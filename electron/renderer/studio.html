@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="claude_tokens.css?v=35" />
   <link rel="stylesheet" href="claude_shell.css?v=34" />
   <link rel="stylesheet" href="claude_chat.css?v=34" />
+  <link rel="stylesheet" href="decision_card.css" />
+  <link rel="stylesheet" href="plan_list.css" />
   <link rel="stylesheet" href="studio_artifacts.css?v=1" />
   <link rel="stylesheet" href="assets/claude-reference/artifact-previews.css" />
   <link rel="stylesheet" href="studio_libraries.css?v=1" />
@@ -248,14 +250,6 @@
           </div>
           <div class="dshw-trajectory-seat" id="trajectory" hidden></div>
 
-          <div class="dshw-plan" id="composer-plan" hidden>
-            <button type="button" class="dshw-plan-head" id="composer-plan-toggle" aria-expanded="true">
-              <svg class="dshw-plan-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
-              <span class="dshw-plan-title" id="composer-plan-title">计划</span>
-              <span class="dshw-plan-count" id="composer-plan-count"></span>
-            </button>
-            <ol class="dshw-plan-steps" id="composer-plan-steps"></ol>
-          </div>
           <div class="dshw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="需要你的决定"></div>
           <div class="dshw-composer-seat">
             <div class="dshw-composer-stack">
@@ -561,7 +555,7 @@
         <form class="mp-terminal-form" id="project-terminal-form"><span>&gt;</span><input id="project-terminal-input" autocomplete="off" spellcheck="false" aria-label="终端命令" /><button type="submit">运行</button></form>
       </section>
       <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">打开 Git 项目后显示工作树变更。</p></div></section>
-      <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><div id="project-tasks"><p class="mp-inspector-empty">这里显示当前项目的后台与已安排任务。</p></div></section>
+      <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><section id="project-plan" hidden></section><div id="project-tasks"><p class="mp-inspector-empty">这里显示当前项目的后台与已安排任务。</p></div></section>
       <section class="mp-inspector-panel" id="inspector-artifact" data-inspector-panel="artifact" hidden>
         <div class="mp-artifact-editor" id="artifact-editor">
           <header class="mp-artifact-editor-meta">
@@ -696,6 +690,8 @@
   <script defer src="studio_subagents.js?v=33"></script>
   <script defer src="studio_inspector_state.js?v=33"></script>
   <script defer src="artifact_editor.js?v=34"></script>
+  <script defer src="decision_card.js"></script>
+  <script defer src="plan_list.js"></script>
   <script defer src="../task_sources.js"></script>
   <script defer src="../task_input_transport.js"></script>
   <script defer src="data.js?v=23"></script>

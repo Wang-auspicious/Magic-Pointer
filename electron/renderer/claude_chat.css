@@ -37,6 +37,9 @@
 .dshw-stream {
   padding: 37px 0 48px;
 }
+.mp-shell:not([data-inspector="open"]) .dshw-stream {
+  scrollbar-gutter: stable both-edges;
+}
 
 .dshw-blank {
   min-height: 1px;
@@ -57,11 +60,6 @@
   gap: 38px;
 }
 
-.mp-shell:not([data-inspector="open"]) .dsh-flow {
-  padding-left: 36px;
-  padding-right: 28px;
-}
-
 .dsh-user {
   position: relative;
   display: flex;
@@ -72,7 +70,7 @@
 
 .dsh-user-stack {
   display: flex;
-  max-width: min(85%, 680px);
+  max-width: min(75%, 680px);
   min-width: 0;
   justify-content: flex-end;
 }
@@ -125,6 +123,7 @@
   font-size: 15px;
   line-height: 23px;
 }
+.dsh-narration .dsh-markdown { font-size: inherit; line-height: inherit; }
 
 /* ---- 权限回执 ----
    回答一道权限门不是用户发了一条消息。画成一枚小回执：左边说决定了什么，
@@ -640,9 +639,17 @@
 }
 
 /* 卡上方的工具名。它不是标题（标题是上面那一行动作），只是「谁跑的」。 */
-/* ---- 产物卡 ----
-   两行一张卡：上行「发布了什么」+ 描边的 Open，下行产物本体 + 可点进去的箭头。
-   行间一条 hairline，和工具组的容器同一套语言。 */
+/* Explicit deliverables. An editable local draft is not a publication. */
+.dsh-todo-list { list-style: none; padding: 6px 0; margin: 0; }
+.dsh-question-history { display: flex; flex-direction: column; gap: 12px; padding: 6px 0; }
+.dsh-question-label { color: var(--mp-text-muted); font-size: 12px; }
+.dsh-question-response { color: var(--mp-text); font-size: 13px; margin-top: 3px; white-space: pre-wrap; }
+.dsh-todo-item { display: flex; gap: 8px; align-items: flex-start; min-height: 26px; font-size: 13px; line-height: 20px; }
+.dsh-todo-check { flex: 0 0 14px; width: 14px; height: 14px; margin-top: 3px; border: 1px solid var(--mp-rule); border-radius: 3px; text-align: center; line-height: 12px; font-size: 11px; }
+.dsh-todo-item[data-state="completed"] { color: var(--mp-text-muted); }
+.dsh-todo-item[data-state="completed"] .dsh-todo-label { text-decoration: line-through; }
+.dsh-todo-item[data-state="in_progress"] .dsh-todo-check { color: var(--mp-clay); border-color: var(--mp-clay); }
+
 .dsh-artifact-card {
   /* 回合体是 flex column + align-items:flex-start，块级子元素会缩到内容宽，
      卡就变成一小片。参考里它和正文一样宽。 */
@@ -658,14 +665,6 @@
   border-top: 1px solid var(--mp-rule);
 }
 
-.dsh-artifact-head {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 10px;
-  padding: 0 8px 0 14px;
-}
-
 .dsh-artifact-label {
   min-width: 0;
   overflow: hidden;
@@ -675,42 +674,25 @@
   white-space: nowrap;
 }
 
-.dsh-artifact-label-prefix {
-  margin-right: 7px;
-  color: var(--mp-text-muted);
-}
-
-.dsh-artifact-open {
-  flex: none;
-  margin-left: auto;
-  padding: 4px 12px;
-  border: 1px solid var(--mp-rule-strong);
-  border-radius: var(--mp-r4);
-  color: var(--mp-text);
-  font-size: 13px;
-  line-height: 18px;
-  transition: background-color var(--mp-dur-fast);
-}
-
-.dsh-artifact-open:hover {
-  background: var(--mp-hover);
-}
-
 .dsh-artifact-row {
   display: flex;
-  min-height: 40px;
+  width: 100%;
+  min-height: 58px;
   align-items: center;
   gap: 8px;
-  padding: 0 12px 0 14px;
+  padding: 10px 14px;
   color: var(--mp-text-secondary);
   font-size: 14px;
   cursor: pointer;
+  text-align: left;
   transition: background-color var(--mp-dur-fast);
 }
 
 .dsh-artifact-row:hover {
   background: var(--mp-hover);
 }
+
+.dsh-artifact-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 
 .dsh-artifact-mark {
   display: inline-flex;
@@ -723,6 +705,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  color: var(--mp-text-muted);
 }
 
 .dsh-artifact-chev {
@@ -1219,132 +1203,11 @@
   box-shadow: var(--mp-shadow-menu);
 }
 
-.dshw-plan,
 .dshw-perm-ask {
   width: 100%;
   max-width: calc(var(--mp-content-width) + 64px);
   margin-inline: auto;
   padding-inline: 32px;
-}
-
-.dshw-plan {
-  flex: 0 0 auto;
-  padding-block: 6px;
-}
-
-.dshw-plan-head {
-  display: flex;
-  width: 100%;
-  min-height: 30px;
-  align-items: center;
-  gap: 7px;
-  color: var(--mp-text-secondary);
-}
-
-.dshw-plan-chev {
-  width: 12px;
-  height: 12px;
-  transition: transform var(--mp-dur-normal) var(--mp-ease-out);
-}
-
-.dshw-plan-head[aria-expanded="false"] .dshw-plan-chev {
-  transform: rotate(-90deg);
-}
-
-.dshw-plan-title {
-  font-weight: var(--mp-weight-medium);
-}
-
-.dshw-plan-count {
-  color: var(--mp-text-muted);
-  font-size: 11px;
-}
-
-.dshw-plan-steps {
-  display: flex;
-  margin: 0;
-  padding: 4px 0 4px 18px;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--mp-text-secondary);
-  font-size: 12px;
-}
-
-.dshw-plan.is-collapsed .dshw-plan-steps {
-  display: none;
-}
-
-.dshw-plan-step {
-  display: flex;
-  min-height: 20px;
-  align-items: flex-start;
-  gap: 7px;
-  list-style: none;
-  color: var(--mp-text-secondary);
-  line-height: 18px;
-}
-
-.dshw-plan-step.is-active {
-  color: var(--mp-text);
-}
-
-.dshw-plan-step.is-done {
-  color: var(--mp-text-muted);
-}
-
-.mp-plan-check {
-  position: relative;
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  align-items: center;
-  justify-content: center;
-  margin-top: 1px;
-  border: 1px solid color-mix(in srgb, var(--mp-text-muted) 54%, transparent);
-  border-radius: var(--mp-r4);
-  color: var(--mp-panel);
-  background: transparent;
-}
-
-.mp-plan-check svg {
-  width: 14px;
-  height: 14px;
-  opacity: 0;
-}
-
-.dshw-plan-step.is-active .mp-plan-check {
-  border-color: color-mix(in srgb, var(--mp-clay) 70%, transparent);
-  background: color-mix(in srgb, var(--mp-clay) 8%, transparent);
-}
-
-.dshw-plan-step.is-active .mp-plan-check::after {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--mp-clay);
-  content: '';
-}
-
-.dshw-plan-step.is-done .mp-plan-check {
-  border-color: var(--mp-text);
-  color: var(--mp-panel);
-  background: var(--mp-text);
-}
-
-.dshw-plan-step.is-done .mp-plan-check svg {
-  opacity: 1;
-}
-
-.mp-plan-step-label {
-  min-width: 0;
-  flex: 1;
-}
-
-.dshw-plan-step.is-done .mp-plan-step-label {
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
 }
 
 .dshw-perm-ask {
@@ -1353,31 +1216,6 @@
   flex: 0 0 auto;
 }
 
-.dshw-perm-ask-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--mp-rule);
-  border-bottom: 0;
-  border-radius: var(--mp-r7) var(--mp-r7) 0 0;
-  background: var(--mp-panel);
-}
-
-.dshw-perm-ask-question {
-  margin: 0;
-  color: var(--mp-text);
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.dshw-perm-ask-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.dshw-perm-ask-actions button,
 .stage-chip {
   min-height: 28px;
   padding: 0 10px;
@@ -1386,15 +1224,9 @@
   background: var(--mp-hover);
 }
 
-.dshw-perm-ask-actions button:hover,
 .stage-chip:hover {
   color: var(--mp-text);
   background: var(--mp-active);
-}
-
-.dshw-perm-ask-actions button.is-primary {
-  color: var(--mp-page);
-  background: var(--mp-text);
 }
 
 .dshw-composer-seat {
@@ -1946,14 +1778,12 @@
   display: contents;
 }
 
-/* 输入框的外壳。54px / 384px / 14px 圆角都是抓到的
-   [data-cds=ChatComposerEditor] 值（min-height / max-height /
-   --cds-radius-composer = .875rem）。54 = 上 5 + 行 44 + 下 5。 */
+/* Desktop Code editor: 14/18 text, 13px vertical inset and a 44px row. */
 .dshw-scroll {
   position: relative;
   display: flex;
-  min-height: 54px;
-  max-height: 384px;
+  min-height: 44px;
+  max-height: 220px;
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--mp-rule-strong);
@@ -1973,23 +1803,19 @@
   flex: 1;
 }
 
-/* 正文 16/22、字重轴 360、内边距 5px 0 5px 8px —— 全是抓到的
-   ChatComposerEditor 值。字重不是 400：参考把它压到 360，输入框里的字
-   比正文轻一档，读起来更像「待写的草稿」而不是「已定稿的回答」。
-   右侧 46px 是我们自己的：参考的发送键在网格的尾列，我们的浮在右上角，
-   不留出这段文字会从它底下穿过去。 */
+/* Keep space for the action at the trailing edge of the editor. */
 .dshw-input {
   width: 100%;
   min-height: 44px;
-  max-height: 374px;
-  padding: 5px 46px 5px 8px;
+  max-height: 218px;
+  padding: 13px 46px 13px 10px;
   overflow: auto;
   border: 0;
   resize: none;
   background: transparent;
   color: var(--mp-text);
-  font-size: 16px;
-  line-height: 22px;
+  font-size: 14px;
+  line-height: 18px;
   font-variation-settings: "wght" 360;
 }
 
@@ -2133,18 +1959,17 @@
   background: var(--mp-hover);
 }
 
-/* 发送键：32×32、圆角 8、**透明底**。参考里它不是一颗实心按钮，是一个
-   着色字形（抓到的 background-color 是 rgba(0,0,0,0)），空输入时整颗
-   opacity .4。11px = (54 - 32) / 2，让它在外壳里垂直居中。 */
+/* Code send control sits in the editor's 10px trailing/bottom inset. */
 .dshw-primary {
   position: absolute;
-  top: 11px;
-  right: 11px;
-  bottom: auto;
-  width: 32px;
-  height: 32px;
+  top: auto;
+  right: 10px;
+  bottom: 10px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 5px;
   color: var(--mp-text);
   background: transparent;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
@@ -2157,14 +1982,7 @@
 .dshw-primary:disabled {
   opacity: .4;
 }
-
-.dshw-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.dshw-primary:active:not(:disabled) {
-  transform: scale(.96);
-}
+.dshw-primary:active:not(:disabled) { background: var(--mp-active); }
 
 /* 空输入时整颗压到 .4，不是换一个颜色——参考就是这么做的
    （computed.json 的 composer.send: "空输入禁用态 opacity .4"）。 */
@@ -2846,20 +2664,23 @@ body[data-ds-dark-theme] .dshw-model-more-panel {
 .mp-shell[data-inspector="open"] .dsh-flow,
 .mp-shell[data-inspector="open"] .dshw-stream > .view-empty,
 .mp-shell[data-inspector="open"] .dshw-trajectory-seat > *,
-.mp-shell[data-inspector="open"] .dshw-plan,
 .mp-shell[data-inspector="open"] .dshw-perm-ask {
-  padding-inline: 50px;
+  padding-inline: 24px;
 }
 
 .mp-shell[data-inspector="open"] .dshw-composer-stack {
-  padding-inline: 40px;
+  padding-inline: 24px;
 }
+
+.mp-shell[data-task-surface="background"] .dsh-flow,
+.mp-shell[data-task-surface="background"] .dshw-stream > .view-empty,
+.mp-shell[data-task-surface="background"] .dshw-perm-ask { max-width: none; padding-inline: 50px; }
+.mp-shell[data-task-surface="background"] .dshw-composer-stack { max-width: none; padding-inline: 40px; }
 
 @media (max-width: 900px) {
   .dsh-flow,
   .dshw-stream > .view-empty,
   .dshw-trajectory-seat > *,
-  .dshw-plan,
   .dshw-perm-ask,
   .dshw-composer-stack,
   .dshw-input-form {
@@ -2875,7 +2696,6 @@ body[data-ds-dark-theme] .dshw-model-more-panel {
   .dsh-flow,
   .dshw-stream > .view-empty,
   .dshw-trajectory-seat > *,
-  .dshw-plan,
   .dshw-perm-ask,
   .dshw-composer-stack,
   .dshw-input-form {

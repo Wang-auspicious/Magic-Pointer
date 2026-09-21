@@ -1,4 +1,4 @@
-/* Studio shell: geometry and surfaces measured from Claude Desktop 1.37937.3. */
+/* Studio shell: Code geometry from the supplied screenshots and Desktop reference. */
 .mp-shell {
   display: grid;
   grid-template-rows: var(--mp-window-bar) minmax(0, 1fr);
@@ -146,13 +146,14 @@
 .mp-design-nav button {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   width: 100%;
-  height: 32px;
+  height: 26px;
   padding: 0 2px;
   border-radius: var(--mp-r6);
   color: var(--mp-text-secondary);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 19.5px;
   font-weight: var(--mp-weight-regular);
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
@@ -168,8 +169,8 @@
 
 .mp-nav-leading {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex: none;
   align-items: center;
   justify-content: center;
@@ -177,15 +178,16 @@
 
 .mp-new-circle {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   background: color-mix(in srgb, var(--mp-text-muted) 15%, transparent);
 }
 
-.mp-new-circle .cds-icon { font-weight: 700; }
+.mp-nav-leading > .cds-icon { font-size: 16px; font-weight: 533.3; --cds-opsz: 16; }
+.mp-new-circle .cds-icon { font-size: 13px; font-weight: 533.3; }
 .dshw-new-session:hover .mp-new-circle { background: color-mix(in srgb, var(--mp-text-muted) 25%, transparent); }
 .mp-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -200,12 +202,12 @@
 }
 
 .dshw-new-session {
-  margin-bottom: 2px;
+  margin-bottom: .5px;
   color: var(--mp-text);
 }
 
 .dshw-customize {
-  margin-bottom: 2px;
+  margin-bottom: .5px;
 }
 
 .mp-design-nav {
@@ -314,31 +316,30 @@
   min-width: 0;
 }
 
-/* 侧栏行：抓到的 --df-row-h 是 32px、--df-radius-pill 8px、
-   --df-row-font 14px（行高 21）。行高给够，侧栏才是「一排可点的条目」而不是
-   一排挤在一起的文字。左右内边距没跟着改成 2px——参考的 2px 是配
-   --df-leading-slot: 28px 那个图标槽的，我们的行首是一个 6px 的状态点，
-   照搬会把点贴到边上。 */
+/* Compact Code session rows; group headings have their own label density. */
 .dshw-project-row,
 .side-item {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 32px;
+  height: 26px;
   min-width: 0;
   padding: 0 6px;
   border-radius: 8px;
   color: var(--mp-text-secondary);
-  font-size: 14px;
-  line-height: 21px;
+  font-size: 13px;
+  line-height: 19.5px;
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
 .dshw-project-row {
-  height: 32px;
+  height: auto;
+  min-height: 34px;
   justify-content: space-between;
-  padding: 0 6px 0 10px;
+  padding: 12px 6px 4px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .dshw-project-toggle {
@@ -358,8 +359,8 @@
 
 .dshw-project-actions button {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   place-items: center;
   border-radius: var(--mp-r4);
   color: var(--mp-text-muted);
@@ -423,11 +424,9 @@
   white-space: nowrap;
 }
 
-/* 项目标题：参考里它和组内的会话行是同一个字号，靠字重和颜色分层，
-   不是靠缩小一档——缩小的写法在长项目名上会先于会话行变得难读。 */
 .dshw-project-name {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 /* 组与组之间空 14px，第一组不空（margin-top: 14px，:first-child 归零）。 */
@@ -440,8 +439,7 @@
   flex-direction: column;
   min-width: 0;
   padding-left: 0;
-  /* 标题和它的第一条会话之间留 2px（抓到的 padding-bottom）。 */
-  padding-top: 2px;
+  padding-top: 0;
 }
 
 .dshw-project[data-open="false"] .dshw-project-sessions {
@@ -450,14 +448,16 @@
 
 .side-item {
   position: relative;
-  gap: 7px;
-  padding-left: 10px;
+  gap: 4px;
+  padding-left: 2px;
+  margin-bottom: .5px;
 }
 
 .side-dot {
   width: 6px;
   height: 6px;
   flex: 0 0 6px;
+  margin-inline: 9px;
   border-radius: 50%;
   background: var(--mp-rule-strong);
 }
@@ -470,6 +470,7 @@
   width: 16px;
   height: 16px;
   flex-basis: 16px;
+  margin-inline: 4px;
   border-radius: 0;
   background: transparent;
   color: var(--mp-danger);
@@ -999,7 +1000,7 @@
 
 .mp-shell[data-inspector="open"] .dshw-header {
   padding-right: 8px;
-  padding-left: 40px;
+  padding-left: 16px;
 }
 
 .mp-studio-home {
@@ -1526,6 +1527,26 @@
   overflow: auto;
 }
 
+.mp-inspector[data-task-rail="true"] {
+  min-width: 240px;
+  margin: 0 24px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mp-inspector[data-background-tasks="true"] { min-width: 0; }
+.mp-inspector[data-task-rail="true"] .mp-inspector-header { padding-inline: 0; }
+.mp-inspector[data-task-rail="true"][data-rail-overlay="false"] { position: relative; inset: auto; }
+.mp-inspector[data-task-rail="true"][data-rail-overlay="true"] {
+  position: absolute;
+  inset: var(--mp-window-bar) 0 0 auto;
+  z-index: 70;
+  margin: 0;
+  padding: 0 16px;
+  background: var(--mp-panel);
+  border-left: 1px solid var(--mp-rule);
+}
+
 #inspector-files {
   display: flex;
   flex-direction: column;
@@ -1921,7 +1942,7 @@
 }
 
 #project-tasks {
-  padding: 4px 8px 12px;
+  padding: 10px;
 }
 
 .mp-artifact-editor {
@@ -2106,88 +2127,42 @@
   opacity: 0.45;
 }
 
-.mp-subagent-section > h3 {
-  margin: 12px 8px 4px;
-  color: var(--mp-text-muted);
-  font-size: 11px;
-  font-weight: var(--mp-weight-medium);
-  line-height: 16px;
-}
-
-.mp-subagent-task {
-  border-bottom: 1px solid var(--mp-rule);
-}
-
-.mp-subagent-task > summary {
-  display: grid;
-  min-height: 44px;
-  grid-template-columns: 20px minmax(0, 1fr) 14px;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: var(--mp-r4);
-  list-style: none;
-  cursor: pointer;
-}
-
-.mp-subagent-task > summary::-webkit-details-marker {
-  display: none;
-}
-
-.mp-subagent-task > summary:hover {
-  background: var(--mp-hover);
-}
-
-.mp-subagent-glyph,
-.mp-subagent-glyph svg {
-  width: 16px;
-  height: 16px;
-}
-
-.mp-subagent-task[data-status="running"] .mp-subagent-glyph {
-  color: var(--mp-clay);
-}
-
-.mp-subagent-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.mp-subagent-copy strong {
-  overflow: hidden;
-  color: var(--mp-text);
-  font-size: 12px;
-  font-weight: var(--mp-weight-regular);
-  line-height: 17px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mp-subagent-copy small {
-  overflow: hidden;
-  color: var(--mp-text-muted);
-  font-size: 11px;
-  line-height: 15px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mp-subagent-caret {
-  width: 12px;
-  height: 12px;
-  transition: transform var(--mp-dur-normal) var(--mp-ease-out);
-}
-
-.mp-subagent-task[open] .mp-subagent-caret {
-  transform: rotate(180deg);
-}
-
-.mp-subagent-body {
-  display: flex;
-  flex-direction: column;
-  padding: 0 8px 8px 36px;
-}
+/* Claude BackgroundTasks: 8px card padding, 5px rows, 13/19 title and
+   12/15 metadata. This is distinct from the narrow Plan session rail. */
+.mp-subagent-section + .mp-subagent-section { margin-top: 16px; }
+.mp-subagent-section-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.mp-subagent-section-header h3 { margin: 0; font: inherit; }
+.mp-subagent-section-header,
+.mp-subagent-section-header button { color: var(--mp-text-muted); font-size: 12px; font-weight: var(--mp-weight-regular); line-height: 15px; }
+.mp-subagent-finished-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 0; }
+.mp-subagent-finished-toggle svg { width: 12px; height: 12px; transform: rotate(-90deg); }
+.mp-subagent-finished-toggle[aria-expanded="true"] svg { transform: none; }
+.mp-subagent-clear { padding: 0; }
+.mp-subagent-clear:hover,
+.mp-subagent-finished-toggle:hover { color: var(--mp-text); }
+.mp-subagent-list { display: flex; flex-direction: column; gap: 4px; }
+.mp-subagent-task { min-width: 0; padding: 8px; border-radius: 8px; background: var(--mp-task-card); }
+/* The supplied Code screenshots use a 77px summary with two 4px row gaps. */
+.mp-subagent-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.mp-subagent-heading strong { min-width: 0; color: var(--mp-text); font-size: 13px; font-weight: var(--mp-weight-regular); line-height: 19px; overflow-wrap: anywhere; }
+.mp-subagent-meta,
+.mp-subagent-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; color: var(--mp-text-muted); font-size: 12px; line-height: 15px; }
+.mp-subagent-meta { margin-bottom: 4px; }
+.mp-subagent-stats { padding-bottom: 3px; }
+.mp-subagent-meta span:empty,
+.mp-subagent-stats span:empty { display: none; }
+.mp-subagent-transcript { padding: 0; color: var(--mp-focus); font: inherit; line-height: inherit; }
+.mp-subagent-transcript:hover { text-decoration: underline; }
+.mp-subagent-stop { display: grid; flex: none; place-items: center; width: 20px; height: 20px; padding: 4px; border-radius: 5px; color: var(--mp-text-muted); background: var(--mp-hover); }
+.mp-subagent-stop svg { width: 12px; height: 12px; }
+.mp-subagent-stop:hover { color: var(--mp-text); background: var(--mp-rule); }
+.mp-subagent-stop:disabled { cursor: default; opacity: .55; }
+.mp-subagent-stop-error { margin: 5px 0 0; color: var(--mp-danger); font-size: 12px; line-height: 15px; overflow-wrap: anywhere; }
+.mp-subagent-body { display: flex; flex-direction: column; gap: 5px; padding: 8px 0 8px; }
+.mp-subagent-list[hidden],
+.mp-subagent-body[hidden],
+.mp-subagent-stop[hidden],
+.mp-subagent-stop-error[hidden] { display: none; }
 
 .mp-subagent-thinking,
 .mp-subagent-step-evidence { min-width: 0; }

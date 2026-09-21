@@ -91,6 +91,8 @@ function statePreparationScript(state, theme) {
     try { localStorage.setItem('mp:theme', theme); } catch (_) {}
 
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    // This renderer fixture has no live runtime recovery transport.
+    Data.recovery = async () => ({ ok: true, pendingRecovery: [] });
     const openReference = async (conversationId = 'studio-reference') => {
       setProductMode('walker', false);
       await openConversation(conversationId);
@@ -318,7 +320,7 @@ function statePreparationScript(state, theme) {
         text: JSON.stringify({ task: 'Audit Claude Settings and Inspector', readonly: true }),
         result: '', usedBackend: 'subagent_loop', startedAt: 100,
       }] }];
-      liveSubagentTasks.set('child-probe', {
+      activeConversationTurns[0].trajectory[0].subagent = {
         id: 'child-probe', parentCallId: 'parent-agent-probe',
         description: 'Audit Claude Settings and Inspector', readonly: true,
         status: 'running', stepCount: 3, currentTool: 'Read',
@@ -327,7 +329,7 @@ function statePreparationScript(state, theme) {
           { index: 2, tool: 'Read', status: 'completed', usedBackend: 'filesystem', latencyMs: 18 },
           { index: 3, tool: 'Read', status: 'running', usedBackend: 'filesystem' },
         ],
-      });
+      };
       focusedSubagentId = 'child-probe';
       setInspector(true, 'tasks');
       renderProjectTasks();
@@ -425,6 +427,9 @@ async function collectMetrics(webContents) {
         shell: rect('#shell'),
         titlebar: rect('#window-titlebar'),
         sidebar: rect('.dshw-sidebar-col'),
+        sidebarProjectHeader: rect('.dshw-project-row'),
+        sidebarSession: rect('.side-item'),
+        sidebarSessionTitle: rect('.side-item .side-title'),
         primary: rect('.dshw-conversation:not([hidden])'),
         home: rect('#studio-home'),
         stats: rect('#studio-home-stats'),
@@ -438,6 +443,17 @@ async function collectMetrics(webContents) {
         settings: rect('.dshw-settings-panel'),
         design: rect('#design-actions'),
         flow: rect('.dsh-flow'),
+        chatHeader: rect('.dshw-header'),
+        taskHeader: rect('.mp-inspector-header'),
+        taskCard: rect('.mp-subagent-task'),
+        taskHeading: rect('.mp-subagent-heading'),
+        taskTitle: rect('.mp-subagent-heading strong'),
+        taskMeta: rect('.mp-subagent-meta'),
+        taskStats: rect('.mp-subagent-stats'),
+        narration: rect('.dsh-narration'),
+        narrationParagraph: rect('.dsh-narration p'),
+        actualInput: rect('.dshw-input'),
+        toolGroupHeader: rect('.dsh-tool-group-header'),
         user: rect('.dsh-user'),
         bubble: rect('.dsh-bubble'),
         assistantBody: rect('.dsh-assistant-body'),
@@ -447,6 +463,19 @@ async function collectMetrics(webContents) {
         browserHost: rect('#project-browser-host'),
         sidebarProjects: document.querySelectorAll('#side-convos .dshw-project').length,
         sidebarSessions: document.querySelectorAll('#side-convos .side-item').length,
+        navigationRows: Array.from(document.querySelectorAll('.mp-main-navigation > button, .mp-main-navigation > .mp-nav-row > .dshw-customize')).filter((element) => element.checkVisibility()).map((element) => {
+          const value = element.getBoundingClientRect();
+          const computed = getComputedStyle(element);
+          const label = element.querySelector('.mp-nav-label');
+          const icon = element.querySelector('.cds-icon');
+          const labelBounds = label?.getBoundingClientRect();
+          return {
+            id: element.id, x: round(value.x), y: round(value.y), width: round(value.width), height: round(value.height),
+            labelX: labelBounds ? round(labelBounds.x) : null,
+            fontSize: computed.fontSize, lineHeight: computed.lineHeight, marginBottom: computed.marginBottom, gap: computed.gap,
+            iconSize: icon ? getComputedStyle(icon).fontSize : null,
+          };
+        }),
         planRows: document.querySelectorAll('#composer-plan:not([hidden]) .dshw-plan-step').length,
         permissionActions: document.querySelectorAll('#composer-permission-ask:not([hidden]) .dshw-perm-ask-btn').length,
         turnErrors: document.querySelectorAll('#stream .dsh-turn-error').length,
@@ -478,6 +507,10 @@ async function collectMetrics(webContents) {
           const value = element.getBoundingClientRect();
           return { className: element.className, x: round(value.x), y: round(value.y), width: round(value.width), height: round(value.height), text: String(element.textContent || '').replace(/\\s+/g, ' ').slice(0, 80) };
         }),
+        visibleToolRows: Array.from(document.querySelectorAll('#stream .dsh-tool-group-header, #stream .dsh-tool .dsh-row')).filter((element) => element.checkVisibility()).map((element) => {
+          const value = element.getBoundingClientRect();
+          return { className: element.className, x: round(value.x), y: round(value.y), width: round(value.width), height: round(value.height) };
+        }),
         filePreviewContent: rect('#project-file-content'),
         filePreviewBlocks: Array.from(document.querySelectorAll('#project-file-content .dsh-markdown > *')).slice(0, 20).map((element) => {
           const value = element.getBoundingClientRect();
@@ -487,6 +520,9 @@ async function collectMetrics(webContents) {
       styles: {
         body: style('body'),
         sidebar: style('.dshw-sidebar'),
+        sidebarProjectHeader: style('.dshw-project-row'),
+        sidebarProjectName: style('.dshw-project-name'),
+        sidebarSession: style('.side-item'),
         panel: style('#project-inspector'),
         composer: style('#composer-form .dshw-card'),
         homeTitle: style('#studio-home-title'),
@@ -494,6 +530,21 @@ async function collectMetrics(webContents) {
         updateCard: style('#update-card'),
         accountFooter: style('#account-footer'),
         toolGroupBody: style('.dsh-tool-group-body'),
+        toolGroupHeader: style('.dsh-tool-group-header'),
+        toolRow: style('.dsh-tool .dsh-row'),
+        chatHeader: style('.dshw-header'),
+        taskHeader: style('.mp-inspector-header'),
+        taskCard: style('.mp-subagent-task'),
+        taskHeading: style('.mp-subagent-heading'),
+        taskTitle: style('.mp-subagent-heading strong'),
+        taskMeta: style('.mp-subagent-meta'),
+        taskStats: style('.mp-subagent-stats'),
+        narration: style('.dsh-narration'),
+        narrationParagraph: style('.dsh-narration p'),
+        actualInput: style('.dshw-input'),
+        inputScroll: style('.dshw-scroll'),
+        inputSend: style('.dshw-primary'),
+        bubble: style('.dsh-bubble'),
       },
       horizontalOverflow: round(horizontalOverflow),
       consoleState: document.readyState,

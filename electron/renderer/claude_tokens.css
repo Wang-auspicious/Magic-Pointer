@@ -57,6 +57,7 @@
   --mp-rule: rgba(11, 11, 11, .10);
   --mp-rule-strong: rgba(11, 11, 11, .18);
   --mp-hover: rgba(11, 11, 11, .05);
+  --mp-task-card: var(--mp-hover);
   --mp-active: rgba(11, 11, 11, .09);
   --mp-clay: #D97757;
   --mp-clay-strong: #C6613F;
@@ -174,16 +175,17 @@
 :root[data-theme="dark"],
 body[data-ds-dark-theme] {
   color-scheme: dark;
-  --mp-page: #151515;
-  --mp-sidebar: #111111;
-  --mp-panel: #1E1E1E;
+  --mp-page: #20201F;
+  --mp-sidebar: #1D1D1C;
+  --mp-panel: #262626;
   --mp-panel-subtle: #303030;
   --mp-markdown-cell: #30302F;
   --mp-code-surface: #30302F;
   --mp-repository-surface: #292928;
-  --mp-composer: #20201F;
-  --mp-user-bubble: #30302F;
-  --mp-selected: #292929;
+  --mp-composer: #2C2C2A;
+  --mp-user-bubble: #313131;
+  --mp-selected: #343433;
+  --mp-task-card: #2F2F2F;
   --mp-text: #F0EFEC;
   --mp-text-secondary: #C3C2B7;
   --mp-text-muted: #898781;

@@ -1,0 +1,54 @@
+/* Session details Plan: six visible steps around the current task, with an
+   explicit expansion control. Colors belong to MP's existing token set. */
+.mp-plan-list { padding: 8px; border-bottom: 1px solid var(--mp-rule); }
+.mp-plan-list[hidden] { display: none; }
+.mp-plan-heading {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  margin: 0;
+  padding: 0 4px;
+  color: var(--mp-text);
+  font-size: 12px;
+  line-height: 15px;
+  font-weight: 600;
+}
+.mp-plan-steps { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.mp-plan-step { display: flex; min-width: 0; color: var(--mp-text-muted); font-size: 13px; line-height: 19px; }
+.mp-plan-step.is-current { color: var(--mp-text); }
+.mp-plan-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.mp-plan-row { cursor: pointer; }
+button.mp-plan-row:hover, .mp-plan-toggle:hover { background: var(--mp-hover); }
+button.mp-plan-row:focus-visible, .mp-plan-toggle:focus-visible { outline: 2px solid var(--mp-clay); outline-offset: 1px; }
+.mp-plan-track { display: flex; flex: 0 0 12px; flex-direction: column; align-items: center; align-self: stretch; }
+.mp-plan-line { flex: 1 1 0; width: 1px; min-height: 2px; background: var(--mp-rule-strong); }
+.mp-plan-line.is-walked, .mp-plan-dot { background: var(--mp-clay); }
+.mp-plan-dot { flex: 0 0 6px; width: 6px; border-radius: 50%; }
+.mp-plan-dot[hidden] { display: none; }
+.mp-plan-label { min-width: 0; flex: 1; align-self: center; padding: 4px 0; overflow-wrap: anywhere; }
+.mp-plan-toggle {
+  min-height: 28px;
+  margin-left: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mp-text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}

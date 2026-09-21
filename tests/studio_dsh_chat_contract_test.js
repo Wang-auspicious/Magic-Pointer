@@ -270,7 +270,7 @@ assert(!css.includes('@keyframes dsh-turn-status-shimmer'), 'perpetual status sh
 /* ---- 样式契约：Claude 精确灰阶与轻量消息语法 ---- */
 assert(tokens.includes('--mp-page: #FCFCFB'), 'light page token matches the measured reference');
 assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (DSH full platform)');
-assert(tokens.includes('--mp-page: #151515'), 'dark page token matches the measured reference');
+assert(tokens.includes('--mp-page: #20201F'), 'dark page token matches the September 21 supplied reference');
 assert.match(css, /\.dsh-bubble\s*\{[^}]*border-radius:\s*12px/s, 'user bubble uses the measured restrained radius');
 assert.match(css, /\.dsh-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Claude height');
 assert.match(css, /\.dsh-tool \.dsh-tool-caret\s*\{[^}]*margin-left:\s*4px/s,

@@ -2157,12 +2157,27 @@ ipcMain.handle('projects:run-command', async (event: Electron.IpcMainInvokeEvent
 const restoredContextUsage = new Map<string, { mtimeMs: number; usage: Promise<any> }>();
 
 async function restoreConversationContext(conversation: any) {
-  const turn = conversation.turns?.at(-1);
-  if (!turn || !conversation.agentSessionId || typeof turn.modelUsage?.contextTokens === 'number') return conversation;
+  let turn = conversation.turns?.at(-1);
+  if (!turn || !conversation.agentSessionId) return conversation;
   const sessionId = conversation.agentSessionId;
   const sessionPath = path.join(FABRIC_DATA_DIR, 'agent-sessions', `${sessionId}.jsonl`);
   let mtimeMs: number;
   try { mtimeMs = (await fs.promises.stat(sessionPath)).mtimeMs; } catch { return conversation; }
+  if (turn.pendingInput) {
+    try {
+      const status = await runPythonBridgePromise({ action: 'status', sessionId }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+      if (status.ok && 'pendingInput' in status
+        && (!status.pendingInput || status.pendingInput.requestId !== turn.pendingInput.requestId)) {
+        const trajectory = (turn.trajectory || []).map((item: any) => item.kind === 'tool' && item.callId === status.lastInputAnswer?.requestId
+          ? { ...item, result: status.lastInputAnswer.message.content, state: 'done', isError: false } : item);
+        conversations().updateTurn({ conversationId: conversation.id, pendingInput: status.pendingInput || null, trajectory });
+        conversations().flush();
+        turn = { ...turn, pendingInput: status.pendingInput || undefined, trajectory };
+        conversation = { ...conversation, turns: [...conversation.turns.slice(0, -1), turn] };
+      }
+    } catch { /* Leave an unanswered card retryable if the runtime cannot be read. */ }
+  }
+  if (typeof turn.modelUsage?.contextTokens === 'number') return conversation;
   let cached = restoredContextUsage.get(sessionId);
   if (!cached || cached.mtimeMs !== mtimeMs) {
     cached = { mtimeMs, usage: runPythonBridgePromise(
@@ -2275,9 +2290,78 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   return sendConversation(raw, event.sender);
 });
 
+const inputResponseRuns = new Set<string>();
+
+ipcMain.handle('conversations:respond', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) return { ok: false, accepted: false, error: 'unauthorized_conversation_sender' };
+  return respondConversation(raw, event.sender);
+});
+
+function conversationForSelection(token: string): any {
+  const selection = selectionSessions.get(token);
+  if (!selection) return null;
+  const live = stageLiveTurns.get(token);
+  if (live) return conversations().get(live.conversationId);
+  const sessionId = activeSessionAgentIds.get(token) || selection.taskId;
+  const summary = conversations().list().find((item: any) => item.agentSessionId === sessionId);
+  return summary ? conversations().get(summary.id) : null;
+}
+
+ipcMain.handle('stage:respond-input', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, accepted: false, error: 'unauthorized_renderer' };
+  const conversation = conversationForSelection(String(raw.selectionSessionToken || ''));
+  if (!conversation) return { ok: false, accepted: false, error: 'unknown_selection_task' };
+  return respondConversation({ ...raw, conversationId: conversation.id }, event.sender);
+});
+
+ipcMain.handle('stage:open-artifact', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, error: 'unauthorized_renderer' };
+  const conversation = conversationForSelection(String(raw.selectionSessionToken || ''));
+  if (!conversation) return { ok: false, error: 'unknown_selection_task' };
+  const artifactId = String(raw.artifactId || '');
+  const result = await artifactCommands().read({ conversationId: conversation.id, artifactId });
+  if (result.ok !== true) return result;
+  showDashboard({ view: 'chat', conversationId: conversation.id, artifactId });
+  return { ok: true, conversationId: conversation.id, artifactId };
+});
+
+async function respondConversation(raw: any = {}, sender?: Electron.WebContents): Promise<any> {
+  const conversationId = String(raw.conversationId || '');
+  const conversation = conversations().get(conversationId);
+  if (!conversation?.agentSessionId || !conversation.turns?.length) return { ok: false, accepted: false, error: 'unknown_conversation' };
+  if (inputResponseRuns.has(conversationId) || [...activeConversations.values()].some(run => run.conversationId === conversationId)) {
+    return { ok: false, accepted: false, error: 'input_response_in_progress' };
+  }
+  inputResponseRuns.add(conversationId);
+  try {
+    const status = await runPythonBridgePromise({ action: 'status', sessionId: conversation.agentSessionId }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+    const last = conversation.turns[conversation.turns.length - 1];
+    const requestId = String(raw.requestId || status.pendingInput?.requestId || '');
+    if (requestId && status.answeredInputIds?.includes(requestId)) {
+      if (last.pendingInput && (!status.pendingInput || last.pendingInput.requestId === requestId)) {
+        const trajectory = (last.trajectory || []).map((item: any) => item.kind === 'tool' && item.callId === status.lastInputAnswer?.requestId
+          ? { ...item, result: status.lastInputAnswer.message.content, state: 'done', isError: false } : item);
+        conversations().updateTurn({ conversationId, pendingInput: null, trajectory });
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+      }
+      return { ...last, ok: !last.failed, accepted: true, alreadyAccepted: true, active: false,
+        conversationId, turnIndex: conversation.turns.length - 1 };
+    }
+    if (!requestId || status.pendingInput?.requestId !== requestId || status.openTurn != null) {
+      return { ok: false, accepted: false, error: 'pending_input_mismatch' };
+    }
+    return await sendConversation({ ...raw, question: '', requestId: raw.requestToken,
+      inputResponse: { requestId, response: raw.response }, conversationId }, sender);
+  } catch (error) {
+    return { ok: false, accepted: false, error: error instanceof Error ? error.message : String(error) };
+  } finally { inputResponseRuns.delete(conversationId); }
+}
+
 async function sendConversation(raw: any = {}, sender?: Electron.WebContents): Promise<any> {
+  const inputResponse = raw?.inputResponse;
   const question = String(raw?.question || '').trim();
-  if (!question) return { ok: false, error: '问题不能为空。' };
+  if (!question && !inputResponse) return { ok: false, error: '问题不能为空。' };
   if (question.length > 12000) return { ok: false, error: '问题最多 12000 字，请缩短后重试。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
   const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
@@ -2294,6 +2378,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
   // once-grant rides this request only. A Bash(prefix) rule is kept intact;
   // stripping its punctuation would persist an inert "Bashpytest" grant.
   let existing = conversationId ? conversations().get(conversationId) : null;
+  if (inputResponse && !existing?.turns?.length) return { ok: false, accepted: false, error: 'unknown_conversation' };
   const grantNow = sanitizePermissionRule(raw?.permissionGrant);
   const denyNow = sanitizePermissionRule(raw?.permissionDeny);
   const onceNow = sanitizePermissionRule(raw?.permissionGrantOnce);
@@ -2345,9 +2430,9 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         : sourceId;
     });
   }
-  let taskInput: Record<string, unknown>;
+  let taskInput: Record<string, unknown> | undefined;
   try {
-    taskInput = TaskSources.bindConversationTaskInput(rawTaskInput, {
+    taskInput = inputResponse ? undefined : TaskSources.bindConversationTaskInput(rawTaskInput, {
       taskId: effectiveAgentSessionId,
       instruction: question,
       attachments,
@@ -2368,6 +2453,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     requestId,
     attachments,
     taskInput,
+    ...(inputResponse ? { inputResponse } : {}),
     // 会话身份必须过桥：Python 侧的 agent session（断点续跑摘要/待办/取消
     // 请求/pending work 挂靠的那条哈希链 JSONL）按它分文件。不传的话桥端
     // 只能从空的 selection object 派生，全部普通对话塌缩成同一条 session。
@@ -2381,7 +2467,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     ...(threadDenials.length ? { permissionDenials: threadDenials } : {}),
     ...(onceNow ? { permissionGrantOnce: [onceNow] } : {}),
   };
-  const conversation = conversations().appendTurn({
+  const conversation = inputResponse ? existing! : conversations().appendTurn({
     conversationId: existing?.id,
     newConversation: !existing,
     capturedAt: capturedAtMs,
@@ -2398,8 +2484,28 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     permissionGrantOnce: onceNow || undefined,
   });
   const turnIndex = conversation.turns.length - 1;
+  const previousTurn = inputResponse ? { ...conversation.turns[turnIndex] } : null;
+  const priorTrajectory = (previousTurn?.trajectory || []).map((item: any) => ({ ...item }));
+  const turnOffset = Math.max(0, ...priorTrajectory.map((item: any) => Number(item.turn) || 0));
+  const continuationTrajectory = (items: any[]) => [...priorTrajectory, ...items.map(item => (
+    item.turn ? { ...item, turn: Number(item.turn) + turnOffset } : item
+  ))];
+  let inputAccepted = false;
+  const acceptInput = (answer?: any) => {
+    if (!inputResponse || inputAccepted && !answer) return;
+    inputAccepted = true;
+    if (answer?.requestId === inputResponse.requestId && typeof answer.message?.content === 'string') {
+      for (const entries of [priorTrajectory, progress.trajectory]) {
+        const entry = entries.find((item: any) => item.kind === 'tool' && item.callId === inputResponse.requestId);
+        if (entry) Object.assign(entry, { result: answer.message.content, state: 'done', isError: false });
+      }
+    }
+    conversations().updateTurn({ conversationId: conversation.id, turnIndex, pendingInput: null, outcome: '进行中', trajectory: progress.trajectory });
+    conversations().flush();
+    notifyConversationChanged(conversation.id);
+  };
   const progress: SelectionLiveProgress = {
-    answer: '', thinking: '', trajectory: [], records: [],
+    answer: '', thinking: '', trajectory: priorTrajectory.map((item: any) => ({ ...item })), records: [],
     requestId, agentSessionId: effectiveAgentSessionId,
   };
   let progressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2416,6 +2522,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     const finish = (parsed: any) => {
       if (finished) return;
       finished = true;
+      if (parsed?.accepted === true) acceptInput(parsed.inputAnswer);
       if (activeConversations.get(requestId)?.forcedStop) {
         parsed = { ...parsed, ok: false, loopTerminated: true,
           loopTerminatedReason: 'user_interrupt', hasPendingWork: true };
@@ -2423,6 +2530,10 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
       activeConversations.delete(requestId);
       if (progressTimer !== null) clearTimeout(progressTimer);
       progressTimer = null;
+      if (inputResponse && !inputAccepted) {
+        resolve({ ...parsed, ok: false, accepted: false, conversationId: conversation.id, turnIndex });
+        return;
+      }
       const failed = parsed?.ok !== true || !String(parsed?.answer || '').trim();
       const terminated = parsed?.loopTerminated === true || Boolean(parsed?.loopTerminatedReason);
       const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
@@ -2431,12 +2542,14 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         ...parsed,
         ok: !failed,
         conversationId: conversation.id,
+        turnIndex,
+        ...(inputResponse ? { accepted: inputAccepted } : {}),
         agentSessionId: parsed?.agentSessionId || progress.agentSessionId,
         hasPendingWork: typeof parsed?.hasPendingWork === 'boolean'
           ? parsed.hasPendingWork : failed || terminated || Boolean(parsed?.pendingInput),
-        answer: String(parsed?.answer || progress.answer || ''),
-        thinking: String(parsed?.thinking || progress.thinking || ''),
-        trajectory: Array.isArray(parsed?.trajectory) ? parsed.trajectory : progress.trajectory,
+        answer: String(parsed?.answer || progress.answer || previousTurn?.answer || ''),
+        thinking: String(parsed?.thinking || progress.thinking || previousTurn?.thinking || ''),
+        trajectory: Array.isArray(parsed?.trajectory) ? continuationTrajectory(parsed.trajectory) : progress.trajectory,
         ...(failed ? { error, errorCode: parsed?.error || (parsed?.ok === true ? 'empty_answer' : 'missing_bridge_error'), exitCode: parsed?.code } : {}),
       };
       conversations().updateTurn({
@@ -2461,6 +2574,12 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
       timeoutMs: 120_000,
       onProgress: (record: any) => {
+        if (record?.phase === 'user_input_accepted') {
+          let answer;
+          try { answer = JSON.parse(Buffer.from(record.fields?.b64 || '', 'base64').toString('utf8')); } catch { /* Final response repeats the durable answer. */ }
+          acceptInput(answer);
+        }
+        if (turnOffset && record?.fields?.turn) record = { ...record, fields: { ...record.fields, turn: String(Number(record.fields.turn) + turnOffset) } };
         handleAgentCursorProgress(record);
         // session_ready 广播 durable session id：停止/插话都指向它。
         const sid = sessionIdFromRecord(record);
@@ -2471,7 +2590,8 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
           progressTimer = setTimeout(flushProgress, 300);
         }
         if (sender && !sender.isDestroyed()) sender.send('conversations:progress', {
-          requestId, conversationId: conversation.id, turnIndex, record,
+          requestId, conversationId: conversation.id, turnIndex,
+          record,
         });
       },
       onComplete: finish,
@@ -2573,6 +2693,22 @@ ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, 
   }, GRACEFUL_CANCEL_GRACE_MS);
   log(`conversation stop requested id=${requestId} session=${plan.sessionId}`);
   return { ok: true, sessionId: plan.sessionId };
+});
+
+ipcMain.handle('conversations:stop-subagent', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) return { ok: false, error: 'unauthorized_renderer' };
+  const conversation = conversations().get(String(raw.conversationId || ''));
+  const subagentId = String(raw.subagentId || '').trim();
+  if (!conversation?.agentSessionId || !subagentId || subagentId === conversation.agentSessionId) {
+    return { ok: false, error: 'unknown_subagent' };
+  }
+  try {
+    return await runPythonBridgePromise({ action: 'cancel', sessionId: subagentId,
+      parentSessionId: conversation.agentSessionId, reason: 'user stopped this subagent' },
+    'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 });
 
 ipcMain.handle('conversations:steer', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {

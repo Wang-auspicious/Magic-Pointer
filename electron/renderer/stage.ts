@@ -45,6 +45,7 @@
   const transcriptBox = document.getElementById('transcript') as HTMLElement;
   const shimmer = document.getElementById('processing-shimmer') as HTMLElement;
   const resultCard = document.getElementById('stage-result') as HTMLElement;
+  const stageDecision = document.getElementById('stage-decision') as HTMLElement;
   const workPanelScroller = document.querySelector('.work-panel-scroller') as HTMLElement;
   const threadPanel = document.getElementById('stage-thread') as HTMLElement;
   const threadTitle = document.getElementById('thread-title') as HTMLElement;
@@ -1851,6 +1852,109 @@
     hidePassageExpand();
   }
 
+  let pendingStageInput: {
+    turnId: number; sessionToken: string; requestId: string; requestToken: string;
+    original: any; accepted: boolean; transcript: ReturnType<typeof ConversationControl.createTranscript>;
+  } | null = null;
+
+  function currentStageInput(request: NonNullable<typeof pendingStageInput>): boolean {
+    return pendingStageInput === request && session.token === request.sessionToken
+      && state.name === 'processing' && state.turns.at(-1)?.id === request.turnId
+      && state.turns.at(-1)?.status === 'pending';
+  }
+
+  function renderStageDecision() {
+    const turn = state.turns.at(-1);
+    const request = pendingStageInput;
+    const active = request && currentStageInput(request) ? request : null;
+    const input = active ? active.accepted ? null : active.original?.pendingInput
+      : turn?.status === 'awaiting' ? turn.result?.pendingInput : null;
+    if (!input || !session.token || ['hidden', 'dismissing'].includes(state.name)) {
+      DecisionCard.clear(stageDecision); return;
+    }
+    DecisionCard.render(stageDecision, {
+      ...input, key: `stage:${session.token}:${input.requestId}`,
+      questions: input.questions || (input.kind !== 'permission' ? [{
+        question: input.question || '需要你的决定',
+        options: (input.options || []).map((label: string) => ({ label })),
+      }] : undefined),
+    }, response => { void respondToStageInput(turn.id, input.requestId, response); });
+    if (active) DecisionCard.pending(stageDecision, true);
+  }
+
+  async function respondToStageInput(turnId: number, requestId: string, response: MagicPointerDecisionResponse) {
+    const turn = state.turns.at(-1);
+    if (pendingStageInput || !session.token || turn?.id !== turnId || turn.status !== 'awaiting') return;
+    if (!requestId || turn.result?.pendingInput?.requestId !== requestId || !api?.respondInput) {
+      DecisionCard.pending(stageDecision, false, '无法找到这条请求的执行记录，请重新打开任务。'); return;
+    }
+    const transcript = ConversationControl.createTranscript();
+    transcript.trajectory = (turn.result?.trajectory || []).map((record: Record<string, unknown>) => ({ ...record }));
+    const request = {
+      turnId, requestId, sessionToken: session.token,
+      requestToken: `stage-response-${Date.now()}-${++taskInputSequence}`,
+      original: turn.result, accepted: false, transcript,
+    };
+    pendingStageInput = request;
+    runningCards.set(`t${turnId}`, { snapshot: { ...transcript, records: [] } });
+    dispatch({ type: 'RESUME_INPUT', turnId, requestId });
+    if (!currentStageInput(request)) { pendingStageInput = null; return; }
+    try {
+      const result = await api.respondInput({ selectionSessionToken: request.sessionToken,
+        requestId, requestToken: request.requestToken, response });
+      if (!currentStageInput(request)) return;
+      request.accepted = request.accepted || result?.accepted === true;
+      if (!request.accepted) {
+        pendingStageInput = null;
+        dispatch({ type: 'RESULT', result: request.original });
+        DecisionCard.pending(stageDecision, false, String(result?.error || '回答未保存，请重试。'));
+        return;
+      }
+      DecisionCard.clear(stageDecision, true);
+      pendingStageInput = null;
+      dispatch(result?.ok === true
+        ? { type: 'RESULT', result }
+        : { type: 'ERROR', result, error: { message: String(result?.error || '继续执行失败。') } });
+    } catch (error) {
+      if (!currentStageInput(request)) return;
+      pendingStageInput = null;
+      const message = error instanceof Error ? error.message : String(error);
+      if (request.accepted) {
+        DecisionCard.clear(stageDecision, true);
+        dispatch({ type: 'ERROR', result: { ...request.transcript }, error: { message } });
+      } else {
+        dispatch({ type: 'RESULT', result: request.original });
+        DecisionCard.pending(stageDecision, false, message);
+      }
+    }
+  }
+
+  function onStageInputProgress(payload: any) {
+    const request = pendingStageInput;
+    if (!request || !currentStageInput(request) || payload.requestId !== request.requestToken || !payload.record) return;
+    if (payload.record.phase === 'user_input_accepted') {
+      if (payload.record.fields?.inputRequestId !== request.requestId) return;
+      request.accepted = true;
+      DecisionCard.clear(stageDecision, true);
+    }
+    ConversationControl.appendTranscript(request.transcript, payload.record);
+    patchRunningCard({ liveProgress: { ...request.transcript, records: [] } });
+    scheduleHitRegionRefresh();
+  }
+
+  async function openStageArtifact(artifactId: string) {
+    const token = session.token;
+    if (!token || !artifactId || !api?.openArtifact) return;
+    try {
+      const result = await api.openArtifact({ selectionSessionToken: token, artifactId });
+      if (session.token === token && result?.ok === false) {
+        dispatch({ type: 'NOTICE', notice: { message: String(result.error || '无法打开产物。') } });
+      }
+    } catch (error) {
+      if (session.token === token) dispatch({ type: 'NOTICE', notice: { message: String(error) } });
+    }
+  }
+
   function clearChips() {
     renderedChipIds = '';
     chipsBox.replaceChildren();
@@ -1863,15 +1967,6 @@
     button.className = 'stage-chip';
     button.textContent = String(chip.label || chip.id);
     button.addEventListener('click', () => {
-      // Clarification chips carry the option text on chip.command and submit
-      // that string as a follow-up. Idle canned chips still map id → command
-      // through StageChipsPolicy; a clarification option named "rewrite"
-      // must not become "改写这段文字".
-      const direct = String(chip.command || '').trim();
-      if (direct) {
-        submitCommand(direct);
-        return;
-      }
       const policy = globalThis.StageChipsPolicy;
       const command = policy && typeof policy.commandForChip === 'function'
         ? policy.commandForChip(chip.id)
@@ -1882,17 +1977,11 @@
   }
 
   // Idle canned chips: click-selected object + idle capsule only.
-  // Clarification chips: newest turn is awaiting with ≥2 pendingInput options.
-  // Awaiting wins — the two sets never show together. Defensive: missing
-  // helper → no chips of that kind.
+  // Questions and permissions use DecisionCard; canned chips are idle actions.
   function renderChips(idleAllowed: boolean) {
     const newest = state.turns[state.turns.length - 1];
     const awaiting = newest?.status === 'awaiting';
-    const clarify = globalThis.ClarificationChips;
     let chips: any[] = [];
-    if (clarify && typeof clarify.clarificationChips === 'function') {
-      chips = clarify.clarificationChips(newest).slice(0, 4);
-    }
     const policy = globalThis.StageChipsPolicy;
     if (!chips.length && !awaiting && idleAllowed && policy
       && typeof policy.shouldShowChips === 'function'
@@ -2094,15 +2183,16 @@
     // and its answer stay on screen once a follow-up is under way.
     if (state.turns.length && name !== 'hidden') {
       renderThread(state.turns);
+      renderStageDecision();
       threadPanel.hidden = false;
       placeThreadSurface();
     } else {
       threadPanel.hidden = true;
       renderedTurnSignature = '';
       resultCard.replaceChildren();
+      renderStageDecision();
     }
-    // Idle canned chips only while the capsule is open. Clarification chips
-    // still render when the newest turn is awaiting (closeTurn → `result`).
+    // Idle canned chips only while the capsule is open.
     renderChips(name === 'capsule-voice' || name === 'capsule-text');
 
     // Errors that belong to a turn already render inside the thread. The
@@ -2350,8 +2440,15 @@
   }
 
   if (api) {
+    if (typeof api.onConversationProgress === 'function') api.onConversationProgress(onStageInputProgress);
+    document.addEventListener('mp:open-artifact', (event) => {
+      const artifactId = String((event as CustomEvent).detail?.artifactId || '');
+      void openStageArtifact(artifactId);
+    });
     api.onShow((payload) => {
       if (!payload) return;
+      pendingStageInput = null;
+      DecisionCard.clear(stageDecision, true);
       state = initialState({ reducedMotion: reducedMotionQuery.matches });
       renderedTranscript = '';
       reportedState = '';

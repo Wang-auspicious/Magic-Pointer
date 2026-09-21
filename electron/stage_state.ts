@@ -206,6 +206,19 @@ function transition(
     return { ...state, notice: message ? { message } : null };
   }
 
+  if (type === 'RESUME_INPUT') {
+    const turn = state.turns.at(-1);
+    const input = recordOf(recordOf(turn?.result)?.pendingInput);
+    if (!turn || turn.id !== candidate.turnId || turn.status !== 'awaiting'
+      || !candidate.requestId || input?.requestId !== candidate.requestId
+      || ['hidden', 'dismissing', 'processing'].includes(state.name)) return state;
+    return {
+      ...state, name: 'processing', command: turn.ask, result: null, error: null,
+      notice: null, deliveryProgress: null,
+      turns: state.turns.map(item => item === turn ? { ...item, status: 'pending', error: null } : item),
+    };
+  }
+
   switch (state.name) {
     case 'hidden':
       if (type === 'WAKE') {

@@ -93,7 +93,7 @@ def register_delegate_tool(
         if extra:
             prompt = f"{prompt}\n\n背景上下文：\n{extra}"
 
-        from app.agent_runtime.session import FileSessionStore
+        from app.agent_runtime.session import FileSessionStore, cancel_interrupt_check
         from app.agent_runtime.memory import compact_messages
         from app.agent_runtime.compaction_prompt import summarize_history_text
         from app.agent_runtime.token_estimate import estimate_request_tokens
@@ -116,8 +116,10 @@ def register_delegate_tool(
             if parent:
                 parent.append("subagent/created", {"childSessionId": child_id, "task": prompt, "readonly": bool(readonly)})
 
+        child_cancelled = cancel_interrupt_check(child_session)
+
         def interrupted() -> bool:
-            return bool((scope is not None and scope.is_cancelled()) or (parent is not None and parent.pending_cancel_request()))
+            return bool(child_cancelled() or (scope is not None and scope.is_cancelled()) or (parent is not None and parent.pending_cancel_request()))
 
         if interrupted():
             raise ActionFailure(FailureType.TOOL_ERROR, f"subagent {child_id} stopped before dispatch")

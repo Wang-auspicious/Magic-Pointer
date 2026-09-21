@@ -68,6 +68,8 @@ export interface TurnEvidence {
 }
 
 export interface TurnPendingInput {
+  requestId?: string;
+  questions?: Array<{ question: string; header?: string; multiSelect?: boolean; options: Array<{ label: string; description?: string }> }>;
   question?: string;
   options?: string[];
   kind?: string;
@@ -744,6 +746,13 @@ function createConversationStore(
     return {
       question,
       options,
+      requestId: String(raw.requestId || '').trim() || undefined,
+      ...(Array.isArray(raw.questions) ? { questions: raw.questions.slice(0, 4).map((item: any) => ({
+        question: String(item.question || ''), header: String(item.header || ''), multiSelect: item.multiSelect === true,
+        options: Array.isArray(item.options) ? item.options.slice(0, 4).map((option: any) => ({
+          label: String(option.label || option || ''), description: String(option.description || ''),
+        })) : [],
+      })) } : {}),
       kind: kind || undefined,
       tool: String(raw.tool ?? '').trim() || undefined,
       prefix: String(raw.prefix ?? '').trim().slice(0, 160) || undefined,

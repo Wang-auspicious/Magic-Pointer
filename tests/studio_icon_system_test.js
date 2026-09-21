@@ -54,8 +54,8 @@ assert.match(html, /id="inspector-toggle"[\s\S]*?<use href="#ic-file-add"/,
   'Claude FileAdd glyph opens the file browser');
 assert(html.includes('class="mp-conversation-view" aria-label="对话视图" hidden'),
   'the old permanent Chat/Trajectory buttons move into the more menu');
-assert.match(shellCss, /\.mp-new-circle\s*\{[^}]*width:\s*22px[^}]*border-radius:\s*50%[^}]*background:\s*color-mix/s,
-  'the original font plus keeps the captured 22px circle rather than an SVG-only style');
+assert.match(shellCss, /\.mp-new-circle\s*\{[^}]*width:\s*18px[^}]*border-radius:\s*50%[^}]*background:\s*color-mix/s,
+  'the supplied Code sidebar uses the compact 18px New circle');
 assert.match(html, /class="mp-new-circle"[\s\S]*?data-glyph="&#xE001;"/);
 
 assert(html.includes('id="chat-source-thumb"'), 'the source thumbnail remains a useful header affordance');
@@ -72,8 +72,8 @@ assert(!html.includes('id="session-log"'), 'the download pill must stay removed'
 assert(studio.includes("icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')"),
   'project rows use the registered Claude-style open/closed folder pair');
 assert(studio.includes("icon('ic-ellipsis')"), 'conversation actions use the shared quiet ellipsis');
-assert(studio.includes("href=\"#ic-agent-workflow\""),
-  'Tasks use a redistributable workflow glyph corresponding to Claude\'s Agent icon');
+assert(!studio.includes('class="mp-subagent-badge"'),
+  'the supplied compact Background tasks cards do not add an invented workflow badge');
 assert(DshIcons.node('think', 16).outerHTML.includes('M12 6v6h4'),
   'thinking uses a clock-family glyph corresponding to Claude ExtendedThinking');
 

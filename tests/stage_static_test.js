@@ -127,12 +127,12 @@ assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : awaiti
 assert(source.includes("threadEyebrowText.textContent = pending"), 'thread eyebrow must be state-driven');
 assert(source.includes("'需要你补充'"),
   'an awaiting card must still announce, to assistive tech, that it waits on the user');
-assert(source.includes('ClarificationChips') && source.includes('clarificationChips(newest'),
-  'awaiting option chips come from ClarificationChips, not idle StageChipsPolicy');
-assert(source.includes('chip.command'),
-  'clicking a clarification chip must submit the option text, not commandForChip');
-assert(html.includes('../clarification_chips.js'),
-  'stage must load the clarification helper as a classic script');
+assert(source.includes('DecisionCard.render(stageDecision') && source.includes('respondToStageInput'),
+  'awaiting questions and permissions use the shared form and tool-response API');
+assert(!source.includes('submitCommand(direct)'),
+  'answering a question must not create another user prompt');
+assert(html.includes('decision_card.js') && html.includes('id="stage-decision"'),
+  'stage must load and host the shared decision form');
 assert(!source.includes("threadEyebrow.querySelector('use')"),
   'the hidden status node carries text only; there is no header glyph left to swap');
 assert(source.includes("threadClose.setAttribute('aria-label', '关闭')"),

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="oreo_tokens.css" />
     <link rel="stylesheet" href="claude_tokens.css" />
     <link rel="stylesheet" href="claude_chat.css" />
+    <link rel="stylesheet" href="decision_card.css" />
     <link rel="stylesheet" href="stage.css" />
     <link rel="stylesheet" href="cards.css" />
     <link rel="stylesheet" href="beam.css" />
@@ -87,6 +88,7 @@
         <div class="work-panel-viewport">
           <div class="work-panel-scroller">
             <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
+            <div id="stage-decision" data-no-drag="1" hidden></div>
           </div>
         </div>
         <!-- 这里以前是一条绿色的「已完成这项任务」。答案出现、追问框回来，
@@ -192,10 +194,10 @@
     <script src="icons.js"></script>
     <script src="../answer_shape_policy.js"></script>
     <script src="../stage_state.js"></script>
+    <script src="../conversation_control.js"></script>
     <script src="../stage_anchor.js"></script>
     <script src="../stage_surface_policy.js"></script>
     <script src="../stage_chips_policy.js"></script>
-    <script src="../clarification_chips.js"></script>
     <script src="../stage_stretch_policy.js"></script>
     <script src="../stage_pick_policy.js"></script>
     <script src="../capture_proof_policy.js"></script>
@@ -211,6 +213,7 @@
     <script src="claude_marks.js"></script>
     <script src="dsh_highlight.js"></script>
     <script src="dsh_chat.js"></script>
+    <script src="decision_card.js"></script>
     <script src="stage.js"></script>
   </body>
 </html>

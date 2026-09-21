@@ -263,8 +263,8 @@ const DshChat = (() => {
   };
 
   const TOOL_TITLES: Record<string, string> = {
-    Todo: 'Updated plan', todo_write: 'Updated plan',
-    AskUser: 'Asked user', ask_user_question: 'Asked user',
+    Todo: 'Updated plan', TodoWrite: 'Updated plan', todo_write: 'Updated plan',
+    AskUser: 'Asked user', AskUserQuestion: 'Asked user', ask_user_question: 'Asked user', ask_user: 'Asked user',
     Observe: 'Observed', get_app_state: 'Observed',
     ListApps: 'Listed windows', ListWindows: 'Listed windows',
     pwsh: 'Ran',
@@ -273,6 +273,7 @@ const DshChat = (() => {
   };
 
   const SUBAGENT_TOOLS = new Set(['Agent', 'delegate_task']);
+  const PLAN_TOOLS = new Set(['Todo', 'TodoWrite', 'todo_write']);
 
   const TOOL_VARIANTS: Record<string, ToolVariant> = {
     bash: 'bash', pwsh: 'bash', read: 'read', web_fetch: 'read',
@@ -490,7 +491,7 @@ const DshChat = (() => {
     const title = isBlockedResult(result) ? 'Blocked' : SUBAGENT_TOOLS.has(name)
       ? state === 'running' ? 'Running subagent' : 'Subagent'
       : TOOL_TITLES[name] ?? (variant === 'others' ? name : VARIANT_TITLES[variant]);
-    const summary = variant === 'others' || name === 'list_dir' ? '' : base;
+    const summary = variant === 'others' || name === 'list_dir' || isQuestionTool(name) || ['Todo', 'TodoWrite', 'todo_write'].includes(name) ? '' : base;
     const output = result === undefined || !result.text ? null : result.text;
     // 报错只露一行短的：完整原文在折叠体里，展开才见。整段红字倾倒会把
     // 流变成事故现场。
@@ -653,10 +654,51 @@ const DshChat = (() => {
     return card;
   }
 
+  function todoChecklist(model: ToolRowModel): DshNode | null {
+    if (!['Todo', 'TodoWrite', 'todo_write'].includes(model.name)) return null;
+    let args: Record<string, unknown>;
+    try { args = JSON.parse(model.argsRaw); } catch { return null; }
+    if (!args || !Array.isArray(args.todos)) return null;
+    const list = h('ul', { class: 'dsh-todo-list', 'aria-label': 'Plan update' });
+    for (const value of args.todos) {
+      if (!value || typeof value.content !== 'string') continue;
+      const state = String(value.status || 'pending');
+      const row = h('li', { class: 'dsh-todo-item', 'data-state': state });
+      attach(row, h('span', { class: 'dsh-todo-check', 'aria-hidden': 'true' }, state === 'completed' ? '✓' : state === 'in_progress' ? '•' : ''));
+      attach(row, h('span', { class: 'dsh-todo-label' }, value.content));
+      attach(list, row);
+    }
+    return list;
+  }
+
+  function questionHistory(model: ToolRowModel): DshNode | null {
+    if (!isQuestionTool(model.name)) return null;
+    let args: Record<string, unknown>;
+    let result: Record<string, unknown> = {};
+    try { args = JSON.parse(model.argsRaw); } catch { return null; }
+    if (!args || typeof args !== 'object') return null;
+    try { result = JSON.parse(model.output || '{}') || {}; } catch { /* A real error is rendered below. */ }
+    const questions = Array.isArray(args.questions) ? args.questions : [args];
+    const answers = result.answers && typeof result.answers === 'object' ? result.answers as Record<string, unknown> : {};
+    const list = h('div', { class: 'dsh-question-history' });
+    for (const question of questions) {
+      if (!question || typeof question.question !== 'string') continue;
+      const row = h('div', { class: 'dsh-question-answer' });
+      attach(row, h('div', { class: 'dsh-question-label' }, question.question));
+      const value = answers[question.question];
+      const decision = result.decision === 'once' ? 'Allowed once' : result.decision === 'grant' ? 'Allowed for this session' : result.decision === 'deny' ? 'Denied' : '';
+      const answer = Array.isArray(value) ? value.join(', ') : typeof value === 'string' ? value : '';
+      attach(row, h('div', { class: 'dsh-question-response' }, decision || answer || (result.answered ? 'No preference' : 'Waiting for your answer')));
+      attach(list, row);
+    }
+    return list;
+  }
+
   function toolRowNode(model: ToolRowModel, scope = ''): DshNode {
     const root = h('div', { class: 'dsh-tool' });
     root.setAttribute('data-tool', '');
     root.setAttribute('data-state', model.state);
+    if (model.callId) root.setAttribute('data-call-id', model.callId);
 
     const summaryText = model.summary;
     const status = model.state === 'running' ? '运行中' : model.state === 'error' ? '失败' : model.state === 'stopped' ? '已停止' : '';
@@ -707,7 +749,11 @@ const DshChat = (() => {
        那段注释。 */
     const singleLine = command !== null && command.rest === '';
     let outputInCard = false;
-    if (diff !== null && (model.body !== null || model.output !== null)) {
+    const checklist = todoChecklist(model) || questionHistory(model);
+    if (checklist !== null) {
+      body.push(checklist);
+      outputInCard = model.state !== 'error';
+    } else if (diff !== null && (model.body !== null || model.output !== null)) {
       body.push(diffNode(diff));
     } else if (command !== null) {
       /* 参考里卡片上方另起一行写工具名（`Bash`，蓝色）。它回答的是「这是谁跑的」，
@@ -921,55 +967,36 @@ const DshChat = (() => {
     return root;
   }
 
-  /* ---- 产物卡（Published artifact） ----
-     参考里它有固定的两行：上行是「发布了什么」，右端一枚描边的 Open；下行是
-     产物本体，右端一行增减和一个可以点进去的箭头。
-     我们这边下行没有文件名的位置（产物是草稿，不是文件），所以放的是它的
-     形态和修订号——都是真有的字段，不是照着形状补的。 */
+  /* One actionable reference to a real, independently editable deliverable. */
   function artifactCardNode(items: Array<Record<string, unknown>>, conversationId: string): DshNode | null {
     const usable = items.filter((item) => item && typeof item === 'object' && String(item.artifactId || ''));
     if (!usable.length) return null;
     const card = h('div', { class: 'dsh-artifact-card' });
     for (const item of usable) {
       const artifactId = String(item.artifactId || '');
-      const name = String(item.name || '').trim() || '未命名草稿';
+      const name = String(item.title || item.name || '').trim() || '未命名草稿';
       const kind = String(item.kind || '').trim();
-      const revision = Number(item.revision);
-      const head = h('div', { class: 'dsh-artifact-head' });
-      const label = h('span', { class: 'dsh-artifact-label' });
-      const prefix = h('span', { class: 'dsh-artifact-label-prefix' });
-      attach(prefix, 'Published artifact');
-      attach(label, prefix);
-      attach(label, name);
-      attach(head, label);
-      const open = h('button', {
+      const row = h('button', {
         type: 'button',
-        class: 'dsh-artifact-open',
+        class: 'dsh-artifact-row',
         'data-dsh-act': 'open-artifact',
         'data-artifact-id': artifactId,
         'data-artifact-conversation': conversationId,
+        'aria-label': `打开 ${name}`,
       });
-      attach(open, 'Open');
-      attach(head, open);
-      attach(card, head);
-
-      const row = h('div', { class: 'dsh-artifact-row' });
       const mark = h('span', { class: 'dsh-artifact-mark', 'aria-hidden': 'true' });
-      /* 参考里这一枚是个小小的「产物」记号。我们这边没有对应的原始图标，
-         所以用现成的 browse（几行文字），而不是照着形状画一个新的。 */
       attach(mark, icon('browse', 14));
       attach(row, mark);
+      const copy = h('span', { class: 'dsh-artifact-copy' });
+      const title = h('span', { class: 'dsh-artifact-label' });
+      attach(title, name); attach(copy, title);
       const meta = h('span', { class: 'dsh-artifact-meta' });
-      attach(meta, [kind, Number.isInteger(revision) && revision > 0 ? `修订 ${revision}` : ''].filter(Boolean).join(' · ') || '草稿');
-      attach(row, meta);
+      const kinds: Record<string, string> = { text: '文本', code: '代码', document_patch: '文档修改', image: '图片', file: '文件' };
+      attach(meta, [kinds[kind] || kind || '草稿', item.state === 'edited' ? '已更新' : ''].filter(Boolean).join(' · '));
+      attach(copy, meta); attach(row, copy);
       const chev = h('span', { class: 'dsh-artifact-chev', 'aria-hidden': 'true' });
       attach(chev, icon('chev', 14));
       attach(row, chev);
-      row.setAttribute('data-dsh-act', 'open-artifact');
-      row.setAttribute('data-artifact-id', artifactId);
-      row.setAttribute('data-artifact-conversation', conversationId);
-      row.setAttribute('role', 'button');
-      row.setAttribute('tabindex', '0');
       attach(card, row);
     }
     return card;
@@ -1061,6 +1088,8 @@ const DshChat = (() => {
     subagent?: Record<string, unknown>;
   }
 
+  interface TurnPresentation { taskPanel?: boolean }
+
   type FlowItem =
     | { type: 'narration'; text: string }
     /* id 是这条思考在它那一轮里的稳定身份：展开态按它存，重建后不丢。 */
@@ -1107,6 +1136,18 @@ const DshChat = (() => {
     return [phase, Number(child.stepCount) ? `${child.stepCount} tools` : '',
       Number(child.elapsedMs) >= 1000 ? `${Math.floor(Number(child.elapsedMs) / 1000)}s` : '',
       latestLine(String(preview || child.summary || ''))].filter(Boolean).join(' · ');
+  }
+
+  function subagentEntryNode(chip: TurnChip, scope: string): DshNode {
+    const model = toolRowModel(chip.name, chip.argsRaw, chip.result, chip.callId);
+    const status = String(chip.subagent?.status || '');
+    if (status) model.state = status === 'running' ? 'running' : status === 'completed' ? 'ok'
+      : ['stopped', 'cancelled', 'user_interrupt'].includes(status) ? 'stopped' : 'error';
+    model.title = model.state === 'running' ? 'Running subagent' : model.state === 'error' ? 'Subagent failed'
+      : model.state === 'stopped' ? 'Subagent stopped' : 'Subagent completed';
+    // The task panel owns the child transcript. This is only its status and
+    // navigation entry; retain the real parent call ID for the existing route.
+    return toolRowNode({ ...model, argsRaw: '', body: null, output: null }, scope);
   }
 
   /* 连续同类读取/搜索折成一条组头（CC "Read 2 files" 契约）。 */
@@ -1346,6 +1387,7 @@ const DshChat = (() => {
   function assistantTurnNode(
     turn: AssistantTurnInput,
     turnScope = `${turn.conversationId || ''}#${Number.isInteger(turn.turnIndex) ? turn.turnIndex : -1}`,
+    options: TurnPresentation = {},
   ): DshNode[] {
     const items: DshNode[] = [];
     const root = h('div', { class: 'dsh-assistant' });
@@ -1370,6 +1412,20 @@ const DshChat = (() => {
       workRun = [];
     };
     for (const item of flow) {
+      if (options.taskPanel && item.type === 'chip') {
+        if (PLAN_TOOLS.has(item.chip.name)) {
+          if (item.chip.result?.isError) {
+            flushChips();
+            attach(bodyHost, noticeNode(item.chip.result.text));
+          }
+          continue;
+        }
+        if (SUBAGENT_TOOLS.has(item.chip.name)) {
+          flushChips();
+          attach(bodyHost, subagentEntryNode(item.chip, turnScope));
+          continue;
+        }
+      }
       if (item.type === 'reasoning') {
         if (chipRun.length) workRun.push(item);
         else attach(bodyHost, thinkNode(item.text, false, `${turnScope}:r${item.id ?? '0'}`));
@@ -1432,7 +1488,7 @@ const DshChat = (() => {
     return items;
   }
 
-  function liveActivityNode(record: Record<string, unknown>, scope = ''): DshNode {
+  function liveActivityNode(record: Record<string, unknown>, scope = '', options: TurnPresentation = {}): DshNode {
     const phase = String(record.phase || '');
     const fields = record.fields && typeof record.fields === 'object'
       ? record.fields as Record<string, unknown> : {};
@@ -1442,6 +1498,11 @@ const DshChat = (() => {
       /* 参数跟着结果回来（tool_call 那一刻运行时还没有参数），所以这一行在
          完成时才能写成「Ran curl -L -o x.pdf」。 */
       const argsRaw = String(fields.args || '');
+      if (options.taskPanel && PLAN_TOOLS.has(name)) return noticeNode(String(fields.result || 'Plan update failed'));
+      if (options.taskPanel && SUBAGENT_TOOLS.has(name)) return subagentEntryNode({
+        name, argsRaw, callId: String(fields.id || ''),
+        result: done ? { text: String(fields.result || ''), isError: fields.state === 'error' } : undefined,
+      }, scope);
       /* 后端是「它是怎么做到的」，对排障有用；耗时不是——参考的工具行不报
          毫秒，而且被权限门拦下的工具耗时是 0.0，写出来只是一行「0.0ms」。
          亚毫秒本来就量不出东西，一并丢掉。 */
@@ -1473,7 +1534,7 @@ const DshChat = (() => {
 
   /* Both task surfaces keep the same DOM for an active turn. Text growth never
      detaches disclosures, resets their scroll, or restarts status animations. */
-  function createLiveTurn(host: HTMLElement, scope = `live-${++liveTurnSequence}`) {
+  function createLiveTurn(host: HTMLElement, scope = `live-${++liveTurnSequence}`, options: TurnPresentation = {}) {
     const rows = new Map<string, { node: HTMLElement; record: string }>();
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
@@ -1512,6 +1573,8 @@ const DshChat = (() => {
                    状态，这里只需换掉子节点。 */
                 const replacement = make() as HTMLElement;
                 entry.node.replaceChildren(...Array.from(replacement.childNodes));
+                const state = replacement.getAttribute('data-state');
+                if (state !== null) entry.node.setAttribute('data-state', state);
                 if (replacement.getAttribute('data-single') === 'true') entry.node.setAttribute('data-single', 'true');
                 else entry.node.removeAttribute('data-single');
               }
@@ -1528,11 +1591,23 @@ const DshChat = (() => {
           };
           snapshot.trajectory.forEach((record, index) => {
             if (record.kind === 'tool') {
+              if (options.taskPanel && PLAN_TOOLS.has(String(record.name))) {
+                if (record.isError) {
+                  flush();
+                  render(`plan-error:${record.callId || index}`, record.result, () => noticeNode(String(record.result || 'Plan update failed')));
+                }
+                return;
+              }
               const chip: TurnChip = { name: String(record.name || 'tool'), callId: String(record.callId || index), argsRaw: String(record.text || ''),
                 result: record.result == null ? undefined : { text: String(record.result), isError: Boolean(record.isError) } };
               if (SUBAGENT_TOOLS.has(chip.name)) {
                 flush();
                 const key = `agent:${chip.callId}`;
+                if (options.taskPanel) {
+                  chip.subagent = { status: (record.subagent as Record<string, unknown> | undefined)?.status };
+                  render(key, chip, () => subagentEntryNode(chip, scope));
+                  return;
+                }
                 render(key, chip, () => chipNode(chip, scope));
                 const child = record.subagent as Record<string, unknown> | undefined;
                 const heartbeat = traceNodes.get(key)!.node.querySelector('.dsh-subagent-heartbeat')!;
@@ -1576,6 +1651,7 @@ const DshChat = (() => {
           const fields = record.fields && typeof record.fields === 'object'
             ? record.fields as Record<string, unknown> : {};
           if (phase === 'tool_call' || phase === 'tool_result') {
+            if (options.taskPanel && PLAN_TOOLS.has(String(fields.name)) && fields.state !== 'error') continue;
             latest.set(`tool:${String(fields.id || fields.name || '')}`, record);
           } else if (['model_request', 'model_response', 'model_first_chunk', 'runtime_boot', 'agent_turn', 'agent_start', 'budget_renewed'].includes(phase)) {
             latest.set('status', record);
@@ -1587,7 +1663,7 @@ const DshChat = (() => {
           const signature = JSON.stringify(record);
           let row = rows.get(key);
           if (!row) {
-            row = { node: liveActivityNode(record, scope) as HTMLElement, record: signature };
+            row = { node: liveActivityNode(record, scope, options) as HTMLElement, record: signature };
             rows.set(key, row);
           } else if (row.record !== signature) {
             if (key === 'status') {
@@ -1598,7 +1674,7 @@ const DshChat = (() => {
             } else {
               /* 同上：展开态由 disclosureRow 按 rowId 从 store 取，构建即正确，
                  不再从旧节点抄一遍。 */
-              const replacement = liveActivityNode(record, scope) as HTMLElement;
+              const replacement = liveActivityNode(record, scope, options) as HTMLElement;
               row.node.setAttribute('data-state', replacement.getAttribute('data-state') || 'running');
               row.node.replaceChildren(...Array.from(replacement.childNodes));
             }
@@ -1639,7 +1715,7 @@ const DshChat = (() => {
       },
       finish(turn: AssistantTurnInput) {
         host.className = host.className.split(' ').filter(name => name !== 'dsh-live-turn').join(' ');
-        host.replaceChildren(...assistantTurnNode(turn, scope) as HTMLElement[]);
+        host.replaceChildren(...assistantTurnNode(turn, scope, options) as HTMLElement[]);
       },
     };
   }
@@ -1660,7 +1736,7 @@ const DshChat = (() => {
             /* scope 与 assistantTurnNode 的 turnScope 同构：展开态的身份必须
                跨「流式中 → 终态重建」保持不变，否则用户展开的东西在轮末自己
                收回去——那正是这一版要修的那半个问题。 */
-            current = { host, live: createLiveTurn(host, `${conversation.id}#${turnIndex}`), final: null };
+            current = { host, live: createLiveTurn(host, `${conversation.id}#${turnIndex}`, { taskPanel: true }), final: null };
             turns.set(turnIndex, current);
           }
           if (turn.liveProgress || turn.outcome === '进行中') {

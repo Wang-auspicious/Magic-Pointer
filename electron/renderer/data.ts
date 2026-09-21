@@ -99,13 +99,24 @@ declare global {
     timingMs?: number;
     usedBackend?: string;
     pendingInput?: {
+      requestId?: string;
       question?: string;
       options?: string[];
+      questions?: Array<{ header?: string; question: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>;
       kind?: string;
       tool?: string;
       prefix?: string;
     };
     [key: string]: unknown;
+  }
+
+  interface MagicPointerInputResponse {
+    conversationId: string;
+    requestId: string;
+    response: { decision?: 'once' | 'grant' | 'deny'; answers?: Record<string, string | string[]> };
+    requestToken?: string;
+    permissionPreset?: string;
+    effort?: string;
   }
 
   interface MagicPointerLiveProgress {
@@ -235,12 +246,12 @@ declare global {
   /* DSH 聊天渲染器（deepseek-harness 100% 移植）：classic script 暴露的全局。 */
   interface MagicPointerDshChatApi {
     userNode(question: string, timeMs?: number, branch?: { conversationId: string; turnIndex: number }): Element;
-    assistantTurnNode(turn: Record<string, unknown>, scope?: string): Element[];
+    assistantTurnNode(turn: Record<string, unknown>, scope?: string, options?: { taskPanel?: boolean }): Element[];
     turnStatusNode(label: string): Element;
     turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
     bindDelegation(scope?: Element): void;
     liveActivityNode(record: Record<string, unknown>): Element;
-    createLiveTurn(host: HTMLElement, scope?: string): MagicPointerLiveTurn;
+    createLiveTurn(host: HTMLElement, scope?: string, options?: { taskPanel?: boolean }): MagicPointerLiveTurn;
     createConversationView(flow: HTMLElement): { update(conversation: MagicPointerConversation): void };
     thinkNode(reasoning: string, running?: boolean): Element;
     permissionAnswerNode(answer: { decision?: string; rule?: string }): Element;
@@ -532,6 +543,8 @@ declare global {
       onStatus(callback: (state: MagicPointerUpdateState) => void): void;
     };
     conversations: {
+      stopSubagent?(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }>;
+      respond?(payload: MagicPointerInputResponse): Promise<Record<string, any>>;
       recovery?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       list(): Promise<MagicPointerConversation[]>;
       stats?(): Promise<MagicPointerHomeStats | null>;
@@ -709,6 +722,8 @@ declare global {
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }, attachments?: string[], taskInput?: MagicPointerTaskInput): Promise<Record<string, any>>;
+    respondConversation(payload: MagicPointerInputResponse): Promise<Record<string, any>>;
+    stopSubagent(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
@@ -867,6 +882,9 @@ declare global {
 
   /* ---- 舞台桥。载荷形状见 preload.ts；渲染层只按松散形状取用。 ---- */
   interface MagicPointerStageApi {
+    respondInput?(payload: Omit<MagicPointerInputResponse, 'conversationId'> & { selectionSessionToken: string }): Promise<Record<string, any>>;
+    onConversationProgress?(callback: (payload: { requestId: string; conversationId?: string; turnIndex?: number; record: any }) => void): (() => void) | void;
+    openArtifact?(payload: { selectionSessionToken: string; artifactId: string }): Promise<Record<string, any>>;
     ready(): void;
     reportState(payload: unknown): void;
     hidden(): void;
@@ -1179,6 +1197,15 @@ const Data: MagicPointerDataApi = {
   async deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }> {
     if (!hasBridge() || !bridge()!.conversations.delete) return { ok: false, error: '删除通道不可用。' };
     return bridge()!.conversations.delete!(id);
+  },
+
+  async respondConversation(payload: MagicPointerInputResponse): Promise<Record<string, any>> {
+    const respond = bridge()?.conversations?.respond;
+    return respond ? respond(payload) : { ok: false, accepted: false, error: '任务回答通道不可用。' };
+  },
+  async stopSubagent(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }> {
+    const stop = bridge()?.conversations?.stopSubagent;
+    return stop ? stop(payload) : { ok: false, error: '子任务停止通道不可用。' };
   },
   async setConversationProject(id: string, root: string): Promise<{ ok?: boolean; error?: string }> {
     const api = bridge()?.conversations;

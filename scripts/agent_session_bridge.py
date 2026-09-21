@@ -128,6 +128,11 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     if action == "usage":
         return {"ok": True, "sessionId": session.id, "contextUsage": _context_usage(session)}
     if action == "cancel":
+        if 'parentSessionId' in payload and (
+            not session.header.parent_session_id
+            or session.header.parent_session_id != str(payload.get('parentSessionId') or '')
+        ):
+            return {'ok': False, 'error': 'subagent_parent_mismatch'}
         # Graceful stop (O3): the running loop polls this at the next round
         # boundary and terminates with a Receipt instead of being killed.
         # A repeat click while one is already pending stays ok: a cancel IS

@@ -107,6 +107,12 @@ assert.strictEqual(decodeChunkBlob({ b64: '%%%not-base64%%%' }), '');
 const steps = [{ content: '第一步', status: 'pending' }];
 const planBlob = Buffer.from(JSON.stringify({ steps }), 'utf8').toString('base64');
 assert.deepStrictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: { b64: planBlob } }), { steps });
+assert.deepStrictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: {
+  b64: Buffer.from(JSON.stringify({ steps: [] })).toString('base64'),
+} }), { steps: [] }, 'an explicit empty plan must clear the visible task plan');
+assert.strictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: {
+  b64: Buffer.from(JSON.stringify({ unrelated: [] })).toString('base64'),
+} }), null, 'missing plan data must not be mistaken for an explicit clear');
 assert.strictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: {} }), null);
 assert.deepStrictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: { b64: '!!!' } }), null);
 

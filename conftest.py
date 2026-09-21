@@ -77,6 +77,8 @@ def pytest_configure(config) -> None:
         return
     if not _is_unusable(_default_basetemp_root()):
         return
-    fallback = _ROOT / ".pytest-tmp" / "basetemp"
+    # pytest clears an explicit basetemp before creating its first fixture.
+    # Parallel agent/test processes must not clear another live session's files.
+    fallback = _ROOT / ".pytest-tmp" / f"basetemp-{os.getpid()}"
     fallback.parent.mkdir(parents=True, exist_ok=True)
     config.option.basetemp = str(fallback)

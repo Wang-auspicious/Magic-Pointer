@@ -2335,13 +2335,15 @@ async function openConversation(id: string) {
   dshCardNodes.clear();
   const turns = c.turns || [];
   activeConversationTurns = turns as Record<string, unknown>[];
-  syncConversationPendingInput(turns);
+  composerPlan = PlanList.project(turns);
+  renderPlanCard();
   activeConversationObject = (c as { object?: Record<string, unknown> }).object || {};
   /* 换了对话，上一条的建议就不再是关于「这里」的了。 */
   clearComposerSuggestion();
   renderProjectTasks();
   if (!turns.length) {
     stream.innerHTML = emptyStateMarkup('ic-message-plus', '这条对话还没有内容', '继续输入任务，或从屏幕上划过一个对象作为上下文。');
+    syncConversationPendingInput(turns);
     renderUsageMeter([]);
     const trajectory = document.getElementById('trajectory');
     if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
@@ -2370,6 +2372,7 @@ async function openConversation(id: string) {
     dshCardNodes.set(proxy.id, host);
   }
   stream.replaceChildren(flow);
+  syncConversationPendingInput(turns);
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
   syncExternalConversationRun(c);
@@ -2385,19 +2388,21 @@ async function openConversation(id: string) {
    task updates. Replacing that turn must also clear any previous question. */
 function syncConversationPendingInput(turns: MagicPointerTurn[]) {
   const last = turns.at(-1);
-  const pending = last && !last.failed && !last.liveProgress ? last.pendingInput : null;
+  const pending = last && !last.liveProgress ? last.pendingInput : null;
   const options = Array.isArray(pending?.options) ? pending.options.map(String).filter(Boolean) : [];
   pendingPermissionAsk = null;
   pendingAskInput = null;
   if (pending?.kind === 'permission' && String(pending.tool || '').trim()) {
     pendingPermissionAsk = {
+      requestId: pending.requestId || pendingToolRequestId(last),
       tool: String(pending.tool),
       prefix: String(pending.prefix || '').trim() || undefined,
       question: String(pending.question || '').trim() || undefined,
       options: options.length ? options : undefined,
     };
-  } else if (options.length >= 2) {
-    pendingAskInput = { question: String(pending?.question || '需要你的决定'), options };
+  } else if (pending && (pending.questions?.length || pending.question)) {
+    pendingAskInput = { ...pending, requestId: pending.requestId || pendingToolRequestId(last),
+      question: String(pending.question || '需要你的决定'), options };
   }
   renderPermissionAsk();
 }
@@ -2434,6 +2439,8 @@ async function refreshOpenConversation(change?: MagicPointerConversationChange) 
   activeConversationRecord = conversation;
   activeConversationTurns = conversation.turns || [];
   activeConversationTurnCount = activeConversationTurns.length;
+  composerPlan = PlanList.project(activeConversationTurns);
+  renderPlanCard();
   if (conversation.taskContext) setActiveTaskContext(conversation.taskContext);
   const stream = document.getElementById('stream');
   if (stream) followIfNearBottom(stream, () => activeConversationView?.update(conversation!));
@@ -3165,6 +3172,12 @@ async function renderConversationRecovery(conversationId: string): Promise<void>
   host.hidden = operations.length === 0;
 }
 
+function pendingToolRequestId(turn?: MagicPointerTurn): string {
+  const calls = turn?.trajectory || [];
+  return String([...calls].reverse().find(record => record.kind === 'tool'
+    && ['AskUser', 'AskUserQuestion', 'ask_user_question'].includes(String(record.name)))?.callId || '');
+}
+
 function esc(v: unknown) {
   return String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -3787,6 +3800,7 @@ interface InspectorState {
   contentSelection?: { kind: 'material' | 'artifact'; id: string } | null;
 }
 interface InspectorStateModule {
+  sessionRailGeometry(availableWidth: number): { width: number; overlay: boolean };
   clampInspectorWidth(desired: unknown, availableWidth: unknown): number;
   reduceInspectorState(state: InspectorState, action: Record<string, unknown>): InspectorState;
 }
@@ -4132,18 +4146,73 @@ function currentSubagentTasks() {
     : activeConversationTurns);
 }
 
+const backgroundTaskViews = new Map<string, { scope: string; finishedOpen: boolean; cleared: Set<string> }>();
+
+function backgroundTaskView() {
+  const scope = activeConversationId || pendingConversation?.agentSessionId || pendingConversation?.requestId || 'draft';
+  let view = backgroundTaskViews.get(scope);
+  if (!view) {
+    view = { scope, finishedOpen: false, cleared: new Set() };
+    backgroundTaskViews.set(scope, view);
+  }
+  return view;
+}
+
+async function stopSubagentTask(row: HTMLElement) {
+  const conversationId = row.dataset.conversationId || '';
+  const subagentId = row.dataset.taskId || '';
+  const button = row.querySelector<HTMLButtonElement>('.mp-subagent-stop')!;
+  const error = row.querySelector<HTMLElement>('.mp-subagent-stop-error')!;
+  if (!conversationId || !subagentId || button.disabled) return;
+  row.dataset.stopState = 'pending';
+  row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent = 'Stopping';
+  button.disabled = true;
+  button.title = 'Stopping task…';
+  button.setAttribute('aria-label', 'Stopping task');
+  error.hidden = true;
+  try {
+    const result = await Data.stopSubagent({ conversationId, subagentId });
+    if (row.dataset.status !== 'running') return;
+    if (!result.ok) throw new Error(result.error || 'Could not stop this task. Try again.');
+    row.dataset.stopState = 'requested';
+  } catch (failure) {
+    if (row.dataset.status !== 'running') return;
+    delete row.dataset.stopState;
+    row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent = '';
+    button.disabled = false;
+    button.title = 'Stop task';
+    button.setAttribute('aria-label', 'Stop task');
+    error.textContent = failure instanceof Error ? failure.message : String(failure);
+    error.hidden = false;
+  }
+}
+
 function renderProjectTasks() {
+  renderPlanCard();
   const host = document.getElementById('project-tasks');
   if (!host) return;
-  const tasks = currentSubagentTasks();
+  const allTasks = currentSubagentTasks();
+  const inspector = document.getElementById('project-inspector');
+  const layout = allTasks.length ? 'background' : 'plan';
+  if (inspector && inspector.dataset.taskLayout !== layout) {
+    inspector.dataset.taskLayout = layout;
+    syncInspectorGeometry();
+  }
+  const view = backgroundTaskView();
+  if (host.dataset.taskScope !== view.scope) {
+    host.replaceChildren();
+    host.dataset.taskScope = view.scope;
+  }
+  const tasks = allTasks.filter(task => task.status === 'running' || !view.cleared.has(task.id));
   if (!tasks.length) {
     const empty = document.createElement('p');
     empty.className = 'mp-inspector-empty';
-    empty.textContent = 'No tasks yet.';
+    empty.textContent = composerPlan?.steps.length ? '' : 'No tasks yet.';
+    empty.hidden = Boolean(composerPlan?.steps.length);
     host.replaceChildren(empty);
     return;
   }
-  const rows = new Map(Array.from(host.querySelectorAll<HTMLDetailsElement>('.mp-subagent-task')).map(row => [row.dataset.taskId, row]));
+  const rows = new Map(Array.from(host.querySelectorAll<HTMLElement>('.mp-subagent-task')).map(row => [row.dataset.taskId, row]));
   const setText = (node: Element, text: string) => { if (node.textContent !== text) node.textContent = text; };
   host.querySelector('.mp-inspector-empty')?.remove();
   const makeSection = (label: string, items: StudioSubagentTask[]) => {
@@ -4152,31 +4221,74 @@ function renderProjectTasks() {
       section = document.createElement('section');
       section.className = 'mp-subagent-section';
       section.dataset.taskSection = label;
-      const heading = document.createElement('h3');
-      heading.textContent = label;
+      const heading = document.createElement('div');
+      heading.className = 'mp-subagent-section-header';
+      if (label === 'Finished') {
+        heading.innerHTML = '<button type="button" class="mp-subagent-finished-toggle"><span></span><svg aria-hidden="true"><use href="#ic-chev" /></svg></button>'
+          + '<button type="button" class="mp-subagent-clear">Clear</button>';
+        heading.querySelector('button')!.addEventListener('click', () => {
+          view.finishedOpen = !view.finishedOpen;
+          renderProjectTasks();
+        });
+        heading.querySelector('.mp-subagent-clear')!.addEventListener('click', () => {
+          for (const task of currentSubagentTasks()) if (task.status !== 'running') view.cleared.add(task.id);
+          renderProjectTasks();
+        });
+      } else {
+        const title = document.createElement('h3');
+        title.textContent = label;
+        heading.appendChild(title);
+      }
       section.appendChild(heading);
+      const list = document.createElement('div');
+      list.className = 'mp-subagent-list';
+      section.appendChild(list);
+    }
+    const list = section.querySelector<HTMLElement>('.mp-subagent-list')!;
+    list.hidden = label === 'Finished' && !view.finishedOpen;
+    if (label === 'Finished') {
+      const toggle = section.querySelector<HTMLElement>('.mp-subagent-finished-toggle')!;
+      toggle.setAttribute('aria-expanded', String(view.finishedOpen));
+      setText(toggle.querySelector('span')!, `Finished ${items.length}`);
     }
     for (const task of items) {
-      let row = rows.get(task.id);
+      let row = rows.get(task.id) || rows.get(`parent:${task.parentCallId}`);
       if (!row) {
-        row = document.createElement('details');
+        row = document.createElement('article');
         row.className = 'mp-subagent-task';
-        row.dataset.taskId = task.id;
-        row.open = task.id === focusedSubagentId;
-        row.innerHTML = '<summary><span class="mp-subagent-glyph"><svg aria-hidden="true"><use href="#ic-agent-workflow" /></svg></span>'
-          + '<span class="mp-subagent-copy"><strong></strong><small></small></span>'
-          + '<svg class="mp-subagent-caret" aria-hidden="true"><use href="#ic-chev" /></svg></summary>'
-          + '<div class="mp-subagent-body"><details class="mp-subagent-thinking"><summary>Thinking</summary><pre></pre></details>'
+        row.innerHTML = '<div class="mp-subagent-heading"><strong></strong><button type="button" class="mp-subagent-stop" title="Stop task" aria-label="Stop task"><svg aria-hidden="true"><use href="#ic-stop" /></svg></button></div>'
+          + '<div class="mp-subagent-meta"><span>Agent</span><span class="mp-subagent-time"></span><span class="mp-subagent-state"></span></div>'
+          + '<div class="mp-subagent-stats"><span class="mp-subagent-tool-uses"></span><span class="mp-subagent-current-tool"></span>'
+          + '<button type="button" class="mp-subagent-transcript" aria-expanded="false">View transcript</button></div>'
+          + '<p class="mp-subagent-stop-error" role="status" hidden></p>'
+          + '<div class="mp-subagent-body" hidden><details class="mp-subagent-thinking"><summary>Thinking</summary><pre></pre></details>'
           + '<div class="mp-subagent-answer"></div><div class="mp-subagent-steps"></div><p class="mp-subagent-result"></p></div>';
+        const taskRow = row;
+        row.querySelector('.mp-subagent-stop')!.addEventListener('click', () => { void stopSubagentTask(taskRow); });
+        row.querySelector('.mp-subagent-transcript')!.addEventListener('click', () => {
+          const body = taskRow.querySelector<HTMLElement>('.mp-subagent-body')!;
+          body.hidden = !body.hidden;
+          const button = taskRow.querySelector<HTMLButtonElement>('.mp-subagent-transcript')!;
+          button.textContent = body.hidden ? 'View transcript' : 'Hide transcript';
+          button.setAttribute('aria-expanded', String(!body.hidden));
+        });
       }
+      row.dataset.taskId = task.id;
+      row.dataset.parentCallId = task.parentCallId;
+      row.dataset.conversationId = activeConversationId || pendingConversation?.conversationId || '';
       row.dataset.status = task.status;
       setText(row.querySelector('strong')!, task.description);
-      setText(row.querySelector('.mp-subagent-copy small')!, [
-        subagentStatusLabel(task.status),
-        task.stepCount ? `${task.stepCount} ${task.stepCount === 1 ? 'step' : 'steps'}` : '',
-        task.currentTool || (task.status === 'running' ? task.phase === 'writing' ? 'Writing' : 'Thinking' : ''),
-        task.elapsedMs ? DshChat.formatRunMeta(task.elapsedMs, null) : '',
-      ].filter(Boolean).join(' · '));
+      setText(row.querySelector('.mp-subagent-time')!, task.elapsedMs ? DshChat.formatRunMeta(task.elapsedMs, null) : '');
+      setText(row.querySelector('.mp-subagent-state')!, task.status === 'running' ? row.dataset.stopState ? 'Stopping' : '' : subagentStatusLabel(task.status));
+      setText(row.querySelector('.mp-subagent-tool-uses')!, `${task.stepCount} tool ${task.stepCount === 1 ? 'use' : 'uses'}`);
+      setText(row.querySelector('.mp-subagent-current-tool')!, task.currentTool || (task.status === 'running' ? task.phase === 'writing' ? 'Writing' : 'Thinking' : ''));
+      const stop = row.querySelector<HTMLButtonElement>('.mp-subagent-stop')!;
+      stop.hidden = task.status !== 'running' || task.id.startsWith('parent:') || !row.dataset.conversationId;
+      if (task.status !== 'running') {
+        delete row.dataset.stopState;
+        row.querySelector<HTMLElement>('.mp-subagent-stop-error')!.hidden = true;
+      }
+      stop.disabled = Boolean(row.dataset.stopState);
       const thinking = row.querySelector<HTMLDetailsElement>('.mp-subagent-thinking')!;
       thinking.hidden = !task.reasoning;
       setText(thinking.querySelector('summary')!, task.status === 'running' && task.phase === 'thinking' ? 'Thinking…' : 'Thought');
@@ -4208,8 +4320,8 @@ function renderProjectTasks() {
       for (const child of Array.from(stepsHost.children)) if (!wantedSteps.includes(child as HTMLElement)) child.remove();
       wantedSteps.forEach((item, i) => { if (stepsHost.children[i] !== item) stepsHost.insertBefore(item, stepsHost.children[i] || null); });
       setText(row.querySelector('.mp-subagent-result')!, task.summary);
-      const index = items.indexOf(task) + 1;
-      if (section.children[index] !== row) section.insertBefore(row, section.children[index] || null);
+      const index = items.indexOf(task);
+      if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
     }
     return section;
   };
@@ -4230,14 +4342,18 @@ document.addEventListener('mp:open-subagent', (event) => {
   const tasks = currentSubagentTasks();
   const matchingTask = tasks.find((task) => task.id === requestedId || task.parentCallId === parentCallId);
   focusedSubagentId = matchingTask?.id || requestedId;
+  if (matchingTask) {
+    const view = backgroundTaskView();
+    view.cleared.delete(matchingTask.id);
+    if (matchingTask.status !== 'running') view.finishedOpen = true;
+  }
   setInspector(true, 'tasks');
   renderProjectTasks();
   if (focusedSubagentId) {
     requestAnimationFrame(() => {
       const taskRow = document.querySelector<HTMLElement>(`.mp-subagent-task[data-task-id="${CSS.escape(focusedSubagentId)}"]`);
-      if (taskRow) (taskRow as HTMLDetailsElement).open = true;
       taskRow?.scrollIntoView({ block: 'nearest' });
-      taskRow?.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+      taskRow?.querySelector<HTMLElement>('.mp-subagent-transcript')?.focus({ preventScroll: true });
     });
   }
 });
@@ -4278,7 +4394,8 @@ window.addEventListener('resize', () => {
 });
 
 function inspectorAvailableWidth(): number {
-  const sidebarWidth = shell.dataset.sidebar === 'collapsed' ? 44 : 288;
+  const sidebarWidth = document.querySelector('.dshw-sidebar-col')?.getBoundingClientRect().width
+    ?? (shell.dataset.sidebar === 'collapsed' ? 44 : 288);
   return Math.max(0, shell.clientWidth - sidebarWidth);
 }
 
@@ -4287,10 +4404,25 @@ function syncInspectorGeometry() {
   const maximize = document.getElementById('inspector-maximize');
   if (!inspector) return;
   inspector.hidden = !inspectorState.open;
-  inspector.style.width = inspectorState.maximized ? '' : `${inspectorState.width}px`;
+  const taskRail = inspectorState.tab === 'tasks';
+  const backgroundTasks = taskRail && inspector.dataset.taskLayout === 'background';
+  const rail = inspectorStatePolicy.sessionRailGeometry(inspectorAvailableWidth());
+  inspector.dataset.taskRail = String(taskRail && !backgroundTasks);
+  inspector.dataset.backgroundTasks = String(backgroundTasks);
+  inspector.dataset.railOverlay = String(taskRail && !backgroundTasks && rail.overlay);
+  shell.dataset.taskSurface = !inspectorState.open ? '' : backgroundTasks ? 'background' : taskRail ? 'plan' : 'document';
+  inspector.style.width = taskRail && !backgroundTasks ? `${rail.width}px`
+    : inspectorState.maximized ? '' : backgroundTasks ? '416px' : `${inspectorState.width}px`;
+  if (taskRail) {
+    const title = document.getElementById('inspector-title');
+    if (title) title.textContent = backgroundTasks ? 'Background tasks' : 'Tasks';
+  }
+  if (maximize) maximize.hidden = taskRail && !backgroundTasks;
+  const resizeHandle = document.getElementById('inspector-resize-handle');
+  if (resizeHandle) resizeHandle.hidden = taskRail;
   if (inspectorState.open) shell.dataset.inspector = 'open';
   else delete shell.dataset.inspector;
-  if (inspectorState.maximized) shell.dataset.inspectorMaximized = 'true';
+  if (inspectorState.maximized && (!taskRail || backgroundTasks)) shell.dataset.inspectorMaximized = 'true';
   else delete shell.dataset.inspectorMaximized;
   maximize?.setAttribute('aria-pressed', String(inspectorState.maximized));
   maximize?.setAttribute('aria-label', inspectorState.maximized ? '还原任务面板' : '展开任务面板');
@@ -4318,7 +4450,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   });
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = ({ materials: 'Materials', files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: 'Tasks', artifact: 'Artifact' } as Record<string, string>)[activeInspectorTab] || 'Task';
+    inspectorTitle.textContent = ({ materials: 'Materials', files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: inspector.dataset.taskLayout === 'background' ? 'Background tasks' : 'Tasks', artifact: 'Artifact' } as Record<string, string>)[activeInspectorTab] || 'Task';
   }
   if (!open) { closeProjectBrowserView(); return; }
   if (activeInspectorTab !== 'browser') closeProjectBrowserView();
@@ -5685,151 +5817,100 @@ function bindPermissionChip() {
     renderPermissionChip();
   });
 }
-/* Codex update_plan 式计划卡：todo_write 实时推送（answer 同款 b64 blob 通道）
-   + 终态 result.plan 双通道 */
-let composerPlan: { steps: Array<{ content: string; status: string }> } | null = null;
-let planCollapsed = false;
+/* The task rail projects the latest durable plan; it does not occupy the composer. */
+let composerPlan: ReturnType<typeof PlanList.project> = null;
 
 function renderPlanCard() {
-  const card = document.getElementById('composer-plan');
-  if (!card) return;
-  const steps = composerPlan?.steps || [];
-  if (!steps.length) { card.hidden = true; return; }
-  card.hidden = false;
-  card.classList.toggle('is-collapsed', planCollapsed);
-  const done = steps.filter(s => s.status === 'completed').length;
-  const title = document.getElementById('composer-plan-title');
-  if (title) title.textContent = 'Plan';
-  const count = document.getElementById('composer-plan-count');
-  const blocked = steps.filter(s => s.status === 'blocked').length;
-  if (count) count.textContent = `${done}/${steps.length}${blocked ? ` · ${blocked} blocked` : ''}`;
-  const list = document.getElementById('composer-plan-steps');
-  if (!list) return;
-  list.replaceChildren(...steps.map(step => {
-    const li = document.createElement('li');
-    li.className = 'dshw-plan-step'
-      + (step.status === 'completed' ? ' is-done' : '')
-      + (step.status === 'in_progress' ? ' is-active' : '');
-    const check = document.createElement('span');
-    check.className = 'mp-plan-check';
-    check.setAttribute('aria-hidden', 'true');
-    check.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.25 10.5 3 3 6.5-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const content = document.createElement('span');
-    content.className = 'mp-plan-step-label';
-    content.textContent = `${step.status === 'blocked' ? '受阻：' : step.status === 'cancelled' ? '已取消：' : ''}${step.content}`;
-    if (step.status === 'blocked' || step.status === 'cancelled') check.textContent = step.status === 'blocked' ? '!' : '–';
-    li.append(check, content);
-    return li;
-  }));
+  const host = document.getElementById('project-plan');
+  if (!host) return;
+  PlanList.render(host, composerPlan, {
+    sessionKey: activeConversationId || pendingConversation?.requestId || '',
+  });
 }
 
-document.getElementById('composer-plan-toggle')?.addEventListener('click', () => {
-  planCollapsed = !planCollapsed;
-  renderPlanCard();
-});
-
-/* 审批卡：贴着 composer 上沿长出的那张卡。两类决定走同一个卡：
-   - permission：CC toolPermissionDecision 语义，三个结构化选项（grant/once/deny），
-     点击 = 授权随下一条消息生效，文本同时告诉模型继续；
-   - ask：ask_user_question 的 options，点哪个就把哪个作为回答发出去。
-   审批而已，用户不该需要打字。 */
-/* 权限门。`options` 是运行时给的那三个选项原文（"仅这一次允许" / "本会话总是
-   允许 X" / "拒绝"）——用它的文案，但**按位置**映射到 once/grant/deny：
-   选项是模型按 permission_modes 的指令「固定为」这个顺序生成的，顺序就是
-   契约。位置对不上（少于三个）时退回自绘的英文按钮。 */
-let pendingPermissionAsk: { tool: string; prefix?: string; question?: string; options?: string[] } | null = null;
+/* Decisions respond to the suspended tool call. They never submit the composer. */
+let pendingPermissionAsk: { requestId?: string; tool: string; prefix?: string; question?: string; options?: string[] } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
-let pendingAskInput: { question: string; options: string[] } | null = null;
+let pendingAskInput: NonNullable<MagicPointerTurn['pendingInput']> | null = null;
+const pendingInputHost = document.getElementById('composer-permission-ask');
 
 function renderPermissionAsk() {
-  const host = document.getElementById('composer-permission-ask');
+  const host = document.getElementById('composer-permission-ask') || pendingInputHost;
   if (!host) return;
-  if (!pendingPermissionAsk && !pendingAskInput) { host.hidden = true; host.replaceChildren(); return; }
-  host.hidden = false;
+  const input = pendingPermissionAsk || pendingAskInput;
+  if (!input) { DecisionCard.clear(host); return; }
+  const conversationId = activeConversationId || '';
+  const requestId = input.requestId || '';
+  const stream = document.getElementById('stream');
+  const follow = stream && stream.scrollHeight - stream.scrollTop - stream.clientHeight < 120;
+  if (stream && host.parentElement !== stream) stream.append(host);
   host.dataset.mode = pendingPermissionAsk ? 'permission' : 'ask';
-  const card = document.createElement('div');
-  card.className = 'dshw-perm-ask-card';
-  const actions = document.createElement('div');
-  actions.className = 'dshw-perm-ask-actions';
-  const question = document.createElement('p');
-  question.className = 'dshw-perm-ask-question';
-  const make = (text: string, onClick: () => void, variant?: string) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = variant ? `dshw-perm-ask-btn is-${variant}` : 'dshw-perm-ask-btn';
-    btn.textContent = text;
-    btn.addEventListener('click', onClick);
-    return btn;
-  };
-  const submitText = (message: string, choice: { grant?: string; deny?: string; once?: string } | null) => {
-    pendingPermissionChoice = choice;
-    const ta = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
-    const form = document.getElementById('composer-form') as HTMLFormElement | null;
-    if (ta && form) {
-      ta.value = message;
-      fitComposer(ta);
-      form.requestSubmit();
-    }
-  };
-  if (pendingPermissionAsk) {
-    const tool = pendingPermissionAsk.tool;
-    const prefix = pendingPermissionAsk.prefix || '';
-    const grantRule = ConversationControl.permissionGrantRule(tool, prefix);
-    const grantTarget = prefix || tool;
-    question.textContent = pendingPermissionAsk.question || `Allow Magic Pointer to run ${grantTarget}?`;
-    const labels = pendingPermissionAsk.options || [];
-    /* 运行时给了三个选项就用它的原文和顺序：这是用户看到的那句话，也是
-       loop 按顺序解释的那句话。每一个都必须带上决定，否则授权到不了运行时，
-       工具会被再拦一次、再问一遍——那正是「卡不消失」的样子。 */
-    if (labels.length === 3 && grantRule) {
-      const answer = (decision: { grant?: string; deny?: string; once?: string }, text: string) =>
-        submitText(text, decision);
-      actions.replaceChildren(
-        make(labels[0], () => answer(
-          { once: grantRule },
-          `Allow ${grantTarget} once. Continue.`,
-        ), 'primary'),
-        make(labels[1], () => answer(
-          { grant: grantRule },
-          `Always allow ${grantTarget} for this session. Continue.`,
-        )),
-        make(labels[2], () => answer(
-          { deny: tool },
-          `Deny ${tool}. Use another approach.`,
-        )),
-      );
-      card.append(question, actions);
-      host.replaceChildren(card);
-      return;
-    }
-    const grantButtons = grantRule ? [
-      make(`Always allow ${prefix || tool}`, () => submitText(
-        `Always allow ${grantTarget} for this session. Continue.`,
-        { grant: grantRule },
-      )),
-      make('Allow once', () => submitText(
-        `Allow ${grantTarget} once. Continue.`,
-        { once: grantRule },
-      ), 'primary'),
-    ] : [];
-    actions.replaceChildren(
-      make('Deny', () => submitText(`Deny ${tool}. Use another approach.`, { deny: tool })),
-      ...grantButtons,
-    );
-    card.append(question, actions);
-    host.replaceChildren(card);
+  DecisionCard.render(host, {
+    ...input, key: `${conversationId}:${requestId}`,
+    presentation: 'inline',
+    kind: pendingPermissionAsk ? 'permission' : 'ask',
+    questions: pendingAskInput?.questions || (pendingAskInput ? [{
+      question: pendingAskInput.question || '需要你的决定',
+      options: (pendingAskInput.options || []).map(label => ({ label })),
+    }] : undefined),
+  }, response => { void respondToPendingInput(conversationId, requestId, response); });
+  if (stream && follow) stream.scrollTop = stream.scrollHeight;
+}
+
+async function respondToPendingInput(conversationId: string, requestId: string, response: MagicPointerDecisionResponse) {
+  if (studioComposerBusy || pendingConversation || externalConversationRun) return;
+  const host = document.getElementById('composer-permission-ask');
+  if (!host || conversationId !== activeConversationId) return;
+  if (!requestId || !conversationId) {
+    DecisionCard.pending(host, false, '无法找到这条请求的执行记录。请重新打开任务后重试。');
     return;
   }
-  const options = pendingAskInput?.options || [];
-  question.textContent = pendingAskInput?.question || '需要你的决定';
-  actions.replaceChildren(
-    ...options.map((option) => make(option, () => {
-      pendingAskInput = null;
-      submitText(option, null);
-    })),
-  );
-  card.append(question, actions);
-  host.replaceChildren(card);
+  const turnIndex = activeConversationTurnCount - 1;
+  const body = document.querySelector<HTMLElement>(`.dsh-flow-item[data-turn-index="${turnIndex}"]`);
+  if (!body) { DecisionCard.pending(host, false, '无法找到当前任务。请重新打开后重试。'); return; }
+  const requestToken = `response-${Date.now()}-${++studioTaskInputSequence}`;
+  const scope = `${conversationId}#${turnIndex}`;
+  const transcript = ConversationControl.createTranscript();
+  const previous = activeConversationTurns[turnIndex] as MagicPointerTurn | undefined;
+  transcript.trajectory = (previous?.trajectory || []).map(record => ({ ...record }));
+  const submitted: PendingConversation = { requestId: requestToken, scope, body,
+    records: new Map(), renderer: DshChat.createLiveTurn(body, scope, { taskPanel: true }),
+    agentSessionId: activeConversationRecord?.agentSessionId || null,
+    streamText: '', reasoningText: '', transcript, liveTokens: null };
+  pendingConversation = submitted;
+  studioComposerBusy = true;
+  setComposerRunningState(true);
+  startPendingClock(body);
+  let accepted = false;
+  try {
+    const result = await Data.respondConversation({ conversationId, requestId, response,
+      requestToken, permissionPreset: composerPreset, effort: composerEffort });
+    accepted = result.accepted === true || submitted.inputAccepted === true;
+    if (pendingConversation !== submitted || activeConversationId !== conversationId) return;
+    if (!accepted) {
+      DecisionCard.pending(host, false, String(result.error || '未能保存这次回答，请重试。'));
+      return;
+    }
+    pendingPermissionAsk = null; pendingAskInput = null;
+    DecisionCard.clear(host, true);
+    await openConversation(conversationId);
+    if (pendingConversation !== submitted || activeConversationId !== conversationId) return;
+    setComposerSettledState(result.ok ? 'success' : 'error');
+    await renderSidebar();
+  } catch (error) {
+    if (pendingConversation === submitted && activeConversationId === conversationId) {
+      accepted = submitted.inputAccepted === true;
+      if (accepted) {
+        await openConversation(conversationId);
+        setComposerSettledState('error');
+      } else DecisionCard.pending(host, false, error instanceof Error ? error.message : String(error));
+    }
+  } finally {
+    if (pendingConversation === submitted) {
+      detachPendingConversation();
+      if (accepted) void refreshOpenConversation({ id: conversationId });
+    }
+  }
 }
 
 bindEffortChip();
@@ -6365,8 +6446,10 @@ function bindModelSeat() {
 bindModelSeat();
 
 interface PendingConversation {
+  conversationId?: string;
   requestId: string;
   scope?: string;
+  inputAccepted?: boolean;
   body: HTMLElement;
   records: Map<string, Record<string, unknown>>;
   renderer: MagicPointerLiveTurn;
@@ -6414,7 +6497,7 @@ function renderConversationProgress(record: Record<string, unknown>) {
   }
   if (String(record.phase || '') === 'plan') {
     const snapshot = ConversationControl.planStepsFromRecord(record);
-    if (snapshot) { composerPlan = snapshot; renderPlanCard(); }
+    if (snapshot) { composerPlan = PlanList.project([{ plan: snapshot }]); renderPlanCard(); }
   }
   if (String(record.phase || '') === 'subagent') {
     schedulePendingRender();
@@ -6452,6 +6535,8 @@ function renderPendingBody() {
   const pending = pendingConversation;
   if (!pending) return;
   pending.renderer.update({ ...pending.transcript, records: [...pending.records.values()] });
+  const plan = PlanList.project([{ liveProgress: pending.transcript }]);
+  if (plan) { composerPlan = plan; renderPlanCard(); }
   pendingClockWrite?.();
 }
 
@@ -6631,10 +6716,17 @@ async function stopActiveConversation() {
 
 Data.onConversationProgress((payload) => {
   if (!pendingConversation || payload.requestId !== pendingConversation.requestId || !payload.record) return;
+  if (payload.conversationId) pendingConversation.conversationId = payload.conversationId;
+  if (payload.record.phase === 'user_input_accepted') {
+    pendingConversation.inputAccepted = true;
+    pendingPermissionAsk = null; pendingAskInput = null;
+    const host = document.getElementById('composer-permission-ask');
+    if (host) DecisionCard.clear(host, true);
+  }
   if (!pendingConversation.scope && payload.conversationId && Number.isInteger(payload.turnIndex)) {
     pendingConversation.scope = `${payload.conversationId}#${payload.turnIndex}`;
     pendingConversation.body.replaceChildren();
-    pendingConversation.renderer = DshChat.createLiveTurn(pendingConversation.body, pendingConversation.scope);
+    pendingConversation.renderer = DshChat.createLiveTurn(pendingConversation.body, pendingConversation.scope, { taskPanel: true });
   }
   renderConversationProgress(payload.record);
 });
@@ -6799,12 +6891,16 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       activeTaskContext?.taskId || 'studio-pending',
       attachmentPaths,
     );
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), renderer: DshChat.createLiveTurn(pendingBody), agentSessionId: activeTaskContext?.taskId || null, streamText: '', reasoningText: '', transcript: ConversationControl.createTranscript(), liveTokens: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), renderer: DshChat.createLiveTurn(pendingBody, undefined, { taskPanel: true }), agentSessionId: activeTaskContext?.taskId || null, streamText: '', reasoningText: '', transcript: ConversationControl.createTranscript(), liveTokens: null };
     const submittedConversation = pendingConversation;
     const conversationId = activeConversationId;
+    const hadPendingInput = Boolean(pendingPermissionAsk || pendingAskInput);
     const permissionChoice = pendingPermissionChoice || undefined;
     const permissionPreset = composerPreset;
     const effort = composerEffort;
+    // The new message owns this run. Keep form drafts, but withdraw the old
+    // question while preparation and delivery are in progress.
+    syncConversationPendingInput([]);
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const workspaceRoot = await prepareComposerWorktree();
@@ -6824,9 +6920,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         return;
       }
       pendingPermissionChoice = null;
-      pendingPermissionAsk = null;
-      pendingAskInput = null;
-      renderPermissionAsk();
       if (response?.conversationId) activeConversationId = String(response.conversationId);
       if (!response?.ok || !response.conversationId) {
         if (response?.conversationId) {
@@ -6848,7 +6941,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         await refreshComposerModel();
         if (pendingConversation !== submittedConversation) return;
       } else if ((response as { plan?: unknown }).plan && typeof (response as { plan?: unknown }).plan === 'object') {
-        composerPlan = (response as { plan: { steps: Array<{ content: string; status: string }> } }).plan;
+        composerPlan = PlanList.project([{ plan: (response as { plan: unknown }).plan }]);
         renderPlanCard();
       }
       /* 结构化提问回传：权限门（kind=permission）走三键授权语义；
@@ -6856,40 +6949,26 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
          点按钮即答，不需要打字。 */
       const awaiting = response as {
         awaitingUserInput?: boolean;
-        pendingInput?: { kind?: string; tool?: string; prefix?: string; question?: string; options?: unknown };
+        pendingInput?: NonNullable<MagicPointerTurn['pendingInput']>;
         /* 见上面 pendingPermissionAsk：运行时的权限选项自带决定，位置即契约。 */
       };
-      if (awaiting.awaitingUserInput && awaiting.pendingInput?.kind === 'permission' && awaiting.pendingInput.tool) {
-        pendingPermissionAsk = {
-          tool: String(awaiting.pendingInput.tool),
-          prefix: String(awaiting.pendingInput.prefix || '').trim() || undefined,
-          question: String(awaiting.pendingInput.question || '').trim() || undefined,
-          options: Array.isArray(awaiting.pendingInput.options)
-            ? (awaiting.pendingInput.options as unknown[]).map((o) => String(o)).filter(Boolean)
-            : undefined,
-        };
-        pendingAskInput = null;
-        renderPermissionAsk();
-      } else if (awaiting.awaitingUserInput && Array.isArray(awaiting.pendingInput?.options)
-        && (awaiting.pendingInput.options as unknown[]).length >= 2) {
-        pendingAskInput = {
-          question: String(awaiting.pendingInput.question || '需要你的决定'),
-          options: (awaiting.pendingInput.options as unknown[]).map((o) => String(o)).filter(Boolean),
-        };
-        renderPermissionAsk();
-      }
+      if (awaiting.awaitingUserInput && awaiting.pendingInput) syncConversationPendingInput([{ pendingInput: awaiting.pendingInput }]);
       await openConversation(String(response.conversationId));
       await renderSidebar();
       if (pendingConversation !== submittedConversation) return;
-      setComposerSettledState('success');
+      setComposerSettledState(awaiting.awaitingUserInput ? 'idle' : 'success');
       /* 联想词在回合彻底结束之后才问——它读的是这一轮的最终结果，不是中间态。
          故意不 await：输入框不该等一个建议。 */
-      void refreshComposerSuggestion(
-        activeConversationTurns,
-        activeConversationObject,
-      );
+      if (!awaiting.awaitingUserInput) void refreshComposerSuggestion(activeConversationTurns, activeConversationObject);
     } catch (error) {
       if (pendingConversation !== submittedConversation) return;
+      if (hadPendingInput && conversationId) {
+        const durable = await Data.conversation(conversationId).catch(() => undefined);
+        if (pendingConversation !== submittedConversation || activeConversationId !== conversationId) return;
+        // A rejected send can leave the original question pending. Once a new
+        // turn exists, a provider failure must not resurrect the older request.
+        if (durable) syncConversationPendingInput(durable.turns || []);
+      }
       pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
       textarea.value = ConversationControl.failedDraftValue(textarea.value, question);
       fitComposer(textarea);
@@ -7168,6 +7247,12 @@ function refreshStashSummaries() {
 /* 主进程可以直接指定落到哪一屏（托盘「设置…」走这条） */
 window.magicPointerDashboard?.onShow?.((payload) => {
   if (payload?.view) show(String(payload.view));
+  if (payload?.conversationId) {
+    const id = String(payload.conversationId);
+    void openConversation(id).then(() => {
+      if (activeConversationId === id && payload.artifactId) void openArtifactEditor(id, String(payload.artifactId));
+    });
+  }
 });
 
 /* 后台任务的进度。三个界面收到的是同一份补丁，所以同一次出图

@@ -136,15 +136,15 @@ const ConversationControl = (() => {
     steps: Array<{ content: string; status: string }>;
   }
 
-  /** plan 快照解码；空/坏快照返回 null（渲染层保持现有计划卡不动）。 */
+  /** Empty steps clears the plan; missing or malformed data leaves it alone. */
   function planStepsFromRecord(record: unknown): PlanSteps | null {
     if (phaseOf(record) !== PLAN_PHASE) return null;
     const raw = decodeBlob(fieldsOf(record));
     if (!raw) return null;
     try {
       const parsed = JSON.parse(raw) as { steps?: unknown };
-      const steps = Array.isArray(parsed?.steps) ? parsed.steps : [];
-      if (!steps.length) return null;
+      if (!Array.isArray(parsed?.steps)) return null;
+      const steps = parsed.steps;
       return {
         steps: steps.map((step: any) => ({
           content: String(step?.content || ''),

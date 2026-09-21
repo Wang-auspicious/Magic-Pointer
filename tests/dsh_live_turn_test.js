@@ -87,6 +87,28 @@ assert.equal(host.querySelector('.dsh-tool'), tool, 'settling the call retains i
 assert.equal(tool.querySelector('.dsh-disclosure').getAttribute('data-open'), 'true');
 assert.match(tool.textContent, /read the actual contents/, 'tool output must show real result content');
 
+const planHost = new TestNode('div');
+const planLive = DshChat.createLiveTurn(planHost);
+const todos = [{ content: 'Inspect the task', status: 'completed' }, { content: 'Fix the issue', status: 'in_progress' }, { content: 'Run checks', status: 'pending' }];
+planLive.update({ trajectory: [{ kind: 'tool', callId: 'todo-1', name: 'Todo', text: JSON.stringify({ todos }), result: JSON.stringify({ plan: todos }), state: 'done' }] });
+const planTool = planHost.querySelector('.dsh-tool');
+assert.equal(planTool.getAttribute('data-call-id'), 'todo-1', 'plan rows must link to their real transcript tool');
+assert.equal(planTool.querySelectorAll('.dsh-todo-item').length, 3, 'expanded Todo tools show a readable checklist');
+assert.equal(planTool.querySelectorAll('.dsh-todo-item')[0].getAttribute('data-state'), 'completed');
+assert.match(planTool.textContent, /Fix the issue/);
+assert.doesNotMatch(planTool.textContent, /"todos"|"plan"|"status"/, 'a successful plan is not a JSON dump');
+planLive.update({ trajectory: [{ kind: 'tool', callId: 'todo-1', name: 'Todo', text: JSON.stringify({ todos }), result: 'Could not save plan', isError: true, state: 'error' }] });
+assert.match(planHost.textContent, /Could not save plan/, 'failed plan updates still expose their real error');
+
+const questionHost = new TestNode('div');
+const questionLive = DshChat.createLiveTurn(questionHost);
+const questions = [{ question: 'Which format?', options: [{ label: 'Report' }, { label: 'Slides' }] }, { question: 'Which details?', multiSelect: true, options: [{ label: 'Charts' }, { label: 'Sources' }] }];
+questionLive.update({ trajectory: [{ kind: 'tool', callId: 'ask-1', name: 'AskUser', text: JSON.stringify({ questions }), result: JSON.stringify({ answered: true, answers: { 'Which format?': 'Report', 'Which details?': [] }, skippedQuestions: ['Which details?'] }), state: 'done' }] });
+assert.equal(questionHost.querySelectorAll('.dsh-question-answer').length, 2, 'answered questions remain readable in tool history');
+assert.match(questionHost.textContent, /Which format\?Report/);
+assert.match(questionHost.textContent, /No preference/);
+assert.doesNotMatch(questionHost.textContent, /"questions"|"answered"|"answers"/, 'question history must not dump the request protocol');
+
 assert.equal(typeof DshChat.createConversationView, 'function');
 const flow = new TestNode('div');
 const view = DshChat.createConversationView(flow);
@@ -130,6 +152,40 @@ agentRecord.subagent.reasoning += '\nFound the handler';
 agentLive.update({ trajectory: [agentRecord] });
 assert.equal(agentHost.querySelector('.dsh-subagent-heartbeat'), heartbeat, 'child token updates preserve the parent row');
 assert.match(agentHost.textContent, /Found the handler/);
+
+const studioTasksHost = new TestNode('div');
+const studioTasks = DshChat.createLiveTurn(studioTasksHost, 'studio-tasks#0', { taskPanel: true });
+const studioPlan = { kind: 'tool', callId: 'studio-plan', name: 'Todo', text: JSON.stringify({ todos }), result: JSON.stringify({ plan: todos }), state: 'done' };
+const studioAgent = { ...agentRecord, callId: 'studio-agent',
+  subagent: { ...agentRecord.subagent, id: 'studio-child', parentCallId: 'studio-agent' } };
+studioTasks.update({ trajectory: [studioPlan, studioAgent] });
+assert.equal(studioTasksHost.querySelectorAll('.dsh-todo-item').length, 0, 'Studio renders the plan only in the Tasks rail');
+assert.equal(studioTasksHost.querySelectorAll('.dsh-subagent-heartbeat').length, 0, 'child reasoning belongs only to the Tasks rail');
+assert.doesNotMatch(studioTasksHost.textContent, /Inspect the task|Found the handler|"task"/);
+const studioAgentRow = studioTasksHost.querySelector('.dsh-tool');
+assert.equal(studioAgentRow.getAttribute('data-call-id'), 'studio-agent');
+assert.equal(studioAgentRow.querySelector('.dsh-row').getAttribute('data-dsh-act'), 'open-subagent');
+assert.equal(studioAgentRow.querySelector('.dsh-row').getAttribute('data-subagent-parent-call-id'), 'studio-agent');
+assert.equal(studioAgentRow.querySelector('.dsh-body-wrap').textContent, '', 'the child entry has no hidden duplicate transcript');
+studioAgent.subagent.status = 'failed';
+studioTasks.update({ trajectory: [studioPlan, studioAgent] });
+assert.equal(studioTasksHost.querySelector('.dsh-tool'), studioAgentRow, 'child state changes preserve the compact entry');
+assert.equal(studioAgentRow.getAttribute('data-state'), 'error', 'the compact entry reflects a child failure before its parent tool settles');
+studioTasks.finish({ answer: 'Complete.', trajectory: [studioPlan, studioAgent] });
+assert.equal(studioTasksHost.querySelectorAll('.dsh-todo-item').length, 0);
+assert.equal(studioTasksHost.querySelectorAll('.dsh-tool-group').length, 0, 'the Agent entry stays directly accessible after completion');
+assert.equal(studioTasksHost.querySelector('.dsh-row').getAttribute('data-dsh-act'), 'open-subagent');
+assert.doesNotMatch(studioTasksHost.textContent, /Found the handler|"task"/);
+studioTasks.update({ trajectory: [{ ...studioPlan, result: 'Could not save plan', isError: true, state: 'error' }] });
+assert.match(studioTasksHost.textContent, /Could not save plan/, 'a rejected plan update must remain visible');
+assert.equal(studioTasksHost.querySelectorAll('.dsh-todo-item').length, 0, 'a rejected plan does not render its proposed checklist');
+studioTasks.update({ records: [{ phase: 'tool_result', fields: { id: 'studio-plan', name: 'Todo', args: studioPlan.text, result: studioPlan.result, state: 'ok' } }] });
+assert.equal(studioTasksHost.querySelectorAll('.dsh-todo-item').length, 0, 'legacy live records also avoid the duplicate checklist');
+const studioHistory = new TestNode('div');
+DshChat.createConversationView(studioHistory).update({ id: 'task-panel-history', turns: [{ trajectory: [studioPlan, studioAgent], answer: 'Complete.' }] });
+assert.equal(studioHistory.querySelectorAll('.dsh-todo-item').length, 0, 'reopening Studio uses the same task presentation');
+assert.equal(studioHistory.querySelectorAll('.dsh-subagent-heartbeat').length, 0);
+assert.equal(studioHistory.querySelector('.dsh-row').getAttribute('data-dsh-act'), 'open-subagent');
 
 const trace = [
   { kind: 'message', turn: 1, text: 'I will inspect the files.', reasoning: 'First reasoning', state: 'done' },
@@ -246,6 +302,15 @@ test('merging an opened later tool group preserves visibility once and honors a 
   renderer.finish(turn);
   assert.equal(target.querySelector('.dsh-tool-group').getAttribute('open'), null,
     'an old child expansion must not override the user closing the merged group');
+});
+
+test('a local draft card names the deliverable without pretending it was published', () => {
+  const card = DshChat.artifactCardNode([{ artifactId: 'draft-one', name: 'Release notes',
+    kind: 'text', revision: 2, state: 'edited' }], 'draft-task');
+  assert.ok(card.textContent.includes('Release notes'));
+  assert.ok(!card.textContent.includes('Published'), 'a generated or edited local draft has not been published');
+  assert.equal(card.querySelectorAll('[data-dsh-act]').length, 1, 'one deliverable needs one coherent open target');
+  assert.equal(DshChat.artifactCardNode([], 'draft-task'), null, 'ordinary messages have no artifact placeholder');
 });
 
 test('a standalone Stage turn preserves expansion through finish without conversation metadata', () => {

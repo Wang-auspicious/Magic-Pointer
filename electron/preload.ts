@@ -89,6 +89,9 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
 });
 
 contextBridge.exposeInMainWorld('magicPointerStage', {
+  respondInput: (payload: unknown) => ipcRenderer.invoke('stage:respond-input', payload),
+  onConversationProgress: (callback: PayloadCallback) => onPayload('conversations:progress', callback),
+  openArtifact: (payload: unknown) => ipcRenderer.invoke('stage:open-artifact', payload),
   ready: () => ipcRenderer.send('stage:renderer-ready'),
   show: () => ipcRenderer.send('stage:show'),
   reportState: (payload: unknown) => ipcRenderer.send('stage:state', payload),
@@ -350,6 +353,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         ? { permissionGrantOnce: String(payload?.permissionGrantOnce).trim().slice(0, 200) }
         : {}),
     }),
+    respond: (payload: unknown) => ipcRenderer.invoke('conversations:respond', payload),
+    stopSubagent: (payload: { conversationId: string; subagentId: string }) => ipcRenderer.invoke('conversations:stop-subagent', payload),
     export: (id: unknown) => ipcRenderer.invoke('conversations:export', String(id || '').slice(0, 120)),
     rename: (payload: { id?: unknown; title?: unknown }) => ipcRenderer.invoke('conversations:rename', {
       id: String(payload?.id || '').slice(0, 120),

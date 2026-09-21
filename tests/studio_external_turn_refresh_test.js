@@ -31,6 +31,7 @@ const context = {
   activeConversationView: { update: value => { calls.push(value); } },
   activeConversationRecord: { id: 'selection-c1', turns: [] },
   conversationRefreshSequence: 0,
+  composerPlan: null,
   pendingConversation: null,
   activeConversationTurnCount: 1,
   inspectorState: { open: true }, activeInspectorTab: 'tasks',
@@ -41,8 +42,14 @@ const context = {
   renderConversationRecovery: async id => { recoveryCalls.push(id); },
   setActiveTaskContext() {},
   pendingPermissionAsk: null, pendingAskInput: null, renderPermissionAsk() {},
+  renderPlanCard() {},
 };
+vm.runInNewContext(compile(fs.readFileSync('electron/renderer/plan_list.ts', 'utf8')), context);
 vm.runInNewContext(compile(studio.slice(start, end)), context);
+const requestIdStart = studio.indexOf('function pendingToolRequestId(');
+assert.ok(requestIdStart >= 0);
+const requestIdEnd = studio.indexOf('\n}\n', requestIdStart) + 2;
+vm.runInNewContext(compile(studio.slice(requestIdStart, requestIdEnd)), context);
 const pendingStart = studio.indexOf('function syncConversationPendingInput(');
 if (pendingStart >= 0) {
   const pendingEnd = studio.indexOf('\n}\n', pendingStart) + 2;
@@ -59,15 +66,21 @@ if (pendingStart >= 0) {
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(calls.at(-1).turns[0].answer, 'Final disk answer');
   assert.deepEqual(recoveryCalls, ['selection-c1'], 'a settled task refreshes its recovery panel');
-  diskTurn = { answer: 'Waiting for approval', pendingInput: { kind: 'permission', tool: 'write_file', prefix: 'notes', question: 'Save these notes?', options: ['Once', 'Always', 'Deny'] } };
+  diskTurn = { answer: 'Updated plan', trajectory: [{ kind: 'tool', callId: 'plan-1', name: 'Todo', state: 'done', text: '{"todos":[{"content":"Verify notes","status":"blocked"}]}' }] };
+  await context.refreshOpenConversation({ id: 'selection-c1' });
+  assert.equal(context.composerPlan.steps[0].content, 'Verify notes', 'settled external updates project the durable plan into the task rail');
+  assert.equal(context.composerPlan.steps[0].anchorToolUseId, 'plan-1');
+  diskTurn = { answer: 'Waiting for approval', pendingInput: { kind: 'permission', requestId: 'permission-1', tool: 'write_file', prefix: 'notes', question: 'Save these notes?', options: ['Once', 'Always', 'Deny'] } };
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(context.pendingPermissionAsk?.tool, 'write_file', 'external task settling to approval must project its pending permission without reopening');
   assert.equal(context.pendingPermissionAsk.question, 'Save these notes?');
+  assert.equal(context.pendingPermissionAsk.requestId, 'permission-1', 'the durable approval request id survives external refresh');
   assert.equal(context.pendingPermissionAsk.options.join(','), 'Once,Always,Deny');
-  diskTurn = { answer: 'Choose a format', pendingInput: { question: 'Which format?', options: ['Brief', 'Detailed'] } };
+  diskTurn = { answer: 'Choose a format', trajectory: [{ kind: 'tool', name: 'AskUser', callId: 'ask-1' }], pendingInput: { question: 'Which format?', options: ['Brief', 'Detailed'] } };
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(context.pendingPermissionAsk, null);
   assert.equal(context.pendingAskInput.question, 'Which format?');
+  assert.equal(context.pendingAskInput.requestId, 'ask-1', 'older saved questions recover the id of their originating tool');
   diskTurn = { answer: 'Done' };
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(context.pendingAskInput, null, 'settled result must clear stale approval or question cards');

@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const css = fs.readFileSync('electron/renderer/claude_chat.css', 'utf8');
+const plan = fs.readFileSync('electron/renderer/plan_list.ts', 'utf8');
+const decisionCard = fs.readFileSync('electron/renderer/decision_card.ts', 'utf8');
 
 assert.strictEqual((html.match(/id="composer-form"/g) || []).length, 1, 'landing and transcript share one composer');
 assert(html.indexOf('id="composer-permission-ask"') < html.indexOf('class="dshw-composer-seat"'),
@@ -29,7 +31,8 @@ assert(source.includes("api.CdsIcons.html('code-send')"),
   'the idle state restores the original Code ArrowReturn font glyph');
 assert(source.includes("document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle')"),
   'the usage ring must switch to its running state with the turn');
-assert(source.includes("setComposerSettledState('success')"));
+assert(source.includes("setComposerSettledState(awaiting.awaitingUserInput ? 'idle' : 'success')"),
+  'a suspended question or approval must not be announced as a completed task');
 assert(source.includes("setComposerSettledState('error')"));
 assert(source.includes('if (studioComposerBusy)'));
 assert(source.includes('await steerActiveConversation(question, textarea)'));
@@ -56,10 +59,13 @@ assert(source.includes('textarea.placeholder = !home && composerSuggestion ? com
 assert(source.includes('void refreshComposerSuggestion('),
   'the suggestion is fetched after the turn settles and does not block the composer');
 assert(source.includes('clearComposerSuggestion();'), 'a consumed or stale suggestion is dropped');
-assert(source.includes("title.textContent = 'Plan'"));
-assert(source.includes("card.className = 'dshw-perm-ask-card'"));
-assert(source.includes("actions.className = 'dshw-perm-ask-actions'"));
-assert(source.includes('host.replaceChildren(card)'));
+assert(plan.includes("heading.textContent = 'Plan'"));
+assert(source.includes("document.getElementById('project-plan')"), 'the plan lives in the task rail');
+assert(source.includes('PlanList.render(host, composerPlan,'));
+assert(decisionCard.includes("element('section', 'mp-decision-card')"));
+assert(decisionCard.includes("element('div', 'mp-decision-actions')"));
+assert(decisionCard.includes('host.replaceChildren(card)'));
+assert(source.includes('DecisionCard.render(host,'), 'the composer must mount the shared decision component');
 assert(!html.includes('id="stats-line"'), 'Claude composer has no second telemetry text row beneath its toolbar');
 assert(!source.includes('function renderStatsLine('), 'usage remains in the context control, not loose bottom text');
 assert(html.includes('id="composer-effort"'), 'composer exposes the direct effort trigger');
@@ -116,7 +122,9 @@ assert(source.includes('Number(latestUsage?.contextWindow) || Number(currentMode
 assert(source.includes("button.style.setProperty('--mp-context-progress', String(contextProgress))"));
 assert(source.includes('button.hidden = false'));
 assert.match(css, /\.mp-context-value\s*\{[^}]*stroke-dasharray:\s*var\(--mp-context-progress\) 100/s);
-assert.match(css, /\.mp-shell\[data-inspector="open"\] \.dsh-flow,[\s\S]*?\.mp-shell\[data-inspector="open"\] \.dshw-composer-stack\s*\{[^}]*padding-inline:\s*40px/s,
-  'the docked Inspector leaves the measured 40px conversation/composer gutters');
+assert.match(css, /\.mp-shell\[data-task-surface="background"\] \.dshw-composer-stack\s*\{[^}]*padding-inline:\s*40px/s,
+  'the supplied Background tasks surface leaves a 40px composer gutter');
+assert.match(css, /\.mp-shell\[data-task-surface="background"\] \.dsh-flow,[\s\S]*?padding-inline:\s*50px/s,
+  'Background tasks reserves the separate measured 50px transcript gutter');
 
 console.log('studio composer states test ok');

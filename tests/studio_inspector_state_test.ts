@@ -2,7 +2,13 @@ const assert = require('node:assert');
 const {
   clampInspectorWidth,
   reduceInspectorState,
+  sessionRailGeometry,
 } = require('../electron/renderer/studio_inspector_state');
+
+assert.deepStrictEqual(sessionRailGeometry(1240 - 288), { width: 240, overlay: false }, 'narrow desktop retains the conversation beside the 15rem rail');
+assert.deepStrictEqual(sessionRailGeometry(1560 - 288), { width: 320, overlay: false }, 'wide desktop caps the task rail at 20rem');
+assert.deepStrictEqual(sessionRailGeometry(1100), { width: 260, overlay: false }, 'rail uses the actual chat measure and three 24px gutters');
+assert.deepStrictEqual(sessionRailGeometry(591), { width: 240, overlay: true }, 'below Claude\'s 592px panel threshold the rail uses an overlay');
 
 assert.strictEqual(clampInspectorWidth(300, 1200), 420);
 assert.strictEqual(clampInspectorWidth(900, 1600), 760);

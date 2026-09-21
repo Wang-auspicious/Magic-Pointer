@@ -7,6 +7,7 @@ const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 const studio = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const data = fs.readFileSync('electron/renderer/data.ts', 'utf8');
+const decisionCard = fs.readFileSync('electron/renderer/decision_card.ts', 'utf8');
 
 assert.match(preload, /send:\s*\(payload:[^)]*\)\s*=>\s*ipcRenderer\.invoke\('conversations:send'/,
   'the visible Studio composer must have an acknowledged IPC channel');
@@ -76,14 +77,17 @@ assert(studio.includes('ConversationControl.failedDraftValue(textarea.value, que
 // Bash prefix grant must survive bridge/store/UI and persist the narrow rule,
 // never widen "always allow pytest" into the whole Bash tool.
 assert(data.includes('prefix?: string'), 'pending permission input must type the Bash prefix');
-assert.match(studio, /pendingPermissionAsk:\s*\{ tool: string; prefix\?: string;/,
+assert.match(studio, /pendingPermissionAsk:\s*\{[^}]*tool: string; prefix\?: string;/,
   'Studio pending permission state must retain the command prefix');
-assert(studio.includes('const grantTarget = prefix || tool;'),
-  'the grant target is the narrow prefix when the runtime supplied one');
-assert.match(studio, /Always allow \$\{grantTarget\}/,
-  'the always-allow button must show the granted command prefix');
-assert(studio.includes("make('Allow once'"));
-assert(studio.includes("make('Deny'"));
+assert.match(decisionCard, /if \(request\.prefix\)[^\n]*mp-decision-command[^\n]*request\.prefix/,
+  'the permission card must display the exact bounded command being granted');
+assert.match(studio, /DecisionCard\.render\(host,\s*\{\s*\.\.\.input,/,
+  'the pending request, including its prefix and request id, reaches the card unchanged');
+assert.match(studio, /Data\.respondConversation\(\{ conversationId, requestId, response,/,
+  'approval answers bind to the original runtime request rather than widening the rule through a new prompt');
+assert(decisionCard.includes("button('Allow for this session', () => submit({ decision: 'grant' })"));
+assert(decisionCard.includes("button('Allow once', () => submit({ decision: 'once' })"));
+assert(decisionCard.includes("button('Deny', () => submit({ decision: 'deny' })"));
 assert.match(preload, /permissionGrant[^\n]*slice\(0, 200\)/,
   'preload must not truncate a bounded Bash(prefix) rule at the old 64-char tool-name cap');
 

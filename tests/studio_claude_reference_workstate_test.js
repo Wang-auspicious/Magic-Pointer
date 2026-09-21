@@ -55,8 +55,8 @@ assert(studio.includes('renderRepositoryContextBar'),
 assert(studio.includes('pullRequestUrl'), 'Create PR must use the real project URL');
 assert.match(chat, /\.mp-repository-context\s*\{[^}]*min-height:\s*40px/s,
   'repository row must use the measured 40px work-state height');
-assert.match(chat, /\.dsh-user-stack\s*\{[^}]*max-width:\s*min\(85%,\s*680px\)/s,
-  'long user prompts must reach Claude Desktop\'s measured 85% transcript width');
+assert.match(chat, /\.dsh-user-stack\s*\{[^}]*max-width:\s*min\(75%,\s*680px\)/s,
+  'the supplied September 21 Code screenshots show bubbles at 75% of transcript width');
 assert.match(chat, /\.dsh-bubble\s*\{[^}]*background:\s*var\(--mp-user-bubble\)/s,
   'user bubbles must use the sampled Claude surface instead of an approximate color mix');
 assert.match(chat, /\.dsh-bubble\s*\{[^}]*overflow-wrap:\s*break-word/s,
@@ -65,6 +65,10 @@ assert.match(tokens, /--mp-user-bubble:\s*#F0F0EF/,
   'light user-bubble token must match the supplied Claude Desktop pixels');
 assert.match(tokens, /--mp-composer:\s*#FEFEFE/,
   'current Claude Desktop uses a distinct near-white composer surface');
+const darkTokens = tokens.slice(tokens.indexOf(':root[data-theme="dark"]'));
+for (const [token, value] of Object.entries({ page: '#20201F', sidebar: '#1D1D1C', panel: '#262626', composer: '#2C2C2A', 'user-bubble': '#313131', selected: '#343433' })) {
+  assert(darkTokens.includes(`--mp-${token}: ${value}`), `dark ${token} must match the supplied September 21 screenshots`);
+}
 assert.match(shell, /\.dshw-header\s*\{[^}]*padding:\s*0 16px/s,
   '1199px work-state header uses the measured 16px horizontal inset');
 assert.match(shell, /\.mp-chat-project\s*\{[^}]*padding:\s*3px 8px/s,
@@ -84,8 +88,13 @@ assert.match(chat, /\.dsh-turn-status\s*\{[^}]*min-height:\s*28px/s,
   'active-turn status owns a stable one-line slot');
 assert.match(chat, /\.dsh-thinking-mark\s*\{[^}]*width:\s*18px[^}]*height:\s*18px/s,
   'working mark must retain the current Claude 18px footprint');
-assert.match(chat, /\.mp-shell:not\(\[data-inspector="open"\]\) \.dsh-flow\s*\{[^}]*padding-left:\s*36px[^}]*padding-right:\s*28px/s,
-  'the scrollbar-compensated transcript must align with the 768px composer');
+assert.match(chat, /\.dsh-flow,[\s\S]*?padding-inline:\s*32px/s,
+  'the centered 768px transcript uses symmetrical 32px outer gutters');
+assert(!chat.includes('padding-left: 36px'), 'do not add unmeasured asymmetric compensation to the transcript');
+assert.match(shell, /\.dshw-project-row,\s*\.side-item\s*\{[^}]*height:\s*26px[^}]*font-size:\s*13px[^}]*line-height:\s*19\.5px/s,
+  'session rows match the supplied 26px compact Code selection');
+assert.match(shell, /\.dshw-project-name\s*\{[^}]*font-size:\s*12px/s,
+  'project headings use the distinct Code 12px group label');
 assert.match(shell, /\.mp-account-mark\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s,
   'local account mark must match the current Claude footer footprint');
 

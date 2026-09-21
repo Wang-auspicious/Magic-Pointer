@@ -78,7 +78,7 @@ assert.match(tokens, /--mp-window-bar:\s*36px/);
 assert.match(tokens, /--mp-sidebar-width:\s*288px/);
 assert.match(tokens, /--mp-content-width:\s*768px/);
 assert.match(tokens, /--mp-page:\s*#FCFCFB/);
-assert.match(tokens, /--mp-page:\s*#151515/);
+assert.match(tokens, /--mp-page:\s*#20201F/);
 assert.match(tokens, /--mp-ease-out:\s*cubic-bezier\(\.32,\.72,0,1\)/);
 assert.match(shell, /grid-template-rows:\s*var\(--mp-window-bar\) minmax\(0,\s*1fr\)/);
 assert.match(shell, /\.mp-inspector\s*\{[^}]*margin:\s*8px 8px 8px 0/s);

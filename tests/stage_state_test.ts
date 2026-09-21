@@ -201,6 +201,25 @@ awaitingThread = transition(awaitingThread, {
 assert.strictEqual(awaitingThread.name, 'result');
 assert.strictEqual(awaitingThread.turns[0].status, 'awaiting');
 
+const waitingResult = { awaitingUserInput: true, pendingInput: { requestId: 'ask-1', question: 'Which one?', options: ['A', 'B'] } };
+let resumedInput = transition(threadAtCapsule(), { type: 'SUBMIT', command: '处理原任务' });
+resumedInput = transition(resumedInput, { type: 'RESULT', result: waitingResult });
+assert.strictEqual(transition(resumedInput, { type: 'RESUME_INPUT', turnId: 99, requestId: 'ask-1' }), resumedInput);
+assert.strictEqual(transition(resumedInput, { type: 'RESUME_INPUT', turnId: 1, requestId: 'stale' }), resumedInput);
+resumedInput = transition(resumedInput, { type: 'RESUME_INPUT', turnId: 1, requestId: 'ask-1' });
+assert.strictEqual(resumedInput.name, 'processing', 'an answer resumes the original waiting turn');
+assert.strictEqual(resumedInput.turns.length, 1);
+assert.strictEqual(resumedInput.turns[0].id, 1);
+assert.strictEqual(resumedInput.turns[0].ask, '处理原任务');
+assert.strictEqual(resumedInput.turns[0].status, 'pending');
+resumedInput = transition(resumedInput, { type: 'RESULT', result: waitingResult });
+assert.strictEqual(resumedInput.turns[0].status, 'awaiting', 'unaccepted transport failure can restore the same request');
+resumedInput = transition(resumedInput, { type: 'RESUME_INPUT', turnId: 1, requestId: 'ask-1' });
+resumedInput = transition(resumedInput, { type: 'ERROR', error: { message: 'provider failed after accepting input' } });
+assert.strictEqual(resumedInput.turns.length, 1);
+assert.strictEqual(resumedInput.turns[0].status, 'failed');
+assert.strictEqual(resumedInput.turns[0].result, null);
+
 thread = transition(thread, { type: 'OPEN_CAPSULE', mode: 'text' });
 assert.strictEqual(thread.name, 'capsule-text');
 assert.strictEqual(thread.turns.length, 1, 'a follow-up must not discard the finished turn');
