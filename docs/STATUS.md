@@ -1,6 +1,6 @@
 # 当前状态
 
-2026-09-21 **接续中午 Claude 的 Agent 稳定性修复（开发树 1.0.50，不升版本、不 sync）**：按用户 11:17“装机版不要你管”及本轮要求，只交付开发树并分批 push main。首批复现并修正思考并入工具组后身份变化、Stage 完成时展开态丢失、不同会话复用 provider call ID 串展开状态；三项回归先红后绿，实际离屏 Chromium 点击/流式结算通过。新会话隔离、恢复查询及 Runtime 终态修复正在接续，最终全量验证结果以本条后续更新为准。中午最后承接提交为 `1172756`。
+2026-09-21 **接续中午 Claude 的 Agent 稳定性修复已通过全量验证（开发树 1.0.50，不升版本、不 sync）**：承接 `1172756`，按用户 11:17“装机版不要你管”及本轮要求只交付开发树，分批 push main。修复新会话残留与运行中导航串任务、晚到 send/steer/model 回包覆盖新界面、缺失 session 恢复查询重复启动 Python、Studio/Stage 流式到终态及工具归并丢展开状态、流式 Stop 被最终答案覆盖、连续空回复假成功、写后验证证据被警告文本破坏和有效写入后误判重复读。各项回归先红后绿；最终 Python **2518 passed / 6 条既有 Pillow 提示 / 335.69s**、Node **268 文件**、lint/全部 typecheck/build 通过；实际离屏 Chromium 点击与归并可见性通过。未声明真实云模型长任务或 Office/Figma 原生应用验收，未修改安装目录。详情：`docs/research/2026-09-21-agent-stability-delivery.md`。
 
 2026-09-21 **Claude Code 对话过程渲染规格取证**：Code transcript 每行搭在 CDS 的 `TurnStatus` / `TurnStatus.Step` 原语上（`c05970c42` 40KB，编译产物里带开发期断言，把"导航行没有展开态""合并时展开态上移""stepCount 语义"写成 `cds:` 规则）。展开规则是 `FM(toolId) ?? (defaultOpen || 待回答 question || Ef(name))`，而 `Ef(name)` 只等于 `name === "PushNotification"`——**除它以外全部默认收起，展开与否只看用户在该 tool id 上的历史选择**。工具文案表 `CO`（39,578 字符 / 45 个 case / 445 条文案）给每个工具三态文案（verb/runningVerb/failedVerb）与 meta 通道。动画是帧序列精灵图（`thinkingFast`/`toolCall1..3`），按需动态 import。MP 现状差在：展开默认自造（单个 chip 自动展开）、工具行没有 per-tool 图标、没有三态文案与 meta 通道、思考行缺省收起（Claude 相反）。详见 `docs/research/2026-09-21-claude-code-transcript-spec.md`。**本轮只取证，未改 MP 生产代码。**
 

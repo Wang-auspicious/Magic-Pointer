@@ -873,7 +873,11 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - [x] 回读中午 Claude 会话，最后提交 `1172756`；保留既有启动内存和展开 store 工作。按用户明确要求不升版本、不管理安装版、不 sync，分批推送 main。
 - [x] 展开身份回归先观察三项失败：中间思考在完成时被换成 group 身份、无 conversation metadata 的 Stage 身份变更、两个会话同 provider call ID 串状态。改为按会话/回合隔离工具及组身份，思考并组保留原身份，独立流式 renderer 的 finish 复用自身 scope。
 - [x] 定向 Node 3 文件、renderer TypeScript、目标 ESLint 与 Electron build 通过；真实离屏 Chromium 点击后流式更新/完成保留思考和组展开，另一个会话不继承。本项是实际浏览器行为验证，模型事件为确定性 fixture。
-- [ ] 新会话/恢复查询、Runtime 取消与验证冲突接续处理中；本批 fresh 全量验证尚未完成，不能据以上定向检查声称全流程验收完成。
+- [x] 新建会话清旧上下文/计划/授权/恢复面板，导航代际隔离旧异步读取；运行中导航只解绑界面，旧 send/steer/model 回包及 finally 不再覆盖新任务。主进程 progress 传持久会话/回合身份，Studio 与 Stage 实际入口均接同一展开 scope；工具归并继承新成员的可见性并尊重后续主动收起。
+- [x] 恢复查询先查 session JSONL，缺失不拉 Python，同 session/mtime 共用只读查询，事件/恢复决策/失败使其失效；恢复失败在当前面板诚实显示。
+- [x] Runtime 每个流事件边界消费 durable Stop 并关闭流，终态保留 interrupted；连续空回复四次后明确失败。写后验证解析原始结构化结果，有效新写入重置重复读取历史，真实文件多次 Write/Read 不再误判 stalled。
+- [x] Fresh 全量验证：Python **2518 passed / 6 条既有 Pillow 弃用提示 / 335.69s**、Node **268 test files passed**、ESLint/全部 TypeScript/build 通过；实际 Chromium 点击归并与关闭保持通过。测试先红后绿证据、旧 fixture 修正及 Stop 开销测量见 `docs/research/2026-09-21-agent-stability-delivery.md`。保持 1.0.50，分批 push main，不 sync。
+- [ ] 验收边界：本批未执行真实云模型长任务及 Office/Figma 原生应用验收。流事件边界取消不代表能立即打断尚未返回的阻塞网络读取，该路径仍依赖现有传输超时与 GUI 强停兜底。
 
 ### 2026-09-21：启动卡顿归因与启动内存削减
 

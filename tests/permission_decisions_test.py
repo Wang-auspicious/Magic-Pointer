@@ -129,6 +129,8 @@ def test_bash_prefix_grant_executes_only_the_matching_command():
             TurnDone(usage=None, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="done")],
+        # The write-verification nudge needs a real final response as well.
+        [TurnDone(usage=None, raw_text="Command ran; independent verification was unavailable.")],
     )
 
     _events, terminal = asyncio.run(collect(_params(
@@ -138,6 +140,7 @@ def test_bash_prefix_grant_executes_only_the_matching_command():
     )))
     assert terminal.reason is TransitionReason.COMPLETED
     assert calls == ["pytest -q"]
+    assert terminal.message == "Command ran; independent verification was unavailable."
 
 
 def test_legacy_bash_alias_asks_with_the_canonical_command_prefix():
@@ -222,12 +225,16 @@ def test_canonical_bash_deny_blocks_legacy_alias_even_in_bypass_mode():
 
 def test_granted_local_irreversible_tool_executes_without_reasking():
     registry = _tool_registry_with("run_command", Effect.LOCAL_IRREVERSIBLE)
-    backend = ScriptedBackend(*_two_turn_scene("run_command"))
+    backend = ScriptedBackend(
+        *_two_turn_scene("run_command"),
+        [TurnDone(usage=None, raw_text="Command ran; independent verification was unavailable.")],
+    )
     events, terminal = asyncio.run(collect(_params(
         registry, backend, PermissionDecisions(allowed=("run_command",)),
     )))
     assert terminal.reason is TransitionReason.COMPLETED
     assert registry._calls["n"] == 1, "granted tool must execute, not re-ask"
+    assert terminal.message == "Command ran; independent verification was unavailable."
 
 
 def test_ungranted_local_irreversible_tool_is_refused_with_ask_feedback():

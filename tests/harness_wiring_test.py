@@ -32,7 +32,7 @@ from app.action_guard.preconditions import (  # noqa: E402
     ResolvedExact,
     TargetFocused,
 )
-from app.agent_runtime.loop import LoopParams, run_agent_loop  # noqa: E402
+from app.agent_runtime.loop import LoopParams, VerificationNudged, run_agent_loop  # noqa: E402
 from app.agent_runtime.model_client import (  # noqa: E402
     LoopModelClient,
     MessageDelta,
@@ -148,6 +148,9 @@ def test_guard_chain_executes_when_all_guards_pass():
             TurnDone(usage=None, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="ok")],
+        # The guarded write has no result verifier; answer its verification
+        # nudge explicitly instead of exhausting the scripted provider.
+        [TurnDone(usage=None, raw_text="已执行但未验证。")],
     )
     client = LoopModelClient(backend)
 
@@ -156,6 +159,8 @@ def test_guard_chain_executes_when_all_guards_pass():
     assert state["calls"] == 1
     assert terminal.results[0].is_error is False
     assert terminal.reason.value == "completed"
+    assert terminal.message == "已执行但未验证。"
+    assert sum(isinstance(event, VerificationNudged) for event in events) == 1
 
 
 def test_guard_chain_fails_closed_when_anchor_missing():

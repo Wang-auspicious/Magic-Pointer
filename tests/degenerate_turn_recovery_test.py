@@ -92,7 +92,8 @@ class TestEmptyCompletionRecovery:
         backend = Scripted(*[_empty() for _ in range(30)])
         _events, terminal = asyncio.run(_collect(_params(LoopModelClient(backend))))
         assert backend.calls == 4, 'three retries, then give up'
-        assert terminal.reason is TransitionReason.COMPLETED
+        assert terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
+        assert terminal.message == "backend_error:empty_response"
 
     def test_a_normal_answer_is_untouched(self) -> None:
         backend = Scripted(_answer())
