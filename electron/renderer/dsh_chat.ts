@@ -34,6 +34,7 @@ const DshChat = (() => {
     children: (string | ShimNode)[];
     dataset: Record<string, string>;
     setAttribute(k: string, v: string): void;
+    removeAttribute(k: string): void;
     getAttribute(k: string): string | null;
     appendChild(child: string | ShimNode): unknown;
     readonly outerHTML: string;
@@ -53,6 +54,10 @@ const DshChat = (() => {
       setAttribute(k: string, v: string) {
         if (k.startsWith('data-')) node.dataset[k.slice(5).replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())] = String(v);
         node.attrs[k] = String(v);
+      },
+      removeAttribute(k: string) {
+        if (k.startsWith('data-')) delete node.dataset[k.slice(5).replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())];
+        delete node.attrs[k];
       },
       getAttribute(k: string): string | null {
         return Object.prototype.hasOwnProperty.call(node.attrs, k) ? node.attrs[k] : null;
@@ -129,6 +134,39 @@ const DshChat = (() => {
     return dot;
   }
 
+  /* ---- 展开态存储：活在 DOM 之外 ----
+     参考实现（Claude Desktop 2.110.0.0 的 CDS TurnStatus）把行展开态按 tool id 存在
+     独立 store 里，组件重建后照样取得回来；组展开态另存一份。MP 以前把它写在
+     data-open 属性上，而两处重建会把它抹掉：助手轮结束时的 finish() 直接
+     replaceChildren 整块换成终态节点；createLiveTurn 里更新一行时也是
+     replaceChildren 换掉子节点、再用下标把展开态搬回去（下标一错行就串位）。
+     结果就是「展开了一下，过一会儿自己又收回去了」。
+
+     这里按稳定 id 存：行用 tool call id / reasoning key，组用组内第一个 callId。
+     重建时读的是这个 Map，DOM 里那点状态丢了也不影响。 */
+  const ROW_EXPANSION = new Map<string, boolean>();
+  const GROUP_EXPANSION = new Map<string, boolean>();
+
+  function rememberExpansion(store: Map<string, boolean>, id: string, open: boolean): void {
+    if (!id) return;
+    store.set(id, open);
+  }
+
+  /* 参考里默认展开的工具只有一个：Ef(name) 展开就是 `name === "PushNotification"`。
+     工具的展开与否几乎完全由「用户之前有没有开过」决定，和它是不是这一串里唯一
+     一个调用无关——MP 以前那条「单个芯片就自动展开」是自造的，也是同一段流里
+     有的收起、有的自动打开的来源。 */
+  function defaultOpenForTool(model: { name: string; state: ToolState }): boolean {
+    return model.state === 'running' && isQuestionTool(model.name);
+  }
+
+  /* 还没拿到结果的问题类工具默认展开：用户得先看见问题才答得了。
+     答完之后它和其它行一样默认收起。 */
+  function isQuestionTool(name: string): boolean {
+    return name === 'AskUser' || name === 'AskUserQuestion'
+      || name === 'ask_user_question' || name === 'ask_user';
+  }
+
   /* ---- 24px 展开行骨架（DisclosureRow） ---- */
   interface DisclosureOptions {
     iconName?: string;
@@ -139,13 +177,18 @@ const DshChat = (() => {
     body?: DshNode[] | null;
     expandable?: boolean;
     open?: boolean;
+    /** 稳定身份：给了就按它读写展开态，重建后不丢。 */
+    rowId?: string;
   }
 
   function disclosureRow(opts: DisclosureOptions): { root: DshNode; row: DshNode; toggle(): void } {
-    const open = Boolean(opts.open);
+    const remembered = opts.rowId ? ROW_EXPANSION.get(opts.rowId) : undefined;
+    const open = remembered !== undefined ? remembered : Boolean(opts.open);
     const expandable = opts.expandable !== false && (opts.body !== null && opts.body !== undefined);
     const root = h('div', { class: 'dsh-disclosure' });
     root.setAttribute('data-open', open ? 'true' : 'false');
+    /* 身份写在 DOM 上，点击路径（事件委托那一支）才能把用户的选择写回 store。 */
+    if (opts.rowId) root.setAttribute('data-row-id', opts.rowId);
 
     const row = h('div', { class: 'dsh-row' });
     if (expandable) {
@@ -195,6 +238,7 @@ const DshChat = (() => {
       const next = root.getAttribute('data-open') !== 'true';
       root.setAttribute('data-open', next ? 'true' : 'false');
       if (expandable) row.setAttribute('aria-expanded', next ? 'true' : 'false');
+      if (opts.rowId) rememberExpansion(ROW_EXPANSION, opts.rowId, next);
     };
     if (expandable) row.setAttribute('data-dsh-act', 'toggle');
     return { root, row, toggle };
@@ -691,7 +735,8 @@ const DshChat = (() => {
       collapsed,
       body: body.length ? body : null,
       expandable: !isSubagent && body.length > 0,
-      open: false,
+      open: defaultOpenForTool(model),
+      rowId: model.callId ? `tool:${model.callId}` : undefined,
     });
 
     if (isSubagent) {
@@ -707,7 +752,7 @@ const DshChat = (() => {
   }
 
   /* ---- Think 思考行（ReasoningRow） ---- */
-  function thinkNode(reasoning: string, running = false): DshNode {
+  function thinkNode(reasoning: string, running = false, thinkId = ''): DshNode {
     const summaryText = running ? latestLine(reasoning) : firstLine(reasoning);
     const summary = h('span', { class: 'dsh-summary' });
     if (running) summary.setAttribute('data-follow-end', 'true');
@@ -733,7 +778,12 @@ const DshChat = (() => {
       collapsed: [h('span', { class: 'dsh-sep', 'aria-hidden': 'true' }), summary],
       body: expandedBody,
       expandable: true,
+      /* 默认收起，与工具行同向。CLI（Claude Code 本体，也是 desktop 渲染的那个
+         agent）里思考行的收起态就是一行 `∴ Thinking (ctrl+o to expand)`，一行
+         内容都不露；已经结束的思考块在非 verbose 下整个不画。
+         （桌面端 CDS 的 TurnStatus 缺省展开是另一套表面，不作为这里的方向。） */
       open: false,
+      rowId: thinkId ? `think:${thinkId}` : undefined,
     });
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'dsh-disclosure dsh-think');
@@ -1007,7 +1057,8 @@ const DshChat = (() => {
 
   type FlowItem =
     | { type: 'narration'; text: string }
-    | { type: 'reasoning'; text: string }
+    /* id 是这条思考在它那一轮里的稳定身份：展开态按它存，重建后不丢。 */
+    | { type: 'reasoning'; text: string; id?: string }
     | { type: 'notice'; text: string }
     | { type: 'chip'; chip: TurnChip };
 
@@ -1077,18 +1128,33 @@ const DshChat = (() => {
     attach(summary, chev);
     const body = h('div', { class: 'dsh-tool-group-body' });
     const entries: FlowItem[] = work || chips.map(chip => ({ type: 'chip', chip }));
+    /* 组展开态也按稳定 id 存，理由同行：这一串重建后不该自己收起。
+       组 id 取组内第一个调用——顺序在这一轮里不变。组是原生 <details>，
+       展开态是 open 属性；用户点击由 bindDelegation 的 toggle 监听写回。 */
+    const groupId = `group:${chips[0]?.callId || ''}`;
+    const remembered = GROUP_EXPANSION.get(groupId);
+    if (remembered === true) root.setAttribute('open', '');
+    summary.setAttribute('aria-expanded', remembered === true ? 'true' : 'false');
+    summary.setAttribute('data-group-id', groupId);
+
     entries.forEach((entry) => {
       if (entry.type === 'reasoning') {
-        attach(body, thinkNode(entry.text));
+        attach(body, thinkNode(entry.text, false, `${groupId}:r${entry.id ?? '0'}`));
         return;
       }
       if (entry.type !== 'chip') return;
       const chip = entry.chip;
       const node = chipNode(chip);
       if (single) {
+        /* 单芯片组里内层那行的行头被 CSS 藏起来了（data-single 规则），它的
+           展开态不面向用户，只决定「组展开时卡片露不露」——用户点的是外层的
+           组头。所以这里直接开这一格，并且把身份摘掉：这一行不接受用户输入，
+           不该在 store 里占一个 id，否则同一个调用在别处（独立成行时）的
+           用户选择会被这里覆盖。 */
         const disclosure = DOC ? (node as Element).querySelector('.dsh-disclosure')
           : (node as ShimNode).children.find(child => typeof child !== 'string' && child.attrs.class === 'dsh-disclosure') as ShimNode | undefined;
         disclosure?.setAttribute('data-open', 'true');
+        disclosure?.removeAttribute('data-row-id');
       }
       attach(body, node);
     });
@@ -1185,10 +1251,16 @@ const DshChat = (() => {
     if (!usable.length) return null;
     const answerText = String(turn.answer || '').trim();
     const items: FlowItem[] = [];
-    for (const record of usable) {
+    for (const [index, record] of usable.entries()) {
       if (record.kind === 'message') {
         const reasoning = String(record.reasoning || '').trim();
-        if (reasoning) items.push({ type: 'reasoning', text: reasoning });
+        if (reasoning) {
+          items.push({
+            type: 'reasoning',
+            text: reasoning,
+            id: String(record.callId || record.turn || index),
+          });
+        }
         const text = String(record.text || '').trim();
         // 最后一轮叙述通常就是最终答案：答案存在且相等时不重复渲染。
         if (!text || (answerText && text === answerText)) continue;
@@ -1250,8 +1322,13 @@ const DshChat = (() => {
     const items: DshNode[] = [];
     const root = h('div', { class: 'dsh-assistant' });
     const bodyHost = h('div', { class: 'dsh-assistant-body' });
+    /* 展开态按稳定 id 存，所以每一轮的 id 要能跨重建保持一致：会话 + 轮序 +
+      该轮内的位置。轨迹数组在终态里不重排，位置就是稳定身份。 */
+    const turnScope = `${turn.conversationId || ''}#${Number.isInteger(turn.turnIndex) ? turn.turnIndex : -1}`;
 
-    if (turn.thinking && !turn.trajectory?.some(record => record.reasoning)) attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running)));
+    if (turn.thinking && !turn.trajectory?.some(record => record.reasoning)) {
+      attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running), `${turnScope}:head`));
+    }
 
     /* CC 折叠协议：模型的轮间叙述是可见的散文，工具调用是单行可扫描的
        芯片（动词 + 最有辨识度的参数），证据保留在展开体里。没有内容的
@@ -1268,7 +1345,7 @@ const DshChat = (() => {
     for (const item of flow) {
       if (item.type === 'reasoning') {
         if (chipRun.length) workRun.push(item);
-        else attach(bodyHost, thinkNode(item.text));
+        else attach(bodyHost, thinkNode(item.text, false, `${turnScope}:r${item.id ?? '0'}`));
       } else if (item.type === 'narration') {
         flushChips();
         attach(bodyHost, narrationNode(item.text));
@@ -1369,7 +1446,7 @@ const DshChat = (() => {
 
   /* Both task surfaces keep the same DOM for an active turn. Text growth never
      detaches disclosures, resets their scroll, or restarts status animations. */
-  function createLiveTurn(host: HTMLElement) {
+  function createLiveTurn(host: HTMLElement, scope = '') {
     const rows = new Map<string, { node: HTMLElement; record: string }>();
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
@@ -1401,20 +1478,15 @@ const DshChat = (() => {
                 appendText(target, target.textContent || '', String(value));
                 if (key.startsWith('reasoning:')) entry.node.querySelector('.dsh-summary')!.textContent = latestLine(String(value));
               } else {
-                const open = entry.node.getAttribute('open') !== null;
-                const expanded = Array.from(entry.node.querySelectorAll('.dsh-disclosure')).map(n => n.getAttribute('data-open'));
+                /* 展开态不再从旧 DOM 里按下标搬回来。以前那段 `expanded[i]`
+                   的复制在重建前后行数或顺序一变就把状态贴到别的行上——同一段
+                   流里「有的自己折叠、有的自己展开」就是这么来的。现在每次
+                   构建都由 disclosureRow 按稳定 id 从 store 取，重建自带正确
+                   状态，这里只需换掉子节点。 */
                 const replacement = make() as HTMLElement;
                 entry.node.replaceChildren(...Array.from(replacement.childNodes));
                 if (replacement.getAttribute('data-single') === 'true') entry.node.setAttribute('data-single', 'true');
                 else entry.node.removeAttribute('data-single');
-                if (open) entry.node.setAttribute('open', '');
-                else entry.node.removeAttribute('open');
-                entry.node.querySelectorAll('.dsh-disclosure').forEach((n, i) => {
-                  if (expanded[i] === 'true') {
-                    n.setAttribute('data-open', 'true');
-                    n.querySelector('.dsh-row')?.setAttribute('aria-expanded', 'true');
-                  }
-                });
               }
               entry.signature = signature;
             }
@@ -1446,7 +1518,10 @@ const DshChat = (() => {
               const key = String(record.turn || index);
               if (record.reasoning) {
                 const running = record.state === 'running' && !record.text;
-                render(`reasoning:${key}`, String(record.reasoning), () => thinkNode(String(record.reasoning), running));
+                /* 与终态渲染用同一套身份（trajectoryFlowItems 也是这么推的），
+                   否则流式期间展开的思考在轮末重建时会自己收起。 */
+                const thinkId = `${scope}:r${record.callId || record.turn || index}`;
+                render(`reasoning:${key}`, String(record.reasoning), () => thinkNode(String(record.reasoning), running, thinkId));
                 updateThinkingState(traceNodes.get(`reasoning:${key}`)!.node, String(record.reasoning), running);
               }
               if (record.text) render(`message:${key}`, String(record.text), () => h('div', { class: 'dsh-stream-live' }, String(record.text)));
@@ -1494,14 +1569,11 @@ const DshChat = (() => {
               if (copy && copy.textContent !== label) copy.textContent = label;
               row.node.setAttribute('aria-label', label);
             } else {
-              const expanded = row.node.querySelector('.dsh-disclosure')?.getAttribute('data-open') === 'true';
+              /* 同上：展开态由 disclosureRow 按 rowId 从 store 取，构建即正确，
+                 不再从旧节点抄一遍。 */
               const replacement = liveActivityNode(record) as HTMLElement;
               row.node.setAttribute('data-state', replacement.getAttribute('data-state') || 'running');
               row.node.replaceChildren(...Array.from(replacement.childNodes));
-              if (expanded) {
-                row.node.querySelector('.dsh-disclosure')?.setAttribute('data-open', 'true');
-                row.node.querySelector('.dsh-row')?.setAttribute('aria-expanded', 'true');
-              }
             }
             row.record = signature;
           }
@@ -1509,7 +1581,8 @@ const DshChat = (() => {
         }
         const nextThinking = String(snapshot.thinking || '');
         if (nextThinking) {
-          if (!thinking) thinking = thinkNode('', true) as HTMLElement;
+          /* 同一个 scope:head：流式期间那一行思考在终态里是 turn.thinking。 */
+          if (!thinking) thinking = thinkNode('', true, `${scope}:head`) as HTMLElement;
           const body = thinking.querySelector<HTMLElement>('.dsh-think-body')!;
           appendText(body, thinkingText, nextThinking);
           const summary = thinking.querySelector('.dsh-summary')!;
@@ -1557,7 +1630,10 @@ const DshChat = (() => {
             host.className = 'dsh-flow-item';
             host.dataset.turnIndex = String(turnIndex);
             flow.appendChild(host);
-            current = { host, live: createLiveTurn(host), final: null };
+            /* scope 与 assistantTurnNode 的 turnScope 同构：展开态的身份必须
+               跨「流式中 → 终态重建」保持不变，否则用户展开的东西在轮末自己
+               收回去——那正是这一版要修的那半个问题。 */
+            current = { host, live: createLiveTurn(host, `${conversation.id}#${turnIndex}`), final: null };
             turns.set(turnIndex, current);
           }
           if (turn.liveProgress || turn.outcome === '进行中') {
@@ -1605,6 +1681,21 @@ const DshChat = (() => {
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
     row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    const rowId = disclosure.getAttribute('data-row-id');
+    if (rowId) rememberExpansion(ROW_EXPANSION, rowId, !open);
+  }
+
+  /* 组的展开是原生 <details> 的 open 属性，点击走浏览器的默认行为，不会经过
+     上面那条委托。toggle 事件不冒泡，所以在宿主上用捕获阶段听一次，把用户的
+     选择写回 store，重建后这一串才不会自己收起。 */
+  function rememberGroupToggle(event: Event): void {
+    const target = event.target as HTMLElement | null;
+    if (!target || !target.classList || !target.classList.contains('dsh-tool-group')) return;
+    const summary = target.querySelector(':scope > .dsh-tool-group-header');
+    const groupId = summary?.getAttribute('data-group-id');
+    if (!groupId) return;
+    rememberExpansion(GROUP_EXPANSION, groupId, target.hasAttribute('open'));
+    summary?.setAttribute('aria-expanded', target.hasAttribute('open') ? 'true' : 'false');
   }
 
   function copyToClipboard(text: string): Promise<boolean> {
@@ -1635,6 +1726,7 @@ const DshChat = (() => {
     const host = scope as Document;
     if ((host as unknown as { __dshBound?: boolean }).__dshBound) return;
     (host as unknown as { __dshBound?: boolean }).__dshBound = true;
+    host.addEventListener('toggle', rememberGroupToggle, true);
     host.addEventListener('click', (event: Event) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
@@ -1716,6 +1808,15 @@ const DshChat = (() => {
     formatRunMeta,
     stateDot,
     bindDelegation,
+    /* 展开态是渲染层之外的状态，测试要能读、能置位、能在用例之间清干净，
+       否则「重建后状态还在不在」这件事没法验。 */
+    expansion: {
+      row: (id: string) => ROW_EXPANSION.get(id),
+      setRow: (id: string, open: boolean) => rememberExpansion(ROW_EXPANSION, id, open),
+      group: (id: string) => GROUP_EXPANSION.get(id),
+      setGroup: (id: string, open: boolean) => rememberExpansion(GROUP_EXPANSION, id, open),
+      clear: () => { ROW_EXPANSION.clear(); GROUP_EXPANSION.clear(); },
+    },
     __test: { firstLine, latestLine, classifyTool, deriveSummary, deriveDiff, formatClock, relativeTime },
   };
 })();

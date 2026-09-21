@@ -57,6 +57,9 @@ const DshChat = require('../electron/renderer/dsh_chat');
 assert.equal(typeof DshChat.createLiveTurn, 'function', 'Stage and Studio need the same incremental turn renderer');
 
 const host = new TestNode('div');
+// 展开态现在活在渲染层之外的 store 里，按稳定 id 取。测试直接改 data-open 不再
+// 算数——那正是这一版要修的：重建时读的是 store，不是旧 DOM 上的残留属性。
+DshChat.expansion.clear();
 const live = DshChat.createLiveTurn(host);
 const call = { phase: 'tool_call', fields: { id: 'r1', name: 'Read', args: '{"path":"notes.txt"}' } };
 live.update({ answer: 'First', thinking: 'Reading', records: [call] });
@@ -75,7 +78,8 @@ assert.equal(thinkBody.scrollTop, 19);
 assert.equal(host.structuralChanges, structure, 'chunks must not detach the turn children');
 assert.equal(answer.textContent, 'First answer');
 assert.equal(thinkBody.textContent, 'Reading\nComparing');
-tool.querySelector('.dsh-disclosure').setAttribute('data-open', 'true');
+// 用户点开这一行：走 store，和点击路径写的是同一个地方。
+DshChat.expansion.setRow('tool:r1', true);
 live.update({ answer: 'First answer', thinking: 'Reading\nComparing', records: [
   { phase: 'tool_result', fields: { ...call.fields, state: 'ok', result: 'read the actual contents' } },
 ] });
@@ -173,3 +177,25 @@ assert.equal(finishedHost.querySelectorAll('.dsh-tool-group').length, 1,
   'completion folds one uninterrupted work sequence into one reference summary');
 assert.match(finishedHost.querySelector('.dsh-tool-group-body').textContent, /Use the other file/,
   'the folded work sequence keeps its intermediate reasoning available');
+
+/* 用户在流式期间展开的思考行，轮末换成终态节点后不该自己收回去。
+   这一条要的是「流式那侧和终态那侧用的是同一个 id」——以前两边各推各的，
+   终态重建时读不到流式期间的展开态，于是用户刚点开的东西在轮末自己合上了。 */
+DshChat.expansion.clear();
+const handoffHost = new TestNode('div');
+const handoffLive = DshChat.createLiveTurn(handoffHost, 'c9#0');
+handoffLive.update({ trajectory: [{ kind: 'message', turn: 0, reasoning: '先读文件', state: 'running' }] });
+const liveThinkRow = handoffHost.querySelector('.dsh-think');
+const liveThinkId = liveThinkRow.getAttribute('data-row-id');
+assert.ok(liveThinkId, 'a streaming thinking row must carry a stable id');
+DshChat.expansion.setRow(liveThinkId, true); // 等同上用户点开这一行
+handoffLive.finish({
+  answer: '完成',
+  conversationId: 'c9',
+  turnIndex: 0,
+  trajectory: [{ kind: 'message', turn: 0, reasoning: '先读文件', text: '' }],
+});
+assert.equal(handoffHost.querySelector('.dsh-think').getAttribute('data-open'), 'true',
+  'a thinking row the user opened must survive the swap to the settled turn');
+DshChat.expansion.clear();
+console.log('expansion survives the live-to-settled swap');
