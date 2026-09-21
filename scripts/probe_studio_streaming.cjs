@@ -62,7 +62,39 @@ app.whenReady().then(async () => {
       check(after.textContent.includes('event sink found'), 'tool output is absent');
       check(host.textContent.includes('Parent ID is preserved') && host.textContent.includes('Checking DOM stability'), 'parent rows lack independent child heartbeats');
       pendingConversation = null;
-      return { paints, children: document.querySelectorAll('.mp-subagent-task').length, failures };
+      DshChat.bindDelegation(document);
+      const continuityHost = document.createElement('div');
+      flow.appendChild(continuityHost);
+      const continuity = DshChat.createLiveTurn(continuityHost, 'continuity#0');
+      const trajectory = [
+        { kind: 'tool', callId: 'read-1', name: 'Read', text: '{"path":"one.md"}', result: 'one', state: 'done' },
+        { kind: 'message', turn: 2, reasoning: 'Compare the second source.', state: 'done' },
+        { kind: 'tool', callId: 'read-2', name: 'Read', text: '{"path":"two.md"}', state: 'running' },
+      ];
+      continuity.update({ trajectory });
+      const thoughtId = continuityHost.querySelector('.dsh-think').dataset.rowId;
+      continuityHost.querySelector('.dsh-think .dsh-row').click();
+      continuityHost.querySelector('.dsh-tool-group-header').click();
+      await wait(0); // Native details.toggle must reach the delegated store.
+      trajectory[2].result = 'two';
+      trajectory[2].state = 'done';
+      continuity.update({ trajectory });
+      continuity.finish({ conversationId: 'continuity', turnIndex: 0, trajectory, answer: 'Compared.' });
+      const settledThought = continuityHost.querySelector('.dsh-think');
+      check(settledThought.dataset.rowId === thoughtId && settledThought.dataset.open === 'true', 'folding the transcript lost the opened thought');
+      check(continuityHost.querySelector('.dsh-tool-group').open, 'completion closed the opened tool group');
+      const otherHost = document.createElement('div');
+      flow.appendChild(otherHost);
+      DshChat.createConversationView(otherHost).update({ id: 'other-session', turns: [{ trajectory, answer: 'Other answer.' }] });
+      check(!otherHost.querySelector('.dsh-tool-group').open, 'another session inherited tool expansion');
+      const standalone = DshChat.createLiveTurn(otherHost);
+      standalone.update({ thinking: 'Inspect selection.' });
+      otherHost.querySelector('.dsh-think .dsh-row').click();
+      standalone.finish({ thinking: 'Inspect selection.', answer: 'Selected answer.' });
+      check(otherHost.querySelector('.dsh-think').dataset.open === 'true', 'standalone Stage completion lost expansion');
+      continuityHost.remove();
+      otherHost.remove();
+      return { paints, children: document.querySelectorAll('.mp-subagent-task').length, transcriptContinuity: true, failures };
     })()`);
     fs.writeFileSync(path.join(output, 'witness.json'), JSON.stringify(witness, null, 2));
     fs.writeFileSync(path.join(output, 'streaming.png'), (await win.webContents.capturePage()).toPNG());

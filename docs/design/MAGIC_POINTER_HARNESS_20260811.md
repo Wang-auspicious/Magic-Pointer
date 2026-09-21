@@ -868,6 +868,13 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-21：接续中午 Claude，修复 Agent 流程稳定性（1.0.50 开发树）
+
+- [x] 回读中午 Claude 会话，最后提交 `1172756`；保留既有启动内存和展开 store 工作。按用户明确要求不升版本、不管理安装版、不 sync，分批推送 main。
+- [x] 展开身份回归先观察三项失败：中间思考在完成时被换成 group 身份、无 conversation metadata 的 Stage 身份变更、两个会话同 provider call ID 串状态。改为按会话/回合隔离工具及组身份，思考并组保留原身份，独立流式 renderer 的 finish 复用自身 scope。
+- [x] 定向 Node 3 文件、renderer TypeScript、目标 ESLint 与 Electron build 通过；真实离屏 Chromium 点击后流式更新/完成保留思考和组展开，另一个会话不继承。本项是实际浏览器行为验证，模型事件为确定性 fixture。
+- [ ] 新会话/恢复查询、Runtime 取消与验证冲突接续处理中；本批 fresh 全量验证尚未完成，不能据以上定向检查声称全流程验收完成。
+
 ### 2026-09-21：启动卡顿归因与启动内存削减
 
 - [x] 用整机性能计数器而非主线程延迟复现：构建峰值 1,513 页/s、裸 Electron 1,377，真 App 启动 59,607 页/s + 磁盘 170%，窗口就是 electron 进程 7→14 那 4 秒。空载对照（什么都不启动）130s 内仍有 9 次抖动，元凶 registry/MsMpEng/深信服/ChatGPT。证据 `scripts/measure_overlay_launch.ps1`、`scripts/measure_page_storm.ps1`。

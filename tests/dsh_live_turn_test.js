@@ -79,7 +79,7 @@ assert.equal(host.structuralChanges, structure, 'chunks must not detach the turn
 assert.equal(answer.textContent, 'First answer');
 assert.equal(thinkBody.textContent, 'Reading\nComparing');
 // 用户点开这一行：走 store，和点击路径写的是同一个地方。
-DshChat.expansion.setRow('tool:r1', true);
+DshChat.expansion.setRow(tool.querySelector('.dsh-disclosure').getAttribute('data-row-id'), true);
 live.update({ answer: 'First answer', thinking: 'Reading\nComparing', records: [
   { phase: 'tool_result', fields: { ...call.fields, state: 'ok', result: 'read the actual contents' } },
 ] });
@@ -199,3 +199,55 @@ assert.equal(handoffHost.querySelector('.dsh-think').getAttribute('data-open'), 
   'a thinking row the user opened must survive the swap to the settled turn');
 DshChat.expansion.clear();
 console.log('expansion survives the live-to-settled swap');
+
+const test = require('node:test');
+
+test('intermediate thinking keeps its identity when completion folds it into a tool group', () => {
+  DshChat.expansion.clear();
+  const target = new TestNode('div');
+  const renderer = DshChat.createLiveTurn(target, 'grouped#0');
+  const trajectory = [
+    { kind: 'tool', callId: 'read-first', name: 'Read', text: '{"path":"a.md"}', result: 'A', state: 'done' },
+    { kind: 'message', turn: 2, reasoning: 'Compare with the other source.', state: 'done' },
+    { kind: 'tool', callId: 'read-second', name: 'Read', text: '{"path":"b.md"}', result: 'B', state: 'done' },
+  ];
+  renderer.update({ trajectory });
+  const id = target.querySelector('.dsh-think').getAttribute('data-row-id');
+  DshChat.expansion.setRow(id, true);
+  renderer.finish({ conversationId: 'grouped', turnIndex: 0, trajectory, answer: 'Compared.' });
+  const settled = target.querySelector('.dsh-think');
+  assert.equal(settled.getAttribute('data-row-id'), id);
+  assert.equal(settled.getAttribute('data-open'), 'true');
+});
+
+test('a standalone Stage turn preserves expansion through finish without conversation metadata', () => {
+  DshChat.expansion.clear();
+  const target = new TestNode('div');
+  const renderer = DshChat.createLiveTurn(target);
+  renderer.update({ thinking: 'Inspecting the selected material.' });
+  const id = target.querySelector('.dsh-think').getAttribute('data-row-id');
+  DshChat.expansion.setRow(id, true);
+  renderer.finish({ thinking: 'Inspected the selected material.', answer: 'Done.' });
+  assert.equal(target.querySelector('.dsh-think').getAttribute('data-row-id'), id);
+  assert.equal(target.querySelector('.dsh-think').getAttribute('data-open'), 'true');
+});
+
+test('provider call ids reused by separate conversations do not share expansion state', () => {
+  DshChat.expansion.clear();
+  const trajectory = [
+    { kind: 'tool', callId: 'call_1', name: 'Read', text: '{"path":"a.md"}', result: 'A', state: 'done' },
+    { kind: 'tool', callId: 'call_2', name: 'Read', text: '{"path":"b.md"}', result: 'B', state: 'done' },
+  ];
+  const a = new TestNode('div');
+  const b = new TestNode('div');
+  const first = DshChat.createConversationView(a);
+  first.update({ id: 'session-a', turns: [{ trajectory, answer: 'Done A.' }] });
+  const rowId = a.querySelector('.dsh-disclosure').getAttribute('data-row-id');
+  const groupId = a.querySelector('.dsh-tool-group-header').getAttribute('data-group-id');
+  DshChat.expansion.setRow(rowId, true);
+  DshChat.expansion.setGroup(groupId, true);
+  DshChat.createConversationView(b).update({ id: 'session-b', turns: [{ trajectory, answer: 'Done B.' }] });
+  assert.notEqual(b.querySelector('.dsh-disclosure').getAttribute('data-row-id'), rowId);
+  assert.equal(b.querySelector('.dsh-disclosure').getAttribute('data-open'), 'false');
+  assert.equal(b.querySelector('.dsh-tool-group').getAttribute('open'), null);
+});

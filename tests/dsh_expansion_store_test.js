@@ -42,7 +42,7 @@ const lone = html(chat.assistantTurnNode(turn({
 // 但外层那个 details 不带 open —— 用户看到的是收起的。
 assert(!/<details[^>]*class="dsh-tool-group"[^>]*\sopen/.test(lone),
   'a lone tool call must not come pre-expanded just because it is alone');
-assert(!/data-row-id="tool:solo"/.test(lone),
+assert(!/data-row-id="tool:c1#0:solo"/.test(lone),
   'the structural row inside a single-call group must not claim a stored id');
 
 /* ---- 默认条：待回答的问题类工具自己开 ---- */
@@ -58,20 +58,19 @@ assert(answered.includes('data-open="false"'),
 /* ---- 核心：重建之后用户的选择还在 ---- */
 chat.expansion.clear();
 const first = html(chat.assistantTurnNode(turn()));
-assert(first.includes('data-row-id="tool:k1"'), 'tool rows carry a stable row id');
+assert(first.includes('data-row-id="tool:c1#0:k1"'), 'tool rows carry a stable row id');
 
-chat.expansion.setRow('tool:k1', true);
+chat.expansion.setRow('tool:c1#0:k1', true);
 const rebuilt = html(chat.assistantTurnNode(turn()));
-assert(rebuilt.includes('data-row-id="tool:k1"'));
-assert(/data-row-id="tool:k1"[^>]*/.test(rebuilt));
-const k1Open = /<div class="dsh-disclosure"[^>]*data-open="true"[^>]*data-row-id="tool:k1"/.test(rebuilt)
-  || /<div class="dsh-disclosure"[^>]*data-row-id="tool:k1"[^>]*data-open="true"/.test(rebuilt);
+assert(rebuilt.includes('data-row-id="tool:c1#0:k1"'));
+const k1Open = /<div class="dsh-disclosure"[^>]*data-open="true"[^>]*data-row-id="tool:c1#0:k1"/.test(rebuilt)
+  || /<div class="dsh-disclosure"[^>]*data-row-id="tool:c1#0:k1"[^>]*data-open="true"/.test(rebuilt);
 assert(k1Open, 'a row the user opened stays open across a rebuild');
 
-chat.expansion.setRow('tool:k1', false);
+chat.expansion.setRow('tool:c1#0:k1', false);
 const collapsedAgain = html(chat.assistantTurnNode(turn()));
-assert(/<div class="dsh-disclosure"[^>]*data-row-id="tool:k1"[^>]*data-open="false"/.test(collapsedAgain)
-  || /<div class="dsh-disclosure"[^>]*data-open="false"[^>]*data-row-id="tool:k1"/.test(collapsedAgain),
+assert(/<div class="dsh-disclosure"[^>]*data-row-id="tool:c1#0:k1"[^>]*data-open="false"/.test(collapsedAgain)
+  || /<div class="dsh-disclosure"[^>]*data-open="false"[^>]*data-row-id="tool:c1#0:k1"/.test(collapsedAgain),
   'and a row the user closed stays closed');
 
 /* ---- 思考行也按同一个 store 存 ---- */
@@ -100,7 +99,7 @@ const twoTools = turn({
 });
 assert(!/<details[^>]*data-group-id|open/.test(html(chat.assistantTurnNode(twoTools)).match(/<details[^>]*>/)[0]),
   'a tool group starts closed');
-chat.expansion.setGroup('group:g1', true);
+chat.expansion.setGroup('group:c1#0:g1', true);
 assert(/<details[^>]*class="dsh-tool-group"[^>]*\sopen/.test(html(chat.assistantTurnNode(twoTools))),
   'a tool group the user opened reopens after a rebuild');
 
@@ -110,6 +109,6 @@ assert(/<details[^>]*class="dsh-tool-group"[^>]*\sopen/.test(html(chat.assistant
 /* ---- 展开态存储是显式的，测试之间可清空 ---- */
 assert.strictEqual(typeof chat.expansion.clear, 'function');
 chat.expansion.clear();
-assert.strictEqual(chat.expansion.row('tool:k1'), undefined);
+assert.strictEqual(chat.expansion.row('tool:c1#0:k1'), undefined);
 
 console.log('dsh expansion store test ok');

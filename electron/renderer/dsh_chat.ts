@@ -146,6 +146,7 @@ const DshChat = (() => {
      重建时读的是这个 Map，DOM 里那点状态丢了也不影响。 */
   const ROW_EXPANSION = new Map<string, boolean>();
   const GROUP_EXPANSION = new Map<string, boolean>();
+  let liveTurnSequence = 0;
 
   function rememberExpansion(store: Map<string, boolean>, id: string, open: boolean): void {
     if (!id) return;
@@ -647,7 +648,7 @@ const DshChat = (() => {
     return card;
   }
 
-  function toolRowNode(model: ToolRowModel): DshNode {
+  function toolRowNode(model: ToolRowModel, scope = ''): DshNode {
     const root = h('div', { class: 'dsh-tool' });
     root.setAttribute('data-tool', '');
     root.setAttribute('data-state', model.state);
@@ -736,7 +737,7 @@ const DshChat = (() => {
       body: body.length ? body : null,
       expandable: !isSubagent && body.length > 0,
       open: defaultOpenForTool(model),
-      rowId: model.callId ? `tool:${model.callId}` : undefined,
+      rowId: model.callId ? `tool:${scope ? `${scope}:` : ''}${model.callId}` : undefined,
     });
 
     if (isSubagent) {
@@ -1080,13 +1081,13 @@ const DshChat = (() => {
     return root;
   }
 
-  function chipNode(chip: TurnChip): DshNode {
+  function chipNode(chip: TurnChip, scope = ''): DshNode {
     const model = toolRowModel(chip.name, chip.argsRaw, chip.result, chip.callId);
     if (chip.displayLabel?.trim()) {
       model.title = chip.displayLabel.trim();
       model.summary = '';
     }
-    const node = toolRowNode(model);
+    const node = toolRowNode(model, scope);
     if (SUBAGENT_TOOLS.has(chip.name)) {
       attach(node, h('div', { class: 'dsh-subagent-heartbeat' }, subagentHeartbeat(chip.subagent)));
     }
@@ -1108,7 +1109,7 @@ const DshChat = (() => {
      chevron，默认展开露出组内芯片，点击收起只留组头。混合工具也成组——
      参考的 Found files, ran a command 就是一个混合串，按工具种类硬拆是
      上一版模仿不到位的原因。 */
-  function toolGroupNode(chips: TurnChip[], _running = false, work?: FlowItem[]): DshNode {
+  function toolGroupNode(chips: TurnChip[], _running = false, work?: FlowItem[], scope = ''): DshNode {
     const root = h('details', { class: 'dsh-tool-group' });
     const summary = h('summary', { class: 'dsh-tool-group-header' });
     const label = h('span', { class: 'dsh-tool-group-title' });
@@ -1131,7 +1132,7 @@ const DshChat = (() => {
     /* 组展开态也按稳定 id 存，理由同行：这一串重建后不该自己收起。
        组 id 取组内第一个调用——顺序在这一轮里不变。组是原生 <details>，
        展开态是 open 属性；用户点击由 bindDelegation 的 toggle 监听写回。 */
-    const groupId = `group:${chips[0]?.callId || ''}`;
+    const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || ''}`;
     const remembered = GROUP_EXPANSION.get(groupId);
     if (remembered === true) root.setAttribute('open', '');
     summary.setAttribute('aria-expanded', remembered === true ? 'true' : 'false');
@@ -1139,12 +1140,12 @@ const DshChat = (() => {
 
     entries.forEach((entry) => {
       if (entry.type === 'reasoning') {
-        attach(body, thinkNode(entry.text, false, `${groupId}:r${entry.id ?? '0'}`));
+        attach(body, thinkNode(entry.text, false, `${scope}:r${entry.id ?? '0'}`));
         return;
       }
       if (entry.type !== 'chip') return;
       const chip = entry.chip;
-      const node = chipNode(chip);
+      const node = chipNode(chip, scope);
       if (single) {
         /* 单芯片组里内层那行的行头被 CSS 藏起来了（data-single 规则），它的
            展开态不面向用户，只决定「组展开时卡片露不露」——用户点的是外层的
@@ -1318,13 +1319,15 @@ const DshChat = (() => {
     return items;
   }
 
-  function assistantTurnNode(turn: AssistantTurnInput): DshNode[] {
+  function assistantTurnNode(
+    turn: AssistantTurnInput,
+    turnScope = `${turn.conversationId || ''}#${Number.isInteger(turn.turnIndex) ? turn.turnIndex : -1}`,
+  ): DshNode[] {
     const items: DshNode[] = [];
     const root = h('div', { class: 'dsh-assistant' });
     const bodyHost = h('div', { class: 'dsh-assistant-body' });
     /* 展开态按稳定 id 存，所以每一轮的 id 要能跨重建保持一致：会话 + 轮序 +
       该轮内的位置。轨迹数组在终态里不重排，位置就是稳定身份。 */
-    const turnScope = `${turn.conversationId || ''}#${Number.isInteger(turn.turnIndex) ? turn.turnIndex : -1}`;
 
     if (turn.thinking && !turn.trajectory?.some(record => record.reasoning)) {
       attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running), `${turnScope}:head`));
@@ -1338,7 +1341,7 @@ const DshChat = (() => {
     let workRun: FlowItem[] = [];
     const flushChips = () => {
       if (!chipRun.length) return;
-      attach(bodyHost, toolGroupNode(chipRun, false, workRun));
+      attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
       chipRun = [];
       workRun = [];
     };
@@ -1405,7 +1408,7 @@ const DshChat = (() => {
     return items;
   }
 
-  function liveActivityNode(record: Record<string, unknown>): DshNode {
+  function liveActivityNode(record: Record<string, unknown>, scope = ''): DshNode {
     const phase = String(record.phase || '');
     const fields = record.fields && typeof record.fields === 'object'
       ? record.fields as Record<string, unknown> : {};
@@ -1428,7 +1431,7 @@ const DshChat = (() => {
       return toolRowNode(toolRowModel(name, argsRaw, done ? {
         text: fields.result !== undefined ? String(fields.result) : detail,
         isError: fields.state === 'error',
-      } : undefined, String(fields.id || '')));
+      } : undefined, String(fields.id || '')), scope);
     }
     /* 非工具阶段 = 单行运行状态(CC/DSH 金标准):StateDot 渐变字,原地更新,
        绝不逐条堆叠成 Think 行;内部管道细节在轨迹视图里看。 */
@@ -1446,7 +1449,7 @@ const DshChat = (() => {
 
   /* Both task surfaces keep the same DOM for an active turn. Text growth never
      detaches disclosures, resets their scroll, or restarts status animations. */
-  function createLiveTurn(host: HTMLElement, scope = '') {
+  function createLiveTurn(host: HTMLElement, scope = `live-${++liveTurnSequence}`) {
     const rows = new Map<string, { node: HTMLElement; record: string }>();
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
@@ -1496,7 +1499,7 @@ const DshChat = (() => {
           const flush = () => {
             if (!chips.length) return;
             const current = chips;
-            render(`tools:${current[0].callId}`, current, () => toolGroupNode(current, true));
+            render(`tools:${current[0].callId}`, current, () => toolGroupNode(current, true, undefined, scope));
             chips = [];
           };
           snapshot.trajectory.forEach((record, index) => {
@@ -1506,7 +1509,7 @@ const DshChat = (() => {
               if (SUBAGENT_TOOLS.has(chip.name)) {
                 flush();
                 const key = `agent:${chip.callId}`;
-                render(key, chip, () => chipNode(chip));
+                render(key, chip, () => chipNode(chip, scope));
                 const child = record.subagent as Record<string, unknown> | undefined;
                 const heartbeat = traceNodes.get(key)!.node.querySelector('.dsh-subagent-heartbeat')!;
                 const text = subagentHeartbeat(child);
@@ -1560,7 +1563,7 @@ const DshChat = (() => {
           const signature = JSON.stringify(record);
           let row = rows.get(key);
           if (!row) {
-            row = { node: liveActivityNode(record) as HTMLElement, record: signature };
+            row = { node: liveActivityNode(record, scope) as HTMLElement, record: signature };
             rows.set(key, row);
           } else if (row.record !== signature) {
             if (key === 'status') {
@@ -1571,7 +1574,7 @@ const DshChat = (() => {
             } else {
               /* 同上：展开态由 disclosureRow 按 rowId 从 store 取，构建即正确，
                  不再从旧节点抄一遍。 */
-              const replacement = liveActivityNode(record) as HTMLElement;
+              const replacement = liveActivityNode(record, scope) as HTMLElement;
               row.node.setAttribute('data-state', replacement.getAttribute('data-state') || 'running');
               row.node.replaceChildren(...Array.from(replacement.childNodes));
             }
@@ -1612,7 +1615,7 @@ const DshChat = (() => {
       },
       finish(turn: AssistantTurnInput) {
         host.className = host.className.split(' ').filter(name => name !== 'dsh-live-turn').join(' ');
-        host.replaceChildren(...assistantTurnNode(turn) as HTMLElement[]);
+        host.replaceChildren(...assistantTurnNode(turn, scope) as HTMLElement[]);
       },
     };
   }
