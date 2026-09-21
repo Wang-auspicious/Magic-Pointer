@@ -579,6 +579,7 @@ interface StudioSubagentTask {
   phase?: string;
   elapsedMs?: number;
   turn?: number;
+  pendingInput?: MagicPointerDecisionRequest & { requestId: string };
 }
 interface StudioSubagentsModule {
   activeSubagentParentCallId(records: ReadonlyArray<Record<string, unknown>>): string;
@@ -2278,6 +2279,7 @@ async function openConversation(id: string) {
   }
   if (activeConversationId !== c.id) repositoryContextDismissedFor = '';
   activeConversationId = c.id;
+  void refreshBackgroundAgentTasks(c.id);
   activeConversationRecord = c;
   void renderConversationRecovery(c.id);
   activeConversationView = null;
@@ -4136,6 +4138,7 @@ document.getElementById('composer-repository-dismiss')?.addEventListener('click'
 
 function subagentStatusLabel(status: string): string {
   if (status === 'running') return 'Running';
+  if (status === 'awaiting_user') return 'Needs approval';
   if (status === 'failed') return 'Failed';
   if (status === 'stopped') return 'Stopped';
   return 'Completed';
@@ -4144,7 +4147,57 @@ function subagentStatusLabel(status: string): string {
 function currentSubagentTasks() {
   return studioSubagentGlobals.projectSubagentTasks(pendingConversation
     ? [...activeConversationTurns, { trajectory: pendingConversation.transcript.trajectory }]
-    : activeConversationTurns);
+    : activeConversationTurns, backgroundAgentSnapshots.get(activeConversationId || '') || []);
+}
+
+const backgroundAgentSnapshots = new Map<string, StudioSubagentTask[]>();
+const acceptedChildInputs = new Set<string>();
+let backgroundAgentRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundAgentRefreshInFlight = '';
+
+function childActive(status: string): boolean { return status === 'running' || status === 'awaiting_user'; }
+
+async function refreshBackgroundAgentTasks(conversationId: string): Promise<void> {
+  if (!conversationId || backgroundAgentRefreshInFlight === conversationId) return;
+  backgroundAgentRefreshInFlight = conversationId;
+  try {
+    const result = await Data.subagents({ conversationId });
+    if (!result.ok) throw new Error(result.error || 'Could not refresh background tasks.');
+    backgroundAgentSnapshots.set(conversationId, (result.tasks || []) as StudioSubagentTask[]);
+    if (activeConversationId === conversationId) renderProjectTasks();
+  } catch (error) {
+    if (activeConversationId === conversationId) {
+      const host = document.getElementById('project-tasks');
+      let notice = host?.querySelector<HTMLElement>('.mp-background-error');
+      if (host && !notice) { notice = document.createElement('p'); notice.className = 'mp-background-error'; notice.setAttribute('role', 'status'); host.prepend(notice); }
+      if (notice) notice.textContent = error instanceof Error ? error.message : String(error);
+    }
+  } finally {
+    if (backgroundAgentRefreshInFlight === conversationId) backgroundAgentRefreshInFlight = '';
+    scheduleBackgroundAgentRefresh();
+  }
+}
+
+function scheduleBackgroundAgentRefresh(): void {
+  if (backgroundAgentRefreshTimer || !activeConversationId || backgroundAgentRefreshInFlight) return;
+  if (!currentSubagentTasks().some(task => childActive(task.status))) return;
+  backgroundAgentRefreshTimer = setTimeout(() => {
+    backgroundAgentRefreshTimer = null;
+    if (activeConversationId) void refreshBackgroundAgentTasks(activeConversationId);
+  }, document.hidden ? 5000 : 1200);
+}
+
+async function respondToChildInput(host: HTMLElement, task: StudioSubagentTask,
+  conversationId: string, response: MagicPointerDecisionResponse): Promise<void> {
+  const requestId = task.pendingInput?.requestId;
+  if (!requestId) return;
+  try {
+    const result = await Data.respondSubagent({ conversationId, subagentId: task.id, requestId, response });
+    if (!result.ok) throw new Error(result.error || 'Could not answer the child task. Try again.');
+    acceptedChildInputs.add(`${conversationId}:${task.id}:${requestId}`);
+    DecisionCard.clear(host, true);
+    await refreshBackgroundAgentTasks(conversationId);
+  } catch (error) { DecisionCard.pending(host, false, error instanceof Error ? error.message : String(error)); }
 }
 
 const backgroundTaskViews = new Map<string, { scope: string; finishedOpen: boolean; cleared: Set<string> }>();
@@ -4173,11 +4226,11 @@ async function stopSubagentTask(row: HTMLElement) {
   error.hidden = true;
   try {
     const result = await Data.stopSubagent({ conversationId, subagentId });
-    if (row.dataset.status !== 'running') return;
+    if (!childActive(row.dataset.status || '')) return;
     if (!result.ok) throw new Error(result.error || 'Could not stop this task. Try again.');
     row.dataset.stopState = 'requested';
   } catch (failure) {
-    if (row.dataset.status !== 'running') return;
+    if (!childActive(row.dataset.status || '')) return;
     delete row.dataset.stopState;
     row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent = '';
     button.disabled = false;
@@ -4190,6 +4243,7 @@ async function stopSubagentTask(row: HTMLElement) {
 
 function renderProjectTasks() {
   renderPlanCard();
+  scheduleBackgroundAgentRefresh();
   const host = document.getElementById('project-tasks');
   if (!host) return;
   const allTasks = currentSubagentTasks();
@@ -4232,7 +4286,7 @@ function renderProjectTasks() {
           renderProjectTasks();
         });
         heading.querySelector('.mp-subagent-clear')!.addEventListener('click', () => {
-          for (const task of currentSubagentTasks()) if (task.status !== 'running') view.cleared.add(task.id);
+          for (const task of currentSubagentTasks()) if (!childActive(task.status)) view.cleared.add(task.id);
           renderProjectTasks();
         });
       } else {
@@ -4262,6 +4316,7 @@ function renderProjectTasks() {
           + '<div class="mp-subagent-stats"><span class="mp-subagent-tool-uses"></span><span class="mp-subagent-current-tool"></span>'
           + '<button type="button" class="mp-subagent-transcript" aria-expanded="false">View transcript</button></div>'
           + '<p class="mp-subagent-stop-error" role="status" hidden></p>'
+          + '<div class="mp-subagent-permission" hidden></div>'
           + '<div class="mp-subagent-body" hidden><details class="mp-subagent-thinking"><summary>Thinking</summary><pre></pre></details>'
           + '<div class="mp-subagent-answer"></div><div class="mp-subagent-steps"></div><p class="mp-subagent-result"></p></div>';
         const taskRow = row;
@@ -4284,12 +4339,21 @@ function renderProjectTasks() {
       setText(row.querySelector('.mp-subagent-tool-uses')!, `${task.stepCount} tool ${task.stepCount === 1 ? 'use' : 'uses'}`);
       setText(row.querySelector('.mp-subagent-current-tool')!, task.currentTool || (task.status === 'running' ? task.phase === 'writing' ? 'Writing' : 'Thinking' : ''));
       const stop = row.querySelector<HTMLButtonElement>('.mp-subagent-stop')!;
-      stop.hidden = task.status !== 'running' || task.id.startsWith('parent:') || !row.dataset.conversationId;
-      if (task.status !== 'running') {
+      stop.hidden = !childActive(task.status) || task.id.startsWith('parent:') || !row.dataset.conversationId;
+      if (!childActive(task.status)) {
         delete row.dataset.stopState;
         row.querySelector<HTMLElement>('.mp-subagent-stop-error')!.hidden = true;
       }
       stop.disabled = Boolean(row.dataset.stopState);
+      const permission = row.querySelector<HTMLElement>('.mp-subagent-permission')!;
+      const input = task.pendingInput;
+      const inputKey = `${row.dataset.conversationId}:${task.id}:${input?.requestId}`;
+      if (input && task.status === 'awaiting_user' && !acceptedChildInputs.has(inputKey)) {
+        const conversationId = row.dataset.conversationId!;
+        DecisionCard.render(permission, { ...input, key: inputKey }, response => {
+          void respondToChildInput(permission, task, conversationId, response);
+        });
+      } else DecisionCard.clear(permission);
       const thinking = row.querySelector<HTMLDetailsElement>('.mp-subagent-thinking')!;
       thinking.hidden = !task.reasoning;
       setText(thinking.querySelector('summary')!, task.status === 'running' && task.phase === 'thinking' ? 'Thinking…' : 'Thought');
@@ -4326,8 +4390,8 @@ function renderProjectTasks() {
     }
     return section;
   };
-  const running = tasks.filter((task) => task.status === 'running');
-  const finished = tasks.filter((task) => task.status !== 'running');
+  const running = tasks.filter((task) => childActive(task.status));
+  const finished = tasks.filter((task) => !childActive(task.status));
   const sections: HTMLElement[] = [];
   if (running.length) sections.push(makeSection('Running', running));
   if (finished.length) sections.push(makeSection('Finished', finished));

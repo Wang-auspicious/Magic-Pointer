@@ -3,7 +3,7 @@ declare global {
   interface MagicPointerDecisionQuestion {
     header?: string;
     question: string;
-    options: Array<{ label: string; description?: string }>;
+    options: Array<{ label: string; description?: string; preview?: string }>;
     multiSelect?: boolean;
   }
   interface MagicPointerDecisionRequest {
@@ -136,6 +136,7 @@ declare global {
         const copy = element('span', 'mp-decision-option-copy');
         copy.append(element('span', 'mp-decision-option-label', option.label));
         if (option.description) copy.append(element('span', 'mp-decision-option-description', option.description));
+        if (option.preview) copy.append(element('pre', 'mp-decision-option-preview mp-decision-command', option.preview));
         row.append(mark, copy); options.append(row);
       });
       card.append(options);

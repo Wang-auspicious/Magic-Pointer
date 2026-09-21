@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
-const code = ['backgroundTaskView', 'stopSubagentTask'].map(name => {
+const code = ['backgroundTaskView', 'childActive', 'stopSubagentTask'].map(name => {
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(declaration);
   return ts.transpileModule(declaration.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;

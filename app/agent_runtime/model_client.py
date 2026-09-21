@@ -145,9 +145,9 @@ class ReasoningDelta(ModelTurnEvent):
     """模型思考流增量（用户裁决：思考流一定要有）。
 
     DeepSeek/Moonshot/MiMo 的 ``reasoning_content``、OpenRouter 的
-    ``reasoning``、Anthropic 的 thinking 块都归一成这个事件。它只用于
-    展示与账面，不进 messages 载荷（DeepSeek 系拒绝回传、Anthropic 系
-    需要完整的 thinking 块往返，后者在思考开关真正打开时另行处理）。
+    ``reasoning``、Anthropic 的 thinking 块都归一成这个展示事件。
+    供应商要求回传的 reasoning_content／带签名 thinking 另外保存在
+    TurnDone.provider_items 中，按各自协议投影回历史。
     """
 
     kind = "reasoning_delta"
@@ -973,6 +973,9 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
     multi-turn tool history round-trips through the gateway (T4.2).
     """
     if message.role is Role.ASSISTANT:
+        chat_reasoning = next(({'reasoning_content': item['reasoning_content']}
+            for item in message.provider_items if item.get('type') == 'chat_reasoning'
+            and isinstance(item.get('reasoning_content'), str)), {}) if api_mode != 'messages' else {}
         if message.tool_calls:
             if api_mode == "messages":
                 blocks: list[dict] = [dict(item) for item in message.provider_items
@@ -990,6 +993,7 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
             return {
                 "role": "assistant",
                 "content": message.content or "",
+                **chat_reasoning,
                 "tool_calls": [
                     {
                         "id": str(call.get("id") or "?"),
@@ -1011,7 +1015,7 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
                 blocks.append({'type': 'text', 'text': message.content})
             if blocks:
                 return {'role': 'assistant', 'content': blocks}
-        return {"role": "assistant", "content": message.content or ""}
+        return {"role": "assistant", "content": message.content or "", **chat_reasoning}
     if message.role is Role.TOOL:
         if api_mode == "messages":
             return {
@@ -1242,6 +1246,11 @@ def _provider_items(payload: object, api_mode: str) -> tuple[dict[str, Any], ...
     if api_mode == 'messages' and isinstance(payload, dict):
         return tuple(dict(item) for item in payload.get('content', [])
                      if isinstance(item, dict) and item.get('type') in {'thinking', 'redacted_thinking'})
+    if api_mode not in {'responses', 'messages'} and isinstance(payload, dict):
+        choices = payload.get('choices') or []
+        message = choices[0].get('message') or {} if choices else {}
+        if isinstance(message.get('reasoning_content'), str):
+            return ({'type': 'chat_reasoning', 'reasoning_content': message['reasoning_content']},)
     return _responses_provider_items(payload)
 
 
@@ -1554,6 +1563,7 @@ def _parse_sse(
         return
     text_parts: list[str] = []
     saw_reasoning = False
+    chat_reasoning_parts: list[str] = []
     pending: dict[int, dict[str, Any]] = {}
     finish_reason: str | None = None
     usage: dict[str, Any] = {}
@@ -1581,6 +1591,8 @@ def _parse_sse(
         if isinstance(delta.get("content"), str) and delta["content"]:
             text_parts.append(delta["content"])
             yield MessageDelta(delta["content"])
+        if isinstance(delta.get('reasoning_content'), str):
+            chat_reasoning_parts.append(delta['reasoning_content'])
         for reasoning_key in ("reasoning_content", "reasoning"):
             reasoning_value = delta.get(reasoning_key)
             if isinstance(reasoning_value, str) and reasoning_value:
@@ -1625,7 +1637,9 @@ def _parse_sse(
         yield TurnWithheld(reason="max_output_tokens")
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")
-    yield TurnDone(usage=usage or None, raw_text=text or None)
+    yield TurnDone(usage=usage or None, raw_text=text or None,
+        provider_items=({'type': 'chat_reasoning', 'reasoning_content': ''.join(chat_reasoning_parts)},)
+        if chat_reasoning_parts else ())
 
 
 def _parse_responses_sse(

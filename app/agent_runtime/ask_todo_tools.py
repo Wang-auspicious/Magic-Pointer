@@ -79,7 +79,7 @@ def register_ask_user_question(
         description=(
             "不确定用户的意图或需要用户在几个选项中选择时，向用户提问。"
             "单题用 question/options（2-4 个选项）；多题用 questions 数组，"
-            "每题可带 header、multiSelect 和选项 label/description。返回结构化 answers。"
+            "每题可带 header、multiSelect 和选项 label/description/preview（文本或代码预览）。返回结构化 answers。"
             "工具被拒需要授权时用 kind=\"permission\" 且 tool=被拒工具名，"
             "options 固定为 [仅这一次允许， 本会话总是允许， 拒绝]。"
         ),
@@ -94,6 +94,7 @@ def register_ask_user_question(
                         "multiSelect": {"type": "boolean"},
                         "options": {"type": "array", "items": {"type": "object", "properties": {
                             "label": {"type": "string"}, "description": {"type": "string"},
+                            "preview": {"type": "string", "maxLength": 16000},
                         }, "required": ["label"]}},
                     }, "required": ["question", "options"]},
                 },

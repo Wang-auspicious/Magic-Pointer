@@ -95,7 +95,7 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     target = str(
         task_input.target if task_input is not None else payload.get("target") or ""
     ).strip()
-    if action not in {"cancel", "status", "usage", "fork", "recovery-resolve"} and target not in TARGETS:
+    if action not in {"cancel", "status", "usage", "fork", "recovery-resolve", "subagent-respond"} and target not in TARGETS:
         return {"ok": False, "error": "invalid_target"}
     try:
         session = FileSessionStore(_session_root()).resume(session_id, repair=False)
@@ -104,6 +104,10 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         return {"ok": False, "error": "invalid_session_id"}
 
+    if action == 'subagent-respond':
+        from app.agent_runtime.background_agent import respond
+        return respond(_session_root(), str(payload.get('parentSessionId') or ''), session_id,
+                       str(payload.get('requestId') or ''), payload.get('response') or {})
     if action == "fork":
         through_turn = payload.get("throughTurn")
         if through_turn is not None and (type(through_turn) is not int or through_turn < 1):
@@ -133,6 +137,9 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
             or session.header.parent_session_id != str(payload.get('parentSessionId') or '')
         ):
             return {'ok': False, 'error': 'subagent_parent_mismatch'}
+        from app.agent_runtime.background_agent import read_status, stop
+        if read_status(_session_root(), session_id) is not None:
+            return stop(_session_root(), str(payload.get('parentSessionId') or ''), session_id)
         # Graceful stop (O3): the running loop polls this at the next round
         # boundary and terminates with a Receipt instead of being killed.
         # A repeat click while one is already pending stays ok: a cancel IS

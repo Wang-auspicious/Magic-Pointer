@@ -868,6 +868,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-21：独立后台 Agent、子任务审批与真实模型续接（1.0.50 开发树）
+
+- [x] `Agent(run_in_background=true)` 独立进程运行，父 bridge 结束后继续执行；持久状态、独立输出、父 inbox 完成通知、AgentStatus／AgentStop 和后台恢复。模型配置仅通过 stdin 私有管道交接；开发与安装运行时继承各自隔离模式。Windows 快照替换的实际读写冲突已由跨进程回归发现并修复。
+- [x] 前台子任务审批转入独立等待；父界面展示并回答指定子 session 的原 requestId，不启动新父聊天回合，不丢 composer 草稿。批准恢复沿用原参数及操作账本；恢复保留子会话 grant、task 名称、审批前步骤；等待中 Stop 不执行写入。
+- [x] AskUser option preview 穿过工具规范化、store、Stage 与共享 DecisionCard，保留缩进并按文本显示。实际 Chromium 检查审批／Plan／多题／子任务交互；所有动作有独立失败见证和恢复检查。
+- [x] 真实 `deepseek-v4.1-flash` 流式调用暴露 Chat Completions reasoning_content 丢失；补齐流式／非流式／审批续接的持久协议数据，避免混入 Messages／Responses。再次真实验收 Write 审批→Read 读回→completed→父 inbox 通过（16,202ms）。完整报告：`docs/research/2026-09-21-claude-background-agent-delivery.md`。
+- [x] fresh Python **2575 passed / 6 条既有 Pillow 提示 / 285.18s**；Node **279 test files**；lint、全部 typecheck、Figma/Electron/脚本构建通过。保持 1.0.50，不 sync、不安装；未执行跨小时压力测试、真实 Claude Messages 账户或原生 Office/Figma 验收，不声称官方全功能等价。
+
 ### 2026-09-21：Claude 本地源码对照与 Runtime 语义修复（1.0.50 开发树）
 
 - [x] 直接阅读用户指定的 `claude-code-main/src` 中 Agent、Plan、Todo、effort、interactiveHandler、消息队列、自动压缩及 TaskStop/TaskOutput。该目录为自述 2026-03-31 的非官方快照；记录具体来源与差异，独立实现，不声称当前官方版本或完整同构。对照表：`docs/research/2026-09-21-claude-runtime-source-alignment.md`。

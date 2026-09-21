@@ -355,6 +355,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     }),
     respond: (payload: unknown) => ipcRenderer.invoke('conversations:respond', payload),
     stopSubagent: (payload: { conversationId: string; subagentId: string }) => ipcRenderer.invoke('conversations:stop-subagent', payload),
+    subagents: (payload: { conversationId: string }) => ipcRenderer.invoke('conversations:subagents', payload),
+    respondSubagent: (payload: unknown) => ipcRenderer.invoke('conversations:respond-subagent', payload),
     export: (id: unknown) => ipcRenderer.invoke('conversations:export', String(id || '').slice(0, 120)),
     rename: (payload: { id?: unknown; title?: unknown }) => ipcRenderer.invoke('conversations:rename', {
       id: String(payload?.id || '').slice(0, 120),

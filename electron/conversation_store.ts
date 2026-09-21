@@ -71,7 +71,7 @@ export interface TurnPendingInput {
   actionPreview?: string;
   plan?: string;
   requestId?: string;
-  questions?: Array<{ question: string; header?: string; multiSelect?: boolean; options: Array<{ label: string; description?: string }> }>;
+  questions?: Array<{ question: string; header?: string; multiSelect?: boolean; options: Array<{ label: string; description?: string; preview?: string }> }>;
   question?: string;
   options?: string[];
   kind?: string;
@@ -753,6 +753,7 @@ function createConversationStore(
         question: String(item.question || ''), header: String(item.header || ''), multiSelect: item.multiSelect === true,
         options: Array.isArray(item.options) ? item.options.slice(0, 4).map((option: any) => ({
           label: String(option.label || option || ''), description: String(option.description || ''),
+          ...(option.preview ? { preview: String(option.preview).slice(0, 16000) } : {}),
         })) : [],
       })) } : {}),
       kind: kind || undefined,

@@ -431,3 +431,13 @@ console.log('conversation store test ok (permission memo)');
 }
 
 console.log('conversation store permission answer ok');
+
+{
+  const preview = '<layout>\n  indented example';
+  const conversation = store.appendTurn({ question: 'Choose layout', answer: '',
+    object: { app: 'Code.exe', windowTitle: 'preview' },
+    pendingInput: { requestId: 'preview-call', question: 'Layout?', options: ['Compact', 'Wide'],
+      questions: [{ question: 'Layout?', options: [{ label: 'Compact', preview }, { label: 'Wide' }] }] } });
+  const reopened = createConversationStore({ baseDir: dir });
+  assert.equal(reopened.get(conversation.id).turns[0].pendingInput.questions[0].options[0].preview, preview);
+}

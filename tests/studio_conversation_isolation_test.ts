@@ -28,7 +28,7 @@ function setup() {
     renderUsageMeter() {}, setConversationTab() {}, renderStudioHome() {}, renderProjectTasks() {},
     renderPlanCard() {}, clearComposerSuggestion() {}, renderArtifactEditor() {},
     setActiveProject() {}, show() {}, renderRepositoryContextBar: async () => {},
-    renderConversationRecovery() {},
+    renderConversationRecovery() {}, refreshBackgroundAgentTasks() {},
     stopPendingClock() {}, setComposerRunningState() {},
     Data: { conversation: async (id: string) => ({ id, turns: [] }) },
   };

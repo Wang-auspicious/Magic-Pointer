@@ -22,6 +22,7 @@ const { scheduleBackgroundLearning } = require('./background_learning');
 const { SelectionSessionStore, continuationTaskForSelection } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceLabel } = require('./interaction_episode');
 const TaskSources = require('./task_sources');
+const { readBackgroundAgents } = require('./background_agents');
 const { ActivationGate } = require('./activation_gate');
 const { WiggleDetector } = require('./wiggle_detector');
 const { runDeterministicWiggleEvidence } = require('./wiggle_reliability');
@@ -2693,6 +2694,26 @@ ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, 
   }, GRACEFUL_CANCEL_GRACE_MS);
   log(`conversation stop requested id=${requestId} session=${plan.sessionId}`);
   return { ok: true, sessionId: plan.sessionId };
+});
+
+ipcMain.handle('conversations:subagents', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) return { ok: false, error: 'unauthorized_renderer' };
+  const conversation = conversations().get(String(raw.conversationId || ''));
+  if (!conversation?.agentSessionId) return { ok: true, tasks: [] };
+  try {
+    return { ok: true, tasks: await readBackgroundAgents(path.join(FABRIC_DATA_DIR, 'agent-sessions'), conversation.agentSessionId) };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+});
+
+ipcMain.handle('conversations:respond-subagent', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) return { ok: false, error: 'unauthorized_renderer' };
+  const conversation = conversations().get(String(raw.conversationId || ''));
+  if (!conversation?.agentSessionId) return { ok: false, error: 'unknown_subagent' };
+  try {
+    return await runPythonBridgePromise({ action: 'subagent-respond', sessionId: String(raw.subagentId || ''),
+      parentSessionId: conversation.agentSessionId, requestId: String(raw.requestId || ''), response: raw.response },
+    'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
 });
 
 ipcMain.handle('conversations:stop-subagent', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {

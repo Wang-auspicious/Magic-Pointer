@@ -1122,7 +1122,7 @@ class EventSession:
                 calls.append({'id': call_id, 'name': pending['action']['tool'],
                     'arguments': copy.deepcopy(pending['action']['arguments']),
                     'provider_items': copy.deepcopy([item for item in original.get('provider_items', ())
-                        if item.get('type') in {'thinking', 'redacted_thinking'}])})
+                        if item.get('type') in {'thinking', 'redacted_thinking', 'chat_reasoning'}])})
         return calls
 
     def cancel_unstarted_permissions(self) -> None:

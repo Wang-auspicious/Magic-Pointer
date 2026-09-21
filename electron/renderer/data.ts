@@ -547,6 +547,8 @@ declare global {
       onStatus(callback: (state: MagicPointerUpdateState) => void): void;
     };
     conversations: {
+      subagents?(payload: { conversationId: string }): Promise<{ ok?: boolean; tasks?: Record<string, any>[]; error?: string }>;
+      respondSubagent?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       stopSubagent?(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }>;
       respond?(payload: MagicPointerInputResponse): Promise<Record<string, any>>;
       recovery?(payload: Record<string, unknown>): Promise<Record<string, any>>;
@@ -701,6 +703,8 @@ declare global {
   }
 
   interface MagicPointerDataApi {
+    subagents(payload: { conversationId: string }): Promise<{ ok?: boolean; tasks?: Record<string, any>[]; error?: string }>;
+    respondSubagent(payload: Record<string, unknown>): Promise<Record<string, any>>;
     isLive(): boolean;
     projects(): Promise<MagicPointerProject[]>;
     openProject(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
@@ -1210,6 +1214,14 @@ const Data: MagicPointerDataApi = {
   async stopSubagent(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }> {
     const stop = bridge()?.conversations?.stopSubagent;
     return stop ? stop(payload) : { ok: false, error: '子任务停止通道不可用。' };
+  },
+  async subagents(payload: { conversationId: string }): Promise<{ ok?: boolean; tasks?: Record<string, any>[]; error?: string }> {
+    const read = bridge()?.conversations?.subagents;
+    return read ? read(payload) : { ok: true, tasks: [] };
+  },
+  async respondSubagent(payload: Record<string, unknown>): Promise<Record<string, any>> {
+    const respond = bridge()?.conversations?.respondSubagent;
+    return respond ? respond(payload) : { ok: false, error: '子任务审批通道不可用。' };
   },
   async setConversationProject(id: string, root: string): Promise<{ ok?: boolean; error?: string }> {
     const api = bridge()?.conversations;

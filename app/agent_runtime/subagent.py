@@ -51,6 +51,7 @@ def register_delegate_tool(
     subagent_event_sink: Callable[[dict[str, Any]], None] | None = None,
     id_factory: Callable[[], str] | None = None,
     parent_session_getter: Callable[[], Any] | None = None,
+    detached: bool = False,
 ) -> None:
     """Register ``delegate_task``; the child runs the same loop kernel."""
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
@@ -88,9 +89,9 @@ def register_delegate_tool(
                 text = str(value)
         return text if len(text) <= limit else f"{text[:limit]}…"
 
-    def delegate_task(task: str, context: str = "", readonly: bool | None = None, resume_id: str = "", effort: str | None = None, scope: Any = None, **_: Any) -> str:
+    def delegate_task(task: str, context: str = "", readonly: bool | None = None, resume_id: str = "", effort: str | None = None, run_in_background: bool | None = None, scope: Any = None, **_: Any) -> str:
         prompt = str(task or "").strip()
-        if not prompt:
+        if not prompt and not (detached and resume_id):
             raise ValueError("task is required")
         extra = str(context or "").strip()
         if extra:
@@ -112,6 +113,14 @@ def register_delegate_tool(
         readonly = bool(readonly) or child_mode == 'plan'
         store = FileSessionStore(parent.path.parent if parent else root / ".mp" / "agent-sessions")
         child_id = str(resume_id or (id_factory or (lambda: uuid.uuid4().hex[:12]))())
+        from app.agent_runtime import background_agent
+        previous_background = None
+        if resume_id and not detached:
+            previous_background = background_agent.read_status(store.root, child_id)
+            if previous_background and previous_background['status'] in background_agent.ACTIVE:
+                raise ValueError('subagent_already_running; use AgentStatus or AgentStop')
+            if previous_background and run_in_background is None:
+                run_in_background = True
         child_effort = normalize_effort(effort) if effort is not None else inherited_effort
         if resume_id:
             child_session = store.resume(child_id, repair=True)
@@ -133,14 +142,47 @@ def register_delegate_tool(
             if parent:
                 parent.append("subagent/created", {"childSessionId": child_id, "task": prompt, "readonly": bool(readonly)})
 
+        child_permissions = PermissionDecisions.inherited(child_session, child_permissions)
         child_cancelled = cancel_interrupt_check(child_session)
+        if previous_background and run_in_background is False:
+            # An explicit foreground resume hands ownership back to this live
+            # parent call; its old background snapshot must not mask new events.
+            child_session.path.with_suffix('.agent.json').unlink()
+
+        def launch_background(background_prompt: str) -> dict:
+            payload = background_agent.launch(child=child_session, parent=parent, provider=llm_provider,
+                workspace_root=root, prompt=background_prompt, mode=child_mode, effort=child_effort,
+                readonly=readonly, permissions=child_permissions, parent_call_id=current_tool_call_id.get(),
+                max_tool_calls=max_tool_calls, max_tokens=max_tokens)
+            emit(payload)
+            return payload
+
+        if run_in_background and not detached:
+            launch_background(prompt)
+            return f'[subagent id={child_id} status=running steps=0]\nRunning independently. Use AgentStatus to read progress; completion arrives in the task inbox.'
 
         def interrupted() -> bool:
-            return bool(child_cancelled() or (scope is not None and scope.is_cancelled()) or (parent is not None and parent.pending_cancel_request()))
+            return bool(child_cancelled() or (detached and background_agent.stop_requested(child_session))
+                or (scope is not None and scope.is_cancelled())
+                or (not detached and parent is not None and parent.pending_cancel_request()))
 
         if interrupted():
             raise ActionFailure(FailureType.TOOL_ERROR, f"subagent {child_id} stopped before dispatch")
         steps: list[dict[str, Any]] = []
+        # Resume the actual child transcript, including the attempt that asked
+        # permission. A new model turn must not erase already observed tools.
+        prepared = {}
+        for event in child_session.events:
+            if event.type == 'operation/prepared':
+                prepared[event.data['operationId']] = event.data
+            elif event.type == 'operation/settled' and event.data['operationId'] in prepared:
+                operation = prepared[event.data['operationId']]
+                message = event.data['message']
+                steps.append({'index': len(steps) + 1, 'callId': operation['callId'], 'tool': operation['name'],
+                    'status': 'failed' if message.get('is_error') else 'completed',
+                    'input': bounded(operation['arguments']), 'output': bounded(message.get('content')),
+                    'usedBackend': event.data.get('usedBackend') or '', 'latencyMs': event.data.get('latencyMs') or 0})
+        description = next((e.data.get('task', '') for e in child_session.events if e.type == 'subagent/configured'), '') or str(task or '').strip()
         active_steps: dict[str, dict[str, Any]] = {}
         parent_call_id = current_tool_call_id.get()
         started_at = time.time() * 1000
@@ -157,7 +199,7 @@ def register_delegate_tool(
             payload: dict[str, Any] = {
                 "id": child_id,
                 "parentCallId": parent_call_id,
-                "description": str(task or "").strip(),
+                "description": description,
                 "readonly": bool(readonly),
                 "status": status,
                 "phase": phase if status == "running" else status,
@@ -179,6 +221,8 @@ def register_delegate_tool(
             }
             if summary:
                 payload["summary"] = summary
+            if status == 'awaiting_user':
+                payload['pendingInput'] = child_session.pending_user_input()
             if status != "running":
                 payload["completedAt"] = time.time() * 1000
             emit(payload)
@@ -321,6 +365,12 @@ def register_delegate_tool(
             f"steps={len(steps)}]"
         )
         result = f"{header}\n{summary or '(no summary)'}"
+        if terminal.reason.value == 'awaiting_user':
+            # Return control to the parent UI; the worker waits on this same
+            # child's durable answer, then resumes the exact blocked action.
+            if not detached and callable(getattr(llm_provider, 'background_config', None)):
+                launch_background('')
+            return result
         if terminal.reason.value not in {"completed", "stop_hook", "local_action"}:
             raise ActionFailure(FailureType.TOOL_ERROR, result)
         return result
@@ -333,6 +383,7 @@ def register_delegate_tool(
             "批量重构、写测试这类活；父对话只收结果摘要。"
             "一次委派一件事，任务描述要自包含。"
             "readonly=true 的调研委派只有读工具，可与其它任务并行。"
+            "run_in_background=true 立即返回；独立后台任务完成时通知，AgentStatus 查看，AgentStop 停止。"
         ),
         input_schema={
             "type": "object",
@@ -340,6 +391,7 @@ def register_delegate_tool(
                 "task": {"type": "string", "description": "自包含的任务描述"},
                 "context": {"type": "string", "description": "可选背景（已知线索、文件路径等）"},
                 "resume_id": {"type": "string", "description": "继续未完成子任务的持久 session id；沿用其历史和检查点"},
+                "run_in_background": {"type": "boolean", "description": "独立后台运行，父回合结束或停止后仍继续；新权限在父界面等待批准"},
                 "effort": {"type": "string", "enum": list(EFFORT_LEVELS), "description": "默认继承父任务；恢复时沿用子任务档位，可显式覆盖"},
                 "readonly": {
                     "type": "boolean",
@@ -356,3 +408,30 @@ def register_delegate_tool(
         used_backend="subagent_loop",
         timeout_ms=1_800_000,
     ))
+
+    def agent_status(id: str = '', scope: Any = None) -> dict:
+        from app.agent_runtime.background_agent import list_children
+        parent = parent_session_getter() if parent_session_getter else None
+        if parent is None:
+            raise ValueError('AgentStatus requires a parent session')
+        children = list_children(parent.path.parent, parent.id)
+        if id:
+            return next((child for child in children if child['id'] == id), {'error': 'unknown_subagent'})
+        return {'tasks': children}
+
+    def agent_stop(id: str, scope: Any = None) -> dict:
+        from app.agent_runtime.background_agent import stop
+        parent = parent_session_getter() if parent_session_getter else None
+        if parent is None:
+            raise ValueError('AgentStop requires a parent session')
+        return stop(parent.path.parent, parent.id, id)
+
+    if not detached:
+        for name, execute, description in (
+            ('AgentStatus', agent_status, '读取本任务独立后台 Agent 的真实状态、进度、等待审批和输出；id 省略则列出全部。'),
+            ('AgentStop', agent_stop, '停止指定 id 的独立后台 Agent，包括等待审批的任务；保留已完成工作和可恢复会话。'),
+        ):
+            registry.register(ToolSpec(name=name, execute=execute, description=description,
+                input_schema={'type': 'object', 'properties': {'id': {'type': 'string'}},
+                              'required': ['id'] if name == 'AgentStop' else []},
+                effect=Effect.READ, is_concurrency_safe=True, used_backend='subagent_session'))

@@ -75,11 +75,13 @@ app.whenReady().then(async () => {
       check(host.hidden, 'accepted approval card stayed visible');
       check(stored.turns.length === 1, 'approval added another task turn');
       stored.turns[0].pendingInput = { requestId: 'ask-format', questions: [
-        { header: 'Format', question: 'Which format?', options: [{ label: 'Report', description: 'A document to share' }, { label: 'Slides', description: 'A presentation' }] },
+        { header: 'Format', question: 'Which format?', options: [{ label: 'Report', description: 'A document to share', preview: '<button>Example</button>\\n  outline' }, { label: 'Slides', description: 'A presentation' }] },
         { header: 'Include', question: 'What should it include?', multiSelect: true, options: [{ label: 'Charts' }, { label: 'Sources' }] },
       ] };
       await openConversation(stored.id);
       check(!host.hidden && host.textContent.includes('A document to share'), 'structured question descriptions are missing');
+      check(host.querySelector('.mp-decision-option-preview')?.textContent === '<button>Example</button>\\n  outline', 'option preview lost formatting');
+      check(!host.querySelector('.mp-decision-option-preview button'), 'option preview must display source, not execute markup');
       const otherChoice = host.querySelector('.mp-decision-other [role="radio"]');
       check(!!otherChoice, 'inline Other is missing its selectable radio row');
       check(getComputedStyle(host.querySelector('.mp-decision-option')).gap === '12px', 'inline question choice gap differs from Code 12px');
@@ -144,7 +146,24 @@ app.whenReady().then(async () => {
       check(!plan.hidden && plan.querySelectorAll('.mp-plan-step').length === 10, 'reopening discarded the plan expansion choice');
       check(!document.querySelector('#stream .dsh-todo-list'), 'the transcript repeats the plan already shown in the task rail');
       check(getComputedStyle(document.querySelector('.dsh-user-stack')).maxWidth.startsWith('min(75%'), 'user prompt bubbles must match the reference 75% transcript width');
-      return { normalSends, responses: responses.length, sameTurn: stored.turns.length === 1, permissionAndQuestions: true, durablePlan: true };
+      let childStatus = 'awaiting_user';
+      let childResponse;
+      Data.subagents = async () => ({ ok: true, tasks: [{ id: 'child-background', parentCallId: 'agent-call',
+        description: 'Independent child', status: childStatus, stepCount: 1, steps: [],
+        pendingInput: childStatus === 'awaiting_user' ? { requestId: 'child-write', kind: 'permission',
+          tool: 'Write', question: 'Allow child edit?', actionPreview: 'exact child edit' } : null }] });
+      Data.respondSubagent = async payload => { childResponse = payload; childStatus = 'completed'; return { ok: true, accepted: true }; };
+      await refreshBackgroundAgentTasks(stored.id);
+      const childRow = document.querySelector('.mp-subagent-task[data-task-id="child-background"]');
+      check(childRow?.dataset.status === 'awaiting_user', 'child approval is mislabeled as finished');
+      check(!childRow.querySelector('.mp-subagent-stop').hidden, 'waiting child cannot be stopped');
+      check(childRow.textContent.includes('exact child edit'), 'child original action is not displayed');
+      childRow.querySelector('[data-decision="once"]').click(); await wait(); await wait();
+      check(childResponse?.subagentId === 'child-background' && childResponse?.requestId === 'child-write', 'parent approval lost the child/request binding');
+      check(normalSends === 0 && !pendingConversation, 'child approval started another parent turn');
+      check(!childRow.querySelector('.mp-decision-card'), 'answered child card remained actionable');
+      check(textarea.value === 'Keep my unsent follow-up', 'child approval overwrote the draft');
+      return { normalSends, responses: responses.length, sameTurn: stored.turns.length === 1, permissionAndQuestions: true, durablePlan: true, backgroundApproval: true };
     })()`);
     fs.writeFileSync(path.join(output, 'witness.json'), JSON.stringify(witness, null, 2));
     await win.webContents.executeJavaScript(`setComposerSettledState('idle'); pendingPermissionAsk = { requestId: 'permission-preview', tool: 'Bash', prefix: 'npm test', question: 'Allow Magic Pointer to run the project tests?' }; pendingAskInput = null; renderPermissionAsk(); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));`);

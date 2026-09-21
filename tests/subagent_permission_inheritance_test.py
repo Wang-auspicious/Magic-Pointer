@@ -53,3 +53,23 @@ def test_runtime_dispatch_passes_explicit_parent_rules_and_restores_context(monk
     assert captured[0]['permission_decisions'].allowed == ('Bash(npm test)',)
     assert captured[0]['permission_decisions'].once == ()
     assert current_permission_decisions.get() is None
+
+
+def test_resume_keeps_grants_made_in_the_child_session(monkeypatch, tmp_path):
+    from app.fabric import engine
+    store = FileSessionStore(tmp_path / 'sessions')
+    parent = store.create('parent')
+    child = store.create('child', parent_session_id='parent')
+    child.append('subagent/configured', {'task': 'edit', 'readonly': False, 'effort': 'high'})
+    child.append_message(AgentMessage(role=Role.TOOL, tool_call_id='ask', name='AskUser', origin=ORIGIN_DATA,
+        content=json.dumps({'kind': 'permission', 'tool': 'Write', 'question': 'Allow?',
+            'options': ['Once', 'Session', 'Deny'], 'awaitingUserInput': True})))
+    child.answer_user_input('ask', {'decision': 'grant'})
+    captured = []
+    monkeypatch.setattr(engine, 'run_agent_turn', lambda *args, **kwargs: captured.append(kwargs) or Terminal(
+        reason=TransitionReason.COMPLETED, message='Done', turns=1, results=()))
+    registry = ToolRegistry()
+    register_delegate_tool(registry, llm_provider=SimpleNamespace(create_client=lambda **kwargs: object()),
+        workspace_root=tmp_path, permission_mode='safe', parent_session_getter=lambda: parent)
+    assert not registry.execute_tool('Agent', {'task': 'continue', 'resume_id': 'child'}).is_error
+    assert captured[0]['permission_decisions'].allows_call('Write', {'path': 'another.txt'}, 'next')

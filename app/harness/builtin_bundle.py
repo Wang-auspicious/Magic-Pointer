@@ -606,6 +606,10 @@ class _MessagesLlmProvider:
             )
         )
 
+    def background_config(self) -> dict[str, Any]:
+        from app.ai_client import background_ai_config
+        return {'streaming': self.streaming, 'aiConfig': background_ai_config()}
+
 
 def _apply_llm_provider(fork, config: dict[str, Any]) -> None:
     """Provide the default gateway implementation at the stable ``llm`` key."""

@@ -1,5 +1,6 @@
 """A permission wait must bind the real call before any side effect."""
 import asyncio
+import pytest
 
 from agent_runtime_loop_test import ScriptedBackend, collect, make_params
 from app.agent_runtime.model_client import LoopModelClient, ToolCallArrived, TurnDone
@@ -97,13 +98,16 @@ def test_new_instruction_cancels_unstarted_approval_instead_of_running_stale_wor
     assert restored.approved_permission_calls() == []
 
 
-def test_approval_continuation_keeps_the_original_messages_thinking_block(tmp_path):
+@pytest.mark.parametrize('thinking', [
+    {'type': 'thinking', 'thinking': 'Prepare the exact edit.', 'signature': 'original-signature'},
+    {'type': 'chat_reasoning', 'reasoning_content': 'Prepare the exact edit.'},
+])
+def test_approval_continuation_keeps_the_original_messages_thinking_block(tmp_path, thinking):
     from app.agent_runtime.types import Role
     store = FileSessionStore(tmp_path)
     session = store.create('signed-approval')
     writes = []
     registry = _registry(writes)
-    thinking = {'type': 'thinking', 'thinking': 'Prepare the exact edit.', 'signature': 'original-signature'}
     backend = ScriptedBackend([ToolCallArrived(call=ToolCall(id='a', name='Modify', arguments={'value': 'new'})),
         TurnDone(usage=None, raw_text=None, provider_items=(thinking,))])
     asyncio.run(collect(make_params(registry=registry, client=LoopModelClient(backend), session=session,

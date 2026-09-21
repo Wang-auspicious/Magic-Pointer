@@ -26,6 +26,8 @@ def normalize_questions(value: Any) -> list[dict[str, Any]]:
             choice = {'label': label}
             if isinstance(option, Mapping) and option.get('description'):
                 choice['description'] = str(option['description']).strip()[:1000]
+            if isinstance(option, Mapping) and option.get('preview'):
+                choice['preview'] = str(option['preview'])[:16000]
             choices.append(choice)
         if len({item['label'] for item in choices}) != len(choices):
             raise ValueError('option labels must be distinct')

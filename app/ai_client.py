@@ -135,6 +135,16 @@ def request_ai_session(session_id: str | None) -> Iterator[None]:
         _REQUEST_SESSION_ID = previous
 
 
+def background_ai_config() -> dict:
+    """Snapshot the active profile for a child process's private stdin pipe."""
+    import copy
+    config = copy.deepcopy(_REQUEST_AI_CONFIG or {})
+    credential, base_url, model = get_ai_config()
+    config.update(credential=credential or '', baseUrl=base_url or '', model=model,
+                  apiMode=get_ai_api_mode(base_url))
+    return config
+
+
 def get_ai_config() -> tuple[str | None, str | None, str]:
     # Studio always sends effort, including installs configured with local
     # secret files. Effort alone must not replace that model configuration.

@@ -34,7 +34,8 @@ function pendingInputFromBridge(value: unknown): UnknownRecord | null {
       options: (Array.isArray(item.options) ? item.options : []).slice(0, 4).map((value) => {
         const option = recordOf(value);
         return { label: String(option.label || '').slice(0, 200),
-          ...(option.description ? { description: String(option.description).slice(0, 1000) } : {}) };
+          ...(option.description ? { description: String(option.description).slice(0, 1000) } : {}),
+          ...(option.preview ? { preview: String(option.preview).slice(0, 16000) } : {}) };
       }),
     };
   }) : undefined;

@@ -29,6 +29,7 @@
     phase?: string;
     elapsedMs?: number;
     turn?: number;
+    pendingInput?: Record<string, any>;
   }
 
   interface LiveSubagentLike extends Partial<SubagentTask> {
@@ -63,13 +64,14 @@
 
   function normalizedStatus(value: unknown): string {
     switch (clean(value).toLocaleLowerCase()) {
+      case 'starting':
       case 'running': return 'running';
+      case 'awaiting_user': return 'awaiting_user';
       case 'completed': return 'completed';
       case 'error':
       case 'failed':
       case 'budget_exhausted':
       case 'provider_unavailable':
-      case 'awaiting_user':
       case 'stalled':
       case 'invariant_failed': return 'failed';
       case 'stopped':
@@ -139,6 +141,7 @@
       phase: live.phase ?? base?.phase ?? '',
       elapsedMs: live.elapsedMs ?? base?.elapsedMs ?? 0,
       turn: live.turn ?? base?.turn ?? 0,
+      pendingInput: live.pendingInput,
     };
   }
 
@@ -171,7 +174,7 @@
       byId.set(merged.id, merged);
       if (merged.parentCallId) byParent.set(merged.parentCallId, merged.id);
     });
-    const rank: Record<string, number> = { running: 0, failed: 1, stopped: 2, completed: 3 };
+    const rank: Record<string, number> = { awaiting_user: 0, running: 1, failed: 2, stopped: 3, completed: 4 };
     return [...byId.values()].sort((a, b) => (rank[a.status] ?? 4) - (rank[b.status] ?? 4)
       || (b.startedAt || b.completedAt) - (a.startedAt || a.completedAt)
       || a.id.localeCompare(b.id));
