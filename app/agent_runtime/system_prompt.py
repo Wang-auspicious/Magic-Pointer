@@ -217,10 +217,9 @@ def default_sections() -> list[Section]:
     def permissions(ctx: dict[str, Any]) -> str | None:
         if str(ctx.get("permission_preset") or "") == "plan":
             return (
-                "当前是计划模式：先用读工具研究清楚，然后调用 Todo 一次性列出"
-                "全部执行步骤（每步一条），随即开始逐步执行；做完一步就把该步标为"
-                " completed、正在做的一步标为 in_progress（再调 Todo）。"
-                "全部步骤完成并验证后才收工。"
+                "当前是计划模式：只用读工具研究和设计，不得修改文件或执行写动作。"
+                "完成方案后调用 ExitPlanMode 提交完整计划供用户批准。"
+                "批准后才能开始实施；Todo 是进度清单，不等于用户批准。"
             )
         mode = str(ctx.get("permission_mode") or "default")
         return (

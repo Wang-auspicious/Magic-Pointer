@@ -79,8 +79,8 @@ assert(studio.includes('ConversationControl.failedDraftValue(textarea.value, que
 assert(data.includes('prefix?: string'), 'pending permission input must type the Bash prefix');
 assert.match(studio, /pendingPermissionAsk:\s*\{[^}]*tool: string; prefix\?: string;/,
   'Studio pending permission state must retain the command prefix');
-assert.match(decisionCard, /if \(request\.prefix\)[^\n]*mp-decision-command[^\n]*request\.prefix/,
-  'the permission card must display the exact bounded command being granted');
+assert.match(decisionCard, /mp-decision-command[^\n]*request\.actionPreview \|\| request\.prefix/,
+  'the permission card must show the full action, using a prefix only for older requests');
 assert.match(studio, /DecisionCard\.render\(host,\s*\{\s*\.\.\.input,/,
   'the pending request, including its prefix and request id, reaches the card unchanged');
 assert.match(studio, /Data\.respondConversation\(\{ conversationId, requestId, response,/,

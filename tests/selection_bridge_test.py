@@ -1796,6 +1796,11 @@ def test_loop_router_keeps_ordinary_selection_out_of_profile_coding_workspace(mo
                             events = ()
                             open_turn = None
 
+                            def append(self, event_type, data):
+                                self.events = (*self.events, SimpleNamespace(type=event_type, data=data))
+                            def permission_mode(self, fallback):
+                                return fallback
+
                             def interrupted_turn_summary(self):
                                 return None
                             def enqueue_inbox(self, *a, **k):
@@ -1898,6 +1903,12 @@ def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
 
         def interrupted_turn_summary(self):
             return None
+
+        def append(self, event_type, data):
+            self.events = (*self.events, SimpleNamespace(type=event_type, data=data))
+
+        def permission_mode(self, fallback):
+            return fallback
 
         def enqueue_inbox(self, *a, **k):
             pass
@@ -2134,6 +2145,7 @@ def test_loop_router_does_not_create_relative_tool_result_dir_without_workspace(
                 return SimpleNamespace(open_or_create=lambda sid, *a, **k: SimpleNamespace(
                     events=(), open_turn=None, interrupted_turn_summary=lambda: None,
                     enqueue_inbox=lambda *a, **k: None, claim_inbox=lambda *a, **k: [],
+                    append=lambda *a, **k: None, permission_mode=lambda fallback: fallback,
                 ))
             if key == "context_budget":
                 return 64000

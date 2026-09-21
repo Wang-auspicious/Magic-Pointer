@@ -6,9 +6,8 @@ is a projection of explicit surface events, compaction appends a replacement
 instead of rewriting history, and interrupted tool calls are repaired with
 different messages for "not started" and "outcome unknown".
 
-This is intentionally smaller than DSH's general-purpose TypeScript package.
-Magic Pointer runs short, local desktop tasks, so one stdlib JSONL store with a
-hash chain is enough. It still enforces the invariant that matters:
+Magic Pointer owns short and long-running desktop tasks. This stdlib JSONL
+store carries the durable history and operation recovery contract:
 ``model-visible means logged``.
 """
 
@@ -25,7 +24,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -473,6 +472,16 @@ class EventSession:
         # SessionEvent is frozen but its JSON ``data`` payload is not.
         # Never expose the authoritative in-memory hash-chain objects.
         return tuple(copy.deepcopy(self._events))
+
+    def permission_mode(self, fallback: str) -> str:
+        """Read current controls without copying the full task history per tool."""
+        with self._lock:
+            for event in reversed(self._events):
+                if event.type == 'permission/mode':
+                    return str(event.data['mode'])
+                if event.type == 'user_input/answered' and event.data['pendingInput'].get('kind') == 'plan':
+                    return {'once': 'safe', 'grant': 'default', 'deny': 'plan'}[event.data['response']['decision']]
+        return fallback
 
     @property
     def open_turn(self) -> int | None:
@@ -1046,10 +1055,15 @@ class EventSession:
 
     def pending_user_input(self) -> dict[str, Any] | None:
         from app.agent_runtime.user_input import normalize_pending_input
+        answered = {event.data['requestId'] for event in self._events if event.type == 'user_input/answered'}
+        answered.update(request_id for event in self._events if event.type == 'permission/cancelled' for request_id in event.data['requestIds'])
+        for event in self._events:
+            if event.type == 'permission/requested' and event.data['requestId'] not in answered:
+                return copy.deepcopy(event.data['pendingInput'])
         for message in reversed(self._surface):
             if message.role is Role.USER and not message.injected:
                 return None
-            if message.role is not Role.TOOL or message.name not in {'AskUser', 'AskUserQuestion', 'ask_user_question'}:
+            if message.role is not Role.TOOL or message.name not in {'AskUser', 'AskUserQuestion', 'ask_user_question', 'ExitPlanMode'}:
                 continue
             try:
                 value = json.loads(message.content)
@@ -1085,9 +1099,41 @@ class EventSession:
         normalized = normalize_input_response(pending, response)
         return self.append('user_input/answered', {
             'requestId': request_id, 'pendingInput': pending, 'response': normalized,
-            'message': AgentMessage(role=Role.TOOL, tool_call_id=request_id, name='AskUser', origin=ORIGIN_DATA,
+            'message': AgentMessage(role=Role.TOOL, tool_call_id=request_id,
+                name=(pending['tool'] if pending.get('harnessPermission') else 'ExitPlanMode' if pending.get('kind') == 'plan' else 'AskUser'), origin=ORIGIN_DATA,
                 content=json.dumps({**pending, **normalized, 'answered': True, 'awaitingUserInput': False}, ensure_ascii=False)).to_dict(),
         })
+
+    def approved_permission_calls(self) -> list[dict[str, Any]]:
+        """Unstarted exact approvals; the operation journal prevents replay."""
+        started = {event.data.get('callId') for event in self._events if event.type == 'operation/prepared'}
+        started.update('approval-' + request_id for event in self._events if event.type == 'permission/cancelled' for request_id in event.data['requestIds'])
+        calls = []
+        for event in self._events:
+            if event.type != 'user_input/answered':
+                continue
+            pending = event.data['pendingInput']
+            call_id = 'approval-' + event.data['requestId']
+            if (pending.get('harnessPermission') and event.data['response']['decision'] != 'deny'
+                    and call_id not in started):
+                original = next((item.data['message'] for item in self._events
+                    if item.type == 'assistant/message' and any(call.get('id') == event.data['requestId']
+                        for call in item.data['message'].get('tool_calls', ()))), {})
+                calls.append({'id': call_id, 'name': pending['action']['tool'],
+                    'arguments': copy.deepcopy(pending['action']['arguments']),
+                    'provider_items': copy.deepcopy([item for item in original.get('provider_items', ())
+                        if item.get('type') in {'thinking', 'redacted_thinking'}])})
+        return calls
+
+    def cancel_unstarted_permissions(self) -> None:
+        """A newer user instruction replaces unstarted work, including approval."""
+        answered = {event.data['requestId'] for event in self._events if event.type == 'user_input/answered'}
+        answered.update(request_id for event in self._events if event.type == 'permission/cancelled' for request_id in event.data['requestIds'])
+        request_ids = [event.data['requestId'] for event in self._events
+            if event.type == 'permission/requested' and event.data['requestId'] not in answered]
+        request_ids.extend(call['id'].removeprefix('approval-') for call in self.approved_permission_calls())
+        if request_ids:
+            self.append('permission/cancelled', {'requestIds': request_ids})
 
     def record_plan_updated(
         self,
@@ -1925,6 +1971,10 @@ class EventSession:
     def _project_event(
         surface: list[AgentMessage], event: SessionEvent
     ) -> list[AgentMessage]:
+        if event.type == 'permission/cancelled':
+            return [replace(message, content='Not executed: a newer user instruction cancelled this approval.', is_error=True)
+                if message.role is Role.TOOL and message.tool_call_id in event.data['requestIds'] else message
+                for message in surface]
         if event.type == 'user_input/answered':
             response = AgentMessage.from_dict(event.data['message'])
             return [response if message.role is Role.TOOL and message.tool_call_id == response.tool_call_id else message for message in surface]

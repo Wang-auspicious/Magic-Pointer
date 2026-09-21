@@ -54,6 +54,8 @@ declare global {
   }
 
   interface MagicPointerTaskContext {
+    permissionMode?: string;
+    effort?: string;
     taskId: string;
     sources: MagicPointerTaskSource[];
     references: MagicPointerTaskReference[];
@@ -99,6 +101,8 @@ declare global {
     timingMs?: number;
     usedBackend?: string;
     pendingInput?: {
+      plan?: string;
+      actionPreview?: string;
       requestId?: string;
       question?: string;
       options?: string[];

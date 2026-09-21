@@ -144,6 +144,13 @@ assert.strictEqual(clarification.result.awaitingUserInput, true);
 assert.deepStrictEqual(clarification.result.pendingInput, { question: 'Which one?', options: ['A', 'B'] });
 assert.deepStrictEqual(clarification.result.modelUsage, { inputTokens: 12, outputTokens: 4, totalTokens: 16 });
 
+const questions = [{ header: 'Format', question: 'Which format?', options: [{ label: 'Memo', description: 'Short report' }, { label: 'Slides' }] },
+  { question: 'Include?', multiSelect: true, options: [{ label: 'Charts' }, { label: 'Sources' }] }];
+const structuredAsk = stageEventFromBridge({ ok: true, answer: 'Choose', awaitingUserInput: true,
+  pendingInput: { requestId: 'original-ask', question: 'Which format?', options: ['Memo', 'Slides'], questions } });
+assert.equal(structuredAsk.result.pendingInput.requestId, 'original-ask', 'Stage transport must preserve the answer target');
+assert.deepStrictEqual(structuredAsk.result.pendingInput.questions, questions, 'Stage transport dropped descriptions or later questions');
+
 const promptDraft = stageEventFromBridge({
   ok: true,
   kind: 'agent-prompt-draft',

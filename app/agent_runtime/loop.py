@@ -899,6 +899,16 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     """The loop body (see :func:`run_agent_loop` for the public contract)."""
     registry = params.registry
     client = params.client
+    if params.session is not None and params.user_input:
+        params.session.cancel_unstarted_permissions()
+    approved_calls = params.session.approved_permission_calls() if params.session is not None else []
+    approval_by_id = {call['id']: call for call in approved_calls}
+    existing_input = params.session.pending_user_input() if params.session is not None else None
+    if existing_input is not None and not approved_calls and not params.user_input:
+        yield LoopStart()
+        yield LoopStopped(Terminal(reason=TransitionReason.AWAITING_USER,
+            message=existing_input['question'], turns=0, results=(), pending_input=existing_input))
+        return
     # Loop budgets are expressed in milliseconds.  Keep that invariant at
     # this public seam as well as in higher-level callers; otherwise a direct
     # LoopParams user silently turns a 4-second budget into ~66 minutes.
@@ -1199,7 +1209,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 for key in ("lastOutputTokens", "lastCacheReadTokens", "lastCacheWriteTokens"):
                     model_usage.pop(key, None)
                 yield ModelUsage(dict(model_usage))
-            if params.session is not None:
+            replaying_approval = bool(approved_calls)
+            if params.session is not None and not replaying_approval:
                 params.session.record_model_request(
                     state.messages,
                     tools=tool_schemas,
@@ -1208,12 +1219,24 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 )
             events: list[ModelTurnEvent] = []
             request_started_at = time.time()
-            with closing(client.stream_turn(
+            if replaying_approval:
+                thinking_blocks = []
+                for call in approved_calls:
+                    events.append(ToolCallArrived(call=ToolCall(id=call['id'], name=call['name'], arguments=call['arguments'])))
+                    for item in call['provider_items']:
+                        if item not in thinking_blocks:
+                            thinking_blocks.append(item)
+                events.append(TurnDone(usage=None, raw_text=None, provider_items=tuple(thinking_blocks)))
+                approved_calls = []
+                client.last_usage = None
+                client.last_reasoning = None
+            with closing((event for event in events) if replaying_approval else client.stream_turn(
                 state.messages,
                 tool_schemas,
                 budget_ms=remaining_ms,
                 cancel_scope=loop_scope.token,
             )) as model_events:
+                events = []
                 for event in model_events:
                     # GUI Stop is a durable request, separate from the token.
                     # Check while streaming so a pure-text final round cannot
@@ -1255,7 +1278,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             # reply is appended further down. Remembering the length lets the
             # next round add only what came after this measurement.
             last_real_prompt_index = len(state.messages)
-            if params.session is not None:
+            if params.session is not None and not replaying_approval:
                 params.session.record_model_response(
                     step=turn_number,
                     outcome=(
@@ -1816,6 +1839,19 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             round_progress = False
             halt_decision: ToolGuardrailDecision | None = None
             pending_input: dict[str, Any] | None = None
+            if replaying_approval and params.session is not None:
+                pending_input = params.session.pending_user_input()
+            permission_waiting = False
+
+            def decisions_for(call: ToolCall):
+                if call.id not in approval_by_id:
+                    return params.permission_decisions
+                from app.agent_runtime.permission_decisions import PermissionDecisions
+                # Only this exact resumed call receives the saved once approval.
+                previous = params.permission_decisions
+                return PermissionDecisions(allowed=getattr(previous, 'allowed', ()),
+                    denied=getattr(previous, 'denied', ()), once=(call.name,),
+                    once_arguments={call.name: approval_by_id[call.id]['arguments']})
 
             def classify_tool(call: ToolCall) -> str:
                 try:
@@ -1828,24 +1864,24 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     return "exclusive"
 
             def execute_scheduled(call: ToolCall) -> ToolResult:
-                return _execute_one(
-                    registry,
-                    call,
-                    cancel_registry,
-                    loop_scope,
-                    params.allowed_effects,
-                    params.precondition_context_factory,
-                    params.hook_manager,
-                    params.permission_mode,
-                    permission_decisions=params.permission_decisions,
-                    interrupt_check=params.interrupt_check,
-                    keepalive=keepalive,
-                    persist_dir=params.tool_result_dir,
-                    source_scope=params.source_scope,
-                    pre_hook_applied=True,
-                )
+                from app.agent_runtime.plan_mode import current_mode
+                from app.agent_runtime.permission_decisions import current_permission_decisions
+                decisions = decisions_for(call)
+                token = current_permission_decisions.set(decisions)
+                try:
+                    return _execute_one(
+                        registry, call, cancel_registry, loop_scope, params.allowed_effects,
+                        params.precondition_context_factory, params.hook_manager,
+                        current_mode(params.session, params.permission_mode),
+                        permission_decisions=decisions, interrupt_check=params.interrupt_check,
+                        keepalive=keepalive, persist_dir=params.tool_result_dir,
+                        source_scope=params.source_scope, pre_hook_applied=True,
+                    )
+                finally:
+                    current_permission_decisions.reset(token)
 
             def block_mutation_with_pending_input(call: ToolCall) -> ToolResult | None:
+                nonlocal permission_waiting
                 try:
                     effect = spec_effect(registry.get(call.name), call.arguments)
                 except KeyError:
@@ -1897,6 +1933,20 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         params.session.pending_inbox("next-step")
                     )
                 if not has_pending:
+                    if params.session is not None and call.argument_error is None:
+                        from app.agent_runtime.plan_mode import current_mode
+                        spec = registry.get(call.name)
+                        if not registry.validate_input(spec, call.arguments):
+                            refusal = _permission_refusal(call=call, arguments=call.arguments, spec=spec,
+                                allowed_effects=params.allowed_effects,
+                                permission_mode=current_mode(params.session, params.permission_mode),
+                                permission_decisions=decisions_for(call), request_input=True)
+                            if refusal is not None:
+                                permission_waiting |= refusal.used_backend == 'permission_request'
+                                return refusal
+                    if permission_waiting:
+                        return ToolResult(tool_call_id=call.id, value='Not executed: an earlier action is waiting for user approval.',
+                            is_error=True, failure_type='not_executed', used_backend=None, latency_ms=0.0)
                     return None
                 return ToolResult(
                     tool_call_id=call.id,
@@ -2015,12 +2065,15 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 yield ToolCallFinished(result=normalized)
                 _beat(f"tool_done name={call.name} ok={int(not normalized.is_error)}")
                 if (
-                    not normalized.is_error
-                    and _tool_suspends_for_user_input(registry, call.name)
+                    (not normalized.is_error and _tool_suspends_for_user_input(registry, call.name))
+                    or (not scheduled.dispatched and normalized.used_backend == 'permission_request')
                 ):
-                    pending_input = _pending_user_input(normalized.value)
-                    if pending_input is not None:
-                        pending_input['requestId'] = call.id
+                    request = _pending_user_input(scheduled.result.value)
+                    if request is not None and normalized.used_backend == 'permission_request' and params.session is not None:
+                        request['requestId'] = call.id
+                        params.session.append('permission/requested', {'requestId': call.id, 'pendingInput': request})
+                    if request is not None and pending_input is None:
+                        pending_input = {**request, 'requestId': call.id}
 
             # Settle every prepared call before stopping, then let Stop take
             # precedence over failure guardrails or a pending input prompt.
@@ -2503,7 +2556,7 @@ def _pending_user_input(value: str) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict) or payload.get("awaitingUserInput") is not True:
         return None
-    if payload.get('questions'):
+    if payload.get('questions') or payload.get('kind') == 'plan' or payload.get('harnessPermission') is True:
         from app.agent_runtime.user_input import normalize_pending_input
         try:
             return normalize_pending_input(payload)
@@ -2542,6 +2595,7 @@ def _permission_refusal(
     allowed_effects: tuple[Effect, ...],
     permission_mode: str,
     permission_decisions: Any,
+    request_input: bool = False,
 ) -> ToolResult | None:
     """Return a refusal for the exact arguments about to be executed."""
     permission_name = str(getattr(spec, "name", "") or call.name)
@@ -2560,6 +2614,11 @@ def _permission_refusal(
             latency_ms=None,
         )
     mode_decision = decide_effect(permission_mode, resolved_effect)
+    if permission_mode == 'plan' and resolved_effect is not Effect.READ:
+        return ToolResult(tool_call_id=call.id,
+            value=f'tool {permission_name!r} is denied in permission mode plan. Plan mode is read-only. Use ExitPlanMode to present the plan for user approval before making changes.',
+            is_error=True, failure_type=FailureType.PERMISSION_DENIED,
+            used_backend=None, latency_ms=None)
     if permission_decisions is not None:
         # Thread-scoped memo (CC toolPermissionDecision): an explicit user
         # deny beats any mode-allow; an allow upgrades an ASK only for
@@ -2577,6 +2636,23 @@ def _permission_refusal(
             mode_decision = PermissionDecision.ALLOW
     if mode_decision is PermissionDecision.ALLOW:
         return None
+    if request_input and mode_decision is PermissionDecision.ASK:
+        from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
+        from app.agent_runtime.permission_modes import _bash_permission_prefix
+        if resolved_effect in GRANTABLE_EFFECTS:
+            prefix = _bash_permission_prefix(permission_name, arguments)
+            payload = {'kind': 'permission', 'tool': permission_name, 'requestId': call.id,
+                'question': f'Allow {permission_name} to execute this action?',
+                'options': ['Allow once', 'Allow for this task', 'Deny'],
+                'action': {'tool': permission_name, 'arguments': dict(arguments)},
+                'actionPreview': (str(arguments['command']) if permission_name == 'Bash' and 'command' in arguments
+                    else json.dumps(dict(arguments), ensure_ascii=False, indent=2)),
+                'awaitingUserInput': True, 'harnessPermission': True}
+            if prefix:
+                payload['prefix'] = prefix
+            return ToolResult(tool_call_id=call.id, value=json.dumps(payload, ensure_ascii=False),
+                is_error=True, failure_type=FailureType.PERMISSION_DENIED,
+                used_backend='permission_request', latency_ms=0.0)
     feedback = PermissionDecisionResult(
         decision=mode_decision,
         mode=PermissionMode(permission_mode),

@@ -45,10 +45,19 @@ def normalize_pending_input(payload: Mapping[str, Any]) -> dict[str, Any]:
         'options': [option['label'] for option in questions[0]['options']]}
     if payload.get('questions'):
         pending['questions'] = questions
+    if payload.get('kind') == 'plan':
+        plan = str(payload.get('plan') or '')
+        if not plan.strip() or len(plan) > 32000:
+            raise ValueError('invalid_plan')
+        pending.update(kind='plan', tool='ExitPlanMode', plan=plan)
     if payload.get('kind') == 'permission' and str(payload.get('tool') or '').strip():
         pending.update(kind='permission', tool=str(payload['tool']).strip()[:64])
         if str(payload.get('prefix') or '').strip():
             pending['prefix'] = str(payload['prefix']).strip()[:160]
+        if payload.get('harnessPermission') is True and isinstance(payload.get('action'), Mapping):
+            pending['action'] = dict(payload['action'])
+            pending['harnessPermission'] = True
+            pending['actionPreview'] = str(payload.get('actionPreview') or '')
     if payload.get('requestId'):
         pending['requestId'] = str(payload['requestId'])
     return pending
@@ -57,7 +66,7 @@ def normalize_pending_input(payload: Mapping[str, Any]) -> dict[str, Any]:
 def normalize_input_response(pending: Mapping[str, Any], response: Any) -> dict[str, Any]:
     if not isinstance(response, Mapping):
         raise ValueError('invalid_input_response')
-    if pending.get('kind') == 'permission':
+    if pending.get('kind') in {'permission', 'plan'}:
         decision = response.get('decision')
         if decision not in {'once', 'grant', 'deny'}:
             raise ValueError('invalid_permission_decision')

@@ -11,6 +11,8 @@ declare global {
     kind?: string;
     tool?: string;
     prefix?: string;
+    plan?: string;
+    actionPreview?: string;
     question?: string;
     questions?: MagicPointerDecisionQuestion[];
     presentation?: 'inline' | 'dock';
@@ -53,7 +55,7 @@ declare global {
     const card = element('section', 'mp-decision-card');
     const inline = request.presentation === 'inline';
     card.dataset.presentation = inline ? 'inline' : 'dock';
-    card.dataset.kind = request.kind === 'permission' ? 'permission' : 'question';
+    card.dataset.kind = request.kind === 'plan' ? 'plan' : request.kind === 'permission' ? 'permission' : 'question';
     card.setAttribute('aria-label', request.kind === 'permission' ? 'Permission request' : 'Question from Magic Pointer');
     card.setAttribute('aria-busy', String(view.busy));
     const button = (label: string, action: () => void, className = '') => {
@@ -68,13 +70,23 @@ declare global {
       paint(host, view);
       view.submit(response);
     };
-    if (request.kind === 'permission') {
+    if (request.kind === 'plan') {
+      card.setAttribute('aria-label', 'Plan approval');
+      card.append(element('div', 'mp-decision-heading', 'Review plan'),
+        element('pre', 'mp-decision-command', request.plan || ''));
+      const actions = element('div', 'mp-decision-actions');
+      for (const [label, decision] of [['Keep planning', 'deny'], ['Approve · manual', 'once'], ['Approve · accept edits', 'grant']] as const) {
+        const action = button(label, () => submit({ decision }), decision === 'grant' ? 'is-primary' : '');
+        action.dataset.decision = decision; actions.append(action);
+      }
+      card.append(actions);
+    } else if (request.kind === 'permission') {
       const head = element('div', 'mp-decision-heading');
       head.append(element('span', 'mp-decision-tool', request.tool || 'Tool'),
         element('span', 'mp-decision-caption', 'Permission needed'));
       const question = element('p', 'mp-decision-question', request.question || `Allow ${request.tool || 'this action'}?`);
       card.append(head, question);
-      if (request.prefix) card.append(element('pre', 'mp-decision-command', request.prefix));
+      if (request.actionPreview || request.prefix) card.append(element('pre', 'mp-decision-command', request.actionPreview || request.prefix));
       const actions = element('div', 'mp-decision-actions');
       const deny = button('Deny', () => submit({ decision: 'deny' }));
       deny.dataset.decision = 'deny';

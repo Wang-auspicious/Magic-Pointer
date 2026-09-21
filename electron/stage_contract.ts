@@ -14,13 +14,33 @@ function recordOf(value: unknown): UnknownRecord {
 function pendingInputFromBridge(value: unknown): UnknownRecord | null {
   const pending = recordOf(value);
   const question = String(pending.question || '').trim().slice(0, 1000);
+  if (pending.kind === 'plan' && pending.plan) {
+    return { kind: 'plan', question, tool: 'ExitPlanMode', plan: String(pending.plan).slice(0, 32000),
+      requestId: String(pending.requestId || ''), options: pending.options };
+  }
   if (pending.kind === 'permission' && String(pending.tool || '').trim()) {
-    return { kind: 'permission', question, tool: String(pending.tool), prefix: String(pending.prefix || '') };
+    return { kind: 'permission', question, tool: String(pending.tool), prefix: String(pending.prefix || ''),
+      requestId: String(pending.requestId || ''), actionPreview: String(pending.actionPreview || '') };
   }
   const options = Array.isArray(pending.options)
     ? pending.options.map(String).map((item) => item.trim().slice(0, 200)).filter(Boolean).slice(0, 4)
     : [];
-  return question && options.length >= 2 ? { question, options } : null;
+  const questions = Array.isArray(pending.questions) ? pending.questions.slice(0, 4).map((value) => {
+    const item = recordOf(value);
+    return {
+      question: String(item.question || '').slice(0, 1000),
+      ...(item.header ? { header: String(item.header).slice(0, 100) } : {}),
+      ...(typeof item.multiSelect === 'boolean' ? { multiSelect: item.multiSelect } : {}),
+      options: (Array.isArray(item.options) ? item.options : []).slice(0, 4).map((value) => {
+        const option = recordOf(value);
+        return { label: String(option.label || '').slice(0, 200),
+          ...(option.description ? { description: String(option.description).slice(0, 1000) } : {}) };
+      }),
+    };
+  }) : undefined;
+  return question && options.length >= 2 ? { question, options,
+    ...(pending.requestId ? { requestId: String(pending.requestId) } : {}),
+    ...(questions ? { questions } : {}) } : null;
 }
 
 function modelUsageFromBridge(value: unknown): UnknownRecord | null {

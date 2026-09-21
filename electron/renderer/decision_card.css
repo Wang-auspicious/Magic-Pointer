@@ -32,6 +32,7 @@
 .mp-decision-question, .mp-decision-hint, .mp-decision-error { margin: 0; }
 .mp-decision-question { font-weight: 500; }
 .mp-decision-command {
+  max-height: 280px;
   padding: 10px 12px;
   margin: 0;
   overflow: auto;

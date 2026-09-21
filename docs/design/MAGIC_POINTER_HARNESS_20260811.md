@@ -868,6 +868,15 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-21：Claude 本地源码对照与 Runtime 语义修复（1.0.50 开发树）
+
+- [x] 直接阅读用户指定的 `claude-code-main/src` 中 Agent、Plan、Todo、effort、interactiveHandler、消息队列、自动压缩及 TaskStop/TaskOutput。该目录为自述 2026-03-31 的非官方快照；记录具体来源与差异，独立实现，不声称当前官方版本或完整同构。对照表：`docs/research/2026-09-21-claude-runtime-source-alignment.md`。
+- [x] Plan 预设落实只读边界；新增 EnterPlanMode/ExitPlanMode 与完整方案批准卡，批准切换手动／接受编辑、拒绝保留 Plan。Todo 与执行批准分离；同批模式切换立即生效，旧 composer 不覆盖已批准模式。模式／effort 经 bridge、store 与 renderer 保存恢复，计划待批时仍可直接输入修改意见。
+- [x] 持久 Runtime 的本地写操作自动生成准确参数审批队列。按原 requestId 回答，批准动作先于下一次模型请求执行；既有操作账本防止重放，新的用户指令取消尚未开始的旧动作。一次批准支持完整 shell 命令，不扩成前缀授权；卡片展示完整动作。Stage 契约补回原 requestId、多题、描述和多选字段。
+- [x] 子 Agent effort 继承父任务，显式覆盖与恢复保留；省略 readonly 时恢复原子任务只读约束；继承父会话／当前派发的持久权限规则，父调用的 once 不外溢。Claude 4.6 Messages 接入原生 effort 与 adaptive thinking，普通工具回合及审批恢复均保留原始 thinking signature；其他 Messages 模型保持提示词档位，不假称原生支持。
+- [x] Fresh 全量 Python **2565 passed / 6 条既有 Pillow 提示 / 259.80s**、Node **278 test files passed**、ESLint／全部 TypeScript／build 通过。实际 Chromium 验证完整动作展示、计划批准、模式恢复及已有问答／草稿／Todo 行为；独立 store 与 Stage 契约验证持久化／传输字段。保持 **1.0.50**，提交 main；不 sync、不安装、不发布，用户参考图片不提交。
+- [ ] 仍有实际差异：同步子 Agent 不具备 Claude run_in_background 的独立生命周期；跨子任务权限交互与完成通知仍需继续处理。确定性协议／Chromium 结果不等于真实云模型长任务或原生应用验收。
+
 ### 2026-09-21：审批、反问、计划与产物交互修复（1.0.50 开发树）
 
 - [x] 按用户新裁决更正 §12.3：只有独立交付物使用 DraftArtifact；移除最终回复自动生成产物，提供显式 Artifact.create/read/update，当前轮创建/修改才呈现产物卡，读取不造新产物，版本冲突保留用户修改。

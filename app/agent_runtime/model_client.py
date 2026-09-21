@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app import ai_client as _ai_client
-from app.agent_runtime.effort import normalize_effort
+from app.agent_runtime.effort import normalize_effort, native_effort_fields
 from app.agent_runtime.context_projection import project_context_messages
 from app.agent_runtime.errors import (
     CONTEXT_OVERFLOW_REASON,
@@ -880,7 +880,7 @@ class AiClientMessagesBackend:
             yield TurnDone(
                 usage=dict(usage) if isinstance(usage, dict) else None,
                 raw_text=None,
-                provider_items=_responses_provider_items(response_payload),
+                provider_items=_provider_items(response_payload, api_mode),
             )
             return
         text = str(parsed.get("text") or "")
@@ -922,7 +922,7 @@ class AiClientMessagesBackend:
         yield TurnDone(
             usage=dict(usage) if isinstance(usage, dict) else None,
             raw_text=text or None,
-            provider_items=_responses_provider_items(response_payload),
+            provider_items=_provider_items(response_payload, api_mode),
         )
 
 
@@ -975,7 +975,8 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
     if message.role is Role.ASSISTANT:
         if message.tool_calls:
             if api_mode == "messages":
-                blocks: list[dict] = []
+                blocks: list[dict] = [dict(item) for item in message.provider_items
+                    if item.get('type') in {'thinking', 'redacted_thinking'}]
                 if message.content:
                     blocks.append({"type": "text", "text": message.content})
                 for call in message.tool_calls:
@@ -1003,6 +1004,13 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
                     for call in message.tool_calls
                 ],
             }
+        if api_mode == 'messages' and message.provider_items:
+            blocks = [dict(item) for item in message.provider_items
+                      if item.get('type') in {'thinking', 'redacted_thinking'}]
+            if message.content:
+                blocks.append({'type': 'text', 'text': message.content})
+            if blocks:
+                return {'role': 'assistant', 'content': blocks}
         return {"role": "assistant", "content": message.content or ""}
     if message.role is Role.TOOL:
         if api_mode == "messages":
@@ -1118,6 +1126,7 @@ def _messages_payload(
             "thinking": {"type": "disabled"},
             "messages": entries,
         }
+        payload.update(native_effort_fields(model, api_mode, effort))
         if system_prompt:
             payload["system"] = (
                 [{
@@ -1208,7 +1217,8 @@ def _responses_input(messages: list[AgentMessage]) -> list[dict[str, Any]]:
                 items.append({"role": "user", "content": [{"type": "input_text", "text": content}]})
             continue
         if message.role is Role.ASSISTANT:
-            items.extend(dict(item) for item in message.provider_items if isinstance(item, dict))
+            items.extend(dict(item) for item in message.provider_items
+                         if isinstance(item, dict) and item.get('type') == 'reasoning')
             if content:
                 items.append({"role": "assistant", "content": content})
             for call in message.tool_calls:
@@ -1226,6 +1236,13 @@ def _responses_input(messages: list[AgentMessage]) -> list[dict[str, Any]]:
                 "output": content,
             })
     return items or [{"role": "user", "content": [{"type": "input_text", "text": "请基于提供的上下文回答。"}]}]
+
+
+def _provider_items(payload: object, api_mode: str) -> tuple[dict[str, Any], ...]:
+    if api_mode == 'messages' and isinstance(payload, dict):
+        return tuple(dict(item) for item in payload.get('content', [])
+                     if isinstance(item, dict) and item.get('type') in {'thinking', 'redacted_thinking'})
+    return _responses_provider_items(payload)
 
 
 def _responses_provider_items(payload: object) -> tuple[dict[str, Any], ...]:
@@ -1702,6 +1719,7 @@ def _parse_messages_sse(
 ) -> Iterator[ModelTurnEvent]:
     """Parse Anthropic Messages SSE frames into the common turn events."""
     text_parts: list[str] = []
+    reasoning_blocks: dict[int, dict[str, Any]] = {}
     saw_reasoning = False
     pending: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
@@ -1748,10 +1766,13 @@ def _parse_messages_sse(
                 text_parts.append(value)
                 yield MessageDelta(value)
             elif block.get("type") == "thinking":
+                reasoning_blocks[index] = dict(block)
                 if block.get("thinking"):
                     value = str(block["thinking"])
                     saw_reasoning = True
                     yield ReasoningDelta(value)
+            elif block.get('type') == 'redacted_thinking':
+                reasoning_blocks[index] = dict(block)
             elif block.get("type") == "tool_use":
                 initial = block.get("input")
                 pending[index] = {
@@ -1778,7 +1799,12 @@ def _parse_messages_sse(
             if delta.get("thinking"):
                 value = str(delta["thinking"])
                 saw_reasoning = True
+                block = reasoning_blocks.setdefault(index, {'type': 'thinking', 'thinking': ''})
+                block['thinking'] = str(block.get('thinking') or '') + value
                 yield ReasoningDelta(value)
+        elif delta.get('type') == 'signature_delta' and index in reasoning_blocks:
+            block = reasoning_blocks[index]
+            block['signature'] = str(block.get('signature') or '') + str(delta.get('signature') or '')
         elif delta.get("type") == "input_json_delta":
             slot = pending.setdefault(
                 index, {"id": "", "name": "", "arguments": ""}
@@ -1810,7 +1836,8 @@ def _parse_messages_sse(
         yield TurnWithheld(reason="max_output_tokens")
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")
-    yield TurnDone(usage=usage or None, raw_text=text or None)
+    yield TurnDone(usage=usage or None, raw_text=text or None,
+                   provider_items=tuple(reasoning_blocks[index] for index in sorted(reasoning_blocks)))
 
 
 def _serialize_messages(messages: list[AgentMessage]) -> str:

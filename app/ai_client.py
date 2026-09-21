@@ -300,6 +300,12 @@ def _without_optional_request_fields(payload: dict) -> dict | None:
         for key, value in payload.items()
         if key not in {"thinking", "reasoning_effort", "reasoning"}
     }
+    if isinstance(stripped.get('output_config'), dict) and 'effort' in stripped['output_config']:
+        output = {key: value for key, value in stripped['output_config'].items() if key != 'effort'}
+        if output:
+            stripped['output_config'] = output
+        else:
+            stripped.pop('output_config')
     return stripped if stripped != payload else None
 
 

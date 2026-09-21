@@ -538,6 +538,10 @@ class _FakeSession:
     def derive_messages(self):
         return []
 
+    def permission_mode(self, fallback):
+        return next((event.data['mode'] for event in reversed(self.events)
+                     if event.type == 'permission/mode'), fallback)
+
     def interrupted_turn_summary(self):
         return None
     def record_plan_updated(self, plan):
@@ -576,6 +580,8 @@ def _install_workspace_boot_stubs(
                 return SimpleNamespace(open_or_create=_open)
             if key == "context_budget":
                 return 64000
+            if key == "model_request_header":
+                return {}
             return SimpleNamespace()  # model_client/compactor/estimator/...
 
     report = SimpleNamespace(ctx=_Ctx(), rows=[

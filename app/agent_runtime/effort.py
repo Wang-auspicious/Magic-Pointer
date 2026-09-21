@@ -57,3 +57,24 @@ def normalize_effort(value: object) -> str:
 
 def effort_instruction(value: object) -> str:
     return _EFFORT_INSTRUCTIONS[normalize_effort(value)]
+
+
+def native_effort_fields(model: str, api_mode: str, value: object | None) -> dict:
+    """Map MP's selection onto a protocol the selected model actually speaks.
+
+    Claude 4.6 capabilities are confirmed by the local reference snapshot.
+    Other Messages models keep the existing semantic prompt fallback.
+    """
+    if value is None:
+        return {}
+    effort = normalize_effort(value)
+    if api_mode == 'messages':
+        name = model.lower().replace('.', '-')
+        opus = 'opus-4-6' in name
+        if not opus and 'sonnet-4-6' not in name:
+            return {}
+        applied = 'high' if effort == 'xhigh' or (effort == 'max' and not opus) else effort
+        return {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': applied}}
+    if api_mode == 'responses':
+        return {'reasoning': {'effort': effort}}
+    return {'reasoning_effort': effort}

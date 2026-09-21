@@ -7,6 +7,42 @@ from app.agent_runtime.tool_registry import ToolRegistry
 from app.agent_runtime.types import Terminal, TransitionReason
 
 
+def test_delegate_inherits_effort_and_allows_explicit_override(monkeypatch, tmp_path):
+    from app.fabric import engine as engine_module
+    captured = []
+
+    class Provider:
+        def create_client(self, **kwargs):
+            captured.append(kwargs)
+            return object()
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", lambda *args, **kwargs: Terminal(
+        reason=TransitionReason.COMPLETED, message="done", turns=1, results=()))
+    registry = ToolRegistry()
+    register_delegate_tool(registry, llm_provider=Provider(), workspace_root=tmp_path,
+                           effort="low")
+    assert not registry.execute_tool("Agent", {"task": "inspect", "readonly": True}).is_error
+    assert captured[-1]["effort"] == "low"
+    assert not registry.execute_tool("Agent", {"task": "inspect", "readonly": True, "effort": "xhigh"}).is_error
+    assert captured[-1]["effort"] == "xhigh"
+
+
+def test_resume_inherits_readonly_and_remembers_effort_override(monkeypatch, tmp_path):
+    from app.fabric import engine as engine_module
+    captured = []
+    monkeypatch.setattr(engine_module, 'run_agent_turn', lambda *args, **kwargs: Terminal(
+        reason=TransitionReason.COMPLETED, message='done', turns=1, results=()))
+    provider = SimpleNamespace(create_client=lambda **kwargs: captured.append(kwargs) or object())
+    registry = ToolRegistry()
+    register_delegate_tool(registry, llm_provider=provider, workspace_root=tmp_path,
+        effort='low', id_factory=lambda: 'remember-child')
+    assert not registry.execute_tool('Agent', {'task': 'inspect', 'readonly': True}).is_error
+    assert not registry.execute_tool('Agent', {'task': 'continue', 'resume_id': 'remember-child', 'effort': 'max'}).is_error
+    assert captured[-1]['effort'] == 'max'
+    assert not registry.execute_tool('Agent', {'task': 'continue again', 'resume_id': 'remember-child'}).is_error
+    assert captured[-1]['effort'] == 'max'
+
+
 def test_delegate_emits_truthful_child_progress(monkeypatch, tmp_path) -> None:
     from app.fabric import engine as engine_module
 

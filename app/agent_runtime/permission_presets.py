@@ -64,7 +64,7 @@ PRESETS: dict[str, PermissionPresetSpec] = {
         sandbox="workspace-write",
         approval="ask",
         name="计划模式",
-        description="先列出计划再逐步执行；进度实时显示，做完一项划掉一项。",
+        description="只读研究并提出计划；用户批准退出计划模式后才能修改。",
     ),
     "read-only": PermissionPresetSpec(
         sandbox="read-only",
@@ -87,15 +87,13 @@ PRESETS: dict[str, PermissionPresetSpec] = {
     ),
 }
 
-# 预设 → MP 效果表档位。plan 落 PLAN（读直行、写问、destructive/purchase 拒）；
+# 预设 → MP 效果表档位。plan 落 PLAN；Runtime 在 ExitPlanMode 批准前阻断写入。
 # read-only 落 SAFE（读直行、其余全问）；
 # workspace-write 落 DEFAULT（可逆写在环内、不可逆问）；danger-full-access
 # 落 BYPASS（购买仍问——那是 MP 自己的红线，不在 DSH 语义内）。
 _PRESET_MODES: dict[str, PermissionMode] = {
     "auto": PermissionMode.ACCEPT_REVERSIBLE,
-    # 计划模式的"先计划后执行"是提示契约（todo_write 列步骤→立即执行→逐步更新），
-    # 不是效果门——Codex update_plan 就是这么做的。
-    "plan": PermissionMode.DEFAULT,
+    "plan": PermissionMode.PLAN,
     "read-only": PermissionMode.SAFE,
     "workspace-write": PermissionMode.DEFAULT,
     "danger-full-access": PermissionMode.BYPASS,

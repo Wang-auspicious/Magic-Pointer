@@ -120,6 +120,8 @@ const tooled = store.appendTurn({
   taskContext: {
     taskId: 'agent-studio-abc123',
     referenceRevision: 2,
+    permissionMode: 'plan',
+    effort: 'max',
     sources: [{ sourceId: 'source:attachment:D:/work/brief.pptx', title: 'brief.pptx' }],
     references: [{ referenceId: 'ref-b', sourceId: 'source:attachment:D:/work/brief.pptx', role: 'target' }],
   },
@@ -142,6 +144,8 @@ assert.strictEqual(tooled.hasPendingWork, true, 'unfinished work must be visible
 assert.strictEqual(tooled.taskContext.referenceRevision, 2,
   'Studio must retain the latest task-material projection on the conversation');
 const tooledAgain = createConversationStore({ baseDir: dir, now: () => clock }).get(tooled.id);
+assert.equal(tooledAgain.taskContext.permissionMode, 'plan', 'persistence dropped the actual runtime mode');
+assert.equal(tooledAgain.taskContext.effort, 'max', 'persistence dropped the task effort');
 assert.strictEqual(tooledAgain.turns[0].events.length, 2, '重开 store 后工具链事件仍在');
 assert.strictEqual(tooledAgain.turns[0].modelUsage.outputTokens, 30, '重开 store 后 token usage 仍在');
 assert.strictEqual(tooledAgain.turns[0].modelId, 'mimo-v2.5', '重开 store 后模型 id 仍在');

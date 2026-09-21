@@ -2397,6 +2397,7 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
       requestId: pending.requestId || pendingToolRequestId(last),
       tool: String(pending.tool),
       prefix: String(pending.prefix || '').trim() || undefined,
+      actionPreview: pending.actionPreview,
       question: String(pending.question || '').trim() || undefined,
       options: options.length ? options : undefined,
     };
@@ -5434,6 +5435,8 @@ function normalizedTaskContext(value: unknown): MagicPointerTaskContext | null {
       sources: sources.filter((source) => source.taskId === taskId),
       references,
       referenceRevision: Math.max(0, Number(raw.referenceRevision) || 0),
+      permissionMode: typeof raw.permissionMode === 'string' ? raw.permissionMode : undefined,
+      effort: typeof raw.effort === 'string' ? raw.effort : undefined,
     };
   } catch {
     return null;
@@ -5442,6 +5445,14 @@ function normalizedTaskContext(value: unknown): MagicPointerTaskContext | null {
 
 function setActiveTaskContext(value: unknown, resetSelection = false) {
   const next = normalizedTaskContext(value);
+  if (next?.permissionMode && (resetSelection || next.permissionMode !== activeTaskContext?.permissionMode)) {
+    const preset = ({ plan: 'plan', safe: 'read-only', default: 'workspace-write',
+      accept_reversible: 'auto', bypass: 'danger-full-access' } as Record<string, string>)[next.permissionMode];
+    if (preset) { composerPreset = preset; renderPermissionChip(); }
+  }
+  if (next?.effort && (resetSelection || next.effort !== activeTaskContext?.effort)) {
+    composerEffort = effortLevels.normalizeEffort(next.effort); renderEffortChip();
+  }
   if (resetSelection || (activeTaskContext?.taskId && activeTaskContext.taskId !== next?.taskId)) {
     composerSelectedSourceIds.clear();
     inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, { type: 'clear-content' });
@@ -5829,7 +5840,7 @@ function renderPlanCard() {
 }
 
 /* Decisions respond to the suspended tool call. They never submit the composer. */
-let pendingPermissionAsk: { requestId?: string; tool: string; prefix?: string; question?: string; options?: string[] } | null = null;
+let pendingPermissionAsk: { requestId?: string; tool: string; prefix?: string; actionPreview?: string; question?: string; options?: string[] } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
 let pendingAskInput: NonNullable<MagicPointerTurn['pendingInput']> | null = null;
 const pendingInputHost = document.getElementById('composer-permission-ask');
@@ -5848,7 +5859,7 @@ function renderPermissionAsk() {
   DecisionCard.render(host, {
     ...input, key: `${conversationId}:${requestId}`,
     presentation: 'inline',
-    kind: pendingPermissionAsk ? 'permission' : 'ask',
+    kind: pendingPermissionAsk ? 'permission' : pendingAskInput?.kind || 'ask',
     questions: pendingAskInput?.questions || (pendingAskInput ? [{
       question: pendingAskInput.question || '需要你的决定',
       options: (pendingAskInput.options || []).map(label => ({ label })),

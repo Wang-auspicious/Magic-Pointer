@@ -3,9 +3,9 @@
 CC gates every tool call through a permission mode (default / acceptEdits /
 plan / bypassPermissions) plus per-tool permission rules. The loop already
 enforces ``allowed_effects``; this module adds the mode layer: each mode maps
-an effect class to allow / ask / deny, where "ask" in the loop means the
-model is told to produce a confirmation proposal instead (the UI confirm
-card is harness-owned, the model can never self-confirm).
+an effect class to allow / ask / deny. Durable local writes enter the
+harness-owned approval queue; external effects retain their action-proposal
+contracts. The model can never self-confirm.
 """
 
 from __future__ import annotations

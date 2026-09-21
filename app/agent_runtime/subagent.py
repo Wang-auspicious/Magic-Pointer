@@ -45,6 +45,7 @@ def register_delegate_tool(
     llm_provider: Any,
     workspace_root: Path | str,
     permission_mode: str = "bypass",
+    effort: str = "high",
     max_tool_calls: int = 60,
     max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     subagent_event_sink: Callable[[dict[str, Any]], None] | None = None,
@@ -57,6 +58,8 @@ def register_delegate_tool(
     from app.fabric.engine import run_agent_turn
 
     root = Path(workspace_root)
+    from app.agent_runtime.effort import EFFORT_LEVELS, normalize_effort
+    inherited_effort = normalize_effort(effort)
 
     def emit(payload: dict[str, Any]) -> None:
         if subagent_event_sink is None:
@@ -85,7 +88,7 @@ def register_delegate_tool(
                 text = str(value)
         return text if len(text) <= limit else f"{text[:limit]}…"
 
-    def delegate_task(task: str, context: str = "", readonly: bool = False, resume_id: str = "", scope: Any = None, **_: Any) -> str:
+    def delegate_task(task: str, context: str = "", readonly: bool | None = None, resume_id: str = "", effort: str | None = None, scope: Any = None, **_: Any) -> str:
         prompt = str(task or "").strip()
         if not prompt:
             raise ValueError("task is required")
@@ -101,18 +104,32 @@ def register_delegate_tool(
         from app.governance import BudgetPolicy, Stage, TimeoutAction
 
         parent = parent_session_getter() if parent_session_getter else None
+        from app.agent_runtime.plan_mode import current_mode
+        child_mode = current_mode(parent, permission_mode)
+        from app.agent_runtime.permission_decisions import PermissionDecisions, current_permission_decisions
+        child_permissions = PermissionDecisions.inherited(parent, current_permission_decisions.get())
+        requested_readonly = readonly
+        readonly = bool(readonly) or child_mode == 'plan'
         store = FileSessionStore(parent.path.parent if parent else root / ".mp" / "agent-sessions")
         child_id = str(resume_id or (id_factory or (lambda: uuid.uuid4().hex[:12]))())
+        child_effort = normalize_effort(effort) if effort is not None else inherited_effort
         if resume_id:
             child_session = store.resume(child_id, repair=True)
             if child_session.header.parent_session_id != (parent.id if parent else None):
                 raise ValueError("resume_id does not belong to this parent task")
             saved = next((e.data for e in child_session.events if e.type == "subagent/configured"), {})
+            if effort is None:
+                child_effort = normalize_effort(next((event.data['effort'] for event in reversed(child_session.events)
+                    if event.type == 'runtime/effort'), saved.get('effort') or inherited_effort))
+            else:
+                child_session.append('runtime/effort', {'effort': child_effort})
+            if requested_readonly is None:
+                readonly = readonly or bool(saved.get('readonly'))
             if bool(saved.get("readonly")) and not readonly:
                 raise ValueError("a readonly child must resume with readonly=true")
         else:
             child_session = store.create(child_id, parent_session_id=parent.id if parent else None)
-            child_session.append("subagent/configured", {"task": prompt, "readonly": bool(readonly)})
+            child_session.append("subagent/configured", {"task": prompt, "readonly": bool(readonly), "effort": child_effort})
             if parent:
                 parent.append("subagent/created", {"childSessionId": child_id, "task": prompt, "readonly": bool(readonly)})
 
@@ -257,7 +274,7 @@ def register_delegate_tool(
         child_client = llm_provider.create_client(
             system_prompt=_SUBAGENT_SYSTEM_PROMPT,
             max_tokens=max_tokens,
-            effort="high",
+            effort=child_effort,
         )
         publish("running")
         try:
@@ -266,7 +283,8 @@ def register_delegate_tool(
                 registry=child_registry,
                 client=child_client,
                 allowed_effects=child_effects,
-                permission_mode=permission_mode,
+                permission_mode=child_mode,
+                permission_decisions=child_permissions,
                 # Two different quantities, kept apart on purpose. The child's
                 # visible tool surface is the same ceiling both production
                 # bridges use; its *work* budget is the turn fuse below.
@@ -322,6 +340,7 @@ def register_delegate_tool(
                 "task": {"type": "string", "description": "自包含的任务描述"},
                 "context": {"type": "string", "description": "可选背景（已知线索、文件路径等）"},
                 "resume_id": {"type": "string", "description": "继续未完成子任务的持久 session id；沿用其历史和检查点"},
+                "effort": {"type": "string", "enum": list(EFFORT_LEVELS), "description": "默认继承父任务；恢复时沿用子任务档位，可显式覆盖"},
                 "readonly": {
                     "type": "boolean",
                     "description": "true=只读子代理（无写工具），可并行",

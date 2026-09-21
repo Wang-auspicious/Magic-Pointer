@@ -685,8 +685,12 @@ def _task_context_payload(session: Any) -> dict[str, Any]:
         task_sources,
     )
 
+    from app.agent_runtime.plan_mode import current_mode
     return {
         "taskId": session.id,
+        "permissionMode": current_mode(session, 'default'),
+        "effort": next((event.data['effort'] for event in reversed(session.events)
+                        if event.type == 'runtime/effort'), 'high'),
         "sources": [source.to_dict() for source in task_sources(session.events)],
         "references": [
             reference.to_dict() for reference in task_references(session.events)
@@ -986,6 +990,11 @@ def answer_conversation(
         emit_session_ready(conversation_clock, resolved_session_id)
         agent_session = (sessions.resume(resolved_session_id, repair=False) if input_response is not None
             else sessions.open_or_create(resolved_session_id, repair=True))
+        from app.agent_runtime.plan_mode import select_mode, current_mode
+        select_mode(agent_session, mode.value)
+        if next((event.data.get('effort') for event in reversed(agent_session.events)
+                 if event.type == 'runtime/effort'), None) != normalize_effort(effort):
+            agent_session.append('runtime/effort', {'effort': normalize_effort(effort)})
         accepted_event = None
         if input_response is not None:
             input_request_id = str(input_response.get('requestId') or '')
@@ -1001,6 +1010,11 @@ def answer_conversation(
             input_answer = {'requestId': input_request_id, 'message': accepted_event.data['message']}
             conversation_clock.mark_blob('user_input_accepted', base64.b64encode(
                 json.dumps(input_answer, ensure_ascii=False).encode('utf-8')).decode('ascii'))
+        mode = PermissionMode(current_mode(agent_session, mode.value))
+        if request_header is not None:
+            request_header = {**request_header, 'permissionMode': mode.value}
+        permission_preset = {'plan': 'plan', 'safe': 'read-only', 'default': 'workspace-write',
+            'accept_reversible': 'auto', 'bypass': 'danger-full-access'}[mode.value]
         # Permission choices survive a desktop crash between session acceptance
         # and the GUI projection. A once grant belongs only to this continuation.
         from app.agent_runtime.user_input import permission_rule
@@ -1014,10 +1028,12 @@ def answer_conversation(
                 durable_grants.add(rule)
                 durable_denials.discard(rule)
             elif decision == 'deny':
+                if event.data['pendingInput'].get('harnessPermission'):
+                    continue  # Reject this call; do not invent a persistent deny rule.
                 durable_denials.add(rule)
                 durable_grants.discard(rule)
         permission_grants, permission_denials = tuple(durable_grants), tuple(durable_denials)
-        if accepted_event and accepted_event.data['response'].get('decision') == 'once':
+        if accepted_event and accepted_event.data['pendingInput'].get('kind') == 'permission' and not accepted_event.data['pendingInput'].get('harnessPermission') and accepted_event.data['response'].get('decision') == 'once':
             rule = permission_rule(accepted_event.data['pendingInput'])
             permission_grant_once = (*permission_grant_once, rule)
             action = accepted_event.data['pendingInput'].get('action')
@@ -1192,7 +1208,10 @@ def answer_conversation(
             hook_manager=ctx.get("hooks"),
             session=agent_session,
             request_header=request_header,
-            evidence_input="\n\n".join(x for x in (continuation_block, evidence) if x) or None,
+            evidence_input="\n\n".join(x for x in (continuation_block, evidence,
+                f'[Current harness controls, superseding older mode/effort descriptions: permission mode={mode.value}; reasoning effort={normalize_effort(effort)}. '
+                + ('Read and design only; call ExitPlanMode for approval before modifications.' if mode.value == 'plan'
+                   else 'Planning approval is not required unless you enter plan mode; execute within current tool permissions.') + ']') if x),
             budgets=CONVERSATION_BUDGETS,
             event_sink=activity_sink,
             interaction_metadata={

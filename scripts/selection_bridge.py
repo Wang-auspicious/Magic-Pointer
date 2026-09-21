@@ -3061,6 +3061,8 @@ def _loop_router(
         try:
             agent_session = sessions.open_or_create(agent_session_id, repair=True)
             _source_session_cell["value"] = agent_session
+            from app.agent_runtime.plan_mode import select_mode
+            permission_mode = select_mode(agent_session, permission_mode)
             persisted_reference_revision = _persist_initial_task_context(
                 agent_session,
                 initial_sources,

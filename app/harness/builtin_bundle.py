@@ -153,6 +153,8 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
     register_todo_write(registry, sink=sink)
     session_getter = config.get("session_getter")
     if callable(session_getter):
+        from app.agent_runtime.plan_mode import register_plan_tools
+        register_plan_tools(registry, session_getter=session_getter)
         from app.artifacts.tools import register_artifact_tools
 
         register_artifact_tools(registry, session_getter=session_getter)
@@ -532,6 +534,7 @@ def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
         llm_provider=fork.get("llm"),
         workspace_root=Path(raw_root),
         permission_mode=str(config.get("permission_mode") or "default"),
+        effort=normalize_effort(config.get("effort")),
         subagent_event_sink=config.get("subagent_event_sink"),
         parent_session_getter=config.get("session_getter"),
     )
@@ -1269,6 +1272,7 @@ def boot_loop_context(
             {
                 "workspace_root": workspace_root,
                 "permission_mode": str(runtime.get("permission_mode") or "default"),
+                "effort": normalize_effort(runtime.get("effort")),
                 "subagent_event_sink": runtime.get("subagent_event_sink"),
                 "session_getter": runtime.get("source_session_getter"),
             },

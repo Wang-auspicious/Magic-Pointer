@@ -23,7 +23,7 @@ app.whenReady().then(async () => {
       show('chat');
       document.getElementById('studio-home').hidden = true;
       const original = { id: 'decision-task', name: 'Agent workflow checks', title: 'Agent workflow checks', agentSessionId: 'agent-decision', turns: [{ at: '2026-09-21T04:00:00.000Z', question: 'Run the checks', answer: '需要批准',
-        pendingInput: { requestId: 'ask-permission', kind: 'permission', tool: 'Bash', prefix: 'npm test', question: 'Allow running the project tests?', options: ['Allow once', 'Always allow', 'Deny'] } }] };
+        pendingInput: { requestId: 'ask-permission', kind: 'permission', tool: 'Bash', prefix: 'npm test', actionPreview: 'npm test && npm run build', question: 'Allow running the project tests?', options: ['Allow once', 'Always allow', 'Deny'] } }] };
       let stored = structuredClone(original);
       Data.conversation = async id => id === stored.id ? structuredClone(stored) : null;
       Data.recovery = async () => ({ ok: true, pendingRecovery: [] });
@@ -58,6 +58,7 @@ app.whenReady().then(async () => {
       textarea.value = 'Keep my unsent follow-up';
       composerAttachments = [{ path: 'draft.md', name: 'draft.md' }];
       const host = document.getElementById('composer-permission-ask');
+      check(host.textContent.includes('npm test && npm run build'), 'approval hides the full action behind a prefix');
       check(host.parentElement?.id === 'stream', 'pending input must be in the scrollable conversation, not a permanent second composer');
       check(document.getElementById('stream').getBoundingClientRect().height > 550, 'pending input squeezed away the conversation viewport');
       const once = [...host.querySelectorAll('button')].find(button => button.textContent.includes('Allow once'));
@@ -115,6 +116,17 @@ app.whenReady().then(async () => {
       resolveResponse({ ok: false, accepted: true, conversationId: stored.id, error: 'provider unavailable' }); await wait(); await wait();
       check(host.hidden, 'a model failure resurrected an already accepted question');
       check(textarea.value === 'Keep my unsent follow-up' && composerAttachments.length === 1, 'question submission changed composer content');
+      stored.taskContext = { taskId: 'agent-decision', sources: [], references: [], referenceRevision: 0, permissionMode: 'plan', effort: 'low' };
+      stored.turns[0].pendingInput = { requestId: 'exit-plan', kind: 'plan', tool: 'ExitPlanMode', plan: 'Edit the parser.\\nRun the regression test.', question: 'Approve?', options: ['Manual', 'Accept edits', 'Keep planning'] };
+      await openConversation(stored.id);
+      check(composerPreset === 'plan' && composerEffort === 'low', 'reopen did not restore task runtime controls');
+      check(host.querySelector('[data-kind="plan"]') && host.textContent.includes('Edit the parser.'), 'plan content lost before approval');
+      host.querySelector('[data-decision="grant"]').click(); await wait();
+      check(responses.at(-1).requestId === 'exit-plan' && responses.at(-1).response.decision === 'grant', 'plan approval not bound to ExitPlanMode request');
+      stored.turns[0].pendingInput = undefined;
+      stored.taskContext.permissionMode = 'default';
+      resolveResponse({ ok: true, accepted: true, conversationId: stored.id }); await wait(); await wait();
+      check(host.hidden && composerPreset === 'workspace-write', 'accepted plan did not clear and restore execution mode');
       const steps = Array.from({ length: 10 }, (_, index) => ({ content: 'Step ' + (index + 1), status: index < 4 ? 'completed' : index === 4 ? 'in_progress' : 'pending' }));
       stored.turns[0].trajectory = [{ kind: 'tool', callId: 'plan-call', name: 'Todo', state: 'done', text: JSON.stringify({ todos: steps }), result: JSON.stringify({ plan: steps }) }];
       await openConversation(stored.id); setInspector(true, 'tasks');

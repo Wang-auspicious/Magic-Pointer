@@ -68,6 +68,8 @@ export interface TurnEvidence {
 }
 
 export interface TurnPendingInput {
+  actionPreview?: string;
+  plan?: string;
   requestId?: string;
   questions?: Array<{ question: string; header?: string; multiSelect?: boolean; options: Array<{ label: string; description?: string }> }>;
   question?: string;
@@ -754,8 +756,10 @@ function createConversationStore(
         })) : [],
       })) } : {}),
       kind: kind || undefined,
+      ...(kind === 'plan' ? { plan: String(raw.plan || '').slice(0, 32000) } : {}),
       tool: String(raw.tool ?? '').trim() || undefined,
       prefix: String(raw.prefix ?? '').trim().slice(0, 160) || undefined,
+      actionPreview: typeof raw.actionPreview === 'string' ? raw.actionPreview : undefined,
     };
   }
 
@@ -1033,6 +1037,8 @@ function createConversationStore(
     return {
       taskId,
       referenceRevision: revision,
+      ...(typeof data.permissionMode === 'string' ? { permissionMode: data.permissionMode } : {}),
+      ...(typeof data.effort === 'string' ? { effort: data.effort } : {}),
       sources: Array.isArray(data.sources) ? structuredClone(data.sources) : [],
       references: Array.isArray(data.references) ? structuredClone(data.references) : [],
     };
