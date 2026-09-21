@@ -163,36 +163,10 @@ def _completed_result(
 
 
 def _latest_turn_artifact_summaries(session: Any) -> list[dict[str, Any]]:
-    """Project only drafts created by the most recent turn for Studio's index."""
-    from app.artifacts.projection import project_artifacts
+    """Project only drafts created or revised this turn for Studio's index."""
+    from app.artifacts.projection import latest_turn_artifact_summaries
 
-    events = session.events
-    turn_start_seq = max(
-        (
-            int(event.seq)
-            for event in events
-            if str(event.type) == "turn/start"
-        ),
-        default=-1,
-    )
-    summaries: list[dict[str, Any]] = []
-    for artifact in project_artifacts(events):
-        created_seq = artifact.history[0].seq if artifact.history else -1
-        if created_seq <= turn_start_seq:
-            continue
-        summary = artifact.content.strip().replace("\r", " ").replace("\n", " ")[:240]
-        name = next(
-            (line.strip() for line in artifact.content.splitlines() if line.strip()),
-            "Draft",
-        )[:120]
-        summaries.append({
-            "artifactId": artifact.artifact_id,
-            "revision": artifact.revision,
-            "kind": artifact.kind,
-            "name": name,
-            "summary": summary,
-        })
-    return summaries
+    return latest_turn_artifact_summaries(session.events)
 
 
 def _strip_options_tail(result: dict[str, Any]) -> dict[str, Any]:
@@ -559,7 +533,7 @@ def _tool_names(value: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _build_permission_decisions(grants, denials, once, *, registry=None):
+def _build_permission_decisions(grants, denials, once, *, registry=None, once_arguments=None):
     """Thread memo normalized to tools that exist on this runtime surface."""
     from app.agent_runtime.permission_decisions import PermissionDecisions
 
@@ -587,11 +561,12 @@ def _build_permission_decisions(grants, denials, once, *, registry=None):
             normalized.append(name)
         return tuple(dict.fromkeys(normalized))
 
-    allowed = canonical(tuple(grants or ()) + tuple(once or ()))
+    allowed = canonical(grants)
     denied = canonical(denials)
-    if not allowed and not denied:
+    once_rules = canonical(once)
+    if not allowed and not denied and not once_rules:
         return None
-    return PermissionDecisions(allowed=allowed, denied=denied)
+    return PermissionDecisions(allowed=allowed, denied=denied, once=once_rules, once_arguments=once_arguments or {})
 
 
 def _effect_ceiling(permission_mode: str):
@@ -746,6 +721,7 @@ def answer_conversation(
     permission_grant_once: Sequence[str] | tuple = (),
     attachments: Sequence[str] | tuple = (),
     task_input: Mapping[str, Any] | None = None,
+    input_response: Mapping[str, Any] | None = None,
     figma_runtime_connections: Sequence[Any] | tuple = (),
 ) -> dict[str, Any]:
     from app.agent_runtime.permission_modes import PermissionMode
@@ -756,7 +732,7 @@ def answer_conversation(
 
     conversation_clock = clock or PhaseClock("conversation")
     prompt = str(question or "").strip()
-    if not prompt:
+    if not prompt and input_response is None:
         return {"ok": False, "error": "问题不能为空。"}
     if len(prompt) > MAX_QUESTION_CHARS:
         return {"ok": False, "error": f"问题最多 {MAX_QUESTION_CHARS} 字。"}
@@ -1002,10 +978,51 @@ def answer_conversation(
         )
     agent_session = None
     activity_sink = None
+    input_accepted = False
+    input_answer = None
+    once_arguments = {}
     try:
         # 渲染层由此拿到停止/插话要指向的 durable session（Studio stop/steer）。
         emit_session_ready(conversation_clock, resolved_session_id)
-        agent_session = sessions.open_or_create(resolved_session_id, repair=True)
+        agent_session = (sessions.resume(resolved_session_id, repair=False) if input_response is not None
+            else sessions.open_or_create(resolved_session_id, repair=True))
+        accepted_event = None
+        if input_response is not None:
+            input_request_id = str(input_response.get('requestId') or '')
+            if any(event.type == 'user_input/answered' and event.data.get('requestId') == input_request_id
+                   for event in agent_session.events):
+                return {'ok': True, 'accepted': True, 'alreadyAccepted': True,
+                    'agentSessionId': resolved_session_id}
+            try:
+                accepted_event = agent_session.answer_user_input(input_request_id, input_response.get('response'))
+            except (TypeError, ValueError, RuntimeError) as exc:
+                return {'ok': False, 'accepted': False, 'error': str(exc), 'agentSessionId': resolved_session_id}
+            input_accepted = True
+            input_answer = {'requestId': input_request_id, 'message': accepted_event.data['message']}
+            conversation_clock.mark_blob('user_input_accepted', base64.b64encode(
+                json.dumps(input_answer, ensure_ascii=False).encode('utf-8')).decode('ascii'))
+        # Permission choices survive a desktop crash between session acceptance
+        # and the GUI projection. A once grant belongs only to this continuation.
+        from app.agent_runtime.user_input import permission_rule
+        durable_grants, durable_denials = set(permission_grants), set(permission_denials)
+        for event in agent_session.events:
+            if event.type != 'user_input/answered' or event.data['pendingInput'].get('kind') != 'permission':
+                continue
+            rule = permission_rule(event.data['pendingInput'])
+            decision = event.data['response']['decision']
+            if decision == 'grant':
+                durable_grants.add(rule)
+                durable_denials.discard(rule)
+            elif decision == 'deny':
+                durable_denials.add(rule)
+                durable_grants.discard(rule)
+        permission_grants, permission_denials = tuple(durable_grants), tuple(durable_denials)
+        if accepted_event and accepted_event.data['response'].get('decision') == 'once':
+            rule = permission_rule(accepted_event.data['pendingInput'])
+            permission_grant_once = (*permission_grant_once, rule)
+            action = accepted_event.data['pendingInput'].get('action')
+            if action is not None:
+                once_arguments[rule] = action['arguments']
         from app.context_pack.source_store import register_source, task_sources
 
         attached_sources = _attachment_sources(resolved_session_id, attachments)
@@ -1194,6 +1211,7 @@ def answer_conversation(
                 permission_denials,
                 permission_grant_once,
                 registry=registry,
+                once_arguments=once_arguments,
             ),
             # 超大工具结果全文落盘 <workspace>/.mp/tool-results（与 .mp/backups
             # 并列），模型拿预览+绝对路径，可用 read_file 分页回读。
@@ -1225,6 +1243,9 @@ def answer_conversation(
             result["runtimeTurn"] = (None if agent_session.open_turn is not None else
                 next((event.data.get("turn") for event in reversed(agent_session.events)
                       if event.type == "turn/end"), None))
+        if input_response is not None:
+            result['accepted'] = input_accepted
+            result['inputAnswer'] = input_answer
         return result
     finally:
         # 这一轮结束了，下一轮没有光标就不该继承这一条通道。
@@ -1271,6 +1292,9 @@ def answer_conversation(
         interaction_ledger=interaction_ledger,
     )
     result["answer"] = answer
+    if input_response is not None:
+        result['accepted'] = input_accepted
+        result['inputAnswer'] = input_answer
     result["artifacts"] = _latest_turn_artifact_summaries(agent_session)
     result["taskContext"] = _task_context_payload(agent_session)
     result["runtimeTurn"] = (None if agent_session.open_turn is not None else
@@ -1354,6 +1378,7 @@ def main() -> int:
                 if isinstance(payload.get("taskInput"), dict)
                 else None
             ),
+            input_response=payload.get('inputResponse') if isinstance(payload.get('inputResponse'), dict) else None,
             figma_runtime_connections=tuple(
                 payload.get("_figmaRuntimeConnections") or []
             ) if isinstance(payload.get("_figmaRuntimeConnections"), list) else (),

@@ -182,7 +182,7 @@ from app.agent_runtime.types import (
     TurnState,
     with_transition,
 )
-from app.artifacts.projection import project_artifacts
+from app.artifacts.projection import latest_turn_artifacts
 from app.evidence.contract import Evidence, EvidenceStatus
 from app.receipts.projection import compose_receipt
 from app.run_kernel import RecoveryPolicy, project_operations
@@ -1590,8 +1590,6 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     )
                     turn_number += 1
                     continue
-                if params.session is not None and str(text or "").strip():
-                    params.session.record_artifact_generated(str(text))
                 # A provider may answer finish_reason=stop with no text and no
                 # tool calls: `_parse_sse` emits no withhold for that, so
                 # nothing upstream classified it, the loop appended nothing,
@@ -2021,6 +2019,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     and _tool_suspends_for_user_input(registry, call.name)
                 ):
                     pending_input = _pending_user_input(normalized.value)
+                    if pending_input is not None:
+                        pending_input['requestId'] = call.id
 
             # Settle every prepared call before stopping, then let Stop take
             # precedence over failure guardrails or a pending input prompt.
@@ -2207,7 +2207,7 @@ def _first_messages(params: LoopParams) -> list[AgentMessage]:
             name=None,
             origin=ORIGIN_INSTRUCTION,
         )
-    ]
+    ] if params.user_input else []
     if params.evidence_input:
         messages.append(
             AgentMessage(
@@ -2503,6 +2503,12 @@ def _pending_user_input(value: str) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict) or payload.get("awaitingUserInput") is not True:
         return None
+    if payload.get('questions'):
+        from app.agent_runtime.user_input import normalize_pending_input
+        try:
+            return normalize_pending_input(payload)
+        except ValueError:
+            return None
     question = str(payload.get("question") or "").strip()[:1000]
     raw_options = payload.get("options")
     if not question or not isinstance(raw_options, list):
@@ -2560,11 +2566,11 @@ def _permission_refusal(
         # grantable effects — dangerous classes keep asking per-mode.
         from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
 
-        memo = permission_decisions.lookup(permission_name)
+        memo = permission_decisions.lookup(permission_name, arguments)
         if memo == "deny":
             mode_decision = PermissionDecision.DENY
         elif (
-            permission_decisions.allows_call(permission_name, arguments)
+            permission_decisions.allows_call(permission_name, arguments, call.id)
             and mode_decision is PermissionDecision.ASK
             and resolved_effect in GRANTABLE_EFFECTS
         ):
@@ -3064,7 +3070,7 @@ def _record_loop_receipt(
     terminal: Terminal,
     results: Sequence[ToolResult],
 ) -> None:
-    artifacts = project_artifacts(session.events)
+    artifacts = latest_turn_artifacts(session.events)
     used_backend = "loop"
     for item in reversed(tuple(results or ())):
         backend = getattr(item, "used_backend", None)

@@ -183,7 +183,13 @@ def test_empty_content_is_not_a_draft(tmp_path: Path) -> None:
     assert project_artifacts(session.events) == ()
 
 
-def test_a_completed_loop_answer_becomes_a_generated_draft(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("prompt", "answer"), [
+    ("你好", "你好。"),
+    ("这个函数是干什么的？", "它把输入转换成列表。"),
+    ("目前做到哪里了？", "已检查输入，接下来处理转换。"),
+    ("你需要我提供什么？", "请提供要处理的文件。"),
+])
+def test_completed_conversation_is_a_message_not_a_draft(tmp_path: Path, prompt, answer) -> None:
     session = FileSessionStore(tmp_path).create("draft-loop")
     registry = ToolRegistry()
     registry.register(ToolSpec(
@@ -195,13 +201,13 @@ def test_a_completed_loop_answer_becomes_a_generated_draft(tmp_path: Path) -> No
 
     class Backend:
         def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
-            yield TurnDone(usage={"input_tokens": 4, "output_tokens": 6}, raw_text="这是终稿。")
+            yield TurnDone(usage={"input_tokens": 4, "output_tokens": 6}, raw_text=answer)
 
     async def collect():
         return [
             event
             async for event in run_agent_loop(LoopParams(
-                user_input="写一段",
+                user_input=prompt,
                 registry=registry,
                 client=LoopModelClient(Backend()),
                 session=session,
@@ -211,14 +217,11 @@ def test_a_completed_loop_answer_becomes_a_generated_draft(tmp_path: Path) -> No
 
     events = asyncio.run(collect())
     assert isinstance(events[-1], LoopStopped)
-    drafts = project_artifacts(session.events)
-    assert len(drafts) == 1
-    assert drafts[0].content == "这是终稿。"
-    assert drafts[0].state is DraftState.GENERATED
-    assert drafts[0].revision == 1
+    assert events[-1].terminal.message == answer
+    assert project_artifacts(session.events) == ()
 
 
-def test_a_follow_up_answer_is_a_new_draft_not_a_patch(tmp_path: Path) -> None:
+def test_follow_up_conversation_does_not_accumulate_drafts(tmp_path: Path) -> None:
     store = FileSessionStore(tmp_path)
     session = store.create("draft-followup")
     registry = ToolRegistry()
@@ -245,10 +248,7 @@ def test_a_follow_up_answer_is_a_new_draft_not_a_patch(tmp_path: Path) -> None:
     asyncio.run(run(session, "第一问", "第一稿"))
     resumed = store.resume("draft-followup", repair=True)
     asyncio.run(run(resumed, "第二问", "第二稿"))
-    drafts = project_artifacts(resumed.events)
-    assert [draft.content for draft in drafts] == ["第一稿", "第二稿"]
-    assert all(draft.revision == 1 for draft in drafts)
-    assert drafts[0].artifact_id != drafts[1].artifact_id
+    assert project_artifacts(resumed.events) == ()
 
 
 def test_a_clarification_does_not_become_a_draft(tmp_path: Path) -> None:

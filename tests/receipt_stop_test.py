@@ -45,7 +45,7 @@ def _params(tmp_path: Path, registry: ToolRegistry, backend, prompt="做完") ->
     )
 
 
-def test_a_plain_answer_issues_a_succeeded_receipt_bound_to_the_draft(tmp_path: Path) -> None:
+def test_a_plain_answer_issues_a_succeeded_receipt_without_an_artifact(tmp_path: Path) -> None:
     registry = ToolRegistry()
     backend = _Scripted([TurnDone(usage=None, raw_text="这是终稿。")])
     params = _params(tmp_path, registry, backend)
@@ -56,8 +56,8 @@ def test_a_plain_answer_issues_a_succeeded_receipt_bound_to_the_draft(tmp_path: 
     assert len(receipts) == 1
     receipt = receipts[0]
     assert receipt.status is ReceiptStatus.SUCCEEDED
-    assert receipt.verification_method == "draft_generated"
-    assert receipt.artifact_ids
+    assert receipt.verification_method == "response_completed"
+    assert receipt.artifact_ids == ()
     assert receipt.wrote is False
 
 

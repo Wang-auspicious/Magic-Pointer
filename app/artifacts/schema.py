@@ -1,8 +1,8 @@
 """DraftArtifact value objects.
 
 The durable source is still :mod:`app.agent_runtime.session`.  These frozen
-objects are the product the user edits: a completed answer is a revisioned
-draft, not a chat bubble that evaporates when three characters change.
+objects are explicit standalone deliverables the user edits. Ordinary
+conversation answers remain messages and do not create drafts.
 """
 
 from __future__ import annotations
@@ -46,3 +46,4 @@ class DraftArtifact:
     kind: str = "text"
     patch_payload: dict[str, Any] | None = None
     accepted_revision: int | None = None
+    title: str = ""

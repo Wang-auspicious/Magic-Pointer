@@ -47,6 +47,7 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
                 content_hash=digest,
                 state=DraftState.GENERATED,
                 kind=kind,
+                title=str(data.get("title") or ""),
                 patch_payload=copy.deepcopy(patch_payload),
                 history=(DraftPatch(
                     revision=1,
@@ -90,6 +91,7 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
                 state=DraftState.EDITED,
                 accepted_revision=None,
                 kind=kind,
+                title=str(data.get("title", current.title) or ""),
                 patch_payload=copy.deepcopy(patch_payload),
                 history=current.history + (DraftPatch(
                     revision=revision,
@@ -120,3 +122,33 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
             accepted_revision=revision,
         )
     return tuple(ordered)
+
+
+def latest_turn_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
+    """Current drafts actually created or revised in the most recent turn."""
+    events = tuple(events)
+    start = max((event.seq for event in events if event.type == "turn/start"), default=-1)
+    changed = {
+        str(event.data.get("artifactId") or "") for event in events
+        if event.type in {"artifact/generated", "artifact/patched"} and event.seq > start
+    }
+    return tuple(item for item in project_artifacts(events) if item.artifact_id in changed)
+
+
+def latest_turn_artifact_summaries(events: Iterable[Any]) -> list[dict[str, Any]]:
+    """The same editable deliverable cards for Stage and Studio."""
+    summaries: list[dict[str, Any]] = []
+    for artifact in latest_turn_artifacts(events):
+        name = artifact.title or next(
+            (line.strip() for line in artifact.content.splitlines() if line.strip()), "Draft",
+        )[:120]
+        summaries.append({
+            "artifactId": artifact.artifact_id,
+            "revision": artifact.revision,
+            "kind": artifact.kind,
+            "state": artifact.state.value,
+            "title": artifact.title,
+            "name": name,
+            "summary": artifact.content.strip().replace("\r", " ").replace("\n", " ")[:240],
+        })
+    return summaries

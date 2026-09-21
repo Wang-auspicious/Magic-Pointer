@@ -160,6 +160,10 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
             "hasPendingWork": session.has_pending_work(),
             "lastTurnReason": last_reason,
             "openTurn": session.open_turn,
+            "pendingInput": session.pending_user_input(),
+            "answeredInputIds": [event.data['requestId'] for event in session.events if event.type == 'user_input/answered'],
+            "lastInputAnswer": next(({'requestId': event.data['requestId'], 'message': event.data['message']}
+                for event in reversed(session.events) if event.type == 'user_input/answered'), None),
             "pendingRecovery": session.pending_recovery(),
         }
     if action == "put":

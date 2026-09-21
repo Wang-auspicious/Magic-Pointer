@@ -176,6 +176,9 @@ def test_agent_session_bridge_status_reports_pending_work(tmp_path, monkeypatch)
         "lastTurnReason": "budget_exhausted",
         "openTurn": None,
         "pendingRecovery": [],
+        "pendingInput": None,
+        "answeredInputIds": [],
+        "lastInputAnswer": None,
     }
 
     session.start_turn()

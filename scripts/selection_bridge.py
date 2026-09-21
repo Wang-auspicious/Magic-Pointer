@@ -3193,6 +3193,9 @@ def _loop_router(
         mapped["selectionSessionId"] = selection_session_id or None
         mapped["selectionSnapshotId"] = selection_snapshot_id
         mapped["agentSessionId"] = agent_session_id
+        from app.artifacts.projection import latest_turn_artifact_summaries
+
+        mapped["artifacts"] = latest_turn_artifact_summaries(agent_session.events)
         mapped["runtimeTurn"] = (None if agent_session.open_turn is not None else
             next((event.data.get("turn") for event in reversed(agent_session.events)
                   if event.type == "turn/end"), None))
@@ -3286,7 +3289,7 @@ def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:
     return {
         **{key: value[key] for key in (
             "agentSessionId", "runtimeTurn", "trajectory", "activities", "thinking", "usedBackend", "timingMs",
-            "hasPendingWork", "receipts", "loopReceipts", "events",
+            "hasPendingWork", "receipts", "loopReceipts", "events", "artifacts",
         ) if key in value},
         "modelUsage": usage,
         "awaitingUserInput": awaiting,

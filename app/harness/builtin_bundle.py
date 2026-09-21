@@ -151,6 +151,11 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
         return stored
 
     register_todo_write(registry, sink=sink)
+    session_getter = config.get("session_getter")
+    if callable(session_getter):
+        from app.artifacts.tools import register_artifact_tools
+
+        register_artifact_tools(registry, session_getter=session_getter)
 
 
 def _apply_web_tools(fork, config: dict[str, Any]) -> None:
@@ -1032,7 +1037,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
         # TodoStore is task state, not a resident provider. A fresh scoped
         # instance is hydrated from this task's EventSession by the bridge;
         # keeping it global leaks one task's plan into the next Stage run.
-        BundleRow("harness-tools", "harness-tools"),
+        BundleRow("harness-tools", "harness-tools", {"session_getter": runtime.get("source_session_getter")}),
         BundleRow("perception-tools", "perception-tools"),
         BundleRow(
             "look-tool",
@@ -1188,7 +1193,7 @@ def boot_loop_context(
     workspace_root = _advanced_workspace(runtime)
 
     rows = [
-        BundleRow("harness-tools", "harness-tools"),
+        BundleRow("harness-tools", "harness-tools", {"session_getter": runtime.get("source_session_getter")}),
         BundleRow("web-tools", "web-tools"),
         BundleRow("computer-agent", "computer-agent"),
         BundleRow("perception-tools", "perception-tools"),

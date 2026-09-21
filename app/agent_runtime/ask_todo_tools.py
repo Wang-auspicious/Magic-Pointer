@@ -26,16 +26,22 @@ def register_ask_user_question(
     """Register the CC-style clarification tool; ``ask`` is the UI bridge."""
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("ask_user_question", "AskUser")
+    registry.register_alias("AskUserQuestion", "AskUser")
     registry.register_alias("todo_write", "Todo")
 
     def execute(
-        question: str,
-        options: list,
+        question: str = '',
+        options: list = None,
         kind: str = None,
         tool: str = None,
         prefix: str = None,
         scope: object = None,
+        questions: list = None,
     ) -> str:
+        from app.agent_runtime.user_input import normalize_pending_input
+        if questions is not None:
+            pending = normalize_pending_input({'questions': questions})
+            question, options = pending['question'], pending['options']
         normalized_question = str(question or "").strip()[:1000]
         normalized_options = [
             str(option).strip()[:200]
@@ -55,6 +61,8 @@ def register_ask_user_question(
             "question": normalized_question,
             "options": normalized_options,
         }
+        if questions is not None:
+            payload['questions'] = pending['questions']
         if str(kind or "").strip() == "permission" and str(tool or "").strip():
             payload["kind"] = "permission"
             payload["tool"] = str(tool).strip()[:64]
@@ -70,7 +78,8 @@ def register_ask_user_question(
         name="AskUser",
         description=(
             "不确定用户的意图或需要用户在几个选项中选择时，向用户提问。"
-            "options 是 2-4 个中文选项。返回用户的选择。"
+            "单题用 question/options（2-4 个选项）；多题用 questions 数组，"
+            "每题可带 header、multiSelect 和选项 label/description。返回结构化 answers。"
             "工具被拒需要授权时用 kind=\"permission\" 且 tool=被拒工具名，"
             "options 固定为 [仅这一次允许， 本会话总是允许， 拒绝]。"
         ),
@@ -78,6 +87,16 @@ def register_ask_user_question(
             "type": "object",
             "properties": {
                 "question": {"type": "string", "description": "要问用户的问题"},
+                "questions": {
+                    "type": "array", "description": "1-4道需要一起回答的问题；使用此字段时不必重复填写question/options",
+                    "items": {"type": "object", "properties": {
+                        "header": {"type": "string"}, "question": {"type": "string"},
+                        "multiSelect": {"type": "boolean"},
+                        "options": {"type": "array", "items": {"type": "object", "properties": {
+                            "label": {"type": "string"}, "description": {"type": "string"},
+                        }, "required": ["label"]}},
+                    }, "required": ["question", "options"]},
+                },
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -96,7 +115,7 @@ def register_ask_user_question(
                     "description": "Bash 权限提问时填提示返回的命令前缀",
                 },
             },
-            "required": ["question", "options"],
+            "required": [],
         },
         execute=execute,
         effect=Effect.READ,

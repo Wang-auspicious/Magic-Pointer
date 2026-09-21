@@ -95,8 +95,8 @@ def _classify(
         if wrote and verified:
             return ReceiptStatus.SUCCEEDED, "write_verified", effect, None
         if has_artifacts:
-            return ReceiptStatus.SUCCEEDED, "draft_generated", effect, None
-        return ReceiptStatus.UNKNOWN, "none", effect, None
+            return ReceiptStatus.SUCCEEDED, "artifact_recorded", effect, None
+        return ReceiptStatus.SUCCEEDED, "response_completed", effect, None
     if reason == TransitionReason.USER_INTERRUPT.value:
         return ReceiptStatus.INTERRUPTED, reason, effect, reason
     if reason == TransitionReason.AWAITING_USER.value:

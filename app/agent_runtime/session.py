@@ -690,6 +690,13 @@ class EventSession:
         """Recheck turn invariants after refreshing under the file lock."""
         if not self._events and event_type != "session/created":
             raise SessionCorruptionError("first event must be session/created")
+        if event_type == 'user_input/answered':
+            from app.agent_runtime.user_input import normalize_input_response
+            pending = self.pending_user_input()
+            if self.open_turn is not None or pending is None or pending['requestId'] != data.get('requestId'):
+                raise ValueError('pending_input_mismatch')
+            if data.get('pendingInput') != pending or normalize_input_response(pending, data.get('response')) != data.get('response'):
+                raise ValueError('invalid_input_response')
         if event_type == "context/updated":
             from app.context_pack.source_store import validate_context_update
 
@@ -1036,6 +1043,51 @@ class EventSession:
             {"message": message.to_dict()},
             surface_op="append",
         )
+
+    def pending_user_input(self) -> dict[str, Any] | None:
+        from app.agent_runtime.user_input import normalize_pending_input
+        for message in reversed(self._surface):
+            if message.role is Role.USER and not message.injected:
+                return None
+            if message.role is not Role.TOOL or message.name not in {'AskUser', 'AskUserQuestion', 'ask_user_question'}:
+                continue
+            try:
+                value = json.loads(message.content)
+                if not isinstance(value, dict) or value.get('awaitingUserInput') is not True:
+                    continue
+                pending = {**normalize_pending_input(value), 'requestId': message.tool_call_id}
+                if pending.get('kind') == 'permission':
+                    # Bind a one-time approval to the actual blocked action,
+                    # when the model has already attempted it before asking.
+                    blocked = None
+                    for item in reversed(self._surface):
+                        if item.role is Role.USER and not item.injected:
+                            break
+                        if item.role is Role.TOOL and item.name == pending['tool'] and item.is_error:
+                            blocked = item
+                            break
+                    if blocked is not None:
+                        call = next((call for item in reversed(self._surface) for call in item.tool_calls or ()
+                            if call.get('id') == blocked.tool_call_id), None)
+                        if call is not None:
+                            pending['action'] = {'tool': pending['tool'], 'arguments': dict(call.get('arguments') or {})}
+                return pending
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def answer_user_input(self, request_id: str, response: Mapping[str, Any]) -> SessionEvent:
+        from app.agent_runtime.user_input import normalize_input_response
+        self._synchronize()
+        pending = self.pending_user_input()
+        if pending is None or pending['requestId'] != request_id:
+            raise ValueError('pending_input_mismatch')
+        normalized = normalize_input_response(pending, response)
+        return self.append('user_input/answered', {
+            'requestId': request_id, 'pendingInput': pending, 'response': normalized,
+            'message': AgentMessage(role=Role.TOOL, tool_call_id=request_id, name='AskUser', origin=ORIGIN_DATA,
+                content=json.dumps({**pending, **normalized, 'answered': True, 'awaitingUserInput': False}, ensure_ascii=False)).to_dict(),
+        })
 
     def record_plan_updated(
         self,
@@ -1426,9 +1478,10 @@ class EventSession:
         content: str,
         *,
         kind: str = "text",
+        title: str = "",
         patch_payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
-        """Persist a completed answer as revision 1 of a new draft."""
+        """Persist an explicitly created standalone deliverable as revision 1."""
         text = str(content or "")
         artifact_id = uuid.uuid4().hex
         resolved_kind = str(kind or "").strip()
@@ -1450,6 +1503,7 @@ class EventSession:
                 "contentHash": content_hash(text),
                 "author": "model",
                 "kind": resolved_kind,
+                "title": str(title).strip(),
                 "patchPayload": resolved_payload,
             },
         )
@@ -1462,6 +1516,7 @@ class EventSession:
         author: str,
         expected_revision: int,
         kind: str | None = None,
+        title: str | None = None,
         patch_payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
         """Record a user or agent edit. Later edits void a previous approval."""
@@ -1502,6 +1557,7 @@ class EventSession:
                 "contentHash": content_hash(text),
                 "author": str(author),
                 "kind": resolved_kind,
+                "title": current.title if title is None else str(title).strip(),
                 "patchPayload": resolved_payload,
             },
         )
@@ -1708,6 +1764,7 @@ class EventSession:
                 "artifactId": item.artifact_id,
                 "revision": item.revision,
                 "kind": item.kind,
+                "title": item.title,
                 "state": str(item.state),
                 "acceptedRevision": item.accepted_revision,
             }
@@ -1868,6 +1925,9 @@ class EventSession:
     def _project_event(
         surface: list[AgentMessage], event: SessionEvent
     ) -> list[AgentMessage]:
+        if event.type == 'user_input/answered':
+            response = AgentMessage.from_dict(event.data['message'])
+            return [response if message.role is Role.TOOL and message.tool_call_id == response.tool_call_id else message for message in surface]
         if event.surface_op is None:
             return surface
         if event.surface_op == "append":

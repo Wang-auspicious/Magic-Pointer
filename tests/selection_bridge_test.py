@@ -1174,6 +1174,51 @@ def test_selection_metadata_keeps_all_reported_usage_buckets():
     assert selection_bridge._loop_interaction_metadata({"modelUsage": usage})["modelUsage"] == usage
 
 
+def test_selection_explicit_artifact_reaches_stage_through_real_loop(monkeypatch, tmp_path):
+    from app.agent_runtime.model_client import LoopModelClient, ToolCallArrived, TurnDone
+    from app.agent_runtime.types import ToolCall
+    from app.agent_runtime.session import FileSessionStore
+    from app.artifacts.projection import project_artifacts
+    from app.fabric import engine as engine_module
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    real_run = engine_module.run_agent_turn
+
+    class Backend:
+        rounds = 0
+
+        def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
+            self.rounds += 1
+            if self.rounds == 1:
+                yield ToolCallArrived(call=ToolCall(id="stage-draft", name="Artifact.create", arguments={
+                    "title": "选区工作摘要", "kind": "markdown", "content": "# 摘要\n独立交付物正文。",
+                }))
+                yield TurnDone(usage=None, raw_text=None)
+            else:
+                yield TurnDone(usage=None, raw_text="工作摘要已经创建。")
+
+    def scripted_run(*args, **kwargs):
+        kwargs["client"] = LoopModelClient(Backend())
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", scripted_run)
+    result = selection_bridge._loop_router(
+        "把选区整理为独立摘要", [], None, None, None, None, "stage-draft", "snap-draft",
+        clock=selection_bridge.PhaseClock("test", enabled=False),
+    )
+    assert result["ok"] is True
+    assert len(result.get("artifacts", [])) == 1
+    summary = result["artifacts"][0]
+    assert summary["name"] == "选区工作摘要"
+    session = FileSessionStore(tmp_path / "agent-sessions").resume(result["agentSessionId"], repair=False)
+    draft = project_artifacts(session.events)[0]
+    assert summary["artifactId"] == draft.artifact_id
+    assert draft.content == "# 摘要\n独立交付物正文。"
+    metadata = selection_bridge._loop_interaction_metadata(result)
+    assert metadata["artifacts"] == [summary]
+    assert metadata["agentSessionId"] == session.id
+
+
 def test_selection_metadata_preserves_runtime_permission_suspension_and_receipts():
     pending = {"kind": "permission", "question": "Allow this command?", "tool": "Bash",
                "prefix": "npm run"}

@@ -80,6 +80,10 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
         # （conversation_store.recordPermissionDecision 就按 pendingInput.kind
         # 判断要不要清掉这道门）。
         pending_input: dict[str, Any] = {"question": question, "options": options}
+        if pending.get('requestId'):
+            pending_input['requestId'] = pending['requestId']
+        if pending.get('questions'):
+            pending_input['questions'] = pending['questions']
         if str(pending.get("kind") or "").strip() == "permission":
             pending_input["kind"] = "permission"
             tool = str(pending.get("tool") or "").strip()

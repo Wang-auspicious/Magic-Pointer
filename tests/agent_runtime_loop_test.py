@@ -307,6 +307,7 @@ def test_user_input_tool_suspends_without_another_model_round() -> None:
 
     assert terminal.reason is TransitionReason.AWAITING_USER
     assert terminal.pending_input == {
+        "requestId": "ask-1",
         "question": "选 A 还是 B？",
         "options": ["A", "B"],
     }

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent_runtime.tool_registry import Effect
@@ -28,17 +28,20 @@ _UNSAFE_PREFIX_COMMAND = re.compile(r"[|&;<>`]|\$\(|[\r\n]")
 
 @dataclass(frozen=True)
 class PermissionDecisions:
-    """Immutable per-thread allow/deny memo keyed by tool name."""
+    """Thread rules plus one-call approvals claimed within this runtime invocation."""
 
     allowed: tuple[str, ...] = ()
     denied: tuple[str, ...] = ()
+    once: tuple[str, ...] = ()
+    once_arguments: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    _claimed_once: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict, compare=False, repr=False)
 
-    def lookup(self, tool_name: str) -> str | None:
+    def lookup(self, tool_name: str, arguments: Mapping[str, Any] | None = None) -> str | None:
         """``"allow"`` / ``"deny"`` / ``None`` (undecided) for one tool."""
         name = str(tool_name or "").strip()
         if not name:
             return None
-        if name in self.denied:
+        if any(_matches_rule(name, arguments or {}, rule) for rule in self.denied):
             return "deny"
         if name in self.allowed:
             return "allow"
@@ -48,6 +51,7 @@ class PermissionDecisions:
         self,
         tool_name: str,
         arguments: Mapping[str, Any],
+        call_id: str | None = None,
     ) -> bool:
         """Allow a whole tool or a bounded ``Bash(<prefix>)`` rule.
 
@@ -56,33 +60,27 @@ class PermissionDecisions:
         input never inherit a prefix grant; the user is asked again instead.
         """
         name = str(tool_name or "").strip()
-        if not name or name in self.denied:
+        if not name or self.lookup(name, arguments) == 'deny':
             return False
         if name in self.allowed:
             return True
-        if name != "Bash":
-            return False
         command = str((arguments or {}).get("command") or "").strip()
-        if not command or _UNSAFE_PREFIX_COMMAND.search(command):
+        if name == 'Bash' and (not command or _UNSAFE_PREFIX_COMMAND.search(command)):
             return False
-        marker = f"{name}("
-        for rule in self.allowed:
-            value = str(rule or "").strip()
-            if not value.startswith(marker) or not value.endswith(")"):
+        if any(_matches_rule(name, arguments, rule) for rule in self.allowed):
+            return True
+        for rule in self.once:
+            if not call_id or not _matches_rule(name, arguments, rule):
                 continue
-            prefix = value[len(marker):-1].strip()
-            if not prefix or _UNSAFE_PREFIX_COMMAND.search(prefix):
+            if rule in self.once_arguments and dict(arguments) != dict(self.once_arguments[rule]):
                 continue
-            if command == prefix:
+            claim = self._claimed_once.setdefault(rule, (call_id, dict(arguments)))
+            if claim == (call_id, dict(arguments)):
                 return True
-            if command.startswith(prefix):
-                suffix = command[len(prefix):]
-                if suffix and suffix[0].isspace():
-                    return True
         return False
 
     @staticmethod
-    def from_allowed(value) -> "PermissionDecisions | None":
+    def from_allowed(value) -> PermissionDecisions | None:
         """Build from a bridge payload list of granted tool names.
 
         ``None``/empty means no memo (every ASK keeps asking).
@@ -95,3 +93,13 @@ class PermissionDecisions:
         if not allowed:
             return None
         return PermissionDecisions(allowed=allowed)
+
+
+def _matches_rule(name: str, arguments: Mapping[str, Any], rule: str) -> bool:
+    if name == rule:
+        return True
+    if name != 'Bash' or not rule.startswith('Bash(') or not rule.endswith(')'):
+        return False
+    prefix = rule[5:-1].strip()
+    command = str(arguments.get('command') or '').strip()
+    return bool(prefix and (command == prefix or command.startswith(prefix) and command[len(prefix):1 + len(prefix)].isspace()))

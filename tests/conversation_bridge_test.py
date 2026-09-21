@@ -925,7 +925,9 @@ def test_thread_permission_grants_reach_the_runtime(monkeypatch):
     decisions = captured["run_kwargs"]["permission_decisions"]
     assert decisions.lookup("Bash") == "allow"
     assert decisions.lookup("Launch") == "deny"
-    assert decisions.lookup("BashRead") == "allow"
+    assert decisions.lookup("BashRead") is None
+    assert decisions.allows_call("BashRead", {}, "approved-call") is True
+    assert decisions.allows_call("BashRead", {}, "another-call") is False
     assert result["ok"] is True
 
 
@@ -1783,6 +1785,8 @@ def test_latest_turn_artifact_summary_carries_the_durable_artifact_id(tmp_path) 
         "artifactId": generated.data["artifactId"],
         "revision": 1,
         "kind": "text",
+        "state": "generated",
+        "title": "",
         "name": "second draft",
         "summary": "second draft",
     }]

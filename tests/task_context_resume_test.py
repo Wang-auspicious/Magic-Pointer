@@ -158,6 +158,7 @@ def test_interrupted_task_restores_plan_context_artifact_steer_and_unknown_actio
         "artifactId": artifact_id,
         "revision": 2,
         "kind": "text",
+        "title": "",
         "state": "edited",
         "acceptedRevision": None,
     }]
