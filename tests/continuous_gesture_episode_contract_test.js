@@ -6,7 +6,7 @@ const fs = require('fs');
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 const requestActivation = main.slice(
   main.indexOf('function requestActivation('),
-  main.indexOf('function cleanupDictationStopFile('),
+  main.indexOf('function ', main.indexOf('function requestActivation(') + 10),
 );
 assert.match(
   requestActivation,

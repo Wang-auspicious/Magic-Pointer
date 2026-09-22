@@ -43,7 +43,6 @@ const { createBufferedLog } = require('./append_log');
 const { toPhysicalGeometry } = require('./geometry_space');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
-const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
 const {
   isConversationSender,
   appendTranscript,
@@ -55,7 +54,6 @@ const {
 } = require('./conversation_control');
 const { studioConversationSessionId } = require('./agent_session_id');
 const { attachmentDialogOptions, resolveConversationWorkspace } = require('./conversation_workspace_policy');
-const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
 const { SessionTimeline } = require('./session_timeline');
@@ -82,7 +80,6 @@ const { AgentCursorSurfaces } = require('./agent_cursor_window');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
 const securityHardening = require('./security_hardening');
 const observability = require('./observability');
-const { VoiceFocusGuard } = require('./voice_focus_guard');
 const { inspectOnboardingReadiness, shouldStartHidden } = require('./app_lifecycle');
 const { RuntimeSnapshot } = require('./runtime_snapshot');
 const {
@@ -97,8 +94,7 @@ const { gestureRuntimeContract, gestureRuntimeSettingsChanged } = require('./ges
 const { createUpdateManager } = require('./update_manager');
 const { pointerPollingPolicy } = require('./pointer_polling_policy');
 const { PassThroughGestureCapture } = require('./pass_through_gesture');
-const { createPythonBridgeRunner } = require('./python_bridge_runner');
-const { SelectionWorkerClient } = require('./selection_worker_client');
+const { createRuntimeBridgeRunner } = require('./runtime_bridge_runner');
 const CardModel = require('./cards');
 const { createTaskWatcher } = require('./task_watcher');
 const { createStashRuntime } = require('./stash_runtime');
@@ -165,14 +161,13 @@ let selectionGestureArmTimer: NodeJS.Timeout | null = null;
 let selectionGestureExpiryTimer: NodeJS.Timeout | null = null;
 let frameCaptureWorkerClient: InstanceType<typeof FrameCaptureWorkerClient> | null = null;
 let captureCommitCoordinator: InstanceType<typeof CaptureCommitCoordinator> | null = null;
-let selectionWorkerClient: InstanceType<typeof SelectionWorkerClient> | null = null;
 let passThroughChainTimer: NodeJS.Timeout | null = null;
 let passThroughChainDeadlineAt = 0;
 let passThroughChainLastPoint: { x: number; y: number; t?: number } | null = null;
 let wiggleDetector: InstanceType<typeof WiggleDetector> | null = null;
 const mouseActivationDetector = new MouseActivationDetector();
 const passThroughGestureCapture = new PassThroughGestureCapture();
-const pythonBridgeRunner = createPythonBridgeRunner();
+const runtimeBridgeRunner = createRuntimeBridgeRunner();
 let fabricSettings: any = null;
 let fabricSettingsStore: InstanceType<typeof ElectronSettingsStore> | null = null;
 let credentialStore: InstanceType<typeof CredentialStore> | null = null;
@@ -212,21 +207,12 @@ let stageHitRegions: { x: number; y: number; width: number; height: number }[] =
 let stageShapeSettleTimer: NodeJS.Timeout | null = null;
 let pendingSurfaceActivation: { reason: string; requestedAt: number } | null = null;
 let surfaceReadinessWaitArmed = false;
-let startupVoiceWarmupScheduled = false;
 const registeredConfigurableHotkeys = new Set();
 
 const MAX_OVERLAY_CAPTURE_POINTS = 4096;
 const MAX_OVERLAY_CAPTURE_STROKES = 32;
 
 const ROOT = projectRoot(__dirname);
-const PYTHON_RUNTIME = resolvePythonRuntime({
-  isPackaged: app.isPackaged,
-  platform: process.platform,
-  resourcesPath: process.resourcesPath,
-  env: process.env,
-});
-const PYTHON_EXECUTABLE = PYTHON_RUNTIME.executable;
-const PYTHON_ISOLATED = PYTHON_RUNTIME.required === true;
 const DEVELOPMENT_RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
 const EXPLICIT_USER_DATA_DIR = process.env.MAGIC_POINTER_USER_DATA_DIR
   ? path.resolve(process.env.MAGIC_POINTER_USER_DATA_DIR)
@@ -272,17 +258,6 @@ const activeSessionAgentIds = new Map();
 const activeConversations = new Map();
 const GRACEFUL_CANCEL_GRACE_MS = 5_000;
 const sessionTimeline = new SessionTimeline();
-const dictationChildren = new Map();
-const dictationStopFiles = new Map();
-let voiceRuntime: InstanceType<typeof VoiceResidentRuntime> | null = null;
-const voiceFocusGuards = new Map();
-let latestVoiceFocusEvidence: ReturnType<InstanceType<typeof VoiceFocusGuard>['finish']> | null = null;
-let latestVoiceRuntimeStatus = {
-  state: 'unloaded',
-  errorCode: null,
-  residentEnabled: true,
-  workerEvent: null,
-};
 const runtimeSnapshot = new RuntimeSnapshot({
   probe: probeRuntimeState,
   ttlMs: 5000,
@@ -315,68 +290,9 @@ securityHardening.install({
 
 observability.install({ runtimeDir: RUNTIME_DIR });
 
-function persistVoiceFocusEvidence(evidence: unknown) {
-  if (!evidence || typeof evidence !== 'object') return;
-  latestVoiceFocusEvidence = safeClone(evidence);
-  try {
-    fs.mkdirSync(FABRIC_DATA_DIR, { recursive: true });
-    fs.appendFileSync(
-      path.join(FABRIC_DATA_DIR, 'voice-focus-evidence.jsonl'),
-      `${JSON.stringify(evidence)}\n`,
-      'utf8',
-    );
-  } catch (error) {
-    log(`voice focus evidence persist failed ${error instanceof Error ? error.name : 'Error'}`);
-  }
-}
 
-function beginVoiceFocusGuard(selectionSessionToken: string) {
-  if (fabricSettings?.activation?.keep_current_app_focus === false) return null;
-  const expectedHwnd = Number(pointerInputState.foregroundHwnd || 0);
-  if (!Number.isSafeInteger(expectedHwnd) || expectedHwnd <= 0) {
-    persistVoiceFocusEvidence({
-      sessionId: String(selectionSessionToken || ''),
-      expectedHwnd: 0,
-      contract: 'foreground-hwnd-stable',
-      invariant: false,
-      violationCount: 1,
-      violations: [{
-        phase: 'wake', expectedHwnd: 0, observedHwnd: 0, timestamp: Date.now(),
-      }],
-      phases: [],
-      startedAt: Date.now(),
-      finishedAt: Date.now(),
-      failure: 'foreground_hwnd_unavailable',
-    });
-    return null;
-  }
-  const guard = new VoiceFocusGuard({
-    expectedHwnd,
-    sessionId: String(selectionSessionToken || crypto.randomUUID()),
-  });
-  voiceFocusGuards.set(selectionSessionToken, guard);
-  observeVoiceFocusPhase('wake', selectionSessionToken);
-  return guard;
-}
 
-function observeVoiceFocusPhase(phase: string, selectionSessionToken: string | null = activeSelectionSessionToken) {
-  const guard = voiceFocusGuards.get(selectionSessionToken);
-  if (!guard) return false;
-  const stable = guard.observe(phase, Number(pointerInputState.foregroundHwnd || 0));
-  if (!stable) log(`voice focus invariant failed phase=${phase}`);
-  return stable;
-}
 
-function finishVoiceFocusGuard(phase: string | null = null, selectionSessionToken = activeSelectionSessionToken) {
-  const guard = voiceFocusGuards.get(selectionSessionToken);
-  if (!guard) return null;
-  if (phase) observeVoiceFocusPhase(phase, selectionSessionToken);
-  const evidence = guard.finish();
-  voiceFocusGuards.delete(selectionSessionToken);
-  persistVoiceFocusEvidence(evidence);
-  log(`voice focus complete invariant=${evidence.invariant} violations=${evidence.violationCount}`);
-  return evidence;
-}
 
 function persistCurrentObjectEpisode(session: any) {
   if (!fabricSettingsStore || !session?.snapshot) return false;
@@ -657,9 +573,9 @@ async function putTaskInputToSession(
   });
   const payload: Record<string, unknown> = { action: 'put', sessionId, taskInput };
   if (sources.length) payload.sources = sources;
-  return runPythonBridgePromise(
+  return runRuntimeBridgePromise(
     payload,
-    'scripts/agent_session_bridge.py',
+    'agent_session',
     { target: null, timeoutMs: 8_000 },
   );
 }
@@ -699,9 +615,9 @@ ipcMain.handle('stage:steer-selection-command', async (event: Electron.IpcMainIn
 });
 
 function requestGracefulAgentCancel(agentSessionId: string) {
-  runPythonBridgePromise(
+  runRuntimeBridgePromise(
     { action: 'cancel', sessionId: agentSessionId, reason: 'user stop' },
-    'scripts/agent_session_bridge.py',
+    'agent_session',
     { target: null, timeoutMs: 8_000 },
   ).then(
     (parsed: any) => {
@@ -1041,7 +957,6 @@ function stageVisualTuningForStage() {
     sweepFadeMs: Number(appearance.sweep_fade_ms ?? 96),
     capsuleSpawnMs: Number(appearance.capsule_spawn_ms ?? 80),
     capsuleExpandMs: Number(appearance.capsule_expand_ms ?? 125),
-    capsuleVoiceWidthDip: Number(appearance.capsule_voice_width_dip ?? 40),
     capsuleTextWidthDip: Number(appearance.capsule_text_width_dip ?? 144),
     capsuleMaxWidthDip: Number(appearance.capsule_max_width_dip ?? 440),
     capsuleInlineGapDip: Number(appearance.capsule_inline_gap_dip ?? 18),
@@ -1193,9 +1108,9 @@ function taskWatcher() {
     CardModel,
     probeEnabled: taskCardSurfaceVisible,
     probe: async (taskId: string) => {
-      const parsed = await runPythonBridgePromise(
+      const parsed = await runRuntimeBridgePromise(
         { operation: 'status', taskId },
-        'scripts/agent_bridge.py',
+        'agent',
         { target: 'stage', timeoutMs: 8000 },
       );
       return parsed?.task || null;
@@ -1242,12 +1157,12 @@ function artifactCommands() {
   if (!artifactRuntime) {
     artifactRuntime = createArtifactRuntime({
       conversationStore: conversations(),
-      runBridge: (payload: Record<string, unknown>) => runPythonBridgePromise(
+      runBridge: (payload: Record<string, unknown>) => runRuntimeBridgePromise(
         {
           ...payload,
           _figmaRuntimeConnections: figmaRuntime.clientConfigurations(),
         },
-        'scripts/artifact_bridge.py',
+        'artifact',
         { target: null, timeoutMs: 120_000 },
       ),
     });
@@ -2016,10 +1931,10 @@ ipcMain.handle('conversations:branch', async (event: Electron.IpcMainInvokeEvent
         return { ok: false, error: '这条旧记录未保存执行轮号；请从最后一轮创建完整分支。' };
       }
       const childSessionId = `agent-${crypto.randomUUID()}`;
-      const forked = await new Promise<any>((resolve) => runPythonBridge({
+      const forked = await new Promise<any>((resolve) => runRuntimeBridge({
         action: 'fork', sessionId: source.agentSessionId, childSessionId,
         ...(Number.isInteger(throughTurn) && throughTurn > 0 ? { throughTurn } : {}),
-      }, 'scripts/agent_session_bridge.py', 'dashboard', { onComplete: resolve }));
+      }, 'agent_session', 'dashboard', { onComplete: resolve }));
       if (forked?.ok !== true) return forked;
       runtime = { agentSessionId: forked.sessionId, taskContext: forked.taskContext };
     }
@@ -2340,7 +2255,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         : selected));
       return;
     }
-    const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
+    const child = runRuntimeBridge(payload, 'conversation', 'dashboard', {
       timeoutMs: 120_000,
       onProgress: (record: any) => {
         if (record?.phase === 'user_input_accepted') {
@@ -2476,9 +2391,9 @@ ipcMain.handle('conversations:respond-subagent', async (event: Electron.IpcMainI
   const conversation = conversations().get(String(raw.conversationId || ''));
   if (!conversation?.agentSessionId) return { ok: false, error: 'unknown_subagent' };
   try {
-    return await runPythonBridgePromise({ action: 'subagent-respond', sessionId: String(raw.subagentId || ''),
+    return await runRuntimeBridgePromise({ action: 'subagent-respond', sessionId: String(raw.subagentId || ''),
       parentSessionId: conversation.agentSessionId, requestId: String(raw.requestId || ''), response: raw.response },
-    'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+    'agent_session', { target: null, timeoutMs: 8000 });
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
 });
 
@@ -2490,9 +2405,9 @@ ipcMain.handle('conversations:stop-subagent', async (event: Electron.IpcMainInvo
     return { ok: false, error: 'unknown_subagent' };
   }
   try {
-    return await runPythonBridgePromise({ action: 'cancel', sessionId: subagentId,
+    return await runRuntimeBridgePromise({ action: 'cancel', sessionId: subagentId,
       parentSessionId: conversation.agentSessionId, reason: 'user stopped this subagent' },
-    'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+    'agent_session', { target: null, timeoutMs: 8000 });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -2567,7 +2482,7 @@ ipcMain.handle('conversations:suggest', (event: Electron.IpcMainInvokeEvent, raw
     modelRuntime: activeModelRuntimeConfig(),
   };
   return new Promise((resolve) => {
-    const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
+    const child = runRuntimeBridge(payload, 'conversation', 'dashboard', {
       timeoutMs: 45_000,
       onComplete: (parsed: any) => {
         resolve({ ok: true, suggestion: parsed?.ok === true ? String(parsed?.suggestion || '') : '' });
@@ -2642,10 +2557,10 @@ ipcMain.handle('conversations:recovery', async (event: Electron.IpcMainInvokeEve
     const sessionPath = path.join(FABRIC_DATA_DIR, 'agent-sessions', `${sessionId}.jsonl`);
     const { mtimeMs } = await fs.promises.stat(sessionPath);
     if (raw.action === 'resolve') {
-      const result = await runPythonBridgePromise({
+      const result = await runRuntimeBridgePromise({
         action: 'recovery-resolve', sessionId, operationId: raw.operationId,
         verificationCallId: raw.verificationCallId, confirmed: raw.confirmed === true,
-      }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+      }, 'agent_session', { target: null, timeoutMs: 8000 });
       conversationRecoveryQueries.delete(sessionId);
       if (result?.ok === true) notifyConversationChanged(conversation.id);
       return result;
@@ -2974,7 +2889,8 @@ function initializeStashRuntime() {
     clipboard,
     baseDir: stashBaseDir(),
     log,
-    pythonExecutable: PYTHON_EXECUTABLE,
+    runtimeExecutable: process.execPath,
+    userDataDir: FABRIC_DATA_DIR,
     settings: () => fabricSettings || {},
     focusProbe: async () => {
       const fallback = () => (
@@ -3218,9 +3134,9 @@ ipcMain.handle('stash:describe', async (event: Electron.IpcMainInvokeEvent, imag
     return { ok: false, error: 'forbidden_path' };
   }
   try {
-    const parsed = await runPythonBridgePromise(
+    const parsed = await runRuntimeBridgePromise(
       { operation: 'describe', imagePath: target },
-      'scripts/stash_describe_bridge.py',
+      'stash_describe',
       { target: 'fabric-dashboard', timeoutMs: 30000 },
     );
     if (parsed?.ok && parsed.summary) return { ok: true, summary: String(parsed.summary) };
@@ -3319,7 +3235,6 @@ function showDashboard(payload: Record<string, unknown> = {}, options: { activat
     else dashboardWindow.show();
     kickTaskWatch();
     dashboardWindow.webContents.send('dashboard:show', payload);
-    dashboardWindow.webContents.send('dashboard:voice-residency-status', latestVoiceRuntimeStatus);
     log(`showDashboard highlight=${payload.highlightItemId || 'none'}`);
   };
   if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
@@ -3454,8 +3369,6 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
   const sessionToken = activeSelectionSessionToken;
   log(`dismissTemporarySurfaces overlayOwnsPointerInput=${overlayOwnsPointerInput} armPresent=${Boolean(selectionGestureArm)}`);
   cancelSelectionGesture('dismissed', { hideSurface: false });
-  stopDictation('stage');
-  stopDictation('overlay');
   setStageMouseCapture(false);
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
     stageWindow.webContents.send('stage:hide');
@@ -3585,210 +3498,15 @@ function requestActivation(reason: string) {
   return decision;
 }
 
-function cleanupDictationStopFile(surface: string | null | undefined) {
-  const stopFile = dictationStopFiles.get(surface);
-  dictationStopFiles.delete(surface);
-  if (!stopFile) return;
-  try { fs.unlinkSync(stopFile); } catch (_) {}
-}
 
-function localWhisperModelName() {
-  const value = String(process.env.MAGIC_POINTER_WHISPER_MODEL || 'tiny').trim();
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value) && !value.includes('..')
-    ? value
-    : 'tiny';
-}
 
-function voiceRuntimeConfig(settings = fabricSettings) {
-  const interaction = settings?.interaction || {};
-  const engine = String(interaction.voice_engine || 'auto').trim().toLowerCase() || 'auto';
-  return {
-    enabled: interaction.voice_enabled === true && interaction.voice_resident_enabled !== false,
-    memoryLimitMb: Number(interaction.voice_memory_limit_mb) || 1024,
-    idleUnloadMs: Number.isInteger(interaction.voice_idle_unload_ms) ? interaction.voice_idle_unload_ms : 0,
-    root: ROOT,
-    pythonExecutable: PYTHON_EXECUTABLE,
-    pythonIsolated: PYTHON_ISOLATED,
-    engine,
-    modelName: engine === 'sense_voice' ? 'sense-voice-small' : localWhisperModelName(),
-    settingsPath: fabricSettingsStore?.path || '',
-  };
-}
 
-function sessionIdHash(value: unknown) {
-  return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 24);
-}
 
-function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, measuredMemoryMb, latencyMs, outcome, errorCode, cancellationReason }: {
-  eventType?: unknown;
-  sessionToken?: unknown;
-  surface?: unknown;
-  engine?: unknown;
-  reused?: unknown;
-  measuredMemoryMb?: unknown;
-  latencyMs?: unknown;
-  outcome?: unknown;
-  errorCode?: unknown;
-  cancellationReason?: unknown;
-}) {
-  const data = {
-    eventType: String(eventType || 'voice.unknown').slice(0, 120),
-    timestamp: new Date().toISOString(),
-    sessionIdHash: sessionIdHash(sessionToken),
-    surface: surface === 'stage' ? 'stage' : 'overlay',
-    engine: String(engine || 'whisper-local').slice(0, 120),
-    modelId: localWhisperModelName(),
-    residentEnabled: fabricSettings?.interaction?.voice_enabled === true
-      && fabricSettings?.interaction?.voice_resident_enabled !== false,
-    reused: reused === true,
-    memoryLimitMb: Number(fabricSettings?.interaction?.voice_memory_limit_mb) || 1024,
-    measuredMemoryMb: Number.isFinite(measuredMemoryMb) ? measuredMemoryMb : null,
-    latencyMs: Number.isFinite(latencyMs) ? latencyMs : null,
-    idleUnloadMs: Number(fabricSettings?.interaction?.voice_idle_unload_ms) || 0,
-    outcome: String(outcome || 'unknown').slice(0, 80),
-    errorCode: errorCode ? String(errorCode).slice(0, 120) : null,
-    cancellationReason: cancellationReason ? String(cancellationReason).slice(0, 120) : null,
-  };
-  try {
-    const auditPath = path.join(FABRIC_DATA_DIR, 'fabric-audit.jsonl');
-    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
-    fs.appendFileSync(auditPath, `${JSON.stringify({
-      eventId: crypto.randomUUID(), timestamp: data.timestamp, type: 'voice.residency', data,
-    })}\n`, 'utf8');
-    return true;
-  } catch (error) {
-    log(`voice audit persist failed ${error instanceof Error ? error.name : 'Error'}`);
-    return false;
-  }
-}
 
-function sendVoiceRuntimeStatus(status: Record<string, unknown> = {}) {
-  const workerEvent = status.workerEvent as { reason?: string; type?: string; engine?: string; memory_mb?: number } | null;
-  if (workerEvent && !appendVoiceAudit({
-    eventType: `voice.${workerEvent.reason || workerEvent.type || 'status'}`,
-    surface: 'stage', engine: workerEvent.engine, measuredMemoryMb: Number(workerEvent.memory_mb),
-    outcome: status.state === 'error' ? 'failed' : 'completed', errorCode: status.errorCode,
-  })) {
-    status = { ...status, state: 'error', errorCode: 'voice_audit_failed' };
-  }
-  const previousRuntimeState = JSON.stringify({
-    state: latestVoiceRuntimeStatus?.state,
-    errorCode: latestVoiceRuntimeStatus?.errorCode,
-    residentEnabled: latestVoiceRuntimeStatus?.residentEnabled,
-  });
-  latestVoiceRuntimeStatus = safeClone(status);
-  const nextRuntimeState = JSON.stringify({
-    state: latestVoiceRuntimeStatus?.state,
-    errorCode: latestVoiceRuntimeStatus?.errorCode,
-    residentEnabled: latestVoiceRuntimeStatus?.residentEnabled,
-  });
-  if (previousRuntimeState !== nextRuntimeState) invalidateRuntimeState('voice_worker_changed');
-  safeSurfaceSend('dashboard', 'dashboard:voice-residency-status', status);
-  if (
-    status.state === 'unloaded'
-    && status.errorCode === 'idle_timeout'
-    && !isQuitting
-    && fabricSettings?.interaction?.voice_enabled === true
-    && fabricSettings?.interaction?.voice_resident_enabled !== false
-  ) {
-    setTimeout(() => {
-      if (isQuitting) return;
-      const started = voiceRuntime?.warmUp() === true;
-      if (started) log('voice idle-unload re-warmed');
-    }, 750);
-  }
-}
 
-function forwardResidentVoiceEvent(event: Record<string, unknown> = {}) {
-  const active = voiceRuntime?.active;
-  if (!active || event.requestId !== active.requestId) return;
-  const sessionToken = activeSelectionSessionToken;
-  const startedAt = active.startedAt || Date.now();
-  const common = {
-    eventType: `voice.${event.type || 'unknown'}`,
-    sessionToken,
-    surface: active.surface,
-    engine: event.engine,
-    reused: event.reused === true,
-    measuredMemoryMb: Number(event.memory_mb),
-    latencyMs: Date.now() - startedAt,
-    outcome: event.type === 'error' ? 'failed' : event.type === 'microphone_stopped' ? 'stopped' : 'accepted',
-    errorCode: event.code,
-  };
-  if (!appendVoiceAudit(common)) {
-    safeSurfaceSend(active.surface, 'dictation:result', { ok: false, surface: active.surface, error: '本地语音审计写入失败，已停止本次会话。' });
-    voiceRuntime.shutdown();
-    return;
-  }
-  if (event.type === 'loading' || event.type === 'ready') {
-    observeVoiceFocusPhase(event.type);
-    safeSurfaceSend(active.surface, 'dictation:result', { ok: true, surface: active.surface, status: event.type, engine: event.engine || 'whisper-local', reused: event.reused === true });
-  } else if (event.type === 'partial' || event.type === 'final') {
-    observeVoiceFocusPhase(event.type);
-    safeSurfaceSend(active.surface, 'dictation:result', { ok: true, surface: active.surface, transcript: String(event.transcript || ''), final: event.type === 'final', engine: event.engine || 'whisper-local' });
-  } else if (event.type === 'error') {
-    observeVoiceFocusPhase('error');
-    safeSurfaceSend(active.surface, 'dictation:result', { ok: false, surface: active.surface, error: String(event.error || '本地语音识别失败。'), engine: event.engine || 'whisper-local' });
-  }
-}
 
-function configureVoiceRuntime(settings: any, { preload = false }: { preload?: boolean } = {}) {
-  if (!voiceRuntime) return { ok: false, error: 'voice_runtime_unavailable' };
-  const result = voiceRuntime.configure(voiceRuntimeConfig(settings));
-  if (
-    result.ok
-    && preload
-    && result.changed
-    && settings?.interaction?.voice_resident_enabled !== false
-  ) voiceRuntime.warmUp();
-  return result;
-}
 
-function scheduleStartupVoiceWarmup(configResult: { ok?: boolean }) {
-  if (
-    startupVoiceWarmupScheduled
-    || !configResult?.ok
-    || fabricSettings?.interaction?.voice_enabled !== true
-    || fabricSettings?.interaction?.voice_resident_enabled === false
-  ) return false;
-  startupVoiceWarmupScheduled = true;
-  stageReadiness.whenReady(() => {
-    overlayReadiness.whenReady(() => {
-      if (isQuitting) return;
-      const started = voiceRuntime?.warmUp() === true;
-      log(`voice startup warmup renderers_ready=true started=${started}`);
-    });
-  });
-  return true;
-}
 
-function stopLegacyDictation({ surface, graceful = false }: Record<string, unknown> = {}) {
-  const child = dictationChildren.get(surface);
-  if (!child) return false;
-  if (graceful) {
-    const stopFile = dictationStopFiles.get(surface);
-    if (!stopFile) return false;
-    try {
-      fs.mkdirSync(path.dirname(stopFile), { recursive: true });
-      fs.writeFileSync(stopFile, 'stop\n', { encoding: 'utf8', flag: 'wx' });
-      observeVoiceFocusPhase('stop_requested');
-    } catch (error) {
-      if ((error as { code?: string })?.code !== 'EEXIST') log(`dictation stop request failed ${error instanceof Error ? error.name : 'Error'}`);
-    }
-    return true;
-  }
-  dictationChildren.delete(surface);
-  cleanupDictationStopFile(surface as string | null);
-  try { if (!child.killed) child.kill(); } catch (_) {}
-  return true;
-}
-
-function stopDictation(surface: string | null, { graceful = false }: { graceful?: boolean } = {}) {
-  if (voiceRuntime?.active?.surface === surface) {
-    return voiceRuntime.stop(voiceRuntime.active.requestId, { graceful, cancel: !graceful });
-  }
-  return stopLegacyDictation({ surface, graceful, cancel: !graceful });
-}
 
 let overlayGhostTimer: NodeJS.Timeout | null = null;
 let overlayGhostShownByUs = false;
@@ -3892,8 +3610,7 @@ function getFrameCaptureWorkerClient() {
   if (!frameCaptureWorkerClient) {
     frameCaptureWorkerClient = new FrameCaptureWorkerClient({
       root: ROOT,
-      pythonExecutable: PYTHON_EXECUTABLE,
-      pythonIsolated: PYTHON_ISOLATED,
+      runtimeExecutable: process.execPath,
     });
   }
   return frameCaptureWorkerClient;
@@ -4369,13 +4086,10 @@ function applyConfiguredWakeState() {
 }
 
 function currentPointerPollingPolicy() {
-  const voiceStartStrategy = String(fabricSettings?.interaction?.voice_start_strategy || 'auto');
   return pointerPollingPolicy({
     wakeMode: fabricSettings?.activation?.wake_mode,
     wiggleEnabled: fabricSettings?.activation?.wiggle_enabled,
     mouseShakeOverride: process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE,
-    voicePointerConfigured: ['push_to_talk', 'hover'].includes(voiceStartStrategy),
-    voiceStartStrategy,
     episodeActive: Boolean(interactionEpisodes.active()),
     mouseSideButton: fabricSettings?.activation?.mouse_side_button,
     onboardingRequired,
@@ -4383,11 +4097,8 @@ function currentPointerPollingPolicy() {
   });
 }
 
-function inputModeForReason(reason: string) {
-  if (reason === 'shortcut-text') return 'text';
-  if (reason === 'shortcut-voice') return fabricSettings?.interaction?.voice_enabled === true ? 'voice' : 'text';
-  return fabricSettings?.interaction?.voice_enabled === true
-    && fabricSettings?.interaction?.default_input_mode === 'voice' ? 'voice' : 'text';
+function inputModeForReason(_reason: string) {
+  return 'text';
 }
 
 function registerConfigurableHotkeys() {
@@ -4413,9 +4124,6 @@ function registerConfigurableHotkeys() {
   register('text_mode', fabricSettings.shortcuts?.text_mode || 'Control+Alt+T', () => {
     requestActivation('shortcut-text');
   });
-  register('voice_mode', fabricSettings.shortcuts?.voice_mode || 'Control+Alt+V', () => {
-    requestActivation('shortcut-voice');
-  }, fabricSettings.interaction?.voice_enabled === true);
   register('pause', fabricSettings.shortcuts?.pause || 'Control+Alt+P', () => {
     inputPaused = !inputPaused;
     if (inputPaused) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
@@ -4470,8 +4178,6 @@ function stageSessionPayload(entry: any) {
     selectionCount: strokeCount,
     captureEligibility: entry.captureEligibility,
     defaultInputMode: inputModeForReason(entry.reason),
-    voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
-    voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
     groundingReady: Boolean(entry?.snapshot),
     selectionChars: String(entry?.snapshot?.context?.content || '').trim().length,
     targetWindowRect: stageWindowRect(
@@ -4573,12 +4279,6 @@ function runningTaskContinuation(excludeToken: string | null = null) {
 function detachSelectionSurface(selectionSessionToken: string | null) {
   if (!selectionSessionToken) return;
   selectionSessions.detach(selectionSessionToken);
-  if (voiceRuntime?.active && activeSelectionSessionToken === selectionSessionToken) {
-    voiceRuntime.stop(voiceRuntime.active.requestId, { cancel: true });
-  }
-  if (voiceFocusGuards.has(selectionSessionToken)) {
-    finishVoiceFocusGuard('continued-with-new-point', selectionSessionToken);
-  }
   if (activeSelectionSessionToken === selectionSessionToken) activeSelectionSessionToken = null;
 }
 
@@ -4614,7 +4314,6 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
   entry.gesture = gesture ? safeClone(gesture) : null;
   activeSelectionSessionToken = entry.token;
   const initialInputMode = inputModeForReason(reason);
-  if (initialInputMode === 'voice') beginVoiceFocusGuard(entry.token);
   hideOverlay();
   let stageBounds = display.bounds;
   if (gesture) {
@@ -4628,8 +4327,6 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
       selectionSessionToken: entry.token,
       selectionSource: selectionSourceForReason(reason),
       defaultInputMode: initialInputMode,
-      voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
-      voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
       targetGeometryKind: 'pointer_only',
       selectionCount: 1,
       pointer: {
@@ -4655,8 +4352,6 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
       reason,
       selectionSource: selectionSourceForReason(reason),
       defaultInputMode: initialInputMode,
-      voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
-      voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
       targetGeometryKind: 'pointer_only',
       target: null,
       capsuleAnchor: 'pointer',
@@ -4678,8 +4373,8 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
   };
   if (gesture && CAPSULE_CONTENT_PROTECTED) revealCapsule('immediate');
 
-  let child: ReturnType<typeof runPythonBridge> | null = null;
-  child = runPythonBridge(
+  let child: ReturnType<typeof runRuntimeBridge> | null = null;
+  child = runRuntimeBridge(
     {
       mode: 'capture_selection_snapshot',
       reason,
@@ -4693,7 +4388,7 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
       foregroundHwnd: gesture?.source?.foregroundHwnd || pointerInputState.foregroundHwnd,
       allowVisualFallback: true,
     },
-    'scripts/selection_snapshot_bridge.py',
+    'selection_snapshot',
     'panel',
     {
       timelineToken: entry.token,
@@ -4821,18 +4516,9 @@ if (gotLock) app.whenReady().then(() => {
     log(`settings load failed closed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
   }
   migrateLegacyModelProfile();
-  voiceRuntime = new VoiceResidentRuntime({
-    startLegacy: startLegacyDictation,
-    stopLegacy: stopLegacyDictation,
-    onDeliver: forwardResidentVoiceEvent,
-    onStatus: sendVoiceRuntimeStatus,
-  });
-  const voiceRuntimeStart = configureVoiceRuntime(fabricSettings, { preload: false });
-  if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
   const requiredPaths = [
-    path.join(ROOT, 'scripts', 'fabric_bridge.py'),
+    path.join(ROOT, 'build', 'electron', 'runtime', 'worker.js'),
     path.join(ROOT, 'build', 'electron', 'renderer', 'stage.html'),
-    ...(PYTHON_RUNTIME.required === true ? [PYTHON_EXECUTABLE] : []),
   ];
   const onboardingReadiness = inspectOnboardingReadiness({
     markerPath: ONBOARDING_MARKER_PATH,
@@ -4916,71 +4602,12 @@ if (gotLock) app.whenReady().then(() => {
       || process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH
       || process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH)
   );
-  if (!captureMode && !onboardingRequired) scheduleStartupVoiceWarmup(voiceRuntimeStart);
   if (!captureMode) initializeUpdateManager({ automatic: true });
   let wasOpenedAtLogin = false;
   try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch (_) {}
   const startHidden = shouldStartHidden({ argv: process.argv.slice(1), wasOpenedAtLogin, captureMode });
   if (onboardingRequired && !captureMode) showOnboarding({}, { activate: true });
   else if (!startHidden) showDashboard({ view: 'general' }, { activate: true });
-  let focusEvidencePath = String(process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH || '').trim();
-  if (!app.isPackaged && focusEvidencePath) {
-    focusEvidencePath = path.resolve(focusEvidencePath);
-    const focusEvidenceStartDelay = Math.max(800, Math.min(
-      Number(process.env.MAGIC_POINTER_N17_FOCUS_START_DELAY_MS || 1500),
-      10000,
-    ));
-    const focusEvidenceDuration = Math.max(4000, Math.min(
-      Number(process.env.MAGIC_POINTER_N17_FOCUS_DURATION_MS || 12000),
-      30000,
-    ));
-    setTimeout(async () => {
-      const foregroundDeadline = Date.now() + 10000;
-      while (Number(pointerInputState.foregroundHwnd || 0) <= 0 && Date.now() < foregroundDeadline) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      const decision = requestActivation('shortcut-voice');
-      const evidenceSessionToken = activeSelectionSessionToken;
-      log(`N17 focus evidence activation decision=${decision}`);
-      setTimeout(() => {
-        try {
-          if (voiceFocusGuards.has(evidenceSessionToken)) {
-            finishVoiceFocusGuard('evidence_timeout', evidenceSessionToken);
-          }
-          const evidence = latestVoiceFocusEvidence || {
-            sessionId: String(evidenceSessionToken || ''),
-            expectedHwnd: 0,
-            contract: 'foreground-hwnd-stable',
-            invariant: false,
-            violationCount: 1,
-            violations: [{
-              phase: 'evidence', expectedHwnd: 0, observedHwnd: 0, timestamp: Date.now(),
-            }],
-            phases: [],
-            startedAt: Date.now(),
-            finishedAt: Date.now(),
-            failure: 'voice_focus_evidence_unavailable',
-          };
-          const envelope = {
-            schemaVersion: 1,
-            platform: process.platform,
-            activationDecision: decision,
-            observedForegroundHwnd: Number(pointerInputState.foregroundHwnd || 0),
-            evidence,
-          };
-          fs.mkdirSync(path.dirname(focusEvidencePath), { recursive: true });
-          fs.writeFileSync(focusEvidencePath, `${JSON.stringify(envelope, null, 2)}\n`, 'utf8');
-          process.stdout.write(`${focusEvidencePath}\ninvariant=${evidence.invariant}\n`);
-          if (evidence.invariant !== true) process.exitCode = 1;
-        } catch (error) {
-          process.stderr.write(`n17_focus_evidence_failed:${error instanceof Error ? `${error.name}:${error.message}` : String(error)}\n`);
-          process.exitCode = 1;
-        } finally {
-          app.quit();
-        }
-      }, focusEvidenceDuration);
-    }, focusEvidenceStartDelay);
-  }
   const dashboardCapturePath = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE || '').trim();
   if (!app.isPackaged && dashboardCapturePath) {
     const captureView = String(process.env.MAGIC_POINTER_DASHBOARD_VIEW || 'activity');
@@ -5081,9 +4708,6 @@ app.on('will-quit', () => {
   agentCursorSurfaces?.dispose();
   agentCursorSurfaces = null;
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
-  voiceRuntime?.shutdown();
-  selectionWorkerClient?.shutdown({ force: true });
-  selectionWorkerClient = null;
   if (uiaResidentHostProcess && !uiaResidentHostProcess.killed) {
     try { uiaResidentHostProcess.kill(); } catch (_) {}
   }
@@ -5095,11 +4719,6 @@ app.on('will-quit', () => {
   }
   try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
   pointerStateChild = null;
-  for (const child of dictationChildren.values()) {
-    try { if (child && !child.killed) child.kill(); } catch (_) {}
-  }
-  dictationChildren.clear();
-  for (const surface of dictationStopFiles.keys()) cleanupDictationStopFile(surface);
   updateManager?.dispose();
   try { stageWindow?.close(); } catch (_) {}
   try { dashboardWindow?.close(); } catch (_) {}
@@ -5185,14 +4804,7 @@ ipcMain.on('stage:state', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const state = String(payload?.state || 'unknown');
   log(`stage renderer state=${state}`);
-  if (state === 'result') {
-    observeVoiceFocusPhase('result');
-    finishVoiceFocusGuard();
-  } else if (state === 'error') {
-    observeVoiceFocusPhase('error');
-    finishVoiceFocusGuard();
-  } else if (state === 'dismissing') {
-    finishVoiceFocusGuard();
+  if (state === 'dismissing') {
     const token = String(payload?.selectionSessionToken || '');
     if (token) detachSelectionSurface(token);
   }
@@ -5214,250 +4826,9 @@ ipcMain.on('stage:set-mouse-capture', (event: Electron.IpcMainEvent, payload: an
     Array.isArray(payload?.regions) ? payload.regions : [],
   );
 });
-ipcMain.on('dictation:stop', (event: Electron.IpcMainEvent, payload: any) => {
-  const surface = payload?.surface === 'overlay' ? 'overlay'
-    : payload?.surface === 'stage' ? 'stage'
-      : payload?.surface === 'dashboard' ? 'dashboard' : null;
-  if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) return;
-  stopDictation(surface, { graceful: payload?.graceful === true });
-});
-function startLegacyDictation({ requestId, surface, contextPath, silenceMs }: {
-  requestId?: unknown;
-  surface?: string | null;
-  contextPath?: unknown;
-  silenceMs?: unknown;
-}) {
-  if (dictationChildren.has(surface)) {
-    return { ok: false, error: 'voice_session_active' };
-  }
-  const voiceEngine = String(fabricSettings?.interaction?.voice_engine || 'auto').trim().toLowerCase() || 'auto';
-  const scriptPath = voiceEngine === 'sense_voice'
-    ? path.join(ROOT, 'scripts', 'sense_voice_bridge.py')
-    : path.join(ROOT, 'scripts', 'local_voice_bridge.py');
-  const pythonExecutable = PYTHON_EXECUTABLE;
-  const voiceArgs = pythonInvocationArgs([
-    '-u',
-    scriptPath,
-    '--model',
-    voiceEngine === 'sense_voice' ? 'sense-voice-small' : localWhisperModelName(),
-    '--silence-ms',
-    String(silenceMs),
-  ], { isolated: PYTHON_ISOLATED });
-  const stopFile = path.join(FABRIC_DATA_DIR, 'voice-control', `${crypto.randomUUID()}.stop`);
-  voiceArgs.push('--stop-file', stopFile);
-  if (!app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV) {
-    voiceArgs.push('--input-wav', path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV));
-  }
-  const child = spawn(pythonExecutable, voiceArgs, {
-    cwd: ROOT,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: pythonSpawnEnvironment({ env: {
-      ...process.env,
-      PYTHONUTF8: '1',
-      PYTHONIOENCODING: 'utf-8',
-      MAGIC_POINTER_VOICE_SETTINGS_FILE: fabricSettingsStore?.path || '',
-      MAGIC_POINTER_VOICE_CONTEXT_PATH: contextPath,
-    }, isolated: PYTHON_ISOLATED }),
-  });
-  dictationChildren.set(surface, child);
-  dictationStopFiles.set(surface, stopFile);
-  let stdout = '';
-  let stderr = '';
-  let terminalEventSeen = false;
-  const forwardEvent = (eventPayload: { type?: string; transcript?: string; engine?: string; error?: string } = {}) => {
-    if (dictationChildren.get(surface) !== child) return;
-    const runtimeSession = voiceRuntime?.active;
-    if (
-      !runtimeSession
-      || runtimeSession.requestId !== requestId
-      || runtimeSession.surface !== surface
-      || runtimeSession.resident !== false
-    ) return;
-    if (
-      runtimeSession.cancelled
-      && (eventPayload.type === 'partial' || eventPayload.type === 'final')
-    ) return;
-    if (eventPayload.type === 'loading') observeVoiceFocusPhase('loading');
-    else if (eventPayload.type === 'ready') observeVoiceFocusPhase('ready');
-    else if (eventPayload.type === 'partial') observeVoiceFocusPhase('partial');
-    else if (eventPayload.type === 'final') observeVoiceFocusPhase('final');
-    else if (eventPayload.type === 'error') observeVoiceFocusPhase('error');
-    if (eventPayload.type === 'partial' || eventPayload.type === 'final') {
-      if (eventPayload.type === 'final') terminalEventSeen = true;
-      if (eventPayload.type === 'final') voiceRuntime?.legacyFinished(requestId);
-      safeSurfaceSend(surface, 'dictation:result', {
-        ok: true,
-        surface,
-        transcript: String(eventPayload.transcript || ''),
-        final: eventPayload.type === 'final',
-        engine: eventPayload.engine || 'whisper-local',
-      });
-    } else if (eventPayload.type === 'error') {
-      terminalEventSeen = true;
-      voiceRuntime?.legacyFinished(requestId);
-      safeSurfaceSend(surface, 'dictation:result', {
-        ok: false,
-        surface,
-        error: String(eventPayload.error || '本地语音识别失败。'),
-        engine: eventPayload.engine || 'whisper-local',
-      });
-    } else if (eventPayload.type === 'loading' || eventPayload.type === 'ready') {
-      safeSurfaceSend(surface, 'dictation:result', {
-        ok: true,
-        surface,
-        status: eventPayload.type,
-        engine: eventPayload.engine || 'whisper-local',
-      });
-    }
-  };
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => {
-    stdout += chunk;
-    const lines = stdout.split(/\r?\n/);
-    stdout = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        forwardEvent(JSON.parse(line));
-      } catch (_) {
-        log('local dictation emitted invalid JSONL');
-      }
-    }
-  });
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-  child.on('error', (error: Error) => {
-    terminalEventSeen = true;
-    if (dictationChildren.get(surface) === child) {
-      dictationChildren.delete(surface);
-      cleanupDictationStopFile(surface);
-    }
-    voiceRuntime?.legacyFinished(requestId);
-    safeSurfaceSend(surface, 'dictation:result', {
-      ok: false,
-      surface,
-      error: `本地语音启动失败：${error.message}`,
-    });
-  });
-  child.on('close', (code: number | null) => {
-    if (stdout.trim()) {
-      try { forwardEvent(JSON.parse(stdout)); } catch (_) {}
-    }
-    if (dictationChildren.get(surface) === child) {
-      dictationChildren.delete(surface);
-      cleanupDictationStopFile(surface);
-    }
-    voiceRuntime?.legacyFinished(requestId);
-    if (!terminalEventSeen && code !== 0) {
-      safeSurfaceSend(surface, 'dictation:result', {
-        ok: false,
-        surface,
-        error: `本地语音识别失败：${stderr.trim().slice(0, 500) || `exit ${code}`}`,
-      });
-    }
-    log(`local dictation closed surface=${surface} code=${code}`);
-  });
-  return { ok: true, requestId, mode: 'legacy' };
-}
 
-ipcMain.on('dictation:start', (event: Electron.IpcMainEvent, payload: any) => {
-  const surface = payload?.surface === 'overlay' ? 'overlay'
-    : payload?.surface === 'stage' ? 'stage'
-      : payload?.surface === 'dashboard' ? 'dashboard' : null;
-  if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) {
-    log('dictation:start rejected untrusted sender or surface');
-    return;
-  }
-  if (surface === 'dashboard') {
-    startDashboardDictation();
-    return;
-  }
-  const selectionToken = activeSelectionSessionToken;
-  const selectionSession = selectionToken ? selectionSessions.get(selectionToken) : null;
-  if (!selectionSession) {
-    safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '当前 THIS 已过期，请重新激活 Magic Pointer。' });
-    return;
-  }
-  if (!selectionSession.snapshot) {
-    const deadline = Date.now() + 3000;
-    const attempt = () => {
-      const current = selectionSessions.get(selectionToken);
-      if (!current || activeSelectionSessionToken !== selectionToken) {
-        safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '当前 THIS 已过期，请重新激活 Magic Pointer。' });
-        return;
-      }
-      if (current.snapshot) {
-        startStageDictation({ surface, selectionSession: current, selectionToken });
-        return;
-      }
-      if (Date.now() >= deadline) {
-        safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '目标识别还在进行，请稍候再试语音。' });
-        return;
-      }
-      setTimeout(attempt, 80);
-    };
-    attempt();
-    return;
-  }
-  startStageDictation({ surface, selectionSession, selectionToken });
-});
 
-function startDashboardDictation() {
-  const surface = 'dashboard';
-  const requestId = crypto.randomUUID();
-  const silenceMs = Math.max(600, Math.min(5000, Number(fabricSettings?.interaction?.voice_silence_ms) || 1600));
-  const result = voiceRuntime?.start({
-    requestId,
-    surface,
-    contextPath: '',
-    silenceMs,
-    inputWav: !app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV
-      ? path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV) : '',
-  }) || { ok: false, error: 'voice_runtime_unavailable' };
-  if (!result.ok) {
-    safeSurfaceSend(surface, 'dictation:result', {
-      ok: false,
-      surface,
-      error: `本地语音未启动：${result.error}`,
-    });
-  }
-}
 
-function startStageDictation({ surface, selectionSession, selectionToken }: {
-  surface: string | null;
-  selectionSession: NonNullable<ReturnType<typeof selectionSessions.get>>;
-  selectionToken: string | null;
-}) {
-  const snapshot = selectionSession.snapshot;
-  const context = snapshot.context || {};
-  const contextPath = String(context.document_path || context.path || snapshot.capture_path || '');
-  const requestId = crypto.randomUUID();
-  const silenceMs = Math.max(600, Math.min(5000, Number(fabricSettings?.interaction?.voice_silence_ms) || 1600));
-  const inputWav = !app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV
-    ? path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV)
-    : '';
-  if (!appendVoiceAudit({
-    eventType: 'voice.start', sessionToken: selectionToken, surface, outcome: 'requested', latencyMs: 0,
-  })) {
-    safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '本地语音审计写入失败，未启动录音。' });
-    return;
-  }
-  observeVoiceFocusPhase('dictation_start', selectionToken);
-  const result = voiceRuntime?.start({
-    requestId,
-    surface,
-    contextPath,
-    silenceMs,
-    inputWav,
-  }) || { ok: false, error: 'voice_runtime_unavailable' };
-  if (!result.ok) {
-    appendVoiceAudit({
-      eventType: 'voice.start_rejected', sessionToken: selectionToken, surface, outcome: 'rejected', errorCode: result.error,
-    });
-    safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: `本地语音未启动：${result.error}` });
-  }
-}
 function resultTargetWindow(target: string | null | undefined) {
   if (target === 'dashboard' || target === 'fabric-dashboard') return dashboardWindow;
   if (target === 'stage') return stageWindow;
@@ -5486,14 +4857,13 @@ function sendBridgeResult(target: string | null, parsed: any) {
   safeSurfaceSend(target, channel, parsed);
 }
 
-function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py', target: string | null = 'overlay', options: any = {}) {
+function runRuntimeBridge(payload: any, scriptPath = 'electron', target: string | null = 'overlay', options: any = {}) {
   if (!options.allowWithoutSurface && !resultTargetWindow(target)) return;
-  const py = PYTHON_EXECUTABLE;
-  const defaultTimeoutMs = scriptPath.includes('selection_snapshot_bridge')
+  const defaultTimeoutMs = scriptPath.includes('selection_snapshot')
     ? 15_000
-    : scriptPath.includes('selection_bridge')
+    : scriptPath.includes('selection')
       ? 15 * 60_000
-      : scriptPath.includes('action_bridge')
+      : scriptPath.includes('action')
         ? 45_000
         : 120_000;
   const onProgress = (record: any) => {
@@ -5517,37 +4887,18 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
     registerActionProposals(parsed, options.selectionSessionToken || null, target);
     sendBridgeResult(target, parsed);
   };
-  if (scriptPath.replace(/\\/g, '/') === 'scripts/selection_bridge.py') {
-    if (!selectionWorkerClient) {
-      selectionWorkerClient = new SelectionWorkerClient({
-        root: ROOT,
-        pythonExecutable: PYTHON_EXECUTABLE,
-        pythonIsolated: PYTHON_ISOLATED,
-        userDataDir: FABRIC_DATA_DIR,
-      });
-    }
-    return selectionWorkerClient.run({
-      requestId: String(payload?.requestId || crypto.randomUUID()),
-      payload,
-      timeoutMs: Math.max(1000, Number(options.timeoutMs) || defaultTimeoutMs),
-      signal: options.signal || null,
-      onProgress,
-      onComplete,
-    });
-  }
-  return pythonBridgeRunner.run({
-    executable: py,
-    args: pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED }),
+  return runtimeBridgeRunner.run({
+    executable: process.execPath,
+    args: [path.join(ROOT, 'build', 'electron', 'runtime', 'worker.js'), scriptPath],
     spawnOptions: {
       cwd: ROOT,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      env: pythonSpawnEnvironment({ env: {
+      env: {
         ...process.env,
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONUTF8: '1',
+        ELECTRON_RUN_AS_NODE: '1',
         MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR,
-      }, isolated: PYTHON_ISOLATED }),
+      },
     },
     input: payload,
     timeoutMs: Math.max(1000, Number(options.timeoutMs) || defaultTimeoutMs),
@@ -5560,7 +4911,7 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
   });
 }
 
-function runPythonBridgePromise(payload: any, scriptPath: string, { target = 'fabric-dashboard', timeoutMs = 5000 }: { target?: string | null; timeoutMs?: number } = {}): Promise<any> {
+function runRuntimeBridgePromise(payload: any, scriptPath: string, { target = 'fabric-dashboard', timeoutMs = 5000 }: { target?: string | null; timeoutMs?: number } = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
@@ -5570,7 +4921,7 @@ function runPythonBridgePromise(payload: any, scriptPath: string, { target = 'fa
       if (timer) clearTimeout(timer);
       callback(value);
     };
-    const child = runPythonBridge(payload, scriptPath, target, {
+    const child = runRuntimeBridge(payload, scriptPath, target, {
       timeoutMs,
       allowWithoutSurface: true,
       onComplete: (parsed: any) => {
@@ -5600,9 +4951,9 @@ ipcMain.handle('learning-candidates:request', async (event: Electron.IpcMainInvo
     return { ok: false, error: 'candidate_request_invalid' };
   }
   try {
-    return await runPythonBridgePromise(
+    return await runRuntimeBridgePromise(
       payload,
-      'scripts/learning_candidates_bridge.py',
+      'learning_candidates',
       { target: null, timeoutMs: 5_000 },
     );
   } catch (error) {
@@ -5636,9 +4987,9 @@ function broadcastModelHealth() {
 
 async function refreshModelHealth({ probe = false } = {}) {
   try {
-    const parsed = await runPythonBridgePromise(
+    const parsed = await runRuntimeBridgePromise(
       { operation: 'model.health', probe, timeoutS: 6, modelRuntime: activeModelRuntimeConfig() },
-      'scripts/fabric_bridge.py',
+      'fabric',
       { target: 'fabric-dashboard', timeoutMs: probe ? 12000 : 6000 },
     );
     if (parsed?.health && typeof parsed.health === 'object') {
@@ -5691,13 +5042,12 @@ function runtimePermissionEvidence() {
 }
 
 async function probeRuntimeState() {
-  const parsed = await runPythonBridgePromise({
+  const parsed = await runRuntimeBridgePromise({
     operation: 'runtime.snapshot',
     runtimeEvidence: {
-      voiceWorker: safeClone(latestVoiceRuntimeStatus),
       permissions: runtimePermissionEvidence(),
     },
-  }, 'scripts/fabric_bridge.py', { timeoutMs: 5000 });
+  }, 'fabric', { timeoutMs: 5000 });
   if (!parsed.snapshot || typeof parsed.snapshot !== 'object') {
     throw new Error('runtime_snapshot_payload_missing');
   }
@@ -5836,13 +5186,6 @@ function handleModelCredentialOperation(operation: string, payload: any) {
   throw new Error('credential_operation_unknown');
 }
 
-function microphonePermissionStatus() {
-  try {
-    return systemPreferences.getMediaAccessStatus('microphone');
-  } catch (_) {
-    return 'unknown';
-  }
-}
 
 function sendPreflightEvent(preflightEvent: unknown) {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
@@ -5870,8 +5213,7 @@ async function runPreflight(payload: { stageIds?: unknown[]; userSkips?: unknown
       settings: fabricSettings || defaultSettings(),
       credentialStore,
       wiggleDetector,
-      pythonRuntime: PYTHON_RUNTIME,
-      microphoneStatus: microphonePermissionStatus,
+      runtimeExecutable: process.execPath,
     }),
   });
   const stageIds = Array.isArray(payload.stageIds) ? payload.stageIds : null;
@@ -5921,7 +5263,7 @@ ipcMain.on('overlay:done', (event: Electron.IpcMainEvent, payload: any) => {
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
   placeStageOnDisplay(display);
   hideOverlay();
-  runPythonBridge(enriched, 'scripts/electron_bridge.py', 'stage', {
+  runRuntimeBridge(enriched, 'electron', 'stage', {
     onComplete: (parsed: any) => {
       registerActionProposals(parsed, null, 'stage');
       lastStageResult = { token: null, parsed: safeClone(parsed) };
@@ -6093,9 +5435,9 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
   beginStageLiveTurn(selectionSessionToken, payload);
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
-  let child: ReturnType<typeof runPythonBridge> | null = null;
+  let child: ReturnType<typeof runRuntimeBridge> | null = null;
   activeSessionAgentIds.set(selectionSessionToken, session.taskId);
-  child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
+  child = runRuntimeBridge(enriched, 'selection', 'stage', {
     timelineToken: selectionSessionToken,
     onProgress: (record: any) => {
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
@@ -6131,7 +5473,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
       scheduleBackgroundLearning({
         enabled: fabricSettings?.privacy?.background_learning_enabled === true,
         request: parsed.learningReview,
-        runBridge: runPythonBridge,
+        runBridge: runRuntimeBridge,
         log,
       });
       registerActionProposals(parsed, selectionSessionToken, 'stage');
@@ -6200,9 +5542,9 @@ ipcMain.handle('stage:pick-element', async (event: Electron.IpcMainInvokeEvent, 
   const session = selectionSessions.get(String(payload?.selectionSessionToken || ''));
   const hwnd = Number(session?.snapshot?.source_window?.hwnd || 0);
   try {
-    return await runPythonBridgePromise(
+    return await runRuntimeBridgePromise(
       { x: Math.round(x), y: Math.round(y), hwnd: Number.isFinite(hwnd) ? hwnd : 0 },
-      'scripts/element_probe_bridge.py',
+      'element_probe',
       { target: 'stage', timeoutMs: 3000 },
     );
   } catch (error) {
@@ -6221,14 +5563,14 @@ ipcMain.handle('stage:agent-sessions', async (event: Electron.IpcMainInvokeEvent
   const packetWorkspace = draft.contextPacket?.workspace;
   const cwd = String(packetWorkspace?.cwd || ROOT);
   try {
-    return await runPythonBridgePromise({
+    return await runRuntimeBridgePromise({
       operation: 'agent.sessions',
       cwd,
       cwdMatch: 'strict',
       includeMismatch: false,
       activeOnly: true,
       limit: 5,
-    }, 'scripts/fabric_bridge.py', { target: 'stage', timeoutMs: 15000 });
+    }, 'fabric', { target: 'stage', timeoutMs: 15000 });
   } catch (error) {
     return { ok: false, error: String((error as { message?: string })?.message || 'agent_sessions_unavailable') };
   }
@@ -6242,11 +5584,11 @@ ipcMain.handle('actions:undo', async (event: Electron.IpcMainInvokeEvent, payloa
   const actionId = String(payload?.actionId || payload?.action_id || '').trim().slice(0, 200);
   if (!taskId) return { ok: false, error: 'missing_task_id' };
   try {
-    return await runPythonBridgePromise({
+    return await runRuntimeBridgePromise({
       operation: 'undo',
       taskId,
       actionId: actionId || undefined,
-    }, 'scripts/action_bridge.py', { target: 'stage', timeoutMs: 15000 });
+    }, 'action', { target: 'stage', timeoutMs: 15000 });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'undo_unavailable' };
   }
@@ -6260,13 +5602,13 @@ ipcMain.handle('stage:dispatch-agent-prompt', async (event: Electron.IpcMainInvo
   const draft = selectionSessions.getAgentPromptDraft(selectionSessionToken);
   if (!draft) return { ok: false, error: 'agent_prompt_draft_expired' };
   try {
-    const result = await runPythonBridgePromise({
+    const result = await runRuntimeBridgePromise({
       operation: 'agent.prompt.dispatch',
       contextPacket: draft.contextPacket,
       prompt: String(payload?.prompt || ''),
       provider: String(payload?.provider || ''),
       sessionId: String(payload?.sessionId || ''),
-    }, 'scripts/fabric_bridge.py', { target: 'stage', timeoutMs: 30000 });
+    }, 'fabric', { target: 'stage', timeoutMs: 30000 });
     if (result?.ok === true) selectionSessions.clearAgentPromptDraft(selectionSessionToken);
     return result;
   } catch (error) {
@@ -6316,7 +5658,7 @@ function executeActionForTarget(payload: any, target: string, options: any = {})
     confirmed: payload?.confirmed === true,
   };
   log(`${target}:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
-  runPythonBridge(enriched, 'scripts/action_bridge.py', target, {
+  runRuntimeBridge(enriched, 'action', target, {
     onComplete: (parsed: any) => {
       if (isSelectionSurface && selectionSessionToken && !selectionSessions.get(selectionSessionToken)) {
         log(`${target}:action result ignored expired selection session`);
@@ -6350,14 +5692,14 @@ ipcMain.on('stage:insert-result-text', (event: Electron.IpcMainEvent, payload: a
   }
   const snapshot = session.snapshot || {};
   log(`stage:insert-result-text token=${selectionSessionToken} chars=${text.length}`);
-  runPythonBridge({
+  runRuntimeBridge({
     text,
     targetResolution: 'adaptive',
     currentTargetWindow: safeClone(lastStableForegroundWindow),
     targetWindow: safeClone(snapshot.source_window || {}),
     targetPoint: safeClone(snapshot.target_point || null),
     targetPointSpace: snapshot.target_point_space || null,
-  }, 'scripts/deliver_text_bridge.py', 'stage', {
+  }, 'deliver_text', 'stage', {
     onComplete: (parsed: any) => {
       if (!selectionSessions.get(selectionSessionToken)) {
         log('stage:insert-result-text result ignored expired selection session');
@@ -6484,9 +5826,9 @@ ipcMain.handle('runtime-snapshot:get', async (event: Electron.IpcMainInvokeEvent
 });
 ipcMain.handle('extensions:inventory', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_extensions_reader' };
-  return runPythonBridgePromise(
+  return runRuntimeBridgePromise(
     { operation: 'extensions.inventory' },
-    'scripts/fabric_bridge.py',
+    'fabric',
     { target: null, timeoutMs: 10_000 },
   );
 });
@@ -6523,14 +5865,6 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
   try {
     fabricSettingsStore.save(nextSettings);
     fabricSettings = nextSettings;
-    if (impact.voice) {
-      const voiceReconfigure = configureVoiceRuntime(nextSettings, { preload: true });
-      if (!voiceReconfigure.ok) {
-        throw new Error(voiceReconfigure.error === 'voice_session_active'
-          ? '语音正在使用中，请结束这次语音后再修改。'
-          : `语音设置未应用：${voiceReconfigure.error}`);
-      }
-    }
     if (impact.hotkeys) {
       hotkeys = registerConfigurableHotkeys();
       const failed = Object.entries(hotkeys)
@@ -6558,7 +5892,6 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
   } catch (error) {
     fabricSettings = previousSettings;
     try { fabricSettingsStore.save(previousSettings); } catch (_) {}
-    if (impact.voice) configureVoiceRuntime(previousSettings, { preload: true });
     if (impact.hotkeys) registerConfigurableHotkeys();
     if (impact.gesture && wiggleDetector) {
       wiggleDetector.updateSettings({
@@ -6581,9 +5914,9 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
 ipcMain.handle('slash:directory', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_slash_directory' };
   try {
-    const parsed = await runPythonBridgePromise(
+    const parsed = await runRuntimeBridgePromise(
       { operation: 'slash.directory' },
-      'scripts/fabric_bridge.py',
+      'fabric',
       { target: 'fabric-dashboard', timeoutMs: 10000 },
     );
     return parsed ?? { ok: false, error: 'slash_directory_failed' };
@@ -6809,10 +6142,10 @@ ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: a
       // The Python bridge returns credential_missing without exposing a secret.
     }
   }
-  runPythonBridge({
+  runRuntimeBridge({
     ...bridgePayload,
     operation,
-  }, 'scripts/fabric_bridge.py', 'fabric-dashboard', {
+  }, 'fabric', 'fabric-dashboard', {
     onComplete: (parsed: any) => {
       if (
         parsed?.ok === true
@@ -6827,22 +6160,6 @@ ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: a
       if (operation === 'settings.save' && parsed?.ok === true && parsed?.settings) {
         const previousSettings = fabricSettings;
         const gestureContractChanged = gestureRuntimeSettingsChanged(previousSettings, parsed.settings);
-        const voiceReconfigure = configureVoiceRuntime(parsed.settings, { preload: true });
-        if (!voiceReconfigure.ok) {
-          fabricSettings = previousSettings;
-          try {
-            fabricSettingsStore.save(previousSettings);
-          } catch (error) {
-            log(`voice settings rollback persistence failed ${error instanceof Error ? error.name : 'Error'}`);
-          }
-          parsed.ok = false;
-          parsed.settings = previousSettings;
-          parsed.error = voiceReconfigure.error === 'voice_session_active'
-            ? '语音正在录音，不能在会话中修改常驻模型设置。'
-            : `常驻语音设置未应用：${voiceReconfigure.error}`;
-          sendBridgeResult('fabric-dashboard', { ...parsed, fabricOperation: operation });
-          return;
-        }
         fabricSettings = parsed.settings;
         if (wiggleDetector) {
           wiggleDetector.updateSettings({
@@ -6862,8 +6179,6 @@ ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: a
           } catch (error) {
             log(`settings hotkey rollback persistence failed ${error instanceof Error ? error.name : 'Error'}`);
           }
-          const voiceRollback = configureVoiceRuntime(previousSettings, { preload: true });
-          if (!voiceRollback.ok) log(`settings voice runtime rollback failed ${voiceRollback.error}`);
           if (wiggleDetector) {
             wiggleDetector.updateSettings({
               sensitivity: previousSettings.activation?.sensitivity,

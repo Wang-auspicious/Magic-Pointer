@@ -6,8 +6,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
-$result = [ordered]@{ status = 'failed'; executable = $null; processId = $null; verifiedFiles = @(); packageSource = $null; bundledPython = $null; pythonImports = @(); documentFixtures = $null; fabricSmoke = $null; version = $null; icon = $null; userData = $null; cleanup = $null; error = $null }
+$result = [ordered]@{ status = 'failed'; executable = $null; processId = $null; verifiedFiles = @(); packageSource = $null; nodeRuntime = $null; nodeImports = @(); documentFixtures = $null; runtimeSmoke = $null; version = $null; icon = $null; userData = $null; cleanup = $null; error = $null }
 $previousRuntimeDir = $env:MAGIC_POINTER_USER_DATA_DIR
+$previousRunAsNode = $env:ELECTRON_RUN_AS_NODE
 $runtimeDir = $null
 $process = $null
 $exitCode = 0
@@ -50,18 +51,19 @@ try {
   $result.executable = $resolvedExe
   $appRoot = Split-Path -Parent $resolvedExe
   $resourcesApp = Join-Path $appRoot 'resources\app'
-  $pythonRuntime = Join-Path $appRoot 'resources\python-runtime'
-  $bundledPython = Join-Path $pythonRuntime 'python.exe'
   $requiredFiles = @(
     'build\electron\main.js',
     'build\electron\renderer\dashboard.html',
     'build\electron\renderer\onboarding.html',
     'build\electron\renderer\onboarding.css',
     'build\electron\renderer\onboarding.js',
-    'scripts\electron_bridge.py',
-    'scripts\local_voice_worker.py',
+    'build\electron\runtime\worker.js',
+    'build\electron\runtime\desktop_capture.js',
+    'build\electron\runtime\package_smoke.js',
+    'scripts\desktop_host.cs',
+    'scripts\desktop_ocr.ps1',
     'assets\app\icon.ico',
-    'app\fabric\context_packet.py',
+    'build\electron\runtime\context.js',
     'data\preflight_manifest.v1.json'
   )
   foreach ($relativePath in $requiredFiles) {
@@ -82,8 +84,7 @@ try {
   }
   $developmentWorkspaceNeedle = 'D:\Desktop\Magic Pointer'
   $sourceRoots = @(
-    (Join-Path $resourcesApp 'electron'),
-    (Join-Path $resourcesApp 'app'),
+    (Join-Path $resourcesApp 'build\electron'),
     (Join-Path $resourcesApp 'scripts')
   )
   $scannedSourceCount = 0
@@ -101,52 +102,9 @@ try {
     developmentWorkspaceProvenanceAbsent = $true
     scannedSourceFiles = $scannedSourceCount
   }
-  foreach ($relativePath in @('python-runtime\python.exe', 'python-runtime\manifest.json', 'python-runtime\Lib\site-packages')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $appRoot "resources\$relativePath"))) { throw "Packaged Python runtime file is missing: $relativePath" }
-    $result.verifiedFiles += $relativePath
-  }
-  $pythonManifest = Get-Content -LiteralPath (Join-Path $pythonRuntime 'manifest.json') -Raw | ConvertFrom-Json
-  if ($pythonManifest.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace($pythonManifest.pythonVersion) -or [string]::IsNullOrWhiteSpace($pythonManifest.requirementsSha256)) {
-    throw 'Bundled Python runtime manifest is invalid.'
-  }
-  $importProbe = @'
-import json
-import pathlib
-import sys
-runtime = pathlib.Path(sys.argv[2]).resolve()
-site_packages = runtime / "Lib" / "site-packages"
-if not site_packages.is_dir():
-    raise RuntimeError("bundled site-packages missing")
-sys.path.insert(0, str(site_packages))
-import PIL
-import fitz
-import docx
-import pptx
-import openpyxl
-import openai
-import pyperclip
-import onnxruntime
-import rapidocr
-import sounddevice
-import whisper
-import torch
-import opencc
-import runpy
-document_fixtures = runpy.run_path(sys.argv[3])["verify_document_dependencies"]()
-print(json.dumps({"executable": str(pathlib.Path(sys.executable).resolve()), "imports": ["PIL", "fitz", "docx", "pptx", "openpyxl", "openai", "pyperclip", "onnxruntime", "rapidocr", "sounddevice", "whisper", "torch", "opencc"], "documentFixtures": document_fixtures}))
-'@
-  $encodedImportProbe = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($importProbe))
-  $importResult = Invoke-CapturedNative -FilePath $bundledPython -Arguments @(
-    '-I', '-X', 'utf8', '-c',
-    'import base64,sys;exec(base64.b64decode(sys.argv[1]))',
-    $encodedImportProbe, $pythonRuntime, (Join-Path $resourcesApp 'app\context_pack\runtime_document_smoke.py')
-  )
-  if ($importResult.ExitCode -ne 0) { throw "Bundled Python imports failed: $($importResult.Output -join [Environment]::NewLine)" }
-  $importEvidence = ($importResult.Output | Select-Object -Last 1) | ConvertFrom-Json
-  if ([IO.Path]::GetFullPath($importEvidence.executable) -ne [IO.Path]::GetFullPath($bundledPython)) { throw 'Dependency imports did not run with bundled python.exe.' }
-  $result.bundledPython = [ordered]@{ path = $bundledPython; manifest = $pythonManifest }
-  $result.pythonImports = @($importEvidence.imports)
-  $result.documentFixtures = $importEvidence.documentFixtures
+  if (Test-Path -LiteralPath (Join-Path $appRoot 'resources\python-runtime')) { throw 'Obsolete Python runtime leaked into package.' }
+  $pythonSources = @(Get-ChildItem -LiteralPath $resourcesApp -Filter '*.py' -File -Recurse | Where-Object { $_.FullName -notlike '*\node_modules\*' })
+  if ($pythonSources.Count -gt 0) { throw "Obsolete Python source leaked into package: $($pythonSources[0].FullName)" }
 
   $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedExe)
   $result.version = [ordered]@{ fileVersion = $versionInfo.FileVersion; productVersion = $versionInfo.ProductVersion; productName = $versionInfo.ProductName }
@@ -156,31 +114,19 @@ print(json.dumps({"executable": str(pathlib.Path(sys.executable).resolve()), "im
 
   $runtimeDir = Join-Path (Join-Path $env:LOCALAPPDATA 'Magic Pointer\package-smoke') ([guid]::NewGuid().ToString('N'))
   $env:MAGIC_POINTER_USER_DATA_DIR = $runtimeDir
-  $smokeScript = Join-Path $resourcesApp 'scripts\smoke_fabric.py'
-  $smokeRunner = @'
-import pathlib
-import runpy
-import sys
-runtime = pathlib.Path(sys.argv[2]).resolve()
-script = pathlib.Path(sys.argv[3]).resolve()
-sys.path.insert(0, str(runtime / "Lib" / "site-packages"))
-sys.argv = [str(script)]
-runpy.run_path(str(script), run_name="__main__")
-'@
-  $encodedSmokeRunner = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($smokeRunner))
-  $smokeResult = Invoke-CapturedNative -FilePath $bundledPython -Arguments @(
-    '-I', '-X', 'utf8', '-c',
-    'import base64,sys;exec(base64.b64decode(sys.argv[1]))',
-    $encodedSmokeRunner, $pythonRuntime, $smokeScript
-  )
-  if ($smokeResult.ExitCode -ne 0) { throw "Bundled Fabric smoke failed: $($smokeResult.Output -join [Environment]::NewLine)" }
-  $smokeText = $smokeResult.Output -join [Environment]::NewLine
-  $smokeJsonStart = $smokeText.IndexOf('{')
-  if ($smokeJsonStart -lt 0) { throw 'Bundled Fabric smoke did not emit JSON.' }
-  $smokeJson = $smokeText.Substring($smokeJsonStart) | ConvertFrom-Json
-  if ($smokeJson.ok -ne $true) { throw 'Bundled Fabric smoke did not report ok=true.' }
-  $result.fabricSmoke = $smokeJson
-  $process = Start-Process -FilePath $resolvedExe -PassThru
+  $smokeScript = Join-Path $resourcesApp 'build\electron\runtime\package_smoke.js'
+  $env:ELECTRON_RUN_AS_NODE = '1'
+  $smokeResult = Invoke-CapturedNative -FilePath $resolvedExe -Arguments @($smokeScript, $resourcesApp)
+  if ($smokeResult.ExitCode -ne 0) { throw "Packaged Node runtime smoke failed: $($smokeResult.Output -join [Environment]::NewLine)" }
+  $smokeJson = ($smokeResult.Output | Select-Object -Last 1) | ConvertFrom-Json
+  if ($smokeJson.ok -ne $true) { throw 'Packaged Node runtime smoke did not report ok=true.' }
+  if ([IO.Path]::GetFullPath($smokeJson.executable) -ne [IO.Path]::GetFullPath($resolvedExe)) { throw 'Node runtime probe did not use the packaged Electron executable.' }
+  $result.nodeRuntime = [ordered]@{ executable = $smokeJson.executable; version = $smokeJson.node }
+  $result.nodeImports = @($smokeJson.dependencies)
+  $result.documentFixtures = $smokeJson.documents
+  $result.runtimeSmoke = $smokeJson
+  Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+  $process = Start-Process -FilePath $resolvedExe -WindowStyle Hidden -PassThru
   $result.processId = $process.Id
   $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
   do {
@@ -259,6 +205,7 @@ finally {
     } catch { $cleanupErrors += "Runtime cleanup: $($_.Exception.Message)" }
   }
   if ($null -eq $previousRuntimeDir) { Remove-Item Env:MAGIC_POINTER_USER_DATA_DIR -ErrorAction SilentlyContinue } else { $env:MAGIC_POINTER_USER_DATA_DIR = $previousRuntimeDir }
+  if ($null -eq $previousRunAsNode) { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue } else { $env:ELECTRON_RUN_AS_NODE = $previousRunAsNode }
   $result.cleanup = [ordered]@{ scopedProcessId = if ($process) { $process.Id } else { $null }; smokeDataRemoved = ($cleanupErrors.Count -eq 0); errors = $cleanupErrors }
   if ($cleanupErrors.Count -gt 0) {
     $result.status = 'failed'

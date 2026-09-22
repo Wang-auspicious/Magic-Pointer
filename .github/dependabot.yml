@@ -35,20 +35,6 @@ updates:
           - "minor"
           - "patch"
 
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 7
-    groups:
-      python-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

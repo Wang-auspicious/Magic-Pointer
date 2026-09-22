@@ -16,7 +16,7 @@ production.filename = mainPath;
 production.paths = Module._nodeModulePaths(path.dirname(mainPath));
 production._compile(fs.readFileSync(mainPath, 'utf8') + `
 module.exports.selectionAcceptance = {
-  run: (payload, onProgress, onComplete) => runPythonBridge({...payload, modelRuntime:activeModelRuntimeConfig()}, 'scripts/selection_bridge.py', null, {allowWithoutSurface:true,onProgress,onComplete}),
+  run: (payload, onProgress, onComplete) => runRuntimeBridge({...payload, modelRuntime:activeModelRuntimeConfig()}, 'selection', null, {allowWithoutSurface:true,onProgress,onComplete}),
   model: () => {const r=activeModelRuntimeConfig();return r ? {model:r.model,provider:r.provider,apiMode:r.apiMode} : {model:fs.readFileSync(path.join(__dirname,'../../secrets/model.txt'),'utf8').trim(),configuration:'local'};},
   open: () => { onboardingWindow?.hide(); showDashboard({view:'chat'}, {activate:true}); }
 };`, mainPath);

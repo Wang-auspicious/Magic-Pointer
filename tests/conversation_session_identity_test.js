@@ -5,7 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.ts', 'utf8');
-const bridge = fs.readFileSync('scripts/conversation_bridge.py', 'utf8');
+const bridge = fs.readFileSync('electron/runtime/index.ts', 'utf8');
 
 const sendHandler = main.slice(main.indexOf("ipcMain.handle('conversations:send'"));
 assert(sendHandler.length > 0, 'main must handle conversations:send');
@@ -23,7 +23,7 @@ assert(
 );
 
 assert(
-  bridge.includes('def resolve_agent_session_id'),
+  bridge.includes('export function resolveSessionId'),
   'bridge must resolve the agent session id through one explicit seam',
 );
 assert(
@@ -35,7 +35,7 @@ assert(
   'bridge main() must read both identity fields off the payload',
 );
 assert(
-  bridge.includes('agent_session_id=resolved_session_id'),
+  bridge.includes('agentSessionId: session.id'),
   'bridge must return the resolved session id so conversation_store can persist it',
 );
 

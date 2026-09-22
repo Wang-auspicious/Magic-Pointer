@@ -11,12 +11,12 @@ interface ElectronBuilderPackage {
 type SpawnResult = Pick<SpawnSyncReturns<Buffer>, 'error' | 'status'>;
 type SpawnRunner = (command: string, args: string[], options: SpawnSyncOptions) => SpawnResult;
 
-interface PreparePythonRuntimeOptions {
+interface RunnerOptions {
   root?: string;
   spawnSync?: SpawnRunner;
 }
 
-interface BuildOptions extends PreparePythonRuntimeOptions {
+interface BuildOptions extends RunnerOptions {
   platform?: NodeJS.Platform;
   electronDist?: string;
   electronBuilderCli?: string;
@@ -36,26 +36,9 @@ function electronBuilderCli(): string {
   return path.join(path.dirname(packagePath), relativeBin);
 }
 
-function preparePythonRuntime({
-  root = ROOT,
-  spawnSync: run = spawnSync as SpawnRunner,
-}: PreparePythonRuntimeOptions = {}): void {
-  const scriptPath = path.join(root, 'scripts', 'prepare_python_runtime.ps1');
-  const result = run(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-    { cwd: root, stdio: 'inherit' },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`Python runtime preparation failed with exit code ${result.status}`);
-  }
-}
-
 function runBuild(
   args: string[],
   {
-    platform = process.platform,
     root = ROOT,
     electronDist = electronDistDir(),
     electronBuilderCli: builderCli = electronBuilderCli(),
@@ -67,7 +50,6 @@ function runBuild(
   if (!fs.existsSync(electronExe) && root === ROOT) {
     throw new Error(`Local Electron distribution is unavailable: ${electronExe}`);
   }
-  if (platform === 'win32') preparePythonRuntime({ root, spawnSync: run });
   const result = run(nodeExecutable, [builderCli, `-c.electronDist=${electronDist}`, ...args], {
     cwd: root,
     stdio: 'inherit',
@@ -78,4 +60,4 @@ function runBuild(
 
 if (require.main === module) process.exitCode = runBuild(process.argv.slice(2));
 
-export { preparePythonRuntime, runBuild };
+export { runBuild };

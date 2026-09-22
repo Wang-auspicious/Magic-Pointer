@@ -26,10 +26,10 @@ assert(packageJson.scripts.typecheck.includes('tsconfig.tools.json'));
 assert(packageJson.scripts.typecheck.includes('tsconfig.tests.json'));
 assert(packageJson.scripts.typecheck.includes('typecheck:figma'));
 assert(packageJson.scripts['build:electron'].includes('npm run build:figma'));
-assert.strictEqual(packageJson.scripts['test:python'], 'python -m pytest tests/ -q');
+assert.strictEqual(packageJson.scripts['test:python'], undefined);
 assert.strictEqual(
   packageJson.scripts.verify,
-  'npm run lint && npm run typecheck && npm test && npm run test:python',
+  'npm run lint && npm run typecheck && npm test',
 );
 assert.strictEqual(baseConfig.compilerOptions.strict, true);
 assert.strictEqual(baseConfig.compilerOptions.noEmitOnError, true);

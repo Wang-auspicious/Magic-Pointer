@@ -70,7 +70,8 @@ interface StashRuntimeOptions {
   focusProbe?: () => Promise<FocusInfo>;
   log?: (message: string) => void;
   onEntry?: (entry: RuntimeEntry) => void;
-  pythonExecutable?: string;
+  runtimeExecutable?: string;
+  userDataDir?: string;
   settings?: () => StashSettings;
 }
 
@@ -86,7 +87,8 @@ function createStashRuntime(options: StashRuntimeOptions) {
     onEntry = () => {},
     focusProbe = async (): Promise<FocusInfo> => ({}),    
     settings = (): StashSettings => ({}),
-    pythonExecutable = '',           // 主进程给：跑 describe bridge 用的 Python 解释器
+    runtimeExecutable = process.execPath,
+    userDataDir,
   } = options;
 
   const indexPath = path.join(baseDir, 'index.json');
@@ -195,8 +197,10 @@ function createStashRuntime(options: StashRuntimeOptions) {
   let describeQueue: Promise<unknown> = Promise.resolve();
   function describeImage(absPath: string): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
-      const child = spawn(pythonExecutable || process.execPath, [path.join(ROOT, 'scripts', 'stash_describe_bridge.py')], {
+      const child = spawn(runtimeExecutable, [path.join(ROOT, 'build', 'electron', 'runtime', 'worker.js'), 'stash_describe'], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...(userDataDir ? { MAGIC_POINTER_USER_DATA_DIR: userDataDir } : {}) },
       });
       let out = '';
       child.stdout.setEncoding('utf8');

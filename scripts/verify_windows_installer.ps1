@@ -25,6 +25,7 @@ $result = [ordered]@{
   installedExe = $installedExe
   shortcuts = @()
   startup = $null
+  runtimeSmoke = $null
   cleanup = $null
   error = $null
 }
@@ -117,7 +118,8 @@ function Read-Shortcut([string]$ShortcutPath) {
 
 try {
   if ([string]::IsNullOrWhiteSpace($Installer)) {
-    $Installer = Join-Path $PSScriptRoot '..\release\Magic-Pointer-1.0.0-setup.exe'
+    $packageVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\package.json') -Raw | ConvertFrom-Json).version
+    $Installer = Join-Path $PSScriptRoot "..\release\Magic-Pointer-$packageVersion-setup.exe"
   }
   $resolvedInstaller = (Resolve-Path -LiteralPath $Installer).Path
   $result.installer = $resolvedInstaller
@@ -150,6 +152,17 @@ try {
 
   New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
   $env:MAGIC_POINTER_USER_DATA_DIR = $runtimeDir
+  $resourcesApp = Join-Path $installRoot 'resources\app'
+  $previousRunAsNode = $env:ELECTRON_RUN_AS_NODE
+  try {
+    $env:ELECTRON_RUN_AS_NODE = '1'
+    $runtimeEvidence = @(& $installedExe (Join-Path $resourcesApp 'build\electron\runtime\package_smoke.js') $resourcesApp)
+    if ($LASTEXITCODE -ne 0) { throw 'installed_node_runtime_smoke_failed' }
+    $result.runtimeSmoke = ($runtimeEvidence | Select-Object -Last 1) | ConvertFrom-Json
+    if ($result.runtimeSmoke.ok -ne $true) { throw 'installed_node_runtime_smoke_invalid' }
+  } finally {
+    if ($null -eq $previousRunAsNode) { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue } else { $env:ELECTRON_RUN_AS_NODE = $previousRunAsNode }
+  }
   $appProcess = Start-Process -FilePath $installedExe -ArgumentList '--background' -WindowStyle Hidden -PassThru
   $logPath = Join-Path $runtimeDir 'electron.log'
   $startupDeadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)

@@ -108,10 +108,6 @@ assert.strictEqual(Composer.safeThumb('javascript:alert(1)'), '');
 assert.strictEqual(Composer.safeThumb('http://evil.example/a.png'), '');
 assert.strictEqual(Composer.safeThumb('data:text/html,<script>'), '');
 
-assert.match(composerSource, /const mic = onVoice\s*\?/,
-  'Composer 必须按 onVoice 能力条件创建麦克风');
-assert.match(composerSource, /mic\.addEventListener\('click'/,
-  '传入 onVoice 后麦克风必须绑定真实点击回调');
 
 for (const [page, needs] of Object.entries({
   'studio.html': ['theme_tokens.css', 'studio_layout.css', 'chat_styles.css', 'card_render.js', 'cards.js', 'live_cards.js'],

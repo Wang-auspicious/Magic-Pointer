@@ -7,12 +7,13 @@
           {
             "name": "magic-pointer-context",
             "type": "command",
-            "command": "python",
+            "command": "node",
             "args": [
-              "D:/Desktop/Magic Pointer/scripts/agent_hook_bridge.py",
+              "MAGIC_POINTER_ROOT/build/electron/runtime/connectors.js",
+              "hook",
               "--provider",
               "gemini",
-              "--root",
+              "--data-root",
               "D:/Desktop/Magic Pointer/data/runtime"
             ],
             "timeout": 5000,

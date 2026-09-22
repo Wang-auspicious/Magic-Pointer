@@ -21,6 +21,8 @@ assert.match(script, /CreateShortcut\([\s\S]*?TargetPath/,
   'shortcut verification must resolve the actual target');
 assert.match(script, /MAGIC_POINTER_USER_DATA_DIR/,
   'installed-app smoke must use isolated user data');
+assert.match(script, /ELECTRON_RUN_AS_NODE/);
+assert.match(script, /package_smoke\.js/);
 assert.match(script, /--background/,
   'installed-app smoke must exercise tray/background startup');
 assert.match(script, /capsule[\s\S]*?startup/i,

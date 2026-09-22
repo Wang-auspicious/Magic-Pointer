@@ -107,24 +107,7 @@ function defaultSettings() {
       multi_stroke_submit_ms: 2500,
       gesture_interaction_mode: 'exclusive_overlay',
     },
-    interaction: {
-      voice_enabled: false,
-      default_input_mode: 'text',
-      voice_auto_submit: true,
-      voice_start_strategy: 'auto',
-      voice_silence_ms: 1600,
-      voice_language: 'auto',
-      voice_output_mode: 'verbatim',
-      voice_punctuation: 'verbatim',
-      voice_script: 'unchanged',
-      voice_mixed_spacing: 'preserve',
-      voice_hallucination_guard: true,
-      voice_resident_enabled: false,
-      voice_engine: 'auto',
-      voice_memory_limit_mb: 1024,
-      voice_idle_unload_ms: 0,  
-      voice_glossaries: {},
-    },
+    interaction: { proactive: true },
     agents: {
       preferred: 'pi',
       profiles: {},
@@ -163,7 +146,6 @@ function defaultSettings() {
     shortcuts: {
       wake: 'Control+Alt+M',
       text_mode: 'Control+Alt+T',
-      voice_mode: 'Control+Alt+V',
       pause: 'Control+Alt+P',
     },
     appearance: {
@@ -177,7 +159,6 @@ function defaultSettings() {
       sweep_fade_ms: 96,
       capsule_spawn_ms: 80,
       capsule_expand_ms: 125,
-      capsule_voice_width_dip: 40,
       capsule_text_width_dip: 144,
       capsule_max_width_dip: 440,
       capsule_inline_gap_dip: 18,
@@ -335,86 +316,7 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     }
     activation[name] = value;
   }
-  const interaction = { ...defaults.interaction, ...(settings.interaction || {}) };
-  if (!['voice', 'text'].includes(interaction.default_input_mode)) {
-    throw new Error('interaction.default_input_mode must be voice or text');
-  }
-  interaction.voice_enabled = interaction.voice_enabled === true;
-  if (!interaction.voice_enabled) {
-    interaction.default_input_mode = 'text';
-    interaction.voice_resident_enabled = false;
-  }
-  interaction.voice_start_strategy = String(interaction.voice_start_strategy || '').trim().toLowerCase();
-  if (!['auto', 'push_to_talk', 'hover'].includes(interaction.voice_start_strategy)) {
-    throw new Error('interaction.voice_start_strategy is unsupported');
-  }
-  interaction.voice_engine = String(interaction.voice_engine || 'auto').trim().toLowerCase() || 'auto';
-  if (!['auto', 'whisper', 'sense_voice'].includes(interaction.voice_engine)) {
-    throw new Error('interaction.voice_engine is unsupported');
-  }
-  interaction.voice_silence_ms = Math.max(
-    600,
-    Math.min(5000, Number(interaction.voice_silence_ms) || defaults.interaction.voice_silence_ms),
-  );
-  interaction.voice_language = String(interaction.voice_language || '').trim().toLowerCase();
-  if (!['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru'].includes(interaction.voice_language)) {
-    throw new Error('interaction.voice_language is unsupported');
-  }
-  interaction.voice_output_mode = String(interaction.voice_output_mode || '').trim().toLowerCase();
-  if (!['verbatim', 'clean_spacing'].includes(interaction.voice_output_mode)) {
-    throw new Error('interaction.voice_output_mode must be verbatim or clean_spacing');
-  }
-  interaction.voice_punctuation = String(interaction.voice_punctuation || '').trim().toLowerCase();
-  if (!['verbatim', 'smart_zh'].includes(interaction.voice_punctuation)) {
-    throw new Error('interaction.voice_punctuation is unsupported');
-  }
-  interaction.voice_script = String(interaction.voice_script || '').trim().toLowerCase();
-  if (!['unchanged', 'simplified', 'traditional'].includes(interaction.voice_script)) {
-    throw new Error('interaction.voice_script is unsupported');
-  }
-  interaction.voice_mixed_spacing = String(interaction.voice_mixed_spacing || '').trim().toLowerCase();
-  if (!['preserve', 'compact_cjk'].includes(interaction.voice_mixed_spacing)) {
-    throw new Error('interaction.voice_mixed_spacing is unsupported');
-  }
-  interaction.voice_resident_enabled = interaction.voice_resident_enabled !== false;
-  if (!Number.isInteger(interaction.voice_memory_limit_mb)
-      || interaction.voice_memory_limit_mb < 128
-      || interaction.voice_memory_limit_mb > 16384) {
-    throw new Error('interaction.voice_memory_limit_mb must be between 128 and 16384');
-  }
-  if (!Number.isInteger(interaction.voice_idle_unload_ms)
-      || interaction.voice_idle_unload_ms < 0
-      || interaction.voice_idle_unload_ms > 3600000) {
-    throw new Error('interaction.voice_idle_unload_ms must be between 0 (resident) and 3600000');
-  }
-  if (
-    !interaction.voice_glossaries
-    || typeof interaction.voice_glossaries !== 'object'
-    || Array.isArray(interaction.voice_glossaries)
-  ) {
-    throw new Error('interaction.voice_glossaries must be an object');
-  }
-  if (Object.keys(interaction.voice_glossaries).length > 64) {
-    throw new Error('interaction.voice_glossaries has too many scopes');
-  }
-  interaction.voice_glossaries = Object.fromEntries(
-    Object.entries(interaction.voice_glossaries).map(([rawScope, rawTerms]) => {
-      const scope = String(rawScope || '').trim();
-      if (!scope) throw new Error('voice glossary scope is empty');
-      if (!Array.isArray(rawTerms)) throw new Error('voice glossary terms must be a list');
-      const seen = new Set();
-      const terms = rawTerms.map((item) => String(item || '').trim()).filter((term) => {
-        if (!term) return false;
-        if (term.length > 120) throw new Error('voice glossary term is too long');
-        const folded = term.toLowerCase();
-        if (seen.has(folded)) return false;
-        seen.add(folded);
-        return true;
-      });
-      if (terms.length > 64) throw new Error('voice glossary has too many terms');
-      return [scope, terms];
-    }),
-  );
+  const interaction = { proactive: settings.interaction?.proactive !== false };
   const privacy = { ...defaults.privacy, ...(settings.privacy || {}) };
   privacy.screen_memory_enabled = privacy.screen_memory_enabled === true;
   privacy.background_learning_enabled = privacy.background_learning_enabled === true;
@@ -483,7 +385,7 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     };
   });
   const rawShortcuts = settings.shortcuts || {};
-  const shortcuts = { ...defaults.shortcuts, ...rawShortcuts };
+  const shortcuts = Object.fromEntries(Object.entries(defaults.shortcuts).map(([key, value]) => [key, (rawShortcuts as Record<string, unknown>)[key] ?? value])) as typeof defaults.shortcuts;
   if (!Object.prototype.hasOwnProperty.call(rawShortcuts, 'wake')) {
     shortcuts.wake = activation.fallback_hotkey || defaults.shortcuts.wake;
   }
@@ -536,7 +438,6 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     sweep_fade_ms: [60, 1500],
     capsule_spawn_ms: [60, 1500],
     capsule_expand_ms: [60, 1500],
-    capsule_voice_width_dip: [28, 180],
     capsule_text_width_dip: [40, 560],
     capsule_max_width_dip: [80, 900],
     capsule_inline_gap_dip: [4, 96],
@@ -554,8 +455,7 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     throw new Error('appearance sweep minimum must not exceed maximum');
   }
   if (
-    appearance.capsule_max_width_dip < appearance.capsule_voice_width_dip
-    || appearance.capsule_max_width_dip < appearance.capsule_text_width_dip
+    appearance.capsule_max_width_dip < appearance.capsule_text_width_dip
   ) {
     throw new Error('appearance capsule maximum width is too small');
   }

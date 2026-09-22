@@ -21,14 +21,6 @@ assert.throws(() => validate({ ...migrated, models: { ...migrated.models,
 assert.strictEqual(defaults.schema_version, 1);
 assert.strictEqual(defaults.activation.wiggle_enabled, true);
 assert.strictEqual(defaults.activation.fallback_hotkey_enabled, true);
-assert.strictEqual(defaults.interaction.default_input_mode, 'text');
-assert.strictEqual(defaults.interaction.voice_enabled, false);
-assert.strictEqual(defaults.interaction.voice_resident_enabled, false);
-assert.strictEqual(defaults.interaction.voice_auto_submit, true);
-assert.strictEqual(defaults.interaction.voice_language, 'auto');
-assert.strictEqual(defaults.interaction.voice_output_mode, 'verbatim');
-assert.strictEqual(defaults.interaction.voice_hallucination_guard, true);
-assert.deepStrictEqual(defaults.interaction.voice_glossaries, {});
 assert(defaults.activation.disabled_apps.includes('blender'));
 assert.strictEqual(defaults.privacy.default_capture_mode, 'follow_global');
 assert.deepStrictEqual(defaults.privacy.app_capture_modes, {});
@@ -43,26 +35,8 @@ assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
 assert.strictEqual(defaults.stash.clipboard, false, 'clipboard image monitoring is opt-in');
 assert.strictEqual(defaults.stash.text, false, 'clipboard text monitoring is opt-in');
 
-const disabledVoice = defaultSettings();
-disabledVoice.interaction.voice_enabled = false;
-disabledVoice.interaction.default_input_mode = 'voice';
-disabledVoice.interaction.voice_resident_enabled = true;
-const normalizedDisabledVoice = validate(disabledVoice);
-assert.strictEqual(normalizedDisabledVoice.interaction.default_input_mode, 'text');
-assert.strictEqual(normalizedDisabledVoice.interaction.voice_resident_enabled, false);
-
 defaults.activation.sensitivity = 0.72;
 defaults.activation.disabled_apps.push('原神');
-defaults.interaction.default_input_mode = 'text';
-defaults.interaction.voice_language = 'zh';
-defaults.interaction.voice_output_mode = 'clean_spacing';
-defaults.interaction.voice_resident_enabled = false;
-defaults.interaction.voice_memory_limit_mb = 2048;
-defaults.interaction.voice_idle_unload_ms = 60000;
-defaults.interaction.voice_glossaries = {
-  '*': ['Magic Pointer', 'Context Packet', 'Magic Pointer'],
-  'D:\\work\\repo': ['TargetLease'],
-};
 defaults.privacy.default_capture_mode = 'local_ocr';
 defaults.privacy.app_capture_modes = { '1password': 'deny', edge: 'local_screenshot' };
 defaults.privacy.screen_memory_enabled = true;
@@ -80,13 +54,6 @@ store.save(defaults);
 const loaded = store.load();
 assert.strictEqual(loaded.activation.sensitivity, 0.72);
 assert(loaded.activation.disabled_apps.includes('原神'));
-assert.strictEqual(loaded.interaction.default_input_mode, 'text');
-assert.strictEqual(loaded.interaction.voice_language, 'zh');
-assert.strictEqual(loaded.interaction.voice_output_mode, 'clean_spacing');
-assert.strictEqual(loaded.interaction.voice_resident_enabled, false);
-assert.strictEqual(loaded.interaction.voice_memory_limit_mb, 2048);
-assert.strictEqual(loaded.interaction.voice_idle_unload_ms, 60000);
-assert.deepStrictEqual(loaded.interaction.voice_glossaries['*'], ['Magic Pointer', 'Context Packet']);
 assert.strictEqual(loaded.privacy.default_capture_mode, 'local_ocr');
 assert.deepStrictEqual(loaded.privacy.app_capture_modes, { '1password': 'deny', edge: 'local_screenshot' });
 assert.strictEqual(loaded.privacy.screen_memory_enabled, true);
@@ -109,10 +76,6 @@ assert.throws(() => validate(badRules), /app_capture_modes/);
 const badPermissionScope = defaultSettings();
 badPermissionScope.permissions.scoped_grants = [{ decision: 'always', recipe: 'agent.handoff' }];
 assert.throws(() => validate(badPermissionScope), /scoped permission/);
-
-const badVoiceMode = defaultSettings();
-badVoiceMode.interaction.voice_output_mode = 'rewrite_everything';
-assert.throws(() => validate(badVoiceMode), /voice_output_mode/);
 
 const duplicateShortcut = defaultSettings();
 duplicateShortcut.shortcuts.text_mode = duplicateShortcut.shortcuts.wake;
@@ -159,11 +122,6 @@ fs.writeFileSync(legacyDiskPath, `${JSON.stringify({
     fallback_hotkey: 'Control+Alt+M',
     disabled_apps: [],
     cooldown_ms: 1100,
-  },
-  interaction: {
-    default_input_mode: 'voice',
-    voice_auto_submit: true,
-    voice_silence_ms: 1600,
   },
 }, null, 2)}\n`, 'utf8');
 const legacyDiskStore = new ElectronSettingsStore(legacyDiskPath);

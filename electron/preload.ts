@@ -50,7 +50,6 @@ contextBridge.exposeInMainWorld('magicPointer', {
   done: (payload: unknown) => ipcRenderer.send('overlay:done', payload),
   gestureStarted: (token: unknown) => ipcRenderer.send('overlay:gesture-start', { token }),
   gestureStroke: (token: unknown, index: unknown) => ipcRenderer.send('overlay:gesture-stroke', { token, index }),
-  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'overlay' }),
   onShow: (callback: PayloadCallback) => onPayload('overlay:show', callback),
   onHide: (callback: SignalCallback) => onSignal('overlay:hide', callback),
   onCursor: (callback: PayloadCallback) => onPayload('overlay:cursor', callback),
@@ -61,7 +60,6 @@ contextBridge.exposeInMainWorld('magicPointer', {
   onGestureInput: (callback: PayloadCallback) => onPayload('overlay:gesture-input', callback),
   onGestureSubmit: (callback: PayloadCallback) => onPayload('overlay:gesture-submit', callback),
   onResult: (callback: PayloadCallback) => onPayload('overlay:result', callback),
-  onDictationResult: (callback: PayloadCallback) => onPayload('dictation:result', callback),
 });
 
 contextBridge.exposeInMainWorld('magicPointerPanel', {
@@ -70,11 +68,9 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
   submitSelectionCommand: (payload: unknown) => ipcRenderer.send('panel:submit-selection-command', payload),
   executeAction: (payload: unknown) => ipcRenderer.send('panel:execute-action', payload),
   showContextualResult: (payload: unknown) => ipcRenderer.send('panel:show-contextual-result', payload),
-  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'panel' }),
   onShow: (callback: PayloadCallback) => onPayload('panel:show', callback),
   onHide: (callback: SignalCallback) => onSignal('panel:hide', callback),
   onResult: (callback: PayloadCallback) => onPayload('panel:result', callback),
-  onDictationResult: (callback: PayloadCallback) => onPayload('dictation:result', callback),
 });
 
 contextBridge.exposeInMainWorld('magicPointerStage', {
@@ -142,11 +138,6 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     provider: String(payload?.provider || ''),
     sessionId: String(payload?.sessionId || ''),
   }),
-  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'stage' }),
-  stopDictation: (options: { graceful?: boolean } = {}) => ipcRenderer.send('dictation:stop', {
-    surface: 'stage',
-    graceful: options?.graceful === true,
-  }),
   setMouseCapture: (enabled: unknown, options: { requestFocus?: boolean; regions?: unknown[] } = {}) => ipcRenderer.send('stage:set-mouse-capture', {
     enabled: enabled === true,
     requestFocus: options?.requestFocus === true,
@@ -156,18 +147,12 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   onUpdate: (callback: PayloadCallback) => onPayload('stage:update', callback),
   onCardPatch: (callback: PayloadCallback) => onPayload('stage:card-patch', callback),
   onHide: (callback: SignalCallback) => onSignal('stage:hide', callback),
-  onDictationResult: (callback: PayloadCallback) => onPayload('dictation:result', callback),
   onPointerInput: (callback: PayloadCallback) => onPayload('stage:pointer-input', callback),
   onModelHealth: (callback: PayloadCallback) => onPayload('stage:model-health', callback),
 });
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
   hide: () => ipcRenderer.send('dashboard:hide'),
-  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'dashboard' }),
-  stopDictation: (options: { graceful?: boolean } = {}) => ipcRenderer.send('dictation:stop', {
-    surface: 'dashboard',
-    graceful: options?.graceful === true,
-  }),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', { theme }),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
   saveFabricSettings: (settings: unknown) => ipcRenderer.invoke('dashboard:settings:save', { settings }),
@@ -190,10 +175,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   onShow: (callback: PayloadCallback) => onPayload('dashboard:show', callback),
   onFabricState: (callback: PayloadCallback) => onPayload('dashboard:fabric-state', callback),
   onRouteResult: (callback: PayloadCallback) => onPayload('dashboard:route-result', callback),
-  onVoiceResidencyStatus: (callback: PayloadCallback) => onPayload('dashboard:voice-residency-status', callback),
   onPreflightEvent: (callback: PayloadCallback) => onPayload('dashboard:preflight-event', callback),
   onModelHealth: (callback: PayloadCallback) => onPayload('dashboard:model-health', callback),
-  onDictationResult: (callback: PayloadCallback) => onPayload('dictation:result', callback),
   refreshModelHealth: () => ipcRenderer.invoke('dashboard:model-health-refresh'),
   sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline'),
   stash: {

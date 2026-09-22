@@ -4615,40 +4615,6 @@ function setBottomPanel(open: boolean) {
 document.getElementById('bottom-panel-toggle')?.addEventListener('click', () => setBottomPanel(shell.dataset.bottomPanel !== 'open'));
 document.getElementById('bottom-panel-close')?.addEventListener('click', () => setBottomPanel(false));
 
-let dictationPrefix = '';
-let studioDictating = false;
-document.getElementById('composer-voice')?.addEventListener('click', () => {
-  const api = window.magicPointerDashboard;
-  const button = document.getElementById('composer-voice');
-  if (studioDictating) {
-    api?.stopDictation?.({ graceful: true });
-    studioDictating = false;
-    button?.classList.remove('is-recording');
-    return;
-  }
-  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
-  dictationPrefix = textarea?.value || '';
-  studioDictating = true;
-  button?.classList.add('is-recording');
-  button?.setAttribute('title', '停止语音输入');
-  api?.startDictation?.();
-});
-window.magicPointerDashboard?.onDictationResult?.((payload) => {
-  if (payload.surface !== 'dashboard') return;
-  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
-  const button = document.getElementById('composer-voice');
-  if (payload.transcript && textarea) {
-    textarea.value = `${dictationPrefix}${dictationPrefix && !/\s$/.test(dictationPrefix) ? ' ' : ''}${payload.transcript}`;
-    fitComposer(textarea);
-  }
-  if (payload.final || payload.ok === false) {
-    studioDictating = false;
-    button?.classList.remove('is-recording');
-    button?.setAttribute('title', payload.ok === false ? String(payload.error || '语音输入失败') : '语音输入');
-    textarea?.focus();
-  }
-});
-
 let pluginDirectoryCatalog: MagicPointerSlashDirectory | null = null;
 let pluginDirectoryKind: 'skills' | 'commands' = 'skills';
 

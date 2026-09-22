@@ -287,45 +287,11 @@ body {
   gap: 14px;
 }
 
-.stage-composer[data-mode='voice'] .capsule-input,
-.stage-composer[data-mode='text'] .capsule-transcript,
-.stage-composer[data-mode='text'] .voice-waveform {
+.capsule-transcript {
   display: none;
 }
 
-.voice-waveform {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex: none;
-}
 
-.voice-waveform i {
-  display: block;
-  width: 3px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--stage-electric-blue);
-  animation: stage-wave 1.1s ease-in-out infinite;
-}
-
-.voice-waveform i:nth-child(2) {
-  animation-delay: 0.18s;
-}
-
-.voice-waveform i:nth-child(3) {
-  animation-delay: 0.36s;
-}
-
-@keyframes stage-wave {
-  0%,
-  100% {
-    transform: scaleY(0.45);
-  }
-  50% {
-    transform: scaleY(1.6);
-  }
-}
 
 .capsule-input {
   flex: 1 1 auto;
@@ -411,7 +377,6 @@ body {
   50% { opacity: .82; transform: scale(1); }
 }
 
-.stage-composer[data-phase='processing'] .voice-waveform,
 .stage-composer[data-phase='processing'] .capsule-input {
   opacity: 0.35;
 }
@@ -1152,7 +1117,6 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .frozen-glow,
-  .voice-waveform i,
   .fly-letter,
   .processing-shimmer,
   .processing-shimmer::before,
@@ -1266,42 +1230,7 @@ body {
   font-weight: 480;
 }
 
-.voice-waveform {
-  width: 14px;
-  height: 16px;
-  justify-content: center;
-  gap: 2px;
-}
 
-.voice-waveform i {
-  width: 2px;
-  height: 9px;
-  background: var(--stage-process-ink);
-  transform-origin: center;
-  animation-duration: 680ms;
-}
-
-.stage-composer[data-voice-state='idle'] .voice-waveform i,
-.stage-composer[data-voice-state='settling'] .voice-waveform i {
-  height: 3px;
-  opacity: .58;
-  animation: none;
-}
-
-.stage-composer[data-voice-state='warming'] .voice-waveform i {
-  height: 3px;
-  animation: stage-voice-warm 780ms ease-in-out infinite;
-}
-
-.stage-composer[data-voice-state='listening'] .voice-waveform i,
-.stage-composer[data-voice-state='transcribing'] .voice-waveform i {
-  animation-duration: 620ms;
-}
-
-@keyframes stage-voice-warm {
-  0%, 100% { opacity: .34; transform: scale(.78); }
-  50% { opacity: 1; transform: scale(1.12); }
-}
 
 .stage-error {
   width: min(360px, calc(100vw - 16px));

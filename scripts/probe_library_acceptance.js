@@ -19,7 +19,7 @@ fs.writeFileSync(MATERIAL, '# Acceptance notes\nRecorded local material for inte
 const plugin = path.join(PROFILE, 'data/plugins/acceptance_plugin');
 fs.mkdirSync(plugin, { recursive: true });
 fs.writeFileSync(path.join(plugin, 'plugin.json'), JSON.stringify({ description: 'Local fixture plugin; its code must remain unexecuted.' }));
-fs.writeFileSync(path.join(plugin, 'plugin.py'), `from pathlib import Path\nPath(${JSON.stringify(path.join(PROFILE, 'UNEXPECTED_PLUGIN_EXECUTION'))}).touch()\n`);
+fs.writeFileSync(path.join(plugin, 'plugin.js'), `require('node:fs').writeFileSync(${JSON.stringify(path.join(PROFILE, 'UNEXPECTED_PLUGIN_EXECUTION'))}, 'executed');\n`);
 fs.writeFileSync(path.join(PROFILE, 'data/mcp.json'), JSON.stringify({ mcpServers: {
   acceptance_notes: { command: 'fixture-must-not-run', env: { TOKEN: 'fixture-secret-must-not-appear' } },
   acceptance_paused: { command: 'fixture-must-not-run', disabled: true },

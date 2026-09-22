@@ -18,7 +18,6 @@ for (const relativePath of [
   'electron/stage_stretch_policy.ts',
   'electron/stage_pick_policy.ts',
   'electron/stage_hit_policy.ts',
-  'electron/voice_trigger_policy.ts',
 ]) {
   assert.doesNotThrow(
     () => {
@@ -47,6 +46,5 @@ assert(context.globalThis.ClarificationChips, 'ClarificationChips browser API mu
 assert(context.globalThis.StageStretchPolicy, 'StageStretchPolicy browser API must exist');
 assert(context.globalThis.StagePickPolicy, 'StagePickPolicy browser API must exist');
 assert(context.globalThis.MagicPointerStageHitPolicy, 'Stage hit-test policy browser API must exist');
-assert(context.globalThis.MagicPointerVoiceTrigger, 'voice trigger browser API must exist');
 
 console.log('stage_browser_script_namespace_test: all assertions passed');

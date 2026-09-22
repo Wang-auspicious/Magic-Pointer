@@ -868,41 +868,6 @@
       "provider": "artifact.compare"
     },
     {
-      "id": "voice.short_command",
-      "title": "语音短命令",
-      "description": "本地转写并绑定当前对象 Episode。",
-      "inputKinds": [
-        "audio",
-        "interaction_episode"
-      ],
-      "outputKind": "command_text",
-      "providerStrategies": [
-        "openai_whisper",
-        "whisper_cpp"
-      ],
-      "risk": "read",
-      "verification": "transcript_and_episode_id",
-      "keywords": {
-        "zh": [
-          "语音",
-          "听写",
-          "我说"
-        ],
-        "en": [
-          "voice command",
-          "dictate"
-        ]
-      },
-      "minObjects": 0,
-      "maxObjects": 12,
-      "platforms": [
-        "windows",
-        "macos"
-      ],
-      "version": 1,
-      "provider": "unavailable:speech_provider_not_configured"
-    },
-    {
       "id": "agent.background_task",
       "title": "后台 Agent 任务",
       "description": "用 Pi 或用户 Agent 在后台执行并提供进度、暂停和接管。",

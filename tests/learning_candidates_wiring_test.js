@@ -9,8 +9,8 @@ assert(
   'dashboard must expose the candidate review bridge',
 );
 assert(
-  main.includes("'scripts/learning_candidates_bridge.py'"),
-  'candidate requests must cross the isolated Python bridge',
+  main.includes("'learning_candidates'"),
+  'candidate requests must invoke the isolated candidate runtime',
 );
 assert(
   main.includes('isDashboardSender(event)') && main.includes('isCompanionSender(event)'),

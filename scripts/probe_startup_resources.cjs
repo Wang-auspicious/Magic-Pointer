@@ -15,7 +15,6 @@ process.env.MAGIC_POINTER_USER_DATA_DIR = profile;
 app.setPath('userData', profile);
 app.setLoginItemSettings = () => {};
 const settings = require('../build/electron/settings_store').defaultSettings();
-settings.voice = { ...settings.voice, enabled: false };
 settings.stash = { ...settings.stash, clipboard: false };
 settings.context_trackers = [];
 settings.models = { schemaVersion: 1, defaultProfileId: 'probe', profiles: [{

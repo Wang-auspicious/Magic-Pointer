@@ -3,12 +3,11 @@
 ## 环境
 
 - Windows 10/11；其他平台状态见 [已知限制](KNOWN_LIMITATIONS.md)。
-- Node.js 20–24、npm 10 及以上；Python 3.11 及以上，本项目开发版本为 Python 3.12。
+- Node.js 20–24、npm 10 及以上。本项目开发与集中验证使用 Node.js 24。
 - 原生桌面功能依赖 Windows API；Office 原生验收需要安装对应应用。
 
 ```powershell
 npm ci
-python -m pip install -r requirements.txt -r requirements-dev.txt
 npm run overlay
 ```
 
@@ -17,15 +16,13 @@ npm run overlay
 | 目录 | 职责 |
 |---|---|
 | `electron/` | 应用生命周期、窗口、手势、IPC、工作台和渲染界面 |
-| `electron/runtime/` | TS 模型请求、模型目录、文本扩写及会话读取；工具注册与调度尚未接入主循环 |
-| `app/agent_runtime/` | 模型循环、工具、子任务、会话、压缩、记忆与权限 |
-| `app/harness/` | 插件发现、依赖注入、服务生命周期与内置能力装配 |
-| `app/fabric/` | 工具执行入口、动作计划、设置、任务及产物服务 |
-| `app/context_pack/` | 任务来源、定位、文档和聊天内容读取 |
-| `app/perception/`、`app/grounding/`、`app/adapters/` | 多来源感知、选区接地及应用适配 |
-| `app/desktop_actions/`、`app/computer_operator/` | 桌面观察、UIA、输入和结果检查 |
-| `app/actions/`、`app/artifacts/` | 文档修改、写回和可编辑产物 |
-| `scripts/` | Python 桥接、原生辅助程序、构建、诊断与验收工具 |
+| `electron/runtime/index.ts`、`agent*.ts` | 模型循环、子任务、压缩、记忆、插件和内置能力装配 |
+| `electron/runtime/session.ts`、`tools.ts` | 持久会话、权限、动作调度及恢复 |
+| `electron/runtime/fabric*.ts` | 动作计划、设置、任务及产物服务 |
+| `electron/runtime/context*.ts` | 任务来源、定位、文档和聊天内容读取 |
+| `electron/runtime/desktop*.ts` | 多来源感知、历史帧、桌面动作和应用适配 |
+| `electron/runtime/actions*.ts`、`artifacts.ts` | 精确文档修改、写回和可编辑产物 |
+| `scripts/` | C#/PowerShell 原生辅助程序、TypeScript 构建、诊断及验收工具 |
 | `integrations/`、`native/` | 可选客户端接口、Figma 插件与原生宿主 |
 | `tests/`、`data/replay_traces/` | 自动化回归与离线回放夹具 |
 
@@ -39,8 +36,8 @@ npm run overlay
 npm run verify
 ```
 
-该命令执行 lint、全部 TypeScript 检查、构建、Node 测试和 Python 测试。
-也可单独运行 `npm test`、`npm run typecheck`、`npm run lint` 和 `npm run test:python`。
+该命令执行 lint、全部 TypeScript 检查、构建和 Node 测试。
+也可单独运行 `npm test`、`npm run typecheck` 和 `npm run lint`。
 新增功能或修复应先给出能暴露具体问题的测试，再修改实现。
 协议和夹具测试不等于真实模型、真实 Office 或 Figma 应用验收。
 
@@ -50,9 +47,13 @@ npm run verify
 npm run dist:win
 ```
 
-Windows 安装器包含独立 Python runtime。`electron-builder.yml` 定义运行文件清单，
-`requirements.lock.txt` 用于可复现的 Python runtime 构建。
-修改桥接入口时要同步检查打包清单，避免开发版可用而安装版缺文件。
+Windows 安装器使用 Electron 自带的 Node Runtime，不包含 Python。`electron-builder.yml`
+定义编译后的 JavaScript、生产依赖与原生辅助源码清单，`package-lock.json` 固定依赖。
+原生辅助程序缓存写入用户数据目录。修改入口时同步检查打包清单，避免安装版缺文件。
+
+构建后可运行 `npm run desktop -- windows`、`npm run replay -- stats TRACE_DIRECTORY`。
+`npm run measure:runtime -- --runs 1` 通过真实 worker 和当前模型测量任务耗时；会调用模型。
+`npm run mcp` 启动 JSONL MCP 服务；`npm run hooks -- --apply` 显式安装外部客户端提示词钩子。
 
 `npm run sync` 用于维护者本机交付：验证、构建、安装并重启应用，会替换本机安装版。
 普通开发可使用 `npm run overlay`。

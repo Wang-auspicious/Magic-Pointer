@@ -1,20 +1,36 @@
 # Third-party notices
 
+## Runtime document and image dependencies
+
+The TypeScript Runtime uses the packages below. Their upstream license files
+remain distributed with the production dependencies in `node_modules`.
+
+| Package | Installed version | License | Upstream |
+|---|---|---|---|
+| adm-zip | 0.6.1 | MIT | https://github.com/cthackers/adm-zip |
+| docx | 9.7.1 | MIT | https://github.com/dolanmiu/docx |
+| exceljs | 4.4.0 | MIT | https://github.com/exceljs/exceljs |
+| fast-xml-parser | 5.11.1 | MIT | https://github.com/NaturalIntelligence/fast-xml-parser |
+| pdf-lib | 1.17.1 | MIT | https://github.com/Hopding/pdf-lib |
+| pdfjs-dist | 6.3.289 | Apache-2.0 | https://github.com/mozilla/pdf.js |
+| pptxgenjs | 4.0.1 | MIT | https://github.com/gitbrent/PptxGenJS |
+| sharp | 0.35.4 | Apache-2.0 | https://github.com/lovell/sharp |
+
 ## HermesAgent (Nous Research)
 
 Parts of the Magic Pointer agent runtime are ported from the local HermesAgent
 source (`hermes-agent` 0.18.2). Ported so far:
 
-- `app/agent_runtime/token_estimate.py` and `electron/runtime/session.ts` — request-level rough token estimation,
+- `electron/runtime/session.ts` — request-level rough token estimation,
   from `agent/model_metadata.py` (`estimate_tokens_rough`,
   `estimate_messages_tokens_rough`, `estimate_request_tokens_rough`).
-- `app/agent_runtime/todo_store.py` — the task list that is re-attached after
+- `electron/runtime/agent.ts` — the task list that is re-attached after
   context compaction, from `tools/todo_tool.py` (`TodoStore`,
   `format_for_injection`), reduced to Magic Pointer's replace-only contract.
-- `app/agent_runtime/memory.py::_tail_cut_by_tokens` — token-budgeted tail
+- `electron/runtime/agent.ts` — token-budgeted tail
   selection with a bounded message-count floor, from
   `agent/context_compressor.py::_find_tail_cut_by_tokens`.
-- `app/agent_runtime/loop.py::_MAX_FRUITLESS_COMPACTIONS` — the anti-thrash
+- `electron/runtime/agent.ts` — the anti-thrash
   rule that stops re-summarising a history that will not shrink, from
   `agent/context_compressor.py::should_compress`.
 

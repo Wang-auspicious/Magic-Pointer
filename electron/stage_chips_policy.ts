@@ -31,9 +31,8 @@ function recordOf(value: unknown): UnknownRecord | null {
 function shouldShowChips(input?: unknown): boolean {
   const candidate = recordOf(input);
   if (candidate === null) return false;
-  const { selectionSource, inputMode, capsuleText } = candidate;
+  const { selectionSource, capsuleText } = candidate;
   if (selectionSource !== 'click') return false;
-  if (inputMode === 'voice') return false;
   if (capsuleText == null) return true;
   if (typeof capsuleText !== 'string') return false;
   return capsuleText.trim() === '';

@@ -8,8 +8,8 @@ const { buildAsyncPreflightChecks } = require('../electron/preflight_checks');
 
 (async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'magic-pointer-preflight-async-checks-'));
-  const bundledPython = path.join(root, 'python.exe');
-  fs.writeFileSync(bundledPython, 'fixture', 'utf8');
+  const runtimeExecutable = path.join(root, 'node.exe');
+  fs.writeFileSync(runtimeExecutable, 'fixture', 'utf8');
   const commands = [];
   const checks = buildAsyncPreflightChecks({
     root,
@@ -21,16 +21,16 @@ const { buildAsyncPreflightChecks } = require('../electron/preflight_checks');
       models: { profiles: [] },
     },
     wiggleDetector: {},
-    pythonRuntime: { executable: bundledPython, source: 'bundled', required: true },
+    runtimeExecutable,
     environment: { PATH: 'C:\\Windows', PYTHONPATH: 'C:\\injected' },
     asyncCommandRunner: async (command, args, options) => {
       commands.push({ command, args, options });
       await new Promise((resolve) => setTimeout(resolve, 1));
-      if (args.join(' ').includes('smoke_fabric.py')) return { status: 0, stdout: '{"ok":true}', stderr: '' };
-      if (args.join(' ').includes('fabric_bridge.py')) {
+      if (args.join(' ').includes('registerDesktopTools')) return { status: 0, stdout: '{"ok":true}', stderr: '' };
+      if (args.join(' ').includes('discoverProviders')) {
         return { status: 0, stdout: '{"ok":true,"providers":[{"id":"pi","available":true}]}', stderr: '' };
       }
-      return { status: 0, stdout: 'Python 3.11', stderr: '' };
+      return { status: 0, stdout: '{"ok":true,"node":"24"}', stderr: '' };
     },
   });
 
@@ -38,8 +38,8 @@ const { buildAsyncPreflightChecks } = require('../electron/preflight_checks');
   assert.strictEqual((await checks.agents()).state, 'pass');
   assert.strictEqual((await checks.e2e_smoke()).state, 'pass');
   assert.strictEqual(commands.length, 3);
-  assert(commands.every(({ args }) => args.slice(0, 3).join(' ') === '-I -X utf8'));
-  assert(commands.every(({ options }) => !('PYTHONPATH' in options.env)));
+  assert(commands.every(({ args }) => args[0] === '-e'));
+  assert(commands.every(({ options }) => options.env.ELECTRON_RUN_AS_NODE === '1'));
   console.log('preflight checks async test ok');
 })().catch((error) => {
   console.error(error);

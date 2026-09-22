@@ -22,18 +22,18 @@ async function main() {
       return { mtimeMs };
     } } }, path, FABRIC_DATA_DIR: 'fixture', conversationRecoveryQueries: new Map(),
     notifyConversationChanged() {},
-    runPythonBridgePromise: async () => {
+    runRuntimeBridgePromise: async () => {
       bridgeCalls++;
       if (!exists) throw new Error('session_not_found');
       if (failure) throw new Error(failure);
       return { ok: true, pendingRecovery: [] };
     },
   };
-  sandbox.handleSessionRead = sandbox.runPythonBridgePromise;
+  sandbox.handleSessionRead = sandbox.runRuntimeBridgePromise;
   vm.runInNewContext(compiled, sandbox);
   const missing = await invoke({}, { conversationId: 'missing' });
   assert.equal(missing.error, 'session_not_found', 'missing runtime evidence is reported honestly without rejecting IPC');
-  assert.equal(bridgeCalls, 0, 'an absent session must not start a Python process on every historical open');
+  assert.equal(bridgeCalls, 0, 'an absent session must not start a Runtime process on every historical open');
   exists = true;
   await Promise.all([invoke({}, { conversationId: 'one' }), invoke({}, { conversationId: 'one' })]);
   assert.equal(bridgeCalls, 1, 'concurrent reads of the same durable session must share one status query');

@@ -46,7 +46,7 @@ app.whenReady().then(async () => {
       event('tool_call', { id: 'parent-b', name: 'Agent', args: '{"task":"Inspect renderer"}' });
       const a = { id: 'child-a', parentCallId: 'parent-a', description: 'Inspect runtime', status: 'running', phase: 'thinking',
         reasoning: 'Reading the event pipeline', answer: '', stepCount: 1, currentTool: '', elapsedMs: 4200,
-        steps: [{ index: 1, callId: 'read-a', tool: 'Read', status: 'completed', input: 'subagent.py', output: 'event sink found', usedBackend: 'filesystem', latencyMs: 12 }] };
+        steps: [{ index: 1, callId: 'read-a', tool: 'Read', status: 'completed', input: 'agent_background.ts', output: 'event sink found', usedBackend: 'filesystem', latencyMs: 12 }] };
       event('subagent', { b64: blob(a) });
       event('subagent', { b64: blob({ ...a, id: 'child-b', parentCallId: 'parent-b', description: 'Inspect renderer', reasoning: 'Checking DOM stability' }) });
       await wait(230);

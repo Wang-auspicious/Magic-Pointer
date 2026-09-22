@@ -28,8 +28,9 @@ for (const vbsLauncher of ['scripts/MagicPointer.vbs', 'scripts/MagicPointerPane
 const stopScript = read('scripts/stop_magic_pointer.ps1');
 assert(!stopScript.includes('app.main'), 'the stop script must not retain the retired Python process matcher');
 
-const systemContext = read('app/system_context.py');
-assert(!systemContext.includes('tk_window'), 'Python system helpers must not retain Tk-specific code');
+const worker = read('electron/runtime/worker.ts');
+assert(worker.includes('dispatchRuntime'), 'the installed runtime must execute its own TypeScript dispatcher');
+assert(!fs.existsSync(path.join(root, 'electron/python_runtime.ts')), 'the obsolete Python launcher must remain removed');
 
 const electronMain = read('electron/main.ts');
 const sourceLoader = "require('tsx/cjs')";

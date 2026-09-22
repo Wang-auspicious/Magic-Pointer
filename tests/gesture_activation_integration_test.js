@@ -8,7 +8,6 @@ const overlay = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const overlayHtml = fs.readFileSync('electron/renderer/index.html', 'utf8');
-const visualVerifier = fs.readFileSync('scripts/verify_gesture_activation_visual.py', 'utf8');
 const { defaultSettings } = require('../electron/settings_store');
 
 const defaults = defaultSettings();
@@ -20,7 +19,7 @@ assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
 
 const requestActivation = main.slice(
   main.indexOf('function requestActivation('),
-  main.indexOf('function cleanupDictationStopFile('),
+  main.indexOf('function ', main.indexOf('function requestActivation(') + 10),
 );
 const surfaceWarmup = main.slice(
   main.indexOf('function queueActivationUntilSurfacesReady('),
@@ -65,8 +64,6 @@ assert.doesNotMatch(gestureArm, /setTimeout\(reveal,\s*armDelayMs\)/,
 assert(main.includes("screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })"),
   'gesture release point must be converted to DIPs before stage anchoring');
 
-assert(main.includes("safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '目标识别还在进行，请稍候再试语音。' })"),
-  'voice must report a friendly error instead of doing nothing');
 assert.match(requestActivation, /isSelectionGestureActivation\(reason\)[\s\S]*?armSelectionGesture\(/,
   'wiggle must arm drawing instead of opening a selection session');
 assert.match(main, /function isSelectionGestureActivation\(reason[^)]*\)[\s\S]*?'wiggle'/,
@@ -88,7 +85,7 @@ assert.match(gestureCompletion, /type:\s*'OPEN_CAPSULE'/,
   'release must always open the conversation capsule');
 assert.doesNotMatch(gestureCompletion, /type:\s*'ERROR'/,
   'grounding weakness must not replace the release capsule with an error card');
-const captureStart = beginSelection.indexOf('runPythonBridge(');
+const captureStart = beginSelection.indexOf('runRuntimeBridge(');
 const immediateGestureStage = beginSelection.slice(0, captureStart);
 assert.match(immediateGestureStage, /const revealCapsule = \(via[^)]*\) => \{[\s\S]*?groundingReady: false/,
   'the early capsule must declare itself ungrounded so the snapshot can still backfill it');
@@ -209,23 +206,10 @@ assert.match(stage, /session\.capsuleAnchor\s*===\s*'target'/,
 assert.match(main, /capsuleDelayMs:\s*0/,
   'gesture capsule motion must not wait for a sweep that does not exist');
 assert.match(beginSelection, /groundingReady:\s*true/,
-  'the completed snapshot must explicitly unlock voice input');
+  'the completed snapshot must explicitly unlock input');
 const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
 assert.match(stageCss, /--stage-composer-width,\s*480px/,
   'gesture activation must reveal the final fixed composer, not a delayed ball expansion');
 assert.match(stageCss, /\.stage-root\[hidden\]\s*\{\s*display:\s*none/,
   'cold-start invisibility belongs to the DOM/CSS initial state, not the stage payload gate');
-assert.match(visualVerifier, /GetForegroundWindow/,
-  'desktop gesture verification must sample the real foreground HWND');
-assert.match(visualVerifier, /foreground_invariant\s*=\s*all\(/,
-  'wiggle, drawing, release, and capsule evidence must preserve source-app focus');
-assert.match(visualVerifier, /and foreground_invariant/,
-  'foreground stability must be a pass condition, not informational telemetry');
-assert.match(visualVerifier, /cursor_handle_invariant\s*=\s*len\(captured_cursor_handles\)\s*==\s*1\s*and\s*0\s*not\s*in\s*captured_cursor_handles/,
-  'desktop verification must prove one native cursor remains active throughout capture');
-assert.match(visualVerifier, /and cursor_handle_invariant/,
-  'cursor stability must be a real desktop pass condition');
-assert.match(visualVerifier, /stage renderer ready[\s\S]*?overlay renderer ready/,
-  'the brief physical wiggle must run against the prewarmed production state');
-
 console.log('gesture activation integration test ok');

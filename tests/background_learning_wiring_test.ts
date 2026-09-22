@@ -16,7 +16,7 @@ const { scheduleBackgroundLearning } = require('../electron/background_learning'
     log: (message: string) => logs.push(message),
   });
   assert.strictEqual(scheduled, true);
-  assert.strictEqual(calls[0][1], 'scripts/learning_review_bridge.py');
+  assert.strictEqual(calls[0][1], 'learning_review');
   assert.strictEqual(calls[0][2], null);
   assert.strictEqual(calls[0][3].allowWithoutSurface, true);
   calls[0][3].onComplete({ ok: true, candidateIds: ['c1'] });

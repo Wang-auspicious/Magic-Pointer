@@ -30,8 +30,8 @@ assert(
   'main must handle mid-run steer (invoke: the renderer needs the delivery verdict)',
 );
 assert(
-  main.includes('scripts/agent_session_bridge.py'),
-  'steer must write the durable inbox the Python loop already claims',
+  main.includes("'agent_session'"),
+  'steer must write the durable inbox the Runtime loop already claims',
 );
 
 console.log('stage steer static test ok');

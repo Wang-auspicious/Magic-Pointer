@@ -1,13 +1,16 @@
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, mkdir, open, stat, truncate, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import type { AgentMessage } from './agent';
+import { validateContextUpdate, taskSources, taskReferences, referenceRevision, registerSource, sourceRef } from './context';
 
 type Data = Record<string, unknown>;
 type Message = {
   role: string; content: string | null; tool_call_id: string | null; name: string | null;
   injected?: boolean; is_error?: boolean; tool_calls?: { id: string; arguments?: Data }[];
 };
-type Event = { seq: number; type: string; data: Data; surfaceOp?: string };
+export type SessionEvent = { seq: number; type: string; data: Data; surfaceOp?: string; hash?: string; time?: number; sessionId?: string };
+type Event = SessionEvent;
 type Operation = { id: string; callId: string; tool: string; arguments: Data; effect: string;
   prepared: number; settled?: number; outcome: string; recovery: string };
 
@@ -99,7 +102,7 @@ function messages(events: Event[]): Message[] {
   return surface;
 }
 
-function normalizedInput(value: Data): Data {
+export function normalizedInput(value: Data): Data {
   const questions = array(value.questions || [{ question: value.question, options: value.options }]).map(raw => {
     const item = object(raw);
     const question = text(item.question).trim();
@@ -231,7 +234,7 @@ function pythonRepr(value: unknown): string {
 
 const ranges = '1100-115f 231a-231b 2329-232a 23e9-23ec 23f0-23f0 23f3-23f3 25fd-25fe 2614-2615 2648-2653 267f-267f 2693-2693 26a1-26a1 26aa-26ab 26bd-26be 26c4-26c5 26ce-26ce 26d4-26d4 26ea-26ea 26f2-26f3 26f5-26f5 26fa-26fa 26fd-26fd 2705-2705 270a-270b 2728-2728 274c-274c 274e-274e 2753-2755 2757-2757 2795-2797 27b0-27b0 27bf-27bf 2b1b-2b1c 2b50-2b50 2b55-2b55 2e80-2e99 2e9b-2ef3 2f00-2fd5 2ff0-2ffb 3000-303e 3041-3096 3099-30ff 3105-312f 3131-318e 3190-31e3 31f0-321e 3220-3247 3250-4dbf 4e00-a48c a490-a4c6 a960-a97c ac00-d7a3 f900-faff fe10-fe19 fe30-fe52 fe54-fe66 fe68-fe6b ff01-ff60 ffe0-ffe6 16fe0-16fe4 16ff0-16ff1 17000-187f7 18800-18cd5 18d00-18d08 1aff0-1aff3 1aff5-1affb 1affd-1affe 1b000-1b122 1b132-1b132 1b150-1b152 1b155-1b155 1b164-1b167 1b170-1b2fb 1f004-1f004 1f0cf-1f0cf 1f18e-1f18e 1f191-1f19a 1f200-1f202 1f210-1f23b 1f240-1f248 1f250-1f251 1f260-1f265 1f300-1f320 1f32d-1f335 1f337-1f37c 1f37e-1f393 1f3a0-1f3ca 1f3cf-1f3d3 1f3e0-1f3f0 1f3f4-1f3f4 1f3f8-1f43e 1f440-1f440 1f442-1f4fc 1f4ff-1f53d 1f54b-1f54e 1f550-1f567 1f57a-1f57a 1f595-1f596 1f5a4-1f5a4 1f5fb-1f64f 1f680-1f6c5 1f6cc-1f6cc 1f6d0-1f6d2 1f6d5-1f6d7 1f6dc-1f6df 1f6eb-1f6ec 1f6f4-1f6fc 1f7e0-1f7eb 1f7f0-1f7f0 1f90c-1f93a 1f93c-1f945 1f947-1f9ff 1fa70-1fa7c 1fa80-1fa88 1fa90-1fabd 1fabf-1fac5 1face-1fadb 1fae0-1fae8 1faf0-1faf8 20000-2fffd 30000-3fffd'.split(' ').map(range => range.split('-').map(value => parseInt(value, 16)));
 
-function estimate(value: string): number {
+export function estimateTokens(value: string): number {
   let wide = 0, other = 0;
   for (const character of value) {
     const code = character.codePointAt(0)!;
@@ -259,12 +262,12 @@ function usage(events: Event[]): Data | null {
   const request = [...events].reverse().find(event => event.type === 'model/request' && event.data.turn === response.data.turn && event.data.step === response.data.step);
   if (!request) return null;
   const surface = messages(events.slice(0, request.seq));
-  const tokens = (tools: boolean) => estimate(surface.filter(message => (message.role === 'tool') === tools)
+  const tokens = (tools: boolean) => estimateTokens(surface.filter(message => (message.role === 'tool') === tools)
     .map(message => (message.content ?? '') + (message.tool_calls?.length ? pythonRepr(message.tool_calls) : '')).join(''));
   const used = object(response.data.usage);
   return { contextTokens: prompt(used), contextEstimated: 0, lastOutputTokens: Number(used.completion_tokens || used.output_tokens || 0),
-    systemTokensEstimate: estimate(text(object(request.data.header).systemPrompt)),
-    toolSchemaTokensEstimate: array(request.data.tools).length ? estimate(pythonRepr(request.data.tools)) : 0,
+    systemTokensEstimate: estimateTokens(text(object(request.data.header).systemPrompt)),
+    toolSchemaTokensEstimate: array(request.data.tools).length ? estimateTokens(pythonRepr(request.data.tools)) : 0,
     messageTokensEstimate: tokens(false), toolResultTokensEstimate: tokens(true) };
 }
 
@@ -301,4 +304,336 @@ export async function handleSessionRead(payload: Data, userDataDir: string): Pro
     pendingInput: pendingInput(events, messages(events)), answeredInputIds: answers.map(event => event.data.requestId),
     lastInputAnswer: last ? { requestId: last.requestId, message: last.message } : null,
     pendingRecovery: recovery(events) };
+}
+
+export const canonicalJson = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
+  item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
+const digest = (value: unknown): string => createHash('sha256').update(canonicalJson(value)).digest('hex');
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+const localLocks = new Map<string, Promise<unknown>>();
+
+export async function withFileLock<T>(file: string, action: () => Promise<T>): Promise<T> {
+  const previous = localLocks.get(file) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    await mkdir(path.dirname(file), { recursive: true });
+    let handle;
+    const until = Date.now() + 30000;
+    while (!handle) {
+      try { handle = await open(file, 'wx'); await handle.writeFile(JSON.stringify({ pid: process.pid })); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        try {
+          const owner = object(JSON.parse(await readFile(file, 'utf8')));
+          if (owner.pid && !alive(Number(owner.pid))) { await unlink(file); continue; }
+        } catch {}
+        if (Date.now() >= until) throw new Error(`Session is busy: ${path.basename(file)}`);
+        await sleep(20);
+      }
+    }
+    try { return await action(); } finally { await handle.close(); await unlink(file); }
+  });
+  localLocks.set(file, pending);
+  try { return await pending; } finally { if (localLocks.get(file) === pending) localLocks.delete(file); }
+}
+
+export class EventSession {
+  events: SessionEvent[] = [];
+  private size = 0;
+  private releaseTurn?: () => Promise<void>;
+  constructor(readonly file: string, readonly id: string) {}
+
+  static async open(userDataDir: string, id: string, create = true, parentSessionId: string | null = null): Promise<EventSession> {
+    if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) throw new Error('invalid_session_id');
+    const session = new EventSession(path.join(userDataDir, 'agent-sessions', `${id}.jsonl`), id);
+    await withFileLock(`${session.file}.ts-lock`, async () => {
+      try { await session.refresh(); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !create) throw error;
+        await session.write('session/created', { version: 1, sessionId: id, createdAt: Date.now(), parentSessionId, parentThroughTurn: null });
+      }
+    });
+    return session;
+  }
+
+  async refresh(): Promise<void> {
+    const info = await stat(this.file);
+    if (info.size === this.size && this.events.length) return;
+    if (this.events.length && info.size > this.size) {
+      const handle = await open(this.file, 'r');
+      try {
+        const buffer = Buffer.alloc(info.size - this.size);
+        await handle.read(buffer, 0, buffer.length, this.size);
+        const raw = buffer.toString('utf8');
+        if (raw.endsWith('\n')) {
+          const next = raw.trimEnd().split('\n');
+          let previous = this.events.at(-1)!.hash;
+          const adopted: SessionEvent[] = [];
+          for (const row of next) {
+            const event = JSON.parse(row) as SessionEvent & { prevHash: string };
+            if (event.sessionId !== this.id || event.seq !== this.events.length + adopted.length || event.prevHash !== previous || createHash('sha256').update(canonicalRow(row)).digest('hex') !== event.hash) throw new Error('invalid session event chain');
+            adopted.push(event); previous = event.hash;
+          }
+          this.events.push(...adopted); this.size = info.size; return;
+        }
+      } finally { await handle.close(); }
+    }
+    const raw = await readFile(this.file);
+    const lastNewline = raw.lastIndexOf(10);
+    if (raw.length && lastNewline !== raw.length - 1) {
+      const tail = raw.subarray(lastNewline + 1).toString('utf8');
+      try { JSON.parse(tail); const handle = await open(this.file, 'a'); try { await handle.write('\n'); } finally { await handle.close(); } }
+      catch { await truncate(this.file, lastNewline + 1); }
+    }
+    this.events = await loadSession(this.file, this.id);
+    this.size = (await stat(this.file)).size;
+  }
+
+  get openTurn(): number | null {
+    let turn: number | null = null;
+    for (const event of this.events) {
+      if (event.type === 'turn/start') turn = Number(event.data.turn);
+      if (event.type === 'turn/end') turn = null;
+    }
+    return turn;
+  }
+  deriveMessages(): AgentMessage[] { return structuredClone(messages(this.events)) as AgentMessage[]; }
+  pendingInput(): Data | null { return pendingInput(this.events, messages(this.events)); }
+  pendingRecovery(): Data[] { return recovery(this.events); }
+  pendingInbox(target: string): Data[] { return inbox(this.events, target); }
+  permissionMode(fallback: string): string {
+    for (const event of [...this.events].reverse()) {
+      if (event.type === 'permission/mode') return text(event.data.mode);
+      if (event.type === 'user_input/answered' && object(event.data.pendingInput).kind === 'plan') return ({ once: 'safe', grant: 'default', deny: 'plan' })[text(object(event.data.response).decision)] ?? fallback;
+    }
+    return fallback;
+  }
+
+  async append(type: string, data: Data, surfaceOp?: string): Promise<SessionEvent> {
+    return withFileLock(`${this.file}.ts-lock`, async () => { await this.refresh(); return this.write(type, data, surfaceOp); });
+  }
+
+  private async write(type: string, data: Data, surfaceOp?: string): Promise<SessionEvent> {
+    if (type === 'context/updated') validateContextUpdate(data, this.id, this.events);
+    if (type === 'inbox/consumed' && data.contextUpdate) validateContextUpdate(object(data.contextUpdate), this.id, this.events);
+    if (type === 'artifact/generated' || type === 'artifact/patched' || type === 'artifact/accepted') {
+      const current = [...this.events].reverse().find(event => ['artifact/generated', 'artifact/patched'].includes(event.type) && event.data.artifactId === data.artifactId);
+      if (type === 'artifact/generated' && current) throw new Error('duplicate_artifact');
+      if (type === 'artifact/patched' && (!current || Number(data.revision) !== Number(current.data.revision ?? 1) + 1)) throw new Error('stale_revision');
+      if (type === 'artifact/accepted' && (!current || data.revision !== current.data.revision || data.contentHash !== current.data.contentHash)) throw new Error('stale_revision');
+    }
+    if (type === 'operation/recovery_resolved') {
+      if (this.openTurn !== null || data.confirmed !== true || !this.pendingRecovery().some(item => item.operationId === data.operationId)) throw new Error('recovery_confirmation_required');
+      const prepared = this.events.find(event => event.type === 'operation/prepared' && event.data.callId === data.verificationCallId && event.data.effect === 'read');
+      const settled = prepared && this.events.find(event => event.type === 'operation/settled' && event.data.operationId === prepared.data.operationId && event.data.outcome === 'succeeded');
+      const unknown = this.events.find(event => event.type === 'operation/settled' && event.data.operationId === data.operationId && event.data.outcome === 'unknown');
+      if (!settled || !unknown || settled.seq <= unknown.seq) throw new Error('successful_post_recovery_read_required');
+    }
+    if (type === 'turn/start' && this.openTurn !== null) throw new Error('session_busy');
+    if (type === 'turn/end' && this.openTurn !== data.turn) throw new Error('turn_mismatch');
+    if (type === 'operation/prepared' && this.events.some(event => event.type === type && event.data.operationId === data.operationId)) throw new Error('duplicate_operation');
+    if (type === 'operation/settled') {
+      const prepared = this.events.find(event => event.type === 'operation/prepared' && event.data.operationId === data.operationId);
+      if (!prepared || object(data.message).tool_call_id !== prepared.data.callId || this.events.some(event => event.type === type && event.data.operationId === data.operationId)) throw new Error('invalid_operation_settlement');
+    }
+    if (type === 'user_input/answered' && (this.openTurn !== null || this.pendingInput()?.requestId !== data.requestId)) throw new Error('pending_input_mismatch');
+    if (type === 'inbox/message' && this.events.some(event => event.type === type && event.data.messageId === data.messageId)) throw new Error('duplicate_inbox_message');
+    if (type === 'inbox/consumed') {
+      const pending = new Set(this.pendingInbox(text(data.target)).map(item => item.messageId));
+      if (!array(data.messageIds).every(id => pending.has(id))) throw new Error('inbox_claim_conflict');
+    }
+    const core = { formatVersion: 1, sessionId: this.id, seq: this.events.length, time: Date.now(), type,
+      data: structuredClone(data), prevHash: this.events.at(-1)?.hash ?? '0'.repeat(64), ...(surfaceOp ? { surfaceOp } : {}) };
+    const event = { ...core, hash: digest(core) };
+    const line = Buffer.from(canonicalJson(event) + '\n');
+    await mkdir(path.dirname(this.file), { recursive: true });
+    const handle = await open(this.file, 'a');
+    try { await handle.writeFile(line); await handle.sync(); } finally { await handle.close(); }
+    this.events.push(event); this.size += line.length;
+    return event;
+  }
+
+  async startTurn(): Promise<number> {
+    const lock = `${this.file}.turn.ts-lock`;
+    await mkdir(path.dirname(lock), { recursive: true });
+    try {
+      const prior = object(JSON.parse(await readFile(lock, 'utf8')));
+      if (alive(Number(prior.pid))) throw new Error('session_busy');
+      await unlink(lock);
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    const handle = await open(lock, 'wx'); await handle.writeFile(JSON.stringify({ pid: process.pid }));
+    this.releaseTurn = async () => { await handle.close(); await unlink(lock); };
+    try {
+      await this.refresh(); await this.repairInterruptedTurn();
+      const turn = Math.max(0, ...this.events.filter(event => event.type === 'turn/start').map(event => Number(event.data.turn))) + 1;
+      await this.append('turn/start', { turn }); return turn;
+    } catch (error) { await this.releaseTurn(); this.releaseTurn = undefined; throw error; }
+  }
+  async endTurn(reason: string, detail = ''): Promise<void> {
+    try { if (this.openTurn !== null) await this.append('turn/end', { turn: this.openTurn, reason, detail }); }
+    finally { await this.releaseTurn?.(); this.releaseTurn = undefined; }
+  }
+  async appendMessage(message: AgentMessage): Promise<SessionEvent> {
+    return this.append(message.role === 'user' ? 'user/message' : message.role === 'assistant' ? 'assistant/message' : 'tool/result', { message }, 'append');
+  }
+  async replaceMessages(next: AgentMessage[], reason: string, expected?: AgentMessage[]): Promise<boolean> {
+    return withFileLock(`${this.file}.ts-lock`, async () => {
+      await this.refresh();
+      if (expected && (this.openTurn !== null || canonicalJson(this.deriveMessages()) !== canonicalJson(expected))) return false;
+      await this.write('surface/replace', { messages: next, reason }, 'replace'); return true;
+    });
+  }
+  async freezePrompt(system: string): Promise<string> {
+    const saved = this.events.find(event => event.type === 'prompt/frozen')?.data;
+    const old = [...this.events].reverse().find(event => event.type === 'model/request' && typeof object(event.data.header).systemPrompt === 'string');
+    const prompt = text(saved?.systemPrompt ?? object(old?.data.header).systemPrompt ?? system);
+    if (!saved) await this.append('prompt/frozen', { systemPrompt: prompt, systemPromptHash: digest(prompt), systemPromptSections: null });
+    if (prompt !== system) await this.append('prompt/drift', { message: 'Using the saved session prompt.', savedHash: digest(prompt), currentHash: digest(system), changedSections: null, currentSections: null });
+    return prompt;
+  }
+  async recordRequest(step: number, system: string, tools: unknown[]): Promise<void> {
+    const surface = this.deriveMessages();
+    await this.append('model/request', { turn: this.openTurn, step, messageCount: surface.length, messagesHash: digest(surface), tools, header: { systemPrompt: system }, systemPromptHash: digest(system), systemPromptSections: null });
+  }
+  async enqueue(instruction: string, target = 'next-step', payload?: Data, messageId: string = randomUUID()): Promise<SessionEvent> {
+    if (!['next-step', 'next-turn'].includes(target) || !instruction.trim() && !payload) throw new Error('invalid_inbox_input');
+    return this.append('inbox/message', { messageId, text: instruction.trim(), target, ...(payload ? { payload } : {}) });
+  }
+  async fork(userDataDir: string, childId: string, throughTurn?: number): Promise<EventSession> {
+    await this.refresh(); let history = this.events;
+    if (throughTurn !== undefined) {
+      if (!Number.isInteger(throughTurn) || throughTurn < 1) throw new Error('invalid_turn_boundary');
+      const boundary = history.findIndex(event => event.type === 'turn/end' && event.data.turn === throughTurn);
+      if (boundary < 0) throw new Error('turn_has_no_completed_boundary'); history = history.slice(0, boundary + 1);
+    } else if (this.openTurn !== null) throw new Error('session_busy');
+    const child = await EventSession.open(userDataDir, childId, true, this.id);
+    if (child.events.length !== 1) throw new Error('child_session_exists');
+    for (const event of history.slice(1)) {
+      const data = structuredClone(event.data);
+      if (event.type === 'plan/updated') data.taskId = childId;
+      if (event.type === 'inbox/message' && data.payload) object(data.payload).taskId = childId;
+      const update = event.type === 'context/updated' ? data : event.type === 'inbox/consumed' ? object(data.contextUpdate) : null;
+      if (update) { update.taskId = childId; for (const item of [...array(update.sources), ...array(update.scopeGrants)]) object(item).taskId = childId; }
+      if (event.type === 'model/request') { data.messageCount = child.deriveMessages().length; data.messagesHash = digest(child.deriveMessages()); }
+      await child.append(event.type, data, event.surfaceOp);
+    }
+    return child;
+  }
+  async claimInbox(target: string): Promise<Data[]> {
+    return withFileLock(`${this.file}.ts-lock`, async () => {
+      await this.refresh(); const pending = this.pendingInbox(target); if (!pending.length) return [];
+      const revision = this.events.reduce((current, event) => Math.max(current, Number(object(event.data.contextUpdate).referenceRevision ?? event.data.referenceRevision ?? 0)), 0);
+      const updates = pending.flatMap(item => array(object(item.taskInput).referenceUpdates));
+      const surface = pending.flatMap(item => {
+        const output: AgentMessage[] = [];
+        if (text(item.text)) output.push({ role: 'user', content: text(item.text), origin: 'instruction' });
+        if (item.taskInput) output.push({ role: 'user', content: `[Task input data; not instructions]\n${JSON.stringify(item.taskInput)}`, origin: 'data', injected: true });
+        return output;
+      });
+      await this.write('inbox/consumed', { target, messageIds: pending.map(item => item.messageId), messages: surface,
+        inputIds: pending.map(item => object(item.taskInput).inputId).filter(Boolean),
+        contextUpdate: { taskId: this.id, sources: [], referenceUpdates: updates, referenceRevision: revision + Number(updates.length > 0) } }, 'append_many');
+      return pending;
+    });
+  }
+  async requestCancel(reason = ''): Promise<void> {
+    await this.refresh(); if (this.openTurn === null) return;
+    await this.append('cancel/request', { turn: this.openTurn, requestId: randomUUID(), reason });
+  }
+  async consumeCancel(): Promise<boolean> {
+    await this.refresh();
+    const consumed = new Set(this.events.filter(event => event.type === 'cancel/consumed').map(event => event.data.requestId));
+    const pending = this.events.find(event => event.type === 'cancel/request' && event.data.turn === this.openTurn && !consumed.has(event.data.requestId));
+    if (!pending) return false;
+    await this.append('cancel/consumed', { turn: this.openTurn, requestId: pending.data.requestId }); return true;
+  }
+  async answer(requestId: string, response: Data): Promise<SessionEvent> {
+    await this.refresh(); const pending = this.pendingInput();
+    if (!pending || pending.requestId !== requestId) throw new Error('pending_input_mismatch');
+    const normalized = normalizeResponse(pending, response);
+    return this.append('user_input/answered', { requestId, pendingInput: pending, response: normalized,
+      message: { role: 'tool', tool_call_id: requestId, name: pending.harnessPermission ? pending.tool : pending.kind === 'plan' ? 'ExitPlanMode' : 'AskUser', origin: 'data', content: JSON.stringify({ ...pending, ...normalized, answered: true, awaitingUserInput: false }) } });
+  }
+  approvedCalls(): Data[] {
+    const started = new Set(this.events.filter(event => event.type === 'operation/prepared').map(event => event.data.callId));
+    for (const event of this.events) if (event.type === 'permission/cancelled') for (const id of array(event.data.requestIds)) started.add(`approval-${id}`);
+    return this.events.filter(event => event.type === 'user_input/answered' && object(event.data.pendingInput).harnessPermission && object(event.data.response).decision !== 'deny' && !started.has(`approval-${event.data.requestId}`))
+      .map(event => ({ id: `approval-${event.data.requestId}`, name: object(object(event.data.pendingInput).action).tool, arguments: object(object(event.data.pendingInput).action).arguments }));
+  }
+  async cancelPermissions(): Promise<void> {
+    const answered = new Set(this.events.filter(event => event.type === 'user_input/answered').map(event => event.data.requestId));
+    for (const event of this.events) if (event.type === 'permission/cancelled') for (const id of array(event.data.requestIds)) answered.add(id);
+    const requestIds = [...this.events.filter(event => event.type === 'permission/requested' && !answered.has(event.data.requestId)).map(event => event.data.requestId), ...this.approvedCalls().map(call => text(call.id).slice(9))];
+    if (requestIds.length) await this.append('permission/cancelled', { requestIds });
+  }
+  async repairInterruptedTurn(): Promise<void> {
+    if (this.openTurn === null) return;
+    const settled = new Set(this.events.filter(event => event.type === 'operation/settled').map(event => event.data.operationId));
+    const pending = this.events.filter(event => event.type === 'operation/prepared' && event.data.turn === this.openTurn && !settled.has(event.data.operationId));
+    for (const event of pending) {
+      const data = event.data, unknown = data.dispatched === true;
+      await this.append('operation/settled', { turn: this.openTurn, operationId: data.operationId, outcome: unknown ? 'unknown' : 'not_started', failureType: 'interrupted', usedBackend: null, latencyMs: null,
+        message: { role: 'tool', name: data.name, tool_call_id: data.callId, origin: 'data', is_error: true,
+          content: unknown ? `Execution interrupted; outcome unknown. ${data.effect === 'read' ? 'Safe to read again.' : 'Verify the target state before retrying. Do not repeat an external action without confirmation.'}` : 'Not executed before interruption.' } }, 'append');
+    }
+    const surface = this.deriveMessages();
+    const completed = new Set(surface.filter(message => message.role === 'tool').map(message => message.tool_call_id));
+    for (const call of surface.flatMap(message => message.tool_calls ?? [])) if (!completed.has(call.id)) {
+      await this.appendMessage({ role: 'tool', tool_call_id: call.id, name: call.name, content: 'Not dispatched before interruption.', is_error: true, origin: 'data' });
+    }
+    await this.append('turn/end', { turn: this.openTurn, reason: 'interrupted', detail: 'Recovered interrupted execution.' });
+  }
+}
+
+export function normalizeResponse(pending: Data, response: Data): Data {
+  if (pending.kind === 'permission' || pending.kind === 'plan') {
+    const decision = text(response.decision);
+    if (!['once', 'grant', 'deny'].includes(decision)) throw new Error('invalid_permission_decision');
+    return { decision };
+  }
+  const questions = array(pending.questions ?? [{ question: pending.question, options: pending.options }]).map(object);
+  const answers = object(response.answers);
+  if (!Object.keys(answers).length && response.answer !== undefined && questions.length === 1) answers[text(questions[0].question)] = response.answer;
+  const skipped: string[] = [];
+  if (Object.keys(answers).sort().join('\n') !== questions.map(question => text(question.question)).sort().join('\n')) throw new Error('answers_must_match_pending_questions');
+  for (const question of questions) {
+    const answer = answers[text(question.question)];
+    if (question.multiSelect ? !Array.isArray(answer) || answer.length > 5 : typeof answer !== 'string') throw new Error('invalid_answer_type');
+    if (answer === '' || Array.isArray(answer) && !answer.length) { skipped.push(text(question.question)); continue; }
+    const items = Array.isArray(answer) ? answer : [answer];
+    if (items.some(item => typeof item !== 'string' || !item.trim() || item.length > 4000)) throw new Error('answer_must_contain_1_4000_characters');
+    answers[text(question.question)] = Array.isArray(answer) ? [...new Set(items.map(item => String(item).trim()))] : String(answer).trim();
+  }
+  return { answers, ...(skipped.length ? { skippedQuestions: skipped } : {}) };
+}
+
+export async function handleSession(payload: Data, userDataDir: string): Promise<Data> {
+  const action = text(payload.action);
+  if (['status', 'usage', 'pending'].includes(action)) return handleSessionRead(payload, userDataDir);
+  try {
+    const session = await EventSession.open(userDataDir, text(payload.sessionId), false);
+    if (action === 'subagent-respond') { const { respondToAgent } = await import('./agent_background.js'); return await respondToAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.requestId), object(payload.response)); }
+    if (action === 'fork') {
+      const child = await session.fork(userDataDir, text(payload.childSessionId), payload.throughTurn === undefined ? undefined : Number(payload.throughTurn));
+      return { ok: true, sessionId: child.id, taskContext: { taskId: child.id, sources: taskSources(child.events), references: taskReferences(child.events), referenceRevision: referenceRevision(child.events) } };
+    }
+    if (action === 'cancel') {
+      const { readAgentStatus, stopAgent } = await import('./agent_background.js');
+      if (await readAgentStatus(userDataDir, session.id)) return await stopAgent(userDataDir, text(payload.parentSessionId), session.id);
+      if (payload.parentSessionId && session.events[0]?.data.parentSessionId !== payload.parentSessionId) throw new Error('subagent_parent_mismatch');
+      if (session.openTurn === null) return { ok: false, error: 'no_open_turn' };
+      await session.requestCancel(text(payload.reason)); return { ok: true, sessionId: session.id, cancelled: true, turn: session.openTurn };
+    }
+    if (action === 'answer') { const event = await session.answer(text(payload.requestId), object(payload.response)); return { ok: true, sessionId: session.id, requestId: payload.requestId, answer: event.data }; }
+    if (action === 'put') {
+      const input = object(payload.taskInput), target = text(input.target ?? payload.target ?? 'next-step'), instruction = text(input.instruction ?? payload.text);
+      if (input.taskId && input.taskId !== session.id) throw new Error('task_mismatch');
+      if (instruction.length > 12000 || session.pendingInbox(target).length >= 100) throw new Error('inbox_limit_exceeded');
+      for (const raw of array(payload.sources)) { const source = sourceRef(raw); if (source.taskId !== session.id) throw new Error('source_task_mismatch'); const known = taskSources(session.events).find(item => item.sourceId === source.sourceId); if (!known) await registerSource(session, source); else if (canonicalJson(known) !== canonicalJson(source)) throw new Error('source_identity_changed'); }
+      const event = await session.enqueue(instruction, target, Object.keys(input).length ? input : undefined, text(input.inputId || payload.messageId || randomUUID()));
+      return { ok: true, sessionId: session.id, status: 'queued', queued: true, target, messageId: event.data.messageId, inputId: input.inputId ?? null };
+    }
+    if (action === 'resolve_recovery' || action === 'recovery-resolve') { await session.append('operation/recovery_resolved', { operationId: payload.operationId, verificationCallId: payload.verificationCallId, confirmed: payload.confirmed === true }); return { ok: true, sessionId: session.id, pendingRecovery: session.pendingRecovery() }; }
+    return { ok: false, error: 'invalid_action' };
+  } catch (error) { return { ok: false, error: (error as Error).message }; }
 }

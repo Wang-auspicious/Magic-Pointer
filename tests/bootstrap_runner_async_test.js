@@ -13,7 +13,7 @@ const { PreflightRunner } = require('../electron/bootstrap_runner');
     schemaVersion: 1,
     stages: [
       { id: 'runtime', title: '运行环境', blocking: true, retryable: true, skippable: false, weight: 70 },
-      { id: 'voice', title: '语音', blocking: false, retryable: true, skippable: true, weight: 30 },
+      { id: 'grounding', title: '目标识别', blocking: false, retryable: true, skippable: true, weight: 30 },
     ],
   };
   const events = [];
@@ -29,7 +29,7 @@ const { PreflightRunner } = require('../electron/bootstrap_runner');
         await new Promise((resolve) => setTimeout(resolve, 5));
         return { state: 'pass', evidence: 'runtime_ready' };
       },
-      voice: async () => ({ state: 'pass', evidence: 'voice_ready' }),
+      grounding: async () => ({ state: 'pass', evidence: 'grounding_ready' }),
     },
   });
 
@@ -45,7 +45,7 @@ const { PreflightRunner } = require('../electron/bootstrap_runner');
   assert.strictEqual(marker.bootstrapVersion, 1);
   assert.strictEqual(marker.productVersion, '1.2.3');
   assert.strictEqual(marker.manifestDigest, 'manifest-sha256');
-  assert.deepStrictEqual(marker.completedStageIds, ['runtime', 'voice']);
+  assert.deepStrictEqual(marker.completedStageIds, ['runtime', 'grounding']);
   console.log('bootstrap runner async test ok');
 })().catch((error) => {
   console.error(error);

@@ -24,14 +24,6 @@ function mergeSettingsPatch(base: unknown, patch: unknown): any {
   return merged;
 }
 
-const VOICE_KEYS = [
-  'voice_enabled', 'default_input_mode', 'voice_auto_submit', 'voice_start_strategy',
-  'voice_silence_ms', 'voice_language', 'voice_output_mode', 'voice_punctuation',
-  'voice_script', 'voice_mixed_spacing', 'voice_hallucination_guard',
-  'voice_resident_enabled', 'voice_engine', 'voice_memory_limit_mb',
-  'voice_idle_unload_ms', 'voice_glossaries',
-] as const;
-
 const GESTURE_KEYS = [
   'wake_mode', 'wiggle_enabled', 'sensitivity', 'mouse_side_button', 'disabled_apps',
   'cooldown_ms', 'gesture_arm_delay_ms', 'gesture_timeout_ms', 'multi_stroke_submit_ms',
@@ -40,7 +32,6 @@ const GESTURE_KEYS = [
 
 function settingsSaveImpact(previous: UnknownRecord = {}, next: UnknownRecord = {}) {
   return {
-    voice: changed(pick(previous.interaction, VOICE_KEYS), pick(next.interaction, VOICE_KEYS)),
     hotkeys: changed(previous.shortcuts || {}, next.shortcuts || {})
       || previous.activation?.fallback_hotkey_enabled !== next.activation?.fallback_hotkey_enabled,
     gesture: changed(pick(previous.activation, GESTURE_KEYS), pick(next.activation, GESTURE_KEYS)),

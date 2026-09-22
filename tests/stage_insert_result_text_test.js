@@ -32,7 +32,7 @@ assert(handlerBody.includes('targetPointSpace: snapshot.target_point_space || nu
 assert(handlerBody.includes("targetResolution: 'adaptive'"));
 assert(handlerBody.includes('currentTargetWindow: safeClone(lastStableForegroundWindow)'));
 assert(!handlerBody.includes('preferForeground: true'));
-assert(handlerBody.includes("'scripts/deliver_text_bridge.py'"));
+assert(handlerBody.includes("'deliver_text'"));
 assert(handlerBody.includes('if (!selectionSessions.get(selectionSessionToken))'));
 
 assert(stageHtml.includes('id="thread-copy"'));

@@ -71,15 +71,12 @@ assert.strictEqual(
 }
 
 
-const PYTHON_AND_CONSUMER_GUARDS = [
-  'app/grounding/evidence_binding.py',
-  'app/actions/draft_delivery.py',
-  'app/actions/executor.py',
-  'app/adapters/browser_devtools_adapter.py',
-  'scripts/selection_snapshot_bridge.py',
+const RUNTIME_AND_CONSUMER_GUARDS = [
+  'electron/runtime/desktop_perception.ts',
+  'electron/runtime/actions_delivery.ts',
   'electron/internal_action_policy.ts',
 ];
-for (const relative of PYTHON_AND_CONSUMER_GUARDS) {
+for (const relative of RUNTIME_AND_CONSUMER_GUARDS) {
   const source = fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
   assert(
     source.includes(COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS),

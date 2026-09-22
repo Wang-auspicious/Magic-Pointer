@@ -12,58 +12,20 @@ directories:
   output: release
   buildResources: packaging
 
-# The Python bridge is launched as a separate process and therefore cannot read
-# files inside app.asar. Keep the application tree unpacked until the bridge is
-# changed to resolve resources outside the archive.
 asar: false
-
-# The only Node production runtime is pure JavaScript (electron-updater).
-# Skipping native rebuild avoids an unnecessary and occasionally stalled pass.
 npmRebuild: false
 
 files:
   - build/electron/**
   - build/figma/**
-  - app/**
-  # 运行时脚本白名单（2026-08-13 实测补全）：桥进程 spawn / import 的全部脚本。
-  # 漏项会让安装版缺文件、首启自检失败（曾漏 recipe/抓帧/进度模块）。
-  - scripts/__init__.py
-  - scripts/_bridge_common.py
-  - scripts/action_bridge.py
-  - scripts/agent_bridge.py
-  - scripts/agent_hook_bridge.py
-  - scripts/agent_session_bridge.py
-  - scripts/artifact_bridge.py
-  - scripts/agent_worker.py
-  - scripts/bridge_progress.py
-  - scripts/conversation_bridge.py
-  - scripts/deliver_text_bridge.py
-  - scripts/electron_bridge.py
-  - scripts/element_probe_bridge.py
-  - scripts/fabric_bridge.py
-  - scripts/frame_capture_worker.py
-  - scripts/frame_lease.py
-  - scripts/install_agent_hooks.py
-  - scripts/local_voice_bridge.py
-  - scripts/local_voice_worker.py
-  - scripts/magic_pointer_mcp.py
-  - scripts/ocr_resident_worker.py
-  - scripts/office_selection_probe.vbs
-  - scripts/pointer_input_state.ps1
-  - scripts/selection_bridge.py
-  - scripts/selection_snapshot_bridge.py
-  - scripts/selection_worker.py
-  - scripts/learning_candidates_bridge.py
-  - scripts/learning_review_bridge.py
-  - scripts/sense_voice_bridge.py
-  - scripts/sense_voice_setup.py
-  - scripts/smoke_fabric.py
-  - scripts/stash_describe_bridge.py
-  - scripts/start_windows_dictation.ps1
+  - build/scripts/collect-diagnostics.js
+  - scripts/desktop_host.cs
+  - scripts/desktop_ocr.ps1
   - scripts/uia_draft_writer.cs
   - scripts/uia_selection_probe.cs
-  - scripts/voice_engine.py
-  - build/scripts/collect-diagnostics.js
+  - scripts/wgc_capture_tool.cs
+  - scripts/office_selection_probe.vbs
+  - scripts/pointer_input_state.ps1
   - native/macos/magic-pointer-host
   - assets/app/icon.ico
   - data/model_capabilities.v1.json
@@ -71,17 +33,8 @@ files:
   - data/recipes/**
   - data/surface_adapters/**
   - data/plugins/**
-  - data/README.md
-  - requirements.txt
   - package.json
   - THIRD_PARTY_NOTICES.md
-
-extraResources:
-  - from: build/python-runtime
-    to: python-runtime
-    filter:
-      - '**/*'
-
 win:
   icon: assets/app/icon.ico
   target:
@@ -112,7 +65,6 @@ mac:
   entitlements: packaging/entitlements.mac.plist
   entitlementsInherit: packaging/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: Magic Pointer 使用麦克风离线转写你的短命令，音频不会离开本机。
     NSAppleEventsUsageDescription: Magic Pointer 通过 Apple Events 让选中的应用执行原位改写与翻译。
     NSAccessibilityUsageDescription: Magic Pointer 通过辅助功能读取当前应用的选区与前台窗口。
     NSScreenCaptureUsageDescription: Magic Pointer 仅在你指点屏幕对象时截图作为视觉兜底。

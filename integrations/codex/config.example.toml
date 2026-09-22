@@ -1,7 +1,6 @@
 # Copy into the relevant Codex config and replace MAGIC_POINTER_ROOT.
 [mcp_servers.magic_pointer]
-command = "python"
-args = ["MAGIC_POINTER_ROOT/scripts/magic_pointer_mcp.py"]
+command = "node"
+args = ["MAGIC_POINTER_ROOT/build/electron/runtime/connectors.js", "mcp"]
 startup_timeout_sec = 10
 tool_timeout_sec = 120
-

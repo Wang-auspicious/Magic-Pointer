@@ -135,6 +135,15 @@ export class ToolRegistry {
   private readonly tools = new Map<string, ToolSpec>();
   private readonly aliases = new Map<string, string>();
   private readonly loaded = new Set<string>();
+  private readonly endListeners = new Set<() => void | Promise<void>>();
+
+  onSessionEnd(listener: () => void | Promise<void>): () => void { this.endListeners.add(listener); return () => { this.endListeners.delete(listener); }; }
+  async close(): Promise<void> {
+    const results = await Promise.allSettled([...this.endListeners].map(listener => Promise.resolve().then(listener)));
+    this.endListeners.clear();
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+  }
 
   register(spec: ToolSpec): ToolSpec {
     if (!namePattern.test(spec.name) || this.tools.has(spec.name) || this.aliases.has(spec.name)) throw new Error(`Invalid or duplicate tool: ${spec.name}`);

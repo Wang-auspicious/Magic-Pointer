@@ -345,7 +345,6 @@ declare global {
     onSubmit?: (payload: { text: string; attachments: MagicPointerAttachment[] }) => boolean | void | Promise<boolean | void>;
     onStop?: (() => boolean | void | Promise<boolean | void>) | null;
     onSteer?: ((text: string) => boolean | void | Promise<boolean | void>) | null;
-    onVoice?: (() => void) | null;
     onScissor?: (() => void) | null;
     allowAttachments?: boolean;
     meta?: { id?: string; title?: string; label?: string; dot?: string; icon?: string }[];
@@ -495,9 +494,6 @@ declare global {
   interface MagicPointerDashboardApi {
     undoAction?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
     setTheme?(theme: unknown): void;
-    startDictation?(): void;
-    stopDictation?(options?: { graceful?: boolean }): void;
-    onDictationResult?(cb: (payload: MagicPointerDictationResultPayload) => void): void;
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
     modelsCatalog?(options?: { refresh?: boolean }): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
@@ -605,11 +601,9 @@ declare global {
     submitSelectionCommand(payload: Record<string, unknown>): void;
     executeAction(payload: Record<string, unknown>): void;
     showContextualResult(payload: Record<string, unknown>): void;
-    startDictation(): void;
     onShow(cb: (payload: MagicPointerPanelShowPayload) => void): void;
     onHide(cb: () => void): void;
     onResult(cb: (payload: MagicPointerPanelResultPayload) => void): void;
-    onDictationResult(cb: (payload: MagicPointerDictationResultPayload) => void): void;
   }
   interface MagicPointerPanelShowPayload {
     selectionSessionToken?: string;
@@ -617,8 +611,6 @@ declare global {
     captureSummary?: MagicPointerCaptureSummary;
     captureEligibility?: MagicPointerCaptureEligibility;
     defaultInputMode?: string;
-    voiceAutoSubmit?: boolean;
-    voiceSilenceMs?: number;
     sessionExpiresAt?: number;
     [key: string]: unknown;
   }
@@ -637,14 +629,6 @@ declare global {
     status?: string;
     error?: string;
     selectionSessionToken?: string;
-    [key: string]: unknown;
-  }
-  interface MagicPointerDictationResultPayload {
-    surface?: string;
-    ok?: boolean;
-    error?: string;
-    transcript?: string;
-    final?: boolean;
     [key: string]: unknown;
   }
 
@@ -791,7 +775,6 @@ declare global {
     done(payload: unknown): void;
     gestureStarted(token: unknown): void;
     gestureStroke(token: unknown, index: unknown): void;
-    startDictation(): void;
     onShow(cb: (payload: Record<string, unknown>) => void): void;
     onHide(cb: () => void): void;
     onCursor(cb: (payload: Record<string, unknown>) => void): void;
@@ -887,14 +870,11 @@ declare global {
     pickElement(payload: unknown): Promise<any>;
     listAgentSessions(selectionSessionToken: unknown): Promise<any>;
     dispatchAgentPrompt(payload: unknown): Promise<any>;
-    startDictation(): void;
-    stopDictation(options?: unknown): void;
     setMouseCapture(enabled: unknown, options?: unknown): void;
     onShow(cb: (payload: Record<string, unknown>) => void): void;
     onUpdate(cb: (payload: Record<string, unknown>) => void): void;
     onCardPatch(cb: (payload: MagicPointerCardPatchPayload) => void): void;
     onHide(cb: () => void): void;
-    onDictationResult(cb: (payload: Record<string, unknown>) => void): void;
     onPointerInput(cb: (payload: Record<string, unknown>) => void): void;
     onModelHealth(cb: (payload: Record<string, unknown>) => void): void;
   }
@@ -903,7 +883,6 @@ declare global {
   var StageAnchor: any;
   var StageSurfacePolicy: any;
   var StudioShell: any;
-  var MagicPointerVoiceTrigger: any;
   var MagicPointerStageHitPolicy: any;
   var AnswerShapePolicy: any;
   var CaptureProofPolicy: any;

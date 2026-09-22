@@ -17,7 +17,6 @@ if (!useRealProfile) {
   app.setPath('userData', profile);
   app.setLoginItemSettings = () => {};
   const settings = require('../build/electron/settings_store').defaultSettings();
-  settings.voice = { ...settings.voice, enabled: false };
   settings.stash = { ...settings.stash, clipboard: false };
   settings.context_trackers = [];
   fs.writeFileSync(path.join(profile, 'fabric-settings.json'), JSON.stringify(settings));

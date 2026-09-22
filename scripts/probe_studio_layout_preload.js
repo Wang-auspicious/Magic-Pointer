@@ -270,8 +270,6 @@ const settings = {
     wake_enabled: true,
     wake_gesture: 'wiggle',
     default_input_mode: 'text',
-    voice_enabled: false,
-    voice_resident_enabled: false,
   },
   appearance: { theme, material: 'solid', compact_mode: false },
   privacy: {
@@ -297,8 +295,6 @@ const ok = async () => ({ ok: true });
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
   hide: () => {},
   setTheme: () => {},
-  startDictation: () => {},
-  stopDictation: () => {},
   saveFabricSettings: async () => ({ ok: true, settings }),
   getFabricSettings: async () => ({
     ok: true,

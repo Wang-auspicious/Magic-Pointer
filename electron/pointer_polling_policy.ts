@@ -1,14 +1,11 @@
 'use strict';
 
-const POINTER_VOICE_STRATEGIES = new Set(['push_to_talk', 'hover']);
 const WIGGLE_WAKE_MODES = new Set(['wiggle', 'wiggle_hotkey']);
 
 type PointerPollingInput = {
   wakeMode?: unknown;
   wiggleEnabled?: boolean;
   mouseShakeOverride?: unknown;
-  voicePointerConfigured?: boolean;
-  voiceStartStrategy?: unknown;
   episodeActive?: boolean;
   mouseSideButton?: unknown;
   onboardingRequired?: boolean;
@@ -25,8 +22,6 @@ function pointerPollingPolicy({
   wakeMode = 'wiggle_hotkey',
   wiggleEnabled = true,
   mouseShakeOverride = '',
-  voicePointerConfigured = false,
-  voiceStartStrategy = 'auto',
   episodeActive = false,
   mouseSideButton = 'none',
   onboardingRequired = false,
@@ -50,16 +45,9 @@ function pointerPollingPolicy({
     episodeActive === true &&
     ['xbutton1', 'xbutton2', 'middle_hold'].includes(normalizedSideButton);
   const detectMouseButton = normalizedWakeMode === 'mouse_button' || episodeContinuation;
-  const stageVoicePointer =
-    voicePointerConfigured === true &&
-    POINTER_VOICE_STRATEGIES.has(
-      String(voiceStartStrategy || '')
-        .trim()
-        .toLowerCase(),
-    );
 
   return {
-    shouldPoll: detectWiggle || detectMouseButton || stageVoicePointer,
+    shouldPoll: detectWiggle || detectMouseButton,
     detectWiggle,
     detectMouseButton,
   };

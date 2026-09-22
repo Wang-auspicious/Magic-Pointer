@@ -43,45 +43,16 @@ body {
   -webkit-app-region: drag;
 }
 
-.voice-glyph {
+.input-glyph {
   display: flex;
-  flex: 0 0 58px;
+  flex: 0 0 44px;
   height: 58px;
   align-items: center;
   justify-content: center;
-  gap: 3px;
   color: var(--google-blue);
-  -webkit-app-region: no-drag;
-}
-
-.voice-glyph i {
-  display: block;
-  width: 3px;
-  height: 8px;
-  border-radius: 3px;
-  background: currentColor;
-  transform-origin: center;
-}
-
-.voice-glyph i:nth-child(2) { height: 14px; }
-.voice-glyph i:nth-child(3) { height: 10px; }
-
-.command-capsule[data-input-mode="voice"] .voice-glyph {
-  opacity: 1;
-}
-
-.command-capsule[data-input-mode="text"] .voice-glyph {
-  flex-basis: 44px;
-}
-
-.command-capsule[data-input-mode="text"] .voice-glyph i {
-  display: none;
-}
-
-.command-capsule[data-input-mode="text"] .voice-glyph::after {
-  content: "T";
   font-size: 15px;
   font-weight: 800;
+  -webkit-app-region: no-drag;
 }
 
 #command {
@@ -123,52 +94,17 @@ body {
   display: none;
 }
 
-.command-capsule[data-state="listening"] .voice-glyph i,
-.command-capsule[data-state="input"] .voice-glyph i {
-  animation: voice-level 820ms ease-in-out infinite alternate;
-}
-
-.command-capsule[data-state="listening"] .voice-glyph i:nth-child(2),
-.command-capsule[data-state="input"] .voice-glyph i:nth-child(2) {
-  animation-delay: -300ms;
-}
-
-.command-capsule[data-state="listening"] .voice-glyph i:nth-child(3),
-.command-capsule[data-state="input"] .voice-glyph i:nth-child(3) {
-  animation-delay: -520ms;
-}
-
-.command-capsule[data-state="running"] .voice-glyph i {
-  width: 4px;
-  height: 4px;
-  animation: processing-dot 900ms ease-in-out infinite;
-}
-
-.command-capsule[data-state="running"] .voice-glyph i:nth-child(2) { animation-delay: 120ms; }
-.command-capsule[data-state="running"] .voice-glyph i:nth-child(3) { animation-delay: 240ms; }
-
 .command-capsule[data-state="error"] {
   border-color: var(--google-error);
   background: var(--google-error-soft);
   color: var(--google-error);
 }
 
-.command-capsule[data-state="error"] .voice-glyph,
+.command-capsule[data-state="error"] .input-glyph,
 .command-capsule[data-state="error"] .capsule-status {
   color: var(--google-error);
 }
 
-@keyframes voice-level {
-  from { transform: scaleY(.55); }
-  to { transform: scaleY(1.2); }
-}
-
-@keyframes processing-dot {
-  0%, 65%, 100% { opacity: .34; transform: translateY(0); }
-  32% { opacity: 1; transform: translateY(-3px); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .command-capsule { transition: none; }
-  .command-capsule .voice-glyph i { animation: none !important; }
 }

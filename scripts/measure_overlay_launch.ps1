@@ -1,10 +1,5 @@
 # Measures what `npm run overlay` actually does to the machine.
 #
-# Yesterday's startup probe ran in an isolated profile with voice off, a fake
-# model and no conversation history, so it could not see the stall the user
-# reports. This samples the real command with performance counters, which is
-# where paging and disk saturation show up as the mouse stopping.
-#
 #   powershell -File scripts/measure_overlay_launch.ps1 -Phase build
 #   powershell -File scripts/measure_overlay_launch.ps1 -Phase launch
 param(

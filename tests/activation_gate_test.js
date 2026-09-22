@@ -23,7 +23,7 @@ assert(mainSource.includes("const { ActivationGate } = require('./activation_gat
 assert(mainSource.includes('function hasVisibleTemporarySurface()'));
 assert(mainSource.includes('function dismissTemporarySurfaces('));
 assert(mainSource.includes('function requestActivation(reason:'));
-for (const reason of ['wiggle', 'shortcut-wake', 'shortcut-text', 'shortcut-voice', 'runtime-delivery', 'legacy-native-selection']) {
+for (const reason of ['wiggle', 'shortcut-wake', 'shortcut-text', 'runtime-delivery', 'legacy-native-selection']) {
   assert(mainSource.includes(`requestActivation('${reason}')`), reason);
 }
 assert(mainSource.includes("decision === 'dismiss'"));

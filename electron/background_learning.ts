@@ -40,7 +40,7 @@ function scheduleBackgroundLearning({
       sessionId: request.sessionId,
       terminalReason: request.terminalReason,
     },
-    'scripts/learning_review_bridge.py',
+    'learning_review',
     null,
     {
       allowWithoutSurface: true,

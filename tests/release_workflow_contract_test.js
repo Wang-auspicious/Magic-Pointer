@@ -11,13 +11,12 @@ assert.match(workflow, /tags:\s*\n\s*-\s*['"]v\*['"]/,
   'version tags must trigger a release build');
 assert.match(workflow, /permissions:\s*\n\s*contents:\s*write/,
   'release publishing must have scoped contents write permission');
-assert.match(workflow, /actions\/setup-python@v5[\s\S]*?python-version:\s*['"]3\.12['"]/,
-  'bundled runtime builds must pin the supported Python version');
+assert.doesNotMatch(workflow, /setup-python|prepare_python_runtime|python -m pytest/,
+  'release builds must use the TypeScript Runtime without obsolete Python preparation');
 assert.match(workflow, /actions\/setup-node@v4[\s\S]*?node-version:\s*['"](?:24|20)['"]/,
   'release builds must pin the supported Node version');
 assert.match(workflow, /npm ci --ignore-scripts/);
 assert.match(workflow, /npm test/);
-assert.match(workflow, /python -m pytest -q/);
 assert.match(workflow, /run:\s*npm run dist:win/,
   'Windows artifacts must be built exactly once before verification');
 assert.match(workflow, /npm run dist:win[\s\S]*?npm run verify:package[\s\S]*?npm run verify:installer/,

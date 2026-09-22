@@ -5,11 +5,10 @@ const {
   SETTINGS_PAGES,
   modelInfoValue,
   patchForSetting,
-  valueForSetting,
 } = require('../electron/renderer/settings_model');
 
 assert.deepStrictEqual(SETTINGS_PAGES.map((page: any) => page.id), [
-  'general', 'interaction', 'voice', 'models-agents',
+  'general', 'interaction', 'models-agents',
   'skills', 'plugins', 'connectors',
   'perception-privacy', 'permissions', 'memory-context', 'storage', 'appearance-accessibility',
   'shortcuts', 'updates', 'diagnostics',
@@ -66,17 +65,8 @@ assert(externalClientSection.rows.some((row: any) => row.label === 'Preferred de
 assert(externalClientSection.rows.every((row: any) => !/Runtime route/i.test(row.description || '')),
   'external clients are prompt-delivery channels, never MP execution backends');
 
-assert.deepStrictEqual(patchForSetting('interaction.voice_enabled', false), {
-  interaction: { voice_enabled: false, default_input_mode: 'text', voice_resident_enabled: false },
-});
-assert.deepStrictEqual(patchForSetting('interaction.default_input_mode', 'voice'), {
-  interaction: { default_input_mode: 'voice', voice_enabled: true },
-});
 assert.deepStrictEqual(patchForSetting('privacy.retain_captures_days', 7), {
   privacy: { retain_captures_days: 7 },
 });
-assert.strictEqual(valueForSetting('interaction.default_input_mode', {
-  interaction: { default_input_mode: 'text' },
-}), 'text');
 
 console.log('settings UI model test ok');

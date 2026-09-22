@@ -22,7 +22,6 @@ assert.strictEqual(defaults.appearance.sweep_duration_ms, 292);
 assert.strictEqual(defaults.appearance.sweep_fade_ms, 96);
 assert.strictEqual(defaults.appearance.capsule_spawn_ms, 80);
 assert.strictEqual(defaults.appearance.capsule_expand_ms, 125);
-assert.strictEqual(defaults.appearance.capsule_voice_width_dip, 40);
 assert.strictEqual(defaults.appearance.capsule_text_width_dip, 144);
 assert.strictEqual(defaults.appearance.capsule_max_width_dip, 440);
 assert.strictEqual(defaults.appearance.capsule_inline_gap_dip, 18);

@@ -3,7 +3,6 @@
 [![Release](https://github.com/Wang-auspicious/Magic-Pointer/actions/workflows/release.yml/badge.svg)](https://github.com/Wang-auspicious/Magic-Pointer/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](.nvmrc)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](.python-version)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](README.md)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
@@ -26,12 +25,12 @@ Magic Pointer 是一个完整的桌面 Agent Harness。它把人在桌面上的�
 短促左右晃动 3 次唤醒
   -> 划线圈选目标，pointerup 瞬间冻结画面、窗口身份与手势几何
   -> UIA / DOM / COM / OCR 并发解析成对象图
-  -> 在单个气泡里输入指令（默认打字，语音可选）
+  -> 在单个气泡里输入指令
   -> Runtime 从对象图直接开始有用工作
   -> 预览高风险动作，执行、读取回执，必要时撤销
 ```
 
-晃动检测要求 250 到 600 毫秒的水平往返与多次方向反转，拖拽、滚动、窗口移动和禁用应用中不会误触发。语音转写在本机完成（SenseVoice 优先，Whisper 兜底），不经过系统听写、不上传录音；默认输入方式是打字。
+晃动检测要求 250 到 600 毫秒的水平往返与多次方向反转，拖拽、滚动、窗口移动和禁用应用中不会误触发。当前通过打字输入指令，语音尚未加入。
 
 ### Studio 工作台
 
@@ -83,10 +82,9 @@ Magic Pointer 是一个完整的桌面 Agent Harness。它把人在桌面上的�
 
 ## 安装与启动
 
-要求 Windows 10/11、Python 3.11 及以上、Node.js 20 及以上。
+源码开发要求 Windows 10/11、Node.js 20–24 和 npm 10 及以上。安装包自带 Electron 的 Node Runtime，无需安装 Python。
 
 ```powershell
-python -m pip install -r requirements.txt
 npm install
 npm run overlay
 ```
@@ -110,21 +108,21 @@ npm run dist:win
 npm test
 npm run typecheck
 npm run lint
-python -m pytest -q --basetemp .pytest-local
 ```
 
-Node 测试、五套 TypeScript strict 检查、ESLint、Python 全量 pytest 四道门是每个批次的交付前置。
+`npm run verify` 集中执行 ESLint、全部 TypeScript 检查、构建及 Node 测试。真实应用验收另行记录，不用协议测试代替。
 
 ## 架构速览
 
 - `electron/main.ts`：Electron 壳、手势生命周期、安全 IPC；
 - `electron/wiggle_detector.ts`：晃动意图检测；
 - `electron/renderer/studio.html` 与 `electron/studio_shell.ts`：Studio 工作台；
-- `scripts/selection_bridge.py`：手势任务桥，`scripts/conversation_bridge.py`：对话桥；
-- `app/fabric/engine.py`：run_agent_turn 主入口；
-- `app/agent_runtime/`：loop、工具、压缩、记忆、权限、技能；
-- `app/harness/`：插件内核（builtin bundle、上下文服务、用户插件目录）；
-- `app/perception/`：并发感知融合，`app/desktop_actions/`：桌面动作与 UIA；
+- `electron/runtime/worker.ts`：手势、对话、会话及动作的进程协议入口；
+- `electron/runtime/index.ts`、`agent.ts`：自有 Runtime 装配与模型循环；
+- `electron/runtime/session.ts`、`tools.ts`：持久会话、权限与工具调度；
+- `electron/runtime/agent_plugins.ts`：插件生命周期与内置能力装配；
+- `electron/runtime/desktop*.ts`：并发感知、历史帧、桌面动作及应用适配；
+- `electron/runtime/context*.ts`、`artifacts.ts`、`actions*.ts`：来源、精确文档修改和产物；
 - `native/macos/MagicPointerHost.swift`：macOS 宿主源码。
 
 ## 文档
@@ -138,7 +136,7 @@ Node 测试、五套 TypeScript strict 检查、ESLint、Python 全量 pytest �
 
 - Windows：主要开发和验证平台；具体应用支持和验收范围见已知限制；
 - macOS：Electron 与共享层源码就绪，Accessibility、Screen Recording、签名与公证尚未实机验证；
-- Linux：Runtime 与工具层为纯 Python 与 Node 实现，系统级指针宿主尚未实现。
+- Linux：共享 Runtime 与工具层使用 TypeScript / Node，系统级指针宿主尚未实现。
 
 ## 许可证
 

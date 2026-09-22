@@ -12,24 +12,10 @@ assert.deepStrictEqual(pointerPollingPolicy({
   detectMouseButton: false,
 });
 
-for (const voiceStartStrategy of ['push_to_talk', 'hover']) {
-  assert.deepStrictEqual(pointerPollingPolicy({
-    wakeMode: 'hotkey',
-    wiggleEnabled: false,
-    voicePointerConfigured: true,
-    voiceStartStrategy,
-  }), {
-    shouldPoll: true,
-    detectWiggle: false,
-    detectMouseButton: false,
-  }, `${voiceStartStrategy} must retain pointer input without silently enabling wiggle`);
-}
 
 assert.deepStrictEqual(pointerPollingPolicy({
   wakeMode: 'hotkey',
   wiggleEnabled: false,
-  voicePointerConfigured: true,
-  voiceStartStrategy: 'auto',
 }), {
   shouldPoll: false,
   detectWiggle: false,
@@ -49,10 +35,8 @@ assert.deepStrictEqual(pointerPollingPolicy({
   wakeMode: 'wiggle',
   wiggleEnabled: true,
   mouseShakeOverride: '0',
-  voicePointerConfigured: true,
-  voiceStartStrategy: 'push_to_talk',
 }), {
-  shouldPoll: true,
+  shouldPoll: false,
   detectWiggle: false,
   detectMouseButton: false,
 });
@@ -80,8 +64,6 @@ for (const blocked of [{ onboardingRequired: true }, { inputPaused: true }]) {
   assert.deepStrictEqual(pointerPollingPolicy({
     wakeMode: 'wiggle',
     wiggleEnabled: true,
-    voicePointerConfigured: true,
-    voiceStartStrategy: 'push_to_talk',
     ...blocked,
   }), {
     shouldPoll: false,

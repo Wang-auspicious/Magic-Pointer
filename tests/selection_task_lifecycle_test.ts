@@ -22,10 +22,9 @@ const requestId = sessions.startRequest(selected.token);
 let cancelled = false;
 const context = {
   activeSelectionSessionToken: selected.token, selectionSessions: sessions,
-  voiceRuntime: null, voiceFocusGuards: new Map(), finishVoiceFocusGuard() {},
   stageWindow: { isDestroyed: () => false, isVisible: () => true, webContents: { send() {} } },
   overlayWindow: null, overlayOwnsPointerInput: false, selectionGestureArm: null,
-  log() {}, cancelSelectionGesture() {}, stopDictation() {}, setStageMouseCapture() {},
+  log() {}, cancelSelectionGesture() {}, setStageMouseCapture() {},
   disarmTemporaryDismissShortcut() {}, hideOverlay() {}, lastStageResult: null,
   invalidateSelectionSession() { cancelled = true; sessions.cancel(selected.token); },
 };

@@ -5,9 +5,8 @@
 ## 开发环境
 
 - Node.js 20（见 `.nvmrc`）
-- Python 3.12（见 `.python-version`）
 - Windows 10/11；其他平台的验证状态见 `docs/KNOWN_LIMITATIONS.md`
-- 建议编辑器：VS Code + `dbaeumer.vscode-eslint` + `esbenp.prettier-vscode` + `charliermarsh.ruff`
+- 建议编辑器：VS Code + `dbaeumer.vscode-eslint` + `esbenp.prettier-vscode`
 
 首次设置：
 
@@ -15,8 +14,7 @@
 git clone https://github.com/Wang-auspicious/Magic-Pointer.git
 cd Magic-Pointer
 npm install
-python -m pip install -r requirements.txt
-pre-commit install   # 可选，本地跑 ruff / prettier / eslint
+npm run verify
 ```
 
 ## 常用命令
@@ -24,7 +22,7 @@ pre-commit install   # 可选，本地跑 ruff / prettier / eslint
 ```bash
 npm run overlay        # 本地跑 Electron 主进程
 npm test               # Node 侧单元 + 静态测试
-python -m pytest -q    # Python 侧测试
+npm run typecheck      # 全部 TypeScript 工程检查
 npm run dist:win       # 构建 Windows 安装包
 ```
 
@@ -44,7 +42,7 @@ npm run dist:win       # 构建 Windows 安装包
 ## PR checklist
 
 - [ ] `npm test` 通过
-- [ ] `python -m pytest -q` 通过
+- [ ] `npm run lint` 和 `npm run typecheck` 通过
 - [ ] 修改了用户可见行为时，同步更新 `CHANGELOG.md`
 - [ ] 修改了公开功能或配置时，更新 `docs/USER_GUIDE.md` / `docs/DEVELOPMENT.md`
 - [ ] 支持范围或验证边界变化时，更新 `docs/KNOWN_LIMITATIONS.md`

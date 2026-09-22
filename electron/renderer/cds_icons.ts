@@ -34,7 +34,6 @@ const GLYPHS: Readonly<Record<string, number>> = Object.freeze({
   'composer-aux2': 0xe0f1,
   send: 0xe013,
   'code-send': 0xe00f,
-  dictate: 0xe0ab,
   'mode-write': 0xe064,
   'mode-learn': 0xe083,
   'mode-life': 0xe04c,

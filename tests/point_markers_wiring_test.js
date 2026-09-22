@@ -55,12 +55,10 @@ const { stageEventFromBridge } = require('../electron/stage_contract');
 
 
 {
-  const bridge = fs.readFileSync(path.join(root, 'scripts', 'selection_bridge.py'), 'utf8');
-  assert(bridge.includes('parse_points('), '回答链路没有解析 [POINT] 标记');
-  assert(bridge.includes('"screenPoints"'), '坐标没有随响应送出');
-  const parseAt = bridge.indexOf('answer, screen_points = parse_points(');
-  const printAt = bridge.indexOf('"screenPoints": [point.to_dict()');
-  assert(parseAt > 0 && parseAt < printAt, '[POINT] 解析没有发生在输出之前');
+  const { parseScreenPoints } = require('../electron/runtime/desktop_perception');
+  const parsed = parseScreenPoints('先点这里 [POINT 100,200]，忽略界外 [POINT 900,900]', [0, 0, 500, 500]);
+  assert.deepStrictEqual(parsed.points, [{ x: 100, y: 200, order: 1 }]);
+  assert(!parsed.text.includes('[POINT'));
 }
 
 {

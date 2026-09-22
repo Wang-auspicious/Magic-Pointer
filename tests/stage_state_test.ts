@@ -13,7 +13,7 @@ const reduced = initialState({ reducedMotion: true });
 assert.strictEqual(reduced.config.reducedMotion, true);
 
 assert.deepStrictEqual(STATES, [
-  'hidden', 'targeting', 'frozen', 'capsule-voice', 'capsule-text',
+  'hidden', 'targeting', 'frozen', 'capsule-text',
   'processing', 'result', 'error', 'dismissing',
 ]);
 
@@ -32,13 +32,13 @@ state = transition(state, { type: 'FREEZE', target: { x: 55, y: 62, width: 118, 
 assert.strictEqual(state.name, 'frozen');
 assert.deepStrictEqual(state.target, { x: 55, y: 62, width: 118, height: 28 });
 
-state = transition(state, { type: 'OPEN_CAPSULE', mode: 'voice' });
-assert.strictEqual(state.name, 'capsule-voice');
-assert.strictEqual(state.inputMode, 'voice');
+state = transition(state, { type: 'OPEN_CAPSULE', mode: 'text' });
+assert.strictEqual(state.name, 'capsule-text');
+assert.strictEqual(state.inputMode, 'text');
 assert.deepStrictEqual(state.target, { x: 55, y: 62, width: 118, height: 28 }, 'capsule keeps frozen target');
 
 state = transition(state, { type: 'TRANSCRIPT', transcript: '翻译这段话' });
-assert.strictEqual(state.name, 'capsule-voice');
+assert.strictEqual(state.name, 'capsule-text');
 assert.strictEqual(state.transcript, '翻译这段话');
 
 state = transition(state, { type: 'SUBMIT' });
@@ -74,8 +74,8 @@ text = transition(text, { type: 'OPEN_CAPSULE', mode: 'text' });
 assert.strictEqual(text.name, 'capsule-text');
 assert.strictEqual(text.inputMode, 'text');
 
-const switched = transition(text, { type: 'OPEN_CAPSULE', mode: 'voice' });
-assert.strictEqual(switched.name, 'capsule-voice');
+const switched = transition(text, { type: 'OPEN_CAPSULE', mode: 'text' });
+assert.strictEqual(switched.name, 'capsule-text');
 
 text = transition(text, { type: 'TRANSCRIPT', transcript: 'summarize this' });
 text = transition(text, { type: 'SUBMIT', command: 'summarize this politely' });
@@ -113,7 +113,7 @@ assert.strictEqual(transition(hidden, null), hidden);
 assert.strictEqual(transition(hidden, {}), hidden);
 
 const targeting = transition(initialState(), { type: 'WAKE' });
-assert.strictEqual(transition(targeting, { type: 'OPEN_CAPSULE', mode: 'voice' }), targeting, 'capsule requires frozen target first');
+assert.strictEqual(transition(targeting, { type: 'OPEN_CAPSULE', mode: 'text' }), targeting, 'capsule requires frozen target first');
 
 const directResult = transition(targeting, { type: 'RESULT', result: { kind: 'inline', answer: 'ok' } });
 assert.strictEqual(directResult.name, 'result');
@@ -122,7 +122,7 @@ const frozenEarly = transition(targeting, { type: 'FREEZE', target: { x: 0, y: 0
 const earlyError = transition(frozenEarly, { type: 'ERROR', error: { message: '选区不可用' } });
 assert.strictEqual(earlyError.name, 'error');
 assert.deepStrictEqual(earlyError.error, { message: '选区不可用' });
-const capsuleEarly = transition(frozenEarly, { type: 'OPEN_CAPSULE', mode: 'voice' });
+const capsuleEarly = transition(frozenEarly, { type: 'OPEN_CAPSULE', mode: 'text' });
 const capsuleError = transition(capsuleEarly, { type: 'ERROR', error: { message: 'whisper missing' } });
 assert.strictEqual(capsuleError.name, 'error');
 
@@ -136,7 +136,7 @@ assert.strictEqual(transition(dismissing, { type: 'SUBMIT' }), dismissing);
 let rm = initialState({ reducedMotion: true });
 rm = transition(rm, { type: 'WAKE' });
 rm = transition(rm, { type: 'FREEZE', target: { x: 0, y: 0, width: 10, height: 10 } });
-rm = transition(rm, { type: 'OPEN_CAPSULE', mode: 'voice' });
+rm = transition(rm, { type: 'OPEN_CAPSULE', mode: 'text' });
 rm = transition(rm, { type: 'SUBMIT' });
 assert.strictEqual(rm.config.reducedMotion, true, 'config survives the whole path');
 

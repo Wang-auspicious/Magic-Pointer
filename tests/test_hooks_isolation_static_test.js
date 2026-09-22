@@ -6,12 +6,9 @@ const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 
-assert(main.includes('MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH'), 'N17 evidence hook must remain available in dev');
 assert(main.includes('MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH'), 'N18 evidence hook must remain available in dev');
 assert(main.includes('MAGIC_POINTER_DASHBOARD_CAPTURE'), 'dashboard capture hook must remain available in dev');
 
-assert(main.includes('if (!app.isPackaged && focusEvidencePath) {'),
-  'N17 focus evidence hook must be dev/test-only');
 assert(main.includes('if (!app.isPackaged && wiggleEvidencePath) {'),
   'N18 wiggle evidence hook must be dev/test-only');
 assert(main.includes('if (!app.isPackaged && dashboardCapturePath) {'),

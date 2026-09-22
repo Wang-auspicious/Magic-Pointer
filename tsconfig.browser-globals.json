@@ -27,7 +27,6 @@
     "electron/stage_turn_stream.ts",
     "electron/task_sources.ts",
     "electron/task_input_transport.ts",
-    "electron/voice_trigger_policy.ts",
     "electron/conversation_control.ts",
     "electron/slash_trigger.ts"
   ]

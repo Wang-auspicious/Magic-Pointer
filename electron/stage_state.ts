@@ -1,6 +1,6 @@
 
 (() => {
-type InputMode = 'text' | 'voice';
+type InputMode = 'text';
 type StageName = typeof STATES[number];
 type TurnStatus = 'awaiting' | 'done' | 'failed' | 'pending';
 type UnknownRecord = Record<string, unknown>;
@@ -45,7 +45,6 @@ const STATES = Object.freeze([
   'hidden',
   'targeting',
   'frozen',
-  'capsule-voice',
   'capsule-text',
   'processing',
   'result',
@@ -201,7 +200,7 @@ function transition(
 
     case 'frozen':
       if (type === 'OPEN_CAPSULE') {
-        const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
+        const mode: InputMode = 'text';
         return { ...state, name: `capsule-${mode}`, inputMode: mode, transcript: '' };
       }
       if (type === 'RESULT') return toResult(state, candidate);
@@ -209,13 +208,12 @@ function transition(
       if (type === 'DISMISS') return toDismissing(state);
       return state;
 
-    case 'capsule-voice':
     case 'capsule-text': {
       if (type === 'TRANSCRIPT') {
         return { ...state, transcript: String(candidate.transcript == null ? '' : candidate.transcript) };
       }
       if (type === 'OPEN_CAPSULE') {
-        const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
+        const mode: InputMode = 'text';
         if (`capsule-${mode}` === state.name) return state;
         return { ...state, name: `capsule-${mode}`, inputMode: mode };
       }
@@ -245,7 +243,7 @@ function transition(
     case 'error':
       if (type === 'DISMISS') return toDismissing(state);
       if (type === 'OPEN_CAPSULE') {
-        const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
+        const mode: InputMode = 'text';
         return {
           ...state,
           name: `capsule-${mode}`,

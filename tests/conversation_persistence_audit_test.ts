@@ -55,7 +55,7 @@ async function main() {
     selectActiveProfileModel,
     saveFabricSettingsPatch: async (patch: any) => { settings.models = patch.models; return { ok: true }; },
     invalidateRuntimeState() {},
-    runPythonBridgePromise: () => { throw new Error('active profile must not write the legacy model file'); },
+    runRuntimeBridgePromise: () => { throw new Error('active profile must not write the legacy model file'); },
     figmaRuntime: { clientConfigurations: () => [] },
     conversations: () => store,
     notifyConversationChanged() {},
@@ -69,7 +69,7 @@ async function main() {
     sessionIdFromRecord: control.sessionIdFromRecord,
     appendTranscript: control.appendTranscript,
     conversationFailureMessage: (result: any) => result?.error || 'failed',
-    runPythonBridge: (request: any, _script: string, _target: string, options: any) => {
+    runRuntimeBridge: (request: any, _script: string, _target: string, options: any) => {
       bridgeCalls++;
       payload = request; callbacks = options;
       return { killed: false, kill: () => options.onComplete({ ok: false, error: 'bridge_no_output' }) };

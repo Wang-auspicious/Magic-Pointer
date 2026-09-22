@@ -4,12 +4,11 @@ const calls = [];
 const pending = [];
 window.magicPointerStage = {
   ready() {}, reportState() {}, hidden() {}, dismiss() {}, setMouseCapture() {},
-  startDictation() {}, stopDictation() {},
   onShow: callback => { listeners.show = callback; },
   onUpdate: callback => { listeners.update = callback; },
   onHide: callback => { listeners.hide = callback; },
   onConversationProgress: callback => { listeners.progress = callback; },
-  onCardPatch() {}, onDictationResult() {}, onPointerInput() {}, onModelHealth() {},
+  onCardPatch() {}, onPointerInput() {}, onModelHealth() {},
   submitSelectionCommand: payload => { calls.push({ unexpectedPrompt: payload }); },
   respondInput: payload => {
     calls.push(payload);

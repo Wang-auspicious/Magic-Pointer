@@ -6,17 +6,9 @@ const { defaultSettings } = require('../electron/settings_store');
 const { settingsSaveImpact } = require('../electron/settings_save_policy');
 
 const base = defaultSettings();
-const voice = structuredClone(base);
-voice.interaction.voice_enabled = true;
-voice.interaction.voice_resident_enabled = true;
-assert.deepStrictEqual(settingsSaveImpact(base, voice), {
-  voice: true, hotkeys: false, gesture: false, appearance: false, login: false, update: false, stash: false,
-});
-
 const hotkey = structuredClone(base);
 hotkey.shortcuts.text_mode = 'Control+Shift+T';
 assert.strictEqual(settingsSaveImpact(base, hotkey).hotkeys, true);
-assert.strictEqual(settingsSaveImpact(base, hotkey).voice, false);
 
 const gesture = structuredClone(base);
 gesture.activation.sensitivity = 0.8;
@@ -25,7 +17,6 @@ assert.strictEqual(settingsSaveImpact(base, gesture).gesture, true);
 const cosmetic = structuredClone(base);
 cosmetic.appearance.theme = 'dark';
 assert.strictEqual(settingsSaveImpact(base, cosmetic).appearance, true);
-assert.strictEqual(settingsSaveImpact(base, cosmetic).voice, false);
 
 const stash = structuredClone(base);
 stash.stash.text = true;

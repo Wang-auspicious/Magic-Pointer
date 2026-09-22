@@ -9,7 +9,6 @@ assert(main.includes('function registerConfigurableHotkeys('));
 assert(main.includes('fabricSettings.shortcuts?.wake'));
 assert(main.includes("requestActivation('shortcut-wake')"));
 assert(main.includes("requestActivation('shortcut-text')"));
-assert(main.includes("requestActivation('shortcut-voice')"));
 assert(main.includes("globalShortcut.register('Control+Alt+Enter'"));
 assert(main.includes("globalShortcut.register('Control+Alt+Shift+M'"));
 assert(main.includes("requestActivation('runtime-delivery')"));
@@ -37,7 +36,7 @@ const overlayDoneBlock = main.slice(
   main.indexOf("ipcMain.on('stage:submit-selection-command'"),
 );
 const nonGestureHandoff = overlayDoneBlock.slice(overlayDoneBlock.indexOf("workflow === 'selection_gesture'"));
-assert(nonGestureHandoff.indexOf('hideOverlay()') < nonGestureHandoff.indexOf('runPythonBridge('),
+assert(nonGestureHandoff.indexOf('hideOverlay()') < nonGestureHandoff.indexOf('runRuntimeBridge('),
   'overlay must hide when the capture is handed to the bridge');
 assert.doesNotMatch(overlayDoneBlock, /onComplete:\s*\(parsed\)\s*=>\s*\{\s*hideOverlay\(\)/,
   'overlay hide must not wait for bridge completion');

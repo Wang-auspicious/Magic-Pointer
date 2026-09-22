@@ -5,7 +5,6 @@ const { EventEmitter } = require('events');
 const path = require('path');
 const { spawn } = require('child_process');
 const { validateFrameLease } = require('./frame_lease');
-const { pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
 
 type ChildProcessWithoutNullStreams = ReturnType<typeof spawn>;
 type UnknownRecord = Record<string, unknown>;
@@ -28,8 +27,7 @@ interface FrameCaptureWorkerClientOptions {
   spawnWorker?: () => ChildProcessWithoutNullStreams;
   requestTimeoutMs?: number;
   root?: string;
-  pythonExecutable?: string;
-  pythonIsolated?: boolean;
+  runtimeExecutable?: string;
   baseEnv?: NodeJS.ProcessEnv;
   logger?: { log(message: string): void };
 }
@@ -49,8 +47,7 @@ function recordOf(value: unknown): UnknownRecord | null {
 
 class FrameCaptureWorkerClient extends EventEmitter {
   root: string;
-  pythonExecutable: string;
-  pythonIsolated: boolean;
+  runtimeExecutable: string;
   baseEnv: NodeJS.ProcessEnv;
   requestTimeoutMs: number;
   logger: { log(message: string): void };
@@ -65,15 +62,13 @@ class FrameCaptureWorkerClient extends EventEmitter {
     spawnWorker,
     requestTimeoutMs = 10000,
     root = path.join(__dirname, '..'),
-    pythonExecutable = 'python',
-    pythonIsolated = false,
+    runtimeExecutable = process.execPath,
     baseEnv = process.env,
     logger = console,
   }: FrameCaptureWorkerClientOptions = {}) {
     super();
     this.root = root;
-    this.pythonExecutable = pythonExecutable;
-    this.pythonIsolated = pythonIsolated === true;
+    this.runtimeExecutable = runtimeExecutable;
     this.baseEnv = baseEnv;
     this.requestTimeoutMs = Math.max(1, Number(requestTimeoutMs) || 10000);
     this.logger = logger;
@@ -118,20 +113,12 @@ class FrameCaptureWorkerClient extends EventEmitter {
   }
 
   _defaultSpawn(): ChildProcessWithoutNullStreams {
-    const scriptPath = path.join(this.root, 'scripts', 'frame_capture_worker.py');
-    const args = pythonInvocationArgs(['-u', scriptPath], { isolated: this.pythonIsolated });
-    return spawn(this.pythonExecutable, args, {
+    const scriptPath = path.join(__dirname, 'runtime', 'desktop_capture.js');
+    return spawn(this.runtimeExecutable, [scriptPath, this.root], {
       cwd: this.root,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: pythonSpawnEnvironment({
-        env: {
-          ...this.baseEnv,
-          PYTHONUTF8: '1',
-          PYTHONIOENCODING: 'utf-8',
-        },
-        isolated: this.pythonIsolated,
-      }),
+      env: { ...this.baseEnv, ELECTRON_RUN_AS_NODE: '1' },
     });
   }
 

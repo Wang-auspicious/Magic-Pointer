@@ -11,7 +11,7 @@ async function main() {
   const sandbox = { ipcMain: { handle: (_: string, callback: any) => { invoke = callback; } },
     dashboardWindow: null, companionWindow: null, isConversationSender: () => true,
     conversations: () => ({ get: (id: string) => id === 'conversation' ? { agentSessionId: 'real-parent' } : null }),
-    runPythonBridgePromise: async (value: any) => { payload = value; return { ok: true, sessionId: value.sessionId, turn: 2 }; },
+    runRuntimeBridgePromise: async (value: any) => { payload = value; return { ok: true, sessionId: value.sessionId, turn: 2 }; },
   };
   vm.runInNewContext(ts.transpileModule(node!.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox);
   assert.equal((await invoke({}, { conversationId: 'missing', subagentId: 'child' })).ok, false);

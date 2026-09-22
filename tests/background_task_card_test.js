@@ -18,7 +18,7 @@ assert(main.includes('function watchTaskFromEvent('),
   '结果里带了 taskId 就要开始盯着它，「已受理」不是「已完成」');
 assert(main.includes('watchTaskFromEvent(payload)'), '必须真的在 updateStage 里调用');
 assert(main.includes("require('./task_watcher')"));
-assert(main.includes("'scripts/agent_bridge.py'"), '状态查询走 agent_bridge status');
+assert(main.includes("'agent'"), '状态查询走 Agent Runtime status');
 assert(main.includes("safeSurfaceSend('stage', 'stage:card-patch'"));
 assert(/for \(const window of \[companionWindow, dashboardWindow\]\)/.test(main),
   '随行窗和工作室看的是同一次会话，补丁要一起送');

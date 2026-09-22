@@ -60,9 +60,7 @@ assert.strictEqual(shouldShowChips({ selectionSource: 'click', inputMode: 'text'
 assert.strictEqual(shouldShowChips({ selectionSource: 'click', inputMode: 'text' }), true, 'absent capsuleText means nothing typed yet');
 
 assert.strictEqual(shouldShowChips({ selectionSource: 'click', inputMode: 'text', capsuleText: '翻' }), false);
-assert.strictEqual(shouldShowChips({ selectionSource: 'click', inputMode: 'voice', capsuleText: '' }), false);
 assert.strictEqual(shouldShowChips({ selectionSource: 'drag', inputMode: 'text', capsuleText: '' }), false);
-assert.strictEqual(shouldShowChips({ selectionSource: 'voice-wake', inputMode: 'text', capsuleText: '' }), false);
 assert.strictEqual(shouldShowChips({ selectionSource: null, inputMode: 'text', capsuleText: '' }), false);
 assert.strictEqual(shouldShowChips({ inputMode: 'text', capsuleText: '' }), false);
 

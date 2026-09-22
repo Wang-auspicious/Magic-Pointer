@@ -161,33 +161,6 @@ body[data-mode='observer'] * {
   font: 800 18px/28px var(--mp-font-ui);
   text-align: center;
 }
-.pill .pill-dictation {
-  position: relative;
-  background: transparent;
-  color: #9ba7b8;
-}
-.pill .pill-dictation:hover { color: #d5ddeb; background: rgba(255, 255, 255, 0.06); }
-.pill-dictation span {
-  position: absolute;
-  left: 12px;
-  top: 7px;
-  width: 6px;
-  height: 10px;
-  border: 1.5px solid currentColor;
-  border-radius: 5px;
-}
-.pill-dictation span::after {
-  content: "";
-  position: absolute;
-  left: -4px;
-  top: 6px;
-  width: 12px;
-  height: 7px;
-  border: 1.5px solid currentColor;
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
-}
-
 @keyframes pillIn {
   from { opacity: 0; transform: translateY(10px) scale(.94); filter: blur(3px); }
   to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }

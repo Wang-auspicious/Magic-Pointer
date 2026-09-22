@@ -121,7 +121,6 @@ const Composer = (() => {
       onSubmit = () => {},
       onStop = null,
       onSteer = null,
-      onVoice = null,
       onScissor = null,         
       allowAttachments = true,
       meta = [],                
@@ -168,10 +167,6 @@ const Composer = (() => {
       : null;
     if (scissor) scissor.addEventListener('click', () => onScissor!());
 
-    const mic = onVoice
-      ? h('button', { type: 'button', class: 'mcomp-tool', title: '说话' }, [icon('ic-mic')])
-      : null;
-    if (mic) mic.addEventListener('click', () => onVoice!());
 
     const clip = allowAttachments
       ? h('button', { type: 'button', class: 'mcomp-tool', title: '附件' }, [icon('ic-clip')])
@@ -196,7 +191,6 @@ const Composer = (() => {
         h('div', { class: 'mcomp-tools' }, [
           clip,
           scissor,
-          mic,
           submit,
         ]),
       ]),

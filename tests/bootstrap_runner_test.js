@@ -7,7 +7,7 @@ const { PreflightRunner, validateManifest } = require('../electron/bootstrap_run
 const manifestPath = path.join(__dirname, '..', 'data', 'preflight_manifest.v1.json');
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 assert.deepStrictEqual(manifest.stages.map((stage) => stage.id), [
-  'runtime', 'os_permissions', 'pointer_host', 'voice', 'grounding',
+  'runtime', 'os_permissions', 'pointer_host', 'grounding',
   'agents', 'model_profile', 'privacy', 'e2e_smoke',
 ]);
 assert.deepStrictEqual(validateManifest(manifest).stages.map((stage) => stage.id), manifest.stages.map((stage) => stage.id));
@@ -25,13 +25,13 @@ assert.strictEqual(result.ready, true);
 assert.strictEqual(result.stages.every((stage) => stage.state === 'pass'), true);
 assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root, 'onboarding.json'), 'utf8')).status, 'ready');
 assert(events.some((event) => event.type === 'manifest'));
-assert(events.filter((event) => event.type === 'stage' && event.state === 'running').length === 9);
+assert(events.filter((event) => event.type === 'stage' && event.state === 'running').length === manifest.stages.length);
 
 const blockedMarker = path.join(root, 'blocked-onboarding.json');
 const blocked = new PreflightRunner({
   manifest,
   markerPath: blockedMarker,
-  checks: { runtime: () => ({ state: 'needs_user', evidence: 'microphone permission not granted' }) },
+  checks: { runtime: () => ({ state: 'needs_user', evidence: 'required runtime resource missing' }) },
 }).run();
 assert.strictEqual(blocked.ready, false);
 assert.strictEqual(blocked.stages[0].state, 'needs_user');

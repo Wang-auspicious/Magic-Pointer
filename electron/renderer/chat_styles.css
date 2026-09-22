@@ -1832,16 +1832,7 @@
   font-size: 12px;
 }
 
-#composer-voice {
-  width: 28px;
-  min-width: 28px;
-  padding: 0;
-}
 
-.mp-voice.is-recording {
-  color: var(--mp-danger);
-  background: color-mix(in srgb, var(--mp-danger) 12%, transparent);
-}
 
 .mpw-trailing {
   justify-content: flex-end;

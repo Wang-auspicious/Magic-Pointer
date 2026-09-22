@@ -18,7 +18,7 @@ assert.ok(fs.existsSync(vendored), 'the woff2 must be vendored locally, not hotl
 assert.strictEqual(fs.statSync(vendored).size, 94528,
   'the vendored woff2 must be the byte-for-byte scraped copy');
 
-const GLYPH_COUNT = 69;
+const GLYPH_COUNT = 68;
 const SPOT_CHECKS = {
   send: 0xe013,
   'code-send': 0xe00f,
@@ -29,7 +29,6 @@ const SPOT_CHECKS = {
   customize: 0xe100,
   attach: 0xe001,
   'new-chat': 0xe001,
-  dictate: 0xe0ab,
   'sidebar-panel': 0xe0dd,
   sort: 0xe0e3,
   unpin: 0xe0bf,

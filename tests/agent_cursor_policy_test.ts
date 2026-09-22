@@ -1,7 +1,5 @@
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 
 const policy = require('../electron/agent_cursor_policy');
 const {
@@ -14,9 +12,6 @@ const {
   normalizeAgentCursorCommand,
   parseAgentDisplays,
 } = policy;
-
-const ROOT = path.resolve(__dirname, '..');
-
 
 const PRIMARY = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 };
 const SECONDARY = { id: 2, bounds: { x: 1920, y: -200, width: 1600, height: 900 }, scaleFactor: 1.25 };
@@ -110,73 +105,6 @@ assert.strictEqual(
   0,
   '负原点屏要正确换算',
 );
-
-
-function pythonConstants(relativePath: string): Map<string, number | string> {
-  const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
-  const values = new Map<string, number | string>();
-  for (const match of source.matchAll(/^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*([^\n]+)$/gm)) {
-    const name = match[1];
-    const raw = match[2].trim().split(/\s+#/)[0].trim();
-    if (/^["']/.test(raw)) {
-      values.set(name, raw.replace(/["']/g, ''));
-      continue;
-    }
-    const numeric = Number(raw);
-    if (Number.isFinite(numeric)) {
-      values.set(name, numeric);
-      continue;
-    }
-    if (/^[0-9.\s+\-*/()]+$/.test(raw)) {
-      const evaluated = Number(Function(`"use strict";return (${raw});`)());
-      if (Number.isFinite(evaluated)) values.set(name, evaluated);
-    }
-  }
-  return values;
-}
-
-const cursorsPy = pythonConstants('app/computer_operator/cursors.py');
-const motionPy = pythonConstants('app/computer_operator/motion.py');
-
-const shared: Array<[string, number]> = [
-  ['OFFSET_X', policy.OFFSET_X],
-  ['OFFSET_Y', policy.OFFSET_Y],
-  ['TRIANGLE_SIZE', policy.TRIANGLE_SIZE],
-  ['SPRING_STIFFNESS', policy.SPRING_STIFFNESS],
-  ['SPRING_DAMPING', policy.SPRING_DAMPING],
-  ['TICK_MS', policy.TICK_MS],
-  ['DWELL_MS', policy.DWELL_MS],
-  ['RETURN_MS', policy.RETURN_MS],
-  ['ARC_FRACTION', policy.ARC_FRACTION],
-  ['ARC_MAX_PX', policy.ARC_MAX_PX],
-  ['SCALE_PULSE', policy.SCALE_PULSE],
-  ['RING_BASE_RADIUS', policy.RING_BASE_RADIUS],
-  ['RING_PULSE_PX', policy.RING_PULSE_PX],
-  ['RING_PHASE_STEP', policy.RING_PHASE_STEP],
-  ['GLOW_MS', policy.GLOW_MS],
-  ['GLOW_MIN_MS', policy.GLOW_MIN_MS],
-  ['GLOW_MAX_MS', policy.GLOW_MAX_MS],
-  ['TTL_MIN_MS', policy.TTL_MIN_MS],
-  ['DEFAULT_TTL_MS', policy.DEFAULT_TTL_MS],
-  ['CANCEL_DISTANCE_PX', policy.CANCEL_DISTANCE_PX],
-];
-
-for (const [name, value] of shared) {
-  const pythonValue = cursorsPy.get(name);
-  assert.notStrictEqual(pythonValue, undefined, `cursors.py 里找不到 ${name}，常量名已经漂移`);
-  assert.strictEqual(
-    value,
-    pythonValue,
-    `${name} 在主进程策略与 Python 模型之间不一致：TS=${value} PY=${pythonValue}`,
-  );
-}
-
-assert.strictEqual(policy.FLIGHT_MIN_MS, motionPy.get('FLIGHT_MIN_MS'));
-assert.strictEqual(policy.FLIGHT_MAX_MS, motionPy.get('FLIGHT_MAX_MS'));
-assert.strictEqual(policy.FLIGHT_MS_PER_PIXEL, motionPy.get('FLIGHT_MS_PER_PIXEL'));
-assert.strictEqual(policy.APPROACH_LEAD_MS, motionPy.get('APPROACH_LEAD_MS'));
-assert.strictEqual(policy.ACCENT_BLUE, cursorsPy.get('ACCENT_BLUE'));
-assert.strictEqual(policy.TRIANGLE_REST_DEGREES, cursorsPy.get('TRIANGLE_REST_DEGREES'));
 
 
 assert.strictEqual(flightDurationMs(0), 0, '零距离不花时间');

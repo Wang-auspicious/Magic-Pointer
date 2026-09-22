@@ -16,13 +16,13 @@ const fixture = { ok: true, plugins: { items: [] }, mcp: { servers: [] } };
 vm.runInNewContext(code, {
   ipcMain: { handle: (_name: string, callback: (...args: any[]) => any) => { handler = callback; } },
   isDashboardSender: (event: any) => event.trusted,
-  runPythonBridgePromise: async (...args: any[]) => { calls.push(args); return fixture; },
+  runRuntimeBridgePromise: async (...args: any[]) => { calls.push(args); return fixture; },
 });
 void (async () => {
   assert.equal((await handler!({ trusted: false })).ok, false);
   assert.equal(calls.length, 0);
   assert.equal(await handler!({ trusted: true }), fixture);
   assert.equal(calls[0][0].operation, 'extensions.inventory');
-  assert.equal(calls[0][1], 'scripts/fabric_bridge.py');
+  assert.equal(calls[0][1], 'fabric');
   console.log('extensions inventory IPC test ok');
 })();

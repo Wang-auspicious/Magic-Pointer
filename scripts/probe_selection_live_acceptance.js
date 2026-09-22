@@ -35,7 +35,6 @@ module.exports.acceptance = {
   bindWindows(stage, dashboard) {
     stageWindow = stage; dashboardWindow = dashboard;
     fabricSettings = defaultSettings();
-    fabricSettings.interaction.voice_enabled = false;
   },
   setActiveToken(token) { activeSelectionSessionToken = token; },
   flush: flushConversations,

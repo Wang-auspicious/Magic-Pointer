@@ -34,23 +34,6 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'activation.keep_current_app_focus', control: 'toggle', label: 'Pause when the target app loses focus' },
       { path: 'activation.disabled_apps', control: 'tags', label: 'Disabled apps', description: 'Comma-separated process or app names.' },
     ] },
-    { title: 'Default input', rows: [
-      { path: 'interaction.default_input_mode', control: 'select', label: 'After a selection', options: [option('text', 'Type'), option('voice', 'Voice')] },
-    ] },
-  ] },
-  { id: 'voice', group: 'Settings', icon: 'ic-mic', title: 'Voice', description: 'Voice is optional. When it is off, no speech model is started.', sections: [
-    { title: 'Voice input', rows: [
-      { path: 'interaction.voice_enabled', control: 'toggle', label: 'Enable voice input', description: 'Turning this off forces text input and hides ordinary voice entry points.' },
-      { path: 'interaction.voice_engine', control: 'select', label: 'Local engine', options: [option('auto', 'Auto'), option('sense_voice', 'SenseVoice'), option('whisper', 'Whisper')] },
-      { path: 'interaction.voice_language', control: 'select', label: 'Language', options: [option('auto', 'Auto'), option('zh', 'Chinese'), option('en', 'English'), option('ja', 'Japanese'), option('ko', 'Korean')] },
-      { path: 'interaction.voice_silence_ms', control: 'select', label: 'End after silence', options: [option(1000, '1.0 seconds'), option(1600, '1.6 seconds'), option(2400, '2.4 seconds')] },
-      { path: 'interaction.voice_auto_submit', control: 'toggle', label: 'Submit after transcription' },
-    ] },
-    { title: 'Performance', rows: [
-      { path: 'interaction.voice_resident_enabled', control: 'toggle', label: 'Keep the speech model in memory' },
-      { path: 'interaction.voice_idle_unload_ms', control: 'select', label: 'Unload when idle', options: [option(0, 'Never'), option(300000, '5 minutes'), option(900000, '15 minutes')] },
-      { path: 'interaction.voice_memory_limit_mb', control: 'select', label: 'Memory limit', options: [option(512, '512 MB'), option(1024, '1 GB'), option(2048, '2 GB')] },
-    ] },
   ] },
   { id: 'models-agents', group: 'Agent', icon: 'ic-spark', title: 'Models & runtime', description: 'Model selection, reasoning display, and Magic Pointer’s own execution runtime.', sections: [
     { title: 'Model', rows: [
@@ -142,11 +125,10 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'accessibility.reduce_transparency', control: 'toggle', label: 'Reduce transparency' },
     ] },
   ] },
-  { id: 'shortcuts', group: 'Settings', icon: 'ic-cursor', title: 'Shortcuts', description: 'Keyboard access for Studio, selections, and voice.', sections: [
+  { id: 'shortcuts', group: 'Settings', icon: 'ic-cursor', title: 'Shortcuts', description: 'Keyboard access for Studio and selections.', sections: [
     { title: 'Shortcuts', rows: [
       { path: 'shortcuts.wake', control: 'text', label: 'Wake Magic Pointer' },
       { path: 'shortcuts.text_mode', control: 'text', label: 'Start text input' },
-      { path: 'shortcuts.voice_mode', control: 'text', label: 'Start voice input' },
       { path: 'shortcuts.pause', control: 'text', label: 'Pause input' },
     ] },
   ] },
@@ -179,15 +161,6 @@ function nestedPatch(path: string, value: unknown) {
 }
 
 function patchForSetting(path: string, value: unknown) {
-  if (path === 'interaction.voice_enabled' && value !== true) {
-    return { interaction: { voice_enabled: false, default_input_mode: 'text', voice_resident_enabled: false } };
-  }
-  if (path === 'interaction.default_input_mode' && value === 'voice') {
-    return { interaction: { default_input_mode: 'voice', voice_enabled: true } };
-  }
-  if (path === 'interaction.voice_resident_enabled' && value === true) {
-    return { interaction: { voice_resident_enabled: true, voice_enabled: true } };
-  }
   return nestedPatch(path, value);
 }
 

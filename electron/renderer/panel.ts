@@ -6,12 +6,8 @@ const capsule = document.getElementById('inline-action-rail')!;
 let currentSelectionSessionToken: string | null = null;
 let currentPanelLayoutNonce: string | null = null;
 let currentCaptureSummary: MagicPointerCaptureSummary | null = null;
-let defaultInputMode = 'voice';
-let voiceAutoSubmit = true;
-let voiceSilenceMs = 1600;
 let submitting = false;
 let autoDismissTimer: number | null = null;
-let voiceSubmitTimer: number | null = null;
 let composing = false;
 
 const measureCanvas = document.createElement('canvas');
@@ -19,18 +15,16 @@ const measureContext = measureCanvas.getContext('2d')!;
 
 function clearTimers() {
   if (autoDismissTimer) window.clearTimeout(autoDismissTimer);
-  if (voiceSubmitTimer) window.clearTimeout(voiceSubmitTimer);
   autoDismissTimer = null;
-  voiceSubmitTimer = null;
 }
 
 function measuredWidth(text = '', state = capsule.dataset.state) {
   if (state === 'running') return 210;
   if (state === 'error') return 320;
   const value = String(text || '').trim();
-  if (!value) return defaultInputMode === 'voice' ? 72 : 176;
+  if (!value) return 176;
   measureContext.font = '750 18px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
-  const glyphWidth = defaultInputMode === 'voice' ? 58 : 44;
+  const glyphWidth = 44;
   return Math.max(118, Math.min(560, Math.ceil(measureContext.measureText(value).width + glyphWidth + 42)));
 }
 
@@ -59,8 +53,6 @@ function submitCommand(commandOverride = '') {
     commandInput.focus();
     return;
   }
-  if (voiceSubmitTimer) window.clearTimeout(voiceSubmitTimer);
-  voiceSubmitTimer = null;
   submitting = true;
   setCapsuleState('running', 'Processing…');
   api.submitSelectionCommand({
@@ -69,17 +61,6 @@ function submitCommand(commandOverride = '') {
   });
 }
 
-function scheduleVoiceAutoSubmit() {
-  if (voiceSubmitTimer) window.clearTimeout(voiceSubmitTimer);
-  voiceSubmitTimer = null;
-  if (
-    defaultInputMode !== 'voice'
-    || voiceAutoSubmit !== true
-    || composing
-    || !commandInput.value.trim()
-  ) return;
-  voiceSubmitTimer = window.setTimeout(() => submitCommand(), voiceSilenceMs);
-}
 
 function renderCaptureEligibility(captureEligibility: MagicPointerCaptureEligibility | undefined) {
   if (!captureEligibility || captureEligibility.commandReady !== false) return true;
@@ -116,20 +97,17 @@ function showResult(payload: MagicPointerPanelResultPayload = {}) {
 }
 
 commandInput.addEventListener('input', () => {
-  setCapsuleState(commandInput.value ? 'input' : (defaultInputMode === 'voice' ? 'listening' : 'ready'));
-  scheduleVoiceAutoSubmit();
+  setCapsuleState(commandInput.value ? 'input' : 'ready');
 });
 commandInput.addEventListener('compositionstart', () => {
   composing = true;
-  if (voiceSubmitTimer) window.clearTimeout(voiceSubmitTimer);
 });
 commandInput.addEventListener('compositionend', () => {
   composing = false;
   syncCapsuleSize();
-  scheduleVoiceAutoSubmit();
 });
 commandInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !composing) {
     event.preventDefault();
     submitCommand();
   } else if (event.key === 'Escape') {
@@ -147,18 +125,14 @@ api.onShow((payload: MagicPointerPanelShowPayload = {}) => {
   currentSelectionSessionToken = payload.selectionSessionToken || null;
   currentPanelLayoutNonce = payload.panelLayoutNonce || null;
   currentCaptureSummary = payload.captureSummary || null;
-  defaultInputMode = payload.defaultInputMode === 'text' ? 'text' : 'voice';
-  voiceAutoSubmit = payload.voiceAutoSubmit !== false;
-  voiceSilenceMs = Math.max(600, Math.min(5000, Number(payload.voiceSilenceMs) || 1600));
-  capsule.dataset.inputMode = defaultInputMode;
+  capsule.dataset.inputMode = 'text';
   commandInput.value = '';
   commandInput.disabled = false;
-  commandInput.placeholder = defaultInputMode === 'text' ? '输入命令…' : '';
-  setCapsuleState(defaultInputMode === 'voice' ? 'listening' : 'ready');
+  commandInput.placeholder = '输入命令…';
+  setCapsuleState('ready');
   if (!renderCaptureEligibility(payload.captureEligibility)) return;
   window.setTimeout(() => {
     commandInput.focus();
-    if (defaultInputMode === 'voice') api.startDictation();
   }, 0);
 });
 
@@ -171,19 +145,3 @@ api.onHide(() => {
 });
 
 api.onResult(showResult);
-api.onDictationResult((payload: MagicPointerDictationResultPayload = {}) => {
-  if (payload.surface !== 'panel') return;
-  if (payload.ok === false) {
-    setCapsuleState('error', payload.error || '本地语音输入不可用');
-    return;
-  }
-  if (typeof payload.transcript === 'string' && payload.transcript.trim()) {
-    commandInput.value = payload.transcript.trim();
-    setCapsuleState('input');
-    if (payload.final === true && voiceAutoSubmit === true) {
-      window.setTimeout(() => submitCommand(), 80);
-    }
-    return;
-  }
-  if (!commandInput.value) setCapsuleState('listening');
-});

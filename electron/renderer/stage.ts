@@ -2,9 +2,8 @@
   const machine = globalThis.StageState;
   const anchor = globalThis.StageAnchor;
   const surfacePolicy = globalThis.StageSurfacePolicy;
-  const voiceTrigger = globalThis.MagicPointerVoiceTrigger;
   const hitPolicy = globalThis.MagicPointerStageHitPolicy;
-  if (!machine || !anchor || !surfacePolicy || !voiceTrigger || !hitPolicy) return;
+  if (!machine || !anchor || !surfacePolicy || !hitPolicy) return;
   const { initialState, transition } = machine;
   const api = window.magicPointerStage;
 
@@ -78,7 +77,6 @@
     sweepFadeMs: 96,
     capsuleSpawnMs: 80,
     capsuleExpandMs: 125,
-    capsuleVoiceWidthDip: 40,
     capsuleTextWidthDip: 144,
     capsuleMaxWidthDip: 440,
     capsuleInlineGapDip: 18,
@@ -99,12 +97,8 @@
     taskId: string | null;
     selectionSnapshotId: string | null;
     groundingReady: boolean;
-    voiceAutoSubmit: boolean;
-    voiceStartStrategy: string;
     selectionVisual: string;
     targetGeometryKind: string;
-    submitOnFinal: boolean;
-    pendingFinalTranscript: string;
     pointer: { x: number; y: number } | null;
     capsuleAnchor: string;
     capsuleDelayMs: number | null;
@@ -122,7 +116,6 @@
     selectionChars: number;
     targetWindowRect: { x: number; y: number; width: number; height: number } | null;
     targetAppLabel: string;
-    voiceState: string;
     accentRgb: string;
     visualTuning: Record<keyof typeof DEFAULT_VISUAL_TUNING, number>;
   } = {
@@ -130,12 +123,8 @@
     taskId: null,
     selectionSnapshotId: null,
     groundingReady: false,
-    voiceAutoSubmit: true,
-    voiceStartStrategy: 'auto',
     selectionVisual: 'sweep_band',
     targetGeometryKind: 'pointer_only',
-    submitOnFinal: false,
-    pendingFinalTranscript: '',
     pointer: null,
     capsuleAnchor: 'target',
     capsuleDelayMs: null,
@@ -150,16 +139,13 @@
     selectionChars: 0,
     targetWindowRect: null,
     targetAppLabel: '',
-    voiceState: 'idle',
     accentRgb: '',
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
-  let dictationActive = false;
   let mouseCaptureOn = false;
   let keyboardFocusRequested = false;
   let hitRegionKey = '';
   let hitRegionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  let voiceTriggerPolicy: any = null;
   const agentPromptUi: {
     key: string;
     prompt: string;
@@ -174,7 +160,6 @@
     loading: false,
   };
   let previousPointerButtons = 0;
-  let pointerWasOverCapsule = false;
   let lastPointerPoint: { x: number; y: number } | null = null;
   let capsuleDrag: { startX: number; startY: number; originLeft: number; originTop: number } | null = null;  
   let surfaceDrag: { element: HTMLElement; startX: number; startY: number; originLeft: number; originTop: number } | null = null;  
@@ -259,7 +244,7 @@
   function renderSelectionStretch() {
     if (!selectionStretch) return;
     const rect = state.target;
-    const composerOpen = state.name === 'capsule-text' || state.name === 'capsule-voice';
+    const composerOpen = state.name === 'capsule-text';
     if (!composerOpen || session.targetGeometryKind !== 'resolved' || !isUsableTargetRect(rect)) {
       selectionStretch.hidden = true;
       return;
@@ -322,44 +307,10 @@
     captureProofLayer.hidden = true;
   }
 
-  function applyVoiceTriggerEffects(outcome: any) {
-    const effects = Array.isArray(outcome?.effects) ? outcome.effects : [];
-    const wantsSubmit = effects.includes('submit');
-    const pendingTranscript = session.pendingFinalTranscript;
-    if (wantsSubmit) session.submitOnFinal = true;
-    if (effects.includes('start') && !dictationActive) {
-      dictationActive = true;
-      session.voiceState = 'warming';
-      capsule.dataset.voiceState = session.voiceState;
-      if (api && typeof api.startDictation === 'function') api.startDictation();
-    }
-    if (effects.includes('stop') && dictationActive) {
-      dictationActive = false;
-      if (api && typeof api.stopDictation === 'function') {
-        api.stopDictation({ graceful: wantsSubmit && !pendingTranscript });
-      }
-    }
-    if (wantsSubmit && pendingTranscript) {
-      session.pendingFinalTranscript = '';
-      submitCommand(pendingTranscript);
-    }
-  }
-
-  function dispatchVoiceTrigger(event: any) {
-    if (!voiceTriggerPolicy) return;
-    applyVoiceTriggerEffects(voiceTriggerPolicy.dispatch(event));
-  }
-
-  function resetVoiceTrigger() {
-    voiceTriggerPolicy = null;
+  function resetPointerState() {
     previousPointerButtons = 0;
-    pointerWasOverCapsule = false;
     capsuleDrag = null;
     surfaceDrag = null;
-    session.submitOnFinal = false;
-    session.pendingFinalTranscript = '';
-    session.voiceState = 'idle';
-    capsule.dataset.voiceState = session.voiceState;
   }
 
   async function pickElementAt(screenX: number, screenY: number) {
@@ -495,7 +446,7 @@
     return false;
   }
 
-  function handleVoicePointerInput(payload: any) {
+  function handlePointerInput(payload: any) {
     const t = Number(payload?.t);
     const x = Number(payload?.x);
     const y = Number(payload?.y);
@@ -528,7 +479,7 @@
       || isInsideStageSurface(x, y, noticeBox)
       || isInsideStageSurface(x, y, passageExpand);
     if (primaryDown && !previousPrimaryDown && !overCapsule && !overResult && !overOwnSurface && !surfaceDrag) {
-      const composerOpen = state.name === 'capsule-text' || state.name === 'capsule-voice';
+      const composerOpen = state.name === 'capsule-text';
       if (composerOpen && Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
         pickElementAt(Number(payload.screenX), Number(payload.screenY));
       }
@@ -592,26 +543,13 @@
       syncHitRegions();
     }
     previousPointerButtons = buttons;
-    if (!voiceTriggerPolicy || state.name !== 'capsule-voice') return;
-    if (session.voiceStartStrategy === 'push_to_talk') {
-      if (primaryDown && !previousPrimaryDown) dispatchVoiceTrigger({ type: 'press', t });
-      else if (!primaryDown && previousPrimaryDown) dispatchVoiceTrigger({ type: 'release', t });
-    } else if (session.voiceStartStrategy === 'hover') {
-      const rect = capsule.getBoundingClientRect();
-      const overCapsule = !capsule.hidden
-        && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-      if (overCapsule && !pointerWasOverCapsule) dispatchVoiceTrigger({ type: 'enter', t });
-      if (overCapsule) dispatchVoiceTrigger({ type: 'tick', t, overTarget: true });
-      else if (pointerWasOverCapsule) dispatchVoiceTrigger({ type: 'leave', t });
-      pointerWasOverCapsule = overCapsule;
-    }
+
   }
 
   function hasInteractiveStageSurface() {
     const name = state.name;
     if (name === 'hidden' || name === 'dismissing') return false;
     if (name === 'capsule-text') return !capsule.hidden && !capsuleInput.disabled;
-    if (name === 'capsule-voice') return !capsule.hidden;
     if (!capsule.hidden || !threadPanel.hidden) return true;
     const hasEnabledButton = (element: HTMLElement) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
@@ -702,22 +640,6 @@
 
   function syncEffects() {
     const name = state.name;
-    const wantDictation = name === 'capsule-voice' && session.groundingReady === true;
-    if (wantDictation && !voiceTriggerPolicy) {
-      voiceTriggerPolicy = new voiceTrigger.VoiceTriggerPolicy({
-        strategy: session.voiceStartStrategy,
-        hoverThresholdMs: 500,
-      });
-      if (session.voiceStartStrategy === 'auto') {
-        dispatchVoiceTrigger({ type: 'capsule-ready' });
-      }
-    } else if (!wantDictation && dictationActive) {
-      dictationActive = false;
-      if (api && typeof api.stopDictation === 'function') api.stopDictation({ graceful: false });
-      resetVoiceTrigger();
-    } else if (!wantDictation && voiceTriggerPolicy) {
-      resetVoiceTrigger();
-    }
     syncHitRegions();
     if (name !== reportedState) {
       reportedState = name;
@@ -899,14 +821,6 @@
     if (text === renderedTranscript) return;
     transcriptBox.textContent = text;
     renderedTranscript = text;
-  }
-
-  function voiceStateForStatus(status: unknown) {
-    const value = String(status || '').toLowerCase();
-    if (value === 'warming') return 'warming';
-    if (value === 'ready' || value === 'microphone_started') return 'listening';
-    if (value === 'microphone_stopped') return 'idle';
-    return null;
   }
 
   function syncCapsuleWidth() {
@@ -1840,7 +1754,6 @@
     stageRoot.dataset.selectionVisual = session.selectionVisual;
     renderSelectionStretch();
     stageRoot.dataset.targetGeometryKind = session.targetGeometryKind;
-    capsule.dataset.voiceState = session.voiceState;
 
     if (name === 'hidden') {
       clearAll();
@@ -1862,7 +1775,7 @@
       targetingOutline.hidden = true;
     }
 
-    const showGlow = name === 'frozen' || name === 'capsule-voice'
+    const showGlow = name === 'frozen'
       || name === 'capsule-text' || name === 'processing';
     const sweepCanRender = session.selectionVisual !== 'sweep_band' || !targetSweepComplete;
     if (showGlow && sweepCanRender && state.target) {
@@ -1885,7 +1798,7 @@
 
     const resultOwnsComposer = (name === 'result' || name === 'error')
       && state.turns.length > 0;
-    const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text'
+    const capsuleOpen = name === 'capsule-text'
       || ((name === 'result' || name === 'error') && !resultOwnsComposer)
       || (name === 'dismissing' && !capsule.hidden);
     if ((name === 'processing' || name === 'result' || name === 'error') && state.transcript) {
@@ -1909,9 +1822,8 @@
         capsule.classList.remove('is-exiting');
         capsule.classList.add('is-entering');
       }
-      const composerMode = state.inputMode
-        || (name === 'result' || name === 'error' ? 'text' : 'voice');
-      capsule.dataset.mode = composerMode === 'text' ? 'text' : 'voice';
+      const composerMode = 'text';
+      capsule.dataset.mode = composerMode;
       capsule.dataset.phase = 'input';
       capsuleInput.placeholder = composerMode === 'text' ? '问点什么…' : '';
       if (name === 'result' || name === 'error') capsuleInput.value = '';
@@ -1940,7 +1852,7 @@
       resultCard.replaceChildren();
       renderStageDecision();
     }
-    renderChips(name === 'capsule-voice' || name === 'capsule-text');
+    renderChips(name === 'capsule-text');
 
     if (name === 'error' && !state.turns.length) {
       errorCard.replaceChildren();
@@ -1967,7 +1879,7 @@
   function renderModelNotice(name: string) {
     if (!noticeBox) return;
     const transient = String(state.notice?.message || '');
-    const composerOpen = name === 'capsule-text' || name === 'capsule-voice' || name === 'processing';
+    const composerOpen = name === 'capsule-text' || name === 'processing';
     const gatewayWarning = modelHealth.circuitOpen === true && Boolean(modelHealth.message) && composerOpen
       ? modelHealth.message
       : '';
@@ -2029,14 +1941,6 @@
   window.addEventListener('mousemove', (event) => {
     lastPointerPoint = { x: event.clientX, y: event.clientY };
     syncHitRegions();
-    if (state.name === 'capsule-voice') {
-      handleVoicePointerInput({
-        t: performance.now(),
-        x: event.clientX,
-        y: event.clientY,
-        buttons: event.buttons,
-      });
-    }
   });
   window.addEventListener('mouseleave', () => {
     lastPointerPoint = null;
@@ -2084,15 +1988,6 @@
         } : ref;
       });
       renderedRefSignature = '';
-    }
-    if ('voiceAutoSubmit' in payload) {
-      session.voiceAutoSubmit = payload.voiceAutoSubmit !== false;
-    }
-    if ('voiceStartStrategy' in payload) {
-      const strategy = String(payload.voiceStartStrategy || 'auto');
-      session.voiceStartStrategy = ['auto', 'push_to_talk', 'hover'].includes(strategy)
-        ? strategy
-        : 'auto';
     }
     if ('groundingReady' in payload) {
       session.groundingReady = payload.groundingReady === true;
@@ -2187,12 +2082,8 @@
       session.taskId = null;
       session.selectionSnapshotId = null;
       session.groundingReady = false;
-      session.voiceAutoSubmit = true;
-      session.voiceStartStrategy = 'auto';
       session.selectionVisual = 'sweep_band';
       session.targetGeometryKind = 'pointer_only';
-      session.submitOnFinal = false;
-      session.pendingFinalTranscript = '';
       session.pointer = null;
       session.capsuleAnchor = 'target';
       session.capsuleDelayMs = null;
@@ -2204,13 +2095,12 @@
       session.resultDragged = false;
       session.consentDismissedForTurn = null;
       session.selectionCount = 1;
-      session.voiceState = 'idle';
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
       lastPointerPoint = null;
       if (targetSweepTimer) clearTimeout(targetSweepTimer);
       targetSweepTimer = null;
       targetSweepComplete = false;
-      resetVoiceTrigger();
+      resetPointerState();
       clearCaptureProof();
       clearScreenPoints();
       pickedElement = null;
@@ -2252,36 +2142,8 @@
         patchRunningCard(payload.patch || {});
       });
     }
-    api.onDictationResult((payload) => {
-      if (!payload || state.name === 'hidden' || state.name === 'dismissing') return;
-      if (payload.ok === false) {
-        dispatch({ type: 'ERROR', error: { message: String(payload.error || '本地语音识别失败。') } });
-        return;
-      }
-      const statusState = voiceStateForStatus(payload.status);
-      if (statusState) {
-        session.voiceState = statusState;
-        render();
-      }
-      const transcript = typeof payload.transcript === 'string' ? payload.transcript : '';
-      if (!transcript) return;
-      session.voiceState = payload.final === true ? 'settling' : 'transcribing';
-      dispatch({ type: 'TRANSCRIPT', transcript });
-      if (payload.final === true) {
-        dictationActive = false;
-        if (session.voiceStartStrategy === 'push_to_talk' && !session.submitOnFinal) {
-          session.pendingFinalTranscript = transcript;
-        } else if (session.voiceAutoSubmit || session.submitOnFinal) {
-          submitCommand(transcript);
-        } else {
-          dispatch({ type: 'OPEN_CAPSULE', mode: 'text' });
-          capsuleInput.value = transcript;
-          syncCapsuleWidth();
-        }
-      }
-    });
     if (typeof api.onPointerInput === 'function') {
-      api.onPointerInput((payload) => handleVoicePointerInput(payload));
+      api.onPointerInput((payload) => handlePointerInput(payload));
     }
     if (typeof api.onModelHealth === 'function') {
       api.onModelHealth((payload) => {

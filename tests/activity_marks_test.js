@@ -7,7 +7,6 @@ const ActivityMarks = require('../electron/renderer/activity_marks');
 
 const KEBAB = {
   spark: 'spark',
-  voiceActivity: 'voice-activity',
   incognito: 'incognito',
   reflectBroadcast: 'reflect-broadcast',
 };
@@ -16,7 +15,6 @@ assert.deepStrictEqual(ActivityMarks.names(), [
   'incognito',
   'reflectBroadcast',
   'spark',
-  'voiceActivity',
 ]);
 
 for (const key of ActivityMarks.names()) {
@@ -41,11 +39,6 @@ assert.match(
   'the star must keep the clay fill token, not a flattened hex',
 );
 
-assert.strictEqual(
-  (ActivityMarks.svg('voiceActivity').match(/<line\b/g) || []).length,
-  6,
-  'the voice waveform is exactly six bars',
-);
 
 assert.strictEqual(ActivityMarks.svg('nope'), '', 'an unknown mark must render as nothing');
 assert.ok(ActivityMarks.svg('spark').length > 0);

@@ -36,7 +36,7 @@ async function main() {
       handleAgentCursorProgress() {}, conversationFailureMessage: (value: any) => value.error || 'failed',
       setTimeout: () => 1, clearTimeout() {},
       handleSessionRead: async () => ({ ok: true, pendingInput: accepted ? null : { requestId: 'ask-1' }, answeredInputIds: accepted ? ['ask-1'] : [] }),
-      runPythonBridge: (payload: any, _file: any, _target: any, cb: any) => { calls++; bridgePayload = payload; callbacks = cb; return {}; },
+      runRuntimeBridge: (payload: any, _file: any, _target: any, cb: any) => { calls++; bridgePayload = payload; callbacks = cb; return {}; },
     };
     vm.runInNewContext(code, context);
     const sender = { isDestroyed: () => false, send: (_: string, value: any) => delivered.push(value) };

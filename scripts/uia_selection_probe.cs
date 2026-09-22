@@ -2316,7 +2316,7 @@ internal static class UiaSelectionProbe
         Point? targetPoint = null;
         Rect? targetRegion = null;
         double px, py, pw, ph;
-        if (parts.Length >= 8 && parts[2] == "region"
+        if (parts.Length >= 7 && parts[2] == "region"
             && double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out px)
             && double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out py)
             && double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out pw)
