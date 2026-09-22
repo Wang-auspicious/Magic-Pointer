@@ -47,11 +47,6 @@ def _token(value: Any, *, limit: int = 120) -> str:
 
 
 class SkillCandidateStore:
-    """Learn privacy-bounded Skill drafts from repeated verified Agent workflows.
-
-    The store records only semantic enums and execution identifiers. Screen text,
-    commands, prompts, paths, window titles and object labels never enter it.
-    """
 
     def __init__(self, root: Path | str, *, threshold: int = 3) -> None:
         self.root = Path(root).expanduser().resolve()

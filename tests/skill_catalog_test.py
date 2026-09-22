@@ -1,10 +1,3 @@
-"""本机 skill 发现（DSH skill-filesystem 的 MP 等价物）。
-
-根与排序对照 deepseek-harness：``<project>/.dsh/skills``、``<project>/.agents/skills``
-先于用户级 ``~/.dsh/skills``、``~/.agents/skills``（项目同名 skill 覆盖用户级）。
-SKILL.md 解析：YAML frontmatter 必须有 name（kebab-case）与 description；
-``user-invocable: false`` 的不进人类目录。正文加载剥掉 frontmatter。
-"""
 
 from __future__ import annotations
 
@@ -33,13 +26,13 @@ def _catalog(tmp_path: Path) -> SkillCatalog:
 def test_scan_lists_all_roots_in_rank_order(tmp_path: Path) -> None:
     catalog = _catalog(tmp_path)
     _write_skill(catalog.project_root / ".agents" / "skills", "project-skill", "项目级")
-    _write_skill(catalog.user_home / ".dsh" / "skills", "user-dsh-skill", "用户 dsh")
+    _write_skill(catalog.user_home / ".dsh" / "skills", "user-directory-skill", "用户技能")
     _write_skill(catalog.user_home / ".agents" / "skills", "user-agents-skill", "用户 agents")
     entries = catalog.list_skills()
     by_name = {entry["name"]: entry for entry in entries}
-    assert set(by_name) == {"project-skill", "user-dsh-skill", "user-agents-skill"}
+    assert set(by_name) == {"project-skill", "user-directory-skill", "user-agents-skill"}
     assert by_name["project-skill"]["source"] == "project-agents"
-    assert by_name["user-dsh-skill"]["source"] == "user-dsh"
+    assert by_name["user-directory-skill"]["source"] == "user-dsh"
     assert by_name["user-agents-skill"]["source"] == "user-agents"
 
 
@@ -88,7 +81,6 @@ def test_user_invocable_false_hidden_from_human_catalog(tmp_path: Path) -> None:
     _write_skill(skills, "visible-skill", "都能调")
     entries = catalog.list_skills()
     assert [entry["name"] for entry in entries] == ["visible-skill"]
-    # 但正文仍可加载（/hidden-skill 显式点名仍然给）
     body = catalog.load_skill_body("hidden-skill")
     assert body and "模型可调" not in body and "# 内容" in body
 

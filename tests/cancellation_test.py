@@ -1,10 +1,3 @@
-"""Tests for thread-safe cancellation tokens, scopes and registry (review L8).
-
-Covers: idempotent cancel, state transitions, raise_if_cancelled, scope
-lifetime semantics (enter/exit/cancel_all, nesting, sibling isolation),
-generation invalidation, registry accounting, the module singleton, and
-concurrent multi-threaded cancellation.
-"""
 
 import threading
 
@@ -232,7 +225,7 @@ class TestConcurrency:
                     token.cancel()
                     token.cancel()
                     assert token.is_cancelled()
-            except BaseException as exc:  # pragma: no cover - failure path
+            except BaseException as exc:
                 failures.append(exc)
 
         threads = [threading.Thread(target=worker, args=(token,)) for token in tokens]
@@ -255,7 +248,7 @@ class TestConcurrency:
                     registry.register(token)
                     token.cancel()
                     registry.unregister(token)
-            except BaseException as exc:  # pragma: no cover - failure path
+            except BaseException as exc:
                 failures.append(exc)
 
         workers = [threading.Thread(target=worker) for _ in range(4)]

@@ -1,8 +1,5 @@
 'use strict';
 
-// The installed Claude shader supplies the 4px grid, rounded 3px cells, eight
-// Manhattan-wave bursts and five-step ink ramp. This controller owns only MP's
-// canvas lifecycle; no React runtime or Claude service code is loaded.
 (() => {
   function mount(canvas: HTMLCanvasElement) {
     let frame = 0;
@@ -75,7 +72,7 @@
     const initialize = () => {
       if (disposed || initialized) return;
       initialized = true;
-      const shaders = (globalThis as { ClaudeEffortShaders?: { vertex: string; fragment: string } }).ClaudeEffortShaders;
+      const shaders = (globalThis as { EffortShaders?: { vertex: string; fragment: string } }).EffortShaders;
       if (!shaders) return;
       gl = canvas.getContext('webgl2', { alpha: true, antialias: false, depth: false, stencil: false });
       if (!gl) return;
@@ -106,7 +103,6 @@
       if (disposed || reduced.matches) return;
       if (!initialized && value) {
         if (frame) cancelAnimationFrame(frame);
-        // Let the popup paint before compiling the small shader.
         frame = requestAnimationFrame(() => { frame = requestAnimationFrame(initialize); });
       } else if (initialized && !frame) frame = requestAnimationFrame(paint);
     };

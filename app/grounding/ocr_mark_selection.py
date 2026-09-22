@@ -1,4 +1,3 @@
-"""Map an open pen stroke to OCR text rows without widening into neighbours."""
 
 from __future__ import annotations
 
@@ -77,10 +76,6 @@ def _row_cost(
             gap = top - y
             if gap > tolerance:
                 continue
-            # A horizontal mark just above the next row is normally the
-            # underline belonging to the row above, not a selection of the row
-            # below. Penalise that direction while still allowing a real
-            # strikethrough to win once it enters the text body.
             cost = gap + BELOW_STROKE_PENALTY_PX
         elif y > bottom:
             gap = y - bottom
@@ -101,13 +96,6 @@ def select_open_stroke_rect_indexes(
     *,
     tolerance: float = UNDERLINE_TOLERANCE_PX,
 ) -> list[int]:
-    """Return OCR boxes belonging to the single text row indicated by a stroke.
-
-    An underline lives in the gap below a row, so symmetric rectangle inflation
-    is ambiguous and often captures the next row too. Rank plausible rows with
-    an above-the-stroke bias, then keep every horizontally split box aligned to
-    the winning row.
-    """
     path = _points(stroke)
     if len(path) < 2:
         return []

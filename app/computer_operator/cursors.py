@@ -1,40 +1,3 @@
-"""Addressable multi-cursor model behind the Windows twin cursor.
-
-The structural idea being ported is openclicky's: the twin cursor is a
-**first-class addressable surface**, not a side effect of an action. An agent
-can say "put a marker here" without touching the pointer, and several markers
-can be alive at once, each with its own accent colour and lifetime
-(``CompanionManager.swift:37-42``, rendered at ``OverlayWindow.swift:1113-1132``).
-
-This module is deliberately pure. It has no ctypes, no Electron, no
-``time.time()``: every public method takes the clock as an argument, so the
-whole motion model is reproducible in a test at whatever frame rate the test
-wants to simulate. The values are the Clicky family's, cited in
-``docs/research/2026-09-16-clicky-twin-cursor.md``:
-
-- flight duration ``min(max(distance / 800, 0.6), 1.4)`` s
-  (``clicky/OverlayWindow.swift:510``) — reused from :mod:`.motion` so the
-  driver and the cursor can never disagree about how long a hop takes
-- flight easing is smoothstep on the Bézier parameter, the path is a quadratic
-  Bézier with the control point raised ``min(distance * 0.2, 80)`` px
-  (``:521``, ``:540``), and the avatar rotates to the curve tangent and pulses
-  to ``1.3x`` at the apex (``:561``, ``:566``)
-- dwell at the target is 3000 ms (``:592``), the return leg is a flat 1400 ms
-  (``clicky-windows/ui/overlay.py:164``)
-- the ring is radius ``26 + pulse * 6`` (``ui/overlay.py:272``, ``:695``) with
-  the phase advanced ``0.08`` per 16 ms tick (``:506``)
-- the click glow lives 2400 ms, clamped to ``[400, 12000]``
-  (``openclicky/CompanionManager.swift:2921``, ``:2939``)
-- the idle follow spring is the explicit 60 Hz integrator from
-  ``ui/overlay.py:492-502`` — ``stiffness 0.28``, ``damping 0.62``, evaluated
-  with no dt term, which is why the tick length is part of the spec rather
-  than an implementation detail
-
-Nothing here hides or moves the OS pointer. None of the three reference
-implementations ever calls ``SetCursorPos``/``NSCursor.hide`` for the twin
-cursor, and this model does not either: the human cursor keeps rendering
-natively, and the twin is a companion drawn at ``pointer + (35, 25)``.
-"""
 
 from __future__ import annotations
 
@@ -45,91 +8,50 @@ from typing import Any
 
 from .motion import distance_between, flight_duration_ms, smoothstep
 
-# --------------------------------------------------------------------------
-# Clicky motion spec. Named, not inlined: these are the numbers the product
-# feels like, and ``tests/agent_cursor_model_test.py`` pins the four the brief
-# calls out.
-# --------------------------------------------------------------------------
 
-#: Where the twin sits relative to the real pointer while following it.
-#: ``clicky/OverlayWindow.swift:348`` and ``:439-440``.
 OFFSET_X = 35
 OFFSET_Y = 25
 
-#: Avatar geometry. ``clicky/OverlayWindow.swift:307``; ``ui/overlay.py:38``.
 TRIANGLE_SIZE = 16
 TRIANGLE_REST_DEGREES = -35.0
 
-#: ``ui/overlay.py:43``. The default accent for a cursor that does not choose
-#: one, so a caller that only has a screen point still gets a coloured cursor.
 ACCENT_BLUE = "#3380FF"
 
-#: Idle follow spring, per 16 ms tick. ``ui/overlay.py:492-502``.
 SPRING_STIFFNESS = 0.28
 SPRING_DAMPING = 0.62
 TICK_MS = 16
 
-#: How many ticks a single ``tick()`` call may catch up on. A stalled renderer
-#: must not replay a backlog of spring steps as one jump, and a monotonic clock
-#: that advanced by ten seconds must not integrate ten seconds of spring.
 TICK_CATCHUP_MAX = 8
 
-#: Below this distance and speed the spring is snapped shut. The integrator is
-#: asymptotic and would otherwise never actually arrive, which makes
-#: "did it reach the target" untestable and leaves a sub-pixel crawl forever.
 SPRING_SNAP_PX = 0.5
 SPRING_SNAP_VELOCITY = 0.5
 
-#: Dwell at the target. ``clicky/OverlayWindow.swift:592``.
 DWELL_MS = 3000
 
-#: The return leg is a flat 1400 ms regardless of distance.
-#: ``clicky-windows/ui/overlay.py:164``.
 RETURN_MS = 1400
 
-#: Flight arc: control point raised ``min(distance * ARC_FRACTION, ARC_MAX_PX)``.
 ARC_FRACTION = 0.20
 ARC_MAX_PX = 80.0
 
-#: Scale pulse at the apex: ``1.0 + sin(progress * pi) * SCALE_PULSE``.
 SCALE_PULSE = 0.30
 
-#: Ring geometry and phase step per tick. ``ui/overlay.py:272``, ``:506``,
-#: ``:695``.
 RING_BASE_RADIUS = 26.0
 RING_PULSE_PX = 6.0
 RING_PHASE_STEP = 0.08
 RING_PHASE_PER_MS = RING_PHASE_STEP / float(TICK_MS)
 
-#: Click glow, clamped. ``openclicky/CompanionManager.swift:2921``, ``:2939``.
 GLOW_MS = 2400
 GLOW_MIN_MS = 400
 GLOW_MAX_MS = 12000
 
-#: A cursor may not be given a lifetime shorter than this: openclicky floors
-#: the TTL at 0.2 s (``CompanionManager.swift:2531-2534``) so that a caller
-#: passing 0 gets a visible flash rather than an invisible no-op.
 TTL_MIN_MS = 200
 
-#: A secondary cursor with no stated lifetime gets one. openclicky refuses to
-#: leave the TTL infinite when the caller omits it
-#: (``CompanionManager.swift:545-551``); an orphaned cursor that never expires
-#: is indistinguishable from a stuck one.
 DEFAULT_TTL_MS = 2000
 
-#: A pointer move larger than this during the *return* leg cancels the return
-#: and snaps back to following the pointer (``clicky/OverlayWindow.swift:426``).
-#: During the forward flight the pointer is ignored entirely (``:416-419``).
 CANCEL_DISTANCE_PX = 100.0
 
 
 class CursorState(str, Enum):
-    """Where a cursor is in its lifecycle.
-
-    ``idle`` follows the pointer, ``flying`` is on a scripted Bézier leg,
-    ``dwelling`` is planted on a target it was pointed at, and ``clicking`` is
-    showing the post-click glow.
-    """
 
     IDLE = "idle"
     FLYING = "flying"
@@ -137,36 +59,25 @@ class CursorState(str, Enum):
     CLICKING = "clicking"
 
 
-#: The two reasons a cursor is ever on a Bézier. The approach leg lands on a
-#: target and then dwells; the return leg goes back to the follow anchor and
-#: then resumes following.
 APPROACH = "approach"
 RETURN = "return"
 
 
 def ring_pulse(phase: float) -> float:
-    """Ring brightness in ``[0, 1]`` from a phase. ``ui/overlay.py:694-695``."""
     return (math.sin(phase) + 1.0) / 2.0
 
 
 def ring_radius(pulse: float) -> float:
-    """Ring radius in pixels: ``26 + pulse * 6``. ``ui/overlay.py:695``."""
     clamped = 0.0 if pulse < 0.0 else 1.0 if pulse > 1.0 else pulse
     return RING_BASE_RADIUS + clamped * RING_PULSE_PX
 
 
 def flight_scale(progress: float) -> float:
-    """Avatar scale during a flight: ``1 + sin(progress * pi) * 0.30``.
-
-    Peaks at the apex of the arc, which is what makes the avatar read as
-    "thrown" rather than "slid": ``clicky/OverlayWindow.swift:565-566``.
-    """
     clamped = 0.0 if progress < 0.0 else 1.0 if progress > 1.0 else progress
     return 1.0 + math.sin(clamped * math.pi) * SCALE_PULSE
 
 
 def arc_height(distance: float) -> float:
-    """Control-point lift for a flight of ``distance`` pixels."""
     return min(max(0.0, distance) * ARC_FRACTION, ARC_MAX_PX)
 
 
@@ -176,7 +87,6 @@ def bezier_point(
     end: tuple[float, float],
     t: float,
 ) -> tuple[float, float]:
-    """Quadratic Bézier evaluated at ``t``."""
     inverse = 1.0 - t
     x = inverse * inverse * start[0] + 2.0 * inverse * t * control[0] + t * t * end[0]
     y = inverse * inverse * start[1] + 2.0 * inverse * t * control[1] + t * t * end[1]
@@ -189,7 +99,6 @@ def bezier_tangent(
     end: tuple[float, float],
     t: float,
 ) -> tuple[float, float]:
-    """First derivative of the quadratic Bézier at ``t``."""
     x = 2.0 * (1.0 - t) * (control[0] - start[0]) + 2.0 * t * (end[0] - control[0])
     y = 2.0 * (1.0 - t) * (control[1] - start[1]) + 2.0 * t * (end[1] - control[1])
     return (x, y)
@@ -203,12 +112,6 @@ def build_flight(
     duration_ms: int,
     purpose: str,
 ) -> _Flight:
-    """A flight from ``start`` to ``end`` with Clicky's arc and timing.
-
-    ``duration_ms <= 0`` means "derive it": distance over 800 px/s with the
-    600 ms floor and the 1400 ms ceiling, except on the return leg, which is a
-    flat 1400 ms regardless of distance (``ui/overlay.py:164``).
-    """
     resolved = int(duration_ms)
     if resolved <= 0:
         if purpose == RETURN:
@@ -243,12 +146,6 @@ def rotation_degrees(
     end: tuple[float, float],
     t: float,
 ) -> float:
-    """Avatar rotation following the curve tangent.
-
-    ``+90`` because the triangle's tip points up at rest
-    (``clicky/OverlayWindow.swift:561``, ``ui/overlay.py:429``). A degenerate
-    tangent falls back to the rest angle instead of ``atan2(0, 0)``'s zero.
-    """
     tangent_x, tangent_y = bezier_tangent(start, control, end, t)
     if tangent_x == 0.0 and tangent_y == 0.0:
         return TRIANGLE_REST_DEGREES
@@ -257,12 +154,6 @@ def rotation_degrees(
 
 @dataclass(frozen=True)
 class CursorFrame:
-    """One cursor as the renderer needs it for a single frame.
-
-    Positions are rounded to whole pixels here and only here — the model
-    integrates in floats so that a slow spring does not stall on rounding, and
-    the wire format stays close to what ``SetCursorPos``-space consumers expect.
-    """
 
     cursor_id: str
     x: int
@@ -277,7 +168,6 @@ class CursorFrame:
     ttl_remaining_ms: int | None
 
     def as_payload(self) -> dict[str, Any]:
-        """JSON-ready form for the Electron bridge."""
         return {
             "id": self.cursor_id,
             "x": self.x,
@@ -310,7 +200,6 @@ class _Flight:
 
 @dataclass
 class Cursor:
-    """One addressable cursor. Mutated only through :class:`CursorRegistry`."""
 
     cursor_id: str
     x: float
@@ -329,18 +218,12 @@ class Cursor:
     ring_visible: bool = False
     glow_until_ms: int = 0
     dwell_until_ms: int = 0
-    #: While held, the dwell never expires — the cursor stays planted on the
-    #: target for as long as the agent is still talking about it
-    #: (``clicky-windows/ui/overlay.py:281-297``).
     hold_dwell: bool = False
     flight: _Flight | None = None
     scale: float = 1.0
     rotation: float = TRIANGLE_REST_DEGREES
-    #: Pointer position observed when the return leg started; a large move
-    #: after that cancels the return.
     return_anchor: tuple[float, float] | None = None
 
-    # -- state queries ----------------------------------------------------
 
     def ring_radius(self) -> float | None:
         if not self.ring_visible:
@@ -368,7 +251,6 @@ class Cursor:
             ttl_remaining_ms=ttl_remaining,
         )
 
-    # -- motion -----------------------------------------------------------
 
     def _advance_flight(self, now_ms: int) -> None:
         flight = self.flight
@@ -382,17 +264,12 @@ class Cursor:
         self.rotation = rotation_degrees(flight.start, flight.control, flight.end, eased)
         if progress < 1.0:
             return
-        # Land exactly. The Bézier is exact at t == 1, but the eased parameter
-        # plus float rounding can leave a fraction of a pixel behind, and a
-        # cursor that stops 0.4 px off its target is a cursor that missed.
         self.x, self.y = flight.end
         self.scale = 1.0
         self.rotation = TRIANGLE_REST_DEGREES
         self.flight = None
         if flight.purpose == APPROACH:
             self.state = CursorState.DWELLING.value
-            # Ring keeps marking the target through the dwell; the dwell shows
-            # the user what was pointed at before anything else moves.
             if not self.hold_dwell:
                 self.dwell_until_ms = now_ms + DWELL_MS
         else:
@@ -407,12 +284,6 @@ class Cursor:
         pointer: tuple[float, float] | None,
         now_ms: int,
     ) -> None:
-        """Leave the target and fly back to the follow anchor.
-
-        With no pointer sample the cursor simply stops dwelling where it is;
-        inventing an anchor would move the twin somewhere the user never put
-        their cursor.
-        """
         self.ring_visible = False
         self.dwell_until_ms = 0
         self.hold_dwell = False
@@ -443,7 +314,6 @@ class Cursor:
                 and abs(self.velocity_x) <= SPRING_SNAP_VELOCITY
                 and abs(self.velocity_y) <= SPRING_SNAP_VELOCITY
             ):
-                # Asymptotic integrator: close enough is arrived.
                 self.x = self.target_x
                 self.y = self.target_y
                 self.velocity_x = 0.0
@@ -451,12 +321,6 @@ class Cursor:
                 return
 
     def advance(self, now_ms: int, steps: int, pointer: tuple[float, float] | None) -> None:
-        """Advance this cursor to ``now_ms``.
-
-        ``steps`` is the number of whole ``TICK_MS`` intervals elapsed since the
-        previous advance, so the spring is a function of the clock rather than
-        of how often the caller happened to call in.
-        """
         if self.follow_pointer and self.state in {
             CursorState.IDLE.value,
             CursorState.CLICKING.value,
@@ -475,8 +339,6 @@ class Cursor:
             )
             > CANCEL_DISTANCE_PX
         ):
-            # The user grabbed the mouse mid-return: the twin stops playing
-            # catch-up and just follows. ``clicky/OverlayWindow.swift:426``.
             self.flight = None
             self.state = CursorState.IDLE.value
             self.ring_visible = False
@@ -499,20 +361,12 @@ class Cursor:
             elif steps > 0:
                 self._advance_spring(steps)
         if self.ring_visible:
-            # Phase advances with the clock, not with the call count, so a
-            # dropped frame does not slow the pulse.
             self.ring_phase += RING_PHASE_PER_MS * (steps * TICK_MS)
             if self.ring_phase > math.tau * 1024.0:
                 self.ring_phase = math.fmod(self.ring_phase, math.tau)
 
 
 class CursorRegistry:
-    """The set of live cursors, and the only thing that moves them.
-
-    The clock is a parameter everywhere. ``tick`` refuses to move backwards: a
-    caller that passes a stale timestamp gets the previous frame's state rather
-    than a rewound animation.
-    """
 
     def __init__(self, *, default_ttl_ms: int | None = None) -> None:
         self._cursors: dict[str, Cursor] = {}
@@ -521,7 +375,6 @@ class CursorRegistry:
         self._last_tick_ms: int | None = None
         self.default_ttl_ms = default_ttl_ms
 
-    # -- registry ---------------------------------------------------------
 
     def __contains__(self, cursor_id: str) -> bool:
         return str(cursor_id) in self._cursors
@@ -549,12 +402,6 @@ class CursorRegistry:
         follow_pointer: bool = False,
         now_ms: int | None = None,
     ) -> CursorFrame:
-        """Add (or replace) a cursor at ``position``.
-
-        ``follow_pointer`` is for the single primary twin; secondary markers
-        get ``False`` and stay where they were told, which is what makes two
-        cursors non-interfering rather than two things chasing one pointer.
-        """
         now = self._effective_now(now_ms)
         lifetime = self.default_ttl_ms if ttl_ms is None else int(ttl_ms)
         expires: int | None = None
@@ -588,7 +435,6 @@ class CursorRegistry:
         return removed
 
     def expire(self, now_ms: int | None = None) -> list[str]:
-        """Drop cursors whose TTL has run out. Returns the ids removed."""
         now = self._effective_now(now_ms)
         expired = [
             cursor_id
@@ -599,14 +445,8 @@ class CursorRegistry:
             del self._cursors[cursor_id]
         return expired
 
-    # -- pointer / targets ------------------------------------------------
 
     def set_pointer(self, position: tuple[float, float] | None) -> None:
-        """Tell the registry where the real pointer is.
-
-        Called once per sample. Follow-anchored cursors spring toward
-        ``position + (OFFSET_X, OFFSET_Y)``; everything else is unaffected.
-        """
         self._pointer = None if position is None else (float(position[0]), float(position[1]))
 
     def set_target(
@@ -616,11 +456,6 @@ class CursorRegistry:
         *,
         now_ms: int | None = None,
     ) -> CursorFrame | None:
-        """Move a cursor's resting place without starting a flight.
-
-        This is the "put a marker here" path: the cursor eases across with the
-        follow spring rather than arcing, which is what a marker should do.
-        """
         cursor = self._cursors.get(str(cursor_id))
         if cursor is None:
             return None
@@ -632,7 +467,6 @@ class CursorRegistry:
             cursor.state = CursorState.IDLE.value
         return cursor.frame(self._effective_now(now_ms))
 
-    # -- scripted motion --------------------------------------------------
 
     def begin_flight(
         self,
@@ -643,12 +477,6 @@ class CursorRegistry:
         purpose: str = APPROACH,
         now_ms: int | None = None,
     ) -> CursorFrame | None:
-        """Send a cursor along a Bézier to ``target``.
-
-        ``duration_ms`` of 0 means "derive it from distance" — the Clicky rule
-        in :func:`app.computer_operator.motion.flight_duration_ms`, so a 5 px
-        hop still takes the 600 ms floor and never teleports.
-        """
         cursor = self._cursors.get(str(cursor_id))
         if cursor is None:
             return None
@@ -675,21 +503,12 @@ class CursorRegistry:
         *,
         now_ms: int | None = None,
     ) -> CursorFrame | None:
-        """Pin (or release) a cursor's dwell.
-
-        While held the cursor stays on the target no matter how long the agent
-        keeps talking about it. Without this the twin leaves the target
-        mid-sentence, which is the single most visible way a pointer overlay
-        reads as broken (``clicky-windows/ui/overlay.py:281-297``).
-        """
         cursor = self._cursors.get(str(cursor_id))
         if cursor is None:
             return None
         cursor.hold_dwell = bool(held)
         now = self._effective_now(now_ms)
         if not held and cursor.state == CursorState.DWELLING.value:
-            # Releasing the hold gives the remaining dwell its full 3000 ms
-            # from now, so a release does not immediately yank the cursor away.
             cursor.dwell_until_ms = now + DWELL_MS
         return cursor.frame(now)
 
@@ -699,11 +518,6 @@ class CursorRegistry:
         *,
         now_ms: int | None = None,
     ) -> CursorFrame | None:
-        """End a dwell now and fly back to the follow anchor.
-
-        The release path for TTS: the answer finished, so the cursor stops
-        marking the target and goes back to following the pointer.
-        """
         cursor = self._cursors.get(str(cursor_id))
         if cursor is None:
             return None
@@ -720,11 +534,6 @@ class CursorRegistry:
         duration_ms: int = GLOW_MS,
         now_ms: int | None = None,
     ) -> CursorFrame | None:
-        """Show the click glow. ``duration_ms`` is clamped to ``[400, 12000]``.
-
-        The clamp is openclicky's (``CompanionManager.swift:2939``): a caller
-        that passes 0 gets the 400 ms floor rather than an invisible click.
-        """
         cursor = self._cursors.get(str(cursor_id))
         if cursor is None:
             return None
@@ -738,15 +547,8 @@ class CursorRegistry:
         cursor.glow_until_ms = now + clamped
         return cursor.frame(now)
 
-    # -- frame production -------------------------------------------------
 
     def tick(self, now_ms: int | None = None) -> list[CursorFrame]:
-        """Advance every cursor and return the frame for each.
-
-        Monotonic and deterministic: the result is a pure function of the
-        registry state, the pointer samples, and the timestamps passed in. A
-        timestamp older than the last one advances nothing.
-        """
         now = self._effective_now(now_ms)
         if self._last_tick_ms is None:
             steps = 0
@@ -761,26 +563,17 @@ class CursorRegistry:
         return [cursor.frame(now) for cursor in self._cursors.values()]
 
     def frames(self, now_ms: int | None = None) -> list[CursorFrame]:
-        """The current frame without advancing anything."""
         now = self._effective_now(now_ms)
         return [cursor.frame(now) for cursor in self._cursors.values()]
 
     def payload(self, now_ms: int | None = None) -> list[dict[str, Any]]:
-        """Every cursor as a JSON-ready dict, for the renderer queue."""
         return [frame.as_payload() for frame in self.frames(now_ms)]
 
     def tick_payload(self, now_ms: int | None = None) -> list[dict[str, Any]]:
         return [frame.as_payload() for frame in self.tick(now_ms)]
 
-    # -- clock ------------------------------------------------------------
 
     def _effective_now(self, now_ms: int | None) -> int:
-        """Never move the clock backwards.
-
-        The renderer and the driver sample independently; a stale timestamp
-        arriving after a fresh one must not rewind an animation, so it is
-        treated as "now".
-        """
         if now_ms is None:
             return self._now_ms if self._now_ms is not None else 0
         now = int(now_ms)

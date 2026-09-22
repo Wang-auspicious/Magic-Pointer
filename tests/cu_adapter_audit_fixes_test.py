@@ -1,4 +1,3 @@
-"""Production adapters with synthetic files/DOM; no application, OCR or model I/O."""
 import hashlib
 import json
 import subprocess

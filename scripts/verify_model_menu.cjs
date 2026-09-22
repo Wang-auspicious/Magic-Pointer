@@ -1,5 +1,4 @@
 'use strict';
-// Real development main/preload/IPC and saved profiles; no fixture renderer.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -44,13 +43,11 @@ app.whenReady().then(async () => {
     return;
   }
   const click = async selector => {
-    // Use the actual DOM handler while the user keeps working in other apps.
-    // Chromium hit testing and native input are separately covered by probe_model_menu.
     await wc.executeJavaScript(`(() => {const n=document.querySelector(${JSON.stringify(selector)});if(!n)throw new Error('missing click target');n.click()})()`);
     await wait(40);
   };
   const measure = () => wc.executeJavaScript(`(() => {
-    const menu=document.querySelector('#composer-model-menu'),panel=menu.querySelector('.dshw-model-more-panel');
+    const menu=document.querySelector('#composer-model-menu'),panel=menu.querySelector('.mpw-model-more-panel');
     const box=n=>{const r=n.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}};
     return {menu:box(menu),panel:panel?box(panel):null,viewport:{width:innerWidth,height:innerHeight},
       rows:[...menu.querySelectorAll('[data-model-id]')].map(n=>({id:n.dataset.modelId,profileId:n.dataset.modelProfileId,key:n.dataset.modelKey,height:n.getBoundingClientRect().height})),
@@ -62,11 +59,8 @@ app.whenReady().then(async () => {
   const savedModels = api.models();
   try {
     await click('#composer-model');
-    await wc.executeJavaScript('openModelMenu()'); // await actual catalog refresh before editing
+    await wc.executeJavaScript('openModelMenu()');  
     savedPins = await wc.executeJavaScript("localStorage.getItem('mp:model-pins')");
-    // This user's previous menu left three saved ids while displaying four.
-    // Materialize four defaults once for this requested delivery; subsequent
-    // unchecks still preserve empty slots and never auto-refill them.
     await wc.executeJavaScript(`(() => {
       const pins=resolveModelPins(modelCatalog),entries=modelEntries(modelCatalog);
       while(pins.filter(Boolean).length<4) {
@@ -88,7 +82,7 @@ app.whenReady().then(async () => {
     const more = await measure();
     assert(more.panel.bottom <= more.viewport.height - 8);
     assert(more.panel.top >= 8);
-    await wc.executeJavaScript("document.querySelector('.dshw-model-more-panel').scrollTop=100000");
+    await wc.executeJavaScript("document.querySelector('.mpw-model-more-panel').scrollTop=100000");
     assert(await wc.executeJavaScript(`(() => {const n=[...document.querySelectorAll('[data-model-pin]')].at(-1),r=n.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('[data-model-pin]')===n})()`), 'last real catalog entry is reachable');
     const removed = main.pins[2];
     const next = more.models.find(entry => !main.pins.includes(entry.key));
@@ -124,7 +118,6 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(out,'result.txt'), 'PASS: actual development GUI, four compact rows, unpin, slot 3 replacement, reopen persistence, real model selection and runtime metadata\n');
   } finally {
     await api.restore(savedModels);
-    // The pre-profile setup persists its current id in the Python secrets file.
     if (!savedModels.profiles?.length) {
       const before = JSON.parse(fs.readFileSync(path.join(out,'initial.json'),'utf8'));
       await wc.executeJavaScript(`Data.selectModel(${JSON.stringify(before.current)})`);

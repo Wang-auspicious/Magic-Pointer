@@ -1,4 +1,3 @@
-"""Self-contained dependency smoke used by development and packaged Python."""
 
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from pptx.util import Inches
 
 
 def verify_document_dependencies() -> dict[str, str]:
-    """Create and reopen one minimal file with every document dependency."""
     with tempfile.TemporaryDirectory(prefix="mp-document-smoke-") as raw_directory:
         directory = Path(raw_directory)
 

@@ -446,10 +446,6 @@ def test_conversation_result_keeps_receipts_usage_activity_and_timing() -> None:
 
 
 def test_conversation_result_carries_every_usage_bucket_the_provider_reported() -> None:
-    """上下文卡按类别分段着色，所以输入侧和缓存侧必须一起过桥。
-
-    以前只透传 outputTokens：卡片只剩一个数字可用，一条条自然只有一种颜色。
-    """
     mapped = {
         "answer": "done",
         "modelUsage": {
@@ -476,7 +472,6 @@ def test_conversation_result_carries_every_usage_bucket_the_provider_reported() 
 
 
 def test_conversation_result_leaves_absent_usage_buckets_absent() -> None:
-    """provider 不报缓存时键不出现——补一个 0 会让卡片画出一段并不存在的量。"""
     mapped = {"answer": "done", "modelUsage": {"inputTokens": 12, "outputTokens": 3}}
     result = conversation_bridge._completed_result(
         mapped,
@@ -559,7 +554,6 @@ def _install_workspace_boot_stubs(
     registry=None,
     fake_session=None,
 ):
-    """boot_loop_context 之后到 run_agent_turn 之间的最小服务桩。"""
     from types import SimpleNamespace
 
     from app.agent_runtime.tool_registry import ToolRegistry
@@ -582,7 +576,7 @@ def _install_workspace_boot_stubs(
                 return 64000
             if key == "model_request_header":
                 return {}
-            return SimpleNamespace()  # model_client/compactor/estimator/...
+            return SimpleNamespace()
 
     report = SimpleNamespace(ctx=_Ctx(), rows=[
         SimpleNamespace(id="model-client", resolved_config={"permission_mode": "default"}),
@@ -735,7 +729,6 @@ def _install_runtime_service_stubs(
     run_impl,
     todo_store=None,
 ) -> None:
-    """Install a real session seam with deterministic runtime services."""
     from types import SimpleNamespace
 
     services = {
@@ -849,9 +842,6 @@ def test_conversation_hydrates_and_persists_plan_before_running(
 
 
 def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_path):
-    """Codex thread workspace_roots 语义：芯片选择只改本请求的 runtime，
-    绝不回写全局 workspace.txt（那是 /cwd 的职责）——否则 A 会话选的工作区
-    会静默泄漏进 B 会话。"""
     import app.agent_runtime.workspace_state as workspace_state
 
     written = []
@@ -881,8 +871,6 @@ def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_pa
 
 
 def test_missing_explicit_workspace_remains_unbound(monkeypatch, tmp_path):
-    """普通 Studio 会话没有文件夹时保持 unbound；profile 默认只供
-    显式 /cwd 与后续新建选择使用，不能偷偷给本线程挂 coding tools。"""
     import app.agent_runtime.workspace_state as workspace_state
 
     default_ws = tmp_path / "profile-default"
@@ -900,9 +888,6 @@ def test_missing_explicit_workspace_remains_unbound(monkeypatch, tmp_path):
 
 
 def test_thread_permission_grants_reach_the_runtime(monkeypatch):
-    """CC toolPermissionDecision：会话里授予/拒绝过的工具随每条消息注入
-    loop memo——grant 升级 ASK，deny 压过 mode-allow；一次性 grant 只进
-    本次请求。"""
     from app.agent_runtime.tool_registry import ToolRegistry, ToolSpec
 
     captured = {}
@@ -946,12 +931,6 @@ def test_no_grants_means_no_memo(monkeypatch):
 
 
 def test_each_conversation_gets_its_own_agent_session(monkeypatch):
-    """会话身份必须钉到 conversationId。
-
-    Agent session 是磁盘上一条哈希链 JSONL：断点续跑摘要、待办、取消请求、
-    pending work 全挂在它上面。两条不同的对话拿到同一个 id，就等于共用一份
-    断点状态——新开一个对话会被上一条对话的未完成任务续跑块劫持。
-    """
     captured_a: dict = {}
     _install_workspace_boot_stubs(monkeypatch, captured_a)
     conversation_bridge.answer_conversation(
@@ -968,9 +947,6 @@ def test_each_conversation_gets_its_own_agent_session(monkeypatch):
 
 
 def test_plain_conversations_without_selection_do_not_share_one_session(monkeypatch):
-    """回归：普通文本对话没有 selection object，旧实现用 windowTitle 派生
-    session_key，全部塌缩成常量 "chat" —— 整个 app 的普通对话共用一条
-    session 文件。"""
     seen = set()
     for conversation_id in ("conv-1", "conv-2", "conv-3"):
         captured: dict = {}
@@ -983,8 +959,6 @@ def test_plain_conversations_without_selection_do_not_share_one_session(monkeypa
 
 
 def test_agent_session_id_is_stable_across_turns_of_one_conversation(monkeypatch):
-    """同一条对话的每一轮必须落回同一条 session，否则断点续跑永远读不到
-    上一轮——多轮对话退化成一次性问答。"""
     ids = []
     for _ in range(2):
         captured: dict = {}
@@ -1000,8 +974,6 @@ def test_established_event_session_does_not_reinject_electron_message_history(
     monkeypatch,
     tmp_path,
 ) -> None:
-    """An empty Agent session imports legacy Electron history once; after the
-    first durable turn, only object/scene evidence is attached again."""
     from app.agent_runtime.session import FileSessionStore
     from app.agent_runtime.tool_registry import ToolRegistry
     from app.agent_runtime.types import (
@@ -1117,8 +1089,6 @@ def test_established_event_session_does_not_reinject_electron_message_history(
 
 
 def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> None:
-    """/rewind 是 checkpoint 的 GUI 入口（B5-25）：走绑定工作区的
-    FileCheckpointStore，步数可选；无记录时诚实回答。"""
     default_ws = tmp_path / "ws"
     default_ws.mkdir()
 
@@ -1162,14 +1132,6 @@ def test_slash_rewind_requires_bound_workspace(monkeypatch, tmp_path) -> None:
 
 
 def test_permission_grants_from_the_payload_reach_the_loop(monkeypatch, tmp_path) -> None:
-    """权限授权条必须真的授权。
-
-    ``main()`` 从来不读 ``permissionGrants``/``permissionDenials``/
-    ``permissionGrantOnce``，也不把它们转给 ``answer_conversation``——三个可选
-    参数在生产里恒为空元组。后果：run_command 是 LOCAL_IRREVERSIBLE，
-    workspace-write 预设下永远 ask，模型按提示调 ask_user_question 求授权，
-    用户点「本会话总是允许」，下一轮又被同一道门拦住——编程闭环走不完。
-    """
     captured: dict[str, object] = {}
 
     def fake_answer(question, turns, obj, preset, **kwargs):
@@ -1239,7 +1201,6 @@ def test_effort_from_payload_reaches_conversation_runtime(monkeypatch) -> None:
 
 
 def test_thread_grant_upgrades_run_command_past_the_ask_gate() -> None:
-    """线程 memo 必须把 run_command 的 ask 抬成 allow（授权的全部意义）。"""
     from app.agent_runtime.permission_modes import PermissionDecision, decide_effect
     from app.agent_runtime.tool_registry import Effect
 
@@ -1253,14 +1214,6 @@ def test_thread_grant_upgrades_run_command_past_the_ask_gate() -> None:
 
 
 def test_conversation_forwards_todo_store_so_the_plan_survives_compaction(monkeypatch) -> None:
-    """Studio 对话必须把 todo_store 交给 loop。
-
-    桥自己拿了 ``ctx.get("todo_store")``（挂 on_update 推计划卡、终态读回），
-    但从来没有把它当参数传给 ``run_agent_turn``——于是 loop 里
-    ``params.todo_store`` 恒为 None：①BUDGET_EXHAUSTED 的部分交付不带未完成
-    步骤；②``_build_partial_delivery_message`` 拿不到计划。这是长任务的两个
-    可见症状，恰好是 1.0.14 给 Stage 修过、却漏了对话路径的同一处接线。
-    """
     captured: dict[str, object] = {}
 
     def fake_run_agent_turn(*args, **kwargs):
@@ -1273,20 +1226,13 @@ def test_conversation_forwards_todo_store_so_the_plan_survives_compaction(monkey
     result = conversation_bridge.answer_conversation(
         "跑一下测试", [], {}, "workspace-write"
     )
-    assert result["ok"] is False  # the fake raised; we assert on the wiring
+    assert result["ok"] is False
     assert captured.get("todo_store") is not None, (
         "todo_store 必须过参数边界，否则压缩后计划回贴与部分交付都拿不到进度"
     )
 
 
 def test_conversation_bridge_imports_under_isolated_python():
-    """安装版以 ``python -I``（isolated）启动桥：sys.path 里没有 scripts/。
-
-    1.0.24 真机事故：conversation_bridge 依赖「直接跑脚本会把脚本目录放进
-    sys.path」这一默认行为，在 -I 下 import _bridge_common 直接炸——
-    进程 exit 1 零输出，GUI 只看到 bridge_no_output。其它每座桥都在
-    import 前自举 sys.path，conversation_bridge 必须同样自举。
-    """
     import json
     import subprocess
     import sys
@@ -1309,8 +1255,6 @@ def test_conversation_bridge_imports_under_isolated_python():
 
 
 def test_answer_conversation_passes_tool_result_dir_under_workspace(monkeypatch, tmp_path):
-    """P1-3 收尾：超大工具结果要全文落盘 <workspace>/.mp/tool-results，
-    桥必须把 tool_result_dir 传给 run_agent_turn，否则落盘层永远不激活。"""
     ws_dir = tmp_path / "profile-default"
     ws_dir.mkdir()
     import app.agent_runtime.workspace_state as workspace_state
@@ -1707,8 +1651,6 @@ def test_slash_help_reads_skills_from_the_bound_workspace(monkeypatch, tmp_path)
 
 
 def test_slash_skill_load_bumps_usage(tmp_path, monkeypatch) -> None:
-    """P2-5：斜杠显式加载技能也要计入频次（MAGIC_POINTER_USER_DATA_DIR
-    指向的用户目录里落 skill-usage.json）。"""
     import json
 
     from app.agent_runtime.skill_catalog import SkillCatalog
@@ -1746,7 +1688,6 @@ def test_history_text_carries_scene_evidence() -> None:
     assert "对象：批注段" in history
     assert "screen-abc123.png" in history
     assert "当时读取到的内容" in history
-    # 没有证据的轮次不添乱
     assert "后来没有下文" in history
     assert history.count("现场证据") == 1
 

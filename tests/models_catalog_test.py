@@ -1,9 +1,3 @@
-"""模型目录（DSH ui-model-selection 的 MP 等价物）。
-
-目录从真实网关来：优先 ``GET {base_url}/models``（OpenAI 兼容网关都有），
-失败时诚实回落到当前配置的单条目。切换写 ``secrets/model.txt``——全栈
-（ai_client/loop/视觉链）消费的同一份配置，不是渲染层自己的状态。
-"""
 
 from __future__ import annotations
 
@@ -53,7 +47,6 @@ def test_list_models_from_gateway(monkeypatch) -> None:
     assert group["id"] == "opencode-zen"
     assert [m["id"] for m in group["models"]] == ["deepseek-v4-flash", "kimi-k3", "qwen3.7-plus"]
     assert [m["contextWindow"] for m in group["models"]] == [128_000, 256_000, 128_000]
-    # 不凭当前选择捏造视觉能力；只保留网关或配置提供的能力元数据。
     assert next(m for m in group["models"] if m["id"] == "deepseek-v4-flash")["vision"] is False
 
 
@@ -68,7 +61,7 @@ def test_list_models_falls_back_to_config_on_gateway_failure(monkeypatch) -> Non
     assert catalog["source"] == "config"
     assert catalog["current"] == "deepseek-v4-flash"
     assert [m["id"] for m in catalog["groups"][0]["models"]] == ["deepseek-v4-flash"]
-    assert catalog["error"]  # 诚实带上失败原因
+    assert catalog["error"]
 
 
 def test_profile_declared_models_skip_gateway_and_preserve_capabilities(monkeypatch) -> None:
@@ -130,7 +123,6 @@ def test_select_model_rejects_blank(monkeypatch, tmp_path) -> None:
 
 
 def test_select_model_accepts_provider_qualified_gateway_ids(monkeypatch, tmp_path) -> None:
-    """OpenAI-compatible catalogs commonly expose ids such as openai/foo."""
     _configured(monkeypatch)
     secrets = tmp_path / "secrets"
     secrets.mkdir()
@@ -144,10 +136,8 @@ def test_select_model_accepts_provider_qualified_gateway_ids(monkeypatch, tmp_pa
 
 
 def test_select_model_creates_user_data_secrets_dir_and_writes_there(monkeypatch, tmp_path) -> None:
-    """安装版常态:开发树 secrets 不进包;写入必须落在 MAGIC_POINTER_USER_DATA_DIR
-    下的 secrets(与 ai_client.read_local_secret 的读取候选链同一处),目录不存在就创建。"""
     _configured(monkeypatch)
-    dev_secrets = tmp_path / "app-bundle" / "secrets"  # 不存在(安装包里没有)
+    dev_secrets = tmp_path / "app-bundle" / "secrets"
     monkeypatch.setattr("app.models_catalog.SECRETS_DIR", dev_secrets)
     user_data = tmp_path / "UserData" / "Magic Pointer"
     monkeypatch.setattr("app.models_catalog.USER_SECRETS_DIR", user_data / "secrets")

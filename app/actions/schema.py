@@ -1,4 +1,3 @@
-﻿"""Reusable, platform-neutral schemas for proposed actions and results."""
 
 from __future__ import annotations
 
@@ -63,11 +62,6 @@ def _optional_bool(value: Any) -> bool | None:
 
 @dataclass(frozen=True)
 class ConfirmationPolicy:
-    """Threshold-based confirmation strategy.
-
-    Explicit confirmation requests are honored, but explicit ``False`` does not
-    downgrade actions at or above the configured safety threshold.
-    """
 
     confirm_at_or_above: SafetyLevel = SafetyLevel.MEDIUM
 
@@ -92,7 +86,6 @@ class ConfirmationPolicy:
 
 @dataclass(frozen=True)
 class ActionTarget:
-    """Serializable reference to a grounded object, point, or region."""
 
     object_id: str | None = None
     selection_id: str | None = None
@@ -136,7 +129,6 @@ class ActionTarget:
 
 @dataclass(frozen=True)
 class ActionProposal:
-    """A proposed action before execution."""
 
     id: str
     action_type: str
@@ -192,7 +184,6 @@ class ExecutionStatus(str, Enum):
 
 @dataclass(frozen=True)
 class ExecutionResult:
-    """Result record for an attempted action execution."""
 
     proposal_id: str
     status: ExecutionStatus

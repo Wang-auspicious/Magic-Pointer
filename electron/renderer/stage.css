@@ -1,16 +1,5 @@
-/* PointerStage — single transparent surface for all ephemeral visuals.
- * Visual contract (design §2.3): graphite #0E1116 surfaces, cold-white text,
- * a single electric-blue accent. No purple gradients, no card stacks. */
 
 :root {
-  /* One accent, expressed as channels, so every alpha below is derived from the
-   * same hue instead of being re-typed. The appearance settings page changes
-   * these three numbers and the whole stage retints — which is only possible
-   * while nothing hardcodes rgba(var(--stage-accent-rgb), ...) again.
-   *
-   * Kept separate from tokens.css on purpose: the stage floats over other
-   * people's windows and needs its own contrast rules, while tokens.css governs
-   * our own chrome. They share the hue, not the palette. */
   --stage-accent-rgb: 38, 115, 235;
   --stage-accent: rgb(var(--stage-accent-rgb));
   --stage-accent-line: rgba(var(--stage-accent-rgb), 0.26);
@@ -23,9 +12,6 @@
   --stage-ink-soft: var(--stage-ink-soft);
   --stage-ink-faint: var(--stage-ink-faint);
 
-  /* 中性墨色。上一版面板上的正文是蓝白（#183b68），整段回答看起来像一个链接。
-   * 参考的两份（Vida 的结果面板、Oreo 的组件卡）正文都是近黑 + 灰，蓝色只留给
-   * 真正是「我们」的那几个像素——那根竖杠、光标、波形。 */
   --stage-neutral-ink: #16181d;
   --stage-neutral-ink-soft: #5c6270;
   --stage-neutral-ink-faint: #8b91a0;
@@ -60,7 +46,6 @@ body {
   user-select: none;
 }
 
-/* Empty state renders nothing: the root is [hidden] until the stage wakes. */
 .stage-root {
   position: fixed;
   inset: 0;
@@ -71,8 +56,6 @@ body {
   display: none;
 }
 
-/* Component display declarations (for example delivery-progress:flex) must
- * never override the semantic hidden attribute and leak stale UI. */
 .stage-root [hidden] {
   display: none !important;
 }
@@ -82,24 +65,12 @@ body {
   transition: opacity 160ms ease-out;
 }
 
-/* --- Target feedback ------------------------------------------------------
- * Default: Google demo 6 style sweep band over the semantic text line.
- * Alternatives remain available from Dashboard: soft object glow / outline. */
 .targeting-outline,
 .frozen-glow {
   position: absolute;
   pointer-events: none;
 }
 
-/* .frozen-glow 是渲染器里唯一一个「只要可见就永远在动」的元素：
-   stage-breathe 无限动画 box-shadow（不可合成）+ opacity。它没有自己的合成层，
-   于是每帧的 box-shadow 重画会落进整个全屏透明 stage 文档的绘制路径里。
-   will-change: opacity 把它提升成独立合成层：动画里的 opacity 交给合成器，
-   box-shadow 的重画被关在这一层内部。元素只在选区存在时挂载（其余时候
-   display:none），所以没有常驻显存代价。
-   其余连续动画的元素不加：.voice-waveform i / .processing-shimmer::after /
-   .stage-thinking 动的都是 transform+opacity，浏览器本来就会自动合成，
-   再加 will-change 只是白占一层。 */
 .frozen-glow {
   will-change: opacity;
 }
@@ -263,12 +234,6 @@ body {
   display: none;
 }
 
-/* --- Fixed composer --------------------------------------------------------
- * The entry surface is a paper-like text composer. Its shell never changes
- * shape when dictation starts, text grows, or a request begins processing. */
-/* Geometry is the measured PromptRescue pill, expressed against its own
-   height: radius .317h, send circle .500h, left inset .262h, right inset
-   .158h. Numbers and method: docs/design/VIDA_PROMPTRESCUE_MEASURED.md. */
 .stage-composer {
   position: absolute;
   display: flex;
@@ -312,9 +277,6 @@ body {
   min-width: 0;
 }
 
-/* The reference pill carries one row only: text, glyph, send. The context and
-   tool rows stay in the DOM so stage.ts keeps its handles, but they do not
-   occupy the pill. */
 .composer-context,
 .composer-tools {
   display: none;
@@ -331,7 +293,6 @@ body {
   display: none;
 }
 
-/* --- Voice waveform: 3 bars --------------------------------------------- */
 .voice-waveform {
   display: inline-flex;
   align-items: center;
@@ -377,7 +338,6 @@ body {
   caret-color: var(--stage-electric-blue);
 }
 
-/* --- Transcript letters fly in with ~30ms stagger ------------------------- */
 .capsule-transcript {
   flex: 1 1 auto;
   min-width: 0;
@@ -405,10 +365,6 @@ body {
   }
 }
 
-/* --- Unknown progress ------------------------------------------------------
- * One neutral ink wash says "still working" without inventing a percentage.
- * The old green/orange/pink/blue strip competed with the text and looked like
- * three unrelated tasks. Keep one material and one quiet activity dot. */
 .processing-shimmer {
   position: absolute;
   inset: 0;
@@ -417,16 +373,6 @@ body {
   overflow: hidden;
 }
 
-/* 未知进度的那道匀速扫光。原来是给 .processing-shimmer 自己打
-   background-position——paint 属性，每帧重画整个 composer；现在改成让一个
-   44% 宽的子层做 transform 平移，跑在合成器上。
-   位置换算（W = 容器宽，扫光带宽度 = 44% W）：
-     background-position: P%  -> 偏移 (W - 0.44W) * P/100 = 0.56W * P/100
-     translateX:          Q%  -> 偏移 0.44W * Q/100
-   两者都随时间线性，所以 Q = 0.56/0.44 * P = 1.2727 * P；P 从 -50 到 150
-   对应 Q 从 -63.6364% 到 190.9091%，任意时刻位置逐点相同。渐变的几何也一致：
-   原来是 background-size: 44% 100%，现在是 44% 宽、100% 高的元素。
-   元素本身是空的 aria-hidden <span>，没有子节点，所以这不改变任何绘制顺序。 */
 .processing-shimmer::before {
   content: '';
   position: absolute;
@@ -470,23 +416,6 @@ body {
   opacity: 0.35;
 }
 
-/* --- Result / error surfaces ---------------------------------------------- */
-/* --- Conversation thread ----------------------------------------------------
- * Processing and result share one edge-aware surface. While work is running,
- * that panel owns Stop; once settled, the same panel owns follow-up/approval.
- *
- * 形照 Vida 那两张卡（PromptRescue 25s 的结果面板 / 22s 的提案卡）：一张几乎
- * 纯白的卡，上面一条眉毛行（这张卡讲的是什么 + 一个关掉它的叉），中间是内容，
- * 底下一条分隔线压着两个大按钮——次要的描边、主要的实心黑。
- *
- * 三件事跟上一版不一样，都是「框太小、太死板」的直接原因：
- * 1. 宽度 430 → 540，正文 13px → 14.5px。原来一行塞不下一句中文的主谓宾。
- * 2. 墨色从蓝白（#183b68）改成中性近黑。蓝色正文让整张卡看起来像一个链接。
- * 3. 底栏三个一样大的灰色文字按钮 → 一实一描边。「填入」是这张卡真正要你做
- *    的事，它必须看起来就是那件事。
- *
- * Depth is layered shadow, never backdrop-filter: a blur on a transparent
- * click-through overlay is fragile and expensive. */
 .stage-thread {
   position: absolute;
   display: flex;
@@ -498,7 +427,6 @@ body {
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   box-sizing: border-box;
-  /* One surface radius token across pill and card, as in the reference. */
   border-radius: 18px;
   background: #f9f8fb;
   border: 1px solid rgba(19, 22, 27, 0.10);
@@ -509,9 +437,6 @@ body {
   animation: stage-thread-in 233ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
-/* --- 眉毛行 ---------------------------------------------------------------
- * 整条头就是抓手。上一版是一条 34×3 的灰色小横杠飘在卡顶——它占掉一整行，
- * 却只说了「我可以被拖」，没说这张卡在讲什么。 */
 .thread-head {
   display: flex;
   flex-direction: column;
@@ -531,10 +456,6 @@ body {
 
 .stage-thread.is-dragging .thread-head { cursor: grabbing; }
 
-/* 状态词离开卡头。`WORKING` / `TASK FINISHED` 那一行是参考里的做法，但它把
- * 一件正文已经说过的事，用等宽全大写在标题旁边又喊了一遍：跑的时候证据流
- * 就在动，完成的时候答案就在那儿，失败的时候失败卡就在那儿。留下节点只是
- * 为了屏幕阅读器还能播报状态。 */
 .thread-eyebrow {
   position: absolute;
   width: 1px;
@@ -546,7 +467,6 @@ body {
   white-space: nowrap;
 }
 
-/* 标题是「我正看着哪个窗口」，属于说明文字那一级——它不该比对话本身重。 */
 .thread-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -561,11 +481,7 @@ body {
   text-overflow: ellipsis;
 }
 
-/* 完成态标题不再藏：参考卡（PromptRescue）的头部就是「这张卡讲什么」 +
- * 右侧一排细图标；完成信号由底部绿行承担，眉毛行退位，标题留在原位。 */
 
-/* 细描边图标按钮：1.5px 描边、24 网格、点击区 32px。参考图里那一排
- * （文件夹+ / 历史 / 叉）全是这个规格，而且彼此隔得很开。 */
 .thread-icon {
   display: inline-flex;
   align-items: center;
@@ -625,15 +541,10 @@ body {
   padding: 0 18px 14px;
   overflow-x: hidden;
   overflow-y: visible;
-  /* 正文字号/卡高 = 31.2/973 = 0.0321,面板 533 高 → 17px。
-     行距两张卡独立测得 1.24 与 1.27,取 1.25;原来的 1.58 明显偏松。 */
   font-size: 17px;
   line-height: 1.25;
 }
 
-/* 卡片区光标统一：鼠标在卡片里移动不应当在手套/箭头之间高频切换
-   （用户体感「反复卡顿闪现」）。文本区一律默认箭头，只有真正可点的
-   操作（复制/填入/关闭/展开）才显示手套。 */
 .stage-result,
 .stage-result .mcard,
 .stage-result .thread-turn,
@@ -659,15 +570,10 @@ body {
   animation: stage-turn-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* 轮次之间是空白，不是横线。一条对话不需要在每两句话之间画一道分隔——
- * 靠右的气泡本身就标出了新一轮从哪里开始。 */
 .thread-turn + .thread-turn {
   margin-top: 18px;
 }
 
-/* 你说的那句话就是一条消息，靠右；回答不套框，靠左通栏。这是 Claude 桌面版
- * 的对话语法，也是这块小窗真正的身份——它不是一张「结果卡」，它是同一场对话
- * 的一个窗口。所以第一轮的问题不再被标题吃掉，每一轮都在原位读得到。 */
 .turn-ask {
   align-self: flex-end;
   max-width: 86%;
@@ -689,15 +595,6 @@ body {
   user-select: text;
 }
 
-/* 舞台上的卡不再是一张「卡」。
- *
- * .mcard 自带白底、圆角和投影——那在工作室里是对的（一屏里并排好几张，需要
- * 边界），但在这块面板里，面板本身已经是那张卡了。再套一层的结果就是参考里
- * 从来不会出现的东西：框里一个框。代码里那句「一条发丝线——绝不是框里套框」
- * 说的就是这件事，只是没管到卡自己。
- *
- * 所以密度是 capsule 时把外壳整个脱掉，只留版式。图卡和工具界面卡自己的框
- * 还在（它们的边界是内容的一部分，不是装饰）。 */
 .stage-result .mcard[data-density='capsule'] {
   padding: 0;
   gap: 8px;
@@ -706,32 +603,21 @@ body {
   box-shadow: none;
 }
 
-/* The shared full card can retain diagnostic facts. The pointer surface only
- * shows the activity name; UIA/L0/ms details belong in the expandable run log. */
 .stage-result .mstep-fact { display: none; }
 
 .stage-result .mcard[data-density='capsule'][data-state='failed'] {
   box-shadow: none;
 }
 
-/* 卡自己的眉毛行（「回答」「已确认」…）在这里是多余的：面板顶上那行状态已经
- * 说过一遍了。留着就是同一件事说两遍，还把每一轮都撑高一行。 */
 .stage-result .mcard[data-density='capsule'] > .mcard-top:only-child { display: none; }
 .stage-result .mcard[data-density='capsule'] .mcard-eyebrow { display: none; }
 
-/* 未知进度不再需要一枚轨道点或任何条子：胶囊密度里现在铺的就是逐行
- * 展开的证据流（cards.css .mcard-steps），证据长到哪儿，进度就在哪儿。 */
 
 .stage-result .mcard[data-density='capsule'][data-state='running'] .mcard-stage {
   min-height: 19px;
   padding-left: 24px;
 }
 
-/* 参考里的证据行是折行显示全文的三行段落,不是一行省略号——被截掉的恰好是
- * "→ 所以要做什么"那半句,也就是这行证据唯一有用的部分。段与段之间空一行
- * (实测段距 75 / 行距 38.7 = 1.94)。舞台域覆盖:cards.css 是 Studio 的合并
- * 源,共享改动会牵动 studio_system.css 重生成,这里只改舞台。
- * 数据见 docs/design/VIDA_PROMPTRESCUE_MEASURED.md §3.6。 */
 .stage-result .mcard-steps {
   gap: 18px;
 }
@@ -742,15 +628,10 @@ body {
   text-overflow: clip;
 }
 
-/* 参考的证据行只有一枚绿勾起头,没有竖脊线。脊线是「状态住在活动脊上」那一版
- * 的产物;状态已经搬回卡头的眉毛行,脊线就没有承载物了,去掉。
- * 绿勾保留——它就是参考里那个 ✓。 */
 .stage-result .mcard-steps li:not(:last-child)::after {
   display: none;
 }
 
-/* 证据行与正文同级:字号 17、行距 1.25。cards.css 那边的 12.5/1.5 是给
- * Studio 与 Companion 的,不动。 */
 .stage-result .mstep-label {
   font-size: 17px;
   line-height: 1.25;
@@ -760,8 +641,6 @@ body {
   color: #b42318;
 }
 
-/* 就地展开出来的那一段。Vida 把改动过的短语用黄色荧光笔标出来——这里同理：
- * 换掉的那一段自己亮一下再褪回去，用户不用去猜哪儿变了。 */
 .passage-fresh {
   animation: passage-settle 1500ms ease-out both;
   border-radius: 4px;
@@ -773,8 +652,6 @@ body {
   100% { background: rgba(250, 204, 21, 0); }
 }
 
-/* 贴着选区冒出来的那个小按钮。位置由 stage.js 按选区的矩形算，这里只管长相：
- * 深色实心、小、圆角够方——参考图里那一排工具条就是这个质感。 */
 .passage-expand {
   position: fixed;
   z-index: 4;
@@ -811,9 +688,6 @@ body {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Working state: three dots plus the elapsed seconds. We do not know how long
- * the model will take, so we show the one honest number we have instead of a
- * progress bar that would be invented. */
 .turn-wait {
   display: flex;
   align-items: center;
@@ -843,14 +717,6 @@ body {
   color: #b4791f;
 }
 
-/* --- 完成行：底部那条绿字 ----------------------------------------------------
- * PromptRescue 19.4-19.6s 逐帧：任务完成的信号是一条贴着追问框上方的
- * 绿色圆勾 + 绿字，约 300ms 淡入上浮；不是卡顶的状态词。成功时顶部
- * 眉毛行退位（stage.ts），同一个事实不写两遍。 */
-/* --- 底栏：一条追问条 -------------------------------------------------------
- * 参考里这块永远是「Ask Vida anything about …」——因为这张卡还没结束。
- * 一条极淡的分隔线，一个 placeholder，右边一个提交箭头。没有一排动作按钮：
- * 要点头的那一下长在问题框那边。 */
 .thread-bar {
   display: flex;
   align-items: center;
@@ -865,8 +731,6 @@ body {
 .stage-thread.is-dragging .thread-bar { cursor: grabbing; }
 .stage-thread[data-phase='running'] .thread-bar { display: none; }
 
-/* placeholder 绑当前这张卡在讲什么（Vida.md §3 第 5 条：追问框绑当前对象，
- * 用户因此不用交代背景）。文本由 stage.js 按标题填。 */
 .thread-followup {
   flex: 1 1 auto;
   min-width: 0;
@@ -893,7 +757,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 追问的提交键。和输入条右端那颗是同一颗——同一个动作在两个地方必须长一样。 */
 .thread-send {
   display: inline-flex;
   align-items: center;
@@ -916,13 +779,6 @@ body {
 .thread-send[data-ready='true']:hover { background: #33373f; }
 .thread-send:active { transform: scale(0.92); }
 
-/* --- 要点头的那一下 ---------------------------------------------------------
- * The decision belongs to TASK FINISHED, so it is the card's footer. The
- * editable draft still lives in the capsule; this row only makes the target
- * and the irreversible boundary explicit. */
-/* Footer rhythm measured off the reference approval card, expressed against
-   the button height: bar 1.775h, gap 0.378h, right inset 0.423h.
-   See docs/design/VIDA_PROMPTRESCUE_MEASURED.md §6. */
 .capsule-consent {
   display: flex;
   align-items: center;
@@ -941,7 +797,6 @@ body {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* 写到哪儿去，写出来。不写清楚目标就问「同意吗」，等于问「同意什么」。 */
 .consent-target {
   flex: 1 1 auto;
   min-width: 0;
@@ -954,23 +809,17 @@ body {
 }
 
 .capsule-consent .thread-btn {
-  /* Reject in the reference is 1.874x its own height; the labels size the
-     buttons, they are not forced to a common width. */
   min-width: 79px;
 }
 
 .stage-thread[data-consent='true'] .thread-bar { display: none; }
 
-/* 参考里的 Reject / Approve：同一个尺寸、同一个圆角，只有填充不同。
- * 42px 高不是为了好看——上一版 4px 内边距的文字按钮，在一块浮在别人窗口上
- * 的面板里根本点不准。 */
 .thread-btn {
   appearance: none;
   flex: 0 0 auto;
   height: 42px;
   padding: 0 22px;
   border: 1.5px solid rgba(19, 22, 27, 0.16);
-  /* 0.261 x button height, measured off the reference Approve control. */
   border-radius: 11px;
   background: #fff;
   color: var(--stage-neutral-ink);
@@ -1009,17 +858,11 @@ body {
   transform: none;
 }
 
-/* The shell is already at its final geometry before it becomes visible.
- * Only opacity changes, so streaming and completion cannot look like a
- * resizing bubble or move the panel under the pointer. */
 @keyframes stage-surface-appear {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-/* 面板入场照 PromptRescue 逐帧复刻（15.750-15.983s 实测）：约 233ms 从右
- * 滑入，带雾化淡入，缓动是全套统一的实测减速曲线。宽度高度全程不变——
- * 滑动只发生在出现那一瞬，落位之后不再移动，流式与完成不会晃到指针。 */
 @keyframes stage-thread-in {
   from {
     opacity: 0;
@@ -1044,7 +887,6 @@ body {
   to { opacity: 1; }
 }
 
-/* A settling turn: rises, overshoots by a hair, lands. */
 @keyframes stage-turn-in {
   from {
     opacity: 0;
@@ -1127,7 +969,6 @@ body {
   }
 }
 
-/* --- Suggestion chips: <=3, click-select flow only, gone on first input ----- */
 .stage-chips {
   position: absolute;
   display: flex;
@@ -1157,7 +998,6 @@ body {
   outline: none;
 }
 
-/* --- Structured result cards (calendar draft / table compare / text draft) -- */
 .result-card {
   display: grid;
   gap: 6px;
@@ -1186,12 +1026,6 @@ body {
   color: var(--stage-cold-white-dim);
 }
 
-.card-conflict {
-  color: var(--stage-cold-white);
-}
-
-/* Status line mirrors the true receipt state; only real success earns the
- * electric-blue accent. */
 .card-status {
   font-size: 12px;
   color: var(--stage-cold-white-dim);
@@ -1230,7 +1064,6 @@ body {
   text-decoration: line-through;
 }
 
-/* --- Result actions: opaque proposal/context buttons ----------------------- */
 .stage-actions {
   display: flex;
   gap: 8px;
@@ -1261,7 +1094,6 @@ body {
   color: var(--stage-cold-white);
 }
 
-/* Receipt line on inline/text-draft results: mirrors the true bridge status. */
 .result-status {
   font-size: 12px;
   color: var(--stage-cold-white-dim);
@@ -1271,7 +1103,6 @@ body {
   color: var(--stage-electric-blue);
 }
 
-/* Word-level diff: insertions blue, deletions struck. */
 .card-diff {
   color: var(--stage-cold-white);
   white-space: pre-wrap;
@@ -1286,9 +1117,6 @@ body {
   text-decoration: line-through;
 }
 
-/* --- Delivery progress: real UIA draft-write steps only -------------------- */
-/* The bar width changes exclusively when a genuine deliveryProgress event
- * arrives; there is no idle/looping animation here by design (§2.2). */
 .delivery-progress {
   position: absolute;
   display: flex;
@@ -1312,12 +1140,6 @@ body {
   overflow: hidden;
 }
 
-/* 曾经是 width: 0% + transition: width：width 是布局属性，每次进度更新都会
-   让整个全屏透明 stage 文档重新布局 + 重画 160ms。这里换成 scaleX（合成器属性，
-   只重画这一条 120x3 的实心色块）。视觉上逐点相同：元素没有圆角、没有子节点、
-   没有背景图，父级 .delivery-track 的 overflow:hidden + 2px 圆角照旧裁剪，
-   scaleX(k) 的绘制宽度就是原来的 width: k*100%。唯一差别是中间帧的边缘不再是
-   布局的 1/64px 取整，而是连续的——只会更平滑。 */
 .delivery-bar {
   display: block;
   height: 100%;
@@ -1328,14 +1150,11 @@ body {
   transition: transform 160ms ease-out;
 }
 
-/* --- Reduced motion: no fly-in/breathing/wave, keep opacity fades ---------- */
 @media (prefers-reduced-motion: reduce) {
   .frozen-glow,
   .voice-waveform i,
   .fly-letter,
   .processing-shimmer,
-  /* 扫光搬到 ::before 上了，动画的减少动效开关必须跟着搬，否则开了
-     减少动效的用户反而会看到这道扫光继续动。 */
   .processing-shimmer::before,
   .stage-result,
   .stage-error {
@@ -1367,11 +1186,6 @@ body {
   }
 }
 
-/* The composer can fade, but its rectangle is immutable for the session. */
-/* 入场实测(11.6-12.9s 逐帧,60fps):胶囊表面亮度从背景线性升到满值,历时
- * 12.514→12.700 ≈ 186ms,期间宽高全程不变(1773×202),背景标记行也不动,
- * 所以是纯不透明度淡入,不是缩放也不是镜头。淡入结束后再上浮 7px/183ms
- * (7/202 = 0.035h,56px 胶囊上折合 2px)。 */
 .stage-composer.is-entering {
   animation: stage-composer-appear 186ms linear both,
     stage-composer-settle 183ms 186ms cubic-bezier(0.32, 0.72, 0, 1) both;
@@ -1392,9 +1206,6 @@ body {
   opacity: 0;
 }
 
-/* 提交键：一个实心黑圆。没跑时是箭头，跑起来变方块。这两个状态之间不换
- * 元素，只换里面哪个 svg 显示——换元素会让按钮在最需要被点到的那一刻消失
- * 一帧。 */
 .capsule-send {
   position: relative;
   z-index: 1;
@@ -1445,8 +1256,6 @@ body {
   position: relative;
   z-index: 1;
   color: var(--stage-neutral-ink);
-  /* 参考胶囊正文墨迹跨度 61 / 胶囊高 202 = 0.302,56px 胶囊上折合 16.9px 墨迹,
-     反解字号 18px。见 docs/design/VIDA_PROMPTRESCUE_MEASURED.md §2。 */
   font-size: 18px;
   font-weight: 520;
   letter-spacing: -0.003em;
@@ -1494,9 +1303,6 @@ body {
   50% { opacity: 1; transform: scale(1.12); }
 }
 
-/* Standalone error card only. `.stage-result` used to share this rule and got
- * a white card body inside the dark thread panel — the black-bar-on-white
- * look. It is now the thread's scroll area and owns no card chrome. */
 .stage-error {
   width: min(360px, calc(100vw - 16px));
   max-width: 440px;
@@ -1518,8 +1324,6 @@ body {
   display: grid;
   gap: 8px;
   user-select: text;
-  /* Nothing inside an answer may be wider than the bubble. A single long URL,
-   * a wide OCR table or a code line used to open a horizontal scrollbar. */
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -1581,7 +1385,6 @@ body {
   }
 }
 
-/* Editable Agent Prompt: extends the current blue-white Stage result surface. */
 .turn-answer[data-kind='agent-prompt-draft'] {
   width: min(560px, calc(100vw - 60px));
 }
@@ -1705,9 +1508,6 @@ body {
   opacity: .38;
 }
 
-/* Model gateway notice: shown only while the composer is open and we already
- * know the endpoint is refusing. It is a fact, not an alarm — no red, no icon
- * soup, and it never blocks the pointer. */
 .stage-notice {
   position: fixed;
   z-index: 3;
@@ -1732,8 +1532,6 @@ body {
   .stage-notice { animation: none; }
 }
 
-/* Progress variant of the notice line: this one means "still working", so it
- * uses the accent rather than the warning tint — nothing is wrong yet. */
 .stage-notice[data-kind='progress'] {
   border-color: var(--stage-accent-line);
   background: rgba(247, 250, 255, 0.98);
@@ -1741,12 +1539,7 @@ body {
   color: #2c5a99;
 }
 
-/* 答案底边那条拉伸把手已经撤掉——见 stage.html 里那段注释。改答案长度现在
- * 走「在答案里划中一段 → 点展开讲讲」，样式在上面的 .passage-expand。 */
 
-/* Picked element: the whole thing lights up at once, then settles into a quiet
- * outline. Distinct from the drawn-selection sweep only in timing — same visual
- * language, because a picked object and a drawn one are the same kind of thing. */
 .frozen-glow.is-picked {
   animation: stage-pick-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1760,10 +1553,6 @@ body {
   .frozen-glow.is-picked { animation: none; }
 }
 
-/* --- Stroke reference chips ----------------------------------------------
- * One per stroke, in draw order, numbered the way the command numbers them.
- * They are how you can see what you picked before submitting — and remove one
- * without redrawing everything. */
 .capsule-refs {
   display: inline-flex;
   align-items: center;
@@ -1808,20 +1597,6 @@ body {
   .capsule-ref { animation: none; }
 }
 
-/* --- Capture proof -------------------------------------------------------
- *
- * A band around every rectangle we actually laid hands on. The user asked for
- * this in as many words on 2026-08-05: "在他外部搞个那种跑一圈的亮色带，证明
- * 拿到了". A sentence claiming we read something is cheap; an outline around
- * the words is not, and when the wrong thing lights up it is visible instead
- * of buried in a log.
- *
- * Colour carries meaning and must not be decorative. Blue is the product's own
- * accent and marks text the app handed us character for character. Amber marks
- * text recognised from pixels, which can be wrong. Painting both blue would make
- * "I know" and "I think that says" look identical — the exact dishonesty the
- * perception work this week was about.
- */
 .capture-proof {
   position: fixed;
   inset: 0;
@@ -1829,8 +1604,6 @@ body {
   z-index: 4;
 }
 
-/* 答案卡/气泡/错误卡在证据层之上：capture-proof 的 band 画的是目标应用里
- * 被读过的矩形，永远不许盖到卡面上（蓝线压卡的根因就是这里缺了层叠）。 */
 .stage-thread,
 .stage-composer,
 .stage-chips,
@@ -1850,28 +1623,21 @@ body {
     capture-proof-out 600ms ease-out calc(var(--proof-delay, 0ms) + 2800ms) forwards;
 }
 
-/* 看过即走：band 证明「读的是这里」，读完 ~3s 淡出。答案卡出现后绝不能
- * 还压着一条蓝线（z-index 已把卡抬到 band 之上，这里再把 band 收走）。 */
 @keyframes capture-proof-out {
   to { opacity: 0; }
 }
 
-/* Read exactly: the app told us these characters. */
 .capture-proof-band[data-source='structured'],
 .capture-proof-band[data-source='text_range'] {
   --proof-edge: rgba(67, 139, 255, .85);
   --proof-halo: rgba(47, 123, 255, .18);
 }
 
-/* Recognised from pixels: this is our reading of a picture, not the app's text. */
 .capture-proof-band[data-source='pixel'] {
   --proof-edge: rgba(232, 160, 38, .85);
   --proof-halo: rgba(232, 160, 38, .16);
 }
 
-/* The band that runs once around the rectangle — the "跑一圈" the user asked
- * for. A conic sweep rotated through a full turn reads as a light travelling
- * the perimeter without needing four separate edge animations. */
 .capture-proof-band::after {
   content: '';
   position: absolute;
@@ -1913,15 +1679,6 @@ body {
   .capture-proof-band::after { display: none; }
 }
 
-/* --- [POINT] arrows ------------------------------------------------------
- *
- * The answer points at the screen while it explains. "The button is in the top
- * right" is a worse answer than an arrow landing on the button.
- *
- * Numbered, because guidance is usually a sequence: first this, then that. The
- * markers never survive into the text itself (see app/text_actions/point_markers.py),
- * so what the user copies is a sentence, not a sentence with coordinates in it.
- */
 .screen-points {
   position: fixed;
   inset: 0;
@@ -1937,7 +1694,6 @@ body {
   animation: screen-point-in 260ms cubic-bezier(.22, 1, .36, 1) var(--point-delay, 0ms) both;
 }
 
-/* The ring that lands on the target. */
 .screen-point::before {
   content: '';
   position: absolute;
@@ -1950,7 +1706,6 @@ body {
   box-shadow: 0 0 0 4px rgba(47, 123, 255, .16);
 }
 
-/* A single pulse outward, so the eye is drawn to it once rather than nagged. */
 .screen-point::after {
   content: '';
   position: absolute;
@@ -1993,21 +1748,10 @@ body {
   .screen-point::after { display: none; }
 }
 
-/* The element the user clicked on, shown next to the stroke chips. Its colour
- * follows the same rule as the proof bands: read exactly, or recognised from
- * pixels. A chip that looks equally certain either way would undo the honesty
- * the bands are there to provide. */
 .capsule-ref.is-picked[data-source='pixel'] {
   border-color: rgba(232, 160, 38, .55);
 }
 
-/* --- Selection stretch handles ------------------------------------------
- *
- * §4.3, named by the user: select sentences 3-4 of 8, pull the lower handle
- * down three lines, release, and the model rewrites to that length. The upper
- * handle does the same upward. The hint says the number the command will ask
- * for, so the gesture promises exactly what it delivers.
- */
 .selection-stretch {
   position: fixed;
   pointer-events: none;

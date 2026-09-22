@@ -1,20 +1,3 @@
-"""Harness layered composition: boot, patch, dump (plan T3).
-
-The DSH profile/bundle/patch idea rewritten in Python: a running harness
-is a plugin tree composed at boot from ordered layers. Bundle rows mount
-in their listed order; a patch targets a row by id and replaces its whole
-config (or inserts new rows, or disables a row); ``dump_config`` prints
-the tree the runtime actually booted.
-
-Row semantics (honest, never silent):
-
-- ``disabled`` rows are skipped entirely (status ``disabled``).
-- A row whose plugin name resolves nowhere is an ``error`` row; the rest
-  of the tree keeps booting.
-- A row whose plugin raises during ``apply`` is an ``error`` row.
-- A row whose declared dependencies are not yet provided stays
-  ``waiting`` (it activates if the missing service is provided later).
-"""
 
 from __future__ import annotations
 
@@ -32,7 +15,6 @@ _PATCH_KEYS = ("plugin", "config", "disabled")
 
 
 def load_patch_file(path: Path | str) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Read a user harness patch without making startup fragile."""
     source = Path(path)
     if not source.is_file():
         return {}, []
@@ -60,7 +42,6 @@ def load_patch_file(path: Path | str) -> tuple[dict[str, dict[str, Any]], list[s
 
 @dataclass(frozen=True)
 class BundleRow:
-    """One composition row: a plugin name plus its config overlay."""
 
     id: str
     plugin: str
@@ -70,12 +51,11 @@ class BundleRow:
 
 @dataclass
 class RowReport:
-    """The outcome of one row, as reported by boot and dump_config."""
 
     id: str
     plugin: str
     config: dict[str, Any]
-    status: str  # active | waiting | error | disabled | unmounted
+    status: str
     resolved_config: dict[str, Any] = field(default_factory=dict)
     error: str = ""
     missing_deps: tuple[str, ...] = ()
@@ -91,14 +71,12 @@ class RowReport:
 
 @dataclass
 class BootReport:
-    """A booted tree: the context plus per-row honest outcomes."""
 
     ctx: Context
     rows: list[RowReport]
     warnings: list[str]
 
     def dump_config(self) -> list[dict[str, Any]]:
-        """The composed tree as JSON-able rows (the ``--dump-config`` idea)."""
         for row in self.rows:
             row.refresh()
         return [
@@ -115,7 +93,6 @@ class BootReport:
         ]
 
     def unmount(self, row_id: str) -> bool:
-        """Unload one active/waiting plugin row without stopping the tree."""
         for row in self.rows:
             if row.id != row_id or row.mount_result is None:
                 continue
@@ -154,15 +131,6 @@ def boot(
     context: Context | None = None,
     preloaded_plugins: list[PluginSpec] | tuple[PluginSpec, ...] = (),
 ) -> BootReport:
-    """Compose and boot the plugin tree; never raises for bad rows.
-
-    Order: core services are provided first (duplicate keys fail loud),
-    ``plugin_dir`` is discovered for name resolution, bundle rows and
-    runtime-matching automatic user rows are composed, then patch entries
-    apply (by id: replace whole config / disable / re-point plugin; unknown
-    ids insert new rows). The final rows mount in order. A row error never
-    prevents the remaining rows from booting.
-    """
     ctx = context if context is not None else Context()
     for key, service in (core or {}).items():
         ctx.provide(key, service)
@@ -265,8 +233,6 @@ def boot(
             rows.append(inserted)
             row_by_id[row_id] = inserted
 
-    # Re-pointing an explicit bundle row to a user plugin replaces its auto
-    # row instead of activating the same plugin twice.
     explicit_plugins = {
         row.plugin for row in rows if not row.id.startswith("user:")
     }

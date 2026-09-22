@@ -1,15 +1,3 @@
-"""Append-only, event-sourced Agent sessions.
-
-The contract and failure semantics are adapted from DeepSeek Harness's
-``packages/core/session`` (MIT): the raw log is authoritative, model history
-is a projection of explicit surface events, compaction appends a replacement
-instead of rewriting history, and interrupted tool calls are repaired with
-different messages for "not started" and "outcome unknown".
-
-Magic Pointer owns short and long-running desktop tasks. This stdlib JSONL
-store carries the durable history and operation recovery contract:
-``model-visible means logged``.
-"""
 
 from __future__ import annotations
 
@@ -60,10 +48,6 @@ _ZERO_HASH = "0" * 64
 _PROCESS_FILE_LOCKS: dict[str, threading.RLock] = {}
 _PROCESS_FILE_LOCKS_GUARD = threading.Lock()
 
-# Turn endings that may leave steps undone. The pending-work marker is
-# derived from these (Hermes resume_pending semantics); everything else
-# (completed / awaiting_user / local_action / stop_hook) finished its turn
-# honestly.
 _UNFINISHED_TURN_REASONS = frozenset({
     "budget_exhausted",
     "stalled",
@@ -82,9 +66,6 @@ _TOOL_OUTCOME_UNKNOWN = (
     "TOOL_OUTCOME_UNKNOWN: The tool call was interrupted after it was "
     "recorded, but no result was durably recorded. Its outcome is unknown. "
 )
-# What the model may do next depends on what the interrupted step could have
-# changed, so the recovery policy is stated instead of one sentence that has to
-# cover a re-read and an irreversible send at the same time.
 _REPAIR_GUIDANCE = {
     RecoveryPolicy.SAFE_REPLAY: "这一步只读，没有外部副作用，可以直接重做。",
     RecoveryPolicy.VERIFY_BEFORE_RETRY: (
@@ -99,7 +80,6 @@ _REPAIR_GUIDANCE = {
 
 @dataclass(frozen=True, slots=True)
 class InboxClaim:
-    """One atomic claim projected into instruction and data messages."""
 
     input_ids: tuple[str, ...]
     instructions: tuple[str, ...]
@@ -163,7 +143,6 @@ def _task_input_messages(items) -> tuple[list[AgentMessage], tuple[str, ...], tu
 
 @contextmanager
 def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
-    """Portable advisory lock, coordinated across local store instances."""
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_key = str(lock_path.resolve())
     with _PROCESS_FILE_LOCKS_GUARD:
@@ -193,19 +172,19 @@ def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
 
 
 class SessionCorruptionError(RuntimeError):
-    """The durable log cannot be reconstructed without inventing history."""
+    pass
 
 
 class ModelSurfaceMismatch(RuntimeError):
-    """A caller tried to send model messages not projected by the log."""
+    pass
 
 
 class SessionForkError(RuntimeError):
-    """A requested fork boundary is not a stable completed-turn boundary."""
+    pass
 
 
 class InboxClaimConflict(RuntimeError):
-    """Another process consumed the same durable steer first."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,12 +237,10 @@ def _canonical_bytes(value: Any) -> bytes:
 
 
 def _snapshot_json(value: Any) -> Any:
-    """Validate and detach one durable value through a single JSON form."""
     return json.loads(_canonical_bytes(value).decode("utf-8"))
 
 
 def _normalized_plan(value: Any) -> list[dict[str, str]]:
-    """Return the bounded TodoStore wire form for one complete plan."""
     from app.agent_runtime.todo_store import TodoStore
 
     if not isinstance(value, list):
@@ -281,12 +258,6 @@ def _event_type_and_data(event: Any) -> tuple[str, dict[str, Any]]:
 
 
 def project_plan(events: Sequence[Any]) -> list[dict[str, str]]:
-    """Project the newest valid complete task plan.
-
-    New sessions use the explicit ``plan/updated`` event. Sessions written by
-    older builds only have Todo's JSON tool result, so that is a read-only
-    compatibility source until the next update writes a first-class event.
-    """
     materialized = tuple(events)
     for event in reversed(materialized):
         event_type, data = _event_type_and_data(event)
@@ -315,7 +286,6 @@ def project_plan(events: Sequence[Any]) -> list[dict[str, str]]:
 
 
 def hydrate_todo_store(session: Any, todo_store: Any) -> list[dict[str, str]]:
-    """Restore TodoStore without making hydration look like a user update."""
     plan = project_plan(session.events)
     missing = object()
     callback = getattr(todo_store, "on_update", missing)
@@ -335,7 +305,6 @@ def bind_todo_store(
     *,
     on_update: Any = None,
 ) -> list[dict[str, str]]:
-    """Hydrate a task-local TodoStore, then persist every real replacement."""
     hydrated = hydrate_todo_store(session, todo_store)
 
     def persist(snapshot: Any) -> None:
@@ -344,9 +313,6 @@ def bind_todo_store(
         if on_update is not None:
             with suppress(Exception):
                 on_update([dict(item) for item in normalized])
-            # UI progress is a best-effort projection. The append-only session
-            # is authoritative, so a closed renderer must not make the Todo
-            # tool roll a successfully persisted plan backward.
 
     todo_store.on_update = persist
     if hydrated and on_update is not None:
@@ -435,7 +401,6 @@ def _surface_hash(messages: Sequence[AgentMessage]) -> str:
 
 
 class EventSession:
-    """One local append-only JSONL session and its model-surface projection."""
 
     def __init__(
         self,
@@ -452,11 +417,6 @@ class EventSession:
         self._lock = threading.RLock()
         self._turn_lease_context: Any | None = None
         self.repaired_tail_bytes = repaired_tail_bytes
-        # Bytes of the log this handle has already verified. A long job
-        # appends thousands of events; re-reading and re-verifying the whole
-        # hash chain on every append is O(n^2) IO that grows with the very
-        # history the session protects. Unchanged files cost one stat;
-        # external growth is adopted incrementally (Codex rollout pattern).
         try:
             self._known_size = path.stat().st_size
         except OSError:
@@ -469,12 +429,9 @@ class EventSession:
 
     @property
     def events(self) -> tuple[SessionEvent, ...]:
-        # SessionEvent is frozen but its JSON ``data`` payload is not.
-        # Never expose the authoritative in-memory hash-chain objects.
         return tuple(copy.deepcopy(self._events))
 
     def permission_mode(self, fallback: str) -> str:
-        """Read current controls without copying the full task history per tool."""
         with self._lock:
             for event in reversed(self._events):
                 if event.type == 'permission/mode':
@@ -508,17 +465,9 @@ class EventSession:
         return highest + 1
 
     def derive_messages(self) -> list[AgentMessage]:
-        """Return a deep snapshot projected only from explicit events.
-
-        ``AgentMessage`` is frozen, but provider tool-call arguments contain
-        ordinary nested dictionaries.  A shallow list copy would let an
-        adapter mutate the authoritative in-memory projection without any
-        corresponding durable event.
-        """
         return copy.deepcopy(self._surface)
 
     def surface_snapshot(self) -> tuple[list[AgentMessage], str]:
-        """Atomically refresh and snapshot the current model surface."""
         with self._lock, self._file_lock():
             self._refresh_from_disk()
             snapshot = copy.deepcopy(self._surface)
@@ -574,7 +523,6 @@ class EventSession:
                 prev_hash=prev_hash,
                 hash=_event_hash(core),
             )
-            # Validate the candidate surface transition before durability.
             candidate_surface = self._project_event(list(self._surface), event)
             line = _canonical_bytes(event.to_dict()) + b"\n"
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -592,20 +540,11 @@ class EventSession:
 
     @contextmanager
     def _file_lock(self) -> Iterator[None]:
-        """Serialize hash-chain extension across independent processes."""
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with _exclusive_file_lock(lock_path):
             yield
 
     def _refresh_from_disk(self) -> None:
-        """Adopt the latest verified chain before deriving the next event.
-
-        Fast path: the file is exactly as long as the bytes this handle has
-        already verified, so nobody else wrote and one stat settles it.
-        Growth is adopted line-by-line, chaining onto the in-memory hash
-        chain; only shrinkage, crash debris or a parse failure falls back to
-        the full repairing load.
-        """
         if not self.path.exists():
             return
         try:
@@ -629,14 +568,6 @@ class EventSession:
             self._known_size = 0
 
     def _adopt_incremental(self, size: int) -> bool:
-        """Adopt only the bytes beyond the already-verified prefix.
-
-        Returns False when the new tail cannot be chained (crash debris,
-        invalid JSON, hash mismatch); the caller then repairs via the full
-        load. The verification strength is identical to a full read: every
-        adopted line must extend the in-memory chain with contiguous seq and
-        matching prevHash/hash.
-        """
         try:
             with self.path.open("rb") as handle:
                 handle.seek(self._known_size)
@@ -696,7 +627,6 @@ class EventSession:
     def _validate_append_transition(
         self, event_type: str, data: Mapping[str, Any]
     ) -> None:
-        """Recheck turn invariants after refreshing under the file lock."""
         if not self._events and event_type != "session/created":
             raise SessionCorruptionError("first event must be session/created")
         if event_type == 'user_input/answered':
@@ -1071,8 +1001,6 @@ class EventSession:
                     continue
                 pending = {**normalize_pending_input(value), 'requestId': message.tool_call_id}
                 if pending.get('kind') == 'permission':
-                    # Bind a one-time approval to the actual blocked action,
-                    # when the model has already attempted it before asking.
                     blocked = None
                     for item in reversed(self._surface):
                         if item.role is Role.USER and not item.injected:
@@ -1105,7 +1033,6 @@ class EventSession:
         })
 
     def approved_permission_calls(self) -> list[dict[str, Any]]:
-        """Unstarted exact approvals; the operation journal prevents replay."""
         started = {event.data.get('callId') for event in self._events if event.type == 'operation/prepared'}
         started.update('approval-' + request_id for event in self._events if event.type == 'permission/cancelled' for request_id in event.data['requestIds'])
         calls = []
@@ -1126,7 +1053,6 @@ class EventSession:
         return calls
 
     def cancel_unstarted_permissions(self) -> None:
-        """A newer user instruction replaces unstarted work, including approval."""
         answered = {event.data['requestId'] for event in self._events if event.type == 'user_input/answered'}
         answered.update(request_id for event in self._events if event.type == 'permission/cancelled' for request_id in event.data['requestIds'])
         request_ids = [event.data['requestId'] for event in self._events
@@ -1139,7 +1065,6 @@ class EventSession:
         self,
         plan: Sequence[Mapping[str, Any]],
     ) -> SessionEvent:
-        """Persist one complete, bounded plan replacement."""
         normalized = _normalized_plan(list(plan))
         return self.append(
             "plan/updated",
@@ -1168,7 +1093,6 @@ class EventSession:
         expected_surface_hash: str,
         reason: str,
     ) -> SessionEvent | None:
-        """Compare-and-swap a compacted surface without erasing new turns."""
         try:
             return self.append(
                 "surface/replace",
@@ -1187,11 +1111,6 @@ class EventSession:
         text: str,
         sections: Sequence[tuple[str, str]],
     ) -> dict[str, Any]:
-        """Select once before client creation; a resume reports drift, never replaces it.
-
-        Existing request headers are also authoritative evidence. Old sessions
-        cannot recover section identities that were never recorded.
-        """
         current = {
             "systemPrompt": text,
             "systemPromptHash": hashlib.sha256(_canonical_bytes(text)).hexdigest(),
@@ -1291,7 +1210,6 @@ class EventSession:
         self,
         metadata: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
-        """Bind one public ledger identity and its grounded input metadata."""
         turn = self.open_turn
         if turn is None:
             raise RuntimeError("interaction start requires an open turn")
@@ -1357,7 +1275,6 @@ class EventSession:
         latency_ms: float | None,
         outcome: str | None = None,
     ) -> SessionEvent:
-        """Settle an operation and append its TOOL message in one event."""
         if self.open_turn is None:
             raise RuntimeError("tool settlement requires an open turn")
         if message.role is not Role.TOOL:
@@ -1402,12 +1319,6 @@ class EventSession:
         return results
 
     def resolve_operation_recovery(self, operation_id: str, verification_call_id: str, *, confirmed: bool) -> SessionEvent:
-        """Record a human decision after showing actual readback evidence.
-
-        This is deliberately a UI/session command, never a model tool. The
-        original unknown outcome remains in the log; only its retry barrier
-        is resolved. A new interrupted attempt creates its own barrier.
-        """
         return self.append("operation/recovery_resolved", {
             "operationId": str(operation_id), "verificationCallId": str(verification_call_id),
             "confirmed": confirmed is True,
@@ -1421,7 +1332,6 @@ class EventSession:
         message_id: str | None = None,
         payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
-        """Persist one cross-process steer without mutating model history yet."""
         data: dict[str, Any] = {
             "messageId": str(message_id or uuid.uuid4()),
             "target": str(target),
@@ -1439,7 +1349,6 @@ class EventSession:
         return pending_inbox(self._events, target)
 
     def claim_task_inputs(self, target: str) -> InboxClaim:
-        """Atomically consume steer text, material payload and context update."""
         from app.context_pack.source_store import reference_revision
         from app.context_pack.sources import TaskInput
 
@@ -1483,7 +1392,6 @@ class EventSession:
         )
 
     def claim_inbox(self, target: str) -> list[str]:
-        """Legacy text projection; structured callers use claim_task_inputs."""
         return list(self.claim_task_inputs(target).instructions)
 
     def record_model_response(
@@ -1495,7 +1403,6 @@ class EventSession:
         output_text_chars: int,
         tool_call_count: int,
     ) -> SessionEvent:
-        """Record response metadata without duplicating model-visible text."""
         if self.open_turn is None:
             raise RuntimeError("model response requires an open turn")
         bounded_usage = {
@@ -1527,7 +1434,6 @@ class EventSession:
         title: str = "",
         patch_payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
-        """Persist an explicitly created standalone deliverable as revision 1."""
         text = str(content or "")
         artifact_id = uuid.uuid4().hex
         resolved_kind = str(kind or "").strip()
@@ -1565,7 +1471,6 @@ class EventSession:
         title: str | None = None,
         patch_payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
-        """Record a user or agent edit. Later edits void a previous approval."""
         text = str(content or "")
         current = {
             item.artifact_id: item for item in project_artifacts(self.events)
@@ -1614,7 +1519,6 @@ class EventSession:
         *,
         revision: int,
     ) -> SessionEvent:
-        """Approve one exact revision. The hash is what the approval is of."""
         current = {
             item.artifact_id: item for item in project_artifacts(self.events)
         }.get(str(artifact_id))
@@ -1632,7 +1536,6 @@ class EventSession:
         )
 
     def record_receipt(self, receipt: Receipt) -> SessionEvent:
-        """Persist the stop proof. Not model-visible."""
         failure = receipt.failure_type
         return self.append(
             "receipt/issued",
@@ -1651,14 +1554,6 @@ class EventSession:
         )
 
     def request_cancel(self, *, turn: int | None = None, reason: str = "") -> SessionEvent:
-        """Persist a graceful-cancel request for the open turn.
-
-        The request is durable so a cancel that lands while the loop is mid
-        round is not lost: the running loop polls it at the next round
-        boundary and terminates as ``user_interrupt`` (Receipt issued, turn
-        closed) instead of being killed mid-write. Scoped to the requested
-        turn so a stale request can never interrupt a later turn.
-        """
         opened = self.open_turn
         if opened is None:
             raise RuntimeError("cancel request requires an open turn")
@@ -1677,14 +1572,12 @@ class EventSession:
         )
 
     def pending_cancel_request(self, turn: int | None = None) -> bool:
-        """True when the given (default: open) turn has an unclaimed cancel."""
         self._synchronize()
         return self._pending_cancel_request_locked(
             self.open_turn if turn is None else int(turn)
         )
 
     def _pending_cancel_request_locked(self, target: int) -> bool:
-        """Scan without syncing: safe inside append's already-held lock."""
         consumed = {
             str(event.data.get("requestId") or "")
             for event in self._events
@@ -1698,7 +1591,6 @@ class EventSession:
         )
 
     def consume_cancel_request(self, *, turn: int | None = None) -> bool:
-        """Claim the pending cancel for this turn so it fires at most once."""
         opened = self.open_turn
         target = int(opened if turn is None else turn)
         if not self.pending_cancel_request(target):
@@ -1719,15 +1611,6 @@ class EventSession:
         return True
 
     def has_pending_work(self) -> bool:
-        """True when the latest finished turn ended without finishing the job.
-
-        Derived from the durable turn/end reason — no second marker to keep
-        in sync. A budget cut, a stall, a provider failure or a user
-        interrupt may all leave steps undone (Hermes' ``resume_pending``
-        semantics); a natural completion, an awaiting-user pause or a local
-        action do not. The GUI uses this to offer continuation instead of
-        silently forgetting an unfinished task after a restart.
-        """
         self._synchronize()
         for event in reversed(self._events):
             if event.type == "turn/end":
@@ -1738,16 +1621,6 @@ class EventSession:
         return False
 
     def interrupted_turn_summary(self) -> dict[str, Any] | None:
-        """Harness-v2 resume reduction over the last finished turn.
-
-        Returns None when the newest turn completed naturally, is still
-        awaiting user input, or the session has no turns. Otherwise returns
-        the unfinished objective plus the current durable plan, sources,
-        references, artifact revisions, pending TaskInput and risk-aware
-        operation recovery state. One-shot by construction: the next turn
-        appended after this read becomes the newest turn and the reduction
-        moves past it.
-        """
         self._synchronize()
         last_end = None
         for event in reversed(self._events):
@@ -1796,9 +1669,6 @@ class EventSession:
         from app.context_pack.source_scope import scope_from_events
         from app.context_pack.source_store import task_references, task_sources
 
-        # Availability belongs to the live bridge: the durable reducer cannot
-        # know whether a Figma document was re-paired or a browser target was
-        # reacquired after restart. It exposes only source identity facts.
         sources = [item.to_model_dict() for item in task_sources(self._events)]
         references = [
             item.to_model_dict()
@@ -1845,7 +1715,6 @@ class EventSession:
         }
 
     def repair_interrupted_turn(self) -> int:
-        """Append risk-aware results for unresolved calls, then close the turn."""
         if self._turn_lease_context is None:
             self._acquire_turn_lease()
         try:
@@ -1871,10 +1740,6 @@ class EventSession:
                     None,
                 )
 
-            # Match call/result occurrences in event order, only inside the
-            # interrupted user turn. Provider-generated ids are not trusted to
-            # be globally unique (some gateways historically emitted call_0
-            # every round), so a set over the whole surface is insufficient.
             for event in self._events[start_index + 1 :]:
                 if event.surface_op in {"append", "append_many"}:
                     surface_messages = (
@@ -1920,10 +1785,6 @@ class EventSession:
                     ),
                     None,
                 )
-                # The prose the model reads and the outcome we persist must
-                # come from the same fact. A prepared-but-never-dispatched call
-                # is safe to replay; telling the model to verify external state
-                # first would make it refuse a retry the record permits.
                 dispatched = (
                     operation.dispatched if operation is not None else call["started"]
                 )
@@ -2006,13 +1867,6 @@ class EventSession:
 
 
 def cancel_interrupt_check(session: EventSession):
-    """Pollable graceful-cancel check for :class:`LoopParams`.
-
-    Returns an ``interrupt_check`` callable that consumes the open turn's
-    pending cancel request; the loop then terminates as ``user_interrupt``
-    with a Receipt instead of being killed mid-write. Bridges pass this so
-    the GUI stop button gets the graceful path (O3).
-    """
 
     def check() -> bool:
         turn = session.open_turn
@@ -2026,7 +1880,6 @@ def cancel_interrupt_check(session: EventSession):
 
 
 class FileSessionStore:
-    """Session factory/persistence seam backed by one hash-chained JSONL file."""
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
@@ -2076,9 +1929,6 @@ class FileSessionStore:
             try:
                 return self.create(session_id)
             except FileExistsError:
-                # Another bridge created the same conversation between our
-                # missing-file read and create attempt. Adopt its verified
-                # log instead of failing a perfectly valid user turn.
                 return self.resume(session_id, repair=repair)
 
     def fork(self, source_id: str, child_id: str, *, through_turn: int | None = None) -> EventSession:
@@ -2116,15 +1966,11 @@ class FileSessionStore:
                 messages, _, _ = _task_input_messages(selected)
                 data["messages"] = [message.to_dict() for message in messages]
             elif event.type == "model/request":
-                # Rebound TaskInput messages belong to the child's surface.
-                # Its request audit must describe that surface as well.
                 messages = child.derive_messages()
                 data["messageCount"] = len(messages)
                 data["messagesHash"] = _surface_hash(messages)
             if context_update is not None:
                 context_update["taskId"] = child.id
-                # Only task ownership changes. Source/document IDs, reference
-                # ordinals and grant restrictions keep their original meaning.
                 for item in (
                     *context_update.get("sources", []),
                     *context_update.get("scopeGrants", []),
@@ -2162,8 +2008,6 @@ class FileSessionStore:
                     os.fsync(handle.fileno())
                 raw = repaired
             else:
-                # A complete final record missing only its delimiter is safe to
-                # normalize; future O_APPEND writes must start on a new line.
                 with path.open("ab") as handle:
                     handle.write(b"\n")
                     handle.flush()

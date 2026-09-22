@@ -1,11 +1,3 @@
-"""Build the WGC capture tool with the machine-local csc (Phase B).
-
-The tool is scaffold-only on this machine (no WinMD projection facades, no
-dotnet SDK, no Windows SDK headers for the D3D11 vtable pass), so this
-build succeeds syntactically but the tool answers rc=2 with the honest
-"scaffold-only" note — the CaptureProvider reports ``wgc_tool_missing``
-either way until a compile+live-capture verification lands.
-"""
 
 from __future__ import annotations
 

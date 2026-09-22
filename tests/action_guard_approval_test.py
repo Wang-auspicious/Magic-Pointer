@@ -1,14 +1,3 @@
-"""Tests for the approval ledger (harness gap review L5 / L7.3, task B3).
-
-Covers: the requires_approval effect matrix, request() registration as
-PENDING with full fields, approve()/reject() transitions with human-only
-approvers (NON_HUMAN_APPROVERS blacklist — L5: confirmation cannot be
-triggered by the model), idempotency, EXPIRED invalidation when the target
-identity/content hash changed, the approve_reversible convenience path for
-effects that do not require approval, unknown-id failures, pending /
-all / records audit views, origin field passthrough (L7 action-origin
-audit), request validation and thread safety.
-"""
 
 from __future__ import annotations
 
@@ -379,7 +368,7 @@ class TestConcurrency:
                 )
                 approved = approval.approve(request.request_id, by="human-alice")
                 ids.append(approved.request_id)
-            except BaseException as exc:  # pragma: no cover - failure path
+            except BaseException as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=worker) for _ in range(8)]

@@ -58,9 +58,6 @@ interface RunOptions {
   args?: string[];
   spawnOptions?: SpawnOptions;
   input?: unknown;
-  /** How long the bridge may stay *silent* before it counts as hung. Every
-   * chunk of stdout/stderr re-arms it, so an agent that keeps working keeps
-   * running. */
   timeoutMs?: number;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
@@ -103,8 +100,6 @@ function createPythonBridgeRunner({
     const log: (message: string) => void = typeof logger === 'function' ? logger : () => {};
     const complete: (result: BridgeResult) => void =
       typeof onComplete === 'function' ? onComplete : () => {};
-    // Progress is opt-in: without a consumer no splitter is built and stderr
-    // handling is byte-for-byte what it was before.
     const feedProgress =
       typeof onProgress === 'function'
         ? createProgressLineSplitter((record) => {
@@ -148,10 +143,6 @@ function createPythonBridgeRunner({
       );
     };
     const append = (stream: 'stdout' | 'stderr', chunk: unknown): void => {
-      // Any output is proof of life. The deadline measures silence, not
-      // elapsed time: a wall-clock kill caps how long a task may take
-      // regardless of whether it is making progress, which is the wrong
-      // question to ask of an agent that may legitimately run for hours.
       armIdleDeadline();
       const text = String(chunk);
       const bytes = Buffer.byteLength(text, 'utf8');
@@ -164,8 +155,6 @@ function createPythonBridgeRunner({
         stdout += text;
       } else {
         if (feedProgress) feedProgress(text);
-        // Progress has already been consumed. Retain a bounded diagnostic tail
-        // rather than imposing a lifetime byte quota on a long-running task.
         stderr = Buffer.from(stderr + text, 'utf8').subarray(-maxStderrBytes).toString('utf8');
       }
     };
@@ -188,9 +177,6 @@ function createPythonBridgeRunner({
     child.on('close', (code) => {
       if (delivered) return;
       if (!stdout.trim()) {
-        // 进程死了却一个字都没写：把 stderr 尾巴一起带出来，否则 crash
-        // traceback（ModuleNotFoundError/语法错误/启动即崩）永远不可见——
-        // 1.0.24 的 bridge_no_output 就这样盲修了一小时。
         const stderrTail = stderr.slice(-800).trim();
         log(`bridge no-output stderr tail code=${code}: ${stderrTail || '(empty)'}`);
         deliver({ ok: false, error: 'bridge_no_output', code, stderrTail });

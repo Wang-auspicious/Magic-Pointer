@@ -1,5 +1,4 @@
 'use strict';
-// Real Chromium clicks against the shipped Stage and shared decision form.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');

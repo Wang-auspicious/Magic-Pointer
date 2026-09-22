@@ -1,14 +1,3 @@
-"""Coding tool surface for the agent loop (CC/Codex contract port).
-
-The real-machine audit found the loop had 22 tools, ALL desktop/perception —
-zero file/shell/code tools, so the harness could not fix a bug in any repo.
-This module ports the mature contracts: CC's Read/Edit (exact-unique-match),
-Codex's workspace confinement, Hermes' bounded shell output.
-
-Effects follow the existing permission ladder: reads are free, file writes
-are reversible_write (allowed in default), shell is local_irreversible
-(needs full-access/bypass — same shape as Codex sandbox modes).
-"""
 
 from __future__ import annotations
 
@@ -46,7 +35,6 @@ def _result_text(result) -> str:
     return str(value.value if hasattr(value, "value") else value)
 
 
-# --- 工具面 ------------------------------------------------------------------
 
 
 def test_registers_the_coding_tool_surface(registry: ToolRegistry) -> None:
@@ -79,11 +67,9 @@ def test_effects_follow_the_permission_ladder(registry: ToolRegistry) -> None:
     assert registry.get("Glob").effect.value == "read"
     assert registry.get("Write").effect.value == "reversible_write"
     assert registry.get("Edit").effect.value == "reversible_write"
-    # shell 是不可逆本地操作：default 模式会被 ask 门拦下，bypass 才放行
     assert registry.get("Bash").effect.value == "local_irreversible"
 
 
-# --- Read ----------------------------------------------------------------
 
 
 def test_read_file_returns_numbered_lines(registry: ToolRegistry, ws: Path) -> None:
@@ -118,7 +104,6 @@ def test_paths_outside_workspace_are_refused(registry: ToolRegistry, tmp_path: P
     assert "workspace" in str(result.error_message or "").casefold()
 
 
-# --- Write ---------------------------------------------------------------
 
 
 def test_write_file_creates_and_reports_bytes(registry: ToolRegistry, ws: Path) -> None:
@@ -146,7 +131,6 @@ def test_edit_file_requires_exact_unique_match(registry: ToolRegistry, ws: Path)
     assert missing.is_error is True
     assert "not found" in str(missing.error_message or "").casefold()
 
-    # 先把文件改成含两处相同文本，再验证非 replace_all 的唯一性拒绝
     registry.execute_tool(
         "Write", {"path": "a.py", "content": "y = 3\ny = 3\n"}
     )
@@ -158,7 +142,6 @@ def test_edit_file_requires_exact_unique_match(registry: ToolRegistry, ws: Path)
     assert "unique" in str(dup.error_message or "").casefold()
 
 
-# --- Glob / Grep --------------------------------------------------------------
 
 
 def test_glob_finds_files_by_pattern(registry: ToolRegistry, ws: Path) -> None:
@@ -183,7 +166,7 @@ def test_grep_bounds_results(registry: ToolRegistry, ws: Path) -> None:
     (ws / "many.txt").write_text("hit\n" * 500, encoding="utf-8")
     result = registry.execute_tool("Grep", {"pattern": "hit", "max_results": 10})
     text = str(result.value.value if hasattr(result.value, "value") else result.value)
-    assert text.count("hit") <= 12  # 10 条 + 截断说明的余量
+    assert text.count("hit") <= 12
 
 
 def test_grep_case_sensitive_identifier_search(registry: ToolRegistry, ws: Path) -> None:
@@ -300,7 +283,6 @@ def test_grep_rg_and_python_fallback_share_output_semantics(
         assert _result_text(rg_result) == _result_text(python_result)
 
 
-# --- Bash ----------------------------------------------------------------
 
 
 def test_run_command_executes_and_captures_output(registry: ToolRegistry, ws: Path) -> None:
@@ -329,12 +311,9 @@ def test_run_command_timeout_kills_the_process(registry: ToolRegistry) -> None:
     assert result.is_error is True
 
 
-# --- Bash effect_classifier (Codex/CC allowlist) --------------------
 
 
 def test_run_command_classifies_pure_read_commands_as_read() -> None:
-    """``_classify_command_effect`` 是 Bash 喂给 effect_for 的分类器;
-    测试它本身,避免和 registry 的去重规则打架。"""
     from app.agent_runtime.coding_tools import _classify_command_effect
     from app.agent_runtime.tool_registry import Effect
 
@@ -342,22 +321,16 @@ def test_run_command_classifies_pure_read_commands_as_read() -> None:
     for cmd in pure_reads:
         assert _classify_command_effect({"command": cmd}) is Effect.READ, cmd
 
-    # 副作用命令保持 local_irreversible
     irreversible = ["npm install", "git push", "python -m pytest", "npm test"]
     for cmd in irreversible:
         assert _classify_command_effect({"command": cmd}) is Effect.LOCAL_IRREVERSIBLE, cmd
 
-    # 管道 / 链式 shell 走 worst-case
     chained = ["ls | head", "ls && rm -rf foo", "ls ; rm a"]
     for cmd in chained:
         assert _classify_command_effect({"command": cmd}) is Effect.LOCAL_IRREVERSIBLE, cmd
 
 
 def test_edit_file_preserves_crlf_but_matches_lf(registry: ToolRegistry, ws: Path) -> None:
-    """Edit 契约：读入时 CRLF→LF 归一后再匹配（模型发的
-    old_string 永远是 \n），Windows 的 CRLF 文件不再必然 not found；
-    写回沿用文件自身的换行。早期实现写回恒 LF——一次编辑就把整个
-    Windows 仓库的 CRLF 改写成 LF，git diff 里全是换行噪音。"""
     from app.agent_runtime.coding_tools import _detect_newline
 
     (ws / "win.py").write_bytes(b"x = 1\r\ny = 2\r\n")
@@ -370,12 +343,9 @@ def test_edit_file_preserves_crlf_but_matches_lf(registry: ToolRegistry, ws: Pat
     assert (ws / "win.py").read_bytes() == b"x = 1\r\ny = 3\r\n"
 
 
-# --- Edit 弯引号归一化匹配（对齐 CC FileEditTool/utils.ts）------------
 
 
 def test_edit_file_normalizes_curly_quotes_to_match(registry: ToolRegistry, ws: Path) -> None:
-    """模型经常把文件里的直引号写成弯引号（或反之）。精确匹配失败后
-    归一化引号再匹配；命中时替换文件里的**真实**子串，而不是归一化后的。"""
     (ws / "a.py").write_text('msg = "hello"\n', encoding="utf-8")
     registry.execute_tool("Read", {"path": "a.py"})
     ok = registry.execute_tool(
@@ -389,8 +359,6 @@ def test_edit_file_normalizes_curly_quotes_to_match(registry: ToolRegistry, ws: 
 def test_edit_file_curly_quotes_match_keeps_actual_quotes_in_new_content_position(
     registry: ToolRegistry, ws: Path
 ) -> None:
-    """反向：文件里是弯引号、模型发直引号，也应命中；且 new_string 的引号
-    跟随文件的花引号风格（CC preserveQuoteStyle：文件排版胜过模型输入）。"""
     (ws / "b.md").write_text("say \u201cfoo\u201d now\n", encoding="utf-8")
     registry.execute_tool("Read", {"path": "b.md"})
     ok = registry.execute_tool(
@@ -427,12 +395,9 @@ def test_edit_file_genuinely_missing_text_still_fails(
     assert "not found" in str(miss.error_message or "").casefold()
 
 
-# --- Bash 退出码语义（对齐 CC commandSemantics）-----------------------
 
 
 def test_run_command_grep_no_match_is_annotated_not_an_error(registry: ToolRegistry, ws: Path) -> None:
-    """Grep/rg/find/diff/test 等退出码 1 是“没找到/有差异”，不是执行错误。
-    不加语义注释，模型会把无命中当成失败，下一轮胡乱重试。"""
     (ws / "a.txt").write_text("hello\n", encoding="utf-8")
     result = registry.execute_tool(
         "Bash",

@@ -9,26 +9,20 @@ html, body {
   font-family: var(--mp-font-ui);
 }
 
-/* Keep only the Magic Pointer cursor visible. Native hand/I-beam cursors look like visual glitches over the custom pointer. */
 *, input, button, textarea, [data-drag-handle="true"], .result, .result * {
   cursor: none !important;
 }
 
 body[data-mode='gesture'] {
-  background: rgba(0, 0, 0, 0.001);  /* non-transparent hit target for exclusive overlay */
+  background: rgba(0, 0, 0, 0.001);  
 }
 body[data-mode='gesture'],
 body[data-mode='gesture'] * {
-  /* A real Windows CUR is moved by the OS cursor path. Unlike a renderer DOM
-     image, it cannot trail the hardware pointer under compositor/IPC load. */
   cursor: url('./assets/armed-cursor.cur') 3 3,
           url('./assets/armed-cursor.svg') 3 3,
           crosshair !important;
 }
 
-/* One persistent compositor layer for answer guidance. Repainting a blurred
-   bitmap into the transparent trail canvas leaves backing-store ghosts on
-   Windows; moving this single DOM node produces one clean flight. */
 #guide-triangle {
   position: fixed;
   left: 0;
@@ -375,10 +369,6 @@ body[data-mode='observer'] * {
   line-height: 1.35;
 }
 
-/* ---- Structured element scan ---------------------------------------------
-   Snapshot completion selects the UIA element nearest the gesture. A single
-   bright segment travels its perimeter once, then the outline dissolves. No
-   labels, no filled pink rectangles, no accessibility tree dumped on screen. */
 #element-ghosts {
   position: fixed;
   inset: 0;

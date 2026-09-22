@@ -11,7 +11,6 @@ JsonDict = dict[str, Any]
 
 @dataclass(frozen=True)
 class GroundingTrace:
-    """Debug metadata emitted by a grounder without coupling callers to internals."""
 
     adapter: str
     messages: list[str] = field(default_factory=list)
@@ -27,7 +26,6 @@ class GroundingTrace:
 
 @dataclass(frozen=True)
 class GroundingBundle:
-    """The object-level answer to 'what did the user point at?'."""
 
     selection: PointerSelection
     objects: list[GroundedObject] = field(default_factory=list)
@@ -52,10 +50,6 @@ class GroundingBundle:
 
 
 class BaseGrounder(ABC):
-    """Pure interface for local object grounding.
-
-    Grounders may inspect OS/app state, but they must not execute actions.
-    """
 
     name = "base"
 

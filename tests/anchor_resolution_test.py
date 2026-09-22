@@ -1,12 +1,3 @@
-"""Tests for the AnchorResolver degradation chain (harness gap review L3).
-
-Covers the resolve() ladder exactly as reviewed:
-app_identity (most stable) -> structural_path -> content_hash -> spatial
-(last resort), with ambiguous/changed as first-class outcomes. All probes are
-fake: nothing touches a real desktop, window, or UI automation API. Probe
-call counters also pin down that degradation is lazy (later probes are only
-invoked when earlier tiers fail).
-"""
 
 from app.anchor import (
     AppIdentity,
@@ -40,7 +31,6 @@ def make_anchor(**overrides):
 
 
 class RecordingProbe:
-    """Fake AnchorProbe: configurable outcomes plus per-method call counters."""
 
     def __init__(
         self,
@@ -83,7 +73,6 @@ class RecordingProbe:
 
 
 class AppMismatchProbe:
-    """App identity fails; any later probe call is a bug to be asserted."""
 
     def __init__(self) -> None:
         self.calls = {"app_matches": 0, "structure_candidates": 0,

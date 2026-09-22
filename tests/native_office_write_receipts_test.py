@@ -1,4 +1,3 @@
-"""Execute production PowerShell bodies against small native-property stand-ins."""
 import json
 import os
 import pytest

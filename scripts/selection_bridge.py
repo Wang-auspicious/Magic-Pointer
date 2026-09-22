@@ -23,12 +23,6 @@ from scripts.bridge_progress import PhaseClock, null_clock
 from app.agent_runtime.activity_projection import RuntimeActivitySink, completed_trajectory
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
-from app.actions.shopping_list import (
-    make_shopping_list_add_many_proposal,
-    make_shopping_list_add_proposal,
-    wants_shopping_list_add,
-)
-from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.perception import (
@@ -136,13 +130,11 @@ _LOOP_HARNESS_HOST = None
 
 
 def set_loop_harness_host(host) -> None:
-    """Inject the resident process host used by ``selection_worker.py``."""
     global _LOOP_HARNESS_HOST
     _LOOP_HARNESS_HOST = host
 
 
 def _capture_settings():
-    """Read the complete capture policy; fail closed if settings are unreadable."""
     settings_path = (
         Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         / "fabric-settings.json"
@@ -311,13 +303,6 @@ def _enrich_interaction_episode_ocr(
     payload: dict[str, Any],
     app_ctx: AdapterReadContext | None,
 ) -> None:
-    """Give multi-object questions locally grounded text for every screen crop.
-
-    THIS already went through the gesture-aware OCR path, so reuse that exact
-    result. Older episode objects no longer carry their original stroke, but
-    their saved evidence is already a bounded crop rather than a full screen;
-    reading that crop is preferable to sending a text model two empty objects.
-    """
     episode = payload.get("interactionEpisode")
     slots = episode.get("slots") if isinstance(episode, dict) else None
     if not isinstance(slots, dict):
@@ -347,7 +332,6 @@ def _enrich_interaction_episode_ocr(
             if not read:
                 cache[path] = ("", "", False)
             elif isinstance(read, tuple) and read[1] == OCR_WORKER_BUSY_ENGINE:
-                # 忙 ≠ 没文字：不缓存，本次不 enrich，下次 tick 再读
                 return
             else:
                 blocks, engine = read
@@ -389,7 +373,6 @@ def _clipped_multi_object_answer(payload: dict[str, Any]) -> str | None:
         return None
     labels = ["THIS", "THAT", *[f"THESE[{index}]" for index in range(1, 11)]]
     fragments = []
-    # labels 只有 12 个：grounded 超出部分截断会静默丢内容，显式限制并说清
     for label, item in zip(labels, grounded[: len(labels)], strict=False):
         text = str(item.get("content") or "").strip()
         fragments.append(f"- {label}：{text if text else '没有读到可用文字'}")
@@ -426,13 +409,6 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
 
-# 一行过程 = 一次工具调用。
-#
-# 界面上以前那十一行（读了设置 / 过了一遍窗口 / 冻住了这块画面 / 凑上下文 /
-# 交给模型 …）全是管道自己的流水账：它们证明程序在动，但对「它到底去动了
-# 什么」一个字都没说。Claude Code 的过程流之所以有用，是因为每一行都是一次
-# 真实的工具调用和它作用的那个对象——`Read(stage.ts)`、`Bash(npm test)`。
-# 这个函数把一次调用压成那一行。
 _TOOL_PATH_KEYS = ("path", "file_path", "filepath", "file", "notebook_path")
 _TOOL_TARGET_KEYS = _TOOL_PATH_KEYS + (
     "command", "cmd", "script", "query", "pattern", "url", "selector",
@@ -444,8 +420,6 @@ def _short_target(value: Any, *, is_path: bool = False) -> str:
     text = str(value or "").strip().replace("\n", " ")
     if not text:
         return ""
-    # 路径只留末两段：整条绝对路径把一行撑爆，而且信息全在末尾。空格不能用来
-    # 判断「这是不是路径」——`D:\Desktop\Magic Pointer\…` 里就有空格。
     if is_path:
         parts = [part for part in re.split(r"[\\/]+", text) if part]
         if len(parts) > 2:
@@ -461,7 +435,6 @@ def tool_activity_line(
     error_message: Any = None,
     value: Any = None,
 ) -> dict[str, Any]:
-    """把一次工具调用压成过程流里的一行。"""
     tool = str(name or "").strip() or "tool"
     args = arguments if isinstance(arguments, dict) else {}
     target = ""
@@ -471,7 +444,6 @@ def tool_activity_line(
             if target:
                 break
     if not target:
-        # 没有约定好的键就用第一个像内容的标量，总好过只写一个工具名。
         for candidate in args.values():
             if isinstance(candidate, (str, int, float)):
                 target = _short_target(candidate)
@@ -497,7 +469,6 @@ def _encode_activity(line: dict[str, Any]) -> str:
 
 
 def _emit_plan_snapshot(clock: Any, steps: Any) -> None:
-    """Stream a lossless Todo snapshot over the existing progress channel."""
     if clock is None:
         return
     raw = json.dumps({"steps": steps}, ensure_ascii=False, separators=(",", ":"))
@@ -510,13 +481,6 @@ def _context_from_snapshot(
     snapshot = payload.get("selectionSnapshot")
     if not isinstance(snapshot, dict):
         return None, None, None, "missing selection snapshot"
-    # A snapshot is a frozen moment, not a lease on the live screen. Its pixels
-    # and its structured read describe what was there when the mark was drawn,
-    # and no amount of elapsed time changes that. The old 120s gate meant a
-    # second question three minutes later failed on evidence that was still
-    # sitting on disk, intact. Acting on the world keeps its own, separate
-    # deadline (the action lease in app/computer_operator), which is where a
-    # freshness requirement actually belongs.
     target_window = snapshot.get("source_window")
     if target_window is not None and not isinstance(target_window, dict):
         return None, None, snapshot, "invalid selection source window"
@@ -594,12 +558,6 @@ def _crop_roi_for_ocr(
     capture_bbox: Any,
     padding: int = 12,
 ) -> Path | None:
-    """Crop the gesture bbox (+padding) out of the full-screen capture.
-
-    Returns a temporary ROI PNG path, or None when geometry is unusable so the
-    caller falls back to the full capture. The full-screen image stays as the
-    evidence artifact; only the OCR read is scoped to the user's mark.
-    """
     if not selection_bbox or not capture_bbox:
         return None
     try:
@@ -632,14 +590,10 @@ def _crop_roi_for_ocr(
         return None
 
 
-# How much of the read text to show when the model could not be reached. Enough
-# to recognise the line that was marked; not so much that the bubble becomes a
-# transcript of the screen.
 MODEL_FAILURE_EXCERPT_CHARS = 800
 
 
 def _safe_failure_url(value: Any) -> str:
-    """Keep useful endpoint evidence without echoing credentials or queries."""
     from urllib.parse import urlsplit, urlunsplit
 
     raw = str(value or "").strip()
@@ -662,14 +616,6 @@ def grounded_browser_failure_answer(
     command: str,
     app_ctx: AdapterReadContext | None,
 ) -> str | None:
-    """Answer browser failure questions from DevTools evidence, without a model.
-
-    A failed completion used to throw away the most valuable part of the
-    capture: the browser's own network error.  Showing only the visible
-    ``TypeError`` after waiting for a model is worse than the browser console.
-    These verdicts are deliberately narrow and evidence-backed; unknown errors
-    still go through the ordinary reasoning path.
-    """
     if app_ctx is None or str(app_ctx.app or "").casefold() != "browser":
         return None
     question = str(command or "").casefold()
@@ -720,13 +666,6 @@ def grounded_browser_failure_answer(
 
 
 def answer_with_read_text_on_model_failure(answer: str, read_text: str) -> str:
-    """When the gateway is down, still hand back what was actually read.
-
-    A bubble that says only "AI 调用失败" is indistinguishable from the failure the
-    user has been reporting all along — "it knows which window, not which line" —
-    even in the case where the line *was* read and is sitting in memory. The model
-    being unreachable is not a reason to withhold it.
-    """
     text = str(answer or "")
     excerpt = str(read_text or "").strip()
     if not text.startswith("AI 调用失败") or not excerpt:
@@ -747,7 +686,6 @@ _EXACT_READBACK_PATTERNS = (
 
 
 def _public_readback_text(content: str) -> str:
-    """Remove OCR bookkeeping labels when every line is a marked segment."""
     lines = str(content or "").splitlines()
     nonempty = [line for line in lines if line.strip()]
     if not nonempty or not all(re.match(r"^\[segment \d+\]\s+", line) for line in nonempty):
@@ -763,7 +701,6 @@ def _exact_readback_response(
     app_ctx: AdapterReadContext | None,
     snapshot: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Return literal grounded text when that is exactly what was asked for."""
     command = str(payload.get("command") or "").strip()
     content = _public_readback_text(str(getattr(app_ctx, "content", "") or ""))
     if not command or not content:
@@ -783,7 +720,6 @@ def _exact_readback_response(
 
 
 def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
-    """Read a saved screen capture locally; never uploads the image."""
     path = Path(capture_path)
     if not path.is_file():
         return None, "capture_missing"
@@ -798,12 +734,6 @@ def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
 
 
 def _snapshot_mark_bbox(snapshot: dict[str, Any]) -> list[int] | None:
-    """The region the user marked, in screen pixels.
-
-    The gesture's own bbox is the authority. `selection_bbox` is what the first
-    stage *resolved*, which on a clean structured read is an element rectangle
-    rather than the mark.
-    """
     raw = dict((snapshot.get("selection_gesture") or {}).get("bbox") or {})
     try:
         x, y = int(raw.get("x") or 0), int(raw.get("y") or 0)
@@ -851,26 +781,9 @@ def _fuse_pixel_tier(
     app_ctx: AdapterReadContext | None,
     snapshot: dict[str, Any] | None,
 ) -> tuple[AdapterReadContext | None, dict[str, Any] | None]:
-    """Add the pixel tier to the first stage's evidence and re-run one fusion.
-
-    The structured tier ran in the snapshot process, against the frozen frame,
-    before this one existed. Its observations travel in the perception trace, so
-    this stage does not re-decide anything: it rehydrates them, gives the frozen
-    frame to OCR when they did not answer the mark, and lets the same ranking
-    pick between them.
-
-    What it replaces: a boolean (`structured_covers_mark`) deciding whether to
-    run OCR, and an OCR hit *replacing* the structured context so that nobody
-    downstream could tell there had been two readings.
-    """
     snapshot = snapshot or {}
     trace = dict(snapshot.get("perception_trace") or {})
     request = _pixel_tier_request(target_window, snapshot)
-    # When the first stage's structured read did not cover the mark, the snapshot
-    # hands this stage a screen-region placeholder instead of that read. Handing
-    # the placeholder back to the structured observation would relabel "here is
-    # the frozen frame" as "UIA read this", which is the confusion the two-stage
-    # seam exists to remove.
     structured_context = (
         None
         if str(getattr(app_ctx, "adapter", "") or "") == "screen_region"
@@ -891,9 +804,6 @@ def _fuse_pixel_tier(
         policy_mode=trace.get("policyMode"),
     )
     fused_trace = {**trace, **result.trace}
-    # Only the selected payload crosses the process boundary. The second
-    # fusion cannot recompute relations between the other structured reads;
-    # adding pixel evidence must not erase those first-stage facts.
     for key in ("conflicts", "corroborations", "notes"):
         records: list[dict[str, Any]] = []
         for record in [*(trace.get(key) or []), *(result.trace.get(key) or [])]:
@@ -905,9 +815,6 @@ def _fuse_pixel_tier(
         return app_ctx, fused_trace
     if selected.context is app_ctx:
         return app_ctx, fused_trace
-    # A superseded structured read keeps contributing what only it had: the
-    # document path, the browser node, the local file the mark pointed at. The
-    # pixel tier won the *content*, not the whole evidence chain.
     merged = {
         **dict(getattr(app_ctx, "artifacts", {}) or {}),
         **dict(selected.context.artifacts or {}),
@@ -930,7 +837,6 @@ def _enrich_selection_materials(command: str, snapshot: dict[str, Any] | None) -
         material["perception_trace"] = trace or {}
 
 
-# 用户是不是在问「哪里/怎么找到」——是的话回答要能指点（[POINT]）。
 _POINTING_RE = re.compile(
     r"指给|指出|指一下|指向|在哪|哪里|哪儿|位置|点在|点一下|怎么找到|哪个|何处|where|point to|show me",
     re.IGNORECASE,
@@ -942,24 +848,13 @@ def wants_pointing(command: str) -> bool:
 
 
 def pointing_instruction_for_command(command: str, bounds: Any = None) -> str:
-    """Expose the existing Clicky marker protocol only for location questions."""
     return instruction_for_model(bounds) if wants_pointing(command) else ""
 
 
-# 本地图片文件：用户划线指向的是一张图（资源管理器里选中、桌面上的一张
-# 图片等），结构化读到的是它的文件名或路径。这张图在本地、是用户明确指
-# 向的对象——把这张图本身给视觉模型，而不是把"文件名"当上下文给文本模
-# 型。这不属于「截屏上传」：截屏上传是隐私开关（upload_screenshots），
-# 而这里读的是用户划中那个文件的内容，等同读用户划中的文字。
 _IMAGE_FILE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".avif")
 
 
 def _user_desktop_dir() -> Path:
-    """The real Desktop folder, honouring user-folder redirection.
-
-    Path.home()/Desktop is wrong on machines whose Desktop is redirected
-    (OneDrive, or a D:-drive home like this one: real desktop is D:\\Desktop).
-    """
     try:
         import ctypes
 
@@ -976,7 +871,6 @@ def _local_image_file_answer(
     app_ctx: AdapterReadContext | None,
     snapshot: dict[str, Any] | None,
 ) -> str | None:
-    """If the marked content is a local image file, ask the visual model about it."""
     candidates: list[str] = []
     if app_ctx is not None:
         adapter_name = str(app_ctx.adapter or "").casefold()
@@ -995,8 +889,6 @@ def _local_image_file_answer(
             candidates.append(str(artifacts.get("path") or ""))
     context = (snapshot or {}).get("context") or {}
     context_adapter = str(context.get("adapter") or "").casefold()
-    # document_path is an explicitly typed document identity. Generic `path`
-    # is not: screen_region uses it for the frozen capture itself.
     document_path = str(context.get("document_path") or "").strip()
     if document_path:
         candidates.append(document_path)
@@ -1010,19 +902,12 @@ def _local_image_file_answer(
         candidates.append(str(local_file.get("path") or ""))
     if context_adapter == "explorer_file":
         candidates.append(str(context_artifacts.get("path") or ""))
-    # 注意：capture_path 是冻结的屏幕证据——绝不能当「用户指向的本地图片文件」。
-    # 本函数只处理有明确文件身份的图片；普通屏幕选区走 loop 的 look 工具
-    # （消费冻结帧）。混用两者会造成重复模型调用，也会把
-    # screen_region 伪报成 local_image_file。
 
     image_file: Path | None = None
     desktop_dir = _user_desktop_dir()
     for candidate in candidates:
         if not candidate:
             continue
-        # 内容可能是 "名字.jpg"（无目录）或全路径；先当全路径试，再当
-        # 文件名在桌面/当前工作目录试。宁可多试一次，不可把本地文件
-        # 错过之后掉进"只有文件名"的文本回答。
         cand_path = Path(candidate)
         trials = [cand_path]
         if not cand_path.is_absolute():
@@ -1367,131 +1252,6 @@ def _review_response(
         }
 
 
-def _shopping_list_response(
-    payload: dict[str, Any],
-    target_window: dict[str, Any] | None,
-    app_ctx: AdapterReadContext | None,
-    snapshot: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    command = str(payload.get("command") or "").strip()
-    if not wants_shopping_list_add(command):
-        return None
-    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
-    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
-    if app_ctx is None or not (app_ctx.content or "").strip():
-        return {
-            "ok": False,
-            "prompt": command,
-            "answer": "",
-            "error": "没有读取到可靠的明确条目，未写入购物清单。",
-            "actionProposals": [],
-            "intentKind": "shopping_list_add",
-            "selectionSessionId": selection_session_id,
-            "selectionSnapshotId": selection_snapshot_id,
-        }
-    proposal = make_shopping_list_add_proposal(
-        app_ctx,
-        command=command,
-        selection_session_id=selection_session_id,
-        selection_snapshot_id=selection_snapshot_id,
-    )
-    if proposal is None:
-        return {
-            "ok": False,
-            "prompt": command,
-            "answer": "",
-            "error": "请选择 1—160 个字符、最多两行的明确条目后重试。",
-            "actionProposals": [],
-            "intentKind": "shopping_list_add",
-            "selectionSessionId": selection_session_id,
-            "selectionSnapshotId": selection_snapshot_id,
-        }
-    return {
-        "ok": True,
-        "prompt": command,
-        "answer": "正在加入购物清单…",
-        "selectionContext": app_ctx.to_dict(),
-        "sourceWindow": target_window,
-        "actionProposals": [proposal.to_dict()],
-        "autoExecuteProposalId": proposal.id,
-        "intentKind": "shopping_list_add",
-        "selectionSessionId": selection_session_id,
-        "selectionSnapshotId": selection_snapshot_id,
-    }
-
-
-def _shopping_list_episode_response(payload: dict[str, Any]) -> dict[str, Any] | None:
-    command = str(payload.get("command") or "").strip()
-    episode = payload.get("interactionEpisode")
-    if not isinstance(episode, dict) or episode.get("pendingIntent") != "add":
-        return None
-    slots = episode.get("slots") if isinstance(episode.get("slots"), dict) else {}
-    sources = slots.get("these") if isinstance(slots.get("these"), list) else []
-    if not sources or not isinstance(slots.get("here"), dict) or not wants_shopping_list_add(command):
-        return None
-    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
-    proposal = make_shopping_list_add_many_proposal(
-        sources,
-        command=command,
-        selection_session_id=selection_session_id,
-    )
-    if proposal is None:
-        return {
-            "ok": False,
-            "prompt": command,
-            "error": "The source set did not contain any bounded shopping-list items.",
-            "actionProposals": [],
-            "intentKind": "shopping_list_add_many",
-            "selectionSessionId": selection_session_id,
-        }
-    return {
-        "ok": True,
-        "prompt": command,
-        "answer": f"Adding {len(proposal.parameters['items'])} grounded items to the shopping list.",
-        "actionProposals": [proposal.to_dict()],
-        "autoExecuteProposalId": proposal.id,
-        "intentKind": "shopping_list_add_many",
-        "interactionEpisodeId": str(episode.get("episodeId") or "") or None,
-        "selectionSessionId": selection_session_id,
-    }
-
-
-def _calendar_response(
-    payload: dict[str, Any],
-    target_window: dict[str, Any] | None,
-    app_ctx: AdapterReadContext | None,
-    snapshot: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    command = str(payload.get("command") or "").strip()
-    if not wants_calendar_draft(command):
-        return None
-    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
-    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
-    if app_ctx is None or not (app_ctx.content or "").strip() or not selection_snapshot_id:
-        return {
-            "ok": False,
-            "prompt": command,
-            "error": "没有读取到可靠的活动文本，未创建日历草稿。",
-            "actionProposals": [],
-            "intentKind": "calendar_event_draft",
-            "selectionSessionId": selection_session_id,
-            "selectionSnapshotId": selection_snapshot_id,
-        }
-    draft = parse_calendar_draft(app_ctx, selection_snapshot_id=selection_snapshot_id)
-    return {
-        "ok": True,
-        "prompt": command,
-        "answer": "日历草稿已打开，请核对时间后创建。",
-        "selectionContext": app_ctx.to_dict(),
-        "sourceWindow": target_window,
-        "actionProposals": [],
-        "calendarDraft": draft,
-        "intentKind": "calendar_event_draft",
-        "selectionSessionId": selection_session_id,
-        "selectionSnapshotId": selection_snapshot_id,
-    }
-
-
 def _route_response(payload: dict[str, Any]) -> dict[str, Any] | None:
     command = str(payload.get("command") or "").strip()
     if not wants_route_draft(command):
@@ -1658,14 +1418,6 @@ def _fabric_response(
     forced_recipe_id: str | None = None,
     forced_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Plan and stage one recipe.
-
-    `forced_recipe_id` is how the L0 and L2 tiers reach this path: the tier has
-    already decided which capability applies, so the engine's own keyword
-    routing is bypassed while everything after it — plan, provider check,
-    preview, confirmation, receipt — is identical. A capability the router picked
-    gets no shortcuts a keyword-matched one would not get.
-    """
     command = str(payload.get("command") or "").strip()
     if not command:
         return None
@@ -1673,10 +1425,6 @@ def _fabric_response(
         return None
     objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
     if forced_recipe_id is None:
-        # Generic questions belong to the answer path below this handler. Do a
-        # pure keyword route before constructing FabricEngine: the engine also
-        # probes providers, settings and workspace context, which used to scan
-        # an entire repository just to discover that "解释这个" was not a Recipe.
         quick_router = engine.router if engine is not None else RecipeRouter()
         quick_match = quick_router.route(command, object_count=len(objects))
         if quick_match.recipe_id is None or quick_match.recipe_id in _FABRIC_SYSTEM_RECIPES:
@@ -1759,28 +1507,12 @@ def _fabric_response(
     }
 
 
-# --- Three-tier routing -----------------------------------------------------
-# The old shape was a ladder of `_xxx_response` handlers, each returning None to
-# pass. That worked for the phrases somebody had written a handler for and died
-# on everything else. The ladder is still here — those handlers are good, and
-# they are the L1 tier — but it is now bracketed: L0 in front of it for
-# unmistakable intents that need no model at all, and L2 behind it so a command
-# nobody anticipated still produces a real answer instead of
-# "暂时无法从…读取可靠对象".
-
-
 def _length_target_response(
     payload: dict[str, Any],
     target_window: dict[str, Any] | None,
     app_ctx: AdapterReadContext | None,
     snapshot: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Answer "扩写/压缩到 N 行" against the length engine, honestly.
-
-    Returns None when the command is not a length target, so the normal chain
-    continues. When it is, the answer is the replacement text and nothing else —
-    it is meant to be pasted, so a preamble would be pasted with it.
-    """
     command = str(payload.get("command") or "").strip()
     source = str(getattr(app_ctx, "content", "") or "").strip()
     if not command or not source:
@@ -1805,7 +1537,6 @@ def _length_target_response(
 
     warning = warning_for(target, source)
     if warning is not None:
-        # Named before a model call is spent, not after.
         return {**base, "ok": False, "error": warning}
 
     result = clean_replacement_text(ask_text_model(
@@ -1819,28 +1550,11 @@ def _length_target_response(
         return {**base, "ok": False, "error": result or "模型没有返回内容，没有改动任何东西。"}
 
     hit, measurement = hit_target(result, target)
-    # Say whether it landed. Reporting a miss as a success is the failure mode
-    # this feature is most prone to, because the text still looks fine either way.
     detail = measurement if hit else f"{measurement}（没有正好命中，可以再拉一次）"
     return {**base, "ok": True, "answer": result, "detail": detail, "lengthHit": hit}
 
 
-# Measured against the configured gateway on 2026-08-04: the same one-line
-# question took 20.6-26.1s through the user's proxy and 27.3-33.5s without it,
-# because the relay writes to whatever max_tokens ceiling it is handed. A 25s
-# budget therefore reported a working endpoint as unreachable. The ceiling is
-# now the lever and the budget has room for the
-# gateway's own slow days.
 def _local_model_transform(command: str, context_text: str, recipe_id: str) -> str:
-    """The local text model as FabricEngine's ``model.text`` provider.
-
-    Without this wiring the engine reports ``model_transform_available=False``
-    and model.text recipes (text.summarize_route etc.) fall back to
-    ``agent.task`` — an external agent handoff that produced
-    ``AgentGatewayError`` in production (review R3, Notepad incident
-    2026-08-13). ``recipe_id`` is accepted for the engine's calling
-    convention but the local model does not need it.
-    """
     return ask_text_model(
         command,
         context_text=context_text,
@@ -1850,9 +1564,6 @@ def _local_model_transform(command: str, context_text: str, recipe_id: str) -> s
 
 
 GENERAL_TIMEOUT_S = 18.0
-# ── 自动记忆（Vida 式主动层的第一块）──────────────────────────────
-# 问答完成即记一条「对象 + 问题」，不依赖用户手动指令。失败绝不影响
-# 主路径。记忆由 executors 的 memory recipe 提供读取端（fabric 层）。
 def _record_auto_memory(
     command: str,
     app_ctx: Any,
@@ -1873,15 +1584,11 @@ def _record_auto_memory(
         title = title or str(getattr(app_ctx, "window", {}).get("title") or "")
     if not text and not title:
         return
-    # 只记「用户对什么做了什么」。命令涉及密码/密钥/验证码/账号时不记
-    # 内容（record 的 sensitive 门控会拒绝写入）。
     sensitive = bool(re.search(
         r"密码|口令|验证码|密钥|secret|password|token|sk-[A-Za-z0-9]",
         f"{text}\n{answer}",
         re.IGNORECASE,
     ))
-    # 只记「用户对什么做了什么」，不记敏感内容（密码/密钥等由 record 的
-    # sensitive 门控挡掉——这里默认 False，由调用方显式标记）。
     memory = ScreenMemory()
     memory.record(
         app=str(getattr(app_ctx, "app", "") or "") if app_ctx is not None else "",
@@ -1912,10 +1619,6 @@ def _memory_provenance_from_input_artifact(
 
 
 def _evidence_content(app_ctx) -> str:
-    """The fullest grounded text for the loop: terminal reads curate the
-    anchor line into ``content`` but keep the window excerpt (up to 8000
-    chars) in ``artifacts.terminal_evidence.window.text`` — the loop must
-    see the window excerpt, not just the anchor line."""
     content = str(getattr(app_ctx, "content", "") or "").strip()
     artifacts = dict(getattr(app_ctx, "artifacts", {}) or {})
     terminal = artifacts.get("terminal_evidence")
@@ -1928,12 +1631,9 @@ def _evidence_content(app_ctx) -> str:
 
 
 def _selection_session_has_history(selection_session_id: str | None) -> bool:
-    """这个圈选会话是否已经有对话历史（存在非空的 durable session）。"""
     sid = str(selection_session_id or "").strip()
     if not sid or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,121}", sid):
         return False
-    # 会话根与 harness 的 session-store 行同源：用户数据目录优先（打包版），
-    # 开发树退回 data/runtime。
     user_data = os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
     runtime_root = Path(user_data) if user_data else ROOT / "data" / "runtime"
     path = runtime_root / "agent-sessions" / f"agent-{sid}.jsonl"
@@ -1948,7 +1648,6 @@ def _crop_frozen_frame_bytes(
     physical_box: tuple[int, int, int, int],
     surface_bounds: tuple[int, int, int, int] | list[int],
 ) -> bytes:
-    """Crop a frozen target-surface image using physical-screen coordinates."""
 
     try:
         surface_left, surface_top, surface_right, surface_bottom = (
@@ -1992,14 +1691,6 @@ def _crop_frozen_frame_bytes(
 
 
 class _BridgeGuardProbe:
-    """Live desktop evidence for the guard chain over the real UIA probe.
-
-    ``resolve_anchor``/``is_focused`` are cheap (window enumeration +
-    foreground query); ``content_hash_at`` pays one probe round trip and
-    is only consulted by ContentUnchanged preconditions. Honest limits:
-    ``modal_seen_since`` returns None (not tracked yet -> the NoModalSince
-    precondition stays disabled for in-loop writes).
-    """
 
     def __init__(self, target_window) -> None:
         self._hwnd = int((target_window or {}).get("hwnd") or 0)
@@ -2050,7 +1741,6 @@ class _BridgeGuardProbe:
 
 
 def _build_selection_anchor(app_ctx, target_window, snapshot):
-    """Build the current selection anchor (guard fallback target)."""
     from app.anchor import AppIdentity, build_anchor
 
     lease = (snapshot or {}).get("frame_lease")
@@ -2080,7 +1770,6 @@ def _build_selection_anchor(app_ctx, target_window, snapshot):
 
 
 class _BridgePerceptionBackend:
-    """PerceptionBackend over this turn's grounded snapshot evidence."""
 
     def __init__(self, app_ctx, target_window, snapshot) -> None:
         self._content = (
@@ -2093,9 +1782,6 @@ class _BridgePerceptionBackend:
         self._rects = [
             list(r) for r in rects if isinstance(r, (list, tuple)) and len(r) == 4
         ][:16]
-        # Which reader produced this text, and how sure it was. Fusion already
-        # decided both; repeating "uia at 1.0" for whatever won would tell the
-        # loop that a recognised line is as exact as a structured read.
         trace = dict((snapshot or {}).get("perception_trace") or {})
         self._source = perception_layer(None, app_ctx) if app_ctx is not None else "none"
         self._confidence = 0.0 if app_ctx is None else 0.7
@@ -2167,23 +1853,13 @@ class _BridgePerceptionBackend:
 
 
 def _agent_effect_ceiling(permission_mode: str):
-    """Production capability ceiling; the permission mode remains the gate.
-
-    Keeping this ceiling narrower than the effect enum made ``plan`` and
-    ``bypass`` configuration inert: calls were rejected before the mode could
-    ask, deny, or explicitly allow them.  The UI-owned mode and per-tool
-    ActionLease/preconditions still decide whether a particular call runs.
-    """
     from app.agent_runtime.permission_modes import PermissionMode
     from app.agent_runtime.tool_registry import Effect
 
-    PermissionMode(permission_mode)  # reject unknown configuration early
+    PermissionMode(permission_mode)
     return tuple(Effect)
 
 
-# 划线问答同样不能背 4 秒 FULL_ANSWER 预算：普通 3-6 秒模型回答会在第一轮
-# 就被误杀成 "full answer budget exhausted"。FULL_ANSWER 放宽到 5 分钟
-# （感知/反馈的其它 stage 预算不动，保留 L8 节奏语义）。
 SELECTION_BUDGETS = {
     Stage.FULL_ANSWER: BudgetPolicy(
         stage=Stage.FULL_ANSWER,
@@ -2194,7 +1870,6 @@ SELECTION_BUDGETS = {
 
 
 def _input_artifact_ledger_metadata(input_artifact, target_window, app_ctx) -> dict[str, Any]:
-    """Compile grounded perception identity into the session ledger start."""
     layer_rank = {
         "dom": (0, "L0"),
         "native_app": (0, "L0"),
@@ -2225,7 +1900,6 @@ def _input_artifact_ledger_metadata(input_artifact, target_window, app_ctx) -> d
 
 
 def _agent_session_id(selection_session_id: str | None) -> str:
-    """Map the main-process selection identity to the durable Runtime task."""
     raw = str(selection_session_id or "").strip()
     if raw and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,121}", raw):
         return f"agent-{raw}"
@@ -2237,11 +1911,6 @@ def _surface_conversation_identity(
     app_ctx,
     target_window: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Recover a chat binding from adapter artifacts or the frozen window.
-
-    The fallback only calls an adapter's pure identity binder. It does not read
-    the live screen after gesture completion.
-    """
     artifacts = dict(getattr(app_ctx, "artifacts", {}) or {}) if app_ctx is not None else {}
     for raw in list(artifacts.get("surface_objects") or ()):
         if not isinstance(raw, dict) or str(raw.get("kind") or "") != "conversation":
@@ -2405,11 +2074,6 @@ def _initial_task_context(
     app_ctx,
     snapshot: dict[str, Any] | None,
 ) -> tuple[tuple[SourceRef, ...], tuple[ReferenceUpdate, ...], Coverage | None, TaskInput | None]:
-    """Compile one frozen gesture into a source, binding and TaskInput.
-
-    No source is invented for text-only calls: without a snapshot there is no
-    original material or local position to reopen later.
-    """
     snap = dict(snapshot or {})
     snapshot_id = str(snap.get("snapshot_id") or "").strip()
     if not snapshot_id:
@@ -2588,14 +2252,6 @@ def _initial_task_context(
 
 
 def _snapshot_element_boxes(snapshot: dict | None) -> dict[str, tuple[int, int, int, int]]:
-    """把快照发布的元素句柄变成 ``element:<ref>`` 可解析的矩形（LTRB）。
-
-    句柄是结构化读取**真的拿到过**的控件的应用自身几何（`element_handles.py`
-    的 `A#<id>` / `<TYPE>-<slug>` / 冲突 `-2`），所以按句柄去 Look，用的是窗口
-    给的坐标，而不是模型从截图里记住的坐标——「看错、偏移」那一类错误正是从
-    后者来的。快照没发句柄（例如自绘应用走 OCR）时这里就是空的，`element:`
-    锚点照旧诚实地解析失败。
-    """
     artifacts = ((snapshot or {}).get("context") or {}).get("artifacts")
     handles = (artifacts or {}).get("element_handles")
     if not isinstance(handles, list):
@@ -2629,12 +2285,8 @@ def _frozen_reference_resolver(updates, snapshot):
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
             continue
         x, y, width, height = (int(v) for v in bbox)
-        # Supported underline gestures can be thinner than the vision crop's
-        # minimum; include their immediate context without changing the anchor.
         pad_x, pad_y = max(0, 32 - width) // 2, max(0, 32 - height) // 2
         boxes[binding.reference_id] = (x - pad_x, y - pad_y, x + width + pad_x, y + height + pad_y)
-    # 同一个对象只有一次定位：圈选引用和元素句柄都解析到这一张表上，模型不必
-    # 自己编 bbox。两者键名前缀不同（`reference:` / `element:`），不会互相顶掉。
     boxes.update(_snapshot_element_boxes(snapshot))
     return boxes.get
 
@@ -2644,7 +2296,6 @@ def _persist_initial_task_context(
     sources: tuple[SourceRef, ...],
     updates: tuple[ReferenceUpdate, ...],
 ) -> int:
-    """Idempotently ACK initial source/reference state in EventSession."""
     existing_sources = {item.source_id: item for item in task_sources(session.events)}
     for source in sources:
         current = existing_sources.get(source.source_id)
@@ -2681,39 +2332,10 @@ def _loop_router(
     reply_style: str = "normal",
     figma_runtime_connections: tuple[Any, ...] = (),
 ) -> dict:
-    """The agent loop as the production router (model-as-router architecture).
-
-    Claude Code pattern: there is no keyword intent table — every capability
-    is a self-describing tool (real schema, honest description), the loop
-    picks by description, and write capabilities only PROPOSE a signed plan
-    that goes through the normal plan/confirm/receipt path. Deterministic
-    keyword shortcuts stay only for L0 local actions and explicit handoffs.
-
-    Review wiring (2026-08-13, now plugin-composed 2026-08-14):
-    - the registration topology moved into the harness plugin tree
-      (``app.harness.builtin_bundle.boot_loop_context``, plugin-kernel batch):
-      tools / hooks / prompt sections / guard factory / model client are
-      mounted as bundle rows in row order, and legacy env knobs
-      (MAGIC_POINTER_PERMISSION_MODE / STREAMING / CONTEXT_TOKENS /
-      INLOOP_REVERSIBLE) keep their semantics through the row config;
-    - permission mode gates every tool call;
-    - guard chain: a real probe-backed precondition factory with the current
-      selection anchor as fallback (fail-closed without an anchor);
-    - streaming backend by default with automatic non-streaming fallback;
-    - proactive/reactive compaction at 70% of the context budget;
-    - in-loop reversible execution stays off by default until the guard
-      chain passes real-machine verification.
-
-    Returns a dict with ``ok``/``loopError``, the mapped answer, and
-    ``actionProposals`` collected from capability-tool calls.
-    """
     from app.fabric.engine import run_agent_turn
     from app.fabric.loop_answer import terminal_to_answer
     from app.harness.builtin_bundle import boot_loop_context
 
-    # The plugin tree owns the registration topology; the bridge still owns
-    # the per-turn runtime adapters below (evidence, vision, guard probe,
-    # fabric propose/execute closures) and hands them over as runtime data.
     inloop_reversible = (
         os.environ.get("MAGIC_POINTER_INLOOP_REVERSIBLE", "0").strip() == "1"
     )
@@ -2784,16 +2406,10 @@ def _loop_router(
             source.source_id,
             FigmaSourceReader(figma_client),
         )
-    # SourceReaderRegistry reopens durable frozen selections per source.
-    # Local files use DocumentReader, never the filename-only selection text.
 
     active_engine = FabricEngine(model_transform=_local_model_transform)
 
     def _grounded_args(args: dict) -> dict:
-        # The model may invent any parameter, but attachments are grounded
-        # file paths: they must come from the frozen evidence chain (the
-        # bridge), never from model output — otherwise a model could attach
-        # and upload an arbitrary local file (fabric audit P1).
         grounded = dict(args or {})
         grounded.pop("attachments", None)
         return grounded
@@ -2819,14 +2435,6 @@ def _loop_router(
         }
 
     def execute_plan(recipe_id: str, args: dict) -> dict:
-        """In-loop execution for machine-verifiable reversible writes.
-
-        The loop gate already ran the guard preconditions (exact / focused /
-        content unchanged), so the plan signature + target lease are the
-        remaining guarantees; ``confirmed=True`` replaces the human stamp
-        for local-write plans only — every other risk class is not
-        registered for in-loop execution at all.
-        """
         planned = active_engine.plan(
             command,
             objects=routing_objects,
@@ -2860,10 +2468,6 @@ def _loop_router(
         or (snapshot or {}).get("annotated_path")
         or ""
     ).strip()
-    # 视觉裁的是**带笔迹**的那一份：模型的提示里永远有「用户圈了什么」，让它
-    # 自己在图里找「用户圈的是哪」是它做不好的那件事。两份图同尺寸、同原点
-    # （标注是画在原图副本上的），所以镜像裁剪坐标不变；标注那份缺了就退回
-    # 原图，绝不因为标注失败而让 Look 变成读不到。
     annotated_path = str((snapshot or {}).get("annotated_path") or "").strip()
 
     lease = (snapshot or {}).get("frame_lease")
@@ -2883,20 +2487,8 @@ def _loop_router(
         return _crop_frozen_frame_bytes(capture_path, box, surface_bounds)
 
     def summarize_history(history_text: str) -> str:
-        # 返回 "" 表示「这次没总结出来」，memory.compact_messages 会对它重试
-        # 一次、再不行就保留原历史。
-        #
-        # 具体参数与失败判定都在 summarize_history_text 里，两个桥共用同一份
-        # ——它们各自抄过一份，抄出来的两份只在被改动的那一次分叉，而那次
-        # 分叉的代价是把「AI 调用失败：…」当成了摘要。
         return summarize_history_text(history_text)
 
-    # 用户的截图上传开关（`privacy.upload_screenshots`）决定这一轮能不能把像素发出去。
-    # 快照里带了策略判定就照它办；没有判定的（没有冻结帧的纯文字回合）本来也没有图可发。
-    #
-    # 这个是**发图的唯一闸门**：Look 和 Observe 共用同一个 `vision_backend`，堵在这里
-    # 两条路一起堵住。以前它只管 fabric 那条中继，Look 照样把冻结帧发走——开关写着
-    # 关，图还是出去了。
     capture_policy = (snapshot or {}).get("capture_policy")
     vision_upload_allowed = bool(
         isinstance(capture_policy, dict) and capture_policy.get("allowUpload")
@@ -2914,7 +2506,6 @@ def _loop_router(
         "perception_backend": _BridgePerceptionBackend(
             app_ctx, target_window, snapshot
         ),
-        # 后台 job 完成推送：cell 先进 runtime，durable session 打开后回填。
         "session_inbox": lambda text: (_inbox_cell["fn"] or (lambda _t: None))(text),
         "source_session_getter": lambda: _source_session_cell["value"],
         "session_id": agent_session_id,
@@ -2936,9 +2527,6 @@ def _loop_router(
         "annotated_path": annotated_path,
         "target_window": target_window or {},
         "command": command,
-        # A screen gesture authorizes the pointed material, not the persisted
-        # coding workspace. Project/shell tools require an explicit advanced
-        # project choice in Studio.
         "workspace_root": "",
         "advanced_tools": False,
         "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
@@ -2967,9 +2555,6 @@ def _loop_router(
         selection_todo_store = ctx.get("todo_store")
         from app.agent_runtime.session import cancel_interrupt_check
 
-        # 计划门（与 conversation_bridge 同语义）：模型想收工但计划还有
-        # 未完成步骤 → nudge 续跑，最多两次防死循环。Stage 长任务与
-        # Studio 对话同权，写完 todo 不得跳过剩余步骤直接 COMPLETED。
         plan_nudges = {"count": 0}
 
         def _plan_completion_gate():
@@ -2989,11 +2574,6 @@ def _loop_router(
             row.resolved_config for row in report.rows if row.id == "model-client"
         )
     except Exception:
-        # A waiting/error row (e.g. a user disabled llm-provider without a
-        # replacement) raises KeyError from ctx.get BEFORE the run try/finally.
-        # Without this cleanup the resident scope leaks: its tools stay
-        # registered on the shared registry and the worker degrades for every
-        # later request (harness-kernel audit P1).
         if resident_scope is not None:
             resident_scope.close()
         raise
@@ -3016,13 +2596,9 @@ def _loop_router(
     )
     input_artifact_public = input_artifact.to_public_dict()
 
-    # 证据不再拼进首条消息：它作为独立的 origin=data 消息进入 loop，
-    # 结构性保证屏幕内容永远不会被当作指令通道（invariant ⑤）。
     first_input = command
     evidence_block = "[本次圈选对象证据]\n" + input_artifact.to_model_text()
 
-    # The same projection feeds both surfaces: answer_chunk/reasoning_chunk,
-    # tool_result, activities and trajectory are identical runtime facts.
     activity_sink = RuntimeActivitySink(clock or null_clock("selection"), request_header=request_header)
     child_progress_cell["sink"] = activity_sink.subagent_progress
 
@@ -3100,9 +2676,6 @@ def _loop_router(
                 live_source_ids=live_source_ids,
             )
             continuation_block = continuation_prefix(resume_summary)
-            # 双生鼠标：把这一轮的进度通道交给输入驱动，让它在上屏光标动身之前
-            # 先说一声要往哪儿去、要飞多久。没有这一句，光标会跟着鼠标走，但
-            # 永远不会「指」向任何东西。
             from app.desktop_actions.session import set_agent_cursor_sink
 
             set_agent_cursor_sink(clock)
@@ -3113,8 +2686,6 @@ def _loop_router(
                 client=client,
                 allowed_effects=_agent_effect_ceiling(permission_mode),
                 permission_mode=permission_mode,
-                # 33 个直连工具之外还要给一次 MCP/能力发现留余量；若真超限，
-                # loop 会发 ToolsTruncated 可见通知，不再静默让工具消失。
                 tool_limit=128,
                 precondition_context_factory=precondition_factory,
                 compactor=compactor,
@@ -3124,7 +2695,6 @@ def _loop_router(
                 hook_manager=ctx.get("hooks"),
                 session=agent_session,
                 request_header=request_header,
-                # Screen evidence travels as a separate origin=data message.
                 evidence_input="\n\n".join(
                     value
                     for value in (continuation_block, evidence_block)
@@ -3134,19 +2704,10 @@ def _loop_router(
                 interaction_metadata=_input_artifact_ledger_metadata(
                     input_artifact, target_window, app_ctx
                 ),
-                # GUI stop button -> durable cancel request -> graceful
-                # USER_INTERRUPT with a Receipt (O3); kill stays as the
-                # fallback for a loop that misses the boundary.
                 interrupt_check=cancel_interrupt_check(agent_session),
-                # Stage path rides the same idle-deadline heartbeat the
-                # conversation bridge uses: a long model call or a single
-                # long run_command must not be killed by the Electron
-                # silence deadline (B1.3).
                 keepalive=clock.mark if clock is not None else None,
                 todo_store=selection_todo_store,
                 nudge_hooks=(_plan_completion_gate,),
-                # Only an explicitly bound advanced project owns a .mp result
-                # directory. Never fall back to the installed process cwd.
                 tool_result_dir=(
                     str(Path(runtime["workspace_root"]) / ".mp" / "tool-results")
                     if runtime["workspace_root"]
@@ -3161,7 +2722,6 @@ def _loop_router(
                 "inputArtifact": input_artifact_public,
             }
         finally:
-            # 这一轮结束了，下一轮没有光标就不该继承这一条通道。
             from app.desktop_actions.session import set_agent_cursor_sink
 
             set_agent_cursor_sink(None)
@@ -3229,9 +2789,6 @@ def _loop_router(
             }
         return mapped
     finally:
-        # Every plugin row is a scoped effect. A request must release the
-        # tree on success and failure so tools, hooks, prompt sections and
-        # provider resources never leak into the next user turn.
         if resident_scope is not None:
             resident_scope.close()
         else:
@@ -3239,10 +2796,6 @@ def _loop_router(
 
 
 def _loop_result_is_answer(result: dict[str, Any] | None) -> bool:
-    """A naturally completed loop owns the answer; a terminated loop does too
-    when it carries a partial-delivery answer (real work happened — the
-    notepad-edit lesson: ten productive rounds must not be reported as a
-    bare error just because the final model call died)."""
 
     if not isinstance(result, dict) or result.get("ok") is not True:
         return False
@@ -3254,7 +2807,6 @@ def _loop_result_is_answer(result: dict[str, Any] | None) -> bool:
 
 
 def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:
-    """Keep audited usage and a real ask-user suspension across bridge layers."""
     value = result if isinstance(result, dict) else {}
     raw_usage = value.get("modelUsage")
     usage = None
@@ -3299,16 +2851,9 @@ def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-# --- Agent handoff ----------------------------------------------------------
-# The user is watching a bubble while this runs, so the model gets a short
-# budget and one attempt. On expiry build_agent_prompt_draft ships the grounded
-# prompt instead, which is already complete — the model only rephrases it.
 AGENT_PROMPT_MODEL_TIMEOUT_S = 12.0
 
 
-# Handing the screen to codex/claude/pi is one capability among many, not the
-# destination of every command. It runs when the user asks for it — by phrase or
-# by pressing the explicit handoff affordance — and never as a silent default.
 _AGENT_HANDOFF_PHRASES = (
     "让 codex", "让codex", "让 claude", "让claude", "让 gemini", "让gemini",
     "让 pi ", "让pi ", "让 cursor", "让cursor", "让 aider", "让aider",
@@ -3455,10 +3000,6 @@ def main() -> int:
         return 2
     command = str(payload.get("command") or "").strip()
     selection_session_id = str(payload.get("selectionSessionId") or "").strip()
-    # reply_style 在 main 作用域读一次：_loop_router 的调用引用它。此前只在
-    # build_agent_prompt_draft 里读，main() 引用未定义名——1.0.14 起每个走
-    # 到 Agent loop 的手势问句都死在 NameError 上（精确读回不走 loop，所以
-    # 看起来"简单划线还能用"）。
     reply_style = str(payload.get("replyStyle") or "normal").strip().lower()[:20]
     clock.mark("payload_read", mode=payload.get("requestMode") or "default", cmd_len=len(command))
     if not command:
@@ -3495,9 +3036,6 @@ def main() -> int:
     clock.mark("context_from_snapshot", err=snapshot_error or "none")
     stale_followup = False
     if snapshot_error:
-        # 到这里只剩「快照结构坏了」这一类真错误——时间不再是错误来源。
-        # 有对话历史时仍然续跑：屏幕证据坏掉不该打死整轮，历史本身就是
-        # 追问的上下文主源。
         has_history = _selection_session_has_history(selection_session_id)
         if has_history:
             app_ctx = None
@@ -3520,9 +3058,6 @@ def main() -> int:
             }, ensure_ascii=False))
             return 1
 
-    # The pixel tier runs here, on the frozen frame the snapshot froze, and is
-    # arbitrated by the same fusion as the structured tier. Local-first: the
-    # image never leaves the machine, and this happens before any routing.
     app_ctx, fused_trace = _fuse_pixel_tier(target_window, app_ctx, snapshot)
     if isinstance(snapshot, dict) and fused_trace is not None:
         snapshot["perception_trace"] = fused_trace
@@ -3603,14 +3138,10 @@ def main() -> int:
         route_info = {"tier": "L0", "reason": "grounded_browser_failure"}
         used_backend = "local.grounded_browser_failure"
     elif local_image_answer:
-        # 划中一张本地图片：视觉模型读的是那个文件本身，不是截屏。
         answer = local_image_answer
         route_info = {"tier": "L0", "reason": "local_image_file"}
         used_backend = "app.ai_client.ask_vision_model"
     else:
-        # One normal Agent state machine owns routing, tools, retries and the
-        # terminal. A failed loop is an honest failed answer; it never triggers
-        # a second classifier, vision request, or single-shot model call.
         clock.mark("loop_router_start")
         loop_result = _loop_router(
             command,
@@ -3728,12 +3259,6 @@ def main() -> int:
         action_proposals.extend(list(loop_result.get("actionProposals") or []))
         if not answer and action_proposals:
             answer = "已生成执行方案，请确认。"
-        # 回答形态：要发出去的文字（deliver）必须纯文本禁 markdown——
-        # 该判定在调用模型前就进了 loop 系统提示词（deliver 动态节），
-        # 桥侧同时把形态带回给渲染层（answer_shape_policy 优先信桥）。
-        # 回答形态只看证据：模型真的生成了执行方案（要用户点头的事）才算
-        # deliver；问题文本里的任何词都不再触发（真机 8·29：「你刚刚在回复
-        # 这段话的过程中…」被「回复」误判成要写回）。
         answer_shape = (
             "deliver"
             if action_proposals
@@ -3742,17 +3267,10 @@ def main() -> int:
         route_info = dict(loop_result.get("route") or route_info)
         used_backend = str(loop_result.get("usedBackend") or "") or None
 
-    # An answer may point at the screen while it explains. The markers come out
-    # of the text here, at the last moment before it is handed over, so nothing
-    # downstream — copy, 填入, the thread log — ever carries "[POINT 100,200]"
-    # into a document.
     answer, screen_points = parse_points(
         answer,
         bounds=(target_window or {}).get("bbox"),
     )
-    # 自动记忆（Vida 式「提前干活」第一步）：问答完成即记一条
-    # 「对象 + 问题」——不依赖用户手动指令，积累上下文供未来主动提议。
-    # 失败绝不影响本次回答（记忆是副作用，不是主路径）。
     try:
         memory_source_id, memory_locator = _memory_provenance_from_input_artifact(
             input_artifact_public,

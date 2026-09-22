@@ -1,4 +1,3 @@
-"""Background Agent supervision must never report undeliverable steering."""
 
 from __future__ import annotations
 

@@ -1,9 +1,3 @@
-"""Windows JobObject with KILL_ON_JOB_CLOSE.
-
-Everywhere Watchdog's idea, written here: MCP/OCR children join a job so
-the OS reaps them when this process dies. The C# is BSL 1.1; this module
-is original ctypes.
-"""
 
 from __future__ import annotations
 
@@ -78,7 +72,6 @@ def _kernel32() -> Any:
 
 
 class KillOnCloseJob:
-    """One job whose members die when this handle is closed."""
 
     def __init__(self) -> None:
         if os.name != "nt":
@@ -117,7 +110,7 @@ class KillOnCloseJob:
         if handle:
             self._dll.CloseHandle(handle)
 
-    def __del__(self) -> None:  # pragma: no cover - interpreter teardown
+    def __del__(self) -> None:
         try:
             self.close()
         except Exception:
@@ -128,11 +121,6 @@ _PROCESS_JOB: KillOnCloseJob | None = None
 
 
 def attach_kill_on_close(process: object) -> bool:
-    """Assign ``process`` to the process-wide kill-on-close job.
-
-    Returns False when JobObjects are unavailable or assignment fails.
-    Never raises: a spawn must not die because the watchdog could not attach.
-    """
     if os.name != "nt" or process is None:
         return False
     global _PROCESS_JOB

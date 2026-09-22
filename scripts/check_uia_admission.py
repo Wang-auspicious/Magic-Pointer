@@ -1,8 +1,3 @@
-"""One-off admission check against live windows.
-
-Not a unit test: it needs real HWNDs and real class names, which is exactly what
-the mocked suite cannot cover. Pass `label:class:hwnd` triples.
-"""
 from __future__ import annotations
 
 import sys

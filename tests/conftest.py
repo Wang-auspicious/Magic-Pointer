@@ -1,4 +1,3 @@
-"""Unit tests must never discover or use the developer's live Jev credential."""
 import pytest
 
 

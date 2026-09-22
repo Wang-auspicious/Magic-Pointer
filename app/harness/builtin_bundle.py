@@ -1,28 +1,3 @@
-"""Magic Pointer builtin bundle: the loop's capabilities as plugins.
-
-The plugin-kernel batch (plan T4) re-expresses what used to be hand-wired
-inside ``scripts/selection_bridge._loop_router`` as a declarative bundle of
-DSH-shaped plugins: every row declares ``inject`` dependencies and mounts
-behaviour in ``apply(ctx, config)``. Row order is registration order, and
-the boot tree is inspectable through ``dump_config``.
-
-The bridge still owns the per-turn runtime adapters (perception backend,
-vision backend, guard probe, the current selection anchor, the fabric
-propose/execute closures) — they are *data for this turn*, injected as
-core services or row config. The registration topology lives here.
-
-Seam keys provided by the boot (the composition contract):
-
-- ``tools``         ToolRegistry (the only model-facing registry)
-- ``hooks``         HookManager (CC PreToolUse/PostToolUse seam)
-- ``prompt``        SystemPromptBuilder (sections register here)
-- ``llm``           LlmProvider (gateway/local/replay provider seam)
-- ``perception``    evidence provider backend for this turn
-- ``vision``        vision backend for this turn
-- ``guard_probe`` / ``selection_anchor``  guard-chain evidence inputs
-- plugin-contributed: ``precondition_factory`` (guard row),
-  ``model_client`` / ``compactor`` / ``token_estimator`` (model-client row)
-"""
 
 from __future__ import annotations
 
@@ -101,7 +76,6 @@ __all__ = [
 ]
 
 _FALLBACK_ROOT = Path(__file__).resolve().parents[2]
-"""Repo/app root when the bridge does not pass one explicitly."""
 
 
 def _spec(
@@ -120,17 +94,11 @@ def _spec(
     )
 
 
-# ---------------------------------------------------------------------------
-# Plugin rows (order = registration order)
-# ---------------------------------------------------------------------------
 
 
 def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
-    """CC-pattern loop tools: clarification + visible plan."""
     registry = fork.get("tools")
     register_ask_user_question(registry, ask=None)
-    # The plan is state, not just a tool result: compaction re-attaches the
-    # unfinished part so progress does not depend on the summariser.
     todo_store = TodoStore()
     fork.provide_up("todo_store", todo_store)
 
@@ -139,13 +107,8 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
         stored = todo_store.write(todos)
         try:
             if todo_store.on_update is not None:
-                # Codex update_plan semantics: the UI sees every transition.
-                # Settable post-boot so both resident and one-shot hosts work.
                 todo_store.on_update(todo_store.read())
         except Exception:
-            # The callback includes EventSession persistence. Keep the live
-            # compactor aligned with the durable projection when that append
-            # fails, then let ToolRegistry surface the failure to the model.
             todo_store.write(previous)
             raise
         return stored
@@ -161,14 +124,12 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_web_tools(fork, config: dict[str, Any]) -> None:
-    """Hermes-contract keyless web search/fetch; READ-only, always safe."""
     from app.agent_runtime.web_tools import register_web_tools
 
     register_web_tools(fork.get("tools"))
 
 
 def _apply_skill_writer(fork, config: dict[str, Any]) -> None:
-    """Hermes self-evolution write side: agent-distilled skills persist."""
     from app.agent_runtime.skill_writer import register_skill_writer
 
     raw_root = str(config.get("skills_root") or "").strip()
@@ -178,19 +139,14 @@ def _apply_skill_writer(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_perception_tools(fork, config: dict[str, Any]) -> None:
-    """Model-facing perception over this turn's grounded evidence."""
     PerceptionTools(fork.get("perception")).register_all(fork.get("tools"))
 
 
 def _apply_look_tool(fork, config: dict[str, Any]) -> None:
-    """The look escape hatch over the vision seam and the frozen frame."""
     from app.agent_runtime.vision_backend import FileVisionBackend
 
     backend = fork.get("vision")
     captured_at = str(config.get("captured_at") or "gesture time")
-    # 随每一次 Look 一起发出去的那张「整块冻结面」用带笔迹的那一份：它的职责
-    # 就是给宏观上下文，而「圈的是哪儿」正是这块上下文里最容易丢、丢了以后
-    # 模型只能自己猜的那一项。两份图同尺寸同原点，标注只是画在原图上的副本。
     context_path = str(
         config.get("annotated_path") or config.get("capture_path") or ""
     ).strip()
@@ -206,7 +162,6 @@ def _apply_look_tool(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_context_tools(fork, config: dict[str, Any]) -> None:
-    """Task material discovery over the current EventSession projection."""
     from app.context_pack.source_scope import scope_from_events
     from app.context_pack.tools import register_context_tools
 
@@ -224,7 +179,6 @@ def _apply_context_tools(fork, config: dict[str, Any]) -> None:
         session = session_getter()
         if session is None:
             raise RuntimeError("task source session is not ready")
-        # Adopt inbox/context writes made by the Electron bridge process.
         session.pending_inbox()
         return scope_from_events(session.events, task_id=session.id)
 
@@ -232,7 +186,6 @@ def _apply_context_tools(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
-    """Copy/screenshot/source as real tools the model can call directly."""
     registry = fork.get("tools")
     empty_schema = {"type": "object", "properties": {}, "required": []}
     content = str(config.get("content") or "")
@@ -335,7 +288,6 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
-    """Kimi CU 13 tools on the main loop, bound to one input-ownership session."""
     import io
     import json
 
@@ -455,8 +407,6 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
                     raise ActionFailure(FailureType.PERMISSION_DENIED, "source is not bound to this task")
                 return read_live_state(source, locator, mode=mode, ax_filter=ax_filter, pid=pid, app=app, scope=scope)
             return observer.observe(resolved_source_id, question, locator, scope=scope)
-        # Existing computer-use calls can still request a structural snapshot.
-        # Fresh pixels are captured only through a task-bound source.
         return session.get_app_state(
             window_id=window_id,
             pid=pid,
@@ -467,8 +417,6 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
         )
 
     def observe_access(args: dict[str, Any]):
-        # Enumerate metadata to bind a named target even when Observe is the
-        # first desktop tool call; deep reads still occur after scope checks.
         if callable(source_session_getter):
             session.windows_probe()
         source_id = str(args.get("source_id") or "").strip()
@@ -492,8 +440,6 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
     )
     from app.desktop_actions.jev import register_jev_target_tool
     register_jev_target_tool(fork.get("tools"), session)
-    # Wait：确定性条件等待（点开菜单→等它渲染→点菜单项）。三家都没有，
-    # MP 的桌面 agent 刚需；探针与 Observe 同源（真实 UIA）。
     WaitTool(
         windows_probe=_live_windows,
         elements_probe=_live_elements,
@@ -502,12 +448,6 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
-    """CC/Codex file+shell tool set over the workspace bound to this turn.
-
-    No ``workspace_root`` in the row config means no workspace was bound:
-    the row stays a no-op so the tool surface honestly reflects what this
-    turn can touch (a chat about a screenshot must not offer run_command).
-    """
     from app.agent_runtime.coding_tools import register_coding_tools
 
     raw_root = str(config.get("workspace_root") or "").strip()
@@ -523,7 +463,6 @@ def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
-    """Hermes-style subagent: isolated-context coding child of this turn."""
     from app.agent_runtime.subagent import register_delegate_tool
 
     raw_root = str(config.get("workspace_root") or "").strip()
@@ -541,7 +480,6 @@ def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_memory_tools(fork, config: dict[str, Any]) -> None:
-    """Cross-session recall over this process's durable session log."""
     from app.agent_runtime.memory_tools import register_history_search
 
     sessions = fork.get("sessions")
@@ -554,12 +492,10 @@ def _apply_memory_tools(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_tool_discovery(fork, config: dict[str, Any]) -> None:
-    """Discovery exposes real registered tools, without recipe wrappers."""
     register_find_capability(fork.get("tools"))
 
 
 def _apply_guard(fork, config: dict[str, Any]) -> None:
-    """Guard chain: probe + selection anchor -> precondition factory."""
     probe = fork.get("guard_probe")
     anchor = fork.get("selection_anchor")
     factory = build_context_factory(
@@ -570,14 +506,12 @@ def _apply_guard(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_system_prompt(fork, config: dict[str, Any]) -> None:
-    """Register the default prompt sections on the shared builder."""
     builder = fork.get("prompt")
     for section in default_sections():
         builder.add(section)
 
 
 class _MessagesLlmProvider:
-    """Built-in gateway provider; replaceable through the ``llm`` seam."""
 
     def __init__(self, *, streaming: bool) -> None:
         self.streaming = streaming
@@ -612,7 +546,6 @@ class _MessagesLlmProvider:
 
 
 def _apply_llm_provider(fork, config: dict[str, Any]) -> None:
-    """Provide the default gateway implementation at the stable ``llm`` key."""
     fork.provide_up(
         "llm",
         _MessagesLlmProvider(streaming=bool(config.get("streaming"))),
@@ -620,13 +553,9 @@ def _apply_llm_provider(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_model_client(fork, config: dict[str, Any]) -> None:
-    """Model client + compaction services from config and the prompt seam."""
     workspace_root = str(config.get("workspace_root") or "").strip()
     memory = MemoryLoader(
         user_dir=Path(config.get("user_data_dir") or str(_FALLBACK_ROOT)),
-        # The packaged process cwd is the install directory, not the project
-        # bound to this turn. Using cwd made workspace MAGIC_POINTER.md
-        # invisible in the installed app.
         workspace_root=Path(workspace_root) if workspace_root else None,
     ).load()
     user_data_dir = Path(config.get("user_data_dir") or str(_FALLBACK_ROOT))
@@ -638,7 +567,6 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     effort = normalize_effort(config.get("effort"))
     context = {
         "permission_mode": str(config.get("permission_mode") or "default"),
-        # 交付格式规则常驻（模型自己判断意图），不再做关键词预分类。
         "deliver": True,
         "memory": memory or None,
         "skills": SkillLoader(
@@ -705,11 +633,6 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
             original,
             config["summarize"],
             force=force,
-            # Once pruning has removed the duplicates, a source this small no
-            # longer needs a model to summarize it — the call would cost a
-            # round trip and a full timeout budget to shrink something that is
-            # already small. Scaled to the model's window: 5% of it is well
-            # under any threshold the loop compacts at.
             model_free_below_chars=max(4_000, int(context_budget * 0.05)),
         )
         if len(compacted) >= len(original):
@@ -743,23 +666,18 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     fork.provide_up("context_budget", context_budget)
 
     def token_estimator(messages) -> int:
-        # The system prompt carries memory (<=4000 chars) and skills (<=12000);
-        # counting messages alone made the compaction threshold fire far too
-        # late. Tool schemas are added by the loop, which owns that list.
         return estimate_request_tokens(messages, system_prompt=system_prompt)
 
     fork.provide_up("token_estimator", token_estimator)
 
 
 def _apply_wechat_surface_adapter(fork, config: dict[str, Any]) -> None:
-    """Register built-in public-surface chat adapters through one seam."""
     fork.get("surface_adapters").register(WeChatSurfaceAdapter())
     fork.get("surface_adapters").register(DingTalkSurfaceAdapter())
     fork.get("surface_adapters").register(FigmaSurfaceAdapter())
 
 
 def _apply_session_store(fork, config: dict[str, Any]) -> None:
-    """Provide append-only local sessions at the stable ``sessions`` seam."""
     root = Path(config.get("root") or _FALLBACK_ROOT)
     session_dir = Path(
         config.get("session_dir")
@@ -769,7 +687,6 @@ def _apply_session_store(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_mcp_provider(fork, config: dict[str, Any]) -> None:
-    """Mount configured MCP servers lazily; discovery starts no processes."""
     configs = load_server_configs(Path(config["config_path"]))
     provider = McpToolProvider(
         configs,
@@ -782,7 +699,6 @@ def _apply_mcp_provider(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_learning_review(fork, config: dict[str, Any]) -> None:
-    """Provide the detached Hermes-style reviewer launcher."""
     sessions = fork.get("sessions")
     session_root = getattr(sessions, "root", None)
     if session_root is None:
@@ -802,7 +718,6 @@ def _apply_learning_review(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_computer_agent(fork, config: dict[str, Any]) -> None:
-    """Provide explicit-authority visual task orchestration, not a raw tool."""
     fork.provide_up(
         "computer_agent",
         ComputerTaskService(
@@ -868,10 +783,6 @@ BUILTIN_ROW_IDS: tuple[str, ...] = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Environment knobs (legacy MAGIC_POINTER_* keep working; they become the
-# base row config, so an explicit patch layer still wins over them).
-# ---------------------------------------------------------------------------
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -899,12 +810,6 @@ def _env_int_or_none(name: str) -> int | None:
 
 
 def _git_branch(root: str) -> str:
-    """Read a symbolic branch from ``.git/HEAD`` without spawning git.
-
-    A project may itself be a linked git worktree, where ``.git`` is a text
-    pointer rather than a directory; that is a supported workspace shape, so
-    resolve the pointer before reading HEAD. Detached HEADs stay unnamed.
-    """
     value = str(root or "").strip()
     if not value:
         return ""
@@ -936,17 +841,6 @@ def _runtime_root(root: Path) -> Path:
 
 
 def _permission_mode_for(runtime: dict[str, Any]) -> str:
-    """The mode this turn will actually enforce, as the prompt must state it.
-
-    Both bridges resolve the user's permission preset into
-    ``runtime["permission_mode"]`` and hand that same value to
-    ``run_agent_turn``. This row used to read only
-    ``MAGIC_POINTER_PERMISSION_MODE``, which production never sets — so the
-    prompt said ``default`` while the gate enforced ``safe``, and a read-only
-    turn was told reversible writes run in-loop right up until the tool was
-    refused. The env knob stays as the documented rollback switch for a turn
-    that carries no mode of its own.
-    """
     explicit = str(runtime.get("permission_mode") or "").strip()
     if explicit:
         return explicit
@@ -984,7 +878,6 @@ def _layered_patch(
 
 
 def _global_loop_rows(root: Path) -> list[BundleRow]:
-    """Rows whose providers live for the whole resident Agent process."""
     return [
         BundleRow("web-tools", "web-tools"),
         BundleRow("computer-agent", "computer-agent"),
@@ -1013,14 +906,12 @@ def _global_loop_rows(root: Path) -> list[BundleRow]:
 
 
 def _advanced_workspace(runtime: dict[str, Any]) -> str:
-    """Return the project root only after the trusted UI chose advanced tools."""
     if runtime.get("advanced_tools") is not True:
         return ""
     return str(runtime.get("workspace_root") or "").strip()
 
 
 def _advanced_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
-    """Generic code/self-write/MCP tools are an explicit project-mode surface."""
     if runtime.get("advanced_tools") is not True:
         return []
     return [
@@ -1041,9 +932,6 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
     window = dict(runtime.get("target_window") or {})
     workspace_root = _advanced_workspace(runtime)
     rows = [
-        # TodoStore is task state, not a resident provider. A fresh scoped
-        # instance is hydrated from this task's EventSession by the bridge;
-        # keeping it global leaks one task's plan into the next Stage run.
         BundleRow("harness-tools", "harness-tools", {"session_getter": runtime.get("source_session_getter")}),
         BundleRow("perception-tools", "perception-tools"),
         BundleRow(
@@ -1080,8 +968,6 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             "desktop-action-tools",
             {
                 "workspace_root": workspace_root,
-                # 本轮圈选发生在哪个窗口。Observe 不带参数时的默认目标就是它，
-                # 否则一旦气泡抢走前台，"观察一下"读到的是桌面。
                 "origin_window_hwnd": int(window.get("hwnd") or 0),
                 "source_session_getter": runtime.get("source_session_getter"),
                 "task_instruction": runtime.get("task_instruction", ""),
@@ -1092,8 +978,6 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             "coding-tools",
             {
                 "workspace_root": workspace_root,
-                # 后台 job 完成推送（Hermes notify_on_complete）：桥在
-                # runtime 里带 session_inbox=enqueue_inbox 回调。
                 "inbox": runtime.get("session_inbox"),
                 "session_id": runtime.get("session_id"),
                 "session_getter": runtime.get("source_session_getter"),
@@ -1119,8 +1003,6 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "effort": normalize_effort(runtime.get("effort")),
                 "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
-                # Stage 常驻路径与 boot_loop_context 同规则：圈选证据存在
-                # 与否决定身份与冻结帧规则是否注入。
                 "selection_anchor": runtime.get("selection_anchor"),
             },
         ),
@@ -1130,7 +1012,6 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
 
 
 class LoopHarnessHost:
-    """Resident loop host: stable providers once, request tools per scope."""
 
     def __init__(
         self,
@@ -1184,14 +1065,6 @@ def boot_loop_context(
     patch: dict[str, dict[str, Any]] | None = None,
     plugin_dir: Path | None = None,
 ):
-    """Boot the loop's composed plugin tree for one turn.
-
-    ``runtime`` carries the per-turn adapters the bridge owns:
-    ``perception_backend``, ``vision_backend``, ``frame_crop``,
-    ``guard_probe``, ``selection_anchor``, ``propose``, ``execute_plan``,
-    ``enabled_recipes``, ``summarize``, ``content``, ``capture_path``,
-    ``target_window``, ``command``.
-    """
     root = root or _FALLBACK_ROOT
     window = dict(runtime.get("target_window") or {})
     content = str(runtime.get("content") or "")
@@ -1299,8 +1172,6 @@ def boot_loop_context(
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "effort": normalize_effort(runtime.get("effort")),
                 "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
-                # 圈选证据（selection_anchor / object）存在与否决定身份与
-                # 冻结帧规则是否注入：普通文本对话不谎称有圈选对象。
                 "selection_anchor": runtime.get("selection_anchor"),
             },
         ),
@@ -1337,12 +1208,6 @@ def boot_surface_context(
     patch: dict[str, dict[str, Any]] | None = None,
     plugin_dir: Path | None = None,
 ) -> BootReport:
-    """Boot the pre-perception SurfaceAdapter plugin scope.
-
-    The surface bridge runs before the agent loop, so it has its own narrow
-    service scope. User plugins declaring ``inject = ("surface_adapters",)``
-    mount from the same plugin directory and unwind after the snapshot read.
-    """
     root = root or _FALLBACK_ROOT
     layered_patch, patch_warnings = _layered_patch(root, patch)
     report = boot(

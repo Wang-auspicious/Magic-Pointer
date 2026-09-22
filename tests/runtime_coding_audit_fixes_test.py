@@ -1,4 +1,3 @@
-"""Regression cases for RT05–RT13 and RT19; all writes use tmp_path."""
 import subprocess
 from pathlib import Path
 import sys

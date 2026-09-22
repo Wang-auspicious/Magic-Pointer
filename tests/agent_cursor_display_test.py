@@ -1,18 +1,3 @@
-"""Per-display geometry for the cursor surface (``app/computer_operator/displays.py``).
-
-Two failures this prevents, both invisible on a single-monitor development
-machine:
-
-1. Magic Pointer's cursor surface is primary-display only, so the twin cursor
-   vanishes the moment the pointer crosses onto a second monitor. Clicky keeps
-   one window per display and moves the buddy between them
-   (``clicky/OverlayWindow.swift:783-808``).
-2. A topmost full-screen window suppresses the Windows auto-hide taskbar's
-   hover trigger, so the Qt port deliberately shaves 2 px off the bottom edge
-   (``clicky-windows/ui/overlay.py:390-392``).
-
-The numbers here are Electron-DIP, matching ``screen.getAllDisplays()``.
-"""
 
 from __future__ import annotations
 
@@ -47,7 +32,6 @@ class TestParse:
         assert [screen.display_id for screen in screens] == ["2", "1"]
 
     def test_a_malformed_entry_is_skipped_not_fatal(self) -> None:
-        # One bad display must not cost the whole cursor surface.
         screens = displays.parse_displays(
             [PRIMARY, {"id": 9}, {"id": 8, "bounds": {"x": 0, "y": 0, "width": 0, "height": 10}}, None]
         )
@@ -79,8 +63,6 @@ class TestOwnership:
         assert displays.display_for_point(screens, (-1, 10)) is None
 
     def test_a_shared_edge_belongs_to_exactly_one_display(self) -> None:
-        # Both displays report x = 1920 as an edge. If both claimed it, both
-        # overlay windows would draw the same cursor.
         screens = parsed(PRIMARY, SECONDARY)
         owner = displays.display_for_point(screens, (1920, 10))
         assert owner is not None
@@ -109,8 +91,6 @@ class TestOwnership:
 
 class TestSurfaceBounds:
     def test_the_bottom_edge_is_shaved_by_two_pixels(self) -> None:
-        # Without this the auto-hide taskbar loses its hover trigger under a
-        # full-screen topmost window. clicky-windows/ui/overlay.py:390-392.
         surface = displays.surface_bounds(parsed(PRIMARY)[0])
         assert surface.as_bounds() == {"x": 0, "y": 0, "width": 1920, "height": 1078}
         assert displays.TASKBAR_SHAVE_PX == 2
@@ -152,7 +132,6 @@ class TestLocalCoordinates:
         assert surface.local_point((-200, 10)) == (1080, 10)
 
     def test_the_whole_answer_comes_back_in_one_call(self) -> None:
-        # This is what the sample loop needs: which window, and where inside it.
         answer = displays.surface_for_point(parsed(PRIMARY, SECONDARY), (2000, -100))
         assert answer is not None
         surface, local = answer
@@ -169,8 +148,6 @@ class TestLocalCoordinates:
         assert displays.screen_point_for(screens, surface, local) == (2000, -100)
 
     def test_the_shaved_bottom_is_clamped_rather_than_dropped(self) -> None:
-        # The missing 2 px is a taskbar workaround, not a hole in the desktop:
-        # a cursor aimed at the bottom edge must land on the display.
         screens = parsed(PRIMARY)
         surface = displays.surface_bounds(screens[0])
         assert displays.screen_point_for(screens, surface, (10, 2000)) == (10, 1079)
@@ -182,7 +159,5 @@ class TestLocalCoordinates:
 
 
 def test_the_shave_is_the_one_windows_needs() -> None:
-    """Pinned: this constant is the difference between a twin cursor and a
-    user who cannot get their taskbar back."""
     assert displays.TASKBAR_SHAVE_PX == 2
     assert pytest.approx(2) == displays.TASKBAR_SHAVE_PX

@@ -1,8 +1,3 @@
-"""Resolve PowerPoint's native document window from the captured HWND.
-
-PowerPoint DocumentWindow does not expose HWND. OBJID_NATIVEOM on its
-mdiClass child provides the document window without activating another deck.
-"""
 
 POWERPOINT_NATIVE_WINDOW_SCRIPT = r'''
 Add-Type @"

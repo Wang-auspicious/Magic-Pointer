@@ -1,4 +1,3 @@
-"""Verification must describe the latest mutation, using production tool names."""
 
 from __future__ import annotations
 

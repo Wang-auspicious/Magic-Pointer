@@ -1,14 +1,3 @@
-"""Web tool surface for the agent loop (Hermes web toolset contract, keyless).
-
-Hermes ships ``web_search`` + ``web_extract``; MP had neither, so the agent
-could not look up a doc page or an issue while fixing a repo. This port keeps
-the contract but needs zero API keys: search via the DuckDuckGo HTML endpoint,
-fetch via httpx with a readable-text extraction (script/style stripped,
-head+tail window on oversized pages — same shape as Hermes' char budget).
-
-Honest limits: no JS rendering (a SPA returns its shell), no PDF parsing.
-Both tools are READ effects and safe to run concurrently.
-"""
 
 from __future__ import annotations
 
@@ -26,8 +15,6 @@ __all__ = ["register_web_tools"]
 _FETCH_CACHE: dict[str, tuple[float, str]] = {}
 _FETCH_CACHE_TTL_S = 900.0
 _FETCH_CACHE_MAX = 20
-"""同 URL 15 分钟缓存（CC WebFetch 同款 TTL）：长任务里反复 fetch 同一
-文档页是常态，重复抓取只浪费时间；容量有界，按插入序淘汰。"""
 
 
 def _cache_get(url: str) -> str | None:
@@ -101,9 +88,6 @@ def web_search(query: str, limit: int = 5) -> str:
     response.raise_for_status()
     html = response.text
     results: list[str] = []
-    # DDG HTML layout: result links carry the target in the href itself or in
-    # a uddg= redirect parameter; titles live in result__a, snippets in
-    # result__snippet.
     blocks = re.split(r'<div class="result\b', html)
     for block in blocks[1:]:
         if len(results) >= bounded:
@@ -143,8 +127,6 @@ def web_fetch(url: str, char_limit: int = _DEFAULT_FETCH_CHARS) -> str:
     cached = _cache_get(target)
     if cached is not None:
         return cached
-    # 重定向不自动跟随：跨源 30x 把用户带去哪里必须显式回显（与出网
-    # 安全审计同向），要继续就再 fetch 一次新地址。
     response = httpx.get(
         target,
         headers={"User-Agent": _USER_AGENT},
@@ -174,7 +156,6 @@ def web_fetch(url: str, char_limit: int = _DEFAULT_FETCH_CHARS) -> str:
 
 
 def register_web_tools(registry: ToolRegistry) -> None:
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("web_search", "Search")
     registry.register_alias("web_fetch", "Fetch")
     registry.register(ToolSpec(

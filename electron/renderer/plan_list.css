@@ -1,5 +1,3 @@
-/* Session details Plan: six visible steps around the current task, with an
-   explicit expansion control. Colors belong to MP's existing token set. */
 .mp-plan-list { padding: 8px; border-bottom: 1px solid var(--mp-rule); }
 .mp-plan-list[hidden] { display: none; }
 .mp-plan-heading {

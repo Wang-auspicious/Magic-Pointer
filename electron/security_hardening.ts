@@ -169,7 +169,6 @@ function createFatalRecoveryGuard({
       fsImpl.renameSync(temporary, target);
       return true;
     } catch (_) {
-      // If crash-loop state cannot be recorded, do not risk an infinite loop.
       return false;
     }
   }
@@ -192,10 +191,6 @@ function install({
   if (installedApps.has(app)) return { recovery, installed: false };
   installedApps.add(app);
 
-  // Sandbox is set per-window in webPreferences. enableSandbox() forces ALL
-  // windows including the pointer overlay and stage into sandbox mode, which
-  // can break the preload contract for transparent/screen-saver surfaces.
-  // Dashboard and onboarding opt into sandbox individually.
 
   app.on('web-contents-created', (_event, contents) => {
     attachContentsHardening(contents, log, { shell });
@@ -231,7 +226,6 @@ function install({
         // A normal quit below still prevents the broken process from surviving.
       }
     }
-    // app.quit preserves before-quit cleanup for pointer and voice helpers.
     try {
       app.quit();
     } catch (_quitError) {

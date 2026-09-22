@@ -69,7 +69,6 @@ def test_split_wide_box_slices_into_overlapping_chunks() -> None:
     assert len(parts) >= 3
     widths = [round(max(p[0] for p in part) - min(p[0] for p in part)) for part in parts]
     assert all(width <= 520 for width in widths)
-    # chunks overlap and together cover the full line
     assert parts[0][1][0] == 520.0
     assert parts[-1][0][0] < 1200.0 and parts[-1][1][0] == 1200.0
 
@@ -93,9 +92,9 @@ def test_stroke_is_closed_detects_loop_with_short_tail() -> None:
 
 def test_select_boxes_loop_collects_inside_not_outside() -> None:
     boxes = [
-        [[100.0, 100.0], [300.0, 100.0], [300.0, 130.0], [100.0, 130.0]],   # inside
-        [[100.0, 200.0], [300.0, 200.0], [300.0, 230.0], [100.0, 230.0]],   # inside
-        [[900.0, 900.0], [1100.0, 900.0], [1100.0, 930.0], [900.0, 930.0]], # outside
+        [[100.0, 100.0], [300.0, 100.0], [300.0, 130.0], [100.0, 130.0]],
+        [[100.0, 200.0], [300.0, 200.0], [300.0, 230.0], [100.0, 230.0]],
+        [[900.0, 900.0], [1100.0, 900.0], [1100.0, 930.0], [900.0, 930.0]],
     ]
     loop = [[90, 90], [350, 92], [352, 240], [88, 238], [90, 90]]
     kept = _select_boxes(boxes, [loop], None)
@@ -138,7 +137,7 @@ def test_small_mark_on_hidpi_frame_gets_detail_detection_without_losing_full_fra
             self.calls += 1
             assert pixels.shape == (512, 640, 3), 'detail detection reuses the warmed detector shape'
             if self.calls == 1:
-                return SimpleNamespace(boxes=None)  # small text vanished in whole-frame downscale
+                return SimpleNamespace(boxes=None)
             return SimpleNamespace(boxes=np.array([[[100, 110], [480, 110], [480, 145], [100, 145]]]))
 
         def crop_text_regions(self, pixels, boxes):

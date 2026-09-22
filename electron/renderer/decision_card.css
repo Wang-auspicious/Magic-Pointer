@@ -1,7 +1,6 @@
-/* Claude Desktop's dock card geometry; application colors use shared tokens. */
-.dshw-perm-ask { padding-bottom: 12px; }
-#stream > .dshw-perm-ask { padding-block: 16px 0; }
-#stream > .dshw-perm-ask .mp-decision-card { max-width: 480px; margin-inline: auto; }
+.mpw-perm-ask { padding-bottom: 12px; }
+#stream > .mpw-perm-ask { padding-block: 16px 0; }
+#stream > .mpw-perm-ask .mp-decision-card { max-width: 480px; margin-inline: auto; }
 .mp-decision-card {
   container-type: inline-size;
   display: flex;
@@ -104,7 +103,6 @@
   .mp-decision-actions:has(.mp-decision-allow) > .mp-decision-button { width: 100%; }
 }
 
-/* Desktop Code compact density, inline AskUserQuestion (Wk), not dock spacing. */
 .mp-decision-card[data-presentation="inline"][data-kind="question"] {
   gap: 0;
   max-height: none;

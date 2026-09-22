@@ -1,5 +1,3 @@
-// Temporary: extract frames from a video for design reference.
-//   npx electron build/scripts/extract_frames.js <video.mp4> <outDir> [count]
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');

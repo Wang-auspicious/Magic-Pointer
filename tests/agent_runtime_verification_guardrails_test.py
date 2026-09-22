@@ -1,4 +1,3 @@
-"""Real file operations must retain verification across loop guardrail guidance."""
 
 import asyncio
 import importlib.util

@@ -1,4 +1,3 @@
-"""Settings merge-patch tests (review Q6: bridge-side deep merge)."""
 
 from __future__ import annotations
 

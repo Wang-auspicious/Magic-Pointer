@@ -11,7 +11,7 @@ const functionNames = ['applyComposerPlaceholder', 'clearComposerSuggestion', 'a
 const statements = ast.statements.filter(node =>
   (ts.isFunctionDeclaration(node) && functionNames.includes(node.name?.text))
   || (ts.isExpressionStatement(node) && (
-    node.getText(ast).startsWith("document.querySelectorAll('form.dshw-input-form')")
+    node.getText(ast).startsWith("document.querySelectorAll('form.mpw-input-form')")
     || node.getText(ast).startsWith("document.getElementById('composer-form')?.querySelector('button[type=\"submit\"]')?.addEventListener('click'")
   )));
 const listeners = new Map();

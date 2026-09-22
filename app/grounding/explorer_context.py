@@ -49,11 +49,6 @@ def read_explorer_file_context(
     gesture: JsonDict | None,
     fallback_point: dict[str, int] | None,
 ) -> tuple[AdapterReadContext | None, JsonDict | None, JsonDict | None]:
-    """Freeze one user-grounded Explorer object without reading its contents.
-
-    The absolute path comes only from Explorer COM/UIA/PowerShell grounding.
-    Content ingestion happens later, after the user's command says what to do.
-    """
 
     target_window = windows[0] if windows else None
     if target_window is None or not is_explorer_window(target_window):

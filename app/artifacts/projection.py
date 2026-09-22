@@ -1,4 +1,3 @@
-"""Pure projections of DraftArtifact revisions from session events."""
 
 from __future__ import annotations
 
@@ -17,7 +16,6 @@ from .schema import (
 
 
 def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
-    """Replay generated/patched/accepted events into the latest draft per id."""
     ordered: list[DraftArtifact] = []
     by_id: dict[str, int] = {}
     for event in events:
@@ -125,7 +123,6 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
 
 
 def latest_turn_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
-    """Current drafts actually created or revised in the most recent turn."""
     events = tuple(events)
     start = max((event.seq for event in events if event.type == "turn/start"), default=-1)
     changed = {
@@ -136,7 +133,6 @@ def latest_turn_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
 
 
 def latest_turn_artifact_summaries(events: Iterable[Any]) -> list[dict[str, Any]]:
-    """The same editable deliverable cards for Stage and Studio."""
     summaries: list[dict[str, Any]] = []
     for artifact in latest_turn_artifacts(events):
         name = artifact.title or next(

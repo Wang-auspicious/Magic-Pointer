@@ -1,7 +1,3 @@
-"""CDP eval helper: run JS in a live Electron page.
-
-Usage: python scripts/cdp_eval.py <title-substring> <js-expression>
-"""
 from __future__ import annotations
 
 import json

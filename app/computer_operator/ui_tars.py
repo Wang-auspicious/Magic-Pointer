@@ -1,12 +1,5 @@
-# Adapted from ByteDance UI-TARS action parsing and coordinate conversion.
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates.
 # SPDX-License-Identifier: Apache-2.0
-"""Safe, data-only adapter for UI-TARS model action text.
-
-Unlike the upstream convenience path, this module never emits Python code and
-never uses ``eval``. It produces unprivileged intents; Magic Pointer core must
-assign an ``Effect`` before an intent can become an executable action.
-"""
 
 from __future__ import annotations
 
@@ -193,7 +186,6 @@ def parse_ui_tars_response(
     *,
     model_image_size: tuple[int, int] | None = None,
 ) -> list[UiTarsActionIntent]:
-    """Parse UI-TARS text without granting it permission to execute anything."""
     text = str(value or "").strip().replace("[EOS]", "")
     if "Action:" not in text:
         raise ValueError("UI-TARS response is missing Action:")
@@ -256,7 +248,6 @@ def compile_ui_tars_intent(
     effect: Effect,
     source_observation: OperatorObservation,
 ) -> ComputerAction:
-    """Core policy assigns the effect; the UI-TARS model never does."""
     if not isinstance(intent, UiTarsActionIntent):
         raise TypeError("intent must be UiTarsActionIntent")
     if not isinstance(source_observation, OperatorObservation):

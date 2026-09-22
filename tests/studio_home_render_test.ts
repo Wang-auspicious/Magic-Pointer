@@ -96,7 +96,7 @@ assert(modelsMarkup.includes('25 input') && modelsMarkup.includes('15 output'));
 
 const shellHtml = fs.readFileSync('electron/renderer/studio.html', 'utf8');
 const homeSource = fs.readFileSync('electron/renderer/studio_home.ts', 'utf8');
-const shellCss = fs.readFileSync('electron/renderer/claude_shell.css', 'utf8');
+const shellCss = fs.readFileSync('electron/renderer/studio_layout.css', 'utf8');
 for (const value of ['overview', 'models']) {
   assert(shellHtml.includes(`role="tab" data-home-view="${value}"`));
 }
@@ -109,6 +109,6 @@ assert(homeSource.includes("let homeRange: HomeRange = 'all'"));
 assert(homeSource.includes("button.setAttribute('aria-selected'"));
 assert(homeSource.includes("addEventListener('click'"));
 assert.match(shellCss, /\.mp-home-heatmap\s*\{[^}]*grid-auto-columns:\s*14px[^}]*grid-template-rows:\s*repeat\(7,\s*14px\)/s,
-  'short ranges retain Claude-sized heat cells instead of stretching into giant tiles');
+  'short ranges retain Studio-sized heat cells instead of stretching into giant tiles');
 
 console.log('studio home render test ok');

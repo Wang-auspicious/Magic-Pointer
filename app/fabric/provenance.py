@@ -27,7 +27,6 @@ def _now() -> str:
 
 
 class ProvenanceIndex:
-    """Local reverse index from pointed objects to executions and outputs."""
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root).expanduser().resolve()

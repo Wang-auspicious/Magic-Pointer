@@ -239,12 +239,6 @@ def test_incompatible_successful_contents_are_reported_as_a_conflict() -> None:
 
 
 def test_a_stalled_provider_cannot_hold_the_verdict_past_the_deadline() -> None:
-    """One wedged adapter must not make the whole read wait for it.
-
-    A UIA probe against an unresponsive window can block indefinitely. Waiting
-    for every provider makes the read as slow as its worst one, which is the
-    exact failure concurrent fusion exists to remove.
-    """
     release = threading.Event()
     stalled = _Adapter(
         "native-stalled",
@@ -277,7 +271,6 @@ def test_a_stalled_provider_cannot_hold_the_verdict_past_the_deadline() -> None:
 
 
 def test_a_single_stalled_provider_still_returns_an_honest_unread_verdict() -> None:
-    """The one-adapter path is the common case, so it needs the same deadline."""
     release = threading.Event()
     try:
         started = time.perf_counter()

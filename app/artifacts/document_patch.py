@@ -1,9 +1,3 @@
-"""Typed, revision-bound document changes and their verification gate.
-
-This module deliberately knows nothing about PowerPoint, PDF, Figma, or a
-desktop connection.  Product adapters provide one read callback and one write
-callback; this value layer owns the invariants shared by all of them.
-"""
 
 from __future__ import annotations
 
@@ -219,7 +213,6 @@ class DocumentPatch:
         }
 
     def preview(self) -> dict[str, Any]:
-        """Return the exact values the approved revision would write."""
         return {
             "patchId": self.patch_id,
             "artifactId": self.artifact_id,
@@ -234,7 +227,6 @@ def bind_document_patch_payload(
     artifact_id: str,
     artifact_revision: int,
 ) -> dict[str, Any]:
-    """Bind UI/model patch data to session-owned artifact coordinates."""
     data = _mapping(value, "document patch payload")
     data["artifactId"] = _text(artifact_id, "artifact_id")
     data["artifactRevision"] = artifact_revision
@@ -360,7 +352,6 @@ def document_patch_paths(patch: DocumentPatch) -> tuple[str, ...]:
 
 
 def inverse_document_patch(patch: DocumentPatch, records: list[dict[str, Any]]) -> DocumentPatch | None:
-    """Reconstruct only recorded writes, reversing their original order."""
     operations = []
     references = []
     forward = {operation.operation_id: operation for operation in patch.operations}
@@ -407,7 +398,6 @@ def apply_document_patch(
     state_probe: Callable[[], tuple[int, int | None]] | None = None,
     allow_already_applied: bool = False,
 ) -> PatchApplyResult:
-    """Apply an approved patch sequentially, stopping at the first uncertainty."""
 
     succeeded: list[str] = []
     written: list[str] = []
@@ -510,8 +500,6 @@ def apply_document_patch(
             )
         backends.append(before.used_backend)
         if allow_already_applied and before.value == operation.after:
-            # A prior undo wrote successfully but its readback was unavailable.
-            # Confirm the restored value without repeating the mutation.
             succeeded.append(operation.operation_id)
             continue
         if before.value != operation.before:

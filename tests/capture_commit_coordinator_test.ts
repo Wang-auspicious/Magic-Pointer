@@ -1,8 +1,5 @@
 'use strict';
 
-// CaptureCommitCoordinator: pointerup must freeze pixels before the overlay is
-// released and before the selection session opens. The coordinator owns that
-// order deterministically, independent of Electron window timing.
 
 const assert = require('assert');
 const { CaptureCommitCoordinator } = require('../electron/capture_commit_coordinator');
@@ -197,8 +194,6 @@ coordinatorTests.push(async function rearmDuringCommitMustNotClobberTheNewEpoch(
   const completing1 = coordinator.complete(gesture());
   await coordinator.arm(armRequest('epoch-2'));
   const lease1 = await completing1;
-  // The stale commit tail must be fully discarded: no overlay release, no
-  // session for the old gesture, and the new epoch's armed request survives.
   assert.strictEqual(lease1, null);
   assert(!events.includes('overlay-release'));
   assert(!events.includes('session:frame-1'));
@@ -232,9 +227,6 @@ coordinatorTests.push(async function commitFailureStillReleasesOverlayAndResolve
 });
 
 coordinatorTests.push(async function commitTimeoutReleasesOverlayAndFailsClosed() {
-  // A provider whose commit never settles must not leave pointerup hanging
-  // with the overlay pinned (electron audit P2). The coordinator owns its
-  // own deadline.
   const events: string[] = [];
   const failures: Error[] = [];
   const coordinator = new CaptureCommitCoordinator({
@@ -242,7 +234,7 @@ coordinatorTests.push(async function commitTimeoutReleasesOverlayAndFailsClosed(
       arm: async () => { events.push('arm'); },
       commit: async () => {
         events.push('commit');
-        await new Promise(() => {}); // never settles
+        await new Promise(() => {});  
       },
       cancel: async () => { events.push('cancel'); },
     },

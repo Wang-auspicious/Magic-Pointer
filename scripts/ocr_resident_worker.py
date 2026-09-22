@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Resident OCR worker.
-
-Loads the RapidOCR engine once and serves JSON requests over a local TCP
-socket. Each request runs full-screen text detection (on a downscaled copy for
-speed), plus a padded detail pass when a HiDPI mark would lose small text,
-then only recognizes the blocks near the user's mark (stroke polylines
-or a selection rectangle in capture-local coordinates). Coordinates in the
-response are capture-local pixels, matching the screenshot the caller saved.
-
-Protocol (newline-delimited JSON on a single connection):
-  -> {"id": 1, "path": "...", "strokes_local": [[[x, y], ...], ...],
-      "selection_bbox_local": [x, y, w, h] | null}
-  <- {"id": 1, "blocks": [{"text": "...", "rect": [x, y, w, h], "conf": 0.9}],
-      "engine": "rapidocr-onnx", "ok": true}
-"""
 
 from __future__ import annotations
 
@@ -36,24 +21,16 @@ from app.grounding.ocr_mark_selection import select_open_stroke_rect_indexes
 RUNTIME_DIR = ROOT / "data" / "runtime"
 PORT_FILE = RUNTIME_DIR / "ocr_worker.port"
 STARTUP_LOCK_FILE = RUNTIME_DIR / "ocr_worker.start.lock"
-# Loading the RapidOCR models costs seconds; serving a request costs
-# milliseconds. A five-minute idle timeout meant a user who came back after
-# lunch paid the cold load again, which is most of the p50 latency we measured.
-# Half an hour keeps a working session warm; MAGIC_POINTER_OCR_IDLE_TIMEOUT_S
-# lets a memory-constrained machine shorten it.
 try:
     IDLE_TIMEOUT_S = max(60.0, float(os.environ.get("MAGIC_POINTER_OCR_IDLE_TIMEOUT_S") or 1800.0))
 except ValueError:
     IDLE_TIMEOUT_S = 1800.0
 DETECTION_WIDE_SIZE = (640, 192)
 DETECTION_STANDARD_SIZE = (640, 512)
-# A single request line larger than this is a broken or hostile caller; never
-# buffer it (the bridge caps its own payload at 64 KB).
 MAX_REQUEST_LINE_BYTES = 512 * 1024
 
 
 def _published_worker_port(port_file: Path = PORT_FILE) -> int | None:
-    """Return a published OCR port only when a worker is actually accepting."""
     try:
         meta = json.loads(port_file.read_text(encoding="utf-8"))
         port = int(meta.get("port") or 0)
@@ -66,7 +43,6 @@ def _published_worker_port(port_file: Path = PORT_FILE) -> int | None:
 
 
 def _remove_owned_port_file(port_file: Path, *, pid: int, port: int) -> bool:
-    """Remove discovery metadata only if this exact worker still owns it."""
     try:
         meta = json.loads(port_file.read_text(encoding="utf-8"))
         if int(meta.get("pid") or 0) != int(pid) or int(meta.get("port") or 0) != int(port):
@@ -79,7 +55,6 @@ def _remove_owned_port_file(port_file: Path, *, pid: int, port: int) -> bool:
 
 @contextmanager
 def _worker_startup_lock(lock_file: Path = STARTUP_LOCK_FILE) -> Iterator[bool]:
-    """Serialize model loading across bridge processes; OS locks vanish on crash."""
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_file.open("a+b")
     acquired = False
@@ -94,7 +69,7 @@ def _worker_startup_lock(lock_file: Path = STARTUP_LOCK_FILE) -> Iterator[bool]:
                 import msvcrt
 
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:  # pragma: no cover - exercised on Windows in desktop acceptance
+            else:
                 import fcntl
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -110,7 +85,7 @@ def _worker_startup_lock(lock_file: Path = STARTUP_LOCK_FILE) -> Iterator[bool]:
                     import msvcrt
 
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:  # pragma: no cover
+                else:
                     import fcntl
 
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -120,7 +95,6 @@ def _worker_startup_lock(lock_file: Path = STARTUP_LOCK_FILE) -> Iterator[bool]:
 
 
 def _detection_canvas(source) -> tuple[object, float]:
-    """Letterbox every capture into one of two reusable detector shapes."""
     from PIL import Image
 
     import numpy as np
@@ -143,7 +117,6 @@ def _detection_canvas(source) -> tuple[object, float]:
 
 
 def _warm_detection_shapes(engine) -> None:
-    """Pay ONNX shape initialization while the resident starts in background."""
     import numpy as np
 
     for width, height in (DETECTION_WIDE_SIZE, DETECTION_STANDARD_SIZE):
@@ -272,12 +245,6 @@ def _select_boxes(boxes: list[list[list[float]]], strokes_local: list[list[list[
 
 
 def _split_wide_box(box: list[list[float]], max_width: float = 900.0, overlap: float = 80.0) -> list[list[list[float]]]:
-    """Split a very wide text box into overlapping vertical slices.
-
-    RapidOCR's recognition model resizes long lines into a fixed-width input,
-    which silently drops characters at the end; slicing keeps each chunk under
-    the model's comfortable width and the parts are joined back in order.
-    """
     xs = [float(p[0]) for p in box]
     ys = [float(p[1]) for p in box]
     left, top = min(xs), min(ys)
@@ -297,7 +264,6 @@ def _split_wide_box(box: list[list[float]], max_width: float = 900.0, overlap: f
 
 
 def _merge_recognized_pieces(parts: list[str]) -> str:
-    """Join overlapping OCR crops without repeating their shared characters."""
     clean = [str(part or "").strip() for part in parts if str(part or "").strip()]
     if not clean:
         return ""
@@ -314,10 +280,6 @@ def _merge_recognized_pieces(parts: list[str]) -> str:
     return merged
 
 
-# Detection runs over the whole frozen capture and is the expensive half of a
-# read; recognition only touches the boxes the user's mark selects. A capture
-# never changes once written, so a second command about the same object (the
-# common case in a multi-turn conversation) can reuse the boxes outright.
 _DETECTION_CACHE: "OrderedDict[tuple, list]" = OrderedDict()
 _DETECTION_CACHE_MAX = 8
 
@@ -358,11 +320,6 @@ def _detect_boxes(engine, image_path: Path, region: tuple[int, int, int, int] | 
 
 
 def _detail_region(size, strokes, selection) -> tuple[int, int, int, int] | None:
-    """Keep the global pass and add readable pixels around a small HiDPI mark.
-
-    The 640px global detector can shrink ordinary UI labels to 5px. A padded
-    local view uses the same warmed shapes without discarding the full frame.
-    """
     width, height = size
     if not selection:
         points = [point for stroke in strokes for point in stroke]
@@ -403,8 +360,6 @@ def process(engine, payload: dict) -> dict:
             if detailed_boxes:
                 left, top, right, bottom = detail_region
                 region_xywh = [left, top, right - left, bottom - top]
-                # Fine boxes supersede coarse fragments within the detail view;
-                # whole-frame boxes outside it (including crossing lines) stay.
                 full_boxes = [box for box in full_boxes
                               if _block_overlap_ratio(boxes_to_xywh(box), region_xywh) < 1.0]
                 full_boxes.extend(detailed_boxes)
@@ -430,8 +385,6 @@ def process(engine, payload: dict) -> dict:
             label = str(text or "").strip()
             if not label:
                 continue
-            # 低置信度识别（OCR 噪声）不参与合并：宁可少一条，不可把
-            # 误识别的字符当成「屏幕上的真相」进上下文。
             if piece_index < len(scores):
                 try:
                     score = float(scores[piece_index])
@@ -452,12 +405,11 @@ def process(engine, payload: dict) -> dict:
                 "conf": None,
             })
         return {"ok": True, "blocks": blocks, "engine": "rapidocr-onnx"}
-    except Exception as exc:  # pragma: no cover - worker robustness
+    except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _process_if_idle(engine, payload: dict, process_lock: threading.Lock) -> dict:
-    """Run one inference at a time; RapidOCR's shared session is not thread-safe."""
     if not process_lock.acquire(blocking=False):
         return {"ok": False, "error": "worker_busy"}
     try:
@@ -472,8 +424,6 @@ def main() -> int:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     with _worker_startup_lock() as owns_startup:
         if not owns_startup:
-            # Another bridge won the cold-start race. Wait for its discovery
-            # record instead of loading a second multi-hundred-MB OCR engine.
             deadline = _time.monotonic() + 30.0
             while _time.monotonic() < deadline:
                 if _published_worker_port() is not None:
@@ -481,14 +431,11 @@ def main() -> int:
                 _time.sleep(0.2)
             return 3
 
-        # A request may have spawned us after a resident had already published.
         if _published_worker_port() is not None:
             return 0
 
         from app.perception.ocr_engine import create_ocr_engine
 
-        # Model files may still be held by a previous worker process being torn
-        # down; retry the engine load so a kill/restart race does not kill us.
         engine = None
         for attempt in range(6):
             try:
@@ -546,7 +493,7 @@ def main() -> int:
                         request = json.loads(line.decode("utf-8"))
                         response = _process_if_idle(engine, request, process_lock)
                         response["id"] = request.get("id")
-                    except Exception as exc:  # pragma: no cover
+                    except Exception as exc:
                         response = {"id": request.get("id") if request else None, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
                     connection.sendall((json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8"))
         except Exception:

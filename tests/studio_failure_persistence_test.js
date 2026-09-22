@@ -4,13 +4,28 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
-const DshChat = require('../electron/renderer/dsh_chat');
+const ChatView = require('../electron/renderer/chat_view');
 
 async function main() {
   const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
-  const start = source.indexOf('      pendingPermissionChoice = null;', source.indexOf('const response = await Data.sendConversation('));
-  const end = source.indexOf('      /* 命令结算的副作用', start);
-  assert.ok(start > 0 && end > start);
+  const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
+  let responseBlock;
+  const findResponse = node => {
+    if (ts.isVariableDeclaration(node) && node.initializer && ts.isAwaitExpression(node.initializer)
+      && ts.isCallExpression(node.initializer.expression)
+      && node.initializer.expression.expression.getText(ast) === 'Data.sendConversation') {
+      responseBlock = node.parent.parent.parent;
+    }
+    ts.forEachChild(node, findResponse);
+  };
+  findResponse(ast);
+  assert.ok(responseBlock && ts.isBlock(responseBlock), 'send must settle inside its response block');
+  const statements = responseBlock.statements;
+  const start = statements.findIndex(node => ts.isExpressionStatement(node) && ts.isBinaryExpression(node.expression)
+    && node.expression.left.getText(ast) === 'pendingPermissionChoice');
+  const end = statements.findIndex(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(declaration => declaration.name.getText(ast) === 'command'));
+  assert.ok(start >= 0 && end > start);
   const calls = [];
   const context = {
     response: { ok: false, conversationId: 'saved-failure', error: 'Provider unavailable' },
@@ -19,17 +34,17 @@ async function main() {
     renderPermissionAsk() {}, renderComposerAttachments() {}, renderComposerMaterials() {},
     openConversation: async id => calls.push(id), renderSidebar: async () => calls.push('sidebar'),
   };
-  const code = ts.transpileModule(`async function settle() {${source.slice(start, end)}}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const settlement = statements.slice(start, end).map(node => node.getText(ast)).join('\n');
+  const code = ts.transpileModule(`async function settle() {${settlement}}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(code, context);
   await assert.rejects(context.settle(), /Provider unavailable/);
   assert.equal(context.activeConversationId, 'saved-failure', 'retry must continue the saved failed task');
   assert.deepEqual(calls, ['saved-failure', 'sidebar'], 'failure must reopen its persisted trace and refresh task navigation');
 
-  const nodes = DshChat.assistantTurnNode({ answer: 'Read one page.', failed: true, error: 'Provider unavailable' });
+  const nodes = ChatView.assistantTurnNode({ answer: 'Read one page.', failed: true, error: 'Provider unavailable' });
   const html = nodes.map(node => node.outerHTML).join('');
   assert.match(html, /Read one page\./);
   assert.match(html, /Provider unavailable/, 'partial output must not hide the terminal failure');
-  const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
   let proxyInput;
   const inspect = node => {
     if (ts.isCallExpression(node) && node.expression.getText(ast) === 'CardModel.normalizeCard'

@@ -1,8 +1,3 @@
-"""Optional, bounded target disambiguation using OpenCode's free Jev model.
-
-Returns a snapshot reference only. The existing action lease, permissions and
-freshness checks still run when the caller chooses to act on that reference.
-"""
 from __future__ import annotations
 
 import json
@@ -65,8 +60,6 @@ class JevTargetSelector:
             return result(exact[0]["ref"], "uia.exact-label", confidence=1.0)
         if not self._key or not rows:
             return result(reason="unconfigured" if not self._key else "no_candidates")
-        # Do not silently discard late UIA nodes to fit a remote prompt. Let the
-        # caller narrow the public candidate_refs argument when the pool is large.
         if len(rows) > 64:
             return result(reason="narrow_candidates")
         if not self._busy.acquire(blocking=False):

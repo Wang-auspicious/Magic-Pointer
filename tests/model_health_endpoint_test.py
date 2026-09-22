@@ -1,18 +1,3 @@
-"""Model health per-endpoint isolation (review P0.4 regression suite).
-
-Before the fix, one health JSON file held a single verdict: a vision-endpoint
-failure (or a local vision-model classification refusal) opened the circuit
-for *every* endpoint, so text answers were short-circuited with "cannot reach
-the gateway" even though the text gateway was healthy. The fix stores one
-verdict per base_url and the vision capability refusal writes no health at all.
-
-Tests:
-1. A failure recorded for endpoint A blocks A only; endpoint B is untouched.
-2. record_success on B clears B's circuit without clearing A's.
-3. Legacy single-object health files (v1) are migrated to the per-endpoint map.
-4. read_health() with no argument prefers the currently configured text
-   endpoint when several endpoints have entries.
-"""
 
 from __future__ import annotations
 
@@ -26,7 +11,7 @@ from app import ai_client, model_health  # noqa: E402
 
 def test_failure_on_endpoint_a_does_not_block_endpoint_b(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(model_health, "_state_path", lambda: tmp_path / "health.json")
-    for _ in range(2):  # 瞬态类需连续两次才熔断（notepad-edit 事故后的新契约）
+    for _ in range(2):
         model_health.record_failure(
             status=500,
             detail="boom",
@@ -95,9 +80,6 @@ def test_read_health_no_arg_prefers_configured_text_endpoint(monkeypatch, tmp_pa
 
 
 def test_single_transient_failure_does_not_open_the_circuit(monkeypatch, tmp_path):
-    """真机事故（notepad-edit）：压缩摘要调用撞上一次瞬时 SSL 错误，熔断器
-    立即打开 20s，把紧接着的主模型调用整个跳过——10 轮成功工作报废。
-    瞬态类（unreachable/5xx/429）必须连续失败才熔断；单次失败只记录。"""
     monkeypatch.setattr(model_health, "_state_path", lambda: tmp_path / "health.json")
     model_health.record_failure(
         status=None,
@@ -134,8 +116,6 @@ def test_success_between_failures_resets_the_transient_count(monkeypatch, tmp_pa
 
 
 def test_open_circuit_message_carries_retry_horizon(monkeypatch, tmp_path: Path) -> None:
-    """roadmap §12.2: an open circuit must tell the user how long until
-    retry is possible, not a bare '稍后自动重试' with no horizon."""
     import time
 
     from app.model_health import (
@@ -155,13 +135,11 @@ def test_open_circuit_message_carries_retry_horizon(monkeypatch, tmp_path: Path)
     remaining = int(DEFAULT_COOLDOWN_S)
     assert f"约 {remaining} 秒后可重试" in health.message
 
-    # A healthy (or never-opened) entry adds no retry sentence.
     relaxed = GatewayHealth(state="ok", open_until=0.0, checked_at=now)
     assert "秒后可重试" not in relaxed.message
 
 
 def test_hard_failures_still_open_immediately(monkeypatch, tmp_path):
-    """401/402/404 不是抖动：一次就熔断，等冷却过去再探测。"""
     monkeypatch.setattr(model_health, "_state_path", lambda: tmp_path / "health.json")
     base = "https://endpoint-a.example/v1"
     model_health.record_failure(status=401, model="m", base_url=base)

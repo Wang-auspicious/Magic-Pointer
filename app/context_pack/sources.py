@@ -1,9 +1,3 @@
-"""Durable task-source, fragment, coverage and reference value objects.
-
-The wire format is camelCase and deliberately strict: these objects cross the
-Electron/Python boundary and are persisted in EventSession, so silently
-discarding a misspelled field would lose the only route back to source material.
-"""
 
 from __future__ import annotations
 

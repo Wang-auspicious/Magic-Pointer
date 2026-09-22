@@ -11,7 +11,6 @@ assert.strictEqual(commandForChip('translate'), '把这段文字翻译成中文'
 assert.strictEqual(commandForChip('summarize'), '总结这段文字');
 assert.strictEqual(commandForChip('compare'), '对比这个和上一个对象');
 assert.strictEqual(commandForChip('tidy'), '整理这个对象');
-assert.strictEqual(commandForChip('add-to-calendar'), '添加到日历');
 assert.strictEqual(commandForChip('unknown'), null);
 
 assert.strictEqual(inferObjectKind({
@@ -31,29 +30,6 @@ assert.strictEqual(inferObjectKind({ source_kind: 'window', context: {} }), null
 assert.strictEqual(selectionSourceForReason('click'), 'click');
 assert.strictEqual(selectionSourceForReason('mouse-click'), 'click');
 assert.strictEqual(selectionSourceForReason('wiggle'), 'wiggle');
-
-const calendar = stageEventFromBridge({
-  ok: true,
-  answer: '日历草稿已生成。',
-  intentKind: 'calendar_event_draft',
-  calendarDraft: {
-    title: '设计评审',
-    location: 'A 会议室',
-    event: {
-      title: '设计评审',
-      start_at: '2026-07-30T10:00:00+08:00',
-      end_at: '2026-07-30T11:00:00+08:00',
-      location: 'A 会议室',
-    },
-    warnings: [],
-  },
-});
-assert.strictEqual(calendar.type, 'RESULT');
-assert.strictEqual(calendar.result.kind, 'calendar-draft');
-assert.strictEqual(calendar.result.status, 'draft');
-assert.strictEqual(calendar.result.title, '设计评审');
-assert.strictEqual(calendar.result.actions[0].kind, 'context');
-assert.strictEqual(calendar.result.actions[0].id, 'open-calendar-draft');
 
 const word = stageEventFromBridge({
   ok: true,
@@ -104,7 +80,7 @@ assert.ok(!accepted.result.statusLabel.includes('完成'));
 
 const executed = stageEventFromBridge({
   ok: true,
-  answer: '已加入购物清单。',
+  answer: '文档已更新。',
   executionResult: {
     status: 'succeeded',
     output: { verified: true },
@@ -112,14 +88,14 @@ const executed = stageEventFromBridge({
   actionProposals: [{
     id: 'undo-1',
     action_token: 'undo-token',
-    action_type: 'shopping_list_undo_add',
+    action_type: 'office_undo_last_action',
     confirmation_required: true,
   }],
 });
 assert.deepStrictEqual(executed, {
   type: 'COMPLETE',
   outcome: { status: 'succeeded', verified: true },
-  result: { answer: '已加入购物清单。' },
+  result: { answer: '文档已更新。' },
 }, 'verified execution retains its real answer for the shared conversation');
 
 const question = stageEventFromBridge({
@@ -177,11 +153,6 @@ assert.deepStrictEqual(failure, {
 
 console.log('stage_contract_test: all assertions passed');
 
-// --- Human error messages -------------------------------------------------
-// The acceptance run put `bridge_timeout` on screen. A bridge code is for the
-// log; the bubble gets a sentence, and an unmapped code gets the honest
-// fallback rather than the identifier. Timeout/cancel happen AFTER tools may
-// have run, so they must not claim nothing changed (O4).
 {
   const { humanErrorMessage } = require('../electron/stage_contract');
   assert.strictEqual(
@@ -206,7 +177,6 @@ console.log('stage_contract_test: all assertions passed');
 }
 console.log('stage contract human error test ok');
 
-// ---- 账单随结果到达渲染层（O6）：真实轮数/token，不是假数字 ----
 const billed = stageEventFromBridge({
   ok: true,
   answer: '做完了。',

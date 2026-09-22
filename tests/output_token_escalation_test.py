@@ -1,14 +1,3 @@
-"""Raising the output ceiling when a turn is truncated.
-
-The defect this covers: the loop already detected ``finish_reason == "length"``
-and retried, but it retried at **the same ceiling**. A request that needed more
-room than 4096 output tokens was re-sent at 4096 until
-``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT`` ran out and the turn was reported as
-failed. Writing a 200-line file, one long patch, or a summary of a long
-command's output all sit in that band, so the retry was structurally incapable
-of succeeding. Claude Code re-sends the identical request with a much larger
-ceiling; this is the same idea at a smaller multiple.
-"""
 
 import asyncio
 
@@ -28,11 +17,6 @@ from app.agent_runtime.tool_registry import ToolRegistry
 
 
 class CeilingBackend:
-    """Backend that records the ceiling in force for every request.
-
-    Also implements ``escalate_max_tokens``, which is the surface the loop
-    reaches for.
-    """
 
     def __init__(self, *scenes) -> None:
         self._scenes = list(scenes)
@@ -54,7 +38,6 @@ class CeilingBackend:
 
 
 class PlainBackend:
-    """No escalation surface at all — the loop must not require one."""
 
     def __init__(self, *scenes) -> None:
         self._scenes = list(scenes)
@@ -99,8 +82,6 @@ class TestEscalationLadder:
         assert escalated_max_tokens(64000, 1) == 0
 
     def test_low_ceilings_still_get_real_headroom(self) -> None:
-        # A 240-token ceiling (the AiClientBackend default) must not escalate
-        # to 960 — that is not enough room to matter.
         assert escalated_max_tokens(240, 0) >= 16384
 
     def test_never_decreases(self) -> None:
@@ -123,8 +104,6 @@ class TestLoopEscalatesOnTruncation:
         )
 
     def test_it_does_not_escalate_forever(self) -> None:
-        # Every turn truncated: the ladder must stop, and the run must still
-        # terminate rather than escalating without bound.
         backend = CeilingBackend(*[_withheld() for _ in range(12)])
         client = LoopModelClient(backend)
         asyncio.run(_collect(_params(client)))
@@ -132,8 +111,6 @@ class TestLoopEscalatesOnTruncation:
         assert backend.max_tokens <= ESCALATED_MAX_TOKENS
 
     def test_a_backend_without_the_surface_is_unaffected(self) -> None:
-        # AiClientBackend predates this and has no escalate_max_tokens on some
-        # paths; the loop must degrade to the old behaviour, not raise.
         backend = PlainBackend(_withheld(), _answered())
         client = LoopModelClient(backend)
         asyncio.run(_collect(_params(client)))

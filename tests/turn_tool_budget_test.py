@@ -1,14 +1,3 @@
-"""Aggregate bound on one round's tool results.
-
-The defect this covers: ``_MAX_TOOL_RESULT_CHARS`` bounds each tool result
-individually, but a round can carry ``max_parallel_tool_calls`` of them — eight
-since the ceiling was raised. Eight parallel reads each just under the cap is
-half a million characters
-entering the history in a single step — the budget of an entire conversation,
-in the step that pushes the next request over the model's window. The measured
-estimate for CJK is roughly one token per character, so this is not a
-theoretical bound.
-"""
 
 from app.agent_runtime.loop import (
     _MAX_TURN_TOOL_RESULT_CHARS,
@@ -57,7 +46,6 @@ class TestOverBudget:
         assert _total(fitted) <= _MAX_TURN_TOOL_RESULT_CHARS
 
     def test_the_largest_message_absorbs_the_cut(self) -> None:
-        # A single huge read must not starve its small siblings.
         messages = [
             _tool("small" * 10, call_id="small"),
             _tool("huge" * 40_000, call_id="huge"),
@@ -68,8 +56,6 @@ class TestOverBudget:
         assert len(by_id["huge"].content or "") < len("huge" * 40_000)
 
     def test_every_trimmed_message_says_so(self) -> None:
-        # A silently shortened tool result is worse than a truncated one: the
-        # model cannot tell "the file ended there" from "we stopped showing you".
         messages = [_tool("a" * 200_000)]
         fitted = _fit_turn_tool_messages(messages)
         assert "trimmed to fit this round's budget" in (fitted[0].content or "")

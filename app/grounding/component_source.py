@@ -75,13 +75,6 @@ def _ignored_directory(name: str) -> bool:
 
 
 def _looks_like_browser_profile(path: Path) -> bool:
-    """Reject Chromium user-data trees accidentally created inside a repo.
-
-    Their caches can contain thousands of generated ``.js`` files and are not
-    source candidates. A profile root has both ``Local State`` and ``Default``;
-    requiring the pair avoids excluding an ordinary project directory called
-    Default or a source file that happens to be named Local State.
-    """
     try:
         return (path / "Local State").is_file() and (path / "Default").is_dir()
     except OSError:

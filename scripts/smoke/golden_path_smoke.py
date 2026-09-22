@@ -1,19 +1,3 @@
-"""Thin golden-path smoke layer (review Q12): own UIA toolchain, no Playwright.
-
-SendInput-synthesized pointer + real window + real frozen frame + the real
-snapshot bridge + the real selection bridge, asserted against honest
-outcomes (answer content, phase progress, ledger files). Never launches the
-Electron UI; never asserts what a human eye should verify (overlay
-exclusion, DPI colours).
-
-Subcommands:
-  uia-host      resident UIA host: spawn -> ping -> probe -> timing
-  replay        offline: every replay fixture through run_trace_replay
-  notepad-read  live: Notepad + synthetic gesture -> frame lease ->
-                snapshot bridge -> selection bridge -> honest assertion
-
-Usage: python scripts/smoke/golden_path_smoke.py <subcommand>
-"""
 
 from __future__ import annotations
 
@@ -108,11 +92,6 @@ def _find_notepad_window():
 
 
 def _frozen_frame_lease(window: dict, gesture_points: list) -> dict:
-    """Production-shape FrameLease over a real GDI grab of the target window.
-
-    This is the same source the production fallback path uses
-    (``gdi-fallback``); the smoke asserts the chain, not the WGC latency.
-    """
     import time as _time
 
     from PIL import ImageGrab
@@ -177,8 +156,6 @@ def _smoke_notepad_read() -> int:
     )
     time.sleep(1.2)
     try:
-        # Type the known content into Notepad via the clipboard (SendInput
-        # keystrokes are fragile across IMEs; clipboard paste is deterministic).
         import pyperclip
 
         pyperclip.copy(content)
@@ -191,8 +168,8 @@ def _smoke_notepad_read() -> int:
             return 1
         user32.SetForegroundWindow(hwnd)
         time.sleep(0.4)
-        user32.keybd_event(0x11, 0, 0, 0)  # Ctrl
-        user32.keybd_event(0x56, 0, 0, 0)  # V
+        user32.keybd_event(0x11, 0, 0, 0)
+        user32.keybd_event(0x56, 0, 0, 0)
         user32.keybd_event(0x56, 0, 2, 0)
         user32.keybd_event(0x11, 0, 2, 0)
         time.sleep(0.6)
@@ -204,7 +181,6 @@ def _smoke_notepad_read() -> int:
             "rect": [100, 100, 900, 700],
             "class_name": "Notepad",
         }
-        # Synthetic gesture: draw a stroke across the text area.
         points = [(300, 200 + index * 12) for index in range(12)]
         for x, y in points:
             _send_input_move(x, y)

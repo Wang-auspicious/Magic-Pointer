@@ -1,4 +1,3 @@
-"""Electron-managed background review bridge (stdin JSON -> stdout JSON)."""
 
 from __future__ import annotations
 

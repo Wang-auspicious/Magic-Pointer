@@ -1,5 +1,4 @@
 const assert = require('assert');
-// 阶段常量与协议值钉死：桥端、主进程、渲染层三方共用同一套名字。
 const {
   ANSWER_CHUNK_PHASE,
   callConversationAction,
@@ -51,7 +50,6 @@ assert.deepStrictEqual(planConversationStop({ requestId: 'selection-request', ag
 assert.deepStrictEqual(planConversationSteer({ text: '继续看右侧', agentSessionId: SELECTION_SESSION_ID }),
   { action: 'steer', sessionId: SELECTION_SESSION_ID, text: '继续看右侧' });
 
-// session_ready：渲染层只接受 Python 当前签发的 new/conv 两种 durable id。
 assert.strictEqual(
   sessionIdFromRecord({ phase: SESSION_READY_PHASE, fields: { sid: NEW_SESSION_ID } }),
   NEW_SESSION_ID,
@@ -66,8 +64,6 @@ assert.strictEqual(sessionIdFromRecord({ phase: SESSION_READY_PHASE, fields: {} 
 assert.strictEqual(sessionIdFromRecord({ phase: SESSION_READY_PHASE, fields: { sid: 'rm -rf /' } }), null);
 assert.strictEqual(sessionIdFromRecord(null), null);
 
-// Conversation actions are intentionally shared by Studio and Companion,
-// while every other renderer remains unauthorized.
 const dashboardContents = { id: 'dashboard' };
 const companionContents = { id: 'companion' };
 const liveWindow = (webContents: object) => ({
@@ -95,7 +91,6 @@ assert.strictEqual(isConversationSender(
   { isDestroyed: () => true, webContents: companionContents },
 ), false);
 
-// answer_chunk：base64 增量解码，坏数据一律空串（展示通道不能炸 UI）。
 assert.strictEqual(
   decodeChunkBlob({ b64: Buffer.from('你好', 'utf8').toString('base64') }),
   '你好',
@@ -103,7 +98,6 @@ assert.strictEqual(
 assert.strictEqual(decodeChunkBlob({}), '');
 assert.strictEqual(decodeChunkBlob({ b64: '%%%not-base64%%%' }), '');
 
-// plan：与 answer_chunk 同一条 blob 通道。
 const steps = [{ content: '第一步', status: 'pending' }];
 const planBlob = Buffer.from(JSON.stringify({ steps }), 'utf8').toString('base64');
 assert.deepStrictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: { b64: planBlob } }), { steps });
@@ -116,7 +110,6 @@ assert.strictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: {
 assert.strictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: {} }), null);
 assert.deepStrictEqual(planStepsFromRecord({ phase: PLAN_PHASE, fields: { b64: '!!!' } }), null);
 
-// stop：没有在跑的请求或还没拿到 session id 时诚实拒绝，不假装点了停。
 assert.deepStrictEqual(planConversationStop({ requestId: '', agentSessionId: 's' }), { action: 'none', reason: 'no_request' });
 assert.deepStrictEqual(planConversationStop({ requestId: 'r', agentSessionId: null }), { action: 'none', reason: 'no_session' });
 assert.deepStrictEqual(
@@ -128,7 +121,6 @@ assert.deepStrictEqual(
   { action: 'none', reason: 'no_session' },
 );
 
-// steer：与输入框及桥端一致，最多 12000 字；没起来时明确不可插话。
 assert.deepStrictEqual(planConversationSteer({ text: '  ', agentSessionId: 's' }), { action: 'none', reason: 'empty_text' });
 assert.deepStrictEqual(planConversationSteer({ text: 'x'.repeat(12001), agentSessionId: 's' }), { action: 'none', reason: 'text_too_long' });
 assert.deepStrictEqual(planConversationSteer({ text: '先别删文件', agentSessionId: null }), { action: 'none', reason: 'no_session' });
@@ -157,8 +149,6 @@ assert.deepStrictEqual(
   'Studio accepts reference-only TaskInput and leaves task identity enforcement to main',
 );
 
-// 权限规则：历史裸工具名兼容；Bash 前缀保持括号/空格，不能被 main.ts
-// 旧 sanitizeTool 削成一个永远匹配不到的 Bashpytest。
 assert.strictEqual(sanitizePermissionRule('run_command'), 'run_command');
 assert.strictEqual(sanitizePermissionRule('Bash(pytest)'), 'Bash(pytest)');
 assert.strictEqual(sanitizePermissionRule('Bash(npm run test:unit)'), 'Bash(npm run test:unit)');
@@ -172,7 +162,6 @@ assert.strictEqual(permissionGrantRule('Bash', ''), 'Bash');
 assert.strictEqual(permissionGrantRule('Read', 'ignored'), 'Read');
 assert.strictEqual(permissionGrantRule('Bash', 'pytest && rm -rf .'), '');
 
-// 长请求失败时只恢复仍为空/仍是旧问题的输入框；用户已经打的新草稿优先。
 assert.strictEqual(failedDraftValue('', '旧问题'), '旧问题');
 assert.strictEqual(failedDraftValue('旧问题', '旧问题'), '旧问题');
 assert.strictEqual(failedDraftValue('我正在写的新问题', '旧问题'), '我正在写的新问题');

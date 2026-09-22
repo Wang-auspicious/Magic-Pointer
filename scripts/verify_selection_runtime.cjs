@@ -1,7 +1,5 @@
 'use strict';
 
-// Real main -> resident worker -> production Runtime, with the saved frozen
-// three-material request. Model credentials stay in memory and on local IPC.
 const { app } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');

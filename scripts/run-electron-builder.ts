@@ -1,5 +1,3 @@
-// Reuse the locally installed Electron distribution. This avoids electron-builder
-// re-extracting Electron on every Windows build and keeps packaging offline-safe.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'node:child_process';

@@ -12,11 +12,6 @@ export interface AttachmentDialogOptions {
   properties: Array<'openFile' | 'multiSelections'>;
 }
 
-/**
- * Thread workspace resolution follows one rule: an explicit pick moves this
- * thread; otherwise its existing binding remains; neither means unbound.
- * Profile defaults belong to `/cwd`, not implicit conversation routing.
- */
 export function resolveConversationWorkspace(
   explicitRoot: unknown,
   threadRoot: unknown,

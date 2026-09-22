@@ -1,4 +1,3 @@
-"""Behavior regressions from CU01–CU27; never operate a real desktop."""
 from __future__ import annotations
 
 import json

@@ -1,8 +1,3 @@
-// Headless interaction probe: load studio.html, click a selector, report
-// console errors + a JS-evaluated result. Used to verify "dead button" bugs
-// in the packaged renderer without launching the full app.
-//
-//   npx electron build/scripts/probe_studio_click.js <clickSelector> <evalExpr>
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');

@@ -1,5 +1,3 @@
-// Temporary: capture studio.html in working (chat) state.
-//   npx electron build/scripts/capture_workspace.js <out.png> [view] [settings-page]
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');

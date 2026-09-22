@@ -1,9 +1,3 @@
-"""Provider-neutral computer-operation values.
-
-The model may propose an intent, but only Magic Pointer creates a
-``ComputerAction`` with an effect classification and a scoped ``SurfaceGrant``.
-That keeps coordinates, permissions and verification outside the model.
-"""
 
 from __future__ import annotations
 
@@ -151,7 +145,6 @@ class ComputerAction:
 
 @dataclass(frozen=True, slots=True)
 class SurfaceGrant:
-    """A bounded authority to operate one target surface, never the desktop."""
 
     grant_id: str
     surface_id: str
@@ -170,7 +163,6 @@ class SurfaceGrant:
         *,
         allowed_effects: tuple[Effect, ...],
     ) -> SurfaceGrant:
-        """Compile one operator authority from matching frozen/live leases."""
         if frame_lease.get("schemaVersion") != 1:
             raise ValueError("invalid frame lease")
         if target_lease.get("schemaVersion") != 1:
@@ -278,7 +270,6 @@ class OperatorObservation:
 
 @dataclass(frozen=True, slots=True)
 class OperatorBackendResult:
-    """Untrusted provider result; the core adds post-action verification."""
 
     executed: bool
     data: dict[str, Any] = field(default_factory=dict)

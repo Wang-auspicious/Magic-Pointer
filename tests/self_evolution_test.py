@@ -1,4 +1,3 @@
-"""Hermes-style background learning with a stricter candidate boundary."""
 
 from __future__ import annotations
 

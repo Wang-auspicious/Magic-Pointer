@@ -1,12 +1,3 @@
-"""Failure repair dialogue data (harness gap review L15).
-
-Every failure resolves to a :class:`RepairSuggestion` carrying an attributed
-title (never a bare "出错了" followed by a spinner), a UI-facing message, and
-1-4 suggested repair actions. Callers pass the raw failure type and evidence
-status strings; the mapping table owns the wording.
-
-Pure Python, stdlib-only. No I/O, no Electron coupling.
-"""
 
 from __future__ import annotations
 
@@ -23,7 +14,6 @@ __all__ = [
 
 
 class RepairAction(enum.StrEnum):
-    """A user-facing repair action suggested after a failure."""
 
     USE_LOOK = "use_look"
     REPICK = "repick"
@@ -38,7 +28,6 @@ _BARE_TITLES = frozenset({"出错了", "出错", "失败", "失败啦", "出问�
 
 @dataclass(frozen=True, slots=True)
 class RepairSuggestion:
-    """One repair dialogue entry: attribution + actions for the UI."""
 
     title: str
     message: str
@@ -93,20 +82,6 @@ def build_repair(
     evidence_status: str | None,
     target_type: str | None = None,
 ) -> RepairSuggestion:
-    """Map a failure/evidence pair to an attributed :class:`RepairSuggestion`.
-
-    Rules are evaluated in order; the first matching row wins:
-    1. timeout (failure or evidence busy/timeout) -> use_look + retry
-    2. empty_confirmed -> repick + ask_user
-    3. stale anchor (stale_anchor failure, or error evidence without a
-       specific failure type) -> repick + rechoose_candidate
-    4. ambiguous -> rechoose_candidate + ask_user
-    5. unsupported (failure or evidence) -> explain_what_failed + use_look
-    6. permission_denied -> explain_what_failed + ask_user
-    7. anything else -> ask_user + use_look
-
-    ``target_type`` is woven into the title when provided.
-    """
     if failure_type == "timeout" or evidence_status in ("busy", "timeout"):
         return _suggest(
             "{target}读取超时，可能还在忙",
@@ -165,7 +140,6 @@ def build_repair(
 
 
 def to_dict(suggestion: RepairSuggestion) -> dict[str, Any]:
-    """Serialize a suggestion for UI consumption."""
     return {
         "title": suggestion.title,
         "message": suggestion.message,

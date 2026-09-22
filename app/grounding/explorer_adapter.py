@@ -24,8 +24,6 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _coverage_float(value: Any) -> float:
-    """Safe parse of a window coverage field; a garbage value must not take
-    the whole grounding chain down (observe() has no per-grounder guard)."""
     try:
         return float(value or 0)
     except (TypeError, ValueError):
@@ -33,8 +31,6 @@ def _coverage_float(value: Any) -> float:
 
 
 def _match_key(value: str) -> str:
-    # UIA/PowerShell can mangle Unicode punctuation (for example em dash -> replacement chars).
-    # Compare a punctuation-insensitive key so visible Explorer names still resolve to files.
     value = value.replace(chr(0xFFFD), " ")
     value = re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE)
     return " ".join(value.split())
@@ -45,7 +41,6 @@ EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass", *DESKTOP_CLASSES}
 
 
 def desktop_directories() -> tuple[str, ...]:
-    """The shell's actual user/public Desktop folders, including redirection."""
     import ctypes
     paths = []
     for folder_id in (0x10, 0x19):
@@ -105,7 +100,6 @@ def _horizontal_underline(stroke_points: list[Point]) -> tuple[bool, float, floa
 
 
 def _underline_semantic_bonus(item_bbox: BoundingBox, stroke_points: list[Point]) -> float:
-    """Interpret a horizontal stroke just below text as an underline of the row above."""
 
     is_underline, stroke_y, stroke_x1, stroke_x2 = _horizontal_underline(stroke_points)
     if not is_underline:
@@ -120,10 +114,6 @@ def _underline_semantic_bonus(item_bbox: BoundingBox, stroke_points: list[Point]
     gap_below_item = stroke_y - bottom
     bonus = 0.0
 
-    # The common user gesture here is an underline: the stroke is inside the
-    # lower part of the file name row or in the small gap immediately below it.
-    # In that case the semantic target is the row above the line, not the row
-    # that starts below the line.
     if top <= stroke_y <= bottom:
         vertical_fraction = (stroke_y - top) / height
         if vertical_fraction >= 0.42:
@@ -131,9 +121,6 @@ def _underline_semantic_bonus(item_bbox: BoundingBox, stroke_points: list[Point]
     elif 0 <= gap_below_item <= min(24.0, height * 0.75):
         bonus += (7.0 - gap_below_item * 0.18) * width_overlap
 
-    # Penalize rows that begin below the underline. This prevents a line drawn
-    # under row N from being captured as row N+1 just because the line is closer
-    # to that row's top edge.
     if top >= stroke_y - 2:
         bonus -= min(5.0, 3.0 + (top - stroke_y) / 12.0) * width_overlap
 
@@ -141,7 +128,6 @@ def _underline_semantic_bonus(item_bbox: BoundingBox, stroke_points: list[Point]
 
 
 def score_item_against_stroke(item_bbox: BoundingBox, selection_bbox: BoundingBox, stroke_points: list[Point]) -> float:
-    """Score a candidate item using pointer samples and selection overlap."""
 
     score = 0.0
     inter = rect_intersection(item_bbox, selection_bbox)
@@ -176,7 +162,6 @@ def file_metadata(path: str | None) -> JsonDict:
 
 
 def resolve_child_path(folder_path: str | None, visible_name: str | None) -> str | None:
-    """Resolve an Explorer UIA item name to a child path when possible."""
 
     if not folder_path or not visible_name:
         return None
@@ -229,8 +214,6 @@ def file_url_to_path(url: str | None) -> str | None:
         if parsed.scheme.lower() != "file":
             return None
         path = unquote(parsed.path)
-        # urlparse('file:///C:/x') yields '/C:/x'. Windows paths should not keep
-        # the leading slash before the drive letter.
         if len(path) >= 3 and path[0] == "/" and path[2] == ":":
             path = path[1:]
         return path.replace("/", os.sep)
@@ -239,16 +222,6 @@ def file_url_to_path(url: str | None) -> str | None:
 
 
 class ExplorerFileGrounder(BaseGrounder):
-    """Best-effort Windows Explorer grounding.
-
-    Order of preference:
-    1. UIA list-item rectangles, scored against the user's stroke.
-    2. Explorer COM selected items, when the user has an explicit Explorer selection.
-    3. Explorer window/folder object as low-confidence context.
-
-    All optional Windows-specific dependencies are imported lazily. The adapter
-    remains safe to import on non-Windows systems and in tests.
-    """
 
     name = "explorer"
 
@@ -263,7 +236,6 @@ class ExplorerFileGrounder(BaseGrounder):
         if not explorer_windows:
             return GroundingBundle(selection=selection, traces=[GroundingTrace(self.name, ["no explorer window intersected selection"])])
 
-        # Prefer the topmost/highest coverage Explorer window from screen_context.
         explorer_windows.sort(key=lambda w: (int(w.get("z_order", 999) or 999), -_coverage_float(w.get("selection_coverage"))))
         window = explorer_windows[0]
         hwnd = int(window.get("hwnd") or 0)
@@ -279,9 +251,6 @@ class ExplorerFileGrounder(BaseGrounder):
             uia_messages.extend(shell_messages)
         traces.append(GroundingTrace(self.name + ":uia", uia_messages, {"item_count": len(ui_items)}))
 
-        # pywin32/pywinauto are often absent on user machines. PowerShell can
-        # still access Explorer COM and Windows UI Automation without Python
-        # packages, so use it as a no-extra-dependency fallback before giving up.
         if not selected_paths or not ui_items:
             ps_folder, ps_selected, ps_items, ps_messages = self._read_powershell_explorer_state(hwnd)
             if ps_folder and not folder_path:
@@ -318,16 +287,12 @@ class ExplorerFileGrounder(BaseGrounder):
                 objects.append(self._object_from_item(selection, item, rank, score, window, folder_path))
             return GroundingBundle(selection=selection, objects=objects, primary_object_id=objects[0].id, traces=traces)
 
-        # If UIA is unavailable, an explicit Explorer selection is still a strong
-        # local signal. This does not infer a file merely from row order.
         for idx, path in enumerate(selected_paths[:5], 1):
             item = ExplorerItem(name=os.path.basename(path), path=path, bbox=selection.bbox, selected=True, source="com_selected")
             objects.append(self._object_from_item(selection, item, idx, 0.86, window, folder_path))
         if objects:
             return GroundingBundle(selection=selection, objects=objects, primary_object_id=objects[0].id, traces=traces)
 
-        # Low-confidence context only. Useful for model prompts and debugging, but
-        # not a file hit.
         if folder_path or window:
             metadata = {
                 "adapter": self.name,
@@ -350,7 +315,6 @@ class ExplorerFileGrounder(BaseGrounder):
         return GroundingBundle(selection=selection, objects=objects, primary_object_id=objects[0].id if objects else None, traces=traces)
 
     def _read_desktop_shell_items(self) -> tuple[list[ExplorerItem], list[str]]:
-        """Public IFolderView exposes paths/positions when Desktop UIA is empty."""
         import pythoncom
         import win32com.client
         from win32com.shell import shell, shellcon
@@ -603,7 +567,6 @@ $result | ConvertTo-Json -Depth 6 -Compress
                         continue
                     seen.add(key)
                     path = str(Path(folder_path) / name) if folder_path else None
-                    # Avoid claiming a path when the visible UI name is not a child of this folder.
                     if path and not Path(path).exists():
                         path = None
                     selected = False

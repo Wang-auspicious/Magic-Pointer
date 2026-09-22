@@ -50,7 +50,6 @@ def test_screen_memory_does_not_invent_a_source_when_none_was_recorded(tmp_path:
 
 
 def test_screen_memory_serializes_read_modify_write_across_instances(tmp_path: Path) -> None:
-    """Concurrent task writers must not lose rows or collide on the temp file."""
     path = tmp_path / "screen-memory.json"
 
     def record(index: int) -> None:

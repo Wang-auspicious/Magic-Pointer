@@ -1,4 +1,3 @@
-"""CaptureProvider contract tests (Phase B): selection, honesty, benchmark."""
 
 from __future__ import annotations
 

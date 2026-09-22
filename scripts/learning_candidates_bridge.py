@@ -1,9 +1,3 @@
-"""Local review/apply boundary for Hermes-style learning candidates.
-
-The background reviewer can only propose. This bridge is deliberately not an
-Agent tool: mutations require an explicit UI/CLI request carrying
-``userApproved: true`` and are revalidated by ``LearningCandidateStore``.
-"""
 
 from __future__ import annotations
 
@@ -92,7 +86,7 @@ def main() -> int:
         result = handle_request(payload, user_root=user_root)
         print(json.dumps(result, ensure_ascii=False))
         return 0
-    except Exception as exc:  # local bridge boundary
+    except Exception as exc:
         print(json.dumps({
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",

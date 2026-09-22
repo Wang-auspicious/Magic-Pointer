@@ -295,8 +295,6 @@ def test_pending_task_input_blocks_each_write_before_dispatch_and_replans(
         def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
             self.round += 1
             if self.round == 1:
-                # This arrives after the model chose the old write but before
-                # dispatch. Every mutating call must observe it.
                 session.enqueue_inbox(
                     task_input.instruction,
                     task_input.target,
@@ -417,13 +415,6 @@ def test_interaction_ledger_is_projected_from_the_authoritative_session(tmp_path
 
 
 def test_settlement_outcome_comes_from_the_scheduler_not_the_result_prose(tmp_path: Path) -> None:
-    """A call that finished with an error is FAILED even if its text talks about unknown outcomes.
-
-    Tool names are model-controlled, so the rejection text for an unknown tool
-    is model-controlled too. Reading execution semantics out of that prose lets
-    the model mark a never-dispatched call ``unknown``/``never_replay``, and it
-    silently inverts the moment anyone rewrites the scheduler's wording.
-    """
     session = FileSessionStore(tmp_path).create("outcome-source")
 
     class Backend:
@@ -461,12 +452,10 @@ def test_settlement_outcome_comes_from_the_scheduler_not_the_result_prose(tmp_pa
 
 
 def test_cancelled_after_dispatch_stays_unknown_under_any_wording(tmp_path: Path) -> None:
-    """The scheduler knows the body was dispatched; settlement must not re-derive it from text."""
     session = FileSessionStore(tmp_path).create("cancelled-after-dispatch")
     cancel_registry = CancellationRegistry()
 
     def execute(scope=None) -> str:
-        # The body reached the outside world, then the user pressed stop.
         cancel_registry.cancel_all()
         return "已写入"
 

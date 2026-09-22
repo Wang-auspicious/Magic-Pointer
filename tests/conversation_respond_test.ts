@@ -25,7 +25,7 @@ async function main() {
       pendingInput: { requestId: 'ask-1', question: 'Format?', options: ['Brief', 'Detailed'] } });
     let callbacks: any; let bridgePayload: any; let calls = 0; let accepted = false;
     const delivered: any[] = [];
-    const context: any = { path, Buffer, console, Date, Set, Map,
+    const context: any = { path, Buffer, console, Date, Set, Map, FABRIC_DATA_DIR: baseDir,
       crypto: { randomUUID: () => 'response-stream' }, inputResponseRuns: new Set(),
       normalizeConversationEffort: () => 'medium', ...control,
       resolveConversationWorkspace: () => '', studioConversationSessionId: ({ existing }: any) => existing,
@@ -35,7 +35,7 @@ async function main() {
       figmaRuntime: { clientConfigurations: () => [] }, notifyConversationChanged() {},
       handleAgentCursorProgress() {}, conversationFailureMessage: (value: any) => value.error || 'failed',
       setTimeout: () => 1, clearTimeout() {},
-      runPythonBridgePromise: async () => ({ ok: true, pendingInput: accepted ? null : { requestId: 'ask-1' }, answeredInputIds: accepted ? ['ask-1'] : [] }),
+      handleSessionRead: async () => ({ ok: true, pendingInput: accepted ? null : { requestId: 'ask-1' }, answeredInputIds: accepted ? ['ask-1'] : [] }),
       runPythonBridge: (payload: any, _file: any, _target: any, cb: any) => { calls++; bridgePayload = payload; callbacks = cb; return {}; },
     };
     vm.runInNewContext(code, context);

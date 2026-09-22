@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""Element geometry at a point. Nothing else.
-
-Pick mode needs one thing while the user moves the pointer: the rectangle of the
-element under it, so the stage can outline the whole thing. That question is
-asked at hover rate, so it cannot go through the snapshot bridge — that one
-enumerates windows, runs the full adapter cascade, captures pixels, runs OCR and
-writes attestations, which is right for committing to an object and absurd for
-answering "what box is under the cursor".
-
-So this bridge does the minimum: resolve the window, ask the UIA probe for the
-element at the point, return its rectangle. No screenshot, no OCR, no text
-content leaves the machine, and nothing is written anywhere.
-
-Protocol: one JSON object on stdin, one on stdout.
-  -> {"x": 1200, "y": 640, "hwnd": 0}
-  <- {"ok": true, "rect": {...}, "label": "", "controlType": "...",
-      "window": {"hwnd": 1, "title": "..."}, "elapsedMs": 12}
-"""
 
 from __future__ import annotations
 
@@ -37,22 +19,10 @@ enable_dpi_awareness()
 
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer Stage"}
 
-# The pointer moves while we work, so a stale answer is worthless. Better to
-# return nothing than to outline where the cursor used to be.
-#
-# 但它不能短于探针自己的预算：探针的点探测相在自绘窗口上会挂住，等的是它自己的
-# 1200ms 上限（`uia_selection_probe.cs` 的 `UiaProbeHardTimeoutMs`），Python 这
-# 边先掐就是**把一个正在正常作答的探针杀掉**，报成读取失败，然后掉进像素兜底。
-# 2026-09-19 实测：微信 797ms、ChatGPT 843ms、资源管理器 344ms、Edge 453ms——
-# 0.9s 会把前两个直接切死。2.5s 与适配器默认值一致，且高于探针的每一个上限。
-# 真正管「过期」的是探针内部那道 400ms 的点探测预算，不是这里。
 PROBE_TIMEOUT_S = 2.5
 
 
 def _window_at(x: int, y: int, preferred_hwnd: int = 0) -> dict[str, Any] | None:
-    # Enumerating every visible window costs more than the probe itself, and the
-    # caller already knows which window it is hovering: it committed to one when
-    # the session opened. Trust the hwnd it passes and skip the walk.
     if preferred_hwnd:
         rect = _window_rect(preferred_hwnd)
         if rect is not None:
@@ -63,8 +33,6 @@ def _window_at(x: int, y: int, preferred_hwnd: int = 0) -> dict[str, Any] | None
         for item in list_visible_windows()
         if str(item.get("title") or "") not in MAGIC_WINDOW_TITLES
     ]
-    # Topmost first, so an overlapping window does not lend its rectangles to
-    # the one behind it.
     for item in windows:
         bbox = item.get("bbox")
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
@@ -85,8 +53,6 @@ def _window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
             return None
         if rect.right <= rect.left or rect.bottom <= rect.top:
             return None
-        # A minimized window reports coordinates far off-screen; nothing there is
-        # pickable.
         if rect.left < -30000 or rect.top < -30000:
             return None
         return rect.left, rect.top, rect.right, rect.bottom
@@ -106,9 +72,6 @@ def _window_title(hwnd: int) -> str:
         return ""
 
 
-# A rectangle this close to the window's own size is "the window", not something
-# inside it. Notepad's document element covers the whole client area, so picking
-# it would outline everything and teach the user nothing.
 WINDOW_COVERAGE_LIMIT = 0.92
 
 
@@ -121,7 +84,6 @@ def _covers_window(rect: dict[str, int], window_bbox: Any) -> bool:
 
 
 def _rect_from(value: Any) -> dict[str, int] | None:
-    """The probe reports [x, y, width, height] in physical screen pixels."""
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
     try:
@@ -134,13 +96,6 @@ def _rect_from(value: Any) -> dict[str, int] | None:
 
 
 def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any] | None:
-    """Rebuild a pointable rectangle from pixels, once per window then cached.
-
-    Only reached when the structured layer had nothing, which is the permanent
-    state for self-drawing apps. OCR costs about a second and pick mode asks at
-    hover rate, so the window's layout is computed once and reused for a few
-    seconds; the pointer then moves over it instantly.
-    """
     from app.vision.visual_element_cache import read_cached, write_cached
     from app.vision.visual_elements import VisualElement, element_at_point, group_blocks_into_elements
 
@@ -151,8 +106,6 @@ def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any]
         return None
     import hashlib
 
-    # This comparison replaces a much more expensive OCR call, and is the
-    # decision that prevents a scroll/tab switch from reusing obsolete boxes.
     content_key = hashlib.sha256(image.convert("RGB").tobytes()).hexdigest()
     cached = read_cached(hwnd, bbox, content_key=content_key)
     if cached is None:
@@ -179,8 +132,6 @@ def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any]
         return None
     return {
         "rect": {"x": hit.rect[0], "y": hit.rect[1], "width": hit.rect[2], "height": hit.rect[3]},
-        # First line only: enough to confirm what got picked without turning a
-        # geometry bridge into a content channel.
         "label": hit.text.splitlines()[0][:120] if hit.text else "",
     }
 
@@ -199,7 +150,6 @@ def _capture_visual_image(window: dict[str, Any]):
 
 
 def _ocr_window_blocks(window: dict[str, Any], *, image: Any = None) -> list[dict[str, Any]] | None:
-    """Capture this window and read its text blocks. Never raises."""
     import tempfile
 
     bbox = window.get("bbox")
@@ -220,8 +170,6 @@ def _ocr_window_blocks(window: dict[str, Any], *, image: Any = None) -> list[dic
         if not read:
             return None
         blocks, _engine = read
-        # OCR ran on a window-local crop; the rest of the pipeline speaks screen
-        # pixels, so put them back where they are on screen.
         return [
             {
                 "text": block.get("text"),
@@ -275,16 +223,10 @@ def main() -> int:
         )
         if candidate is not None and not _covers_window(candidate, window.get("bbox"))
     ]
-    # The tightest box that is not the whole window: nesting is the norm, and the
-    # smallest one is what the user is pointing at.
     rect = min(candidates, key=lambda item: item["width"] * item["height"]) if candidates else None
     source = "structured"
     label = str(data.get("element_name") or "")[:120]
     if rect is None:
-        # Nothing structured to outline. That is the normal answer for WeChat,
-        # Qt, Flutter and every self-drawing app — eight UIA nodes for a whole
-        # window, none of them the message you are pointing at. Rebuild something
-        # pointable from the pixels instead.
         visual = _visual_element_at(window, x, y)
         if visual is not None:
             rect, label, source = visual["rect"], visual["label"], "pixel"
@@ -300,12 +242,7 @@ def main() -> int:
     print(json.dumps({
         "ok": True,
         "rect": rect,
-        # Where the rectangle came from. The stage colours its band by this:
-        # "the app told us" and "we recognised it in a picture" are different
-        # claims and must not look the same.
         "source": source,
-        # A label helps the user confirm what got picked, but it is a name, never
-        # the element's content: this bridge is geometry only.
         "label": label,
         "controlType": str(data.get("control_type") or "")[:80],
         "resultKind": str(data.get("result_kind") or ""),

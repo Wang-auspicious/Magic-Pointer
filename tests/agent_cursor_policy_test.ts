@@ -1,12 +1,3 @@
-/*
- * Twin cursor 主进程策略（electron/agent_cursor_policy.ts）。
- *
- * 三层实现（Python 策略 / 主进程策略 / 渲染进程绘制）里，这一层能独立单测，
- * 所以它同时承担一件事：**交叉校验**。最后一段直接读 app/computer_operator
- * 的源码，把常量逐个比对。两边一旦漂移（有人只改了一个 0.28），这里立刻红
- * ——否则表现是"光标在 Windows 上手感和 macOS 不一样"，而这种问题没人能在
- * CI 里看见。
- */
 
 const assert = require('assert');
 const fs = require('fs');
@@ -26,7 +17,6 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 
-/* ── Electron display 对象解析 ─────────────────────────────────────── */
 
 const PRIMARY = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 };
 const SECONDARY = { id: 2, bounds: { x: 1920, y: -200, width: 1600, height: 900 }, scaleFactor: 1.25 };
@@ -56,7 +46,6 @@ assert.strictEqual(
   '缺 scaleFactor 默认 1',
 );
 
-/* ── 每屏归属 ──────────────────────────────────────────────────────── */
 
 const displays = parseAgentDisplays([PRIMARY, SECONDARY, LEFT]);
 assert.strictEqual(agentDisplayForPoint(displays, { x: 100, y: 100 })!.displayId, '1');
@@ -85,7 +74,6 @@ assert.strictEqual(agentDisplayForPoint(parseAgentDisplays([PRIMARY]), { x: 10, 
 assert.strictEqual(agentDisplayForPoint(displays, { x: Number.NaN, y: 10 }), null);
 assert.strictEqual(agentDisplayForPoint(displays, { x: 10, y: Number.POSITIVE_INFINITY }), null);
 
-/* ── 窗口矩形与 2px 任务栏留白 ─────────────────────────────────────── */
 
 assert.deepStrictEqual(
   agentSurfaceBounds(parseAgentDisplays([PRIMARY])[0]),
@@ -109,7 +97,6 @@ assert.strictEqual(
   '留白可配置',
 );
 
-/* ── 采样 → 窗口本地坐标 ───────────────────────────────────────────── */
 
 const routed = agentSurfaceForPoint(parseAgentDisplays([PRIMARY, SECONDARY]), { x: 2000, y: -100 })!;
 assert.deepStrictEqual(routed.surface, {
@@ -124,14 +111,12 @@ assert.strictEqual(
   '负原点屏要正确换算',
 );
 
-/* ── 校验：Python 与 TS 的常量必须逐字一致 ─────────────────────────── */
 
 function pythonConstants(relativePath: string): Map<string, number | string> {
   const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
   const values = new Map<string, number | string>();
   for (const match of source.matchAll(/^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*([^\n]+)$/gm)) {
     const name = match[1];
-    // 值里可能带 `#`（如 "#3380FF"），所以只能砍掉「空白 + #」形式的尾注释。
     const raw = match[2].trim().split(/\s+#/)[0].trim();
     if (/^["']/.test(raw)) {
       values.set(name, raw.replace(/["']/g, ''));
@@ -142,8 +127,6 @@ function pythonConstants(relativePath: string): Map<string, number | string> {
       values.set(name, numeric);
       continue;
     }
-    // motion.py 把 800px/s 写成 `1000.0 / 800.0`，不是字面量。只对纯算术
-    // 表达式求值——源码来自本仓库，不是外部输入。
     if (/^[0-9.\s+\-*/()]+$/.test(raw)) {
       const evaluated = Number(Function(`"use strict";return (${raw});`)());
       if (Number.isFinite(evaluated)) values.set(name, evaluated);
@@ -195,7 +178,6 @@ assert.strictEqual(policy.APPROACH_LEAD_MS, motionPy.get('APPROACH_LEAD_MS'));
 assert.strictEqual(policy.ACCENT_BLUE, cursorsPy.get('ACCENT_BLUE'));
 assert.strictEqual(policy.TRIANGLE_REST_DEGREES, cursorsPy.get('TRIANGLE_REST_DEGREES'));
 
-/* ── 纯函数：飞行时长与前置量 ─────────────────────────────────────── */
 
 assert.strictEqual(flightDurationMs(0), 0, '零距离不花时间');
 assert.strictEqual(flightDurationMs(1), 600, '短距离走下限');
@@ -207,7 +189,6 @@ assert.ok(approachLeadMs(1200) > approachLeadMs(10), '前置量随距离增长')
 assert.ok(approachLeadMs(1000) >= flightDurationMs(1000), '前置量绝不能短于飞行本身');
 assert.strictEqual(approachLeadMs(1000000), 1400, '前置量被飞行上限卡住');
 
-/* ── 采样闸门 ──────────────────────────────────────────────────────── */
 
 const gate = new CursorSampleGate();
 assert.strictEqual(gate.accept({ x: 10, y: 10 }), true, '第一帧必须发出去');
@@ -224,7 +205,6 @@ gate.ack();
 gate.reset();
 assert.strictEqual(gate.accept({ x: 90, y: 90 }), true, '窗口重建后必须能收到第一帧');
 
-/* ── 指令归一化 ────────────────────────────────────────────────────── */
 
 assert.strictEqual(normalizeAgentCursorCommand(null), null);
 assert.strictEqual(normalizeAgentCursorCommand('approach'), null);
@@ -250,7 +230,6 @@ assert.strictEqual(normalizeAgentCursorCommand({ kind: 'click', x: 1, y: 2 })!.g
 assert.strictEqual(normalizeAgentCursorCommand({ kind: 'clear' })!.kind, 'clear', 'clear 不需要坐标');
 assert.strictEqual(normalizeAgentCursorCommand({ kind: 'hold', id: 'primary', x: 0, y: 0, held: true })!.held, true);
 
-/* ── 组合：一条 approach 指令能算出窗口与本地坐标 ──────────────────── */
 
 const command = normalizeAgentCursorCommand({
   kind: 'approach', x: 2000, y: -100, leadMs: 900,

@@ -1,4 +1,3 @@
-"""Terminal-to-answer mapping tests (batch 4 loop answer path)."""
 
 from __future__ import annotations
 
@@ -165,14 +164,6 @@ def test_awaiting_user_terminal_maps_to_resumable_question() -> None:
 
 
 def test_permission_gate_keeps_its_kind_and_tool_across_the_bridge() -> None:
-    """权限门和普通澄清共用 AWAITING_USER，但回答的语义不同。
-
-    澄清的选项就是用户要说的话；权限门的选项必须变成 grant/once/deny 回到
-    loop 里。裁掉 kind/tool 会把前者退化成后者：Studio 画出普通选项按钮，
-    点下去发出一条普通消息，授权到不了运行时，工具被再拦一次、再问一遍——
-    实测里这就是同一个 curl 连问五轮、审批卡「不消失」的原因。
-    conversation_store.recordPermissionDecision 也按 pendingInput.kind 判断
-    要不要清掉那道门，所以这两个字段是两端共同的契约。"""
     terminal = Terminal(
         reason=TransitionReason.AWAITING_USER,
         message="需要下载这篇论文的 PDF，可以吗？",
@@ -196,7 +187,6 @@ def test_permission_gate_keeps_its_kind_and_tool_across_the_bridge() -> None:
 
 
 def test_a_clarification_never_grows_a_permission_decision() -> None:
-    """反方向也要成立：普通提问不带决定，否则显示层会把它画成审批卡。"""
     terminal = Terminal(
         reason=TransitionReason.AWAITING_USER,
         message="要哪个？",
@@ -223,10 +213,6 @@ def _terminal(reason, results=(), message=""):
 
 
 def test_provider_failure_after_work_delivers_partial_receipts():
-    """真机事故（notepad-edit）：10 轮成功工作（文档真的改对了）之后一个
-    瞬时后端错误把 turn 报废，answer 为空、ok=False——用户看到「Agent 未
-    完成」却不知道活已经干完。有成功工具回执的终止 turn 必须交付部分结
-    果：已完成步骤 + 诚实缺口，而不是一句报错。"""
     from app.agent_runtime.types import ToolResult, TransitionReason
 
     results = (
@@ -259,7 +245,6 @@ def test_provider_failure_after_work_delivers_partial_receipts():
 
 
 def test_provider_failure_without_work_stays_a_failure():
-    """零进展的终止仍然是失败，不编造「已完成 0 步」的答案。"""
     from app.agent_runtime.types import TransitionReason
 
     mapped = terminal_to_answer(
@@ -290,8 +275,6 @@ def test_budget_exhausted_after_work_delivers_partial_receipts():
 
 
 def test_stalled_after_work_delivers_partial_receipts():
-    """真机 notepad-edit：写入成功后验证阶段被重复证据守卫 halt，
-    answer 为空——活干完了必须交付已完成步骤。"""
     from app.agent_runtime.types import ToolResult, TransitionReason
 
     results = (
@@ -316,12 +299,6 @@ def test_stalled_after_work_delivers_partial_receipts():
 
 
 def test_backend_error_code_becomes_human_guidance():
-    """原始代码（backend_error:http_500）不得当答案渲染。
-
-    真机 8·29：GUI 第一条消息撞上网关 500，气泡里出现斜体的
-    「backenderror:http500」——用户看到的应该是人话和下一步建议，
-    原始码留在 error 字段里供日志和诊断。
-    """
     from app.agent_runtime.types import TransitionReason
 
     mapped = terminal_to_answer(

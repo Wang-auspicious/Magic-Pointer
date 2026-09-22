@@ -1,8 +1,5 @@
 'use strict';
 
-// Real compiled main handlers + preload IPC + two compiled Chromium renderers.
-// The recorded read-only progress below replaces an AI/network execution only.
-// Startup hardware/network watchers are not started; no production test flags.
 const { app, BrowserWindow, ipcMain, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -47,8 +44,6 @@ module.exports.acceptance = {
 app.whenReady = originalWhenReady;
 const main = productionMain.exports.acceptance;
 
-// Unrelated boot reads can involve providers or inspect user's environment.
-// Keep lifecycle/progress/conversation handlers untouched and isolate these.
 const externalBoundaries = {
   'models:catalog': { ok: true, catalog: { current: 'Recorded read-only fixture', groups: [] } },
   'models:quota': { ok: false, error: 'fixture_no_network' },
@@ -120,8 +115,6 @@ originalWhenReady().then(async () => {
     };
     stage = new BrowserWindow({ width: 1250, height: 900, show: false, frame: false, webPreferences: preferences });
     studio = new BrowserWindow({ width: 1400, height: 1000, show: false, webPreferences: preferences });
-    // Native visibility/focus are suppressed only to keep this acceptance off
-    // the user's desktop. The real IPC close/detach/hide handlers still run.
     let visibilityRequests = 0;
     stage.showInactive = () => { visibilityRequests++; };
     stage.focus = () => {};
@@ -131,7 +124,7 @@ originalWhenReady().then(async () => {
       stage.loadFile(path.join(ROOT, 'build/electron/renderer/stage.html')),
       studio.loadFile(path.join(ROOT, 'build/electron/renderer/studio.html'), { query: { view: 'chat' } }),
     ]);
-    await waitFor('Studio boot finished', () => evaluate(studio, `document.activeElement?.classList.contains('dshw-input') === true`));
+    await waitFor('Studio boot finished', () => evaluate(studio, `document.activeElement?.classList.contains('mpw-input') === true`));
     const entry = main.selectionSessions.create({ reason: 'acceptance-recorded-read-only' });
     main.selectionSessions.attachSnapshot(entry.token, {
       selectionSnapshot: { snapshot_id: 'acceptance-read-only-1', context: { app: 'Fixture document', content: 'Recorded read-only material' } },
@@ -157,11 +150,9 @@ originalWhenReady().then(async () => {
       ],
     });
     await waitFor('Stage processing turn', () => evaluate(stage, `document.querySelector('.thread-turn[data-status="pending"]') !== null`));
-    // Open through the visible sidebar's actual click handler, using its real
-    // conversations:list / conversations:get preload round trips.
     await waitFor('Conversation sidebar row', () => evaluate(studio, `Boolean(document.querySelector('[data-open=${JSON.stringify(conversationId)}]'))`));
     await evaluate(studio, `document.querySelector('[data-open=${JSON.stringify(conversationId)}]').click(); true`);
-    await waitFor('Studio live turn', () => evaluate(studio, `Boolean(document.querySelector('.dsh-flow-item .dsh-live-turn, .dsh-flow-item.dsh-live-turn'))`));
+    await waitFor('Studio live turn', () => evaluate(studio, `Boolean(document.querySelector('.mp-chat-flow-item .mp-chat-live-turn, .mp-chat-flow-item.mp-chat-live-turn'))`));
     const emit = record => main.appendStageLiveProgress(entry.token, record);
     const chunk = (phase, text) => emit({ phase, fields: { b64: Buffer.from(text).toString('base64') } });
     emit({ phase: 'model_request', fields: { turn: '1' } });
@@ -169,38 +160,38 @@ originalWhenReady().then(async () => {
     chunk('reasoning_chunk', '先核对材料中的日期和任务归属。');
     chunk('answer_chunk', '材料显示：');
     await waitFor('both receive first chunks', async () => (await Promise.all([stage, studio].map(window => evaluate(window,
-      `document.querySelector('.dsh-stream-live')?.textContent === '材料显示：' && document.querySelector('.dsh-think-body')?.textContent.includes('核对材料')`)))).every(Boolean));
+      `document.querySelector('.mp-chat-stream-live')?.textContent === '材料显示：' && document.querySelector('.mp-chat-think-body')?.textContent.includes('核对材料')`)))).every(Boolean));
     for (const window of [stage, studio]) await evaluate(window, `
-      window.__liveNodes = { answer: document.querySelector('.dsh-stream-live'), think: document.querySelector('.dsh-think'), body: document.querySelector('.dsh-think-body') };
-      document.querySelector('.dsh-think .dsh-row').click();
+      window.__liveNodes = { answer: document.querySelector('.mp-chat-stream-live'), think: document.querySelector('.mp-chat-think'), body: document.querySelector('.mp-chat-think-body') };
+      document.querySelector('.mp-chat-think .mp-chat-row').click();
       true;
     `);
     emit({ phase: 'tool_result', fields: { id: 'fixture-read-1', name: 'Read', args: '{"path":"acceptance-notes.txt"}', state: 'ok', result: '日期：2026-09-18；归属：产品团队。', backend: 'recorded.fixture.read_only', latency_ms: '12' } });
     chunk('reasoning_chunk', '\n日期一致，继续整理结论并保留引用。');
     chunk('answer_chunk', '项目负责人已确认当前范围。');
     await waitFor('both receive second chunks', async () => (await Promise.all([stage, studio].map(window => evaluate(window,
-      `document.querySelector('.dsh-stream-live')?.textContent === '材料显示：项目负责人已确认当前范围。'`)))).every(Boolean));
+      `document.querySelector('.mp-chat-stream-live')?.textContent === '材料显示：项目负责人已确认当前范围。'`)))).every(Boolean));
     const snapshots = await Promise.all([stage, studio].map(window => evaluate(window, `({
-      answer: document.querySelector('.dsh-stream-live').textContent,
-      thinking: document.querySelector('.dsh-think-body').textContent,
-      status: document.querySelector('.dsh-turn-status-label').textContent,
-      statusMeta: document.querySelector('.dsh-turn-status-meta').textContent,
-      sharedSpark: Boolean(document.querySelector('.dsh-thinking-mark svg')),
-      stableAnswer: window.__liveNodes.answer === document.querySelector('.dsh-stream-live'),
-      stableThink: window.__liveNodes.think === document.querySelector('.dsh-think'),
-      stableThinkBody: window.__liveNodes.body === document.querySelector('.dsh-think-body'),
-      thinkOpen: document.querySelector('.dsh-think').dataset.open === 'true',
-      toolResult: document.querySelector('.dsh-tool').textContent.includes('产品团队'),
-      visible: document.querySelector('.dsh-stream-live').getBoundingClientRect().height > 0,
+      answer: document.querySelector('.mp-chat-stream-live').textContent,
+      thinking: document.querySelector('.mp-chat-think-body').textContent,
+      status: document.querySelector('.mp-chat-turn-status-label').textContent,
+      statusMeta: document.querySelector('.mp-chat-turn-status-meta').textContent,
+      sharedSpark: Boolean(document.querySelector('.mp-chat-thinking-mark svg')),
+      stableAnswer: window.__liveNodes.answer === document.querySelector('.mp-chat-stream-live'),
+      stableThink: window.__liveNodes.think === document.querySelector('.mp-chat-think'),
+      stableThinkBody: window.__liveNodes.body === document.querySelector('.mp-chat-think-body'),
+      thinkOpen: document.querySelector('.mp-chat-think').dataset.open === 'true',
+      toolResult: document.querySelector('.mp-chat-tool').textContent.includes('产品团队'),
+      visible: document.querySelector('.mp-chat-stream-live').getBoundingClientRect().height > 0,
     })`)));
     assert.deepEqual(snapshots[0], snapshots[1]);
     for (const flag of ['stableAnswer', 'stableThink', 'stableThinkBody', 'thinkOpen', 'toolResult', 'visible', 'sharedSpark']) assert.equal(snapshots[0][flag], true, flag);
     report.checks.live = snapshots;
     emit({ phase: 'tool_result', fields: { id: 'fixture-edit-failed', name: 'Edit', args: JSON.stringify({ file_path: 'acceptance-notes.txt', old_string: 'Original line', new_string: 'Revised line\nWith evidence' }), state: 'error', result: 'The selected original text was not found.\nRecorded detail: the source changed before this attempted edit.' } });
-    await waitFor('both receive failed Edit diff', async () => (await Promise.all([stage, studio].map(window => evaluate(window, `Boolean(document.querySelector('.dsh-tool[data-state="error"] .dsh-diff-stat'))`)))).every(Boolean));
+    await waitFor('both receive failed Edit diff', async () => (await Promise.all([stage, studio].map(window => evaluate(window, `Boolean(document.querySelector('.mp-chat-tool[data-state="error"] .mp-chat-diff-stat'))`)))).every(Boolean));
     for (const window of [stage, studio]) {
-      await evaluate(window, `document.querySelector('.dsh-tool[data-state="error"] .dsh-row').click(); true`);
-      assert.equal(await evaluate(window, `document.querySelector('.dsh-tool[data-state="error"] .dsh-diff-line[data-kind="del"]')?.textContent.includes('Original line') && document.querySelector('.dsh-tool[data-state="error"] .dsh-tool-output')?.getBoundingClientRect().height>0`), true);
+      await evaluate(window, `document.querySelector('.mp-chat-tool[data-state="error"] .mp-chat-row').click(); true`);
+      assert.equal(await evaluate(window, `document.querySelector('.mp-chat-tool[data-state="error"] .mp-chat-diff-line[data-kind="del"]')?.textContent.includes('Original line') && document.querySelector('.mp-chat-tool[data-state="error"] .mp-chat-tool-output')?.getBoundingClientRect().height>0`), true);
     }
     report.checks.failedEdit = { headerDiffCounts: true, expandedDiff: true, fullErrorVisible: true, bothSurfaces: true };
     const stageRect = await evaluate(stage, `(() => { const r=document.getElementById('stage-thread').getBoundingClientRect(); return {x:Math.floor(r.x),y:Math.floor(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)} })()`);
@@ -215,7 +206,7 @@ originalWhenReady().then(async () => {
     assert.equal(killRequests, 0);
     const showsAfterClose = visibilityRequests;
     chunk('answer_chunk', '\n小窗关闭后，任务继续完成。');
-    await waitFor('GUI continues after close', () => evaluate(studio, `document.querySelector('.dsh-stream-live')?.textContent.includes('小窗关闭后') === true`));
+    await waitFor('GUI continues after close', () => evaluate(studio, `document.querySelector('.mp-chat-stream-live')?.textContent.includes('小窗关闭后') === true`));
     assert.equal(visibilityRequests, showsAfterClose);
     assert.equal(await evaluate(stage, `document.getElementById('stage').hidden`), true);
     const finalAnswer = '最终答案：项目负责人已确认当前范围，日期为 2026-09-18。小窗关闭后任务仍已完成。'
@@ -233,8 +224,8 @@ originalWhenReady().then(async () => {
     await waitFor('final answer appears without manual reopen', () => evaluate(studio, `document.querySelector('#stream')?.textContent.includes(${JSON.stringify(finalVisibleText)}) === true`));
     const finalState = await evaluate(studio, `({
       finalVisible: document.querySelector('#stream').textContent.includes(${JSON.stringify(finalVisibleText)}),
-      streamingNodes: document.querySelectorAll('.dsh-stream-live').length,
-      questionCount: [...document.querySelectorAll('.dsh-user')].filter(n => n.textContent.includes(${JSON.stringify(question)})).length,
+      streamingNodes: document.querySelectorAll('.mp-chat-stream-live').length,
+      questionCount: [...document.querySelectorAll('.mp-chat-user')].filter(n => n.textContent.includes(${JSON.stringify(question)})).length,
       busy: document.getElementById('composer-form').getAttribute('aria-busy'),
     })`);
     assert.equal(finalState.finalVisible, true); assert.equal(finalState.streamingNodes, 0);
@@ -246,8 +237,8 @@ originalWhenReady().then(async () => {
     report.checks.close = { detached: true, requestSurvived: true, killRequests, latePatchDidNotReopen: true };
     report.checks.final = finalState;
     report.checks.persistedAnswer = main.conversations().get(conversationId).turns[0].answer;
-    await waitFor('all four actual image sources decode', () => evaluate(studio, `document.querySelectorAll('#stream .dsh-image').length===4 && [...document.querySelectorAll('#stream .dsh-image')].every(img=>img.complete&&img.naturalWidth>0)`));
-    report.checks.markdownImages = await evaluate(studio, `([...document.querySelectorAll('#stream .dsh-image')].map(img=>({alt:img.alt,source:img.src.split(':')[0],naturalWidth:img.naturalWidth})))`);
+    await waitFor('all four actual image sources decode', () => evaluate(studio, `document.querySelectorAll('#stream .mp-chat-image').length===4 && [...document.querySelectorAll('#stream .mp-chat-image')].every(img=>img.complete&&img.naturalWidth>0)`));
+    report.checks.markdownImages = await evaluate(studio, `([...document.querySelectorAll('#stream .mp-chat-image')].map(img=>({alt:img.alt,source:img.src.split(':')[0],naturalWidth:img.naturalWidth})))`);
     await screenshot(studio, 'studio-completed-after-stage-close');
     await evaluate(studio, `refreshComposerSuggestion([{question:'Fixture question',answer:'Fixture answer'}],{}).then(()=>true)`);
     const turnsBeforeSuggestion = main.conversations().get(conversationId).turns.length;
@@ -263,14 +254,12 @@ originalWhenReady().then(async () => {
     report.checks.composer = { tabAcceptsEditableText: true, noSubmission: true, longComposer };
     await screenshot(studio, 'studio-long-composer');
     await evaluate(studio, `(() => {const ta=document.querySelector('#composer-form textarea');ta.value='';ta.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-    // A later recorded runtime result pauses for approval while the Stage is
-    // still detached. The current GUI must project its composer controls.
     const approvalRequestId = main.selectionSessions.startRequest(entry.token);
     assert.ok(approvalRequestId);
     main.pendingQuestions.set(entry.token, '把结论保存为笔记。');
     main.beginStageLiveTurn(entry.token, { command: '把结论保存为笔记。' });
     assert.equal(main.stageLiveTurns.get(entry.token).conversationId, conversationId);
-    await waitFor('follow-up starts in current GUI', () => evaluate(studio, `document.querySelectorAll('.dsh-live-turn').length === 1`));
+    await waitFor('follow-up starts in current GUI', () => evaluate(studio, `document.querySelectorAll('.mp-chat-live-turn').length === 1`));
     main.selectionSessions.finishRequest(entry.token, approvalRequestId);
     main.updateStage({ selectionSessionToken: entry.token, event: main.stageEventFromBridge({
       ok: true, answer: '保存笔记前需要你的确认。', agentSessionId: entry.taskId,
@@ -284,17 +273,15 @@ originalWhenReady().then(async () => {
       && document.getElementById('composer-permission-ask')?.textContent.includes('允许保存这份笔记吗？')
     `));
     report.checks.pendingPermission = await evaluate(studio, `({
-      question: document.querySelector('.dshw-perm-ask-question').textContent,
-      buttonCount: document.querySelectorAll('.dshw-perm-ask-btn').length,
-      streamingNodes: document.querySelectorAll('.dsh-stream-live').length,
+      question: document.querySelector('.mpw-perm-ask-question').textContent,
+      buttonCount: document.querySelectorAll('.mpw-perm-ask-btn').length,
+      streamingNodes: document.querySelectorAll('.mp-chat-stream-live').length,
       busy: document.getElementById('composer-form').getAttribute('aria-busy'),
     })`);
     assert.equal(report.checks.pendingPermission.buttonCount, 3);
     assert.equal(report.checks.pendingPermission.busy, null);
     assert.equal(visibilityRequests, showsAfterClose);
     await screenshot(studio, 'studio-permission-after-stage-close');
-    // A separate recorded request proves the visible GUI Stop button reaches
-    // the same selection child through the production conversations:stop IPC.
     const stopEntry = main.selectionSessions.create({ reason: 'acceptance-explicit-stop' });
     main.selectionSessions.attachSnapshot(stopEntry.token, {
       selectionSnapshot: { snapshot_id: 'acceptance-stop-1', context: { app: 'Fixture document', content: 'Recorded stop target' } },

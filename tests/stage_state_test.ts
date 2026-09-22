@@ -1,7 +1,6 @@
 const assert = require('assert');
 const { initialState, transition, STATES } = require('../electron/stage_state');
 
-// --- initial state + config -------------------------------------------------
 const start = initialState();
 assert.strictEqual(start.name, 'hidden');
 assert.strictEqual(start.target, null);
@@ -18,7 +17,6 @@ assert.deepStrictEqual(STATES, [
   'processing', 'result', 'error', 'dismissing',
 ]);
 
-// --- happy path: voice branch ----------------------------------------------
 let state = initialState();
 const frozenSnapshot = JSON.parse(JSON.stringify(state));
 
@@ -68,17 +66,14 @@ assert.strictEqual(state.target, null, 'hidden clears target payload');
 assert.strictEqual(state.transcript, '', 'hidden clears transcript');
 assert.strictEqual(state.result, null, 'hidden clears result');
 
-// transition must not mutate its input
 assert.deepStrictEqual(JSON.parse(JSON.stringify(initialState())), frozenSnapshot);
 
-// --- text branch -------------------------------------------------------------
 let text = transition(initialState(), { type: 'WAKE' });
 text = transition(text, { type: 'FREEZE', target: { x: 1, y: 2, width: 3, height: 4 } });
 text = transition(text, { type: 'OPEN_CAPSULE', mode: 'text' });
 assert.strictEqual(text.name, 'capsule-text');
 assert.strictEqual(text.inputMode, 'text');
 
-// mode switch voice <-> text is legal while capsule is open
 const switched = transition(text, { type: 'OPEN_CAPSULE', mode: 'voice' });
 assert.strictEqual(switched.name, 'capsule-voice');
 
@@ -87,7 +82,6 @@ text = transition(text, { type: 'SUBMIT', command: 'summarize this politely' });
 assert.strictEqual(text.name, 'processing');
 assert.strictEqual(text.command, 'summarize this politely', 'explicit command wins over transcript');
 
-// --- error path --------------------------------------------------------------
 let bad = transition(text, { type: 'ERROR', error: { message: 'whisper timeout' } });
 assert.strictEqual(bad.name, 'error');
 assert.deepStrictEqual(bad.error, { message: 'whisper timeout' });
@@ -97,7 +91,6 @@ bad = transition(bad, { type: 'HIDDEN' });
 assert.strictEqual(bad.name, 'hidden');
 assert.strictEqual(bad.error, null, 'hidden clears error payload');
 
-// processing can be cancelled
 const cancelled = transition(text, { type: 'DISMISS' });
 assert.strictEqual(cancelled.name, 'dismissing');
 
@@ -111,7 +104,6 @@ assert.strictEqual(completedWithAnswer.turns.at(-1).status, 'done');
 assert.strictEqual(completedSilently.name, 'dismissing',
   'verified execution collapses the capsule without entering result state');
 
-// --- illegal transitions are no-ops (same reference) -------------------------
 const hidden = initialState();
 assert.strictEqual(transition(hidden, { type: 'SUBMIT' }), hidden);
 assert.strictEqual(transition(hidden, { type: 'RESULT', result: {} }), hidden);
@@ -123,17 +115,13 @@ assert.strictEqual(transition(hidden, {}), hidden);
 const targeting = transition(initialState(), { type: 'WAKE' });
 assert.strictEqual(transition(targeting, { type: 'OPEN_CAPSULE', mode: 'voice' }), targeting, 'capsule requires frozen target first');
 
-// --- direct RESULT/ERROR shortcuts (runtime-issue capture, early failures) ---
-// A runtime-issue circle capture delivers a result with no capsule round-trip.
 const directResult = transition(targeting, { type: 'RESULT', result: { kind: 'inline', answer: 'ok' } });
 assert.strictEqual(directResult.name, 'result');
 assert.deepStrictEqual(directResult.result, { kind: 'inline', answer: 'ok' });
-// An ineligible selection errors straight from frozen.
 const frozenEarly = transition(targeting, { type: 'FREEZE', target: { x: 0, y: 0, width: 5, height: 5 } });
 const earlyError = transition(frozenEarly, { type: 'ERROR', error: { message: '选区不可用' } });
 assert.strictEqual(earlyError.name, 'error');
 assert.deepStrictEqual(earlyError.error, { message: '选区不可用' });
-// Dictation failure surfaces from the open capsule without a SUBMIT.
 const capsuleEarly = transition(frozenEarly, { type: 'OPEN_CAPSULE', mode: 'voice' });
 const capsuleError = transition(capsuleEarly, { type: 'ERROR', error: { message: 'whisper missing' } });
 assert.strictEqual(capsuleError.name, 'error');
@@ -145,7 +133,6 @@ assert.strictEqual(transition(resultState, { type: 'WAKE' }), resultState);
 const dismissing = transition(resultState, { type: 'DISMISS' });
 assert.strictEqual(transition(dismissing, { type: 'SUBMIT' }), dismissing);
 
-// --- reduced motion flag flows through every transition ----------------------
 let rm = initialState({ reducedMotion: true });
 rm = transition(rm, { type: 'WAKE' });
 rm = transition(rm, { type: 'FREEZE', target: { x: 0, y: 0, width: 10, height: 10 } });
@@ -153,7 +140,6 @@ rm = transition(rm, { type: 'OPEN_CAPSULE', mode: 'voice' });
 rm = transition(rm, { type: 'SUBMIT' });
 assert.strictEqual(rm.config.reducedMotion, true, 'config survives the whole path');
 
-// SET_REDUCED_MOTION is legal from any state and never changes the state name
 const toggled = transition(rm, { type: 'SET_REDUCED_MOTION', value: false });
 assert.strictEqual(toggled.name, rm.name);
 assert.strictEqual(toggled.config.reducedMotion, false);
@@ -161,11 +147,6 @@ const toggledHidden = transition(initialState(), { type: 'SET_REDUCED_MOTION', v
 assert.strictEqual(toggledHidden.name, 'hidden');
 assert.strictEqual(toggledHidden.config.reducedMotion, true);
 
-// --- Conversation thread -----------------------------------------------------
-// A follow-up must never cost the user the question they already asked. These
-// assertions pin the thread: the ask is recorded when it is submitted (so it is
-// on screen while the answer is still coming), the answer settles that same
-// turn, and reopening the composer leaves the finished turns alone.
 
 function threadAtCapsule() {
   let s = transition(initialState(), { type: 'WAKE', target: { x: 0, y: 0, width: 10, height: 10 } });
@@ -187,8 +168,6 @@ assert.strictEqual(thread.turns[0].status, 'done');
 assert.deepStrictEqual(thread.turns[0].result, { text: 'translate this' });
 assert.strictEqual(thread.turns[0].ask, '翻译这段', 'settling must not erase the ask');
 
-// The follow-up: this is the regression that mattered — reopening the composer
-// used to null the result, so the previous exchange vanished from the screen.
 let awaitingThread = threadAtCapsule();
 awaitingThread = transition(awaitingThread, { type: 'SUBMIT', command: 'choose' });
 awaitingThread = transition(awaitingThread, {
@@ -240,7 +219,6 @@ assert.strictEqual(thread.turns[1].result.answer, '已检查选区，但后续�
 assert.strictEqual(thread.turns[1].result.trajectory[0].name, 'Look');
 assert.strictEqual(thread.turns[0].status, 'done', 'an earlier success is untouched by a later failure');
 
-// Chip actions run against the same thread.
 let chipThread = threadAtCapsule();
 chipThread = transition(chipThread, { type: 'SUBMIT', command: '总结' });
 chipThread = transition(chipThread, { type: 'RESULT', result: { text: 'a' } });
@@ -250,15 +228,12 @@ assert.strictEqual(chipThread.turns.length, 2, 'a suggested action opens its own
 assert.strictEqual(chipThread.turns[1].ask, '发到日历');
 assert.strictEqual(chipThread.turns[1].status, 'pending');
 
-// A result with no preceding ask still lands in the thread (runtime-issue
-// capture, ineligible selection) so the surface never renders an orphan card.
 let direct = transition(initialState(), { type: 'WAKE', target: { x: 0, y: 0, width: 4, height: 4 } });
 direct = transition(direct, { type: 'RESULT', result: { text: 'captured' } });
 assert.strictEqual(direct.turns.length, 1, 'an unsolicited result opens and closes its own turn');
 assert.strictEqual(direct.turns[0].ask, '');
 assert.strictEqual(direct.turns[0].status, 'done');
 
-// Dismissing ends the session; the next wake starts an empty thread.
 let ended = transition(thread, { type: 'DISMISS' });
 ended = transition(ended, { type: 'HIDDEN' });
 assert.deepStrictEqual(ended.turns, [], 'a new session must not inherit the previous thread');

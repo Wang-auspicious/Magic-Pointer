@@ -1,4 +1,3 @@
-"""Previewed, non-overwriting file moves with recoverable inverse records."""
 
 from __future__ import annotations
 
@@ -149,7 +148,6 @@ def build_move_preview(
     source_id: str,
     reference_id: str,
 ) -> list[dict[str, Any]]:
-    """Resolve a proposed batch and report conflicts without changing disk."""
     authorized_root = Path(root).expanduser().resolve(strict=False)
     operations: list[dict[str, Any]] = []
     destinations: set[str] = set()

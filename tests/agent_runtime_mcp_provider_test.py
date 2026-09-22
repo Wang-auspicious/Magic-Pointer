@@ -1,4 +1,3 @@
-"""Lazy MCP ToolProvider integration with the Agent registry."""
 
 from __future__ import annotations
 

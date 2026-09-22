@@ -2,7 +2,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
-/** Explicit prompt delivery only. All MP task execution stays in MPAgentRuntime. */
 export default function magicPointerExtension(pi: ExtensionAPI) {
   pi.registerCommand('pointer', {
     description: 'Deliver a reviewed Magic Pointer prompt file: /pointer "absolute path to prompt.md"',

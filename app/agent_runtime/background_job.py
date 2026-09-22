@@ -1,4 +1,3 @@
-"""A background command's lifetime is independent of the per-turn bridge."""
 from __future__ import annotations
 
 import json
@@ -31,8 +30,6 @@ def run(meta_path: Path) -> None:
     meta["finished"] = time.time()
     persist()
     if meta.get("sessionPath"):
-        # Direct script execution must also work from an installed app and from
-        # a workspace unrelated to the MP source directory.
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         from app.agent_runtime.session import FileSessionStore
 

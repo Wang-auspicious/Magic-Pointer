@@ -37,8 +37,6 @@ class FakeUpdater extends EventEmitter {
 
   set channel(value) {
     this._channel = value;
-    // electron-updater's real channel setter enables downgrade support.
-    // Keep that side effect in the fake so the contract cannot regress.
     this.allowDowngrade = true;
   }
 }

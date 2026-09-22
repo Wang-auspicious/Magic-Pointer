@@ -153,7 +153,7 @@ def press_escape() -> None:
 def press_activation_hotkey() -> None:
     user32 = ctypes.windll.user32
     key_up = 0x0002
-    keys = [0x11, 0x12, 0x10, 0x7A]  # Control + Alt + Shift + F11
+    keys = [0x11, 0x12, 0x10, 0x7A]
     for key in keys:
         user32.keybd_event(key, 0, 0, 0)
     time.sleep(0.08)
@@ -298,9 +298,6 @@ def main() -> int:
             min(right - left, target_rect["x"] - left + target_rect["width"]),
             min(bottom - top, target_rect["y"] - top + target_rect["height"]),
         )
-        # CDP can expose the page before Edge's first compositor frame reaches
-        # the desktop. Do not treat the transient dark backing surface as the
-        # visual baseline.
         paint_deadline = time.time() + 6
         before = None
         candidate = None
@@ -446,21 +443,15 @@ def main() -> int:
         )
         visual_passed = changed_ratio >= 0.008 and blue_ratio >= 0.005 and thickness_passed
 
-        # The non-interactive sweep itself must not become a transparent click
-        # blocker merely because the nearby text capsule is interactive.
         click_at(sweep_click_point["x"], sweep_click_point["y"])
         sweep_clicks = wait_for_sweep_click(page["webSocketDebuggerUrl"], 1)
         sweep_click_through_passed = sweep_clicks == 1
 
-        # A point outside the Stage's native shaped regions must also click
-        # through to the browser while the temporary surface remains available.
         dismiss_before = log_text.count("dismissTemporarySurfaces")
         click_at(outside_point["x"], outside_point["y"])
         outside_clicks = wait_for_outside_click(page["webSocketDebuggerUrl"], 1)
         click_through_passed = outside_clicks == 1
 
-        # The click gives focus back to the browser. Escape still has to dismiss
-        # globally, which is the accidental-activation escape hatch.
         dismiss_before_escape = dismiss_before
         press_escape()
         escape_log = wait_for_log_occurrences(

@@ -1,18 +1,3 @@
-"""Replay-history sanitization shared across resume code paths.
-
-Ported from HermesAgent ``agent/replay_cleanup.py`` (MIT, hermes-agent 0.18.2).
-Adapted to Magic Pointer's frozen :class:`AgentMessage` (``name`` lives on the
-message, not under OpenAI ``function``) and to this runtime's repair markers
-(``TOOL_NOT_STARTED`` / ``TOOL_OUTCOME_UNKNOWN``).
-
-When a turn dies mid-tool-loop the transcript can end with a dangling
-``assistant(tool_calls)`` or an interrupted assistant→tool block.  On the next
-model call that tail is re-issued as an endless reboot.  These helpers close
-that gap on the copy the model sees; the durable JSONL is left intact.
-
-Sanitize immediately before the model call, never while a live tool round is
-still waiting for results — at that point the unanswered tail is in-flight.
-"""
 
 from __future__ import annotations
 
@@ -56,7 +41,6 @@ _ORPHAN_READ = (
 
 
 def tool_may_have_side_effect(name: str) -> bool:
-    """Fail closed: an unknown name is treated as possibly having an effect."""
     return str(name or "") not in _READ_ONLY_TOOLS
 
 
@@ -66,7 +50,6 @@ def is_interrupted_tool_result(content: str | None) -> bool:
 
 
 def sanitize_replay_history(messages: list[AgentMessage]) -> list[AgentMessage]:
-    """Strip interrupted read-only blocks, then close unanswered tool calls."""
     if not messages:
         return messages
     return close_unanswered_tool_calls(strip_interrupted_tool_tails(messages))
@@ -94,7 +77,6 @@ def _orphan_result(call_id: str, name: str) -> AgentMessage:
 
 
 def strip_interrupted_tool_tails(messages: list[AgentMessage]) -> list[AgentMessage]:
-    """Drop interrupted read-only assistant→tool blocks; keep side-effecting ones."""
     cleaned: list[AgentMessage] = []
     index = 0
     length = len(messages)
@@ -142,11 +124,6 @@ def strip_interrupted_tool_tails(messages: list[AgentMessage]) -> list[AgentMess
 
 
 def close_unanswered_tool_calls(messages: list[AgentMessage]) -> list[AgentMessage]:
-    """Close unanswered tool_calls anywhere, not only at the tail.
-
-    generate_turn runs after the next user line is already appended, so a
-    tail-only stripper would leave a broken assistant/user pair for the provider.
-    """
     cleaned: list[AgentMessage] = []
     index = 0
     length = len(messages)

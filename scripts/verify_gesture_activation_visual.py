@@ -64,7 +64,7 @@ def cursor_handle() -> int:
 
 def press_activation_hotkey() -> None:
     user32 = ctypes.windll.user32
-    keys = [0x11, 0x12, 0x10, 0x7A]  # Control + Alt + Shift + F11
+    keys = [0x11, 0x12, 0x10, 0x7A]
     for key in keys:
         user32.keybd_event(key, 0, 0, 0)
     time.sleep(0.08)
@@ -91,10 +91,7 @@ def perform_three_stroke_wiggle(origin: tuple[int, int]) -> None:
 def force_foreground_window(hwnd: int) -> None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
-    user32.ShowWindow(int(hwnd), 9)  # SW_RESTORE
-    # Foreground-lock rules can reject SetForegroundWindow in unattended
-    # runs. Keep the disposable fixture topmost for the short verification so
-    # unrelated user windows cannot invalidate the before/after evidence.
+    user32.ShowWindow(int(hwnd), 9)
     user32.SetWindowPos(int(hwnd), -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
     current_foreground = int(user32.GetForegroundWindow() or 0)
     current_thread = int(kernel32.GetCurrentThreadId())
@@ -164,8 +161,6 @@ def drag_and_capture(start, end, capture_bbox, steps=20):
         user32.SetCursorPos(x, y)
         time.sleep(0.018)
         if index == steps // 2:
-            # Let Electron consume the native mousemove queue and paint the
-            # next animation frame before sampling the transparent overlay.
             time.sleep(0.08)
             middle = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
             foreground_samples.append({
@@ -283,9 +278,6 @@ def main() -> int:
             else "accelerator=Control+Alt+Shift+F11 ok=true"
         )
         wait_for_log(runtime / "electron.log", startup_pattern, 20)
-        # The native gesture is intentionally brief. Do not fire it while the
-        # disposable Electron process is still cold-loading both renderers;
-        # the production app prewarms these surfaces before user interaction.
         wait_for_log(runtime / "electron.log", "stage renderer ready", 20)
         wait_for_log(runtime / "electron.log", "overlay renderer ready", 20)
         force_foreground_window(int(window["hwnd"]))
@@ -301,9 +293,6 @@ def main() -> int:
         else:
             press_activation_hotkey()
         if EARLY_DRAG:
-            # Regression: a user may press and hold immediately after the wake
-            # gesture, before the configured arm grace elapses. The stroke
-            # must not disappear merely because its pointerdown was early.
             armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
             armed.save(EVIDENCE_DIR / "armed-invisible.png")
             drawing, foreground_samples, cursor_samples = drag_and_capture(
@@ -321,8 +310,6 @@ def main() -> int:
         completed_log = wait_for_log(runtime / "electron.log", "selection gesture completed", 10)
         capsule_state = f"stage renderer state=capsule-{INPUT_MODE}"
         capsule_log = wait_for_log(runtime / "electron.log", capsule_state, 30)
-        # The state transition starts the configured spawn animation at
-        # opacity zero. Sample after it has visibly settled.
         time.sleep(0.82)
         capsule = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
         capsule.save(EVIDENCE_DIR / "capsule-after-release.png")

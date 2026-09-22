@@ -26,7 +26,6 @@ const MAX_WIDTH = 760;
 const MIN_PRIMARY = 420;
 const GAP = 8;
 
-// Claude's session rail shares the chat panel, not the document inspector's width.
 function sessionRailGeometry(availableWidth: number): { width: number; overlay: boolean } {
   return { width: Math.min(320, Math.max(240, availableWidth - 768 - 3 * 24)), overlay: availableWidth < 592 };
 }

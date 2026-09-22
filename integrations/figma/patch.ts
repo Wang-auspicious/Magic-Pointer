@@ -384,8 +384,6 @@ export async function applyFigmaNodePatch(
     }
   }
 
-  // Font loading yields to the Figma document. Recheck every base together,
-  // then perform the transaction without another asynchronous boundary.
   for (let index = 0; index < prepared.length; index += 1) {
     const change = prepareNode(prepared[index].node, operations[index]);
     if (change.fonts.some((font) => !uniqueFonts.has(fontKey(font)))) {

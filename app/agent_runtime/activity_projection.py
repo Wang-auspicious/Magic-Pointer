@@ -1,4 +1,3 @@
-"""Shared runtime progress and trajectory projection for desktop surfaces."""
 
 from __future__ import annotations
 
@@ -13,7 +12,6 @@ if TYPE_CHECKING:
 
 
 def _trajectory_text(value: Any) -> str:
-    """Serialize structured runtime facts as the JSON DSH's tool rows display."""
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return str(value or "")
@@ -26,7 +24,6 @@ def completed_trajectory(
     question: str = "",
     used_backend: str = "",
 ) -> list[dict[str, Any]]:
-    """Finish the same trace for either surface, using actual runtime receipts."""
     answer = str(mapped.get("answer") or "")
     used_backend = str(mapped.get("usedBackend") or used_backend)
     records = [dict(record) for record in trajectory]
@@ -45,11 +42,6 @@ def completed_trajectory(
         if not str(last_message.get("text") or "").strip():
             last_message["text"] = answer
         last_message["usedBackend"] = used_backend
-        # 输入侧和缓存侧也要一起带上：卡片要按类别分段着色，只有输出这一项
-        # 就画不出「上下文花在哪」。缺的键保持缺失（不补 0），渲染层才知道
-        # 该不该画那一段。
-        # Turn totals already live in mapped.modelUsage. Per-request usage
-        # belongs to the original message and must not be overwritten here.
     receipts_by_id = {
         str(receipt.get("toolCallId") or ""): receipt
         for receipt in mapped.get("loopReceipts") or []
@@ -70,9 +62,7 @@ def completed_trajectory(
 
 
 class RuntimeActivitySink:
-    """Project loop events into honest desktop lifecycle rows and phase marks."""
 
-    #: 流式正文增量的节流窗口：太密会淹没 stderr，太久会让用户看着空屏。
     CHUNK_FLUSH_INTERVAL_S = 0.12
 
     def __init__(
@@ -104,8 +94,6 @@ class RuntimeActivitySink:
         self._first_chunk_seen = False
         self._pending_chunk_text: list[str] = []
         self._last_chunk_flush = 0.0
-        # 思考流（reasoning）：trajectory message record 逐轮累计 + 进度行
-        # 边想边画；turn_reasoning 供终态载荷的 thinking 字段（Think 行）。
         self._pending_reasoning_text: list[str] = []
         self._last_reasoning_flush = 0.0
         self.turn_reasoning: list[str] = []
@@ -140,7 +128,6 @@ class RuntimeActivitySink:
         return record
 
     def subagent_progress(self, payload: dict[str, Any]) -> None:
-        """Attach child telemetry to its real parent, also in the saved trace."""
         parent = self._trajectory_tools.get(str(payload.get("parentCallId") or ""))
         safe = dict(payload)
         for key, limit in (("id", 120), ("parentCallId", 120), ("description", 600),
@@ -245,13 +232,11 @@ class RuntimeActivitySink:
                 if self._active_message is not None:
                     self._active_message["firstTokenAt"] = at_ms
             if text:
-                # Studio 流式正文：增量 base64 上线，渲染层边收边画。
                 self._pending_chunk_text.append(text)
                 if time.perf_counter() - self._last_chunk_flush >= self.CHUNK_FLUSH_INTERVAL_S:
                     self._flush_answer_chunks()
             return
         if kind == "reasoning_chunk":
-            # 思考流：记进 message record（正式渲染）+ 进度行（边想边画）。
             text = str(getattr(event, "text", "") or "")
             if not text:
                 return
@@ -265,8 +250,6 @@ class RuntimeActivitySink:
                 self._flush_reasoning_chunks()
             return
         if kind == "tool_call_started":
-            # 工具边界前把持有的正文尾巴冲出去：模型先说话再调工具时，
-            # 文本必须落在工具行之前，不能被节流窗口吞到下一轮。
             self._flush_answer_chunks()
             self._flush_reasoning_chunks()
             call_id = str(getattr(event, "id", ""))
@@ -300,8 +283,6 @@ class RuntimeActivitySink:
             failed = bool(getattr(result, "is_error", False))
             backend = str(getattr(result, "used_backend", "") or "")
             latency = float(getattr(result, "latency_ms", 0.0) or 0.0)
-            # Arguments and output are runtime evidence. A single blob preserves
-            # complete tool rows for both surfaces without the phase-token cap.
             payload = {
                 "id": call_id, "name": name,
                 "state": "error" if failed else "done", "backend": backend or "-",
@@ -342,7 +323,6 @@ class RuntimeActivitySink:
             })
             return
         if kind == "turn_finished":
-            # 回合正文结束：把节流窗口里持有的尾巴全部冲出去，不能丢字。
             self._flush_answer_chunks()
             self._flush_reasoning_chunks()
             state = getattr(event, "state", None)

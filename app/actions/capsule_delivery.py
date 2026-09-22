@@ -1,22 +1,3 @@
-"""Carry the capsule's own answer into the app the user was working in.
-
-The bubble already holds the text, so the natural question is why it cannot just
-walk across into the WeChat input box. Mechanically it can: the verified
-cross-application write already exists as
-`app/actions/executor.py::_paste_text_to_foreground`, and it is already used to
-fill Agent input boxes. Two things it deliberately will not do:
-
-* clobber a draft the user typed themselves (the writer refuses when the target
-  input already holds different text), and
-* claim a write it could not read back (WeChat, Canvas and other self-drawn
-  controls expose no readable text to verify against).
-
-Both refusals are features. The cost of pretending otherwise is exactly the bug
-`a6a6d08` removed -- a success report for text that never moved. So when the
-write cannot happen or cannot be confirmed, this module falls back to the thing
-the user can finish themselves in one keystroke: the text goes on the clipboard
-and we say so, naming the reason.
-"""
 
 from __future__ import annotations
 
@@ -33,8 +14,6 @@ CAPSULE_DELIVERY_KIND = "capsule_text_delivery"
 CAPSULE_WORKFLOW_KIND = "capsule_delivery"
 CLIPBOARD_FALLBACK_KIND = "capsule_clipboard_fallback"
 
-# The clipboard sentence is appended to every fallback message, so the user
-# always learns the same next step regardless of which refusal they hit.
 _CLIPBOARD_TAIL = "结果已复制，把光标点进输入框按 Ctrl+V 就行。"
 
 
@@ -51,12 +30,6 @@ def make_capsule_delivery_proposal(
     target_resolution: str = "exact",
     current_target_window: dict[str, Any] | None = None,
 ) -> ActionProposal:
-    """The write itself, reusing the existing channel's identity guarantees.
-
-    Every check in `make_prompt_delivery_proposal` is kept: hwnd, pid and title
-    must all be present, the point must be trusted physical screen pixels, the
-    text is hashed, and `submit` is False so nothing is ever sent for the user.
-    """
     delegate = make_prompt_delivery_proposal(
         text,
         target_window=target_window,
@@ -83,7 +56,6 @@ def make_capsule_delivery_proposal(
 
 
 def make_clipboard_fallback_proposal(text: str, *, reason_code: str) -> ActionProposal:
-    """The honest second best: the text is on the clipboard, the user pastes it."""
     exact_text = str(text or "")
     if not exact_text.strip():
         raise DraftDeliveryError("draft text is empty")
@@ -109,9 +81,8 @@ def make_clipboard_fallback_proposal(text: str, *, reason_code: str) -> ActionPr
 
 @dataclass(frozen=True)
 class DeliveryVerdict:
-    """What actually happened, in the words we are willing to show the user."""
 
-    kind: str  # "written" | "clipboard"
+    kind: str
     reason_code: str
     message: str
     write_attempted: bool
@@ -132,10 +103,6 @@ WRITTEN = DeliveryVerdict(
     write_attempted=True,
 )
 
-# Ordered because writer errors are matched by substring and the first match
-# wins. `attempted` records whether keys were actually sent: for an unverifiable
-# paste the text may already be in the box, and saying otherwise would be a
-# second kind of lie.
 _FAILURE_RULES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "not an editable input surface",
@@ -201,12 +168,6 @@ _FAILURE_RULES: tuple[tuple[str, str, str, bool], ...] = (
 
 
 def describe_delivery_failure(error: str | None) -> DeliveryVerdict:
-    """Turn a writer error into a clipboard verdict that names the real cause.
-
-    Unrecognized errors fall through to a generic message rather than being
-    dressed up as a known cause -- an unfamiliar failure is still a failure, and
-    guessing its reason would make the message less trustworthy, not more.
-    """
     text = str(error or "").casefold()
     for needle, code, message, attempted in _FAILURE_RULES:
         if needle in text:

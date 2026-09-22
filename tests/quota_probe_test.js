@@ -1,11 +1,5 @@
 'use strict';
 
-/*
- * The quota card is only worth having if every number on it came from the
- * provider. So these tests pin two things: the documented response shapes are
- * parsed correctly, and every way of *failing* produces no rows rather than a
- * plausible-looking one.
- */
 
 const assert = require('node:assert');
 const path = require('node:path');
@@ -24,7 +18,6 @@ assert(adapter('openrouter'), 'openrouter adapter must exist');
 assert(adapter('moonshot'), 'moonshot adapter must exist');
 assert(adapter('opencode-go'), 'opencode-go adapter must exist');
 
-/* ---- 认 provider ---- */
 
 assert.strictEqual(quotaAdapterFor({ provider: 'api.deepseek.com', baseUrl: 'https://api.deepseek.com/v1' })?.id,
   'deepseek', 'a deepseek base URL must resolve without the provider field saying so');
@@ -36,10 +29,7 @@ assert.strictEqual(quotaAdapterFor({ provider: 'deepseek', baseUrl: 'https://api
   'a local runtime has no account behind it');
 assert.strictEqual(quotaAdapterFor(null), null);
 
-/* ---- 端点拼接 ---- */
 
-/* deepseek 的余额挂在域名根下，不在 baseUrl 的 /v1 里；openrouter 的 key
-   接口挂在 baseUrl 的版本段下。两条规则不一样，所以两边都要钉住。 */
 assert.strictEqual(adapter('deepseek').url('https://api.deepseek.com', 'api.deepseek.com'),
   'https://api.deepseek.com/user/balance');
 assert.strictEqual(adapter('openrouter').url('https://openrouter.ai', 'openrouter.ai'),
@@ -53,7 +43,6 @@ assert.strictEqual(hostOf('https://api.deepseek.com/v1'), 'api.deepseek.com');
 assert.strictEqual(hostOf('not a url'), '');
 assert.strictEqual(originOf('https://api.deepseek.com/v1'), 'https://api.deepseek.com');
 
-/* ---- DeepSeek：文档里的示例响应，金额是字符串 ---- */
 
 const deepseekRows = adapter('deepseek').parse({
   is_available: true,
@@ -76,7 +65,6 @@ assert.deepStrictEqual(adapter('deepseek').parse({ is_available: false, balance_
 assert.deepStrictEqual(adapter('deepseek').parse({ nope: 1 }, 'api.deepseek.com'), []);
 assert.deepStrictEqual(adapter('deepseek').parse(null, 'api.deepseek.com'), []);
 
-/* ---- OpenRouter：有上限才有比例，没上限也要说清楚 ---- */
 
 const capped = adapter('openrouter').parse({
   data: { limit: 100, limit_remaining: 62.5, usage: 37.5, usage_weekly: 4.25, usage_monthly: 18.75 },
@@ -96,7 +84,6 @@ assert.strictEqual(uncapped[0].detail, '免费额度');
 
 assert.deepStrictEqual(adapter('openrouter').parse({ data: { usage: 'abc' } }, 'openrouter.ai'), []);
 
-/* ---- Moonshot：币种跟主机走 ---- */
 
 const moonshotCn = adapter('moonshot').parse({
   code: 0,
@@ -115,7 +102,6 @@ assert.strictEqual(moonshotIntl[0].value, '$12.00', 'the international host bill
 
 assert.deepStrictEqual(adapter('moonshot').parse({ code: 0, data: {} }, 'api.moonshot.cn'), []);
 
-/* ---- OpenCode Go：窗口百分比 + 重置时间 ---- */
 
 const opencode = adapter('opencode-go').parse({
   usage: {
@@ -131,7 +117,6 @@ assert.deepStrictEqual(opencode.map((row) => row.percent), [4, 37, 61]);
 assert.ok(opencode.every((row) => row.detail.includes('重置')),
   'a window without a reset time is not actionable');
 
-/* 真实响应里 percent 可能越界，画进度条之前必须夹住。 */
 const clamped = adapter('opencode-go').parse({ usage: { rolling: { percent: 140 } } }, 'opencode.ai');
 assert.strictEqual(clamped[0].percent, 100);
 const negative = adapter('opencode-go').parse({ usage: { rolling: { percent: -3 } } }, 'opencode.ai');
@@ -140,7 +125,6 @@ assert.strictEqual(negative[0].percent, 0);
 assert.deepStrictEqual(adapter('opencode-go').parse({ usage: {} }, 'opencode.ai'), []);
 assert.deepStrictEqual(adapter('opencode-go').parse({}, 'opencode.ai'), []);
 
-/* ---- probeQuota：失败要留原因，成功要留来源 ---- */
 
 const fakeResponse = (status, body) => ({
   ok: status >= 200 && status < 300,

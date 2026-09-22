@@ -1,4 +1,3 @@
-"""Explicit native Office acceptance on new, disposable audit documents only."""
 from __future__ import annotations
 import json
 import sys
@@ -18,7 +17,6 @@ def application(name):
 
 
 def native_integer(value):
-    # Some late-bound PowerPoint type libraries expose HWND as a getter method.
     return int(value() if callable(value) else value)
 
 

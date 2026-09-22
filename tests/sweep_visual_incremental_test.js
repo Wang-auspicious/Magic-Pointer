@@ -1,12 +1,5 @@
 'use strict';
 
-/*
- * C-069: buildSdfPath 的增量几何缓存必须与「每帧从完整点数组重建」逐位一致。
- *
- * 这里把改动前的算法（smoothPath / resamplePath / addArcProgress / 边界计算）
- * 原样抄了一份当参考实现，然后对同一条「只 append、不改写已有元素」的数组
- * 逐点比对增量结果。任何一帧只要有一位不同，这个测试就会炸在具体下标上。
- */
 
 const assert = require('assert');
 const path = require('path');
@@ -20,7 +13,6 @@ function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-// ---- 参考实现：改动前的 sweep_visual.ts，逐字抄写 ------------------------
 
 function refCatmullRomPoint(p0, p1, p2, p3, t) {
   const t2 = t * t;
@@ -137,7 +129,6 @@ function referenceBuildSdfPath(points, requestedWidth) {
   };
 }
 
-// ---- 生长中的数组：增量结果必须逐位等于全量重建 --------------------------
 
 assert.strictEqual(typeof sweep.createSweepPathCache, 'function',
   'the module must expose an independent cache handle so two canvases cannot thrash');
@@ -146,9 +137,7 @@ const shapes = {
   straight: (i) => ({ x: 100 + i * 4.2, y: 300 }),
   sine: (i) => ({ x: 300 + Math.sin(i / 20) * 250 + i * 0.3, y: 400 + Math.cos(i / 17) * 120 }),
   jitter: (i) => ({ x: 200 + i * 4.21, y: 200 + ((i * 37) % 11) - 5 }),
-  // 小于 0.1px 的相邻点：专门压 smoothPath 里的 >0.1 去重分支
   subPixel: (i) => ({ x: 50 + i * 0.04, y: 50 + (i % 3) * 0.03 }),
-  // 大回环，制造 <2px 与 >6px 段并存
   loop: (i) => ({ x: 500 + Math.sin(i / 9) * 180, y: 500 + Math.sin(i / 4.5) * 90 }),
 };
 
@@ -170,7 +159,6 @@ for (const [name, make] of Object.entries(shapes)) {
     `${name}: a long stroke must resample to exactly MAX_POINTS`);
 }
 
-// 长长长：4096 点是 overlay 的上限，走一遍确认大数组也不漂
 {
   const cache = sweep.createSweepPathCache();
   const growing = [];
@@ -183,21 +171,17 @@ for (const [name, make] of Object.entries(shapes)) {
   }
 }
 
-// ---- 退化输入 ------------------------------------------------------------
 
 {
   const cache = sweep.createSweepPathCache();
   assert.strictEqual(sweep.buildSdfPath([], 22, cache), null);
   assert.strictEqual(sweep.buildSdfPath([{ x: 1, y: 1 }], 22, cache), null);
-  // 两个重合点：pathLength 0 <= 0.1 -> null
   assert.strictEqual(sweep.buildSdfPath([{ x: 1, y: 1 }, { x: 1, y: 1 }], 22, cache), null);
   assert.strictEqual(sweep.buildSdfPath(null, 22, cache), null);
   assert.strictEqual(sweep.buildSdfPath('nonsense', 22, cache), null);
-  // 数组里混入非法点 -> 必须回落到全量实现，且结果与参考实现一致
   const dirty = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 80, y: 30 }, { x: NaN, y: 30 }, { x: 120, y: 80 }];
   assert.deepStrictEqual(sweep.buildSdfPath(dirty, 22, cache), referenceBuildSdfPath(dirty, 22),
     'a stroke containing a non-finite point must fall back to the stateless implementation');
-  // 回落后缓存必须自愈：下一条正常轨迹仍要正确
   const clean = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 80, y: 30 }, { x: 120, y: 80 }];
   const cleanCache = sweep.createSweepPathCache();
   assert.deepStrictEqual(sweep.buildSdfPath(clean, 22, cleanCache), referenceBuildSdfPath(clean, 22));
@@ -206,25 +190,20 @@ for (const [name, make] of Object.entries(shapes)) {
     'the cache must recover after a fallback');
 }
 
-// ---- 数组被整体替换 / 缩回 / 原地改写中间点 -------------------------------
 
 {
   const cache = sweep.createSweepPathCache();
   const a = [{ x: 0, y: 0 }, { x: 30, y: 20 }, { x: 70, y: 10 }, { x: 110, y: 60 }];
   const first = sweep.buildSdfPath(a, 22, cache);
-  // 同样的内容、不同的数组对象 -> 必须整体重建且结果一致
   assert.deepStrictEqual(sweep.buildSdfPath(a.slice(), 22, cache), first,
     'a new array with the same content must produce the same geometry');
-  // 缩回（换数组）也不能留下脏状态
   const short = a.slice(0, 2);
   assert.deepStrictEqual(sweep.buildSdfPath(short, 22, cache), referenceBuildSdfPath(short, 22));
   assert.deepStrictEqual(sweep.buildSdfPath(a.slice(), 22, cache), first,
     'geometry must be reproducible after the array shrinks and is rebuilt');
-  // 不传 cache 时必须仍然走默认缓存并得到同样结果
   assert.deepStrictEqual(sweep.buildSdfPath(a, 22), first);
 }
 
-// ---- 宽度参数 ------------------------------------------------------------
 
 {
   const cache = sweep.createSweepPathCache();
@@ -234,17 +213,13 @@ for (const [name, make] of Object.entries(shapes)) {
     const reference = referenceBuildSdfPath(pts, width);
     assert.deepStrictEqual(path, reference, `width ${width} diverged`);
   }
-  // 同一个 cache 交替不同宽度：几何缓存不关心宽度，但结果必须随时正确
   assert.deepStrictEqual(sweep.buildSdfPath(pts, 12, cache), referenceBuildSdfPath(pts, 12));
   assert.deepStrictEqual(sweep.buildSdfPath(pts, 40, cache), referenceBuildSdfPath(pts, 40));
 }
 
-// ---- 性能：生长中的数组（production 形状） --------------------------------
 
 {
   const points = 1024;
-  // 每一步都往同一条数组多 append 一个点，模拟 overlay.addPoint -> scheduleRender
-  // 的真实节奏（overlay 只在起笔时换数组，之后一直 push）。
   const growth = [];
   const incrementalStart = process.hrtime.bigint();
   {

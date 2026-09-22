@@ -1,10 +1,3 @@
-"""B1 工具面分层：deferred 工具不出现在默认 schema，经 find_capability 发现加载。
-
-对照 CC ToolSearchTool / Hermes tool_search：低频工具不付每轮 schema token。
-MP 的 loop 机制早已就位（``_select_tool_schemas`` 跳过 ``spec.deferred``、
-find_capability 结果进下轮 extra_names）——本批把审计裁定的低频工具真正
-标记为 deferred。
-"""
 
 from __future__ import annotations
 
@@ -24,11 +17,9 @@ def _params(registry: ToolRegistry, tool_limit: int = 64):
     return SimpleNamespace(registry=registry, tool_limit=tool_limit)
 
 
-# --- 各模块的 deferred 标记 ---------------------------------------------------
 
 
 def test_frozen_frame_perception_trio_is_deferred() -> None:
-    """冻帧三件套（Stage 手势路径专用）与 live 窗口枚举不再占对话 schema。"""
     from app.agent_runtime.perception_tools import PerceptionTools
 
     class _Backend:
@@ -84,7 +75,6 @@ def test_recall_and_save_skill_are_deferred() -> None:
 
 
 def test_core_surface_stays_visible() -> None:
-    """核心 25 件永不 defer：文件/shell、桌面 13 件套、元工具、web。"""
     from pathlib import Path
 
     from app.agent_runtime.coding_tools import register_coding_tools
@@ -107,11 +97,9 @@ def test_core_surface_stays_visible() -> None:
         assert spec.deferred is False, f"{spec.name} 属核心面，不得 defer"
 
 
-# --- 分层机制集成 -------------------------------------------------------------
 
 
 def test_select_tool_schemas_excludes_deferred_and_search_finds_them() -> None:
-    """deferred 不进默认 schema；find_capability（registry.search）仍能发现。"""
     from app.agent_runtime.perception_tools import PerceptionTools
     from app.agent_runtime.coding_tools import register_coding_tools
 

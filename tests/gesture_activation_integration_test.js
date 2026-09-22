@@ -62,15 +62,9 @@ assert.match(
 assert.doesNotMatch(gestureArm, /setTimeout\(reveal,\s*armDelayMs\)/,
 
   'input capture must begin immediately so an early held click cannot disappear');
-// Physical->DIP conversion: the stroke release point is physical pixels;
-// anchoring and display lookup must convert once so the capsule stays next
-// to the selection on scaled displays instead of clamping to a corner.
 assert(main.includes("screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })"),
   'gesture release point must be converted to DIPs before stage anchoring');
 
-// Manual voice press during grounding must not be dropped silently.
-assert(main.includes('Bounded wait for grounding instead of a silent drop'),
-  'dictation:start must wait briefly for grounding');
 assert(main.includes("safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '目标识别还在进行，请稍候再试语音。' })"),
   'voice must report a friendly error instead of doing nothing');
 assert.match(requestActivation, /isSelectionGestureActivation\(reason\)[\s\S]*?armSelectionGesture\(/,
@@ -94,11 +88,6 @@ assert.match(gestureCompletion, /type:\s*'OPEN_CAPSULE'/,
   'release must always open the conversation capsule');
 assert.doesNotMatch(gestureCompletion, /type:\s*'ERROR'/,
   'grounding weakness must not replace the release capsule with an error card');
-// The capsule used to be forbidden from appearing before the snapshot callback,
-// because it would otherwise land inside our own screenshot and UIA probes. That
-// cost 4.9s of dead air on a real machine, which makes draw-talk-draw
-// impossible. The rule is now narrower but just as hard: the capsule may appear
-// early only when it physically cannot enter the capture.
 const captureStart = beginSelection.indexOf('runPythonBridge(');
 const immediateGestureStage = beginSelection.slice(0, captureStart);
 assert.match(immediateGestureStage, /const revealCapsule = \(via[^)]*\) => \{[\s\S]*?groundingReady: false/,
@@ -165,8 +154,6 @@ assert.match(overlay, /gestureLineStyle\s*===\s*'thin'/,
   'thin stroke remains an explicit selectable style');
 assert.match(overlay, /demo6_band/,
   'Demo 6 text-row band is the default stroke style');
-// 原来只断言「非手势态才 startPulseLoop」。现在这条约束被收紧成三处：
-// 进入手势态时显式停掉，且脉冲自己每帧再用 pulseAllowed() 检查一次。
 assert.match(overlay, /if\s*\(gestureMode\)\s*\{\s*stopPulseLoop\(\)/,
   'armed drawing must not run the full-screen idle animation loop');
 assert.match(overlay, /function pulseAllowed\(\)\s*\{[^}]*!gestureMode/,

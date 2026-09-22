@@ -70,7 +70,7 @@ assert.equal(lib.nextScheduledRun({enabled:false,trigger:{kind:'schedule',startA
 assert.deepEqual(Array.from(lib.sortProjects([{root:'a',name:'Z',addedAt:10,lastOpenedAt:30},{root:'b',name:'A',addedAt:20,lastOpenedAt:25}], [{workspaceRoot:'b',updatedAt:40}], 'activity')).map(x=>x.root),['b','a']);
 assert.deepEqual(Array.from(lib.sortProjects([{root:'a',name:'Z',addedAt:10},{root:'b',name:'A',addedAt:20}], [], 'created')).map(x=>x.root),['b','a']);
 assert.deepEqual(Array.from(lib.sortSkills([{name:'A',modifiedAt:10},{name:'Z',modifiedAt:20}], 'edited')).map(x=>x.name),['Z','A']);
-const previews = JSON.parse(fs.readFileSync('electron/renderer/assets/claude-reference/artifact-previews.json', 'utf8'));
+const previews = JSON.parse(fs.readFileSync('electron/renderer/assets/library-previews/artifact-previews.json', 'utf8'));
 for (const [name, duration] of [['docs',9000],['slides',7000],['design',8400]]) {
   assert.equal(previews[name].timeline.durationMs, duration);
   for (const track of previews[name].timeline.tracks) {
@@ -79,7 +79,12 @@ for (const [name, duration] of [['docs',9000],['slides',7000],['design',8400]]) 
   }
 }
 const studio = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
-const changeBlock = studio.slice(studio.indexOf('let conversationChangeRaf:'), studio.indexOf('// 收藏箱条目更新'));
+const studioAst = ts.createSourceFile('studio.ts', studio, ts.ScriptTarget.Latest, true);
+const changeStatements = studioAst.statements.filter(node =>
+  ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => declaration.name.getText(studioAst) === 'conversationChangeRaf')
+  || ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(studioAst) === 'Data.onChange');
+assert.equal(changeStatements.length, 2, 'library refresh needs its frame state and actual subscription');
+const changeBlock = changeStatements.map(node => node.getText(studioAst)).join('\n');
 const refreshes = []; let changeCallback; let frameCallback;
 const changes = {
   Data: { onChange: callback => { changeCallback = callback; } },

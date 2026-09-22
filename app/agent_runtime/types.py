@@ -1,10 +1,3 @@
-"""Agent runtime turn-state, message, tool-result and terminal types.
-
-Ported from the Claude Code query-loop study note
-(docs/harness-port-notes/2026-08-12-cc-query-loop.md): the State
-dataclass is rebuilt whole at every continue point with the transition
-reason recorded; it is never mutated in place. Pure Python, no I/O.
-"""
 
 from __future__ import annotations
 
@@ -21,18 +14,11 @@ class Role(enum.StrEnum):
 
 
 ORIGIN_INSTRUCTION = "instruction"
-"""Origin tag: a genuine user instruction (first user message, future
-voice/gesture entries). Only these messages may drive the model as
-instructions."""
 
 ORIGIN_DATA = "data"
-"""Origin tag: tool results and harness-internal state (perception reads,
-tool results/errors, truncation feedback, recovery prompts). Never an
-instruction."""
 
 
 class TransitionReason(enum.StrEnum):
-    """Why the loop continued (or why it terminated)."""
 
     COMPLETED = "completed"
     TOOL_RESULT = "tool_result"
@@ -60,8 +46,6 @@ class AgentMessage:
     origin: str = ORIGIN_INSTRUCTION
     injected: bool = False
     tool_calls: tuple[dict[str, Any], ...] = ()
-    # Provider-native opaque output items (currently Responses reasoning
-    # items). They are replayed as protocol data, never shown as user text.
     provider_items: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,9 +66,6 @@ class AgentMessage:
         _reject_unknown(data, cls)
         data = {
             **data,
-            # Fail closed: a message without an explicit origin tag is data,
-            # never an instruction (runtime-audit P2). The write path always
-            # emits origin; only foreign/legacy logs can omit it.
             "origin": data.get("origin", ORIGIN_DATA),
             "injected": data.get("injected", False),
             "tool_calls": data.get("tool_calls", ()),
@@ -131,11 +112,6 @@ class ToolResult:
 
 @dataclass(frozen=True, slots=True)
 class TurnState:
-    """One agentic turn loop state (query.ts State, 9 fields, Python form).
-
-    Rebuilt whole at every continue point via :func:`with_transition`;
-    never mutated in place.
-    """
 
     messages: list[AgentMessage]
     tool_calls_pending: list[ToolCall]
@@ -198,23 +174,11 @@ def with_transition(
     reason: TransitionReason,
     **overrides: Any,
 ) -> TurnState:
-    """Rebuild the whole state, recording why the loop continues.
-
-    Mirrors the query.ts "continue sites write state = { ... }" pattern:
-    the original state is untouched; fields not overridden carry over.
-    """
     return dataclasses.replace(state, transition=reason, **overrides)
 
 
 @dataclass(frozen=True, slots=True)
 class Terminal:
-    """Final return value of the query loop.
-
-    ``local_action`` carries a deterministic local action id
-    (save_screenshot / copy_object_text / show_source) when the routing
-    layer resolved the command without running the loop at all
-    (``reason=LOCAL_ACTION``); it is None for every loop-driven terminal.
-    """
 
     reason: TransitionReason
     message: str
@@ -224,8 +188,6 @@ class Terminal:
     pending_input: dict[str, Any] | None = None
     model_usage: dict[str, int | float] | None = None
     failure_kind: str | None = None
-    """§12.3：INVARIANT_FAILED 的细分（runaway_rounds / output_truncation），
-    其余 reason 为 None。用户文案据此给出下一步该做什么。"""
 
     def to_dict(self) -> dict[str, Any]:
         return {

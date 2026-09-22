@@ -1,16 +1,3 @@
-"""Terminal structured-read regression tests (real-machine fix 2026-08-13).
-
-Real-machine findings that these tests pin:
-- ``uia_text_adapter`` used ``time.monotonic`` without importing ``time``
-  -> every resident-host probe crashed with NameError and every read fell
-  back to OCR (pixel) silently.
-- Windows Terminal's ``DocumentRange.GetText`` throws or returns
-  whitespace for a healthy buffer -> the probe's terminal path must fall
-  back to the RangeFromPoint line-window read (C# side, covered by the
-  real-machine scenario; here the Python mapping is pinned).
-- terminal_buffer results must survive the adapter mapping into a
-  non-empty AdapterReadContext instead of degrading to identity_only.
-"""
 
 from __future__ import annotations
 
@@ -21,16 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def test_resident_probe_path_does_not_raise_name_error() -> None:
-    """The resident-host funnel must never crash on a missing import
-    (real bug: time.monotonic NameError killed the whole UIA path)."""
     import app.adapters.uia_text_adapter as module
 
-    # The module must import time for the spawn cooldown logic.
     assert hasattr(module, "time"), "uia_text_adapter must import time"
 
 
 def test_terminal_buffer_probe_maps_to_non_empty_context(monkeypatch) -> None:
-    """A healthy terminal_buffer probe result becomes a readable context."""
     from app.adapters.uia_text_adapter import UiaProbeResult, UiaTextSelectionAdapter
 
     data = {
@@ -75,7 +58,6 @@ def test_terminal_buffer_probe_maps_to_non_empty_context(monkeypatch) -> None:
 
 
 def test_terminal_buffer_evidence_extractor_handles_blank_anchor() -> None:
-    """Blank anchor line must not zero out the window text (real scenario)."""
     from app.grounding.terminal_evidence import TerminalEvidenceExtractor
 
     raw = (

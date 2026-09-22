@@ -1,9 +1,3 @@
-"""Replay-history sanitization for crash resume (Hermes replay_cleanup, MIT).
-
-A killed turn can leave an unanswered assistant(tool_calls) in the durable
-transcript. Repair fills the open turn; this module is the model-facing extra
-pass so a leftover tail cannot be re-issued as an infinite tool loop.
-"""
 
 from __future__ import annotations
 
@@ -87,9 +81,6 @@ def test_dangling_side_effect_tail_is_recovered_as_unknown_not_erased() -> None:
 
 
 def test_unanswered_look_buried_under_a_new_user_message_is_closed() -> None:
-    # generate_turn runs after the next user line is already appended, so a
-    # tail-only stripper would miss this and the provider would see a broken
-    # tool_call / user sequence.
     history = [
         _user("先读"),
         _assistant_calls(("c3", "look")),

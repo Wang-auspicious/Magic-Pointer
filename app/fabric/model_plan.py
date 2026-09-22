@@ -1,18 +1,5 @@
 from __future__ import annotations
 
-"""Model-produced structured plan contract.
-
-Responsibility split (2026-07-31 review audit follow-ups):
-- Local system owns speed and determinism: capture, OCR, object extraction,
-  execution, verification, undo.
-- The model owns understanding and planning: intent, target objects, and a
-  small set of tool calls from a fixed registry.
-
-A :class:`ModelPlan` is the only artifact a model is allowed to produce.  It
-never names screen coordinates or mouse actions directly; execution stays in
-the local executor layer.  Keyword recipe routing remains the offline
-fallback when no model plan is available.
-"""
 
 import json
 from dataclasses import dataclass, field
@@ -34,7 +21,6 @@ _SCALAR_ARGUMENT_TYPES = (str, int, float, bool)
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """Registry entry describing how a model tool maps to a local recipe."""
 
     tool: str
     recipe_id: str | None
@@ -75,9 +61,6 @@ def _spec(
     )
 
 
-# Model-friendly tool names -> local recipes.  Tools without a recipe_id are
-# recognized (so the model can request them) but not yet implemented; the
-# validator rejects execution attempts until a local executor exists.
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     "copy_text": _spec("copy_text", "text.ocr_copy", RiskLevel.LOCAL_WRITE),
     "clean_ocr_text": _spec("clean_ocr_text", "text.ocr_clean", RiskLevel.LOCAL_WRITE),
@@ -90,7 +73,6 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "extract_table": _spec("extract_table", "table.to_spreadsheet", RiskLevel.LOCAL_WRITE),
     "merge_tables": _spec("merge_tables", "table.merge", RiskLevel.LOCAL_WRITE, min_objects=2, max_objects=12),
     "extract_chart_data": _spec("extract_chart_data", "chart.extract_data", RiskLevel.LOCAL_WRITE),
-    "create_calendar_event": _spec("create_calendar_event", "calendar.create_from_screen", RiskLevel.EXTERNAL_SEND, required=("title",)),
     "open_map_route": _spec("open_map_route", "map.route", RiskLevel.EXTERNAL_SEND, min_objects=2, max_objects=2, required=("destination",)),
     "create_task": _spec("create_task", "task.route", RiskLevel.EXTERNAL_SEND),
     "save_evidence_card": _spec("save_evidence_card", "research.evidence_card", RiskLevel.LOCAL_WRITE, max_objects=8),
@@ -142,7 +124,7 @@ class ModelPlan:
 
 
 class ModelPlanError(ValueError):
-    """Raised when a model-produced plan violates the contract."""
+    pass
 
 
 def _bounded_str(value: Any, name: str, max_chars: int, *, allow_empty: bool = False) -> str:
@@ -216,7 +198,6 @@ class ValidationResult:
 
 
 def parse_model_plan(value: Any) -> ModelPlan:
-    """Strictly parse and validate a model-produced plan.  Raises ModelPlanError."""
     if not isinstance(value, dict):
         raise ModelPlanError("model plan must be an object")
     intent = _bounded_str(value.get("intent"), "intent", MAX_INTENT_CHARS)
@@ -284,7 +265,6 @@ def parse_model_plan(value: Any) -> ModelPlan:
 
 
 def validate_model_plan(value: Any) -> ValidationResult:
-    """Non-raising wrapper used by callers that must not crash on model output."""
     try:
         plan = parse_model_plan(value)
     except ModelPlanError as exc:
@@ -293,5 +273,4 @@ def validate_model_plan(value: Any) -> ValidationResult:
 
 
 def tool_registry_public() -> list[dict[str, Any]]:
-    """Machine-readable tool list for model prompts and the dashboard."""
     return [spec.to_dict() for spec in TOOL_REGISTRY.values()]

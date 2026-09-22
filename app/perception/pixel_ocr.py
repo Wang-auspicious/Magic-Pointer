@@ -1,18 +1,3 @@
-"""Frozen-frame OCR as a perception provider.
-
-This is the second evidence class, and the reason the provider protocol exists
-at all. Until now the same recognition ran in the answer bridge as a serial
-fallback whose entry condition was one boolean (`structured_covers_mark`), and
-whose result *replaced* the structured context — so a UIA container name and an
-OCR line of text could never be seen side by side.
-
-The recognition itself is unchanged: full-frame reading (global context, like
-clicky and UFO²) with the user's stroke deciding which recognised blocks reach
-the model. What changed is where the verdict is made.
-
-The provider only ever reads the frozen artifact carried by the request. There
-is no path here to the live screen.
-"""
 
 from __future__ import annotations
 
@@ -36,9 +21,6 @@ ROOT = Path(__file__).resolve().parents[2]
 OCR_WORKER_PORT_FILE = ROOT / "data" / "runtime" / "ocr_worker.port"
 OCR_WORKER_SCRIPT = ROOT / "scripts" / "ocr_resident_worker.py"
 
-# Busy is not "there is no text on the screen". The caller must be able to tell
-# the difference, so the busy answer is a distinguishable engine name rather
-# than an empty result that would be cached as a confirmed empty read.
 OCR_WORKER_BUSY_ENGINE = "worker-busy"
 _OCR_BUSY = "__ocr_busy__"
 _OCR_UNAVAILABLE = "__ocr_unavailable__"
@@ -47,7 +29,6 @@ MAX_CAPTURED_RECTS = 24
 
 
 def gesture_strokes(gesture: Any) -> list[list[tuple[int, int]]]:
-    """Independent stroke polylines in physical screen pixels."""
     if not isinstance(gesture, dict):
         return []
     strokes: list[list[tuple[int, int]]] = []
@@ -56,9 +37,6 @@ def gesture_strokes(gesture: Any) -> list[list[tuple[int, int]]]:
         geometry = stroke.get("geometry") if isinstance(stroke, dict) else None
         if (isinstance(geometry, dict) and geometry.get("type") == "polygon_region"
                 and geometry.get("coordinateSpace") == "physical_screen_pixels"):
-            # The capture UI has already classified the loose circle. Its closed
-            # region must reach both worker selection and postfilter unchanged;
-            # reclassifying raw endpoints with a pixel threshold loses interiors.
             raw_points = list(geometry.get("ring") or raw_points)
         points: list[tuple[int, int]] = []
         for raw in raw_points[:256]:
@@ -74,7 +52,6 @@ def gesture_strokes(gesture: Any) -> list[list[tuple[int, int]]]:
 
 
 def stroke_is_closed(points: list[tuple[int, int]], tolerance: float = 26.0) -> bool:
-    """A circle/freeform loop closes back near its start (short tails allowed)."""
     if len(points) < 5:
         return False
     ax, ay = points[0]
@@ -111,7 +88,6 @@ def block_center_in_region(
 
 
 def block_overlap_ratio(rect: list[int], region_xywh: list[int]) -> float:
-    """Fraction of the text block's own area covered by the mark region."""
     try:
         rx, ry, rw, rh = (float(value) for value in rect)
         gx, gy, gw, gh = (float(value) for value in region_xywh)
@@ -132,8 +108,6 @@ def _rect_of(block: dict[str, Any]) -> list[int] | None:
 
 
 def sort_blocks_reading_order(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Top-to-bottom, then left-to-right, with a row bucket so boxes on the
-    same visual row keep their horizontal order instead of jumping around."""
     def key(block: dict[str, Any]) -> tuple[float, float]:
         rect = _rect_of(block)
         if rect is None:
@@ -144,7 +118,6 @@ def sort_blocks_reading_order(blocks: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def ocr_blocks_to_text(blocks: list[dict[str, Any]]) -> str:
-    """Join horizontally split detection boxes as one visual text row."""
     rows: list[dict[str, Any]] = []
     for block in sort_blocks_reading_order(blocks):
         text = str(block.get("text") or "").strip()
@@ -180,13 +153,6 @@ def filter_blocks_by_strokes(
     blocks: list[dict[str, Any]],
     strokes: list[list[tuple[int, int]]],
 ) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]]]:
-    """Keep only OCR text blocks a stroke actually crosses.
-
-    The user's mark is the stroke polyline (underline / strike-through
-    semantics), not the min-max bounding box of all strokes, which would pull in
-    everything between independent lines. Returns (selected, segments) where each
-    segment holds the blocks hit by one stroke.
-    """
     from app.grounding.ocr_mark_selection import select_open_stroke_rect_indexes
 
     if not blocks or not strokes:
@@ -209,20 +175,12 @@ def filter_blocks_by_strokes(
             if rect is None:
                 continue
             if closed:
-                # Loop/selection-box semantics: any block whose center (or the
-                # bulk of its area) falls inside the marked region counts, so
-                # nested cards / middle lines are never dropped. A 30%+ area
-                # overlap snaps the block in whole (hand-drawn loops rarely
-                # cover a card perfectly).
                 if (
                     not block_center_in_region(rect, region)
                     and block_overlap_ratio(rect, region) <= 0.30
                 ):
                     continue
             elif block_index not in open_indexes:
-                # Open marks belong to one OCR row. Symmetric inflation around
-                # an underline selects both the row above and the row below; the
-                # shared row-ranking policy keeps only the intended row.
                 continue
             key = json.dumps(block, ensure_ascii=False, sort_keys=True)
             if key not in seen_keys:
@@ -242,11 +200,6 @@ def filter_blocks_by_bbox(
     *,
     padding: int = 8,
 ) -> list[dict[str, Any]]:
-    """Keep only OCR text blocks overlapping the user's mark.
-
-    Full-frame recognition still runs; this scopes what the model receives to the
-    marked region without cropping the image.
-    """
     if not blocks or not selection_bbox:
         return list(blocks)
     try:
@@ -281,7 +234,6 @@ def capture_edge_state(
     offset_y: int = 0,
     margin: int = 14,
 ) -> tuple[bool, list[int] | None]:
-    """Whether recognised text reaches the edge of a bounded evidence crop."""
     try:
         from PIL import Image
 
@@ -323,23 +275,12 @@ def _worker_connect(timeout: float = 3.0) -> Any:
             if port > 0:
                 return socket.create_connection(("127.0.0.1", port), timeout=2.0)
         except Exception:
-            # The worker may still be writing its port file (or just starting to
-            # accept); never delete it here, just retry on the next tick.
             time.sleep(0.2)
     return None
 
 
 def _spawn_worker() -> None:
     try:
-        # 不加进 kill-on-close 的 job：会来叫它起床的多半是一次性的桥进程
-        # （处理完这一次请求就退出），而加载一次 RapidOCR 引擎要 ~11s，是引擎
-        # 热着时的十倍以上。挂在 job 上等于每次手势都重新加载一遍引擎，把
-        # 「常驻」变回「每次冷启」。
-        #
-        # 它的生命周期由它自己管：`IDLE_TIMEOUT_S` 空闲自退（默认半小时），退出
-        # 时 `_remove_owned_port_file` 只删自己写的端口文件，`_worker_startup_
-        # lock` 保证不会同时活两个引擎。MCP 客户端那类「父死子必须死」的进程
-        # 仍然走 job。
         subprocess.Popen(
             [sys.executable, str(OCR_WORKER_SCRIPT)],
             cwd=str(ROOT),
@@ -353,11 +294,6 @@ def _spawn_worker() -> None:
 
 
 def _worker_reachable(timeout: float = 0.2) -> bool:
-    """端口文件在、而且真的有人接，才算已经起来了。
-
-    不用 ``_worker_connect``：那个循环每次尝试都按 2s 连，撞上一个上次被硬杀的
-    worker 留下的死端口文件时要白等两秒。预热是顺手做的事，不能因为这个变慢。
-    """
     try:
         meta = json.loads(OCR_WORKER_PORT_FILE.read_text(encoding="utf-8"))
         port = int(meta.get("port") or 0)
@@ -373,16 +309,6 @@ def _worker_reachable(timeout: float = 0.2) -> bool:
 
 
 def prewarm_ocr_worker(*, wait_s: float = 0.0) -> bool:
-    """把常驻 OCR worker 提前叫起来；返回它是否已经可以接活。
-
-    这台机器上冷启一次要 ~11s，几乎全是进程起来 + RapidOCR 引擎加载——和图片
-    多大没关系（800×600 的小图和整屏 3120×2080 一样要 11s），而引擎热了以后同
-    一次读取是 0.6–2.8s。也就是说这笔钱谁先请求谁付，且只付一次。
-
-    手势路径在用户还在打字的时候就已经知道「马上要读一次像素」了，所以这笔钱该
-    花在那段等待里。``wait_s=0`` 只负责把 worker 叫起来：它是 detached 进程，本
-    进程退出后它继续加载。
-    """
     if _worker_reachable():
         return True
     _spawn_worker()
@@ -405,20 +331,9 @@ def _worker_request(
     selection_local: list[int] | None = None,
     timeout: float = 10.0,
 ) -> tuple[list[dict[str, Any]], str] | None | str:
-    """Resident worker request. Three outcomes plus None:
-
-    (blocks, engine)  — read it
-    _OCR_BUSY         — worker occupied; not "no text", so never cached as empty
-    _OCR_UNAVAILABLE  — connect/timeout failure; may fall back to a cold engine
-    """
     sock = _worker_connect(timeout=2.0)
     if sock is None:
         _spawn_worker()
-        # The worker publishes its port only after the engine is loaded, so this
-        # budget has to cover the cold load itself. Measured 2026-09-19 on this
-        # machine: 11.2s for the load regardless of image size. 15s cleared it by
-        # four seconds — a deadline that only just contains the thing it is
-        # waiting for is how a working endpoint gets reported as unreachable.
         sock = _worker_connect(timeout=30.0)
     if sock is None:
         return None
@@ -438,8 +353,6 @@ def _worker_request(
                 break
             buffer += chunk
             if len(buffer) > 4 * 1024 * 1024:
-                # A misbehaving worker must not OOM its caller; treat the
-                # oversized reply as an unavailable worker.
                 raise RuntimeError("ocr worker response too large")
         line = buffer.split(b"\n", 1)[0].strip()
         response = json.loads(line.decode("utf-8"))
@@ -449,9 +362,6 @@ def _worker_request(
             return _OCR_BUSY
         return None
     except Exception:
-        # A connected resident that missed its budget must not trigger a second
-        # cold RapidOCR instance in a short-lived process. That doubled CPU and
-        # memory and turned one slow request into a minute-long queue.
         return _OCR_UNAVAILABLE
     finally:
         try:
@@ -464,7 +374,6 @@ _RAPID_OCR_INSTANCE: Any = None
 
 
 def _rapid_ocr() -> Any:
-    """Reuse one RapidOCR engine across calls; model init costs ~9s."""
     global _RAPID_OCR_INSTANCE
     if _RAPID_OCR_INSTANCE is None:
         from app.perception.ocr_engine import create_ocr_engine
@@ -479,7 +388,6 @@ def read_ocr_blocks(
     strokes_local: list[list[tuple[int, int]]] | None = None,
     selection_local: list[int] | None = None,
 ) -> tuple[list[dict[str, Any]], str] | None:
-    """Read one image into text blocks, resident worker first."""
     worker_result = _worker_request(
         capture_path,
         strokes_local=strokes_local,
@@ -497,10 +405,6 @@ def read_ocr_blocks(
 def read_ocr_blocks_cold(
     capture_path: str | Path,
 ) -> tuple[list[dict[str, Any]], str] | None:
-    """Run local OCR over the whole image and return per-text-block boxes.
-
-    Returns None when OCR produced nothing usable.
-    """
     path = Path(capture_path)
     if not path.is_file():
         return None
@@ -544,8 +448,6 @@ def read_ocr_blocks_cold(
             return blocks, "rapidocr-onnx"
     except Exception:
         pass
-    # The Tesseract fallback has no per-block geometry; return the whole text as
-    # one unfilterable block so the read still succeeds.
     try:
         from app.fabric.executors import FabricExecutors
 
@@ -561,7 +463,6 @@ def read_ocr_blocks_cold(
 
 
 class FrozenFrameOcrProvider:
-    """Recognise the frozen frame and answer about the marked region only."""
 
     def __init__(
         self,
@@ -622,8 +523,6 @@ class FrozenFrameOcrProvider:
             )
         blocks, engine = read
         if engine == OCR_WORKER_BUSY_ENGINE:
-            # Busy is not empty. Saying "the screen has no text" here is how a
-            # loaded worker turns into a wrong answer instead of a retry.
             return ProviderResult(
                 context=None,
                 status=EvidenceStatus.BUSY,
@@ -635,9 +534,6 @@ class FrozenFrameOcrProvider:
             for block in blocks
         )
         if unlocated:
-            # Text-only fallback (e.g. Tesseract) read the surface but cannot
-            # attribute its words to the mark. Keep the evidence without
-            # claiming that filtering located it or that the mark was empty.
             selected_blocks, segments = [], []
             text = "\n".join(
                 str(block.get("text") or "").strip()
@@ -657,9 +553,6 @@ class FrozenFrameOcrProvider:
             else:
                 text = "\n".join(segment_texts)
         else:
-            # OCR rectangles are artifact-local, a mark bbox is screen-global.
-            # Without the artifact bounds there is no honest transform between
-            # them, and the artifact is already bounded evidence.
             selected_blocks = filter_blocks_by_bbox(
                 blocks,
                 list(request.mark_bbox) if has_mapping and request.mark_bbox else None,
@@ -698,10 +591,6 @@ class FrozenFrameOcrProvider:
             ),
             "ocr_edge_clipped": edge_clipped,
             "ocr_capture_size": capture_size,
-            # The rectangles of the blocks that actually made it into the
-            # answer, in physical screen pixels. These are what the stage
-            # outlines: a claim that we read something is worth much less than a
-            # band drawn around the words we read.
             "captured_rects": rects,
             "captured_rects_source": "pixel",
             "selection_rectangles": rects,

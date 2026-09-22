@@ -1,5 +1,3 @@
-// Probe-only preload: installs the fake dashboard bridge BEFORE page scripts
-// run, so studio.ts boot() sees a project and renders the real tree path.
 const { contextBridge } = require('electron');
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {

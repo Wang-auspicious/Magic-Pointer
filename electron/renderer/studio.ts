@@ -1,13 +1,10 @@
-/* Magic Pointer Studio: real data renderers mounted inside the shared Oreo shell. */
 
-/* head 中已经在首帧前解析系统/已保存主题；这里同步旧组件需要的属性。 */
 (function bootTheme() {
   const dark = document.documentElement.dataset.theme === 'dark';
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
   document.body.toggleAttribute('data-ds-dark-theme', dark);
 })();
 
-/* ---- 确定性哈希 ---- */
 function hash(str: string) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -26,7 +23,6 @@ function rng(seed: unknown) {
   };
 }
 
-/* ---- 缩略图占位：暖调抽象，不是灰块 ---- */
 function makeShot(seed: unknown) {
   const r = rng('shot' + String(seed));
   const h = Math.floor(r() * 360);
@@ -38,13 +34,7 @@ function makeShot(seed: unknown) {
        + `linear-gradient(${Math.floor(r() * 360)}deg, ${a}, ${b})`;
 }
 
-/* ============================================================
-   数据
-   ============================================================ */
 
-/* ============================================================
-   渲染
-   ============================================================ */
 
 function icon(id: string, cls = '') {
   return `<svg class="${cls}"><use href="#${id}"/></svg>`;
@@ -66,15 +56,11 @@ function emptyStateMarkup(
 
 const KIND_TAG: Record<string, string> = { 灵感:'tag-indigo', 交接:'tag-teal', 凭证:'tag-amber', 素材:'tag-teal', 片段:'tag-amber' };
 
-/* ---- 布局：簇内按行打包，簇之间在世界坐标里松散排布 ---- */
 const PAD = 24, GAP = 16, CLUSTER_GAP = 48, ROW_MAX = 420;
 
-// 收藏箱顶部的分类 tab。上一版点击只切 is-on 样式，内容一动没动——filter
-// 永远为空，等于按钮是假的。这里记下选中的分类，renderStash 按它过滤。
 let stashKindFilter = '';
 let stashQuery = '';
 
-// 画布上摆过的收藏节点：Data.stash() 的条目加上布局坐标。
 interface StashBurstNode {
   t: string; w?: number; h?: number; desc?: string; src?: string; text?: string; media?: string; summary?: string;
   id?: string; capturedAt?: number; originalArtifactPath?: string; sourceId?: string; sourceTimeMs?: number; userCategory?: string;
@@ -95,7 +81,6 @@ function layoutBurst(b: MagicPointerStashEntry): LaidBurst {
     const imageH = it.t === 'shot' ? Math.max(130, Math.min(210, Number(it.h) || 160)) : 0;
     const summaryHeight = it.summary ? 66 : 0;
     const iw = imageW;
-    // Caption + description + border; reserve summary space only when present.
     const ih = (it.t === 'shot' ? imageH + 58 + summaryHeight : 104);
     if (x > PAD && x + iw > ROW_MAX) { x = PAD; y += rowH + GAP; rowH = 0; }
     const node = { ...it, x, y, w: iw, h: ih, imageW, imageH };
@@ -175,7 +160,6 @@ function renderStashList(laid: LaidBurst[], force = false) {
   ).join('');
 }
 
-/* ---- 平移与缩放 ---- */
 let cam = { x: 0, y: 0, k: 1 };
 function applyCam() {
   const w = document.getElementById('canvas-world');
@@ -196,7 +180,6 @@ function fitCanvas() {
   if (!cv || !w) return;
   const ww = Number(w.dataset.width) || 1200, wh = Number(w.dataset.height) || 800;
   const r = cv.getBoundingClientRect();
-  // 以宽度为准，别缩得太小；高度不够就靠拖动看
   cam.k = Math.max(.62, Math.min(1, (r.width - 130) / ww));
   cam.x = Math.max(78, (r.width - ww * cam.k) / 2);
   cam.y = Math.max(20, (r.height - wh * cam.k) / 2);
@@ -233,7 +216,6 @@ function bindCanvas() {
   document.getElementById('zoom-out')?.addEventListener('click', () => { cam.k = Math.max(.25, cam.k / 1.2); applyCam(); });
 }
 
-/* ---- 侧栏：文件夹启用项目工具，但普通 Studio 会话可以不绑定文件夹。 ---- */
 let sidebarQuery = '';
 let sidebarRecentOnly = false;
 const expandedWorkspaces = new Map<string, boolean>();
@@ -262,9 +244,6 @@ function setActiveProject(root: unknown) {
   }
 }
 
-/* ---- 会话级 git worktree ----
-   打开后工作目录切到一棵独立的 checkout，agent 的改动落在自己的分支上。
-   `base` 记住切出去之前是哪个项目，关掉开关要切回去。 */
 interface ComposerWorktree { path: string; branch: string; base: string }
 let composerWorktree: ComposerWorktree | null = null;
 let composerWorktreeEnabled = false;
@@ -294,8 +273,6 @@ function renderComposerWorktree() {
     : 'Work in an isolated copy of your repository to work on multiple tasks at the same time.';
 }
 
-/* 失败必须说出来：git 拒绝（不是仓库、有未提交改动、分支占用了）时开关弹回
-   原状并带上 git 自己的话，而不是静默地什么都不发生。 */
 function failComposerWorktree(button: HTMLElement | null, message: string) {
   button?.setAttribute('data-error', 'true');
   if (button) button.title = message;
@@ -313,8 +290,6 @@ document.getElementById('composer-worktree')?.addEventListener('click', (event) 
   renderComposerWorktree();
 });
 
-// Like Claude's checkbox, choosing a worktree is immediate. Git only runs when
-// sending a task; deselecting never deletes a checkout or its uncommitted work.
 async function prepareComposerWorktree(): Promise<string> {
   const base = activeProjectRoot;
   if (!composerWorktreeEnabled || !base) return base;
@@ -331,8 +306,6 @@ async function prepareComposerWorktree(): Promise<string> {
   }
   composerWorktree = { path: result.path, branch: result.branch || 'worktree', base };
   persistComposerWorktree();
-  // A user may cancel the checkbox while Git is running. Keep the created
-  // checkout for reuse, and run the task in the originally selected folder.
   if (!composerWorktreeEnabled) return base;
   setActiveProject(result.path);
   return result.path;
@@ -614,7 +587,6 @@ function conversationNode(c: {
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
   row.dataset.open = String(c.id || '');
   row.type = 'button';
-  // 会话行保持安静：标题是主体，待续状态与操作只在需要时出现。
   const dot = document.createElement('span');
   dot.className = 'side-dot';
   const lastTurn = Array.isArray(c.turns) ? c.turns[c.turns.length - 1] : undefined;
@@ -638,8 +610,6 @@ function conversationNode(c: {
   title.textContent = String(c.title || '未命名对话');
   const actions = document.createElement('span');
   actions.className = 'side-actions';
-  // DSH Rows 的会话动作菜单：重命名 / 删除。行本身是 button，动作槽用
-  // role=button 的 span（按钮不能嵌按钮）。
   const ellipsis = document.createElement('span');
   ellipsis.className = 'side-ellipsis';
   ellipsis.setAttribute('role', 'button');
@@ -653,9 +623,6 @@ function conversationNode(c: {
   return row;
 }
 
-/* 会话动作菜单：挂在行内，打开时才可见；点击外部由全局委托收起。
-   结构照参考：图标 + 文案 +（P/R/D 快捷键），子菜单带右尖角，置顶后换成
-   「取消固定 / 移除出项目 / 上移 / 下移」——固定过的项靠手动顺序排，不再按分组。 */
 function buildSessionMenu(c: { id?: string; title?: string; workspaceRoot?: string }): HTMLElement {
   const id = String(c.id || '');
   const menu = document.createElement('span');
@@ -706,8 +673,6 @@ function buildSessionMenu(c: { id?: string; title?: string; workspaceRoot?: stri
   rename.addEventListener('click', run('rename'));
   menu.append(rename);
   const project = item('project', inProject ? 'Change project' : 'Add to project', { icon: 'box', submenu: true });
-  // 不能先藏菜单再传 anchor：元素一 hidden，getBoundingClientRect() 全归零，
-  // 项目选择器会被摆到窗口左上角。菜单留着，选择器自己按外部点击收起。
   project.addEventListener('click', (event) => { event.stopPropagation(); void openProjectAssignment(id, project); });
   menu.append(project);
   if (inProject) {
@@ -716,7 +681,6 @@ function buildSessionMenu(c: { id?: string; title?: string; workspaceRoot?: stri
     menu.append(removeProject);
   }
   if (!local.pinned) {
-    // 「移至分组」是个真子菜单：列出现有分组名，加一条新建。
     const parent = item('group', 'Move to group', { icon: 'folder', submenu: true });
     const apply = (group: string | null) => {
       if (group === null) {
@@ -755,9 +719,6 @@ function buildSessionMenu(c: { id?: string; title?: string; workspaceRoot?: stri
   return menu;
 }
 
-/* 「移至分组」的子菜单必须挂到 body 上：侧栏列表是 overflow:auto 的滚动容器，
-   留在行内的绝对定位子菜单会被它整块裁掉，右侧只剩一个白角。
-   位置按父行算，右边界放不下就翻到左侧；鼠标移开父行进到面板里不算离开。 */
 let closeGroupSubmenu: (() => void) | null = null;
 function openGroupSubmenu(anchor: HTMLElement, groups: readonly string[], current: string, pick: (group: string | null) => void): void {
   closeGroupSubmenu?.();
@@ -798,8 +759,6 @@ function openGroupSubmenu(anchor: HTMLElement, groups: readonly string[], curren
   closeGroupSubmenu = close;
 }
 
-/* 菜单打开时按 P / R / D 直接执行对应行——参考里写在行右端的字母要是按不动，
-   就只是装饰。和模型菜单的 1..9 一样：菜单关掉就解绑。 */
 function bindSessionMenuKeys(menu: HTMLElement): void {
   const onKey = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -871,26 +830,25 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.querySelector<HTMLInputElement>('input')?.focus();
 }
 
-/* 重命名对话框：Electron 不支持 window.prompt，用内联覆盖层。 */
 function requestStudioText(title: string, initial = '', maxLength = 32000): Promise<string | null> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'dshw-perm-confirm';
+    overlay.className = 'mpw-perm-confirm';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', title);
     const card = document.createElement('div');
-    card.className = 'dshw-perm-confirm-card';
+    card.className = 'mpw-perm-confirm-card';
     const label = document.createElement('b');
     label.textContent = title;
     const input = document.createElement('textarea');
-    input.className = 'dshw-rename-input';
+    input.className = 'mpw-rename-input';
     input.value = initial;
     input.maxLength = maxLength;
     input.rows = maxLength > 200 ? 4 : 1;
     input.setAttribute('aria-label', title);
     const actions = document.createElement('div');
-    actions.className = 'dshw-perm-confirm-actions';
+    actions.className = 'mpw-perm-confirm-actions';
     const finish = (value: string | null) => { overlay.remove(); resolve(value); };
     const cancel = document.createElement('button');
     cancel.textContent = '取消';
@@ -916,23 +874,23 @@ function requestStudioText(title: string, initial = '', maxLength = 32000): Prom
 function openRenameDialog(id: string, currentTitle: string) {
   if (!id) return;
   const overlay = document.createElement('div');
-  overlay.className = 'dshw-perm-confirm';
+  overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
   overlay.setAttribute('aria-label', '重命名对话');
   const card = document.createElement('div');
-  card.className = 'dshw-perm-confirm-card';
+  card.className = 'mpw-perm-confirm-card';
   const titleEl = document.createElement('b');
   titleEl.textContent = '重命名对话';
   const input = document.createElement('input');
-  input.className = 'dshw-rename-input';
+  input.className = 'mpw-rename-input';
   input.value = currentTitle;
   input.maxLength = 60;
   const err = document.createElement('p');
-  err.className = 'dshw-rename-error';
+  err.className = 'mpw-rename-error';
   err.hidden = true;
   const actionsEl = document.createElement('div');
-  actionsEl.className = 'dshw-perm-confirm-actions';
+  actionsEl.className = 'mpw-perm-confirm-actions';
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.textContent = '取消';
@@ -1084,7 +1042,6 @@ async function renderSidebar() {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     filtered = filtered.filter((conversation) => Number(conversation.updatedAt) >= cutoff);
   }
-  // 项目独立持久化；即使还没有第一条对话，打开过的文件夹也必须留在左栏。
   const wsGroups = sidebarGroups.groupByWorkspace(filtered as Array<MagicPointerConversation & { workspaceRoot?: string }>);
   const conversationsByRoot = new Map(wsGroups.map((group) => [normalizedProjectRoot(group.workspaceRoot), group.items]));
   const projectGroups = projects.map((project) => ({
@@ -1101,7 +1058,7 @@ async function renderSidebar() {
     ...(localGroup ? [{ key: '', label: localGroup.label, items: localGroup.items as MagicPointerConversation[] }] : []),
   ];
   const displayGroups = studioLibraries.sections(filtered, groups) as Array<{ key: string; label: string; items: MagicPointerConversation[]; virtual?: boolean }>;
-  const browser = host.closest<HTMLElement>('.dshw-workspace-browser');
+  const browser = host.closest<HTMLElement>('.mpw-workspace-browser');
   browser?.classList.toggle('is-empty', displayGroups.length === 0);
   if (!displayGroups.length) {
     const empty = document.createElement('div');
@@ -1115,26 +1072,26 @@ async function renderSidebar() {
   }
   for (const group of displayGroups) {
     const project = document.createElement('section');
-    project.className = 'dshw-project';
+    project.className = 'mpw-project';
     const open = expandedWorkspaces.get(group.key) !== false;
     project.classList.toggle('is-active', normalizedProjectRoot(group.key) === normalizedProjectRoot(activeProjectRoot));
     project.dataset.open = String(open);
     project.dataset.workspace = group.key;
     const head = document.createElement('div');
-    head.className = 'dshw-project-row';
+    head.className = 'mpw-project-row';
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = 'dshw-project-toggle';
+    toggle.className = 'mpw-project-toggle';
     toggle.dataset.workspaceToggle = group.key;
     if (group.virtual) toggle.dataset.virtualGroup = 'true';
     toggle.dataset.projectSelect = group.key;
     toggle.setAttribute('aria-expanded', String(open));
     const projectName = document.createElement('span');
-    projectName.className = 'dshw-project-name';
+    projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
     toggle.appendChild(projectName);
     const actions = document.createElement('span');
-    actions.className = 'dshw-project-actions';
+    actions.className = 'mpw-project-actions';
     if (group.key && !group.virtual) {
       const add = document.createElement('button');
       add.type = 'button';
@@ -1150,7 +1107,7 @@ async function renderSidebar() {
     }
     head.append(toggle, actions);
     const sessions = document.createElement('div');
-    sessions.className = 'dshw-project-sessions';
+    sessions.className = 'mpw-project-sessions';
     for (const c of group.items) {
       const node = conversationNode(c, active);
       sessions.appendChild(node);
@@ -1204,7 +1161,7 @@ Data.onUpdateStatus(renderUpdateCard);
 void Data.updateStatus().then(renderUpdateCard);
 
 function bindSidebarSearch() {
-  const browser = document.querySelector<HTMLElement>('.dshw-workspace-browser');
+  const browser = document.querySelector<HTMLElement>('.mpw-workspace-browser');
   const input = document.getElementById('side-search') as HTMLInputElement | null;
   const toggle = document.getElementById('side-search-toggle');
   const clear = document.getElementById('side-search-clear') as HTMLButtonElement | null;
@@ -1256,9 +1213,6 @@ async function openProjectFromPicker() {
 
 document.getElementById('workspace-add')?.addEventListener('click', () => { void openProjectFromPicker(); });
 
-/* 点工作目录芯片先开一张小卡（参考里就是这个），而不是直接弹系统对话框：
-   系统对话框里没有「最近打开过哪个项目」这件事，而用户十次里有九次是切回
-   刚才那个。最后一行才是「打开文件夹…」。 */
 function workspaceMenuRow(
   className: string,
   label: string,
@@ -1351,12 +1305,6 @@ function compactTokenCount(value: number): string {
   return `${Number((value / 1000).toFixed(1))}k`;
 }
 
-/* ---- 左上角的跳转条 ----
-   参考里它不是一条贯穿整屏的轨道，而是钉在正文左上角的一小撮短横：每一条
-   我发出去的消息一枚，叠在一起。鼠标移上去才展开成带标签的列表（`— Session
-   start` / `— 核验完成，构建档案页`），点一行滚过去。
-   以前做成「按全文比例摊在整条左槽上」是错的——那是滚动条的位置，不是
-   参考的形状。 */
 const RAIL_START_LABEL = 'Session start';
 
 function railEntries(): Array<{ label: string; target: HTMLElement | null }> {
@@ -1365,27 +1313,24 @@ function railEntries(): Array<{ label: string; target: HTMLElement | null }> {
   const entries: Array<{ label: string; target: HTMLElement | null }> = [
     { label: RAIL_START_LABEL, target: null },
   ];
-  for (const message of Array.from(stream.querySelectorAll<HTMLElement>('.dsh-user'))) {
-    const text = (message.querySelector('.dsh-bubble')?.textContent || '').trim();
+  for (const message of Array.from(stream.querySelectorAll<HTMLElement>('.mp-chat-user'))) {
+    const text = (message.querySelector('.mp-chat-bubble')?.textContent || '').trim();
     entries.push({ label: text.split('\n')[0].slice(0, 60) || '未命名', target: message });
   }
-  /* 只有 Session start 一条时整个控件没有意义——一个没有目的地的跳转条。 */
   return entries.length > 1 ? entries : [];
 }
-/* 高亮的是「当前视口顶部那一条」。参考里两枚短横一深一浅，深的那枚就是
-   你正看着的那一段。 */
 function syncStreamRailActive() {
   const rail = document.getElementById('stream-rail');
   const stream = document.getElementById('stream');
   if (!rail || !stream) return;
-  const anchors = Array.from(rail.querySelectorAll<HTMLElement>('.dshw-rail-mark'));
+  const anchors = Array.from(rail.querySelectorAll<HTMLElement>('.mpw-rail-mark'));
   if (!anchors.length) return;
   const streamTop = stream.getBoundingClientRect().top;
   const cursor = stream.scrollTop + 24;
   let best = 0;
   let bestDistance = Number.POSITIVE_INFINITY;
   anchors.forEach((mark, index) => {
-    const target = mark.dataset.railIndex === '0' ? null : stream.querySelectorAll<HTMLElement>('.dsh-user')[index - 1];
+    const target = mark.dataset.railIndex === '0' ? null : stream.querySelectorAll<HTMLElement>('.mp-chat-user')[index - 1];
     const offset = target
       ? target.getBoundingClientRect().top - streamTop + stream.scrollTop
       : 0;
@@ -1407,7 +1352,7 @@ function railScrollTo(index: number): void {
     stream.scrollTo({ top: 0, behavior });
     return;
   }
-  const message = stream.querySelectorAll<HTMLElement>('.dsh-user')[index - 1];
+  const message = stream.querySelectorAll<HTMLElement>('.mp-chat-user')[index - 1];
   message?.scrollIntoView({ block: 'start', behavior });
 }
 
@@ -1428,19 +1373,19 @@ function renderStreamRail() {
   menu.replaceChildren();
   entries.forEach((entry, index) => {
     const mark = document.createElement('span');
-    mark.className = 'dshw-rail-mark';
+    mark.className = 'mpw-rail-mark';
     mark.dataset.railIndex = String(index);
     marks.appendChild(mark);
 
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'dshw-rail-row';
+    row.className = 'mpw-rail-row';
     row.dataset.railIndex = String(index);
     const dash = document.createElement('span');
-    dash.className = 'dshw-rail-dash';
+    dash.className = 'mpw-rail-dash';
     dash.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span');
-    label.className = 'dshw-rail-label';
+    label.className = 'mpw-rail-label';
     label.textContent = entry.label;
     row.append(dash, label);
     row.setAttribute('aria-label', `跳到：${entry.label}`);
@@ -1450,8 +1395,6 @@ function renderStreamRail() {
   syncStreamRailActive();
 }
 
-/* 流是一轮一轮长出来的，每轮都会改消息的条数，所以重新数要等这一轮画完再做。
-   用 debounce 而不是 rAF：一轮里可能连改好几次 DOM。 */
 let streamRailTimer = 0;
 function scheduleStreamRail(delay = 80) {
   if (streamRailTimer) window.clearTimeout(streamRailTimer);
@@ -1461,10 +1404,6 @@ function scheduleStreamRail(delay = 80) {
   }, delay);
 }
 
-/* ---- 选中文字 → Start a side chat / Reply ----
-   在消息里选中一段文字，旁边浮出这两个动作。它们回答的是同一件事的两个方向：
-   「就着这段说一句」（把选中的话引到输入框里）和「拿这段另起一个对话」。
-   引用用的是 markdown 引用块——它进的是输入框，用户还能改，而不是偷偷发出去。 */
 function quotedSelection(text: string): string {
   const lines = text.split('\n').map((line) => `> ${line}`).join('\n');
   return `${lines}\n\n`;
@@ -1474,7 +1413,7 @@ function quotedSelection(text: string): string {
   const stream = document.getElementById('stream');
   if (!stream) return;
   const pill = document.createElement('div');
-  pill.className = 'dshw-select-pill';
+  pill.className = 'mpw-select-pill';
   pill.hidden = true;
   pill.setAttribute('role', 'toolbar');
   pill.setAttribute('aria-label', '选中内容的操作');
@@ -1502,13 +1441,12 @@ function quotedSelection(text: string): string {
     const range = selection.getRangeAt(0);
     const node = range.commonAncestorContainer;
     const element = node.nodeType === 1 ? node as Element : node.parentElement;
-    const message = element?.closest<HTMLElement>('.dsh-user, .dsh-assistant');
+    const message = element?.closest<HTMLElement>('.mp-chat-user, .mp-chat-assistant');
     if (!message || !stream.contains(message)) { hide(); return; }
-    /* 引用要连回它出自哪一轮，所以从消息上取分支目标（用户气泡带着它）。 */
-    const fork = message.querySelector<HTMLElement>('[data-dsh-branch-conversation]');
-    const turnIndex = Number(fork?.getAttribute('data-dsh-branch-turn'));
+    const fork = message.querySelector<HTMLElement>('[data-mp-chat-branch-conversation]');
+    const turnIndex = Number(fork?.getAttribute('data-mp-chat-branch-turn'));
     selectionTurn = fork && Number.isInteger(turnIndex)
-      ? { conversationId: fork.getAttribute('data-dsh-branch-conversation') || '', turnIndex }
+      ? { conversationId: fork.getAttribute('data-mp-chat-branch-conversation') || '', turnIndex }
       : null;
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) { hide(); return; }
@@ -1516,7 +1454,6 @@ function quotedSelection(text: string): string {
     pill.hidden = false;
     const width = pill.offsetWidth;
     const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
-    /* 选中的是最后一行时，浮层放到选区上方——放到下方会压在输入框上。 */
     const below = rect.bottom + 10;
     const top = below + pill.offsetHeight < window.innerHeight - 12 ? below : rect.top - pill.offsetHeight - 10;
     pill.style.left = `${Math.round(left)}px`;
@@ -1553,7 +1490,6 @@ function quotedSelection(text: string): string {
     textarea.setSelectionRange(quoted.length, quoted.length);
   });
 
-  /* selectionchange 在拖选过程中会连续触发，等手停下来再定位。 */
   let timer = 0;
   document.addEventListener('selectionchange', () => {
     if (timer) window.clearTimeout(timer);
@@ -1568,8 +1504,6 @@ function quotedSelection(text: string): string {
 (function bindStreamRail() {
   const stream = document.getElementById('stream');
   if (!stream) return;
-  /* 滚动只改高亮，不重新测量：位置是按全文比例定的，不随滚动漂移。
-     用 rAF 合并同一帧里的多次 scroll 事件。 */
   let ticking = false;
   stream.addEventListener('scroll', () => {
     if (ticking) return;
@@ -1581,8 +1515,6 @@ function quotedSelection(text: string): string {
   }, { passive: true });
 }());
 
-/* 账户配额只问一次：这张卡是「点开看一眼」，不是仪表盘。主进程那边还有
-   60 秒缓存，所以即使这里被重建也不会重复打接口。 */
 let composerQuota: MagicPointerQuotaReport | null = null;
 let composerQuotaPending = false;
 let usageMeterTurns: MagicPointerTurn[] = [];
@@ -1603,8 +1535,6 @@ function ensureComposerQuota(force = false) {
   });
 }
 
-/* 上下文卡里的类别，顺序固定：缓存命中 → 缓存写入 → 新输入 → 输出。
-   顺序就是「上下文花在哪」的顺序：缓存里的最便宜，也最该先看见。 */
 const USAGE_CATEGORIES = [
   { kind: 'cache-read', label: '缓存命中' },
   { kind: 'cache-write', label: '缓存写入' },
@@ -1618,9 +1548,6 @@ interface UsageCategoryRow {
   value: number;
 }
 
-/* 一轮 usage 拆成类别行，只留「真到过且不为零」的。缺键整项不出现——「这家
-   provider 不报」和「报了零」是两回事，前者画出来就是编数据；值为零的也不
-   画，一段零宽的彩色只会让人以为那儿有东西。 */
 function usageCategoryRows(usage: MagicPointerModelUsage | undefined): UsageCategoryRow[] {
   if (!usage || typeof usage !== 'object') return [];
   const read = (key: string): number | undefined => {
@@ -1631,8 +1558,6 @@ function usageCategoryRows(usage: MagicPointerModelUsage | undefined): UsageCate
   const cacheWrite = read('cacheWriteTokens');
   const input = read('inputTokens');
   const output = read('outputTokens');
-  /* 新输入 = 输入总量 − 命中 − 写入，负数按 0。OpenAI 系（含 DeepSeek）的
-     prompt_tokens 已经把缓存那段算在内，减出来就是这次真被重新读进去的部分。 */
   const fresh = input === undefined
     ? undefined
     : Math.max(0, input - (cacheRead || 0) - (cacheWrite || 0));
@@ -1652,9 +1577,6 @@ function usageCategoryRows(usage: MagicPointerModelUsage | undefined): UsageCate
   return rows;
 }
 
-/* 一段占窗口多少，换算成百分比宽度。夹在 0..100：一段画不出比整条还长。
-   零和负数在这里也返回 0%，虽然它们在 usageCategoryRows 就已经被滤掉——
-   零宽的彩色段看着像「这里有东西」，两头都不放它进来。 */
 function usageSegmentShare(value: number, contextWindow: number): string {
   if (!(contextWindow > 0) || !(value > 0)) return '0%';
   return `${Math.max(0, Math.min(100, value / contextWindow * 100))}%`;
@@ -1680,7 +1602,6 @@ function latestContextUsage(turns: MagicPointerTurn[]): MagicPointerModelUsage |
       && typeof (record.modelUsage as MagicPointerModelUsage)?.contextTokens === 'number')?.modelUsage as MagicPointerModelUsage | undefined;
     if (current) return current;
     if (typeof turn.modelUsage?.contextTokens === 'number') return turn.modelUsage;
-    // Older saved turns contain only the sum of their model calls.
     if (turn.modelUsage) return undefined;
   }
   return undefined;
@@ -1720,11 +1641,6 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       && (!modelCatalog?.currentProfileId || entry.profileId === modelCatalog.currentProfileId));
   const latestUsage = latestContextUsage(turns);
   const contextWindow = Number(latestUsage?.contextWindow) || Number(currentModel?.contextWindow) || 0;
-  /* 「上下文占了多少」问的是**这一次请求送进去多少**，所以只数输入。
-     以前把输出也加了进来：输出还没被送回去，把它算进窗口占用既说不通，
-     又会把百分比顶到 100%，看上去像一条越界的实心色块。
-     比例本身不夹：真超过窗口就该看得见超过，夹掉的数字是在替数据圆谎。
-     夹的只有进度条的宽度——那条画不出超过 100%。 */
   const contextTokens = Number(latestUsage?.contextTokens) || 0;
   const measured = latestUsage?.contextEstimated === 0 || turns.length === 0;
   const known = typeof latestUsage?.contextTokens === 'number' || turns.length === 0;
@@ -1738,8 +1654,6 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   button.title = contextWindow > 0
     ? `Context ${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
     : `Session usage: ${totalTokens.toLocaleString()} tokens`;
-  /* Context is the latest request. Account windows come from the provider;
-     cumulative billing counters are available in the expanded details. */
   popover.replaceChildren();
   const el = (tag: string, className: string, text?: string) => {
     const node = document.createElement(tag);
@@ -1770,8 +1684,6 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   head.append(headValue, chev);
   popover.append(head);
 
-  /* The composition is provider-independent. Component proportions are local
-     estimates; their sum is calibrated to the measured request input. */
   const latestRows = contextCategoryRows(latestUsage);
   const bar = el('div', 'mp-usage-bar');
   if (contextWindow > 0) {
@@ -1830,9 +1742,6 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   arrow.appendChild(arrowPath);
   details.append(section);
 
-  /* 本会话的类别合计。一行一个类别，每行的条用这一类别自己的颜色——四行四个
-     色，不是四行一个色。这一段的尺度和上面那条不一样：上面问的是「这一轮占
-     了窗口多少」，这里问的是「整个会话花在哪」，所以各算各的，不硬凑成一个数。 */
   const sessionTotals: Record<string, number> = {};
   for (const turn of turns) {
     for (const row of usageCategoryRows(latestContextUsage([turn]) || turn.modelUsage)) {
@@ -1853,10 +1762,6 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     details.append(node);
   }
 
-  /* 账户配额。数字来自 provider 自己的接口（见 electron/quota_probe.ts），
-     这里只负责画。没有适配器就整段不出现——「少一行」和「编一个数」的区别，
-     用户是看不出来的，所以宁可少一行。适配器认出来了但请求失败时会留一行
-     灰色的原因，那是真信息，不是装饰。 */
   if (composerQuota && (composerQuota.rows.length > 0 || composerQuota.error)) {
     popover.append(el('div', 'mp-usage-divider'));
     const quotaSection = el('button', 'mp-usage-section mp-usage-quota-head');
@@ -1931,8 +1836,6 @@ document.getElementById('composer-context')?.addEventListener('click', (event) =
   const open = popover.hidden;
   if (open) {
     positionAnchoredPopover('composer-usage-popover', 'composer-context');
-    // 配额不是每个回合都会变，但也不该在启动时就打一次接口——等这张卡被
-    // 真正打开再问，然后原地补上那几行。
     ensureComposerQuota(true);
   } else closeAnchoredPopover('composer-usage-popover', 'composer-context');
   button.setAttribute('aria-expanded', String(open));
@@ -1942,18 +1845,16 @@ window.setInterval(() => {
   if (!document.hidden && !document.getElementById('composer-usage-popover')?.hidden) ensureComposerQuota();
 }, 15_000);
 
-/* ---- 打开一条对话 ---- */
 let activeConversationId: string | null = null;
 let activeConversationTab: 'chat' | 'trajectory' = 'chat';
 let activeConversationTurnCount = 0;
 let activeConversationTurns: Record<string, unknown>[] = [];
-let activeConversationView: ReturnType<typeof DshChat.createConversationView> | null = null;
+let activeConversationView: ReturnType<typeof ChatView.createConversationView> | null = null;
 let activeConversationRecord: MagicPointerConversation | null = null;
 let conversationOpenGeneration = 0;
 let conversationRefreshSequence = 0;
 let conversationNotificationSequence = 0;
 let externalConversationRun: { requestId: string; agentSessionId: string; body: HTMLElement } | null = null;
-/* 这条对话挂着的屏幕对象：联想词要读它，否则模型只看到半截上下文。 */
 let activeConversationObject: Record<string, unknown> = {};
 let activeTaskContext: MagicPointerTaskContext | null = null;
 const composerSelectedSourceIds = new Set<string>();
@@ -2060,12 +1961,11 @@ async function toggleFigmaConnection() {
 document.getElementById('figma-connect')?.addEventListener('click', () => {
   void toggleFigmaConnection();
 });
-/* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
-const dshCardNodes = new Map<string, HTMLElement>();
+const chatCardNodes = new Map<string, HTMLElement>();
 
 function setStudioHomeVisible(visible: boolean) {
   const home = document.getElementById('studio-home');
-  const header = document.querySelector<HTMLElement>('#view-chat > .dshw-header');
+  const header = document.querySelector<HTMLElement>('#view-chat > .mpw-header');
   const stream = document.getElementById('stream');
   const trajectory = document.getElementById('trajectory');
   const contextRow = document.querySelector<HTMLElement>('.mp-composer-context-row');
@@ -2077,7 +1977,7 @@ function setStudioHomeVisible(visible: boolean) {
   if (contextRow) contextRow.hidden = !visible && Boolean(activeProjectRoot);
   if (textarea) applyComposerPlaceholder(textarea);
   document.getElementById('nav-new-chat')?.classList.toggle('is-on', visible);
-  document.querySelector<HTMLElement>('.dshw-scrollbody')?.classList.toggle('is-home', visible);
+  document.querySelector<HTMLElement>('.mpw-scrollbody')?.classList.toggle('is-home', visible);
 }
 
 async function renderStudioHome() {
@@ -2185,7 +2085,7 @@ function selectGlobalSearchResult(item: StudioSearchItem) {
     return;
   }
   const name = String(item.target.command || item.target.skill || '');
-  const textarea = document.querySelector<HTMLTextAreaElement>('.dshw-input');
+  const textarea = document.querySelector<HTMLTextAreaElement>('.mpw-input');
   if (!textarea || !name) return;
   textarea.value = `/${name} `;
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2248,7 +2148,7 @@ function setConversationTab(tab: 'chat' | 'trajectory') {
   activeConversationTab = tab;
   const stream = document.getElementById('stream');
   const trajectory = document.getElementById('trajectory');
-  const scrollbody = document.querySelector<HTMLElement>('.dshw-scrollbody');
+  const scrollbody = document.querySelector<HTMLElement>('.mpw-scrollbody');
   const homeVisible = document.getElementById('studio-home')?.hidden === false;
   if (stream) stream.hidden = homeVisible || tab !== 'chat';
   if (trajectory) trajectory.hidden = homeVisible || tab !== 'trajectory';
@@ -2312,8 +2212,6 @@ async function openConversation(id: string) {
   if (preview && sourceThumb && peek && peekImage) {
     const imgPath = c.object?.annotatedPath || '';
     if (imgPath) {
-      // 划线时标注过的区域截图：主进程把本地路径经 IPC 给出来，渲染层转成
-      // file:// 预览。没有这张图就整个藏掉，绝不放一张裂图。
       const src = 'file:///' + String(imgPath).replace(/\\/g, '/');
       const hideBrokenPreview = () => { preview.hidden = true; peek.hidden = true; };
       sourceThumb.onerror = hideBrokenPreview;
@@ -2333,14 +2231,13 @@ async function openConversation(id: string) {
 
   const stream = document.getElementById('stream');
   if (!stream) return;
-  LiveCards.reset();   // 换了一条对话，旧卡的计时器不该继续陪着跑
-  dshCardNodes.clear();
+  LiveCards.reset();    
+  chatCardNodes.clear();
   const turns = c.turns || [];
   activeConversationTurns = turns as Record<string, unknown>[];
   composerPlan = PlanList.project(turns);
   renderPlanCard();
   activeConversationObject = (c as { object?: Record<string, unknown> }).object || {};
-  /* 换了对话，上一条的建议就不再是关于「这里」的了。 */
   clearComposerSuggestion();
   renderProjectTasks();
   if (!turns.length) {
@@ -2348,19 +2245,16 @@ async function openConversation(id: string) {
     syncConversationPendingInput(turns);
     renderUsageMeter([]);
     const trajectory = document.getElementById('trajectory');
-    if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
+    if (trajectory) trajectory.replaceChildren(ChatTrajectory.render([]));
     setConversationTab(activeConversationTab);
     return;
   }
-  // 每轮使用稳定的工具/思考结构；消息本身保持克制，操作在悬停时出现。
   const flow = document.createElement('div');
-  flow.className = 'dsh-flow';
-  activeConversationView = DshChat.createConversationView(flow);
+  flow.className = 'mp-chat-flow';
+  activeConversationView = ChatView.createConversationView(flow);
   activeConversationView.update(c);
   for (const [turnIndex, t] of turns.entries()) {
-    const host = flow.querySelector<HTMLElement>(`.dsh-flow-item[data-turn-index="${turnIndex}"]`)!;
-    // 后台任务补丁按舞台同款 cardId 就地落到这个节点：登记代理卡，
-    // 补丁来了 replaceWith 重画，不重建整条流。
+    const host = flow.querySelector<HTMLElement>(`.mp-chat-flow-item[data-turn-index="${turnIndex}"]`)!;
     const proxy = LiveCards.track(CardModel.normalizeCard({
       id: `${t.at || 0}-a`,
       kind: 'prose',
@@ -2371,23 +2265,21 @@ async function openConversation(id: string) {
         ? { label: x, state: 'done' }
         : { label: x.label, note: x.note || '', state: 'done' })),
     }));
-    dshCardNodes.set(proxy.id, host);
+    chatCardNodes.set(proxy.id, host);
   }
   stream.replaceChildren(flow);
   syncConversationPendingInput(turns);
   stream.scrollTop = stream.scrollHeight;
-  DshChat.bindDelegation(stream);
+  ChatView.bindDelegation(stream);
   syncExternalConversationRun(c);
   scheduleStreamRail();
   renderUsageMeter(turns);
   const trajectory = document.getElementById('trajectory');
-  if (trajectory) trajectory.replaceChildren(DshTrajectory.render(DshTrajectory.project(turns)));
+  if (trajectory) trajectory.replaceChildren(ChatTrajectory.render(ChatTrajectory.project(turns)));
   setConversationTab(activeConversationTab);
   if (notificationSequence !== conversationNotificationSequence) void refreshOpenConversation({ id: c.id });
 }
 
-/* The last turn owns the composer question for both reopening and external
-   task updates. Replacing that turn must also clear any previous question. */
 function syncConversationPendingInput(turns: MagicPointerTurn[]) {
   const last = turns.at(-1);
   const pending = last && !last.liveProgress ? last.pendingInput : null;
@@ -2414,7 +2306,7 @@ function syncExternalConversationRun(conversation: MagicPointerConversation) {
   if (pendingConversation) return;
   const turns = conversation.turns || [];
   const live = turns.at(-1)?.liveProgress;
-  const body = document.querySelector<HTMLElement>(`.dsh-flow-item[data-turn-index="${turns.length - 1}"]`);
+  const body = document.querySelector<HTMLElement>(`.mp-chat-flow-item[data-turn-index="${turns.length - 1}"]`);
   const wasRunning = Boolean(externalConversationRun);
   const next = live?.requestId && body ? {
     requestId: live.requestId,
@@ -2455,15 +2347,14 @@ async function refreshOpenConversation(change?: MagicPointerConversationChange) 
     renderUsageMeter(conversation.turns || []);
     renderProjectTasks();
     const trajectory = document.getElementById('trajectory');
-    if (trajectory) trajectory.replaceChildren(DshTrajectory.render(DshTrajectory.project(conversation.turns || [])));
+    if (trajectory) trajectory.replaceChildren(ChatTrajectory.render(ChatTrajectory.project(conversation.turns || [])));
   }
 }
 
-/* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
-function renderDshCardNode(card: MagicPointerCard): HTMLElement {
+function renderChatCardNode(card: MagicPointerCard): HTMLElement {
   const host = document.createElement('div');
-  host.className = 'dsh-assistant';
-  for (const node of DshChat.assistantTurnNode({
+  host.className = 'mp-chat-assistant';
+  for (const node of ChatView.assistantTurnNode({
     answer: card.answer,
     failed: card.state === 'failed',
     running: card.state === 'running',
@@ -2475,7 +2366,6 @@ function renderDshCardNode(card: MagicPointerCard): HTMLElement {
   return host;
 }
 
-/* ---- 产物 ---- */
 interface ArtifactEntry {
   artifactId?: string;
   revision?: number;
@@ -2486,8 +2376,6 @@ interface ArtifactEntry {
   at?: number;
   conversationId?: string;
 }
-/* 产物页的筛选状态。写在模块级：切走再切回来时 renderArtifacts 会因为
-   host 已有内容而早退，状态必须活得比一次渲染长。 */
 let artifactCache: ArtifactEntry[] = [];
 let artifactScope: 'all' | 'mine' = 'all';
 let artifactKind = '';
@@ -2501,8 +2389,6 @@ function artifactGlyph(name: string, size = 'small') {
   return (globalThis as unknown as { CdsIcons: { html(name: string, size: string): string } }).CdsIcons.html(name, size);
 }
 
-/* kind 是桥端透传的自由字符串（现网见过 file / text / document_patch）。
-   只给认得的 kind 配中文名和图标，认不得的原样显示——不编类型。 */
 const ARTIFACT_KIND_LABELS: Record<string, string> = {
   file: '文件',
   text: '文本',
@@ -2521,9 +2407,6 @@ function artifactKindIcon(kind: string) {
   return 'document';
 }
 
-/* 产物名是落盘内容的第一行，模型经常写成 `**验证结果：已通过。**`。列表里一行
-   标题不能留 Markdown 记号，所以渲染前剥成纯文本：这里不解析结构，只去掉
-   标记符号、保留文字。 */
 function artifactPlainLine(value: unknown, limit = 120) {
   const text = String(value == null ? '' : value)
     .replace(/\r\n?/g, '\n')
@@ -2546,8 +2429,6 @@ function artifactPlainLine(value: unknown, limit = 120) {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-/* 分组标题要的是参考里的「今天 / 昨天 / 9月13日」。data.ts 的 dayLabel 回的是
-   「9 月 13 日」（带空格），formatTime 当天只回时刻，都对不上，所以单独一个。 */
 function artifactDayKey(at: number) {
   const date = new Date(at);
   const today = new Date();
@@ -2587,7 +2468,6 @@ function artifactRowMarkup(entry: ArtifactEntry) {
     </details></div>`;
 }
 
-/* 空态照参考的克制写法：只有一行灰字，没有插画、没有那颗撑满页面的图标。 */
 function artifactEmptyMarkup(message: string) {
   return `<div class="mp-artifact-empty-state">${studioLibraries.pictogram('HandShapes')}<p class="mp-artifact-empty">${esc(message)}</p></div>`;
 }
@@ -2643,8 +2523,6 @@ function paintArtifacts() {
     host.innerHTML = artifactEmptyMarkup('没有匹配的产物。');
     return;
   }
-  // 分组按「第一次出现的日期」排序，缓存本身已按 at 从新到旧，所以组序和组内
-  // 顺序都不需要再排一次。
   const groups: Array<{ label: string; items: ArtifactEntry[] }> = [];
   const byLabel = new Map<string, ArtifactEntry[]>();
   for (const entry of filtered) {
@@ -2683,9 +2561,6 @@ async function loadArtifactPreviews(entries: ArtifactEntry[]) {
   if (artifactLayout === 'grid') paintArtifacts();
 }
 
-/* 工具条是真的在筛东西：tab / 类型 / 搜索 / 布局四种状态都落到同一份缓存上。
-   行本身的打开动作仍由 studio.ts 既有的 document 委托处理（[data-artifact-id]
-   与 [data-open]）。 */
 function bindArtifactView() {
   if (artifactViewBound) return;
   const view = document.getElementById('view-artifacts');
@@ -3187,15 +3062,10 @@ function esc(v: unknown) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// 本地路径进 CSS url('...')：反斜杠换正斜杠，再转义掉能截断字符串的引号。
-// 文件名是用户剪贴板/收藏目录来的，不能假设它干净。
 function cssUrl(v: unknown) {
   return String(v == null ? '' : v).replace(/\\/g, '/').replace(/'/g, '%27').replace(/"/g, '%22');
 }
 
-/* ============================================================
-   交互
-   ============================================================ */
 
 const shell = document.getElementById('shell') as HTMLElement;
 const aux = document.getElementById('aux') as HTMLElement;
@@ -3423,18 +3293,18 @@ function toggleAnimatedTheme(origin?: { x: number; y: number }) {
 
 function openInformationDialog(title: string, detail: string) {
   const overlay = document.createElement('div');
-  overlay.className = 'dshw-perm-confirm';
+  overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
   const card = document.createElement('div');
-  card.className = 'dshw-perm-confirm-card';
+  card.className = 'mpw-perm-confirm-card';
   const heading = document.createElement('b');
   heading.textContent = title;
   const body = document.createElement('p');
   body.style.whiteSpace = 'pre-line';
   body.textContent = detail;
   const actions = document.createElement('div');
-  actions.className = 'dshw-perm-confirm-actions';
+  actions.className = 'mpw-perm-confirm-actions';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'is-primary';
@@ -3489,11 +3359,9 @@ function closeAccountMenu() {
   closeAnchoredPopover('account-menu', 'account-footer');
 }
 
-/* 参考里的账户浮层不是贴着触发按钮的窄菜单：它左右各留 8px、铺满整个侧栏宽度，
-   底边压在账户行上方，所以宽度跟着侧栏走，不跟按钮走。 */
 function openAccountMenu() {
   const menu = document.getElementById('account-menu');
-  const sidebar = document.querySelector<HTMLElement>('.dshw-sidebar-col');
+  const sidebar = document.querySelector<HTMLElement>('.mpw-sidebar-col');
   const footer = document.getElementById('account-footer');
   if (!menu || !sidebar || !footer) return;
   closeStudioPopovers('account-menu');
@@ -3651,8 +3519,6 @@ document.addEventListener('keydown', (event) => {
   void executeWindowMenuCommand(command);
 });
 
-/* 重新发送一条已经发过的消息：把它放回输入框并提交。不新建对话——重发是
-   「这一条再走一遍」，不是「另起一轮」。 */
 document.addEventListener('mp:retry-question', (event: Event) => {
   const detail = (event as CustomEvent<{ question?: string }>).detail;
   const question = String(detail?.question || '').trim();
@@ -3666,7 +3532,6 @@ document.addEventListener('mp:retry-question', (event: Event) => {
   form.requestSubmit();
 });
 
-/* 产物卡上的 Open 和箭头都走这里：打开右侧的产物编辑器，落在那一份上。 */
 document.addEventListener('mp:open-artifact', (event: Event) => {
   const detail = (event as CustomEvent<{ artifactId?: string; conversationId?: string }>).detail;
   const artifactId = String(detail?.artifactId || '');
@@ -3841,8 +3706,6 @@ function renderProjectFileTree() {
       row.dataset.projectPath = entry.path;
       row.dataset.projectKind = entry.kind;
       row.dataset.depth = String(depth);
-      // 官方树行：data-tree-row + role=treeitem + aria-level=depth+1，缩进是
-      // 内联 paddingLeft = 8 + depth * 8（不是每层 20px、也不再画引导线）。
       row.dataset.treeRow = 'true';
       row.setAttribute('role', 'treeitem');
       row.setAttribute('aria-level', String(depth + 1));
@@ -3901,7 +3764,7 @@ function renderSelectedProjectFile() {
   const renderMarkdown = selectedProjectFileMarkdown && !projectFileCodeView;
   preview.classList.toggle('is-markdown', renderMarkdown);
   code?.setAttribute('aria-pressed', String(projectFileCodeView));
-  if (renderMarkdown) content.replaceChildren(DshMarkdown.render(selectedProjectFileText));
+  if (renderMarkdown) content.replaceChildren(ChatMarkdown.render(selectedProjectFileText));
   else {
     const pre = document.createElement('pre');
     pre.textContent = selectedProjectFileText;
@@ -4334,7 +4197,7 @@ function renderProjectTasks() {
       row.dataset.conversationId = activeConversationId || pendingConversation?.conversationId || '';
       row.dataset.status = task.status;
       setText(row.querySelector('strong')!, task.description);
-      setText(row.querySelector('.mp-subagent-time')!, task.elapsedMs ? DshChat.formatRunMeta(task.elapsedMs, null) : '');
+      setText(row.querySelector('.mp-subagent-time')!, task.elapsedMs ? ChatView.formatRunMeta(task.elapsedMs, null) : '');
       setText(row.querySelector('.mp-subagent-state')!, task.status === 'running' ? row.dataset.stopState ? 'Stopping' : '' : subagentStatusLabel(task.status));
       setText(row.querySelector('.mp-subagent-tool-uses')!, `${task.stepCount} tool ${task.stepCount === 1 ? 'use' : 'uses'}`);
       setText(row.querySelector('.mp-subagent-current-tool')!, task.currentTool || (task.status === 'running' ? task.phase === 'writing' ? 'Writing' : 'Thinking' : ''));
@@ -4445,7 +4308,6 @@ if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(() => scheduleProjectBrowserResize()).observe(projectBrowserHost);
 }
 window.addEventListener('resize', () => {
-  /* 跳转条的位置按全文高度算，换尺寸之后整张图都变了，要重新测。 */
   scheduleStreamRail();
   if (inspectorState.open && !inspectorState.maximized) {
     inspectorState = inspectorStatePolicy.reduceInspectorState(
@@ -4459,7 +4321,7 @@ window.addEventListener('resize', () => {
 });
 
 function inspectorAvailableWidth(): number {
-  const sidebarWidth = document.querySelector('.dshw-sidebar-col')?.getBoundingClientRect().width
+  const sidebarWidth = document.querySelector('.mpw-sidebar-col')?.getBoundingClientRect().width
     ?? (shell.dataset.sidebar === 'collapsed' ? 44 : 288);
   return Math.max(0, shell.clientWidth - sidebarWidth);
 }
@@ -4600,9 +4462,6 @@ document.getElementById('project-file-tree')?.addEventListener('contextmenu', (e
     }
   });
 });
-/* 文件树的键盘导航：官方树行是 tabIndex=-1（键盘只从树容器进来），靠 ←/→/↑/↓
-   Home/End 在行之间移动焦点。行本身是 button，Enter/Space 走原生 click。
-   ↑ 在第一行时回到过滤框——官方也是这么收回去的。 */
 (function bindFileTreeKeyboard() {
   const host = document.getElementById('project-file-tree');
   if (!host) return;
@@ -4877,14 +4736,12 @@ document.addEventListener('click', e => {
     return;
   }
 
-  /* 权限预设弹层：点外面收起（芯片/行自己的 click 已 stopPropagation） */
   const permMenu = document.getElementById('composer-permission-menu');
   if (permMenu && !permMenu.hidden && !target.closest('#composer-permission-menu')
       && !target.closest('#composer-permission')) {
     closePermissionMenu();
   }
 
-  /* 模型目录弹层：同上 */
   const modelMenu = document.getElementById('composer-model-menu');
   if (modelMenu && !modelMenu.hidden && !target.closest('#composer-model-menu')
       && !target.closest('#composer-model')) {
@@ -4897,7 +4754,6 @@ document.addEventListener('click', e => {
     closeEffortMenu();
   }
 
-  /* + opens Claude's attachment menu; / keeps the command directory. */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
   if (addBtn) {
@@ -4942,7 +4798,7 @@ document.addEventListener('click', e => {
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
   if (projectToggle) {
     const key = projectToggle.dataset.workspaceToggle || '';
-    const project = projectToggle.closest<HTMLElement>('.dshw-project');
+    const project = projectToggle.closest<HTMLElement>('.mpw-project');
     const alreadyActive = normalizedProjectRoot(key) === normalizedProjectRoot(activeProjectRoot);
     const open = project?.dataset.open !== 'false';
     if (projectToggle.dataset.virtualGroup === 'true') {
@@ -5051,7 +4907,6 @@ document.addEventListener('click', e => {
     return;
   }
 
-  // 收藏箱图片节点：左键 → 放大查看；查看窗里可复制图片
   const imgNode = target.closest<HTMLElement>('.node[data-src], .stash-row[data-src]');
   if (imgNode && imgNode.dataset.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(imgNode.dataset.src)) {
     openStashViewer(imgNode.dataset.src, imgNode.dataset.text || '');
@@ -5059,7 +4914,6 @@ document.addEventListener('click', e => {
     return;
   }
 
-  // 收藏箱文字节点：点击在「一行摘要」和「全文展开」之间切换
   const note = target.closest<HTMLElement>('.node[data-text] .node-note, .stash-row .txt');
   if (note) {
     note.classList.toggle('is-open');
@@ -5087,7 +4941,6 @@ document.addEventListener('click', e => {
   if (tab) {
     tab.parentElement!.querySelectorAll('.tab').forEach(t => t.classList.remove('is-on'));
     tab.classList.add('is-on');
-    // 分类 tab 不只是高亮自己：收藏箱真的按这个分类过滤。
     stashKindFilter = tab.dataset.kind || '';
     renderStash(true);
     return;
@@ -5121,7 +4974,6 @@ document.getElementById('stash-search')?.addEventListener('input', (event) => {
 
 let studioComposerBusy = false;
 
-/* ---- `+` 斜杠目录（DSH input-trigger 菜单：命令 / 技能 两组 + 本地过滤） ---- */
 let slashDirectory: MagicPointerSlashDirectory | null = null;
 let slashDirectoryLoaded = false;
 
@@ -5134,19 +4986,19 @@ function closeSlashMenu() {
 function slashRow(entry: MagicPointerSlashEntry, group: 'command' | 'skill'): HTMLElement {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'dshw-slash-row';
+  row.className = 'mpw-slash-row';
   row.setAttribute('role', 'menuitem');
   row.dataset.slashName = entry.name;
   row.dataset.slashGroup = group;
   const head = document.createElement('span');
-  head.className = 'dshw-slash-name';
+  head.className = 'mpw-slash-name';
   const slash = document.createElement('em');
   slash.textContent = `/${entry.name}`;
   head.appendChild(slash);
   const desc = document.createElement('small');
   desc.textContent = entry.description;
   const body = document.createElement('span');
-  body.className = 'dshw-slash-text';
+  body.className = 'mpw-slash-text';
   body.append(head, desc);
   row.appendChild(body);
   return row;
@@ -5164,19 +5016,19 @@ function renderSlashRows(filter: string) {
     || (e.whenToUse || '').toLowerCase().includes(needle));
   if (commands.length) {
     const head = document.createElement('div');
-    head.className = 'dshw-slash-group';
+    head.className = 'mpw-slash-group';
     head.textContent = '命令';
     nodes.push(head, ...commands.map(e => slashRow(e, 'command')));
   }
   if (skills.length) {
     const head = document.createElement('div');
-    head.className = 'dshw-slash-group';
+    head.className = 'mpw-slash-group';
     head.textContent = '技能';
     nodes.push(head, ...skills.map(e => slashRow(e, 'skill')));
   }
   if (!nodes.length) {
     const empty = document.createElement('div');
-    empty.className = 'dshw-slash-empty';
+    empty.className = 'mpw-slash-empty';
     empty.textContent = slashDirectoryLoaded ? '没有匹配的命令或技能。' : '目录不可用（本机未接入桥）。';
     nodes.push(empty);
   }
@@ -5184,7 +5036,6 @@ function renderSlashRows(filter: string) {
   setActiveSlashRow(slashRows()[0] || null);
 }
 
-/* 键盘导航：高亮行在可见行之间循环移动，Enter/Tab 选中。 */
 function slashRows(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('#composer-slash-rows [data-slash-name]')];
 }
@@ -5221,7 +5072,7 @@ async function openSlashMenu(inlineFilter?: string) {
     const rows = document.getElementById('composer-slash-rows');
     if (rows) rows.replaceChildren();
     const loading = document.createElement('div');
-    loading.className = 'dshw-slash-empty';
+    loading.className = 'mpw-slash-empty';
     loading.textContent = '正在加载目录…';
     if (rows) rows.appendChild(loading);
   }
@@ -5239,12 +5090,11 @@ async function openSlashMenu(inlineFilter?: string) {
 }
 
 function insertSlashToken(name: string) {
-  const ta = document.querySelector<HTMLTextAreaElement>('.dshw-input');
+  const ta = document.querySelector<HTMLTextAreaElement>('.mpw-input');
   if (!ta) return;
   const token = `/${name} `;
   const caret = ta.selectionStart ?? ta.value.length;
   const before = ta.value.slice(0, caret);
-  // 光标前已有 / 前缀（连续挑选）就替换掉旧 token，避免 //stack。
   const trimmed = before.replace(/\/[a-z0-9-]*$/i, '');
   ta.value = trimmed + token + ta.value.slice(caret);
   const nextCaret = (trimmed + token).length;
@@ -5281,7 +5131,6 @@ function bindSlashMenu() {
 }
 bindSlashMenu();
 
-/* ---- Claude effort：模型工作深度，不是回复文风。 ---- */
 const EFFORT_STORAGE_KEY = 'mp:composer-effort';
 let composerEffort = (() => {
   try {
@@ -5290,7 +5139,6 @@ let composerEffort = (() => {
   } catch { return 'xhigh'; }
 })();
 
-/* 档位随会话存下来：它不是一次性选择，是用户对这个助手的长期偏好。 */
 function persistEffort() {
   try { localStorage.setItem(EFFORT_STORAGE_KEY, composerEffort); } catch { /* storage unavailable */ }
 }
@@ -5310,10 +5158,6 @@ function closeEffortMenu() {
   closeAnchoredPopover('composer-effort-menu', 'composer-effort');
 }
 
-/* 菜单里的选中勾现在是 Claude 自己的字形（`check` U+E03B，20px 那档），
-   不再是一枚自绘的描边勾——参考里菜单内的勾和别处的图标是同一套字形，
-   自绘的那个笔画粗细跟旁边的字体图标对不上。
-   取不到字体模块时退回原来的 svg：少一个勾比少一整个菜单严重。 */
 function checkGlyph(): Element {
   const api = globalThis as unknown as { CdsIcons?: { html?: (name: string, size?: string) => string } };
   const markup = typeof api.CdsIcons?.html === 'function' ? api.CdsIcons.html('check') : '';
@@ -5333,14 +5177,10 @@ function checkGlyph(): Element {
 
 function selectedCheck(): Element {
   const check = checkGlyph();
-  check.classList.add('dshw-perm-check');
+  check.classList.add('mpw-perm-check');
   return check;
 }
 
-/* 参考里的 effort 不是一列选项，是一根滑块：左边 Faster、右边 Smarter，
-   一条槽上五个刻度点，方形白滑块停在当前档。选档因此是一个「往左还是往右」
-   的动作，而不是在五个词里读哪一个——这两件事对用户是不同的负担。
-   槽是连续的，档是离散的：点击/拖动都吸附到最近的那一档。 */
 function openEffortMenu() {
   const menu = document.getElementById('composer-effort-menu');
   if (!menu) return;
@@ -5389,8 +5229,6 @@ function openEffortMenu() {
   particles.setAttribute('aria-hidden', 'true');
   fill.append(particles);
   track.append(fill, thumb);
-  /* 位置一律内缩半个滑块宽：不内缩的话第一档和最后一档的方块各有一半悬在
-     槽外，参考里两端都是完整落在槽里的。 */
   const position = (ratio: number) => `calc(var(--mp-effort-inset) + ${ratio} * (100% - 2 * var(--mp-effort-inset)))`;
   for (let index = 0; index < levels.length; index += 1) {
     const tick = document.createElement('i');
@@ -5422,7 +5260,7 @@ function openEffortMenu() {
   };
   const indexFromPointer = (clientX: number) => {
     const rect = track.getBoundingClientRect();
-    const inset = 8; // Claude compact control: (24 - 8) / 2
+    const inset = 8;  
     const usable = rect.width - inset * 2;
     if (usable <= 0) return activeIndex;
     const ratio = (clientX - rect.left - inset) / usable;
@@ -5430,8 +5268,6 @@ function openEffortMenu() {
   };
   track.addEventListener('pointerdown', (event) => {
     track.dataset.dragging = 'true';
-    /* 先选档再捕获：捕获对合成事件（探针的 sendInputEvent）会抛 NotFoundError，
-       放在前面会让整个处理器在那一次点击里直接中止——档位看着像点不动。 */
     select(indexFromPointer(event.clientX));
     try { track.setPointerCapture(event.pointerId); } catch { /* synthetic pointer */ }
   });
@@ -5475,7 +5311,6 @@ function bindEffortChip() {
   });
 }
 
-/* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
 let composerPreset = 'workspace-write';
 let composerAttachments: string[] = [];
 
@@ -5616,7 +5451,7 @@ function renderTaskMaterials() {
     const controls = document.createElement('div');
     controls.className = 'mp-material-watch';
     const task = document.createElement('input');
-    task.className = 'dshw-rename-input';
+    task.className = 'mpw-rename-input';
     task.value = '核对材料变化，生成更新草稿。';
     task.maxLength = 4000;
     task.setAttribute('aria-label', '材料关注任务');
@@ -5769,30 +5604,27 @@ function closePermissionMenu() {
 function openPermissionMenu() {
   const menu = document.getElementById('composer-permission-menu');
   if (!menu) return;
-  /* 参考里这枚菜单的第一行是分组标题 `Mode`，行首不放图标，行尾是数字快捷键，
-     当前档在编号前面打一个勾；Bypass 那一行没有编号，右侧改放一个 Enable。
-     以前的版本是「行首图标 + 行尾只打勾」，形状对不上。 */
   const heading = document.createElement('div');
-  heading.className = 'dshw-perm-heading';
+  heading.className = 'mpw-perm-heading';
   heading.textContent = 'Mode';
   const rows = permPresets.PRESETS.map(option => {
     const row = document.createElement('button');
     row.type = 'button';
     const selected = option.value === composerPreset;
-    row.className = 'dshw-perm-row' + (selected ? ' is-active' : '');
+    row.className = 'mpw-perm-row' + (selected ? ' is-active' : '');
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(selected));
     row.dataset.permValue = option.value;
     if (option.shortcut) row.dataset.permKey = option.shortcut;
     row.title = option.description;
     const text = document.createElement('span');
-    text.className = 'dshw-perm-row-text';
+    text.className = 'mpw-perm-row-text';
     const name = document.createElement('span');
-    name.className = 'dshw-perm-row-name';
+    name.className = 'mpw-perm-row-name';
     name.textContent = option.label;
     if (option.badge) {
       const badge = document.createElement('span');
-      badge.className = 'dshw-perm-badge';
+      badge.className = 'mpw-perm-badge';
       badge.textContent = option.badge;
       name.appendChild(badge);
     }
@@ -5801,18 +5633,17 @@ function openPermissionMenu() {
     text.append(name, desc);
     row.append(text);
     const trail = document.createElement('span');
-    trail.className = 'dshw-perm-trail';
+    trail.className = 'mpw-perm-trail';
     if (option.action) {
-      /* 有 action 的行没有编号：它不是「切过去」，是一次要确认的开启。 */
       const action = document.createElement('span');
-      action.className = 'dshw-perm-action';
+      action.className = 'mpw-perm-action';
       action.textContent = option.action;
       trail.appendChild(action);
     } else {
       if (selected) trail.appendChild(selectedCheck());
       if (option.shortcut) {
         const key = document.createElement('span');
-        key.className = 'dshw-perm-key';
+        key.className = 'mpw-perm-key';
         key.textContent = option.shortcut;
         trail.appendChild(key);
       }
@@ -5826,31 +5657,30 @@ function openPermissionMenu() {
   requestAnimationFrame(() => opened?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
 }
 
-/* Full access 确认门：勾选“已了解风险”才能启用（DSH RiskConfirmation 同款语义） */
 function confirmFullAccess() {
   const option = permPresets.PRESETS.find(p => p.value === 'danger-full-access');
   const confirmSpec = option?.confirm;
   if (!confirmSpec) return;
   const overlay = document.createElement('div');
-  overlay.className = 'dshw-perm-confirm';
+  overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'alertdialog');
   overlay.setAttribute('aria-modal', 'true');
   overlay.setAttribute('aria-label', confirmSpec.title);
   const card = document.createElement('div');
-  card.className = 'dshw-perm-confirm-card';
+  card.className = 'mpw-perm-confirm-card';
   const title = document.createElement('b');
   title.textContent = confirmSpec.title;
   const desc = document.createElement('p');
   desc.textContent = confirmSpec.description;
   const ackRow = document.createElement('label');
-  ackRow.className = 'dshw-perm-confirm-ack';
+  ackRow.className = 'mpw-perm-confirm-ack';
   const box = document.createElement('input');
   box.type = 'checkbox';
   const ackText = document.createElement('span');
   ackText.textContent = '我已了解风险，并愿意继续';
   ackRow.append(box, ackText);
   const actions = document.createElement('div');
-  actions.className = 'dshw-perm-confirm-actions';
+  actions.className = 'mpw-perm-confirm-actions';
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.textContent = '取消';
@@ -5892,7 +5722,6 @@ function bindPermissionChip() {
     renderPermissionChip();
   });
 }
-/* The task rail projects the latest durable plan; it does not occupy the composer. */
 let composerPlan: ReturnType<typeof PlanList.project> = null;
 
 function renderPlanCard() {
@@ -5903,7 +5732,6 @@ function renderPlanCard() {
   });
 }
 
-/* Decisions respond to the suspended tool call. They never submit the composer. */
 let pendingPermissionAsk: { requestId?: string; tool: string; prefix?: string; actionPreview?: string; question?: string; options?: string[] } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
 let pendingAskInput: NonNullable<MagicPointerTurn['pendingInput']> | null = null;
@@ -5941,7 +5769,7 @@ async function respondToPendingInput(conversationId: string, requestId: string, 
     return;
   }
   const turnIndex = activeConversationTurnCount - 1;
-  const body = document.querySelector<HTMLElement>(`.dsh-flow-item[data-turn-index="${turnIndex}"]`);
+  const body = document.querySelector<HTMLElement>(`.mp-chat-flow-item[data-turn-index="${turnIndex}"]`);
   if (!body) { DecisionCard.pending(host, false, '无法找到当前任务。请重新打开后重试。'); return; }
   const requestToken = `response-${Date.now()}-${++studioTaskInputSequence}`;
   const scope = `${conversationId}#${turnIndex}`;
@@ -5949,7 +5777,7 @@ async function respondToPendingInput(conversationId: string, requestId: string, 
   const previous = activeConversationTurns[turnIndex] as MagicPointerTurn | undefined;
   transcript.trajectory = (previous?.trajectory || []).map(record => ({ ...record }));
   const submitted: PendingConversation = { requestId: requestToken, scope, body,
-    records: new Map(), renderer: DshChat.createLiveTurn(body, scope, { taskPanel: true }),
+    records: new Map(), renderer: ChatView.createLiveTurn(body, scope, { taskPanel: true }),
     agentSessionId: activeConversationRecord?.agentSessionId || null,
     streamText: '', reasoningText: '', transcript, liveTokens: null };
   pendingConversation = submitted;
@@ -5990,19 +5818,9 @@ async function respondToPendingInput(conversationId: string, requestId: string, 
 
 bindEffortChip();
 bindPermissionChip();
-/* textarea 随内容长高，上限由当前 composer 的 CSS 决定。 */
 let composerFitRaf: number | null = null;
 let composerFitTarget: HTMLTextAreaElement | null = null;
 
-/*
- * 自动长高原来是「写 height:auto → 读 scrollHeight（强制同步布局）→ 写 height」
- * 每个按键跑一次，整个 studio 文档（长会话下极大）被同步 reflow。改成把测量
- * 合并到下一帧：一次 input 突发只量一次，且测量发生在同一帧内所有样式写入
- * 之后，读到的布局是最终的那一份。
- *
- * 所有调用点都只把 fitComposer 当成「下一帧变高」的视觉副作用（没有调用方在
- * 它之后立刻读 textarea 的高度），所以延后一帧不改变任何可观察行为。
- */
 function fitComposer(ta: HTMLTextAreaElement) {
   composerFitTarget = ta;
   if (composerFitRaf !== null) return;
@@ -6017,10 +5835,6 @@ function fitComposer(ta: HTMLTextAreaElement) {
   });
 }
 
-/* ---- 输入框联想词 ----
-   回合结束后问一次「用户下一步最可能说什么」，空草稿以 placeholder 显示，
-   Tab 接受为可编辑草稿，再由用户提交。拉取失败或模型没给建议时退回静态提示语，
-   不写任何错误提示——输入框不是一个报告错误的地方。 */
 let composerSuggestion = '';
 let composerSuggestionRequest = 0;
 
@@ -6030,7 +5844,6 @@ const COMPOSER_PLACEHOLDER_THREAD = 'Type / for commands';
 function applyComposerPlaceholder(ta?: HTMLTextAreaElement | null) {
   const textarea = ta || document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
   if (!textarea) return;
-  /* 联想词只在会话里出现：首页那句问的是「要做什么」，没有「下一步」。 */
   const home = !document.getElementById('studio-home')?.hidden;
   const base = home ? COMPOSER_PLACEHOLDER_HOME : COMPOSER_PLACEHOLDER_THREAD;
   textarea.placeholder = !home && composerSuggestion ? composerSuggestion : base;
@@ -6044,8 +5857,6 @@ function clearComposerSuggestion() {
   applyComposerPlaceholder();
 }
 
-/* 请求不阻塞任何东西：它在回合结束之后自己跑，回来时如果用户已经换了会话
-   或又发了一轮，就整条丢掉。 */
 async function refreshComposerSuggestion(turns: unknown, object: unknown) {
   const request = ++composerSuggestionRequest;
   const suggestion = await Data.suggestNextPrompt(turns, object);
@@ -6061,8 +5872,6 @@ function syncComposerSubmitState() {
   submit.disabled = !studioComposerBusy && !textarea.value.trim();
 }
 
-/* 模型切换器：DSH ModelSelect 同款——真实网关目录（fabric_bridge model.catalog），
-   选中即更新当前模型档案（没有档案时才写 legacy secrets/model.txt），下次发送就生效。 */
 let modelCatalog: MagicPointerModelCatalog | null = null;
 let modelCatalogRequest = 0;
 
@@ -6098,8 +5907,6 @@ async function openModelMenu() {
   const menu = document.getElementById('composer-model-menu');
   if (!menu) return;
   modelMoreOpen = false;
-  // 先把浮层画出来，再刷新目录。模型目录是 I/O，不能挟持一次点击的
-  // 可见反馈；否则网关慢半秒，用户就会连续点击并在返回瞬间把菜单关掉。
   menu.replaceChildren(...modelMenuRows(modelCatalog));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
   bindDigitShortcuts(menu, 'modelKey');
@@ -6118,15 +5925,10 @@ async function openModelMenu() {
   }
   modelCatalog = catalog;
   renderComposerModel();
-  // 更新同一个模型状态，但不重新打开用户已关闭的菜单。
   if (menu.hidden) return;
   renderModelMenu();
 }
 
-/* 菜单打开时按 1..9 直接选中对应模型——行右端写着的那个数字要是按不动，
-   就只是一个装饰。监挂在 document 上、菜单一关就摘掉，避免和输入框抢键。 */
-/* 菜单打开时按数字直接选。模型菜单和 Mode 菜单共用这一份——两者的区别只在
-   属性名，复制一遍的话「菜单关掉要解绑」这个容易漏的收尾就会漏第二次。 */
 function bindDigitShortcuts(menu: HTMLElement, attribute: 'modelKey' | 'permKey'): void {
   const onKey = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -6148,10 +5950,6 @@ function bindDigitShortcuts(menu: HTMLElement, attribute: 'modelKey' | 'permKey'
   document.addEventListener('keydown', onKey, true);
 }
 
-/* 参考里的模型菜单只露固定几个：外面一排是「已固定」的席位（行尾写数字快捷键，
-   当前那个写勾），其余全部收进 More models 子菜单，在子菜单里勾选决定谁占席位。
-   勾满 MODEL_PIN_LIMIT 个以后要先取消一个才能勾下一个——席位是有上限的，
-   否则子菜单里的每一行都会同时说「已勾选」和「不显示」，那是自相矛盾的状态。 */
 const MODEL_PIN_LIMIT = 4;
 const MODEL_PIN_STORAGE = 'mp:model-pins';
 let modelMoreOpen = false;
@@ -6190,8 +5988,6 @@ function writeModelPins(ids: string[]): void {
   } catch { /* 浏览器存储只读时，本次会话内仍然生效 */ }
 }
 
-/* 只在首次使用时给出四个默认项。空字符串保留用户腾出的席位，下一次
-   勾选填回原位置；取消当前模型的固定不会改变 Runtime 的活动模型。 */
 function resolveModelPins(catalog: MagicPointerModelCatalog | null): string[] {
   const entries = modelEntries(catalog);
   const known = new Set(entries.map(entry => entry.key));
@@ -6200,7 +5996,6 @@ function resolveModelPins(catalog: MagicPointerModelCatalog | null): string[] {
     const seen = new Set<string>();
     return Array.from({ length: MODEL_PIN_LIMIT }, (_, index) => {
       const raw = saved[index] || '';
-      // Preferences written before provider-qualified catalogs used the id.
       const id = known.has(raw) ? raw : entries.find(entry => entry.id === raw
         && entry.profileId === catalog?.currentProfileId)?.key
         || entries.find(entry => entry.id === raw)?.key || '';
@@ -6226,30 +6021,26 @@ function resolveModelPins(catalog: MagicPointerModelCatalog | null): string[] {
 
 function modelMenuDivider(): HTMLElement {
   const line = document.createElement('hr');
-  line.className = 'dshw-model-divider';
+  line.className = 'mpw-model-divider';
   return line;
 }
 
 function modelMenuRow(id: string, _vision: boolean, index: number, selected: boolean): HTMLElement {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'dshw-model-row' + (selected ? ' is-active' : '');
+  row.className = 'mpw-model-row' + (selected ? ' is-active' : '');
   row.setAttribute('role', 'option');
   row.dataset.modelId = id;
   const name = document.createElement('span');
-  name.className = 'dshw-model-name';
+  name.className = 'mpw-model-name';
   name.textContent = id;
   row.appendChild(name);
   row.setAttribute('aria-selected', String(selected));
-  /* 参考里每行右端有一个数字，是**真的快捷键**（按 1 直接选中第一个）。
-     只画数字不接键盘就成了骗人的提示，所以两边一起给：编号写进
-     data-model-key，打开菜单时挂一次按键监听。
-     当前那一行右端画勾、不画数字——勾和数字同时出现会挤成第三列。 */
   row.dataset.modelKey = String(index + 1);
   if (selected) row.appendChild(selectedCheck());
   else {
     const key = document.createElement('kbd');
-    key.className = 'dshw-model-key';
+    key.className = 'mpw-model-key';
     key.textContent = String(index + 1);
     row.appendChild(key);
   }
@@ -6259,15 +6050,15 @@ function modelMenuRow(id: string, _vision: boolean, index: number, selected: boo
 function modelMoreRow(open: boolean): HTMLElement {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'dshw-model-row dshw-model-more';
+  row.className = 'mpw-model-row mpw-model-more';
   row.dataset.modelMore = 'true';
   row.setAttribute('aria-expanded', String(open));
   const label = document.createElement('span');
-  label.className = 'dshw-model-name';
+  label.className = 'mpw-model-name';
   label.textContent = 'More models';
   row.appendChild(label);
   const chevron = document.createElement('span');
-  chevron.className = 'dshw-model-chevron';
+  chevron.className = 'mpw-model-chevron';
   chevron.setAttribute('aria-hidden', 'true');
   chevron.innerHTML = (globalThis as unknown as { CdsIcons: { html(name: string, size: string): string } }).CdsIcons.html('chevron-section', 'small');
   row.appendChild(chevron);
@@ -6276,7 +6067,7 @@ function modelMoreRow(open: boolean): HTMLElement {
 
 function modelSourceBadge(provider: string): HTMLElement {
   const badge = document.createElement('span');
-  badge.className = 'dshw-model-source';
+  badge.className = 'mpw-model-source';
   badge.textContent = provider;
   badge.title = provider;
   return badge;
@@ -6284,14 +6075,14 @@ function modelSourceBadge(provider: string): HTMLElement {
 
 function modelMorePanel(entries: ModelMenuEntry[], pins: string[]): HTMLElement {
   const panel = document.createElement('div');
-  panel.className = 'dshw-model-more-panel';
+  panel.className = 'mpw-model-more-panel';
   panel.setAttribute('role', 'group');
   panel.setAttribute('aria-label', 'More models');
   for (const entry of entries) {
     const pinned = pins.includes(entry.key);
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'dshw-model-pin-row';
+    row.className = 'mpw-model-pin-row';
     row.setAttribute('role', 'menuitemcheckbox');
     row.setAttribute('aria-checked', String(pinned));
     row.dataset.modelPin = entry.key;
@@ -6300,13 +6091,13 @@ function modelMorePanel(entries: ModelMenuEntry[], pins: string[]): HTMLElement 
       row.setAttribute('aria-disabled', 'true');
     }
     const box = document.createElement('span');
-    box.className = 'dshw-model-pin-box';
+    box.className = 'mpw-model-pin-box';
     box.setAttribute('aria-hidden', 'true');
     if (pinned) box.appendChild(checkGlyph());
     const name = document.createElement('span');
-    name.className = 'dshw-model-name';
+    name.className = 'mpw-model-name';
     const label = document.createElement('span');
-    label.className = 'dshw-model-label';
+    label.className = 'mpw-model-label';
     label.textContent = entry.id;
     name.append(label, modelSourceBadge(entry.provider));
     row.append(box, name);
@@ -6328,9 +6119,9 @@ function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] 
     if (!entry) return;
     const row = modelMenuRow(entry.id, Boolean(entry.vision), index, entry.id === catalog.current
       && (!catalog.currentProfileId || entry.profileId === catalog.currentProfileId));
-    const name = row.querySelector('.dshw-model-name');
+    const name = row.querySelector('.mpw-model-name');
     const label = document.createElement('span');
-    label.className = 'dshw-model-label';
+    label.className = 'mpw-model-label';
     label.textContent = entry.id;
     name?.replaceChildren(label, modelSourceBadge(entry.provider));
     if (entry.profileId) row.dataset.modelProfileId = entry.profileId;
@@ -6349,17 +6140,15 @@ function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] 
   return rows;
 }
 
-/* 子菜单默认开在菜单右侧；模型菜单贴着输入框右下角，右边往往不够，
-   所以量一次视口再决定翻到左侧——开在屏幕外的菜单等于没开。 */
 function renderModelMenu(): void {
   const menu = document.getElementById('composer-model-menu');
   if (!menu) return;
-  const scrollTop = menu.querySelector('.dshw-model-more-panel')?.scrollTop || 0;
+  const scrollTop = menu.querySelector('.mpw-model-more-panel')?.scrollTop || 0;
   const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.modelPin : undefined;
   menu.replaceChildren(...modelMenuRows(modelCatalog));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
   positionModelMorePanel();
-  const panel = menu.querySelector<HTMLElement>('.dshw-model-more-panel');
+  const panel = menu.querySelector<HTMLElement>('.mpw-model-more-panel');
   if (panel) {
     panel.scrollTop = scrollTop;
     if (focused) Array.from(panel.querySelectorAll<HTMLElement>('[data-model-pin]'))
@@ -6369,7 +6158,7 @@ function renderModelMenu(): void {
 
 function positionModelMorePanel(): void {
   const menu = document.getElementById('composer-model-menu');
-  const panel = menu?.querySelector<HTMLElement>('.dshw-model-more-panel');
+  const panel = menu?.querySelector<HTMLElement>('.mpw-model-more-panel');
   if (!menu || menu.hidden || !panel) return;
   const rect = menu.getBoundingClientRect();
   const margin = 8;
@@ -6466,7 +6255,7 @@ function openAttachMenu() {
 
 function modelMenuNote(text: string): HTMLElement {
   const note = document.createElement('div');
-  note.className = 'dshw-model-note';
+  note.className = 'mpw-model-note';
   note.textContent = text;
   return note;
 }
@@ -6532,7 +6321,6 @@ interface PendingConversation {
   streamText: string;
   reasoningText: string;
   transcript: ReturnType<typeof ConversationControl.createTranscript>;
-  /** 运行中已产出的 token 数——只有进度记录真的带了才填，否则时间行只报时长。 */
   liveTokens: number | null;
 }
 let pendingConversation: PendingConversation | null = null;
@@ -6543,22 +6331,17 @@ function progressKey(record: Record<string, unknown>): string {
   const fields = record.fields && typeof record.fields === 'object'
     ? record.fields as Record<string, unknown> : {};
   if (phase === 'tool_call' || phase === 'tool_result') return `tool:${String(fields.id || fields.name || '')}`;
-  /* 非工具阶段全部并入单一 status 桶:运行中只有一行状态,原地更新(CC/DSH 金标准),
-     内部阶段不再逐条堆成 Think 行。 */
   return 'status';
 }
 
 function renderConversationProgress(record: Record<string, unknown>) {
   if (!pendingConversation) return;
   ConversationControl.appendTranscript(pendingConversation.transcript, record);
-  /* session_ready：拿到 durable session id —— 停止/插话都指向它。 */
   const sid = ConversationControl.sessionIdFromRecord(record);
   if (sid) {
     pendingConversation.agentSessionId = sid;
     setComposerRunningState(true);
   }
-  /* 进度记录带了 token 数就采纳，运行态那行因此能写成
-     `1m 12s · 3.6k tokens · 第 2 轮推理中`；没带就只报时长，不编数字。 */
   const tokenFields = record.fields && typeof record.fields === 'object'
     ? record.fields as Record<string, unknown> : {};
   const reportedTokens = Number(tokenFields.total_tokens ?? tokenFields.tokens ?? tokenFields.output_tokens);
@@ -6582,13 +6365,13 @@ function renderConversationProgress(record: Record<string, unknown>) {
     const fields = record.fields && typeof record.fields === 'object'
       ? record.fields as Record<string, string> : {};
     appendLiveStreamText(ConversationControl.decodeChunkBlob(fields));
-    return; // 正文增量不是活动行，不进 records。
+    return;  
   }
   if (String(record.phase || '') === 'reasoning_chunk') {
     const fields = record.fields && typeof record.fields === 'object'
       ? record.fields as Record<string, string> : {};
     appendLiveReasoningText(ConversationControl.decodeChunkBlob(fields));
-    return; // 思考流增量同样不进 records，画成 Think 行。
+    return;  
   }
   pendingConversation.records.set(progressKey(record), record);
   schedulePendingRender();
@@ -6632,19 +6415,13 @@ function isNearBottom(el: HTMLElement, threshold = SCROLL_FOLLOW_THRESHOLD_PX): 
 }
 
 function updateScrollPill() {
-  const scroller = document.querySelector<HTMLElement>('.dshw-scrollbody');
+  const scroller = document.querySelector<HTMLElement>('.mpw-scrollbody');
   const pill = document.getElementById('scroll-pill');
   if (!scroller || !pill) return;
   pill.hidden = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 240;
 }
 
-/* 贴底才跟随（DSH FOLLOW_THRESHOLD 同款）：用户往上翻阅历史时，进度记录
-   不再把视图拽走；回到距底 48px 内恢复自动跟随。 */
-/* 运行中计时：参考把「已经跑了多久」并进那一行状态里，而不是另起一行——
-   星芒 + `12m 59s · 第 2 轮推理中`。计时槽是状态行里预留的空 span，这里按秒
-   就地写文本；不重建节点，星芒的旋转动画因此不会每秒被打断一次。 */
 let pendingClockTimer: number | null = null;
-/** 当前计时器的写槽函数：状态行重建后由渲染循环立刻补一次，避免新行空一拍。 */
 let pendingClockWrite: (() => void) | null = null;
 
 function startPendingClock(body: HTMLElement) {
@@ -6654,7 +6431,7 @@ function startPendingClock(body: HTMLElement) {
     const slot = body.querySelector<HTMLElement>('[data-turn-meta]');
     if (!slot) return;
     const elapsed = Date.now() - startedAt;
-    const text = DshChat.formatRunMeta(elapsed, pendingConversation?.liveTokens ?? null);
+    const text = ChatView.formatRunMeta(elapsed, pendingConversation?.liveTokens ?? null);
     if (slot.textContent !== text) slot.textContent = text;
   };
   pendingClockWrite = tick;
@@ -6671,7 +6448,7 @@ function stopPendingClock() {
 }
 
 function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
-  const scroller = body.closest('.dshw-scrollbody') as HTMLElement | null;
+  const scroller = body.closest('.mpw-scrollbody') as HTMLElement | null;
   const near = scroller ? isNearBottom(scroller) : true;
   mutate();
   if (near && scroller) {
@@ -6681,7 +6458,7 @@ function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
 }
 
 (function bindScrollPill() {
-  const scroller = document.querySelector<HTMLElement>('.dshw-scrollbody');
+  const scroller = document.querySelector<HTMLElement>('.mpw-scrollbody');
   const pill = document.getElementById('scroll-pill');
   if (!scroller || !pill || scroller.dataset.pillBound) return;
   scroller.dataset.pillBound = '1';
@@ -6706,8 +6483,6 @@ function appendLiveReasoningText(text: string) {
   schedulePendingRender();
 }
 
-/* 作曲家忙态：发送钮变停止钮（DSH InputBar 同款形态）。
-   isRunning=false 时恢复发送钮并清掉流式残留状态。 */
 function focusComposerWhenIdle() {
   const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
   if (!textarea) return;
@@ -6744,9 +6519,6 @@ function setComposerRunningState(running: boolean) {
     submit.classList.toggle('is-stop', running);
     submit.title = running ? 'Stop' : 'Send';
     submit.setAttribute('aria-label', running ? 'Stop' : 'Send');
-    /* 空闲时是 Claude 自己的 send 字形（字体图标）。跑起来要换成方块停止键，
-       而字体里没有对应的码位，所以只有运行态走自绘的 svg——两态外形差别够大，
-       值得为它留一个例外。 */
     const hasStop = Boolean(submit.querySelector('use[href="#ic-stop"]'));
     if (running !== hasStop) {
       submit.replaceChildren();
@@ -6766,7 +6538,6 @@ function setComposerRunningState(running: boolean) {
       }
     }
   }
-  /* 运行时右下角那个环跟着转：它是「还在动」，不是「用了多少」。 */
   document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle');
   syncComposerSubmitState();
   if (!running) focusComposerWhenIdle();
@@ -6777,7 +6548,7 @@ async function stopActiveConversation() {
   if (!studioComposerBusy || !pending || pending.body.dataset.stopRequested === 'true') return;
   pending.body.dataset.stopRequested = 'true';
   const note = document.createElement('div');
-  note.className = 'dsh-turn-status';
+  note.className = 'mp-chat-turn-status';
   note.textContent = '正在停止…';
   pending.body.appendChild(note);
   const result = await ConversationControl.callConversationAction(
@@ -6801,23 +6572,21 @@ Data.onConversationProgress((payload) => {
   if (!pendingConversation.scope && payload.conversationId && Number.isInteger(payload.turnIndex)) {
     pendingConversation.scope = `${payload.conversationId}#${payload.turnIndex}`;
     pendingConversation.body.replaceChildren();
-    pendingConversation.renderer = DshChat.createLiveTurn(pendingConversation.body, pendingConversation.scope, { taskPanel: true });
+    pendingConversation.renderer = ChatView.createLiveTurn(pendingConversation.body, pendingConversation.scope, { taskPanel: true });
   }
   renderConversationProgress(payload.record);
 });
 
-/* 忙态插话：文本写入 durable inbox（next-step），下一轮模型请求即携带。
-   界面立即给一条排队的用户气泡，不假装它已经影响本轮。 */
 async function steerActiveConversation(question: string, textarea: HTMLTextAreaElement): Promise<void> {
   const pending = pendingConversation || externalConversationRun;
   const sessionId = pending?.agentSessionId || '';
-  if (!sessionId) return; // runtime 还没就绪：保持输入，不打断用户。
+  if (!sessionId) return;  
   const attachmentPaths = [...composerAttachments];
   const inputId = `input:studio:${Date.now()}:${studioTaskInputSequence += 1}`;
   const taskInput = buildStudioTaskInput(question, inputId, sessionId, attachmentPaths);
   if (!taskInput || !TaskInputTransport?.createTaskInputTransport) return;
   const status = document.createElement('div');
-  status.className = 'dsh-turn-status';
+  status.className = 'mp-chat-turn-status';
   status.textContent = '正在排队…';
   pending?.body.appendChild(status);
   const transport = TaskInputTransport.createTaskInputTransport({
@@ -6843,19 +6612,17 @@ async function steerActiveConversation(question: string, textarea: HTMLTextAreaE
       composerSelectedSourceIds.clear();
       renderComposerAttachments();
       renderComposerMaterials();
-      const flow = document.querySelector<HTMLElement>('#stream .dsh-flow');
+      const flow = document.querySelector<HTMLElement>('#stream .mp-chat-flow');
       if (flow) {
-        const node = DshChat.userNode(question);
+        const node = ChatView.userNode(question);
         node.setAttribute('data-queued', 'true');
         flow.appendChild(node);
-        flow.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+        flow.closest('.mpw-scrollbody')?.scrollTo({ top: 1_000_000 });
       }
     },
   });
 }
 
-/* 忙态下点发送钮 = 停止本回合：优雅取消优先（Receipt + 部分结果）。
-   停止后 openConversation 会用会话里的最终状态重画。 */
 document.getElementById('composer-form')?.querySelector('button[type="submit"]')?.addEventListener('click', (e) => {
   if (!studioComposerBusy || !(pendingConversation || externalConversationRun)) return;
   e.preventDefault();
@@ -6863,21 +6630,18 @@ document.getElementById('composer-form')?.querySelector('button[type="submit"]')
   void stopActiveConversation();
 });
 
-document.querySelectorAll('form.dshw-input-form').forEach(form => {
+document.querySelectorAll('form.mpw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');
   if (ta) {
     fitComposer(ta);
     syncComposerSubmitState();
     ta.addEventListener('input', () => { fitComposer(ta); syncComposerSubmitState(); });
-    /* DSH input-trigger：光标前是未提交的 /token 时内联开目录并随输入过滤。 */
     ta.addEventListener('input', () => {
       const caret = ta.selectionStart ?? ta.value.length;
       const token = SlashTrigger.detectSlashToken(ta.value.slice(0, caret));
       if (token !== null) void openSlashMenu(token);
       else closeSlashMenu();
     });
-    /* 目录打开时方向键移动高亮、Enter/Tab 选中、Escape 关闭；
-       未打开时 Enter 走发送分派（下方 keydown）。 */
     ta.addEventListener('keydown', e => {
       const menu = document.getElementById('composer-add-menu');
       if (menu && !menu.hidden) {
@@ -6908,8 +6672,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
     const question = textarea?.value.trim() || '';
     if (!textarea || !question) { textarea?.focus(); return; }
-    /* 忙态下 Enter = 插话（steer）：写入 durable inbox，下一轮即携带。
-       还没拿到 session id 时诚实拒绝，不假装已送达。 */
     if (studioComposerBusy) {
       await steerActiveConversation(question, textarea);
       return;
@@ -6922,30 +6684,26 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
 
     const stream = document.getElementById('stream');
     if (!stream) return;
-    /* 发送这一下就要离开首页。等桥返回再离开的话，新建的对话被写进一个
-       `hidden` 的 stream 里——用户盯着首页几十秒，以为消息丢了。对话界面
-       在用户按下回车的那一刻就该出现。 */
     setStudioHomeVisible(false);
-    let flow = stream.querySelector<HTMLElement>('.dsh-flow');
+    let flow = stream.querySelector<HTMLElement>('.mp-chat-flow');
     if (!flow) {
       flow = document.createElement('div');
-      flow.className = 'dsh-flow';
-      stream.replaceChildren(...(stream.querySelector('.dshw-blank, .view-empty') ? [] : [...stream.children]), flow);
+      flow.className = 'mp-chat-flow';
+      stream.replaceChildren(...(stream.querySelector('.mpw-blank, .view-empty') ? [] : [...stream.children]), flow);
     }
-    /* 回答权限门的那一下也不画用户气泡：用户点的是卡上的选项。 */
     if (pendingPermissionChoice && (pendingPermissionChoice.grant || pendingPermissionChoice.deny || pendingPermissionChoice.once)) {
-      flow.appendChild(DshChat.permissionAnswerNode({
+      flow.appendChild(ChatView.permissionAnswerNode({
         decision: pendingPermissionChoice.deny ? 'deny' : pendingPermissionChoice.once ? 'once' : 'grant',
         rule: String(pendingPermissionChoice.deny || pendingPermissionChoice.once || pendingPermissionChoice.grant || ''),
       }));
     } else {
-      flow.appendChild(DshChat.userNode(requestQuestion));
+      flow.appendChild(ChatView.userNode(requestQuestion));
     }
     const pending = document.createElement('div');
-    pending.className = 'dsh-assistant';
+    pending.className = 'mp-chat-assistant';
     const pendingBody = document.createElement('div');
-    pendingBody.className = 'dsh-assistant-body';
-    pendingBody.appendChild(DshChat.liveActivityNode({ phase: 'runtime_boot', fields: {} }));
+    pendingBody.className = 'mp-chat-assistant-body';
+    pendingBody.appendChild(ChatView.liveActivityNode({ phase: 'runtime_boot', fields: {} }));
     pending.appendChild(pendingBody);
     flow.appendChild(pending);
     stream.scrollTop = stream.scrollHeight;
@@ -6953,7 +6711,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
 
     textarea.value = '';
     fitComposer(textarea);
-    /* 建议已经被采纳成这一轮了，先撤掉；下一轮结束再问新的。 */
     clearComposerSuggestion();
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
@@ -6966,15 +6723,13 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       activeTaskContext?.taskId || 'studio-pending',
       attachmentPaths,
     );
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), renderer: DshChat.createLiveTurn(pendingBody, undefined, { taskPanel: true }), agentSessionId: activeTaskContext?.taskId || null, streamText: '', reasoningText: '', transcript: ConversationControl.createTranscript(), liveTokens: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), renderer: ChatView.createLiveTurn(pendingBody, undefined, { taskPanel: true }), agentSessionId: activeTaskContext?.taskId || null, streamText: '', reasoningText: '', transcript: ConversationControl.createTranscript(), liveTokens: null };
     const submittedConversation = pendingConversation;
     const conversationId = activeConversationId;
     const hadPendingInput = Boolean(pendingPermissionAsk || pendingAskInput);
     const permissionChoice = pendingPermissionChoice || undefined;
     const permissionPreset = composerPreset;
     const effort = composerEffort;
-    // The new message owns this run. Keep form drafts, but withdraw the old
-    // question while preparation and delivery are in progress.
     syncConversationPendingInput([]);
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
@@ -7007,7 +6762,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       composerSelectedSourceIds.clear();
       renderComposerAttachments();
       renderComposerMaterials();
-      /* 命令结算的副作用：/permission 落芯片，/model 刷新目录标签 */
       const command = (response as { command?: { type?: string; preset?: string } }).command;
       if (command?.type === 'permission' && command.preset) {
         composerPreset = String(command.preset);
@@ -7019,32 +6773,24 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         composerPlan = PlanList.project([{ plan: (response as { plan: unknown }).plan }]);
         renderPlanCard();
       }
-      /* 结构化提问回传：权限门（kind=permission）走三键授权语义；
-         ask_user_question 的 options 走逐选项按钮。都长在 composer 上沿，
-         点按钮即答，不需要打字。 */
       const awaiting = response as {
         awaitingUserInput?: boolean;
         pendingInput?: NonNullable<MagicPointerTurn['pendingInput']>;
-        /* 见上面 pendingPermissionAsk：运行时的权限选项自带决定，位置即契约。 */
       };
       if (awaiting.awaitingUserInput && awaiting.pendingInput) syncConversationPendingInput([{ pendingInput: awaiting.pendingInput }]);
       await openConversation(String(response.conversationId));
       await renderSidebar();
       if (pendingConversation !== submittedConversation) return;
       setComposerSettledState(awaiting.awaitingUserInput ? 'idle' : 'success');
-      /* 联想词在回合彻底结束之后才问——它读的是这一轮的最终结果，不是中间态。
-         故意不 await：输入框不该等一个建议。 */
       if (!awaiting.awaitingUserInput) void refreshComposerSuggestion(activeConversationTurns, activeConversationObject);
     } catch (error) {
       if (pendingConversation !== submittedConversation) return;
       if (hadPendingInput && conversationId) {
         const durable = await Data.conversation(conversationId).catch(() => undefined);
         if (pendingConversation !== submittedConversation || activeConversationId !== conversationId) return;
-        // A rejected send can leave the original question pending. Once a new
-        // turn exists, a provider failure must not resurrect the older request.
         if (durable) syncConversationPendingInput(durable.turns || []);
       }
-      pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
+      pending.replaceChildren(ChatView.turnErrorNode(error instanceof Error ? error.message : String(error)));
       textarea.value = ConversationControl.failedDraftValue(textarea.value, question);
       fitComposer(textarea);
       setComposerSettledState('error');
@@ -7054,20 +6800,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
   });
 });
 
-/* 进行中卡：演示分段推进 */
-(function tickRun() {
-  const segs = document.querySelectorAll('#demo-run .seg');
-  if (!segs.length) return;
-  let n = 3;
-  setInterval(() => {
-    n = n >= 5 ? 1 : n + 1;
-    segs.forEach((s, i) => s.classList.toggle('is-on', i < n));
-  }, 2600);
-})();
-
-/* 开机：侧栏 + 打开最近那条。
-   在此之前 #stream 里是一份静态样例——它只该在没有任何记录时用来占位，
-   绝不能在有真实记录时还挂在那儿骗人。 */
 async function boot(initialView: string) {
   void refreshComposerModel();
   await renderSidebar();
@@ -7079,8 +6811,6 @@ async function boot(initialView: string) {
   startNewChat();
 }
 
-/* 新对话：清空当前这一屏，把焦点交回输入框。
-   不新建记录——记录在第一次真的问出去之后才产生。 */
 function detachPendingConversation() {
   if (pendingRenderTimer !== null) window.clearTimeout(pendingRenderTimer);
   pendingRenderTimer = null;
@@ -7134,20 +6864,18 @@ function startNewChat() {
   if (peek) { peek.hidden = true; }
   const stream = document.getElementById('stream');
   if (stream) {
-    stream.innerHTML = '<div class="dshw-blank" aria-hidden="true"></div>';
+    stream.innerHTML = '<div class="mpw-blank" aria-hidden="true"></div>';
   }
   renderUsageMeter([]);
   const trajectory = document.getElementById('trajectory');
-  if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
+  if (trajectory) trajectory.replaceChildren(ChatTrajectory.render([]));
   setConversationTab('chat');
   void renderStudioHome();
-  // 「+」的可见回应：即便本来就在空会话上，输入卡也要闪一下并聚焦，
-  // 让点击永远有看得见的结果（用户反馈：点了没反应）。
-  const card = document.querySelector<HTMLElement>('#composer-form .dshw-card');
-  const textarea = document.querySelector<HTMLTextAreaElement>('.dshw-input');
+  const card = document.querySelector<HTMLElement>('#composer-form .mpw-card');
+  const textarea = document.querySelector<HTMLTextAreaElement>('.mpw-input');
   if (card) {
     card.classList.remove('is-pulsed');
-    void card.offsetWidth; // restart the animation
+    void card.offsetWidth;  
     card.classList.add('is-pulsed');
     window.setTimeout(() => card.classList.remove('is-pulsed'), 700);
   }
@@ -7159,12 +6887,6 @@ document.getElementById('nav-new-chat')?.addEventListener('click', () => {
   startNewChat();
 });
 
-/* ============================================================
-   收藏箱：悬停图片 1 秒 → 视觉模型摘要浮层
-   ------------------------------------------------------------
-   一次性传很多图时，光看缩略图没法找。停一秒，本地视觉模型给
-   三到四句话，知道它是什么。摘要按条目缓存，不重复调模型。
-   ============================================================ */
 const stashSummaryCache = new Map<string, string>();
 let stashHoverTimer: ReturnType<typeof setTimeout> | null = null;
 let stashHoverTarget: HTMLElement | null = null;
@@ -7180,7 +6902,6 @@ function stashSummaryEl() {
   return el;
 }
 
-/* ---- 收藏图片大图查看窗：左键放大 + 复制图片 ---- */
 function openStashViewer(src: string, desc: string) {
   let viewer = document.getElementById('stash-viewer');
   if (!viewer) {
@@ -7206,7 +6927,6 @@ function openStashViewer(src: string, desc: string) {
     viewer.querySelector('#stash-viewer-copy')!.addEventListener('click', () => {
       const img = viewer!.querySelector('.stash-viewer-img') as HTMLImageElement | null;
       if (!img || !img.src) return;
-      // 把本地图片复制进剪贴板（保留位图，图片编辑器可直接粘贴）
       fetch(img.src).then((r) => r.blob()).then((blob) => {
         navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       }).catch(() => { /* 剪贴板不可用时静默 */ });
@@ -7238,7 +6958,6 @@ document.addEventListener('mouseover', (e) => {
     el.style.top = `${rect.bottom + 10}px`;
     el.textContent = '正在看这张图…';
     el.classList.add('is-visible');
-    // 入库时已自动生成过简介就直接用，不用再等模型
     if (node.dataset.summary) {
       el.textContent = node.dataset.summary;
       return;
@@ -7269,11 +6988,6 @@ document.addEventListener('mouseout', (e) => {
 const initialView = studioShell.normalizeView(new URLSearchParams(location.search).get('view'));
 void boot(initialView === 'chat' && productMode === 'design' ? 'design' : initialView);
 
-// 新的一轮问答落库之后，项目树与产物跟着刷新。
-// conversations:turn 在一条回答的流式期间会连着来（main 的 300ms 实时 flush
-// 每个回合结束再来一次），而这一组刷新里 renderSidebar 与 renderStudioHome
-// 各自都要一次整库的 IPC 往返、renderArtifacts(true) 还要整份 innerHTML 重建。
-// 合并到一帧的尾部：同一个 rAF 窗口里收到 N 次通知，只重建一次列表。
 let conversationChangeRaf: number | null = null;
 Data.onChange((change) => {
   if (change?.id) conversationNotificationSequence += 1;
@@ -7290,8 +7004,6 @@ Data.onChange((change) => {
   });
 });
 
-// 收藏箱条目更新（新采集、自动简介生成）时：只更新简介文本，
-// 不重绘画布（保住用户的平移/缩放状态）。
 function refreshStashSummaries() {
   const world = document.getElementById('canvas-world');
   if (!world) return;
@@ -7319,7 +7031,6 @@ function refreshStashSummaries() {
   }).catch(() => {});
 }
 
-/* 主进程可以直接指定落到哪一屏（托盘「设置…」走这条） */
 window.magicPointerDashboard?.onShow?.((payload) => {
   if (payload?.view) show(String(payload.view));
   if (payload?.conversationId) {
@@ -7330,18 +7041,15 @@ window.magicPointerDashboard?.onShow?.((payload) => {
   }
 });
 
-/* 后台任务的进度。三个界面收到的是同一份补丁，所以同一次出图
-   在哪个窗口看都是同一个进度。工作室的 DSH 回合节点按同款 cardId
-   登记在 LiveCards，补丁落地时就地 replaceWith 重画那一轮。 */
 if (window.magicPointerDashboard?.onCardPatch) {
   window.magicPointerDashboard.onCardPatch((payload) => {
     if (!payload?.cardId) return;
     const updated = LiveCards.patch(payload.cardId, payload.patch || {});
-    const host = dshCardNodes.get(payload.cardId);
+    const host = chatCardNodes.get(payload.cardId);
     if (host && updated) {
-      const replacement = renderDshCardNode(updated);
+      const replacement = renderChatCardNode(updated);
       host.replaceWith(replacement);
-      dshCardNodes.set(payload.cardId, replacement);
+      chatCardNodes.set(payload.cardId, replacement);
     }
   });
 }

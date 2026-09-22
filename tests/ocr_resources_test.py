@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 
 def test_ocr_engine_bounds_native_cpu_pools(monkeypatch):
-    """All OCR entry points must leave cores for the desktop and pointer hook."""
     calls = []
     sentinel = object()
     monkeypatch.setitem(sys.modules, 'cv2', SimpleNamespace(setNumThreads=lambda n: calls.append(('cv', n))))

@@ -1,10 +1,3 @@
-"""Behavioral contracts for W08 document actions.
-
-The fakes model the parts of Office identity that matter: two open windows can
-show same-named presentations, slide order can change, and grouped shapes can
-reuse display names.  Production code must bind by hwnd + full path and then
-by slideId + shapeId, never by title, slide index, or shape name.
-"""
 
 from __future__ import annotations
 
@@ -197,7 +190,6 @@ def test_powerpoint_uses_full_path_hwnd_slide_id_and_recursive_shape_id(tmp_path
         FakePresentation(
             right,
             202,
-            # Slide 700 is deliberately second: slide order is not identity.
             [FakeSlide(999, [FakeShape(42, "Body", "other slide")]),
              FakeSlide(700, [FakeShape(9, "Group", "", [target])])],
         ),
@@ -308,8 +300,6 @@ def test_pdf_rotated_highlight_is_written_to_new_copy_only(tmp_path: Path) -> No
     annotations = list(reopened_page.annots() or ())
     assert len(annotations) == 1
     assert annotations[0].info["subject"] == "Magic Pointer annotation-rotated"
-    # The visual-space rectangle is converted through the page's de-rotation
-    # matrix, so a 90-degree page must not receive the raw rectangle.
     assert tuple(round(value, 2) for value in annotations[0].rect) != (20.0, 30.0, 90.0, 55.0)
     reopened.close()
 
@@ -355,7 +345,7 @@ def test_create_docx_xlsx_and_pptx_are_reopened_and_verified(tmp_path: Path) -> 
 
     assert Document(tmp_path / "report.docx").paragraphs[0].text == "Executive summary"
     assert load_workbook(tmp_path / "report.xlsx", data_only=False)["Summary"]["B2"].value == "=SUM(1,2)"
-    assert len(Presentation(tmp_path / "report.pptx").slides) >= 2  # content + editable sources slide
+    assert len(Presentation(tmp_path / "report.pptx").slides) >= 2
 
 
 def test_file_move_conflict_does_not_overwrite_and_inverse_restores(tmp_path: Path) -> None:

@@ -12,7 +12,6 @@ const pointerState = readCode('scripts/pointer_input_state.ps1');
 
 function readCode(relativePath) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
-  // Static contracts must be satisfied by executable code, never comments.
   return source
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/[^\r\n]*/gm, '$1')
@@ -24,18 +23,10 @@ function requireCode(source, pattern, contract) {
 }
 
 (function pointerStateCarriesForegroundIdentityInEveryJsonShape() {
-  // The snapshot is assembled in the C# helper now rather than in the
-  // PowerShell loop body, because per-tick cmdlets were the poller's dominant
-  // cost. The contract is unchanged: the success shape must carry both
-  // identity fields, each sourced from the right Win32 call, and a fallback
-  // shape must exist that zeroes both.
   requireCode(pointerState, /hwnd\s*=\s*foreground\.ToInt64\(\)/,
     'the snapshot must expose foregroundHwnd from GetForegroundWindow');
   requireCode(pointerState, /GetWindowThreadProcessId\(foreground,\s*out\s+processId\)/,
     'the snapshot must expose foregroundProcessId from GetWindowThreadProcessId');
-  // The JSON keys are assembled with escaped quotes inside a C# verbatim
-  // string, so match on the key being built from the value it just read
-  // rather than on the exact escaping.
   requireCode(pointerState, /foregroundHwnd[^\r\n]{0,10}\+\s*hwnd/,
     'the JSON must carry the foreground HWND it read');
   requireCode(pointerState, /foregroundProcessId[^\r\n]{0,10}\+\s*processId/,

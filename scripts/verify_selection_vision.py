@@ -1,8 +1,3 @@
-"""Explicit read-only Look acceptance on material B of the user's frozen frame.
-
-This deliberately invokes Look to verify real model vision. It does not claim
-that the OCR-covered end-to-end replay automatically required a vision call.
-"""
 from __future__ import annotations
 
 import json
@@ -40,7 +35,6 @@ def main():
     model = current_model
     if "--replay-model" in sys.argv:
         model = json.loads((out / "runtime-result.json").read_text(encoding="utf8"))["model"]["model"]
-    # A test-only request override preserves the user's currently selected model.
     with request_ai_config({"credential": credential, "baseUrl": base_url, "model": model,
                             "apiMode": get_ai_api_mode()}):
         evidence = tool.look(updates[1].binding.reference_id,

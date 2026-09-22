@@ -1,4 +1,3 @@
-"""Computer operators stay behind Magic Pointer's lease and receipt boundary."""
 
 from __future__ import annotations
 

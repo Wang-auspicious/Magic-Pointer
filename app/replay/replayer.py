@@ -1,8 +1,3 @@
-"""ReplayHarness: load a recorded DesktopTrace and iterate it offline.
-
-All file-backed entries are verified on iteration; a missing file raises
-ReplayError instead of being silently skipped.
-"""
 
 from __future__ import annotations
 
@@ -15,7 +10,7 @@ from app.replay.trace_schema import DesktopTrace, PointerSample, TraceFrame, Uia
 
 
 class ReplayError(RuntimeError):
-    """Raised when a trace is missing, corrupt or references a missing file."""
+    pass
 
 
 def _parse_utc(value: str) -> float:

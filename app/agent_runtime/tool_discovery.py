@@ -1,4 +1,3 @@
-"""Compact, registry-owned tool directory and exact schema discovery."""
 from __future__ import annotations
 
 import json
@@ -10,7 +9,6 @@ from app.agent_runtime.tool_registry import FIND_CAPABILITY_TOOL, ToolRegistry, 
 
 
 def tool_directory(specs: Iterable[ToolSpec]) -> str:
-    """Names and first sentences only; full parameters belong in API schemas."""
     rows = []
     for spec in specs:
         summary = re.split(r"[\n。]|(?<=\.)\s", spec.description.strip(), maxsplit=1)[0]
@@ -21,7 +19,6 @@ def tool_directory(specs: Iterable[ToolSpec]) -> str:
 
 
 def register_find_capability(registry: ToolRegistry, *, limit: int = 8) -> ToolSpec:
-    """Discover exact batches or search when the tool name is unknown."""
     def execute(keyword: str = "", names: list[str] | None = None, scope: object = None) -> str:
         if names:
             matches = []

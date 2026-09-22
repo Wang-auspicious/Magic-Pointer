@@ -1,9 +1,3 @@
-"""DraftArtifact value objects.
-
-The durable source is still :mod:`app.agent_runtime.session`.  These frozen
-objects are explicit standalone deliverables the user edits. Ordinary
-conversation answers remain messages and do not create drafts.
-"""
 
 from __future__ import annotations
 
@@ -20,7 +14,7 @@ class DraftState(enum.StrEnum):
 
 
 class ArtifactProjectionError(RuntimeError):
-    """The event stream cannot be projected into a draft without inventing state."""
+    pass
 
 
 def content_hash(content: str) -> str:

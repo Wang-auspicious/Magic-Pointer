@@ -14,10 +14,6 @@ assert(main.includes("fabricSettings?.activation?.mouse_side_button || 'none'"))
 assert(main.includes('requestActivation(mouseActivationReason)'));
 assert(main.includes('pointerPolicy.detectMouseButton'),
   'mouse-button wake remains explicitly enabled by the shared polling policy');
-// The XButton reads moved into the C# ButtonsRaw() helper — the PowerShell
-// loop now calls it instead of doing five GetAsyncKeyState round-trips per
-// tick. The contract is unchanged: side buttons 1 and 2 must reach the polled
-// button mask as bits 3 and 4.
 assert(pointerState.includes('if (IsDown(5)) buttons |= 8;'),
   'the poller must report XButton1 as bit 3 of the button mask');
 assert(pointerState.includes('if (IsDown(6)) buttons |= 16;'),

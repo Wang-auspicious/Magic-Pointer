@@ -1,13 +1,3 @@
-"""turn 端验证门：改了却没验证就想收工时，拦一次。
-
-Hermes ``agent/verification_stop.py`` 的 MP 最小版（policy-only，自己不跑
-任何检查）：本回合执行过写入类效果（REVERSIBLE_WRITE 及更强），最后一次
-写入之后没有新鲜验证证据时，模型试图以 completed 收尾 → 拒绝一次并注入 nudge。
-证据是：通过 ``verify_result`` 的回执、写入工具 JSON 里
-``verification.matched is true``（``Click``/``click`` 除外——点成功不是任务完成）。
-普通 Observe/get_app_state 只提供观察，不构成已通过的验证。已经 nudge 过一次就放行，防死循环。
-纯读回合永远不拦。
-"""
 
 from __future__ import annotations
 
@@ -32,7 +22,6 @@ _GATED_EFFECTS = frozenset({
 
 
 class VerificationGate:
-    """一回合的验证证据账。loop 在工具回执处 ``record_executed``。"""
 
     def __init__(self) -> None:
         self._wrote = False
@@ -46,7 +35,6 @@ class VerificationGate:
         verified: bool,
         tool_name: str = "",
     ) -> None:
-        """记录一次成功执行的工具调用。"""
         if effect in _GATED_EFFECTS:
             self._wrote = True
             self._verified = False
@@ -69,7 +57,6 @@ class VerificationGate:
 
 
 def should_nudge_before_completion(gate: VerificationGate) -> str | None:
-    """模型想收工时问一次：要 nudge 就返回注入文本，否则 None。"""
     if gate._nudged or not gate._wrote or gate._verified:
         return None
     return _NUDGE_MESSAGE

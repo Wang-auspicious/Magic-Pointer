@@ -1,7 +1,3 @@
-"""Failure flow (harness gap review L15/L16): repair dialogue and capability hints.
-
-Pure Python data modules consumed by the UI; no I/O, no Electron coupling.
-"""
 
 from .repair_prompt import (
     RepairAction,

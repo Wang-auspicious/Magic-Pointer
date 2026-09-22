@@ -1,24 +1,3 @@
-"""Harness kernel context tests (plugin-kernel batch, plan T1).
-
-Pins the DSH-Cordis-style semantics re-written in Python
-(docs/2026-08-14-plugin-architecture-review.md):
-
-- ``provide``/``get``/``has``/``keys`` service repository with duplicate
-  rejection and ``service/<key>`` activation events.
-- ``inject`` dependency-driven activation: runs immediately when all deps
-  are present, otherwise waits for the last dep; activations cascade and
-  register into the same LIFO teardown stack as effects.
-- ``effect`` reversible registrations unwound LIFO on ``unload``; a raising
-  disposer never prevents the rest from unwinding.
-- Events must be declared with a dispatch mode; emitting with the wrong
-  method raises. emit / waterfall (short-circuitable) / parallel /
-  serial(last-result) semantics.
-- ``on`` listeners are reversible; prepend=True runs before others.
-- ``scope()`` child contexts read services from the parent, confine their
-  own registrations, and unload independently.
-- ``revoke`` disposes the inject scope that depended on the removed
-  service.
-"""
 
 from __future__ import annotations
 
@@ -70,8 +49,6 @@ def test_inject_waits_for_last_dep_and_activates_in_registration_order():
 
 
 def test_inject_cascades_within_its_fork():
-    """An inject callback runs inside a fork: services it provides stay in
-    the fork, but the fork is a full context, so nested injects cascade."""
     ctx = Context()
     order: list[str] = []
 
@@ -82,7 +59,7 @@ def test_inject_cascades_within_its_fork():
     ctx.inject(["a"], outer)
     ctx.provide("a", object())
     assert order == ["b-ready"]
-    assert ctx.has("b") is False  # fork provides never leak to the parent
+    assert ctx.has("b") is False
 
 
 def test_service_activation_event_fires_on_provide():
@@ -127,7 +104,7 @@ def test_raising_disposer_does_not_block_the_rest():
 
     ctx.effect(broken)
     ctx.effect(lambda: disposed.append("ok"))
-    ctx.unload()  # must not raise
+    ctx.unload()
     assert disposed == ["ok"]
 
 
@@ -204,7 +181,7 @@ def test_waterfall_delegates_and_can_short_circuit():
 
     def short(payload, next):
         calls.append("short")
-        return 100  # no next() call: short-circuit
+        return 100
 
     ctx.on("decision", wrap)
     ctx.on("decision", short)
@@ -310,7 +287,6 @@ def test_scope_reads_parent_services_and_confines_own_registrations():
     child.provide("own", object())
     assert child.has("own") is True
     assert parent.has("own") is False
-    # child listeners are isolated from parent emissions
     parent.declare("tick", "emit")
     seen: list[int] = []
     child.on("tick", seen.append)
@@ -443,8 +419,6 @@ def test_provide_up_exposes_fork_service_on_root_and_revokes_on_unload():
     fork = root.scope()
     fork.provide_up("plugin_svc", object())
     assert root.has("plugin_svc")
-    # `has` reads through to the parent, so the fork sees it too; the point
-    # is that the service lives on the root, not on the fork.
     fork.unload()
     assert root.has("plugin_svc") is False
 
@@ -458,7 +432,6 @@ def test_provide_up_activates_root_dependents_and_revoke_disposes_them():
     fork.provide_up("plugin_svc", object())
     assert order == ["ready"]
     fork.unload()
-    # revoke cascaded: the dependent fork's teardown already ran
     assert root.has("plugin_svc") is False
 
 

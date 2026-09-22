@@ -51,8 +51,6 @@ def test_act_reuses_verified_successor_and_does_not_claim_unchecked_success():
                                        expect={"text": "Ready", "timeout_ms": 100}))
     assert result["verification"]["found"] is True
     assert result["verification"]["state_id"] == result["state_id"]
-    # A no-op click leaves the tree unchanged: the returned full view must
-    # actually contain the actionable outline, not just an empty diff.
     next_result = json.loads(session.act_ui(result["state_id"], [{"action": "click", "ref": "@e1"}]))
     assert next_result["verification"]["status"] == "unavailable"
     assert next_result["view"] == "full"

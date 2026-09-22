@@ -1,15 +1,3 @@
-"""Agent hooks (CC PreToolUse/PostToolUse/Stop/UserPromptSubmit pattern).
-
-Claude Code's hooks are user/session-configurable interceptors: before a tool
-runs (can block or mutate input), after it runs (can block or append context),
-and around turns. This module is the harness-side contract: a
-:class:`HookManager` holds ordered hook lists per event kind, runs them with
-the same semantics (a ``block`` decision stops the action and the reason is
-fed back to the model), and never lets a raising hook kill the loop.
-
-Pure Python; the hook callables themselves are injected (real
-user-configured hooks are a later config-layer task).
-"""
 
 from __future__ import annotations
 
@@ -28,7 +16,6 @@ __all__ = [
 
 
 class HookDecision(Protocol):
-    """One hook callable; see each event kind for the exact input shape."""
 
     def __call__(self, payload: dict[str, Any]) -> dict[str, Any] | None: ...
 
@@ -39,7 +26,6 @@ PostToolUseHook = Callable[[dict[str, Any]], dict[str, Any] | None]
 
 @dataclass(frozen=True)
 class HookOutcome:
-    """The manager's verdict after running every hook of one kind."""
 
     allowed: bool
     reason: str
@@ -50,7 +36,6 @@ class HookOutcome:
 
 @dataclass
 class HookManager:
-    """Ordered hook lists; the first blocking decision wins (CC semantics)."""
 
     pre_tool_use: list[PreToolUseHook] = field(default_factory=list)
     post_tool_use: list[PostToolUseHook] = field(default_factory=list)
@@ -78,14 +63,9 @@ class HookManager:
         return False
 
     def scope_for(self, context: Any) -> _ScopedHookManager:
-        """Return a plugin-scope view whose hook additions auto-unwind."""
         return _ScopedHookManager(self, context)
 
     def run_pre_tool_use(self, tool_name: str, arguments: dict[str, Any]) -> HookOutcome:
-        """Run PreToolUse hooks. A hook returning ``{"decision": "block",
-        "reason": ...}`` blocks the tool; a ``decision: "approve"`` short-
-        circuits the remaining hooks; ``None`` = pass. Mutated ``input`` is
-        carried forward hook to hook."""
         payload = {"tool_name": tool_name, "input": copy.deepcopy(arguments or {})}
         decisions: list[dict[str, Any]] = []
         for hook in self.pre_tool_use:
@@ -124,8 +104,6 @@ class HookManager:
     def run_post_tool_use(
         self, tool_name: str, arguments: dict[str, Any], result: Any
     ) -> HookOutcome:
-        """Run PostToolUse hooks; ``extraContext`` accumulates into feedback
-        appended to the tool result; a ``block`` marks the outcome blocked."""
         payload = {
             "tool_name": tool_name,
             "input": copy.deepcopy(arguments or {}),
@@ -162,7 +140,6 @@ class HookManager:
 
 
 class _ScopedHookManager:
-    """Context-bound hook registry view."""
 
     def __init__(self, manager: HookManager, context: Any) -> None:
         self._manager = manager

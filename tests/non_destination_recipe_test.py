@@ -1,16 +1,3 @@
-"""一个提问不能被"点选"这类感知步骤接走。
-
-实测（2026-08-05，真微信）：在一条会话上划线并问「这是什么」，L2 把每条 recipe
-当工具交给模型挑，模型挑了 `element.pick`，于是气泡回了一句
-
-    点选元素追问：已锁定 1 个对象，provider=internal。 将直接执行并验证。
-
-用户问的是"这是什么"，拿到的是一句关于我们内部状态的通告。
-
-`element.pick` 的 outputKind 是 `grounded_object`——和早就被排除掉的 `ground.this`
-一模一样。两者都是**把对象锁定下来**，而锁定在用户敲下这条指令之前就已经发生了。
-所以判据不该是手工维护的名字清单（漏了一个就复发），而该是 recipe 自己声明的产物类型。
-"""
 
 from __future__ import annotations
 
@@ -46,7 +33,6 @@ def test_real_capabilities_remain_reachable() -> None:
 
 
 def test_every_grounded_object_recipe_is_excluded_by_kind_not_by_name() -> None:
-    """新增一条产出 grounded_object 的能力时不该需要有人记得改名单。"""
     assert "grounded_object" in NON_DESTINATION_OUTPUT_KINDS
     for recipe in load_recipes():
         if recipe.output_kind in NON_DESTINATION_OUTPUT_KINDS:

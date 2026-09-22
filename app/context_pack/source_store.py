@@ -1,4 +1,3 @@
-"""EventSession-backed projection for task sources and persistent references."""
 
 from __future__ import annotations
 
@@ -27,8 +26,6 @@ def _context_events(events: Iterable[Any]):
         if event_type == "context/updated":
             yield data
         elif event_type == "inbox/consumed" and isinstance(data.get("contextUpdate"), Mapping):
-            # Claiming TaskInput is one durable event: its model-surface data
-            # messages and reference projection become visible together.
             yield dict(data["contextUpdate"])
 
 

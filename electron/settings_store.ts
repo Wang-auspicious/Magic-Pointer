@@ -61,9 +61,6 @@ function normalizedShortcut(value: unknown): string {
   return [...modifiers, key].join('+');
 }
 
-// Accept "r, g, b" or "#rrggbb"; fall back to the default rather than throwing.
-// An unreadable accent is cosmetic, and refusing to load settings over it would
-// turn a typo into an app that will not start.
 function normalizeAccentRgb(value: unknown, fallback: string): string {
   const text = String(value == null ? '' : value).trim();
   if (text.startsWith('#')) {
@@ -125,7 +122,7 @@ function defaultSettings() {
       voice_resident_enabled: false,
       voice_engine: 'auto',
       voice_memory_limit_mb: 1024,
-      voice_idle_unload_ms: 0, // 0 = keep the voice model resident
+      voice_idle_unload_ms: 0,  
       voice_glossaries: {},
     },
     agents: {
@@ -186,9 +183,6 @@ function defaultSettings() {
       capsule_inline_gap_dip: 18,
       gesture_line_style: 'demo6_band',
       gesture_line_width_dip: 40,
-      // "r, g, b". The stage derives every accent alpha from this, so changing
-      // it retints the whole surface. Channels rather than hex because that is
-      // what CSS needs to compose the alphas.
       accent_rgb: '38, 115, 235',
     },
     accessibility: {
@@ -200,20 +194,14 @@ function defaultSettings() {
       browser_devtools_enabled: true,
       browser_devtools_endpoints: ['http://127.0.0.1:9222'],
     },
-    // 收藏箱的常驻剪贴板监控默认关闭。用户显式加入的材料仍可收藏；
-    // 只有明确打开开关后，后台才观察后续复制内容。
     stash: {
       clipboard: false,
-      // 文本默认关。图片是用户明确截下来的，文本不是——每一次 Ctrl+C 都会
-      // 经过这里，包括密码管理器里的那一次。
       text: false,
       text_min_chars: 12,
       dir: '',
       burst_window_ms: 120000,
       dedupe_window_ms: 5000,
     },
-    // 用户明确创建的材料关注／定时任务。观察器只在桌面进程存活时运行；
-    // Runtime 状态（lastObserved/lastRun）和配置一起落盘，供休眠恢复合并使用。
     context_trackers: [] as ReturnType<typeof normalizeContextTracker>[],
     recipe_enabled: {},
   };
@@ -519,8 +507,6 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     ? settings.appearance
     : {};
   const appearance = { ...defaults.appearance, ...rawAppearance };
-  // v1 drew only an 8-DIP thin stroke. Absence of a style marker means the
-  // width still has those old semantics, so migrate it to the new Demo 6 band.
   if (!Object.prototype.hasOwnProperty.call(rawAppearance, 'gesture_line_style')) {
     appearance.gesture_line_style = defaults.appearance.gesture_line_style;
     appearance.gesture_line_width_dip = defaults.appearance.gesture_line_width_dip;

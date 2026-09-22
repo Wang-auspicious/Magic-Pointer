@@ -1,13 +1,3 @@
-"""首次运行时扫一遍：这台机器的聊天软件仓库在哪。
-
-每台电脑的仓库位置都不一样——微信安装时就让人挑盘，钉钉/飞书各有各的默认。靠一张
-写死的候选表等于赌对方和你一样，所以安装时扫一次，结果落盘，之后每次直接读缓存。
-
-    python scripts/discover_chat_stores.py
-    python scripts/discover_chat_stores.py --root D:\MyTencent      # 手动补一条
-
-扫描只到每个固定盘的前两层目录名，不做全盘遍历。找不到就报找不到——不猜。
-"""
 
 from __future__ import annotations
 

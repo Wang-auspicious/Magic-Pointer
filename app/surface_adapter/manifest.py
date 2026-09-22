@@ -1,9 +1,3 @@
-"""SurfaceAdapter manifest: declarative display metadata (design §8).
-
-Behaviour lives in the adapter code (single source of truth, like the
-capability-tool schemas); the manifest keeps only data-shaped facts used
-for discovery, listing and the Reuse Gate review.
-"""
 
 from __future__ import annotations
 
@@ -60,9 +54,6 @@ class SurfaceAdapterManifest:
 
     @staticmethod
     def _string_tuple(value: Any, field_name: str) -> tuple[str, ...]:
-        # A manifest that writes "app_ids": "wechat" (string instead of array)
-        # used to iterate into single characters and claim nearly every window
-        # (perception-audit P2: type-confused manifest -> adapter matches all).
         if value is None:
             return ()
         if not isinstance(value, (list, tuple)):
@@ -74,12 +65,6 @@ class SurfaceAdapterManifest:
         )
 
     def matches_window(self, window: dict[str, Any]) -> bool:
-        """True when this manifest claims the given window identity.
-
-        Process names match the executable basename exactly (``evilwechat.exe``
-        is not ``wechat.exe``); title/class patterns are deliberately
-        substring signals but only fire when the window actually exposes them.
-        """
         process = str(window.get("process_name") or "").casefold()
         app = str(window.get("app") or "").casefold()
         class_name = str(window.get("class_name") or "").casefold()
@@ -104,9 +89,6 @@ class SurfaceAdapterManifest:
 
 
 def _title_claims(pattern: str, title: str) -> bool:
-    """A title pattern claims a window when the title IS the pattern or the
-    pattern leads the title (separator follows) — a bare substring match
-    claimed '微信使用技巧 - Chrome' as WeChat (perception-audit P2)."""
     folded_pattern = pattern.casefold()
     folded_title = title.casefold()
     if folded_title == folded_pattern:
@@ -118,7 +100,6 @@ def _title_claims(pattern: str, title: str) -> bool:
 
 
 def load_manifest(path: Path) -> SurfaceAdapterManifest:
-    """Load + validate one manifest JSON; raises on malformed input."""
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     manifest = SurfaceAdapterManifest.from_dict(data)

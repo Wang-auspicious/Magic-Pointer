@@ -1,8 +1,3 @@
-"""Bind explicitly named, unambiguous visible applications to a text task.
-
-Only top-level window metadata is used here. Deep reads still go through
-Observe and every input action retains its snapshot/effect permission checks.
-"""
 
 from __future__ import annotations
 

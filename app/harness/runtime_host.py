@@ -1,4 +1,3 @@
-"""Process-lifetime harness host with cheap, isolated request scopes."""
 
 from __future__ import annotations
 
@@ -20,7 +19,6 @@ __all__ = ["HarnessRuntimeHost", "RuntimeScope"]
 
 @dataclass(slots=True)
 class RuntimeScope:
-    """One request/run scope owned by a process host."""
 
     report: BootReport
     _closed: bool = False
@@ -44,13 +42,6 @@ class RuntimeScope:
 
 
 class HarnessRuntimeHost:
-    """Mount stable services once and create a lightweight scope per run.
-
-    User plugin discovery/import happens at construction only. Run scopes read
-    process services through their parent, receive scoped views for registries,
-    and own every run registration/export. Closing a scope therefore removes
-    its tools and services without rebuilding or stopping the process host.
-    """
 
     def __init__(
         self,
@@ -119,15 +110,11 @@ class HarnessRuntimeHost:
                 context=child,
             )
         except BaseException:
-            # The caller cannot close a scope it never received.  Unwind all
-            # partially mounted plugins/services before propagating startup
-            # failures (including cancellation-style BaseException values).
             child.unload()
             raise
         return RuntimeScope(report)
 
     def _refresh_user_plugins(self) -> None:
-        """Adopt plugin file changes for future request scopes only."""
         if self._plugin_dir is None:
             return
         signature = _plugin_tree_signature(self._plugin_dir)
@@ -146,7 +133,6 @@ class HarnessRuntimeHost:
 
 
 def _plugin_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
-    """Cheap request-boundary fingerprint; never imports plugin code."""
     if not path.is_dir():
         return ()
     rows: list[tuple[str, int, int]] = []

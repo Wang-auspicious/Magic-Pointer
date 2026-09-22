@@ -1,9 +1,3 @@
-"""WeChat public-surface adapter with honest chat semantics.
-
-The Windows client may expose either a bounded UIA subtree or only a painted
-message pane. UIA text is emitted in visual order, but unavailable message
-semantics stay blank and explicitly request visual observation.
-"""
 
 from __future__ import annotations
 
@@ -75,8 +69,6 @@ def _conversation_identity(
         conversation_key = f"{account_key}:{native_id}" if account_key else native_id
         provenance = "native"
     else:
-        # This binds the observed app/window surface; it does not claim the app
-        # exposed a native conversation id. HWND keeps equal titles distinct.
         conversation_key = f"{adapter_id}:window:{hwnd}:surface:{surface_id or 'root'}"
         provenance = "window-surface"
     return {
@@ -98,7 +90,6 @@ def _conversation_identity(
 
 
 class WeChatSurfaceAdapter(SurfaceResolver):
-    """Resolve a WeChat chat surface; subclasses can reuse the contract."""
 
     manifest = WECHAT_MANIFEST
     adapter_id = "wechat"
@@ -108,7 +99,6 @@ class WeChatSurfaceAdapter(SurfaceResolver):
         return self.manifest.matches_window(window)
 
     def conversation_identity(self, window: Mapping[str, Any]) -> dict[str, Any]:
-        """Bind a frozen window record without performing another live read."""
         return _conversation_identity(self.adapter_id, window, {})
 
     def resolve(
@@ -179,7 +169,6 @@ class WeChatSurfaceAdapter(SurfaceResolver):
                     if value is None
                 ]
                 objects.append(RawObject(
-                    # Visible order is an object-graph anchor, not a native id.
                     id=f"{self.adapter_id}-visible-message-{visible_index}",
                     kind="chat_message",
                     label="可见消息",

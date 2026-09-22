@@ -180,8 +180,6 @@ class WiggleDetector {
     const yRange = Math.max(...ys) - Math.min(...ys);
     const minRange = 28 * this.thresholdScale;
     if (xRange < minRange) return { ready: false, reason: 'horizontal_range', durationMs, xRange, yRange };
-    // User intent is three alternating horizontal-ish strokes. Permit a
-    // generous diagonal axis; reject only motion that is predominantly vertical.
     if (yRange > Math.max(48, xRange * 0.90)) {
       return { ready: false, reason: 'vertical_drift', durationMs, xRange, yRange };
     }
@@ -267,8 +265,6 @@ class WiggleDetector {
       return { triggered: false, reason: 'idle', metrics: {} };
     }
 
-    // A wiggle is one continuous movement burst. Old ordinary mouse travel
-    // must never make the next deliberate left-right-left gesture harder.
     if (this.lastMotionAt === null || point.t - this.lastMotionAt >= this.idleResetMs) {
       this.points = [previousSample];
     }

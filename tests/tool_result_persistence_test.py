@@ -1,11 +1,3 @@
-"""工具结果落盘回读（persisted-output，CC/Hermes 同款三层防溢出）。
-
-现状只有一层：64K 字符 head+tail 硬截断——截掉的中间内容模型永远拿不
-回来，Grep 命中 500 行里只剩头尾。本契约钉死：超限结果全文落盘到
-``<workspace>/.mp/tool-results/<call_id>.txt``，模型收到预览 + 路径 +
-Read 回读指引；没有落盘目录（无工作区）时保留旧 head+tail 兜底。
-Read 自身加工具内字符上限，防止 persist → read → persist 死循环。
-"""
 
 from __future__ import annotations
 
@@ -46,7 +38,6 @@ def test_without_persist_dir_oversized_result_falls_back_to_head_tail() -> None:
     returned = _bounded_tool_result(value)
     assert len(returned) <= 64_001
     assert "tool result truncated" in returned
-    # 无处落盘时中间内容确实丢了——这正是要用落盘回读替换的行为。
     assert "A" * 100 not in returned[:10_000] or True
 
 
@@ -61,7 +52,6 @@ def test_unwritable_persist_dir_degrades_to_truncation(tmp_path) -> None:
     assert "tool result truncated" in returned
 
 
-# ---- loop 集成：tool_result_dir 进 LoopParams 后工具消息携带回读路径 ----
 
 
 def test_loop_tool_message_carries_persisted_path_for_oversized_result(tmp_path) -> None:
@@ -132,7 +122,6 @@ def test_loop_tool_message_carries_persisted_path_for_oversized_result(tmp_path)
     assert (tmp_path / "call_big.txt").read_text(encoding="utf-8") == big
 
 
-# ---- Read 工具内字符上限（防 persist→read→persist 死循环）----------
 
 
 def test_read_file_caps_output_chars_with_pagination_hint(tmp_path) -> None:
@@ -151,6 +140,5 @@ def test_read_file_caps_output_chars_with_pagination_hint(tmp_path) -> None:
     first_page = Read(path="huge.log", offset=1, limit=2000)
     assert len(first_page) < 70_000, f"Read 单页必须被字符上限截住：{len(first_page)}"
     assert "offset" in first_page, "截断提示必须告诉模型用 offset/limit 分页取"
-    # 分页读不会死循环：第二页照常返回。
     second_page = Read(path="huge.log", offset=800, limit=100)
     assert second_page

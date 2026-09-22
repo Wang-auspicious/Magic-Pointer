@@ -42,9 +42,6 @@ def test_model_plan_routes_to_recipe_without_keywords(tmp_path: Path) -> None:
     plan = result["plan"]
     assert plan["recipeId"] == "text.translate_in_place"
     assert plan["command"] == "translate the selected text to English"
-    # The model cannot bypass the local permission policy: default_write is
-    # "confirm", so a local-write plan still requires confirmation even when
-    # the model says needsConfirmation=false.
     assert plan["requiresConfirmation"] is True
     assert plan["parameters"]["modelPlan"]["toolCalls"][0]["tool"] == "translate_text"
     assert plan["parameters"]["modelToolCalls"][0]["arguments"] == {"language": "en"}
@@ -163,4 +160,4 @@ def test_model_plan_copy_text_executes_end_to_end(tmp_path: Path) -> None:
     receipt = engine.execute(plan, confirmed=True)
     assert receipt["status"] == "succeeded"
     assert receipt["verified"] is True
-    assert clipboard["value"] == "订单号 138 0013 8000"  # copy_text preserves spacing; clean_ocr_text strips it
+    assert clipboard["value"] == "订单号 138 0013 8000"

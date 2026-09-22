@@ -1,12 +1,3 @@
-"""Skill writer: closes Hermes' self-evolution loop (agent writes its own skills).
-
-Hermes' edge is that the agent distills recurring lessons into skill files and
-its own future sessions pick them up. MP already had the read side
-(:class:`~app.agent_runtime.memory.SkillLoader` injects relevant skills from
-``<user_data>/skills``); this adds the write side: one ``save_skill`` tool the
-model calls to persist a distilled procedure. Next turn, the loader routes it
-back in by token overlap — no extra machinery.
-"""
 
 from __future__ import annotations
 
@@ -24,7 +15,6 @@ _MAX_SKILL_CHARS = 12_000
 
 
 def register_skill_writer(registry: ToolRegistry, *, skills_root: Path | str) -> None:
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("save_skill", "SaveSkill")
     root = Path(skills_root)
 
@@ -83,5 +73,5 @@ def register_skill_writer(registry: ToolRegistry, *, skills_root: Path | str) ->
         is_concurrency_safe=False,
         used_backend="workspace_fs",
         timeout_ms=10_000,
-        deferred=True,  # 经验沉淀是低频动作
+        deferred=True,
     ))

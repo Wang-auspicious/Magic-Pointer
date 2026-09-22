@@ -1,8 +1,3 @@
-"""Session-owned planning state, separate from the Todo progress list.
-
-Behavioral reference: Claude Code EnterPlanMode/ExitPlanMode and session
-permission transitions. Implementation uses MP's existing event journal.
-"""
 from __future__ import annotations
 
 import json
@@ -18,8 +13,6 @@ def current_mode(session: Any, fallback: str) -> str:
 
 
 def select_mode(session: Any, requested: str) -> str:
-    """A changed composer selection overrides the session; an unchanged one
-    must not undo an approved plan or an in-loop EnterPlanMode transition."""
     previous = next((event.data['requested'] for event in reversed(session.events)
                      if event.type == 'permission/mode' and 'requested' in event.data), None)
     if previous != requested:

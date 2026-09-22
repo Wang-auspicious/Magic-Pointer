@@ -59,13 +59,7 @@ from scripts._bridge_common import (
 enable_dpi_awareness()
 
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer Stage"}
-# A frozen moment does not expire; only the frozen PNG behind it is eventually
-# pruned (by retention days, in _prune_capture_dir). `expires_at` therefore
-# describes when the evidence file may stop existing, not when the reading stops
-# being true. Nothing gates a question on it — the 120s gate that used to live
-# in selection_bridge is gone, because it failed second questions on evidence
-# that was still on disk.
-SNAPSHOT_TTL_SECONDS = 7 * 86400  # matches the default capture retain_days
+SNAPSHOT_TTL_SECONDS = 7 * 86400
 VISUAL_REGION_WIDTH = 640
 VISUAL_REGION_HEIGHT = 420
 POINTER_ANCHOR_SIZE = 16
@@ -98,16 +92,6 @@ def _window_identity(window: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-# What makes a window *that* window. A handle plus the process behind it, and the
-# virtual desktop it lives on, because the same hwnd on another desktop is not
-# something the user is looking at.
-#
-# Title and bbox are deliberately absent. They are state, not identity: WeChat
-# retitles on an incoming message, a terminal retitles on every command, a window
-# animates when it is restored. Treating those as identity changes aborted the
-# capture — and for apps that expose nothing to UI Automation, the capture is the
-# only way to read anything at all, so a retitle was taking the feature down. Every
-# test written for this guard changes hwnd or desktop_id, which is its real intent.
 IDENTITY_FIELDS = ("hwnd", "processId", "processName", "desktopId")
 
 
@@ -120,12 +104,6 @@ def _same_window_identity(expected: dict[str, Any], actual: dict[str, Any]) -> b
 
 
 def _same_window_geometry(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
-    """Are the window's pixels still where we thought they were?
-
-    Separate from identity because the answer calls for something different: a
-    window that moved is still the right window, it just needs grabbing again at
-    its new position. Adapters that report no geometry are not "moved".
-    """
     before, after = expected.get("bbox"), actual.get("bbox")
     if not before or not after:
         return True
@@ -133,14 +111,6 @@ def _same_window_geometry(expected: dict[str, Any], actual: dict[str, Any]) -> b
 
 
 def read_payload() -> dict[str, Any]:
-    # Bounded like every other bridge: an oversized payload (a corrupt gesture,
-    # a malicious caller) must be rejected, not buffered without limit — but a
-    # selection is bounded by the selection budget, not by the 64 KiB that
-    # ordinary control commands use. A completed gesture carries the frozen
-    # frame's lease, the window table and one structured observation per stroke;
-    # three ordinary windows already exceed the control-command ceiling, and the
-    # rejection surfaced to the user as "shrink your selection", which was never
-    # what went wrong.
     return read_bounded_json_payload(MAX_SELECTION_PAYLOAD_BYTES)
 
 
@@ -154,10 +124,6 @@ def _window_dicts(
         if title in MAGIC_WINDOW_TITLES:
             continue
         windows.append(dict(item))
-    # A foreground HWND captured at gesture start is a committed identity.  It
-    # must outrank point containment: every maximized window contains the same
-    # coordinates, and enumeration order is not z-order.  Point geometry is only
-    # a fallback for callers that could not lock a window.
     requested_hwnd = int(preferred_hwnd or 0)
     if requested_hwnd:
         requested = next(
@@ -191,14 +157,12 @@ def _window_dicts(
 
 
 def _desktop_window() -> dict[str, Any] | None:
-    """Desktop is a shell surface even though normal window lists omit it."""
     if os.name != "nt":
         return None
     from ctypes import wintypes
     from app.system_context import process_name_for_pid
     user32 = ctypes.windll.user32
     hwnd = user32.FindWindowW("Progman", None)
-    # Windows 11 can host the icon view under WorkerW instead of Progman.
     worker = 0
     while True:
         worker = user32.FindWindowExW(0, worker, "WorkerW", None)
@@ -218,7 +182,6 @@ def _desktop_window() -> dict[str, Any] | None:
 
 
 def _capture_stroke_materials(windows, gesture, *, registry=None, policy=None):
-    """Bind every stroke to its own surface; all pixels stay in the one lease."""
     from concurrent.futures import ThreadPoolExecutor
     def read(item):
         index, stroke = item
@@ -281,10 +244,6 @@ def _read_target_context(
         command="",
         target_point=target_point,
         target_region=target_region,
-        # broker 默认 2000ms：Chromium 冷树上的区域遍历（6000 节点上限）
-        # 首跑就要 1.5~2s，会被这个默认值掐死在刚要答对的时刻——真机复现：
-        # ZCode 圈两行只识别一行、句柄回放不发。OCR 兜底路径实测 5.7s，
-        # 4s 的结构化额度完全在既有延迟包络内。
         deadline_ms=6000,
         **(frozen_evidence or {}),
     )
@@ -302,13 +261,6 @@ def _surface_adapter_attempt(
     gesture: dict[str, Any] | None,
     fallback_point: dict[str, int] | None,
 ):
-    """SurfaceAdapter chain (design §8): first claiming adapter wins.
-
-    Returns ``(AdapterReadContext | None, attempt | None)``. Text-bearing
-    resolutions become the structured context; anchor-only resolutions
-    (opaque trees) return ``(None, attempt)`` so the generic chain still
-    runs and the attempt is recorded in the perception trace.
-    """
     from app.adapters.base import AdapterReadContext
     from app.harness.builtin_bundle import boot_surface_context
 
@@ -348,8 +300,6 @@ def _surface_adapter_attempt(
             "status": "empty",
             "reason": "adapter_claimed_but_empty",
         }
-    # A conversation title binds the surface but does not read the user's mark.
-    # Only message/list content may compete in perception fusion.
     text_objects = [
         obj for obj in result.objects
         if obj.kind != "conversation" and obj.text.strip()
@@ -384,12 +334,6 @@ def _surface_provider_result(
     gesture: dict[str, Any] | None,
     fallback_point: dict[str, int] | None,
 ) -> ProviderResult:
-    """The surface-adapter chain as one observation among the others.
-
-    It used to overwrite the whole perception trace on a hit, which deleted
-    every observation the concurrent read had just collected. Now a claiming
-    adapter is ranked, not privileged.
-    """
     ctx, attempt = _surface_adapter_attempt(windows, gesture, fallback_point)
     if ctx is not None:
         return ProviderResult(
@@ -403,8 +347,6 @@ def _surface_provider_result(
         return ProviderResult(status=EvidenceStatus.UNSUPPORTED, reason=NOT_APPLICABLE)
     if str(attempt.get("status") or "") == "error":
         return ProviderResult(status=EvidenceStatus.ERROR, reason=reason)
-    # An adapter that claimed the window and returned anchors without text has
-    # not read the mark, and it has not confirmed the surface is empty either.
     return ProviderResult(status=EvidenceStatus.UNSUPPORTED, reason=reason)
 
 
@@ -413,12 +355,6 @@ def _explorer_provider_result(
     gesture: dict[str, Any] | None,
     fallback_point: dict[str, int] | None,
 ) -> ProviderResult:
-    """Explorer grounding as one observation, no longer a short circuit.
-
-    It ran before the generic chain and took over the whole read on a hit, so
-    UIA never got the chance to corroborate or contradict it on the one surface
-    where both can answer.
-    """
     context, grounding, trace = read_explorer_file_context(
         windows,
         gesture=gesture,
@@ -604,10 +540,6 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
             ]
             remaining -= len(stroke_points)
             if len(stroke_points) >= 2:
-                # 每一笔的区域几何（圈的环 / 线的走廊）必须一起带过去。它原来
-                # 在这里被丢掉——上面只重建了 points，于是 Electron 画出来的
-                # 多边形永远到不了 Python，OCR 只能退回 bbox：圈得松一点就会
-                # 把旁边几行一起圈进来，用户看到的是「我明明只圈了这一段」。
                 stroke = {"points": stroke_points}
                 geometry = raw_stroke.get("geometry") if isinstance(raw_stroke, dict) else None
                 if isinstance(geometry, dict):
@@ -641,10 +573,6 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
             "x": min(xs), "y": min(ys),
             "width": max(xs) - min(xs), "height": max(ys) - min(ys),
         }
-    # A line is a physical stroke corridor, not a zero-area mathematical
-    # segment. External callers and perfectly steady automation can still send
-    # a 0px axis even though Electron normally expands by 8 DIPs × display DPI.
-    # Keep the corridor centered so grounding, capture and OCR share one scope.
     minimum_thickness = 8
     if bbox["width"] < minimum_thickness:
         center_x = bbox["x"] + bbox["width"] / 2
@@ -696,13 +624,6 @@ def _gesture_points(gesture: dict[str, Any] | None) -> list[tuple[int, int]]:
 
 
 def _gesture_stroke_points(gesture: dict[str, Any] | None) -> list[list[tuple[int, int]]]:
-    """每一笔各自的点，按手势顺序，一笔一项（没有点的那笔也占一个位置）。
-
-    位置就是名字：材料是一个笔画一份（`_capture_stroke_materials` 用
-    `enumerate` 发 `stroke_index`），标注也用同一个下标取字母。中间省掉一笔
-    会让后面每一笔的字母整体前移，图和材料从此对不上，而且是对不上的时候
-    看起来完全正常。
-    """
     if not isinstance(gesture, dict):
         return []
     strokes = gesture.get("strokes") if isinstance(gesture.get("strokes"), list) else []
@@ -724,16 +645,6 @@ def _annotate_frozen_surface(
     surface_bounds: tuple[int, int, int, int],
     stroke_polylines: list[list[tuple[int, int]]],
 ) -> str | None:
-    """把用户的笔迹画到冻结的那张面上，另存一份；画不出来就返回 None。
-
-    没有这一份，模型拿到的是一张整屏裸图加一句「用户圈了这里」：自绘应用里它
-    既认不出圈的是什么，也没有任何东西告诉它圈在哪，只能自己在 3120×2080 里
-    找。画在**整张冻结面**上而不裁到笔迹那一小块——只截那一行的代价是连「这是
-    微信还是网页」都丢了，业务先验全部归零。
-
-    标注是证据的注脚，不是证据本身，所以这一份允许失败：失败就返回 None，调用
-    方照旧用没标注的原图，快照的形状不变。
-    """
     if not stroke_polylines:
         return None
     try:
@@ -751,11 +662,6 @@ def _annotate_frozen_surface(
         return None
 
 
-# Wall-clock ceiling for the per-sample fallback cascade. Measured 2026-08-04:
-# one cascade costs 0.3-3.7s depending on the window (Chromium's devtools
-# adapter alone is ~2.1s), so nine in series can reach 13s. 3.5s buys the first
-# two or three samples on a slow window and all nine on a fast one, and the
-# capsule stays usable either way. Always attempts at least one sample.
 GESTURE_SAMPLE_BUDGET_S = 3.5
 
 
@@ -789,9 +695,6 @@ def _is_enclosed_gesture(gesture: dict[str, Any] | None, points: list[tuple[int,
     closure_tolerance = max(30.0, min(width, height) * 0.70)
     required_area = width * height * 0.18
     best_loop_area = 0.0
-    # A user often finishes a lasso with a short exit stroke. Look for the
-    # largest near-closed subpath instead of requiring the whole stroke's last
-    # point to return to its first point.
     for start in range(0, len(points) - 4):
         for end in range(start + 4, len(points)):
             closure_distance = math.hypot(
@@ -852,12 +755,6 @@ def _context_rectangles(context: Any) -> list[list[int]]:
 
 
 def _gesture_mark_bbox(gesture: dict[str, Any] | None) -> list[int] | None:
-    """The bounding box of the mark the user actually drew, in screen pixels.
-
-    Deliberately the gesture's *own* box rather than whatever the grounding step
-    settled on: this is the yardstick a structured read is measured against, and
-    measuring it against a box the same read produced would prove nothing.
-    """
     raw = dict((gesture or {}).get("bbox") or {}) if isinstance(gesture, dict) else {}
     try:
         x = int(raw.get("x") or 0)
@@ -868,10 +765,6 @@ def _gesture_mark_bbox(gesture: dict[str, Any] | None) -> list[int] | None:
             return None
         geometry = dict((gesture or {}).get("geometry") or {})
         corridor = max(8, min(64, int(round(float(geometry.get("widthPx") or 16)))))
-        # A mouse can produce a perfectly horizontal/vertical line. Its raw
-        # min/max box then has one zero dimension, but it is still a real mark,
-        # not a point click. Preserve the line's visual corridor so capture,
-        # OCR and the stage all keep gesture-region semantics.
         if width <= 0:
             x -= corridor // 2
             width = corridor
@@ -888,12 +781,6 @@ def _bounded_gesture_capture_bbox(
     target_window: dict[str, Any] | None,
     screen_bbox: tuple[int, int, int, int] | None,
 ) -> tuple[int, int, int, int] | None:
-    """Build a small evidence frame around the mark, never the whole desktop.
-
-    The gesture is the user's scope contract.  A little surrounding context is
-    useful for labels and line height, but unrelated windows and distant rows
-    are neither useful nor safe to send to OCR or a model.
-    """
     mark = _gesture_mark_bbox(gesture)
     if mark is None:
         return None
@@ -938,7 +825,6 @@ def _bounded_gesture_capture_bbox(
 
 
 def _gesture_strokes(gesture: dict[str, Any] | None) -> list[list[tuple[int, int]]]:
-    """Independent stroke polylines in physical screen pixels."""
     if not isinstance(gesture, dict):
         return []
     strokes: list[list[tuple[int, int]]] = []
@@ -967,7 +853,6 @@ def _segment_hits_rect(
     right: float,
     bottom: float,
 ) -> bool:
-    """True when segment [a,b] intersects the axis-aligned rect (Liang-Barsky)."""
 
     def inside(x: float, y: float) -> bool:
         return left <= x <= right and top <= y <= bottom
@@ -1004,7 +889,6 @@ def _polyline_hits_rect(
     rect_xywh: list[int] | tuple[int, int, int, int],
     tolerance: float = 6.0,
 ) -> bool:
-    """True when any stroke segment crosses (or tightly covers) the rect."""
     if not points or len(rect_xywh) != 4:
         return False
     try:
@@ -1024,7 +908,6 @@ def _polyline_hits_rect(
 
 
 def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Andrew monotone chain；点数 < 3 时原样返回（退化成线段/点）。"""
     pts = sorted(set((float(x), float(y)) for x, y in points))
     if len(pts) < 3:
         return pts
@@ -1046,7 +929,6 @@ def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]
 
 
 def _point_in_hull(point: tuple[float, float], hull: list[tuple[float, float]], tolerance: float) -> bool:
-    """点在凸包内（含 tolerance 外扩）。凸包退化（<3 顶点）时按线段/点距离算。"""
     px, py = point
     if len(hull) < 3:
         for (ax, ay), (bx, by) in zip(hull, hull[1:]):
@@ -1061,7 +943,6 @@ def _point_in_hull(point: tuple[float, float], hull: list[tuple[float, float]], 
     for index in range(count):
         ax, ay = hull[index]
         bx, by = hull[(index + 1) % count]
-        # 边向量叉积：所有边同侧 = 在内；允许 tolerance 的外扩
         cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
         edge_len = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5 or 1.0
         if cross < -tolerance * edge_len:
@@ -1076,17 +957,6 @@ def _select_region_elements_by_strokes(
     *,
     tolerance: float = 6.0,
 ) -> tuple[list[dict[str, Any]], list[list[int]]]:
-    """磁铁语义：笔迹凸包罩住的元素 = 选中（穿越规则保留）。
-
-    旧规则要求笔画线物理穿过元素矩形——圈住文字时笔只擦过边缘，
-    容差一抖就漏（真机：圈两行只识别一行）。凸包统一「圈选」和
-    「下划线」：闭合圈 → 凸包是面 → 罩住的块全中；下划线 → 凸包是
-    细带 → 只有被压的行中。没有形状 if-else。
-
-    Returns (selected_elements, segments) where each segment is the union
-    rectangle of the elements hit by one stroke. Multi-stroke selections stay
-    separate instead of collapsing into one big bounding box.
-    """
     if not strokes:
         return [], []
     selected: list[dict[str, Any]] = []
@@ -1104,7 +974,6 @@ def _select_region_elements_by_strokes(
             l, t, w, h = (float(value) for value in rect)
             cx, cy = l + w / 2.0, t + h / 2.0
             crossed = _polyline_hits_rect(stroke, list(rect), tolerance=tolerance)
-            # 磁铁：中心在凸包内即选中；穿越规则对小元素更精确，两者取并。
             enclosed = w > 0 and h > 0 and _point_in_hull((cx, cy), hull, tolerance)
             if not crossed and not enclosed:
                 continue
@@ -1125,7 +994,6 @@ def _region_context_selected(
     selected: list[dict[str, Any]],
     segments: list[list[int]],
 ) -> Any:
-    """Rebuild a region context limited to stroke-selected elements."""
     texts = [
         str(element.get("text") or "").strip()
         for element in selected
@@ -1211,11 +1079,6 @@ def _read_gesture_target_context(
             and region_attempts
             and all(str(item.get("status") or "") == "error" for item in region_attempts)
         ):
-            # A bounded read already exercised the complete adapter cascade and
-            # every provider failed. Repeating that same expensive failure at
-            # each point on the stroke cannot reveal a semantic candidate; it
-            # only multiplies a 1-3s provider timeout. Preserve the real error
-            # trace once and hand the literal stroke to the pixel fallback.
             return region_window, region_context, region_trace, {
                 "schemaVersion": 1,
                 "state": "unresolved",
@@ -1237,12 +1100,6 @@ def _read_gesture_target_context(
                 mark_bbox=mark_bbox,
             )
             if coverage.covers:
-                # Windows Terminal's TextPattern gives us the exact anchored
-                # line in one bounded region probe. Sampling the same line at
-                # several more points only repeats an expensive COM/UIA round
-                # trip. Keep the user's literal stroke as the public geometry:
-                # the terminal provider commonly reports the entire 2000px row
-                # even when the person underlined a short phrase.
                 return region_window, region_context, region_trace, {
                     "schemaVersion": 1,
                     "state": "resolved",
@@ -1259,10 +1116,6 @@ def _read_gesture_target_context(
             and region_rectangles
             and rect_is_container(region_bbox, window=region_window, mark_bbox=mark_bbox)
         ):
-            # Point-sampling the same document-sized UIA container four more
-            # times cannot discover line geometry that the provider does not
-            # expose. Stop after the bounded region probe and let pixels read
-            # the literal mark instead of spending the whole gesture budget.
             return region_window, region_context, region_trace, {
                 "schemaVersion": 1,
                 "state": "unresolved",
@@ -1286,9 +1139,6 @@ def _read_gesture_target_context(
                 "score": 1.0,
                 "margin": 1.0,
             }
-            # Open strokes are underline/strike-through semantics: only the
-            # elements the line actually crosses (or tightly covers) count,
-            # and independent strokes stay independent multi-segments.
             if mode == "stroke_region":
                 selected, segments = _select_region_elements_by_strokes(
                     list(region_artifacts.get("region_elements") or []),
@@ -1303,10 +1153,6 @@ def _read_gesture_target_context(
                     })
                     resolved_bbox = _union_xywh(_context_rectangles(resolved_context))
                     mark_bbox = _gesture_mark_bbox(gesture)
-                    # A container element is crossed by every stroke drawn inside
-                    # it, so "crossed" alone does not mean "chosen". Reporting the
-                    # whole console as the selection is how a 1175×30 underline
-                    # became a 2346×1142 selection on 2026-08-04.
                     if rect_is_container(resolved_bbox, window=region_window, mark_bbox=mark_bbox):
                         grounding.update({
                             "state": "unresolved",
@@ -1320,12 +1166,6 @@ def _read_gesture_target_context(
                         grounding,
                         resolved_bbox,
                     )
-                # The line crossed nothing the structured layer knows about. That
-                # is a real outcome, not a reason to hand back everything in the
-                # region: widening a 1175×30 underline to the whole 2346×1142
-                # console both loses the user's intent and makes a failed read
-                # look like a resolved one. Keep the mark as drawn and let the
-                # pixel layer answer for it.
                 grounding.update({
                     "state": "unresolved",
                     "candidate_count": 0,
@@ -1345,15 +1185,6 @@ def _read_gesture_target_context(
     sampled = _sample_gesture_points(points)
     candidates: dict[str, dict[str, Any]] = {}
     target_window = windows[0] if windows else None
-    # Each sample is a full adapter cascade, and a cascade against a slow
-    # automation provider costs 0.3-3s. Nine of them in series is how a
-    # first-run read reached 12.9 seconds on 2026-08-04 — long enough that the
-    # user was told their selection had failed while it was still working.
-    #
-    # The budget is the honest fix: sample until we have enough agreeing
-    # candidates or the clock runs out, and report how far we got. Stopping
-    # early costs precision on the hardest windows; spending 13s costs the
-    # user the feature.
     deadline = time.monotonic() + GESTURE_SAMPLE_BUDGET_S
     samples_attempted = 0
     unresolved_trace: dict[str, Any] = {
@@ -1389,9 +1220,6 @@ def _read_gesture_target_context(
 
     if not candidates:
         unresolved_trace["attempts"] = unresolved_trace["attempts"][:12]
-        # Report the samples actually tried, not the samples planned. Claiming
-        # nine when the budget stopped us at two would hide the reason a hard
-        # window failed.
         return target_window, None, unresolved_trace, {
             "schemaVersion": 1,
             "state": "unresolved",
@@ -1436,10 +1264,6 @@ def _read_gesture_target_context(
         ]
         geometric, best_rectangle = max(rectangle_scores, key=lambda item: item[0])
         proximity = _proximity(best_rectangle)
-        # Coverage is over the samples we actually ran, not the samples planned.
-        # Dividing by the plan would make every candidate look weak whenever the
-        # budget cut sampling short — penalising exactly the slow windows the
-        # budget exists to rescue.
         coverage = len(candidate["samples"]) / max(1, samples_attempted)
         ranked.append((geometric + 3.0 * proximity + 4.0 * coverage, key, {**candidate, "best_rectangle": best_rectangle}))
     ranked.sort(key=lambda item: (-item[0], item[1]))
@@ -1461,11 +1285,6 @@ def _read_gesture_target_context(
     return target_window, best["context"], best["trace"], grounding, chosen_rect
 
 
-# Per-provider ceilings, replacing three *unbounded* serial calls. Each is the
-# honest bound of the reader behind it: Explorer grounding pays COM/PowerShell
-# cold start, the surface chain boots the harness bundle, and the gesture
-# strategy owns a documented 3.5s sampling budget on top of one cascade that can
-# itself take 3.7s on this machine.
 EXPLORER_PROVIDER_DEADLINE_MS = 5000.0
 SURFACE_PROVIDER_DEADLINE_MS = 4000.0
 GESTURE_PROVIDER_DEADLINE_MS = GESTURE_SAMPLE_BUDGET_S * 1000.0 + 4000.0
@@ -1474,13 +1293,6 @@ GESTURE_PROVIDER_DEADLINE_MS = GESTURE_SAMPLE_BUDGET_S * 1000.0 + 4000.0
 def _composite_read_status(
     trace: dict[str, Any],
 ) -> tuple[EvidenceStatus | None, str]:
-    """Carry a composite provider's own read state out to the outer fusion.
-
-    A provider that fans out internally already knows the difference between
-    "this surface has nothing" and "nobody managed to read it". Without this the
-    outer layer sees only a missing context and would report a busy or wedged
-    provider as a confirmed empty selection.
-    """
     if trace.get("selectedLayer") or str(trace.get("readState") or "") != "unread":
         return None, ""
     statuses = {
@@ -1514,19 +1326,6 @@ def _fuse_snapshot_perception(
     dict[str, Any] | None,
     list[int] | None,
 ]:
-    """One concurrent read of every structured source, then one verdict.
-
-    What this replaces: Explorer grounding running first and taking over the
-    read on any hit, a surface-adapter hit overwriting the perception trace, and
-    the generic gesture chain being the only one of the three whose evidence was
-    ever kept. All three now answer the same bound request at the same time, and
-    fusion ranks the answers.
-
-    Pixels are deliberately not in this plan. Frozen-frame OCR costs 1-3s on a
-    warm worker, and the interaction has to show the user something within a
-    couple of hundred milliseconds of release; the pixel tier runs in the answer
-    stage against this same frozen frame, through this same fusion.
-    """
     resolved_windows: dict[str, dict[str, Any] | None] = {}
 
     def explorer_read(request: PerceptionRequest) -> ProviderResult:
@@ -1597,9 +1396,6 @@ def _fuse_snapshot_perception(
     result = PerceptionBroker().resolve(request, providers)
     selected = result.selected
     if selected is None:
-        # Nothing was read, but the gesture provider still knows what the mark
-        # landed on — "the stroke crossed no element" is the answer to a
-        # different question than "which source won", and the stage needs it.
         unresolved = next(
             (
                 item.grounding
@@ -1634,19 +1430,6 @@ def _grab_capture_image(
     target_window: dict[str, Any] | None,
     visual_capture: Any | None,
 ) -> Any:
-    """Produce the pixels for one region, preferring the target's own content.
-
-    Capture the committed source HWND directly whenever we have one. A desktop
-    grab returns whatever is painted at those pixels, which is how a Notepad
-    selection came back holding the text of a CMD window sitting behind it: the
-    gesture path asks for a screen-sized bbox, so an earlier `capture_bbox is
-    None` guard turned the window capture off exactly when the region was largest
-    and the bleed worst.
-
-    PrintWindow gives us the target's own content even where another window covers
-    it, and anything in the requested region that is not the target stays blank
-    rather than being read as if it belonged to the object.
-    """
     if visual_capture is not None:
         return visual_capture(bbox=bbox, all_screens=True)
     hwnd = int(target_window.get("hwnd") or 0) if target_window else 0
@@ -1673,12 +1456,7 @@ def _grab_capture_image(
                 if image.size != expected_size:
                     image = image.resize(expected_size)
             else:
-                # The requested region reaches past the window. Keep the window's
-                # pixels where they exist and leave the rest blank.
                 image = _paste_window_into_region(window_image, local_bbox, expected_size)
-    # A hardware-composited window can return a plausible title bar while its
-    # client-area crop is a flat black/grey surface. Validate the evidence ROI,
-    # not merely the full PrintWindow frame, before trusting it.
     if image is None or _capture_is_blank(image):
         image = ImageGrab.grab(bbox=bbox, all_screens=True)
     return image
@@ -1708,13 +1486,12 @@ def _visual_bbox(
 
 
 def _global_screen_bbox() -> tuple[int, int, int, int] | None:
-    """Physical virtual-desktop bounds, including negative-monitor origins."""
     try:
         user32 = ctypes.windll.user32
-        left = int(user32.GetSystemMetrics(76))   # SM_XVIRTUALSCREEN
-        top = int(user32.GetSystemMetrics(77))    # SM_YVIRTUALSCREEN
-        width = int(user32.GetSystemMetrics(78))  # SM_CXVIRTUALSCREEN
-        height = int(user32.GetSystemMetrics(79)) # SM_CYVIRTUALSCREEN
+        left = int(user32.GetSystemMetrics(76))
+        top = int(user32.GetSystemMetrics(77))
+        width = int(user32.GetSystemMetrics(78))
+        height = int(user32.GetSystemMetrics(79))
         if width > 0 and height > 0:
             return left, top, left + width, top + height
     except Exception:
@@ -1723,12 +1500,6 @@ def _global_screen_bbox() -> tuple[int, int, int, int] | None:
 
 
 def _context_with_element_handles(context: Any) -> Any:
-    """drive 通道数据：给结构化元素发语义句柄（圈选后在屏幕上回放框+标签）。
-
-    region_elements 来自 UIA 探针（text/control_type/automation_id/rect，
-    物理像素）。句柄文法见 app/perception/element_handles.py。没有结构化
-    元素（自绘应用 OCR 路径）就原样返回——不造假框。
-    """
     if not isinstance(context, dict):
         return context
     artifacts = context.get("artifacts")
@@ -1754,8 +1525,6 @@ def _structured_context_with_visual_evidence(
     visual: dict[str, Any] | None,
     structured_succeeded: bool,
 ) -> dict[str, Any]:
-    """Keep the structured read as the authoritative context; attach any
-    full-screen visual record as supporting evidence instead of replacing it."""
     if not structured_succeeded or app_ctx is None:
         return dict(app_ctx.to_dict()) if app_ctx is not None else {}
     structured_dict = dict(app_ctx.to_dict())
@@ -1795,15 +1564,6 @@ def _prune_capture_dir(
     pattern: str = "screen-*.png",
     keep: Path | str | None = None,
 ) -> int:
-    """Remove only expired Magic Pointer captures from one known directory.
-
-    删除范围必须**点名**：`pattern` 由调用方给出，这个函数绝不按目录扫。冻结帧
-    目录（`frame-leases/`）里放的是每个手势一张整屏 PNG 加上一份带笔迹的副本，
-    没有这一道就会一直涨——实测一下午 44 个文件、约 64 MB。
-
-    ``keep`` 是这一次正在用的那一份。按 mtime 它本来就删不到，但「正在用的证据
-    不会被自己删掉」不该依赖时钟对不对。
-    """
     output_dir = Path(capture_dir).resolve()
     if not output_dir.is_dir():
         return 0
@@ -1831,23 +1591,10 @@ def _prune_capture_dir(
     return removed
 
 
-# A whole-window capture with this little variation in every channel carries no
-# content. Two or three points of jitter survive rounding in a genuinely dead
-# frame, so the threshold is not zero.
 BLANK_CAPTURE_SPREAD = 4
 
 
 def _capture_is_blank(image: Any) -> bool:
-    """Is this capture featureless — and therefore a failed capture?
-
-    Not "is it black". PrintWindow returns a flat surface for hardware-composited
-    windows, and the colour it returns is whatever that window's background is:
-    WeChat 4.x came back a uniform grey of 42, sailed past a `max <= 2` black
-    check, and produced an image OCR found nothing in and a user who got no
-    result. What marks a failed grab is the absence of *variation*; a real window
-    is never one flat colour. Callers fall back to the compositing desktop grab,
-    which is cheap and correct even in the rare case a real region is uniform.
-    """
     try:
         extrema = image.convert("RGB").getextrema()
     except Exception:
@@ -1868,12 +1615,6 @@ def _paste_window_into_region(
     local_bbox: tuple[int, int, int, int],
     expected_size: tuple[int, int],
 ) -> Any:
-    """Place the window's pixels inside a region larger than the window itself.
-
-    Everything the window does not cover stays a flat neutral field. That is the
-    honest rendering: those pixels belong to some other window, and letting OCR
-    read them would attribute another app's text to this object.
-    """
     from PIL import Image
 
     canvas = Image.new("RGB", expected_size, (255, 255, 255))
@@ -1916,17 +1657,8 @@ def _capture_visual_region(
             "after": None,
         })
 
-    # Grab, then check. Identity changing means the wrong window and we refuse.
-    # Geometry changing means the *right* window somewhere else, so grab again
-    # where it now is — a window that animated into place is not a reason to make
-    # the user re-point. Only a window that will not hold still gets a caveat, and
-    # even then it gets a capture: an unstable target is worth reporting, not worth
-    # withholding. An explicit capture_bbox (the gesture path's full-screen frame)
-    # does not depend on where the window sits, so it never re-grabs.
     geometry_matters = capture_bbox is None and callable(identity_probe)
     max_attempts = 3 if geometry_matters else 1
-    # The reference is the window whose position produced `bbox`, which on the
-    # first pass is the committed target — not what the probe just reported.
     reference_window = dict(target_window or {})
     recaptured = False
     unstable = False
@@ -1960,10 +1692,6 @@ def _capture_visual_region(
         reference_window = after_window
     else:
         unstable = True
-    # The pixels are now ours and verified to be the window the user pointed at.
-    # Everything after this line — saving, annotating, OCR — happens on a frozen
-    # copy, so any surface we draw from here on cannot contaminate the capture.
-    # This is the earliest moment it is safe to show the conversation capsule.
     if clock is not None:
         clock.mark("pixels_frozen", w=image.width, h=image.height)
     output_dir = Path(capture_dir) if capture_dir is not None else (
@@ -2008,11 +1736,6 @@ def _capture_visual_region(
 
 
 def _verify_frozen_lease_artifact(frozen_lease: dict[str, Any]) -> str | None:
-    """Verify the committed artifact is still exactly what the lease promises.
-
-    Returns a fail-closed reason code, or None when the artifact matches. A
-    mismatch never triggers a recapture: the current screen may have changed.
-    """
     artifact = frozen_lease.get("localArtifact")
     if not isinstance(artifact, dict):
         return "artifact_missing"
@@ -2035,7 +1758,6 @@ def _verify_frozen_lease_artifact(frozen_lease: dict[str, Any]) -> str | None:
 
 
 def _frame_lease_failure_snapshot(captured: datetime, reason: str) -> dict[str, Any]:
-    """Fail closed: an invalid/missing frozen frame never recaptures the screen."""
     summary = {
         "state": "invalid_frame_lease",
         "label": "画面未冻结",
@@ -2123,12 +1845,6 @@ def capture_snapshot(
             clock.mark(phase, **fields)
 
     captured = datetime.now(timezone.utc)
-    # A FrameLease is the authoritative frozen surface. Validate it before any
-    # structured read and never fall back to recapturing the current screen.
-    # A completed-gesture request WITHOUT a lease must fail closed: the lease
-    # is the only thing that guarantees the pixels belong to the moment of
-    # pointerup, and a live grab here would silently certify a post-gesture
-    # screen as frozen evidence (bridge-audit P1).
     if frame_lease is None and gesture is not None:
         return _frame_lease_failure_snapshot(captured, "missing_frame_lease")
     frozen_lease: dict[str, Any] | None = None
@@ -2162,8 +1878,6 @@ def capture_snapshot(
                 "phase": "complete",
             },
         }
-        # 冻结帧目录也按同一个保留天数清理。它以前没人管：每个手势一张整屏 PNG，
-        # 加上这一版新增的带笔迹副本，只增不减。
         try:
             _prune_capture_dir(
                 Path(frozen_visual["path"]).parent,
@@ -2176,9 +1890,6 @@ def capture_snapshot(
     live_window_source = windows is None
     normalized_target_point = _normalized_point(target_point)
     normalized_gesture = _normalized_gesture(gesture)
-    # Establish every stroke's owner before slow UIA reads. The user's capsule
-    # and IME may appear while those readers run; they are not historical
-    # targets and must not replace the desktop/chat surface under a mark.
     material_windows = None
     if normalized_gesture and len(normalized_gesture.get("strokes") or []) > 1:
         material_windows = list(windows) if windows is not None else [
@@ -2256,10 +1967,6 @@ def capture_snapshot(
             }],
         }
     else:
-        # One concurrent read: Explorer grounding, the surface-adapter chain and
-        # the gesture structured strategy all answer the same bound request, and
-        # fusion ranks the answers instead of the first non-empty one taking
-        # over the trace.
         (
             target_window,
             app_ctx,
@@ -2305,9 +2012,6 @@ def capture_snapshot(
                 "selectedMethod": None,
                 "pixelFallbackUsed": False,
                 "fallbackReason": "target_mismatch",
-                # The observations described a window that is no longer there.
-                # Leaving them would let the answer stage rehydrate them and
-                # conclude the mark was already read.
                 "observations": [],
                 "attempts": [
                     *(perception_trace.get("attempts") or []),
@@ -2320,26 +2024,14 @@ def capture_snapshot(
                     },
                 ],
             }
-    # A non-empty string is not the same thing as an answer. A UIA read of a
-    # console or a chat window happily returns the container's accessible name —
-    # on 2026-08-04 that was the literal path to powershell.exe — and treating it
-    # as content is what switched the pixel fallback off and left the user with
-    # "I can see which window you mean but not what you underlined".
     mark_coverage = structured_read_covers_mark(
         content=str(getattr(app_ctx, "content", "") or ""),
         window=target_window,
         element_rects=_context_rectangles(app_ctx) if app_ctx is not None else [],
         mark_bbox=_gesture_mark_bbox(normalized_gesture),
-        # 一段没有几何、也没有指名任何对象的文字，不能因为「非空」就被当成
-        # 圈中的那一行：那正是把像素兜底关掉、然后告诉用户「我知道是哪个窗口，
-        # 但没读到你划的那一行」的原因。指了对象（路径/单元格/范围/DOM 节点/
-        # 原生选区）的读取不受影响。
         has_explicit_binding=context_is_explicitly_bound(app_ctx),
     )
     if normalized_gesture is not None and not mark_coverage.covers:
-        # The structured candidate can be useful as a clue and still be too
-        # broad to represent the selection.  Once it fails the mark-coverage
-        # gate, the user's own gesture becomes authoritative again.
         gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture) or gesture_selection_bbox
     structured_succeeded = bool(
         app_ctx is not None
@@ -2347,10 +2039,6 @@ def capture_snapshot(
         and mark_coverage.covers
     )
     if not structured_succeeded:
-        # 结构化没读到，像素层马上要被派上去。它最贵的一次不是识别图片，是
-        # 把 RapidOCR 引擎加载起来（本机实测 11.2s，和图片多大无关），而且谁
-        # 先请求谁付。此刻用户还没打完那句话——这笔钱应该花在那段等待里，不
-        # 该花在答案前面。worker 是 detached 进程，这里只负责叫它起来，不等。
         try:
             from app.perception.pixel_ocr import prewarm_ocr_worker
 
@@ -2358,8 +2046,6 @@ def capture_snapshot(
         except Exception:
             pass
     if app_ctx is not None and not mark_coverage.covers:
-        # Say it in the trace rather than only in the outcome: the diagnostics
-        # page has to be able to show *why* pixels were needed.
         perception_trace = append_perception_attempt(
             perception_trace,
             layer=str(perception_trace.get("selectedLayer") or "uia"),
@@ -2370,10 +2056,6 @@ def capture_snapshot(
         )
     summary = _summary_for(target_window, app_ctx)
     if app_ctx is None and perception_trace.get("readState") == "unread":
-        # Busy/timeout/error means we did not read the target.  It is not an
-        # unsupported app and it is not a confirmed empty selection.  Keep the
-        # provider details in the trace and give the public summary one honest
-        # state that callers can act on.
         summary.update({
             "state": "error",
             "label": f"{str((target_window or {}).get('title') or '当前应用')} · 读取失败",
@@ -2422,10 +2104,6 @@ def capture_snapshot(
         and not target_mismatch
         and not sensitive_target
         and (capture_decision is None or capture_decision.allow_local_pixels)
-        # A completed gesture gets a bounded visual record around the mark.
-        # UIA/DOM can still provide exact text and geometry, but neither a
-        # failed structured read nor a model call may silently widen the user's
-        # selection to the whole desktop.
         and (bool(gesture_points) or not perception_trace.get("selectedLayer"))
         and (bool(gesture_points) or not summary.get("hasContent"))
         and not summary["hasActiveContext"]
@@ -2433,16 +2111,11 @@ def capture_snapshot(
     )
     pixels_allowed = bool(not sensitive_target and (capture_decision is None or capture_decision.allow_local_pixels))
     if frozen_lease is not None and frozen_visual is not None and pixels_allowed:
-        # The committed artifact is the only visual evidence; the current
-        # screen is never grabbed for this snapshot.
         visual = dict(frozen_visual)
         visual_attempt_recorded = True
         capture_attestation = visual["capture_attestation"]
         mark("visual_saved", got=True)
         if gesture_points:
-            # 冻结面上本来就该有用户的笔迹。这一条只在「有 frame lease」这条路上
-            # 跑过，所以直到现在为止，正常手势拿到的都还是没有标注的原图——而
-            # 兜底那次现场抓拍反倒一直是有标注的。
             surface = visual.get("bbox")
             if isinstance(surface, (list, tuple)) and len(surface) == 4:
                 annotated_path = _annotate_frozen_surface(
@@ -2522,9 +2195,6 @@ def capture_snapshot(
                         if structured_succeeded
                         else str(perception_trace.get("fallbackReason") or "structured_context_unavailable")
                     ),
-                    # A local evidence crop is not a pixel fallback when DOM/UIA
-                    # already grounded the user's mark. Keep the structured
-                    # layer authoritative and record pixels as corroboration.
                     select=not structured_succeeded,
                     policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
                 )
@@ -2652,8 +2322,6 @@ def capture_snapshot(
     visual_context = None
     pointer_anchor = None
     if visual is not None and not structured_succeeded:
-        # The cursor may be absent for gesture-only captures; the gesture bbox
-        # center was already chosen as the capture anchor above (visual_target_point).
         anchor_point = normalized_target_point or visual_target_point
         pointer_anchor = (
             _pointer_anchor_ltrb(anchor_point)
@@ -2693,10 +2361,6 @@ def capture_snapshot(
         "expires_at": (captured + timedelta(seconds=SNAPSHOT_TTL_SECONDS)).isoformat(),
         "status": summary["state"],
         "source_kind": source_kind,
-        # Whether the structured layer read the marked content, and when it did
-        # not, which way it failed. The command bridge uses this to decide that
-        # OCR still owes the user an answer; without it, a read that returned
-        # only the app's own name looks identical to a real one.
         "structured_covers_mark": bool(mark_coverage.covers),
         "structured_gap_reason": "" if mark_coverage.covers else mark_coverage.reason,
         "target_point": normalized_target_point,

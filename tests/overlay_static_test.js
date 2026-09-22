@@ -6,8 +6,6 @@ const source = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
 const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 
-// Kept contract: 光标是 CSS armed-cursor，不在 canvas 画鼠标。
-// 之前 canvas 画蓝圈（drawPointer/drawObserverAura）是用户点名不要的。
 assert(!source.includes('function drawObserverAura'),
   'observer 模式必须用 CSS 光标，不画 canvas aura');
 assert(!source.includes('function drawPointer'),
@@ -20,7 +18,6 @@ assert(!source.includes('function updateArmedCursor('),
 assert(source.includes('observerMode = payload?.observerMode === true'));
 assert(!source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 
-// Clicky 式引导小三角：默认不出现，收到 [POINT] 指点才浮现并贝塞尔飞行
 assert(source.includes('window.magicPointer?.onGuidePoint?.('),
   'overlay 必须监听主进程的 overlay:guide-point');
 assert(html.includes('id="guide-triangle"'),
@@ -46,7 +43,6 @@ assert(!source.includes('guideFollow'),
 assert(source.includes('window.magicPointer?.guideFinished()'),
   'the guide overlay must retire itself after the requested point has been shown');
 
-// Kept contract: runtime-issue circle capture submits the drawn region via done().
 assert(source.includes("let currentWorkflow = 'generic';"));
 assert(source.includes("currentWorkflow = String(payload?.workflow || 'generic')"));
 assert(source.includes('workflow: currentWorkflow'));
@@ -74,13 +70,10 @@ assert(html.includes('src="sweep_visual.js"'),
   'the procedural sweep renderer must load before overlay.js');
 assert(html.includes('id="hint"'));
 
-// Demo 7 visual contract: gesture bands are GPU-composited and the old
-// three-stroke Canvas brush is not used for the default gesture style.
 assert(source.includes('new globalThis.MagicSweepVisual.SweepRenderer'));
 assert(source.includes("gestureLineStyle === 'demo6_band'"));
 assert(source.includes('sweepRenderer.render('));
 
-// The circle payload keeps points + bbox + viewport for the capture bridge.
 const payloadStart = source.indexOf('function computeSelectionPayload');
 const payloadEnd = source.indexOf('function hideVisualsForCapture');
 assert(payloadStart >= 0, 'computeSelectionPayload not found');
@@ -104,7 +97,6 @@ assert.strictEqual(context.testPayload.viewport.height, 800);
 assert.strictEqual(context.testPayload.viewport.dpr, 2);
 assert.strictEqual(context.testPayload.points.length, 3);
 
-// Unified multi-stroke chain: the payload carries every committed stroke.
 const chainStart = source.indexOf('let strokes: OverlayStroke[] = [];');
 const chainEnd = source.indexOf('let renderRaf: number | null = null;');
 assert(chainStart >= 0, 'multi-stroke chain state must exist');
@@ -118,8 +110,6 @@ assert(source.includes('finalizeGesture'));
 assert(source.includes('strokes: strokes.map((s) => ({ points: [...s.points] }))'),
   'the unified payload must include all strokes');
 
-// A committed quick click keeps its point identity so the renderer can show
-// the actual target instead of covering it with the sequence badge.
 assert(source.includes('kind: strokeSummary.kind,'),
   'committed strokes must retain the summarized gesture kind');
 assert(source.includes("if (stroke.kind === 'point')"),
@@ -129,8 +119,6 @@ assert(source.includes('drawPointTarget(stroke.semanticPoint)'),
 assert.match(source, /function drawPointTarget[\s\S]*?const radius = 38;/,
   'a quick click needs a visible cursor-sized glow, not a tiny hidden dot');
 
-// Legacy retirement: the overlay no longer renders results or actions.
-// Everything below now lives on the PointerStage surface.
 assert(!source.includes('pill'));
 assert(!source.includes('showPill'));
 assert(!source.includes('showResult'));

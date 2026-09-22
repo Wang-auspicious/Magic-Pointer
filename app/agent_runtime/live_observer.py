@@ -1,10 +1,3 @@
-"""Task-scoped live surface observation.
-
-``Look`` remains bound to the immutable gesture frame. ``LiveObserver``
-re-resolves an authorized SourceRef, obtains a fresh structural snapshot and
-fresh pixels, then asks the configured vision backend the caller's question.
-Raw pixels never enter the model-visible result.
-"""
 
 from __future__ import annotations
 
@@ -31,7 +24,6 @@ def _check_cancelled(scope: object) -> None:
 
 
 def validate_live_source(source: SourceRef, window: dict[str, Any], *, surface_registry: Any = None, adapter_registry: Any = None) -> None:
-    """Re-resolve the current surface through its registered identity provider."""
     identity = source.identity
     if source.kind == "capture":
         return

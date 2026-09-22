@@ -1,8 +1,5 @@
 'use strict';
 
-// FrameCaptureWorkerClient: persistent JSONL RPC to scripts/frame_capture_worker.py.
-// One child process is reused across every arm/commit of a gesture sequence; the
-// client stays idle between gestures and must never leak frame contents into logs.
 
 const assert = require('assert');
 const { EventEmitter } = require('events');
@@ -105,7 +102,6 @@ function replyTo(child: any, index: number, payload: any) {
 
   const first = client.arm(armRequest('epoch-1'));
   const second = client.arm(armRequest('epoch-2'));
-  // Replies arrive out of order; each must resolve its own request.
   replyTo(child, 2, { result: { epochId: 'epoch-2' } });
   await second;
   replyTo(child, 1, { result: { epochId: 'epoch-1' } });
@@ -123,7 +119,6 @@ function replyTo(child: any, index: number, payload: any) {
   await startPromise;
 
   const affected = client.arm(armRequest('epoch-broken'));
-  // Response carries the id but neither result nor error: malformed for this request.
   child.stdout.write(JSON.stringify({ id: child.requests.at(-1).id }) + '\n');
   await assert.rejects(affected);
   assert(protocolErrors.some((record) => record.error === 'malformed_response'),
@@ -133,7 +128,6 @@ function replyTo(child: any, index: number, payload: any) {
   replyLatest(child, { result: { epochId: 'epoch-healthy' } });
   await healthy;
 
-  // Unparseable output records a protocol error without rejecting anything.
   child.stdout.write('this is not json\n');
   assert(protocolErrors.some((record) => record.error === 'invalid_jsonl'));
   const last = client.arm(armRequest('epoch-last'));

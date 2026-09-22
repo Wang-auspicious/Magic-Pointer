@@ -1,11 +1,5 @@
 from __future__ import annotations
 
-"""Real, isolated desktop acceptance evidence for N20 resident local voice.
-
-This is deliberately an external acceptance harness.  It neither injects a
-renderer nor calls the worker directly: every dictation is started through the
-configured global hotkey and is observed through the app's own audit/log files.
-"""
 
 import argparse
 import ctypes
@@ -83,7 +77,7 @@ def wait_until(label: str, predicate, timeout: float) -> object:
             value = predicate()
             if value:
                 return value
-        except Exception as exc:  # an external process can be in transition
+        except Exception as exc:
             last_error = exc
         time.sleep(0.18)
     suffix = f":{type(last_error).__name__}" if last_error else ""
@@ -110,7 +104,6 @@ def cdp_value(websocket_url: str, expression: str):
 
 
 def fixture_geometry(page: dict) -> dict:
-    # Read-only CDP: never changes selection, focus, click counters, or Stage.
     return cdp_value(page["webSocketDebuggerUrl"], """(() => {
       const node = document.getElementById('target');
       const r = node.getBoundingClientRect();
@@ -151,7 +144,7 @@ def key_press(vk: int, up: bool = False) -> None:
 
 
 def press_hotkey() -> None:
-    keys = [0x11, 0x12, 0x10, 0x7A]  # Ctrl + Alt + Shift + F11
+    keys = [0x11, 0x12, 0x10, 0x7A]
     for key in keys:
         key_press(key)
     time.sleep(.08)
@@ -168,7 +161,6 @@ def primary_button(down: bool) -> None:
 
 
 def draw_selection(end: tuple[int, int]) -> None:
-    """Drive the same freehand primary-button gesture used by the product."""
     start = (end[0] - 260, end[1] - 2)
     set_cursor(start)
     time.sleep(.08)
@@ -240,8 +232,6 @@ def write_isolated_settings(runtime: Path) -> None:
     })
     settings["appearance"]["selection_visual"] = "sweep_band"
     settings["shortcuts"]["wake"] = HOTKEY
-    # Preserve the generated complete schema and validate it using production's
-    # public store before Electron sees the isolated directory.
     candidate = runtime / "fabric-settings.json"
     candidate.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     source = "const S=require('./electron/settings_store').ElectronSettingsStore;new S(process.argv[1]).load();"
@@ -250,8 +240,6 @@ def write_isolated_settings(runtime: Path) -> None:
 
 
 def synthesize_wav(path: Path) -> None:
-    # This does not access a microphone.  The text is intentionally never
-    # copied into any evidence JSON or audit excerpt.
     escaped_path = str(path).replace("'", "''")
     script = (
         "Add-Type -AssemblyName System.Speech;"
@@ -276,7 +264,6 @@ def wait_stage_text(log_path: Path, prior_count: int, timeout: float = 45) -> No
 
 
 def start_voice_selection(log_path: Path, point: tuple[int, int]) -> None:
-    """Wake, draw and release before the auto voice strategy is expected to run."""
     ready_count = read_text(log_path).count("gesture-ready OK")
     completed_count = read_text(log_path).count("selection gesture completed")
     voice_count = read_text(log_path).count("stage renderer state=capsule-voice")
@@ -318,8 +305,6 @@ def evidence_payload(**updates) -> dict:
 
 
 def run_worker_only() -> int:
-    # Explicitly non-acceptance diagnostic: retained only to make local Whisper
-    # startup diagnosis possible without touching the user's microphone.
     wav = EVIDENCE_DIR / "worker-only.wav"
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     synthesize_wav(wav)
@@ -352,7 +337,6 @@ def main() -> int:
             raise RuntimeError("electron_missing")
         enable_dpi_awareness()
         EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-        # These paths are wholly inside the explicitly sanctioned evidence root.
         shutil.rmtree(runtime, ignore_errors=True)
         shutil.rmtree(edge_profile, ignore_errors=True)
         runtime.mkdir()
@@ -382,7 +366,6 @@ def main() -> int:
                                     env=env, stdout=trace, stderr=subprocess.STDOUT)
         log_path = runtime / "electron.log"
         audit_path = runtime / "fabric-audit.jsonl"
-        # Worker readiness, not merely app readiness, is the precondition.
         wait_until("resident_worker_ready", lambda: bool(rows_for(audit_rows(audit_path), "voice.ready")), 90)
 
         finals_before = 0
@@ -417,8 +400,6 @@ def main() -> int:
                          if isinstance(row.get("measuredMemoryMb"), (int, float))]
         p50 = statistics.median(latencies) if len(latencies) == 5 else None
 
-        # No status command is sent in this idle interval.  Its only observed
-        # signal is the resident worker's own idle-timeout audit event.
         press_escape()
         wait_until("idle_timeout_unloaded", lambda: any(
             row.get("eventType") == "voice.idle_timeout" and row.get("outcome") == "completed"
@@ -477,8 +458,6 @@ def main() -> int:
         metrics = evidence_payload(**{**metrics, "failureCodes": failures,
                                       "screenshots": screenshot_names})
     finally:
-        # Evidence is emitted even on failures and cleanup is restricted to the
-        # two roots launched above, never a global browser/application kill.
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
         if trace is not None:

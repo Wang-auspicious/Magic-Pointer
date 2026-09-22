@@ -1,9 +1,3 @@
-"""P2-5 技能使用频次计数与排序（Hermes skill_usage 范式）。
-
-skill 被注入提示词或被斜杠显式加载时 bump 计数 + 时间戳，落
-``<user_data>/skill-usage.json``；SkillLoader 在相关性分数相同时把
-高频技能排前。
-"""
 
 from __future__ import annotations
 
@@ -57,8 +51,6 @@ def test_loader_bumps_skills_it_injects(user_dir: Path, skills: Path) -> None:
 
 
 def test_loader_ranks_by_usage_count_on_tie(user_dir: Path, skills: Path) -> None:
-    # 两个技能与命令的相关性分数同为 0 之外不现实——用同名 token 构造
-    # 同分：命令里只出现共享词。这里用显式 store 验证排序键。
     store = SkillUsageStore(user_dir)
     for _ in range(5):
         store.bump("code")

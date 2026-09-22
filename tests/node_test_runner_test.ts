@@ -4,9 +4,6 @@ const assert = require('assert');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-// The selected-test probe launches the runner from inside the normal suite.
-// The marker prevents that child from launching another child if an old runner
-// incorrectly ignores argv and executes every test file.
 if (process.env.MP_NODE_RUNNER_PROBE_CHILD !== '1') {
   const root = path.resolve(__dirname, '..');
   const runner = path.join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs');

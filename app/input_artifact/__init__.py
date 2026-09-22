@@ -1,4 +1,3 @@
-"""Versioned, user-inspectable input compiled for the sovereign Agent runtime."""
 
 from .schema import (
     InputArtifact,

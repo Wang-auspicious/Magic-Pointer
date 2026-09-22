@@ -1,11 +1,5 @@
 'use strict';
 
-/* Hermes「drive 回放」的屏幕策略：结构化元素句柄 → 屏幕上的框+标签。
- *
- * 输入是快照桥 artifacts.element_handles（物理屏幕像素 xywh）；输出是
- * 某一块显示器本地的 DIP 矩形 + 错峰延迟。太小/出屏的框直接丢——
- * 自绘应用没有句柄时返回空数组，不造假框。
- */
 
 export interface GhostRect { x: number; y: number; width: number; height: number }
 export interface ElementGhost { ref: string; label: string; role: string; rect: GhostRect; delayMs: number }
@@ -48,8 +42,6 @@ function usableRect(rect: unknown, displayBounds: { x: number; y: number; width:
   const height = ph / scale;
   if (localX + width <= 0 || localY + height <= 0) return null;
   if (localX >= displayBounds.width || localY >= displayBounds.height) return null;
-  // 盖住大半块屏幕的框（如 Chromium 的 RootWebArea 容器）不是可指认的
-  // 元素，画出来只是一张全屏罩子——丢弃。
   const displayArea = displayBounds.width * displayBounds.height;
   if (width * height > displayArea * 0.7) return null;
   return {

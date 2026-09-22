@@ -1,19 +1,3 @@
-"""Recovery for a model that answers nothing, and for a request that does not fit.
-
-Two defects, both ending the same way for the user — a dead task that looks like
-a finished one.
-
-**Empty completion.** A provider can answer ``finish_reason == "stop"`` with no
-text and no tool calls. ``_parse_sse`` emits no withhold for that, so nothing
-classified it, the loop appended no message, and the run closed ``COMPLETED``
-with ``message=""``. The user got an empty bubble and a success terminal.
-
-**Context overflow.** Almost every vendor reports "too many tokens" as an
-ordinary HTTP 400. The loop only treated ``http_5*`` as recoverable, so the
-first context-window overrun of a long task became a terminal
-``PROVIDER_UNAVAILABLE`` — the one provider refusal that gets *more* likely to
-succeed the more we do to it was the one we gave up on.
-"""
 
 import asyncio
 
@@ -46,12 +30,6 @@ def _params(client, **overrides) -> LoopParams:
 
 
 async def _collect(params):
-    """Consume the loop; return (events, terminal).
-
-    The terminal is delivered as the final ``LoopStopped`` event, not as a
-    generator return value — PEP 525 forbids an async generator from returning
-    one.
-    """
     events = []
     terminal = None
     async for event in run_agent_loop(params):
@@ -69,7 +47,6 @@ def _answer(text="这是答案"):
     return [TurnDone(usage=None, raw_text=text)]
 
 
-# --- empty completion -------------------------------------------------------
 
 class TestEmptyCompletionRecovery:
     def test_an_empty_turn_is_not_the_end(self) -> None:
@@ -88,7 +65,6 @@ class TestEmptyCompletionRecovery:
         assert "没有返回任何内容" in followup.content
 
     def test_recovery_is_bounded(self) -> None:
-        # A model that only ever returns nothing must not loop forever.
         backend = Scripted(*[_empty() for _ in range(30)])
         _events, terminal = asyncio.run(_collect(_params(LoopModelClient(backend))))
         assert backend.calls == 4, 'three retries, then give up'
@@ -108,7 +84,6 @@ class TestEmptyCompletionRecovery:
         assert terminal.message == "这是答案"
 
 
-# --- context overflow -------------------------------------------------------
 
 class TestOverflowClassification:
     def test_vendor_wordings_are_recognised(self) -> None:
@@ -139,10 +114,6 @@ class TestContextOverflowRescue:
             compacted.append(len(messages))
             return messages[:1]
 
-        # ``evidence_input`` gives the history more than one message, so there
-        # is something for the compactor to actually remove; the budget is set
-        # high enough that the loop's *proactive* compaction does not fire
-        # first and leave nothing for the overflow path to do.
         _events, terminal = asyncio.run(_collect(_params(
             LoopModelClient(backend),
             evidence_input="[证据] 一段很长的屏幕内容",
@@ -156,9 +127,6 @@ class TestContextOverflowRescue:
         assert terminal.message == "这是答案"
 
     def test_a_history_with_nothing_to_remove_fails_honestly(self) -> None:
-        # If compaction removes nothing, resending would fail identically, so
-        # the loop must say so rather than burn the retry budget. Reached here
-        # by shrinking to a single message, which is the floor.
         backend = Scripted(
             *[[TurnWithheld(reason=CONTEXT_OVERFLOW_REASON), TurnDone(usage=None, raw_text=None)]
               for _ in range(5)]
@@ -180,7 +148,7 @@ class TestContextOverflowRescue:
         _events, terminal = asyncio.run(_collect(_params(
             LoopModelClient(backend),
             evidence_input="[证据] 一段很长的屏幕内容",
-            compactor=lambda messages: messages,          # changes nothing
+            compactor=lambda messages: messages,
             token_estimator=lambda messages: len(messages) * 100,
             context_budget_tokens=200,
         )))

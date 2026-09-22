@@ -25,11 +25,6 @@ _SESSION_CAPABILITY = {
 
 
 class AgentGateway:
-    """One safe boundary for agent discovery, session selection, and durable tasks.
-
-    The gateway deliberately owns no worker state.  AgentTaskStore remains the
-    sole durable source of task lifecycle truth.
-    """
 
     def __init__(
         self,
@@ -249,15 +244,12 @@ class AgentGateway:
         }
 
     def cancel(self, task_id: str) -> dict[str, Any]:
-        """Request termination through the durable task supervisor."""
         return self.task_store.cancel(str(task_id or ""))
 
     def steer(self, task_id: str, message: str) -> dict[str, Any]:
-        """Deliver live steering only when the transport can prove it."""
         return self.task_store.steer(str(task_id or ""), str(message or ""))
 
     def resume(self, task_id: str) -> dict[str, Any]:
-        """Restart one interrupted/failed durable task attempt."""
         return self.task_store.resume(str(task_id or ""))
 
     def _raw_protocol(self, task_id: str) -> str:

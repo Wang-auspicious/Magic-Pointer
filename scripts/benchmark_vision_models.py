@@ -54,7 +54,6 @@ QUESTIONS: list[dict[str, str]] = [
 
 
 def _inventory(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Reduce the real perception snapshot into a compact pre-agent inventory."""
     trace = snapshot.get("perception_trace") or {}
     context = snapshot.get("context") or {}
     structured_text = ""
@@ -109,7 +108,6 @@ def _inventory(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def _verdict(question: dict[str, str], answer: str) -> dict[str, Any]:
-    """Honest partial-match verdict against authored ground truth."""
     lowered = answer.casefold()
     refused = ("未找到" in answer or "无法" in answer or "未识别" in answer or "not found" in lowered)
     checks: list[tuple[str, str]] = []

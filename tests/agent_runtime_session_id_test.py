@@ -1,8 +1,3 @@
-"""Selection-session token → durable agent session id.
-
-Electron steer and the selection bridge must hash the same way, or a mid-run
-steer lands in a different JSONL than the live loop.
-"""
 
 from __future__ import annotations
 

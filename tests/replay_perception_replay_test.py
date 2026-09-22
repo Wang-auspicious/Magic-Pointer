@@ -1,4 +1,3 @@
-"""Replay fixtures + perception-replay tests (review Q8: 20 traces by contract)."""
 
 from __future__ import annotations
 
@@ -61,7 +60,6 @@ def test_all_twenty_fixtures_exist_and_are_schema_valid() -> None:
 
 
 def test_half_the_fixtures_are_failure_paths() -> None:
-    """The harness sells predictable failure: half the fixtures exercise it."""
     failure_ids = {
         "blacklist-app",
         "password-redact",
@@ -81,14 +79,12 @@ def test_trace_to_snapshot_payload_shapes_the_bridge_input() -> None:
     trace = load_trace(FIXTURES_DIR / "notepad-document-fallback.trace.json")
     payload = trace_to_snapshot_payload(trace)
     snapshot = payload["selectionSnapshot"]
-    # Replay evidence is honest about its origin: it is NOT a FrameLease and
-    # must not claim to be one (a live bridge must never trust it as frozen).
     assert snapshot["status"] == "replay"
     assert snapshot["capture_attestation"]["status"] == "replay"
     assert snapshot["source_kind"] == "replay"
     assert snapshot["capture_attestation"]["backend"] == "replay"
     context = snapshot["context"]
-    assert context["content"]  # UIA tree text carries the structured content
+    assert context["content"]
     assert "架构" in context["content"]
     assert payload["command"] == "这个文件里读到了啥。概况总结。"
     assert payload["selectionSessionId"] == f"replay:{trace.trace_id}"

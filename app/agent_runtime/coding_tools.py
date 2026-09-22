@@ -1,14 +1,3 @@
-"""Coding tool surface for the agent loop (CC/Codex contract port).
-
-The real-machine audit found the loop had 22 tools, ALL desktop/perception —
-zero file/shell/code tools, so the harness could not fix a bug in any repo.
-This module ports the mature contracts: CC's Read/Edit (exact-unique-match),
-Codex's workspace confinement, Hermes' bounded shell output.
-
-Effects follow the existing permission ladder: reads are free, file writes
-are reversible_write (allowed in default), shell is local_irreversible
-(needs full-access/bypass — same shape as Codex sandbox modes).
-"""
 
 from __future__ import annotations
 
@@ -41,13 +30,10 @@ _MAX_OUTPUT_CHARS = 64_000
 _MAX_GREP_RESULTS = 200
 _MAX_GLOB_RESULTS = 500
 _DEFAULT_COMMAND_TIMEOUT_S = 300.0
-"""CC Bash 默认 30 分钟、Hermes 前台语义"配长超时但快完成秒回"；MP 给 5 分钟
-默认值，长命令仍可用 timeout_s 顶到 600。"""
 _MAX_COMMAND_TIMEOUT_S = 600.0
 
 
 class WorkspaceSpace:
-    """Path confinement: every tool path must stay inside the workspace."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
@@ -79,7 +65,6 @@ def _text(result_value: Any) -> str:
 
 
 def _numbered(path: Path, offset: int, limit: int, max_chars: int = _MAX_READ_CHARS) -> tuple[str, bool]:
-    """返回 (渲染文本, 是否截断)。截断 = 模型没看到完整范围（帽截断或越界）。"""
     raw = path.read_text(encoding="utf-8", errors="replace")
     lines = raw.splitlines()
     total = len(lines)
@@ -91,7 +76,6 @@ def _numbered(path: Path, offset: int, limit: int, max_chars: int = _MAX_READ_CH
     if start > total:
         truncated = True
     if len(body) > max_chars:
-        # End on a complete line so the next offset can recover everything.
         boundary = body.rfind("\n", 0, max_chars)
         if boundary > 0:
             end = start + body[:boundary].count("\n")
@@ -110,7 +94,6 @@ def _numbered(path: Path, offset: int, limit: int, max_chars: int = _MAX_READ_CH
 
 
 def _credential_mask(rel: str, text: str) -> str:
-    """凭据文件（.env/secrets/key）命中只报位置，不回显内容（Hermes 同款）。"""
     lowered = rel.casefold()
     if (
         ".env" in lowered
@@ -133,7 +116,6 @@ def _rg_search(
     case_sensitive: bool,
     output_mode: str,
 ) -> str | None:
-    """ripgrep --json 主路；进程失败返回 None 让调用方退回纯 Python。"""
     args = [rg_path, "--json", "--no-messages"]
     if not case_sensitive:
         args.append("-i")
@@ -150,7 +132,7 @@ def _rg_search(
     except (OSError, subprocess.TimeoutExpired):
         return None
     if completed.returncode not in (0, 1):
-        return None  # 2 = 出错；让 Python 兜底给一个确定可用的行为
+        return None
     entries: list[tuple[bool, str, int, str]] = []
     root_text = str(space.root)
     for line in (completed.stdout or "").splitlines():
@@ -183,7 +165,6 @@ def _py_search(
     case_sensitive: bool,
     output_mode: str,
 ) -> str:
-    """纯 Python 兜底（无 ripgrep 的机器）：与 rg 路同一种输出形状。"""
     try:
         regex = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
     except re.error as exc:
@@ -224,7 +205,6 @@ def _render_search(
     offset: int,
     output_mode: str,
 ) -> str:
-    """Render both search backends with one deterministic paging contract."""
     ordered = sorted(
         set(entries),
         key=lambda entry: (entry[1], entry[2], not entry[0], entry[3]),
@@ -309,8 +289,6 @@ def _glob_files(root: Path, scope: CancellationToken | None):
     if rg is None:
         yield from _walk_files(root, "", scope)
         return
-    # Filter the paths after enumeration: a positive rg -g would override
-    # .gitignore and reintroduce release bundles into a workspace search.
     process = subprocess.Popen(
         [rg, "--files", "--hidden", "--no-require-git", "-g", "!.git", "-g", "!node_modules"],
         cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -378,7 +356,6 @@ def _do_search(
 
 
 def _do_grep(root: Path, pattern: str, glob_filter: str, max_results: int) -> str:
-    """search_history 的旧入口：工作区根全文搜索（无上下文、无 offset）。"""
     fake_space = WorkspaceSpace(root)
     return _do_search(fake_space, root, pattern, glob_filter, max_results)
 
@@ -391,12 +368,6 @@ def _display(root: Path, path: Path) -> str:
 
 
 def _detect_newline(path: Path) -> str:
-    """The file's own newline convention, so edits don't rewrite CRLF→LF.
-
-    read_text default-translates (CRLF→LF) and write_text with newline=""
-    preserves whatever it was given — so the old edit_file turned a one-line
-    change to a Windows repo into a whole-file diff. Detect once and reuse.
-    """
     try:
         with path.open("rb") as handle:
             chunk = handle.read(65536)
@@ -410,10 +381,10 @@ def _detect_newline(path: Path) -> str:
 
 
 _QUOTE_TABLE = str.maketrans({
-    "\u201c": '"', "\u201d": '"',  # “ ”
-    "\u2018": "'", "\u2019": "'",  # ‘ ’
-    "\u201a": "'", "\u201b": "'",  # ‚ ‛
-    "\u201e": '"', "\u201f": '"',  # „ ‟
+    "\u201c": '"', "\u201d": '"',
+    "\u2018": "'", "\u2019": "'",
+    "\u201a": "'", "\u201b": "'",
+    "\u201e": '"', "\u201f": '"',
 })
 
 
@@ -422,12 +393,6 @@ def _quote_normalized(text: str) -> str:
 
 
 def _normalized_quote_matches(raw: str, needle: str) -> list[str]:
-    """文件里所有归一化引号后等于 needle 的**真实**子串（保留原字符）。
-
-    精确匹配失败后的第二级匹配（对齐 CC FileEditTool/utils.ts）：模型常把
-    文件里的直引号吐成弯引号。命中时替换的是文件里的原字符，所以替换后
-    原有引号风格不丢。
-    """
     normalized_needle = _quote_normalized(needle)
     normalized_chars: list[str] = []
     index_map: list[int] = []
@@ -446,8 +411,6 @@ def _normalized_quote_matches(raw: str, needle: str) -> list[str]:
     return matches
 
 
-# 退出码 1 自有语义的命令族（对齐 CC commandSemantics.ts）：退出码 1 表示
-# "没找到/有差异/条件为假"，不是执行错误。
 _EXIT_ONE_SEMANTIC_COMMANDS = frozenset({
     "grep", "egrep", "fgrep", "rg", "find", "diff", "cmp", "test", "[",
 })
@@ -459,7 +422,7 @@ def _exit_code_semantics(command: str, returncode: int) -> str | None:
     first = str(command or "").strip()
     for token in first.split():
         if "=" in token and token.split("=", 1)[0].isidentifier():
-            continue  # 跳过 FOO=bar 前缀
+            continue
         if token.casefold() in _EXIT_ONE_SEMANTIC_COMMANDS:
             return (
                 "exit 1 means no matches / differences / condition false — "
@@ -469,24 +432,13 @@ def _exit_code_semantics(command: str, returncode: int) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# 读状态（readFileState，CC FileReadTool/FileEditTool 契约）
-#
-# 读去重必须属于当前 Agent 的可见上下文。每次注册有自己的状态；新回合
-# 或子代理重新读文件，不能把另一个 Agent 的 Read 当作已见证据。
-# ---------------------------------------------------------------------------
 
 _READ_LOOP_WARN_AT = 3
-"""同一区间连读到第 N 次在结果里加警告（Hermes 是 3 警 4 断；MP 的硬断
-放宽到 6，因为 MP 没有它那套 dispatcher 级重置，只靠工具执行信号）。"""
 _READ_LOOP_BLOCK_AT = 6
 _READ_FINGERPRINT_CAP = 4_000_000
-"""超过这个字节数不做 sha 摘要（只比 mtime/size；大文件 hash 每次编辑
-都付一遍不值）。"""
 
 
 class _FileReadState:
-    """当前工具注册所服务的 Agent 读状态：条目 + 连读守卫。"""
 
     def __init__(self) -> None:
         self.entries: dict[str, dict[str, Any]] = {}
@@ -530,12 +482,10 @@ def _state_mark_read(
 
 
 def _state_mark_written(store: _FileReadState, path: Path) -> None:
-    """写/编辑成功 = 模型对结果内容有完整最新认知（CC：Edit/Write 存全量视图）。"""
     _state_mark_read(store, path, offset=1, limit=_MAX_READ_LINES, truncated=False)
 
 
 def _state_freshness(store: _FileReadState, path: Path) -> str:
-    """'fresh' | 'not-read' | 'truncated' | 'modified' | 'gone'。"""
     entry = store.entries.get(str(path))
     if entry is None:
         return "not-read"
@@ -552,7 +502,6 @@ def _state_freshness(store: _FileReadState, path: Path) -> str:
         and entry.get("sha") is not None
         and digest == entry["sha"]
     ):
-        # mtime 被云同步/杀软拨动但内容逐字节未变（CC content fallback）。
         return "fresh"
     return "modified"
 
@@ -577,7 +526,6 @@ def _gate_message(reason: str, display: str) -> str:
     )
 
 
-# --- 连读守卫 ----------------------------------------------------------------
 
 
 def _read_guard_bump(store: _FileReadState, key: str) -> int:
@@ -594,7 +542,6 @@ def _read_guard_reset(store: _FileReadState) -> None:
     store.last_count = 0
 
 
-# --- 相似文件 / 设备 / 二进制守卫 ------------------------------------------------
 
 _WINDOWS_DEVICE_NAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -612,7 +559,6 @@ _OFFICE_DOC_EXTENSIONS = {
 
 
 def _similar_file_hint(space: "WorkspaceSpace", target: Path) -> str:
-    """ENOENT 时给一个"是不是拼错了"的建议（CC findSimilarFile）。"""
     parent = target.parent if target.parent.is_dir() else space.root
     try:
         siblings = [p.name for p in parent.iterdir() if p.is_file()]
@@ -628,7 +574,6 @@ def _similar_file_hint(space: "WorkspaceSpace", target: Path) -> str:
 
 
 def _device_guard(target: Path) -> None:
-    """会挂死/产生无限输出的设备名（路径判断，无 I/O；CC BLOCKED_DEVICE_PATHS）。"""
     text = str(target)
     if "\\\\.\\" in text or "\\\\" in text[:7]:
         raise ValueError(f"cannot read a Windows device path: {text}")
@@ -640,7 +585,6 @@ def _device_guard(target: Path) -> None:
 
 
 def _binary_guard(target: Path) -> None:
-    """诚实拒绝：read_file 渲染不了的东西就直说用什么替代。"""
     ext = target.suffix.casefold()
     if ext in _OFFICE_IMAGE_EXTENSIONS:
         raise ValueError(
@@ -667,11 +611,9 @@ def _binary_guard(target: Path) -> None:
         )
 
 
-# --- 行级模糊匹配阶梯（Hermes 策略 2/3/4 的行锚定变体）---------------------------
 
 
 def _line_spans(raw: str) -> list[tuple[int, int, int]]:
-    """每行 (body_start, body_end, line_end)；line_end 含换行符。"""
     spans: list[tuple[int, int, int]] = []
     start = 0
     for line in raw.splitlines(keepends=True):
@@ -703,12 +645,6 @@ _LINE_STRATEGIES: tuple[tuple[str, Any], ...] = (
 def _line_strategy_spans(
     raw: str, needle: str, normalizer: Any
 ) -> list[tuple[int, int, int]]:
-    """行锚定匹配：返回每个命中的 (body_start, body_end, line_end) 三元组。
-
-    body_end 不含换行；line_end 含换行（删除整行时用）。替换时保首行缩进
-    与末行尾随空白——行策略比较的是剥掉空白后的内容，真实子串替换保证
-    文件里其余空白原样不动。
-    """
     spans = _line_spans(raw)
     raw_lines_norm = [normalizer(raw[s:e]) for (s, e, _e) in spans]
     needle_lines = needle.split("\n")
@@ -742,7 +678,6 @@ def _all_spans(raw: str, needle: str) -> list[tuple[int, int]]:
 
 
 def _spans_of_parts(raw: str, parts: list[str]) -> list[tuple[int, int]]:
-    """按出现顺序把每个真实子串定位回原文 span（顺序 find）。"""
     spans: list[tuple[int, int]] = []
     position = 0
     for part in parts:
@@ -759,13 +694,6 @@ def _spans_of_parts(raw: str, parts: list[str]) -> list[tuple[int, int]]:
 def _locate_matches(
     raw: str, old: str, new: str, replace_all: bool
 ) -> tuple[list[tuple[int, int, int]] | None, str]:
-    """匹配阶梯：exact → 删行扩展 → 弯引号归一化 → 三级行策略。
-
-    返回 (spans, strategy)；spans 是三元组 (body_start, body_end, line_end)，
-    未命中返回 (None, "")。行策略在 new 为空时直接给 line_end（删整行）。
-    """
-    # CC applyEditToFile：删行语义——new 为空且 old 不带尾换行时，优先把
-    # 连同换行符一起删（否则留下空行）。这条检查先于普通精确匹配。
     if new == "" and not old.endswith("\n") and raw.count(old + "\n"):
         return [(s, e, e) for (s, e) in _all_spans(raw, old + "\n")], "exact"
     if raw.count(old):
@@ -788,11 +716,6 @@ def _locate_matches(
 def _plan_edits(
     raw: str, edit_list: list[dict[str, Any]], display: str
 ) -> tuple[list[tuple[int, int, str]], str]:
-    """把每条 edit 定位成原文 span + 替换文本，做唯一性与重叠校验。
-
-    全部编辑对**原文**匹配（Pi edit-diff 契约），倒序应用由调用方完成。
-    返回 (planned spans, 策略备注)；有任何错误直接 raise ValueError。
-    """
     planned: list[tuple[int, int, str, int]] = []
     note = ""
     for entry in edit_list:
@@ -800,7 +723,7 @@ def _plan_edits(
         all_flag, idx = entry["all"], entry["index"]
         label = f"edits[{idx}]: " if idx is not None else ""
         if old == new:
-            continue  # 批量里的 no-op 直接跳过；整体无变化在最后兜住
+            continue
         spans, strategy = _locate_matches(raw, old, new, all_flag)
         if spans is None:
             raise ValueError(
@@ -855,7 +778,6 @@ def _plan_edits(
 
 
 def _preserve_outer_whitespace(actual: str, replacement: str) -> str:
-    """首行缩进与末行尾随空白跟随文件真实行（new_string 提供内容本身）。"""
     if not actual or not replacement:
         return replacement
     first_nl = actual.find("\n")
@@ -873,8 +795,6 @@ def _preserve_outer_whitespace(actual: str, replacement: str) -> str:
 
 
 def _preserve_quote_style(actual_old: str, new_string: str) -> str:
-    """文件用弯引号而模型发直引号时，new_string 的引号跟随文件风格
-    （CC FileEditTool preserveQuoteStyle：开/闭启发 + 缩写词撇号）。"""
     has_double = "\u201c" in actual_old or "\u201d" in actual_old
     has_single = "\u2018" in actual_old or "\u2019" in actual_old
     if not has_double and not has_single:
@@ -884,8 +804,6 @@ def _preserve_quote_style(actual_old: str, new_string: str) -> str:
         if index == 0:
             return True
         prev = chars[index - 1]
-        # CJK 标点后跟随的引号是开引号（他说：“…”）；CC 的 ASCII 启发式
-        # （空格/括号/破折号）不覆盖中文标点，中文文案文件是 MP 主场景。
         if prev in "：，。、；！？（《「『【〈…":
             return True
         return prev in " \t\n\r([{—–\u2014\u2013"
@@ -899,7 +817,7 @@ def _preserve_quote_style(actual_old: str, new_string: str) -> str:
             prev = chars[index - 1] if index > 0 else ""
             nxt = chars[index + 1] if index + 1 < len(chars) else ""
             if prev.isalpha() and nxt.isalpha():
-                result.append("\u2019")  # don't / it's 的撇号
+                result.append("\u2019")
             else:
                 result.append("\u2018" if opening(chars, index) else "\u2019")
         else:
@@ -918,14 +836,8 @@ _CATASTROPHIC_COMMANDS = (
     re.compile(r"\bmkfs\b"),
     re.compile(r"\bdd\s+if=", re.IGNORECASE),
 )
-"""Catastrophic, never-legitimate-dev-work commands (handoff §A2 minimal
-blacklist). Everything else goes through the permission ladder unchanged."""
 
 
-# Read-only shell-command allowlist (Codex sandboxMode:read-only + CC Bash
-# readonly subset). Anything not on this list falls back to the static
-# LOCAL_IRREVERSIBLE declaration (default-closed), so a missed entry costs
-# a confirmation prompt, never silent data loss.
 _READ_ONLY_COMMANDS = frozenset({
     "ls", "dir", "pwd", "echo", "cat", "type", "head", "tail",
     "wc", "find", "tree", "date", "whoami", "hostname", "env",
@@ -935,27 +847,13 @@ _READ_ONLY_COMMANDS = frozenset({
 })
 _GIT_READ_SUBCOMMANDS = frozenset({
     "status", "log", "diff", "show", "branch", "tag", "blame", "remote",
-    "rev-parse", "describe", "ls-files", "config",  # config 读；写形式带参数罕见，链式/写配置回落 IRREVERSIBLE 由链式守卫兜
+    "rev-parse", "describe", "ls-files", "config",
 })
-"""Allowlist of commands with no observable mutation effect (Codex
-sandboxMode=readOnly + CC Bash readonly subset). Comparison is lowercase
-(Linux + Windows PowerShell). First whitespace-separated token must hit
-this set; anything chained (| / ; / && / || / $( / backtick) falls back to
-LOCAL_IRREVERSIBLE because the static check cannot prove the right-hand
-side is also benign."""
 
 _CHAIN_OPERATORS = re.compile(r"[|&;<>`\r\n]|\$\(")
 
 
 def _classify_command_effect(arguments: dict) -> "Effect":
-    """``run_command`` 的动态 effect_for:把纯只读 shell 当作 READ,其余按静态声明。
-
-    Codex 把任何不可证明为只读的命令当作 sandbox=workspace-write 不可触发的
-    操作;CC Bash 走 readonly 子集允许列目录/读文件。这两条折在一起就是:
-    命令首 token 在 ``_READ_ONLY_COMMANDS`` 白名单、且不含 shell 链式操作符,
-    才返回 ``Effect.READ``。其余一律回落 ``LOCAL_IRREVERSIBLE``,让权限链
-    用默认值拦住,而不是把误判当放行凭据。
-    """
     from app.agent_runtime.tool_registry import Effect
 
     command = str((arguments or {}).get("command") or "").strip()
@@ -986,15 +884,9 @@ def _classify_command_effect(arguments: dict) -> "Effect":
 
 
 class _ShellSession:
-    """会话内 shell 状态：cwd 跨调用保持（CC Shell.ts 的 `pwd -P` 回读）。
-
-    按 workspace 根共享（进程寿命，与读状态同一理由——工具按轮重注册，
-    闭包状态活不过一轮；而 `cd` 的意义正是跨轮保持）。子代理与父会话
-    共享同一 workspace 的 shell 状态：可见、可 cd 回来，无隐藏隔离。
-    """
 
     def __init__(self) -> None:
-        self.cwd: Path | None = None  # None = workspace 根
+        self.cwd: Path | None = None
 
 
 _SHELL_SESSIONS: dict[str, _ShellSession] = {}
@@ -1006,15 +898,7 @@ _CD_SPLIT = re.compile(r"&&|\|\||[&;|\n]")
 def _resolve_cd_target(
     command: str, start: Path, space: "WorkspaceSpace"
 ) -> Path | None:
-    """词法跟踪命令里的 `cd` 段，返回最终 cwd（没有 cd 段返回 None）。
-
-    cmd 的 `%CD%` 在整条命令解析时就展开，echo-marker 方案测不到 `cd` 的
-    效果；改为把命令按 `&&`/`&`/`;`/`|`/换行切段，逐段解析 `cd [-d] 目标`，
-    相对目标按累计 cwd 解析。pushd/for-do 内的 cd 不识别——漏跟只损失
-    一次持久化，不会改错目录。
-    """
     current: Path | None = None
-    # Only a standalone cd has a statically knowable executed destination.
     if _CHAIN_OPERATORS.search(command):
         return None
     for segment in [str(command or "")]:
@@ -1025,7 +909,7 @@ def _resolve_cd_target(
             continue
         args = [t for t in tokens[1:] if t.casefold() != "/d"]
         if not args:
-            continue  # `cd` 无参 = 打印当前目录，不改变
+            continue
         raw_target = args[-1].strip('"')
         try:
             base = current or start
@@ -1089,7 +973,6 @@ def _run_shell(command: str, cwd: Path, timeout: float, scope: CancellationToken
 
 
 class BackgroundJobs:
-    """Detached child processes owned by one coding-tools registration."""
 
     def __init__(self, root: Path, notify: Callable[[str], None] | None = None,
                  session_getter: Callable[[], Any] | None = None) -> None:
@@ -1122,11 +1005,6 @@ class BackgroundJobs:
         )
 
         def watch() -> None:
-            """Hermes notify_on_complete：结束时记录 exit code 并推一次消息。
-
-            推送走 durable inbox（target=next-step），活跃 loop 下一模型轮
-            即携带；loop 已结束则随会话留到下一次运行，不丢。
-            """
             try:
                 process.wait()
             except Exception:  # noqa: BLE001 - watcher 死了不连累工具
@@ -1136,8 +1014,6 @@ class BackgroundJobs:
                 code = meta["exit"]
             except (OSError, ValueError):
                 return
-            # A durable session is notified by the independent worker, once.
-            # The callback serves non-durable embedders while they are alive.
             if self._notify is not None and session is None:
                 try:
                     self._notify(
@@ -1196,12 +1072,6 @@ def _pid_alive(pid: int) -> bool:
 
 
 class FileCheckpointStore:
-    """Before-images of every file our tools touch (CC /rewind contract).
-
-    Backups live under ``<workspace>/.mp/backups``: one content file per
-    mutation plus a JSONL manifest. ``restore`` rewinds the last N mutations
-    so an agent that went down the wrong path is one call from clean.
-    """
 
     def __init__(self, root: Path, *, session_id: str | None = None) -> None:
         self.dir = Path(root).resolve() / ".mp" / "backups"
@@ -1210,11 +1080,6 @@ class FileCheckpointStore:
                 raise ValueError("invalid checkpoint session id")
             self.dir /= session_id
         self.manifest = self.dir / "manifest.jsonl"
-        # seq must continue across processes, not from 0 every boot. The
-        # manifest is append-only and the backups are per-seq files (000001.bak,
-        # ...); restarting _seq at 0 on the next run overwrote earlier backups
-        # while the manifest still pointed at them, so /rewind restored content
-        # from the wrong file. Start past every seq already recorded.
         self._seq = self._max_recorded_seq()
 
     def _max_recorded_seq(self) -> int:
@@ -1262,7 +1127,6 @@ class FileCheckpointStore:
             return self._restore(steps)
 
     def _restore(self, steps: int = 0) -> str:
-        """Undo the last ``steps`` mutations (0 = every recorded one)."""
         if not self.manifest.is_file():
             return "no file edits recorded to restore"
         entries: list[dict[str, Any]] = []
@@ -1274,7 +1138,7 @@ class FileCheckpointStore:
         if not pending:
             return "nothing to restore"
         restored: list[str] = []
-        for entry in reversed(pending):  # undo newest-first
+        for entry in reversed(pending):
             target = Path(str(entry["path"]))
             backup = entry.get("backup")
             if backup:
@@ -1301,9 +1165,6 @@ def register_coding_tools(
     session_id: str | None = None,
     session_getter: Callable[[], Any] | None = None,
 ) -> None:
-    """``inbox``：后台 job 完成时推一条 durable 消息（Hermes
-    notify_on_complete 契约）。桥接线在 builtin_bundle 的 coding-tools 行。"""
-    """Register the file/shell tool set, confined to ``workspace_root``."""
     space = WorkspaceSpace(Path(workspace_root))
     owner = session_id or uuid.uuid4().hex
     checkpoints = FileCheckpointStore(space.root, session_id=owner)
@@ -1473,11 +1334,6 @@ def register_coding_tools(
                     "No changes to make: old_string and new_string are exactly the same."
                 )
 
-        # read_text default-translates to LF, which is the view the model saw
-        # through read_file — so old_string matches, and matching happens in
-        # LF space. The write side restores the file's own newline convention
-        # (CRLF repos stay CRLF). Decoding bytes without translation would
-        # keep literal CRLF here and the re-expansion below would double it.
         newline = _detect_newline(target)
         raw_bytes = target.read_bytes()
         bom = raw_bytes.startswith(b"\xef\xbb\xbf")
@@ -1518,13 +1374,10 @@ def register_coding_tools(
                 def checkpoint(target, *, existed):
                     checkpoints.record(target, existed=existed)
                     touched.append(target)
-                # apply_patch_text 的返回里带着「同一段在别处也匹配」的位置提示；
-                # 丢掉它等于把唯一的歧义信号吃掉，模型下一轮会以为自己改对了。
                 summaries.append(apply_patch_text(text, space.root, before_write=checkpoint))
         except ApplyPatchError as exc:
             raise ValueError(f"Patch failed: {exc}") from exc
         for target in dict.fromkeys(touched):
-            # patch 成功 = 补丁内容模型刚写的，视为已读最新，省一轮重读。
             if target.is_file():
                 _state_mark_written(store, target)
         detail = "\n".join(summaries)
@@ -1540,7 +1393,6 @@ def register_coding_tools(
             bounded = 0
         result = checkpoints.restore(bounded)
         if "nothing" not in result:
-            # 回滚是 harness 动的文件：读状态全部作废，后续编辑必须重读。
             read_store.entries.clear()
             _read_guard_reset(read_store)
         return result
@@ -1561,7 +1413,6 @@ def register_coding_tools(
                 matches.append((rel, mtime))
         if not matches:
             return f"no files match {pattern!r}"
-        # mtime 降序：模型找"刚才那个文件"时最近的排前（CC Glob 同款）。
         matches.sort(key=lambda item: -item[1])
         shown = matches[:_MAX_GLOB_RESULTS]
         suffix = (
@@ -1648,9 +1499,6 @@ def register_coding_tools(
         out = (completed.stdout or "")[-_MAX_OUTPUT_CHARS:]
         err = (completed.stderr or "")[-8000:]
         header = f"exit={completed.returncode}"
-        # 退出码语义（对齐 CC commandSemantics）：这批工具退出码 1 的含义是
-        # "没找到/有差异/条件为假"，不是执行错误。不注明，模型会把无命中
-        # 当成失败，下一轮胡乱重试。
         semantic = _exit_code_semantics(text, completed.returncode)
         if semantic:
             header += f" ({semantic})"
@@ -1664,7 +1512,6 @@ def register_coding_tools(
             raise RuntimeError(result)
         return result
 
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("read_file", "Read")
     registry.register_alias("write_file", "Write")
     registry.register_alias("edit_file", "Edit")

@@ -51,7 +51,6 @@ DEFAULT_SYSTEM_PROMPT = """你是 Magic Pointer Open 的屏幕对象助手。
 
 
 def _plain_error_excerpt(text: str, limit: int = 220) -> str:
-    """Turn gateway HTML/error pages into a compact user-facing message."""
 
     text = re.sub(r"<script[\s\S]*?</script>", " ", text or "", flags=re.I)
     text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
@@ -64,9 +63,6 @@ def _plain_error_excerpt(text: str, limit: int = 220) -> str:
 def read_local_secret(name: str) -> str | None:
     if os.getenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS") == "1":
         return None
-    # 打包安装版里 ROOT/secrets 不存在（secrets 不进安装包、也不进 git）。
-    # 查找顺序：开发树 secrets → 用户数据目录 secrets（sync_install.ps1 会把
-    # 本机 secrets 拷进 %LOCALAPPDATA%\Magic Pointer\secrets）。
     candidates = [SECRETS_DIR / name]
     if USER_SECRETS_DIR is not None:
         candidates.append(USER_SECRETS_DIR / name)
@@ -85,7 +81,6 @@ def read_local_secret(name: str) -> str | None:
 
 @contextmanager
 def request_ai_config(value: object, *, session_id: str | None = None) -> Iterator[None]:
-    """Bind a decrypted model profile to one resident-worker request only."""
 
     global _REQUEST_AI_CONFIG, _REQUEST_SESSION_ID
     previous = _REQUEST_AI_CONFIG
@@ -124,7 +119,6 @@ def request_ai_config(value: object, *, session_id: str | None = None) -> Iterat
 
 @contextmanager
 def request_ai_session(session_id: str | None) -> Iterator[None]:
-    """Use the durable Runtime conversation identity for provider routing."""
     global _REQUEST_SESSION_ID
     previous = _REQUEST_SESSION_ID
     if session_id:
@@ -136,7 +130,6 @@ def request_ai_session(session_id: str | None) -> Iterator[None]:
 
 
 def background_ai_config() -> dict:
-    """Snapshot the active profile for a child process's private stdin pipe."""
     import copy
     config = copy.deepcopy(_REQUEST_AI_CONFIG or {})
     credential, base_url, model = get_ai_config()
@@ -146,8 +139,6 @@ def background_ai_config() -> dict:
 
 
 def get_ai_config() -> tuple[str | None, str | None, str]:
-    # Studio always sends effort, including installs configured with local
-    # secret files. Effort alone must not replace that model configuration.
     if _REQUEST_AI_CONFIG and any(
         _REQUEST_AI_CONFIG.get(key)
         for key in ("provider", "credential", "baseUrl", "model", "apiMode")
@@ -164,18 +155,12 @@ def get_ai_config() -> tuple[str | None, str | None, str]:
 
 
 def get_ai_model_catalog() -> list[dict]:
-    """Return models explicitly declared by the active request profile."""
     if not _REQUEST_AI_CONFIG or not isinstance(_REQUEST_AI_CONFIG.get("models"), list):
         return []
     return [dict(item) for item in _REQUEST_AI_CONFIG["models"] if isinstance(item, dict)]
 
 
 def get_ai_context_window(model_name: str | None = None, metadata: dict | None = None) -> int:
-    """Per-model metadata wins; known families precede the profile fallback.
-
-    Compatible gateways use several spellings for the same context limit.
-    Keep the catalog display and the Runtime compaction budget on this path.
-    """
     from app.agent_runtime.model_profiles import context_window_for
 
     name = model_name or get_ai_config()[2]
@@ -198,7 +183,6 @@ def get_ai_context_window(model_name: str | None = None, metadata: dict | None =
 
 
 def get_ai_api_mode(base_url: str | None = None) -> str:
-    """Protocol for the configured gateway; legacy installs stay OpenAI-compatible."""
     if _REQUEST_AI_CONFIG:
         request_mode = str(_REQUEST_AI_CONFIG.get("apiMode") or "").casefold()
         if request_mode in {"messages", "chat-completions", "responses", "local"}:
@@ -215,17 +199,11 @@ def get_ai_api_mode(base_url: str | None = None) -> str:
 
 
 def get_ai_effort() -> str:
-    """Reasoning effort bound to the current request, with High as default."""
     if _REQUEST_AI_CONFIG:
         return normalize_effort(_REQUEST_AI_CONFIG.get("effort"))
     return "high"
 
 
-# 没有「文字模型 / 视觉模型」这一分：一个模型就是一个模型。图像和文字走同一条
-# 已被选中的 profile，能不能看图由那次请求的结果回答，不由一张模型名模式表预先
-# 判定。曾经这里有 `classify_vision_capability`：它用正则给模型名分类，命中
-# text-only 就**在发请求之前**拒绝读图，于是「OCR 明明读到了但那行还是答不出来」
-# 这类问题会被伪装成「模型不支持」。
 
 
 def _completion_endpoint(base_url: str | None, api_mode: str) -> str:
@@ -250,7 +228,6 @@ def _completion_headers(
                 headers[key] = value
     target = urlsplit(base_url if base_url is not None else (get_ai_config()[1] or ""))
     if target.hostname == "opencode.ai" and target.path.startswith("/zen/go/"):
-        # OpenCode Go routes and caches by the client conversation identity.
         headers["x-opencode-session"] = _REQUEST_SESSION_ID or _MODEL_SESSION_ID
         headers["User-Agent"] = "MagicPointer"
     return headers
@@ -292,10 +269,6 @@ def _text_completion_payload(
             {"role": "user", "content": content},
         ],
         "max_tokens": max(1, int(max_tokens)),
-        # Reasoning models (deepseek-v4-flash on Go etc.) would spend the whole
-        # max_tokens budget on thinking and return empty content. Same
-        # contract as the messages branch: thinking off by default. Gateways
-        # that reject the param get a stripped retry (see ask_text_model).
         "thinking": {"type": "disabled"},
     }
     if effort is not None:
@@ -304,7 +277,6 @@ def _text_completion_payload(
 
 
 def _without_optional_request_fields(payload: dict) -> dict | None:
-    """Drop optional reasoning controls for one compatibility retry."""
     stripped = {
         key: value
         for key, value in payload.items()
@@ -339,13 +311,6 @@ def _text_completion_response(data: dict, api_mode: str) -> str:
 
 
 def _empty_answer_evidence(data: dict, api_mode: str) -> str:
-    """Diagnostics for an HTTP-200-but-empty-answer response.
-
-    The common failure is a reasoning model spending its whole max_tokens
-    budget on thinking (deepseek-v4-flash measured on Go 2026-08-07:
-    finish=length, content='', reasoning_content=4960 chars). Surfacing
-    finish_reason and the reasoning-token split makes the next fix obvious.
-    """
     if api_mode == "responses":
         details = data.get("incomplete_details") or {}
         return f"finish={details.get('reason') or data.get('status') or 'unknown'}"
@@ -450,8 +415,6 @@ def _tool_completion_response(data: dict, api_mode: str) -> dict:
                 try:
                     arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                 except (TypeError, ValueError):
-                    # Keep the provider fragment so LoopModelClient can return
-                    # an argument_error instead of executing an invented {}.
                     arguments = raw_arguments
                 calls.append({
                     "id": str(output.get("call_id") or output.get("id") or ""),
@@ -522,7 +485,6 @@ def _vision_content_block(data_url: str, api_mode: str) -> dict:
 
 
 def _httpx_client(httpx_module, *, timeout: int = 120):
-    """Use environment proxies when valid, but survive malformed proxy variables."""
 
     try:
         return httpx_module.Client(timeout=timeout, follow_redirects=False)
@@ -531,12 +493,6 @@ def _httpx_client(httpx_module, *, timeout: int = 120):
 
 
 def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 82) -> str:
-    """Return an optimized image data URL for model input.
-
-    Screenshots can be large, and OpenAI-compatible gateways may close TLS
-    connections on bigger multimodal payloads. Keep the saved local screenshot
-    untouched, but send a downscaled JPEG copy to the model.
-    """
 
     try:
         from PIL import Image
@@ -556,29 +512,14 @@ def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 
         return f"data:image/png;base64,{encoded}"
 
 
-#: Every failure in this module is reported by *returning* a sentence with this
-#: prefix — `ask_text_model` catches its own exceptions and converts them too
-#: (`return f"AI 调用失败：{type(exc).__name__}: {exc}"`), so a caller's
-#: ``except`` block is never reached. That is deliberate: most callers show the
-#: sentence to the user, and showing "AI 调用失败：HTTP 402" beats showing a
-#: traceback.
-#:
-#: It is *not* safe for callers that treat the return value as content. The
-#: compaction summarizer was one: a failed summarization produced a non-empty
-#: string, which `memory.compact_messages` accepted as a summary and used to
-#: replace the entire conversation head — so the model lost its history and was
-#: handed an error message as its own memory. Use :func:`is_ai_failure` at any
-#: call site where "no answer" and "an answer" must be told apart.
 AI_FAILURE_PREFIX = "AI 调用失败："
 
 
 def is_ai_failure(value: object) -> bool:
-    """True when ``value`` is a failure report rather than model output."""
     return str(value or "").lstrip().startswith(AI_FAILURE_PREFIX)
 
 
 def _incomplete_text_response(data: dict, api_mode: str) -> str | None:
-    """Provider completion state is authoritative even when text is nonempty."""
     if api_mode == "responses":
         status = data.get("status")
         if status and status != "completed":
@@ -604,19 +545,6 @@ def ask_text_model(
     attempts: int = 2,
     max_tokens: int = 1200,
 ) -> str:
-    """Ask the configured OpenAI-compatible model with text-only context.
-
-    `timeout_s` is the budget for a single attempt and `attempts` caps the
-    retries. Interactive callers must pass a short budget: a surface the user
-    is staring at cannot afford the batch default, and every caller of this
-    function already has a non-model fallback to fall back to.
-
-    `max_tokens` is a latency control as much as a size one. Measured against
-    the nghimmo gateway on 2026-08-04: a cap of 1200 produced 1198 tokens and
-    took 26.9s for a one-line question, while a cap of 120 answered the same
-    question in 12.1s. A relay that writes to whatever ceiling it is given makes
-    the ceiling the wait, so interactive callers should set one they can afford.
-    """
     api_key, base_url, model = get_ai_config()
     api_mode = get_ai_api_mode(base_url)
     if not api_key and api_mode != "local":
@@ -633,10 +561,6 @@ def ask_text_model(
             f"当前读取到的上下文：{excerpt}"
         )
 
-    # A gateway we already know is refusing (402 balance, 401 key, 404 model)
-    # gets skipped instead of waited on. Every caller has a local fallback, and
-    # burning a full timeout per command is what made the acceptance run feel
-    # broken rather than merely unconfigured. The verdict is per endpoint.
     blocked = short_circuit_message((base_url or "").rstrip("/"))
     if blocked:
         return f"AI 调用失败：{blocked}"
@@ -675,9 +599,6 @@ def ask_text_model(
                     record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
                     continue
                 if response.status_code >= 400:
-                    # Optional reasoning controls are best-effort transport
-                    # hints. The Effort prompt section remains authoritative,
-                    # so an incompatible gateway gets one stripped retry.
                     stripped = _without_optional_request_fields(payload)
                     if stripped is not None:
                         try:
@@ -698,15 +619,6 @@ def ask_text_model(
                 record_success(model=model, base_url=base_url)
                 answer = _text_completion_response(data, api_mode)
                 if not answer:
-                    # HTTP 200 with nothing visible is the quiet twin of the
-                    # 400 above: the gateway took an optional reasoning
-                    # control it did not understand and spent the whole
-                    # budget on it. Measured on mimo-v2.5 (2026-09-16, same
-                    # prompt, one variable): with `thinking: disabled` it
-                    # answered finish=length / content=None in 53.0s, and
-                    # without it answered in 31.0s. So the quiet twin gets
-                    # the same one stripped retry the loud one already got,
-                    # before we tell the user we failed.
                     stripped = _without_optional_request_fields(payload)
                     if stripped is not None:
                         try:
@@ -752,11 +664,6 @@ def ask_text_model(
                 )
                 continue
             except httpx.TimeoutException:
-                # A read/write/pool timeout means this individual request used
-                # up the caller's latency budget. It does not prove that the
-                # endpoint is offline. Marking it globally unreachable opens
-                # the circuit and causes the *next* answer to be skipped even
-                # while the cheap health probe succeeds.
                 request_timed_out = True
                 continue
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
@@ -792,17 +699,6 @@ def ask_text_model_with_tools(
     attempts: int = 1,
     max_tokens: int = 240,
 ) -> dict:
-    """Ask the model, offering it tools it may call instead of answering in prose.
-
-    This is the L2 tier of the intent router: every enabled recipe is offered as
-    a tool, so a command nobody wrote a rule for can still resolve to real work.
-    When the model would rather just answer, that is a valid outcome too — the
-    contract is that the user always gets something.
-
-    Returns {"text": str, "toolCalls": [{"name": str, "arguments": dict}],
-    "error": str}. Never raises: a failure comes back as `error` with empty
-    text so the caller can fall back to its local path.
-    """
     api_key, base_url, model = get_ai_config()
     api_mode = get_ai_api_mode(base_url)
     if not api_key and api_mode != "local":
@@ -891,10 +787,6 @@ def ask_text_model_with_tools(
                 "text": parsed["text"],
                 "toolCalls": parsed["toolCalls"],
                 "error": "",
-                # Carried so a caller can tell a finished turn from one the
-                # provider cut off at the output ceiling. Without it the only
-                # way to guess was to inspect the text, which is how a Chinese
-                # sentence ending in "…" got mistaken for a truncation.
                 "finishReason": str(parsed.get("finishReason") or ""),
             }
         if request_timed_out and last_error == "model_request_timeout":
@@ -917,7 +809,6 @@ def ask_vision_model(
     max_tokens: int = 1200,
     cancellation_scope: object = None,
 ) -> str:
-    """Ask an OpenAI-compatible multimodal model about the screenshot."""
 
     api_key, base_url, model = get_ai_config()
     api_mode = get_ai_api_mode(base_url)
@@ -981,9 +872,6 @@ def ask_vision_model(
             for item in labeled_extra_images or []:
                 label, path = item
                 labeled.append((label, path))
-            # Backward compatibility for old callers: still label them instead
-            # of appending unlabeled images, because unlabeled multimodal input
-            # is exactly what caused this/that reversal.
             for i, path in enumerate(extra_image_paths or [], 1):
                 labeled.append((f"EXTRA_REFERENCE_{i}", path))
             return labeled
@@ -1033,9 +921,6 @@ def ask_vision_model(
 
         last_exc: Exception | None = None
         last_http_error: tuple[int, str] | None = None
-        # Try full payload twice; if the gateway is unstable or dislikes the
-        # multimodal payload, fall back to primary image only while keeping text
-        # context. 5xx must not dump gateway HTML into the UI.
         attempt_count = min(3, max(1, int(attempts)))
         has_extras = bool(extra_image_paths or labeled_extra_images)
         attempt_plan = [

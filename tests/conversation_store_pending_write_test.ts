@@ -22,7 +22,7 @@ async function main() {
     for (let attempt = 0; !release && attempt < 100; attempt++) await delay(10);
     assert.ok(release, 'first background write starts');
     store.appendTurn({ conversationId: created.id, question: 'second', answer: 'two' });
-    await delay(40); // the second debounce elapses while the first write is in flight
+    await delay(40);  
     release!();
     release = undefined;
     for (let attempt = 0; attempt < 100; attempt++) {

@@ -1,5 +1,4 @@
 'use strict';
-// Exercise the shipped Studio controls in Chromium. Responses are local fixtures.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +10,7 @@ const deadline = setTimeout(() => app.exit(1), 30000);
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1240, height: 900, show: false, webPreferences: {
     offscreen: true, sandbox: false, contextIsolation: true,
-    preload: path.resolve('scripts/probe_studio_claude_preload.js'),
+    preload: path.resolve('scripts/probe_studio_layout_preload.js'),
     additionalArguments: ['--mp-probe-theme=light', '--mp-probe-state=landing'],
   } });
   try {
@@ -37,19 +36,19 @@ app.whenReady().then(async () => {
       check(navStyle.height === '26px' && navStyle.fontSize === '13px' && navStyle.lineHeight === '19.5px' && navStyle.marginBottom === '0.5px', 'sidebar still uses Web comfortable density instead of the supplied Code 26.5px row rhythm');
       const textarea = document.querySelector('#composer-form textarea');
       check(getComputedStyle(textarea).fontSize === '14px' && getComputedStyle(textarea).lineHeight === '18px', 'Code composer is still using the larger Web Chat typography');
-      check(document.querySelector('.dshw-scroll').getBoundingClientRect().height <= 46, 'single-line Code composer exceeds the reference 44px editor plus border');
-      check(document.querySelector('.dshw-primary').getBoundingClientRect().width === 24, 'Code send control is not the compact 24px size');
+      check(document.querySelector('.mpw-scroll').getBoundingClientRect().height <= 46, 'single-line Code composer exceeds the reference 44px editor plus border');
+      check(document.querySelector('.mpw-primary').getBoundingClientRect().width === 24, 'Code send control is not the compact 24px size');
       const overflowWitness = document.createElement('div');
       overflowWitness.style.height = '1400px'; overflowWitness.style.flex = '0 0 1400px';
       const chatStream = document.getElementById('stream');
       chatStream.append(overflowWitness);
-      const conversationFlow = chatStream.querySelector('.dsh-flow');
+      const conversationFlow = chatStream.querySelector('.mp-chat-flow');
       const textLeft = conversationFlow.getBoundingClientRect().left + parseFloat(getComputedStyle(conversationFlow).paddingLeft);
-      const centeredTranscript = Math.abs(textLeft - document.querySelector('.dshw-scroll').getBoundingClientRect().left) < 1;
+      const centeredTranscript = Math.abs(textLeft - document.querySelector('.mpw-scroll').getBoundingClientRect().left) < 1;
       overflowWitness.remove();
       const narrationWitness = document.createElement('div');
-      narrationWitness.className = 'dsh-narration';
-      narrationWitness.innerHTML = '<div class="dsh-markdown"><p>Check the actual text dimensions.</p></div>';
+      narrationWitness.className = 'mp-chat-narration';
+      narrationWitness.innerHTML = '<div class="mp-chat-markdown"><p>Check the actual text dimensions.</p></div>';
       chatStream.append(narrationWitness);
       const narrationStyle = getComputedStyle(narrationWitness.querySelector('p'));
       check(narrationStyle.fontSize === '15px' && narrationStyle.lineHeight === '23px', 'nested markdown overrides the visible narration typography');
@@ -133,7 +132,7 @@ app.whenReady().then(async () => {
       stored.turns[0].trajectory = [{ kind: 'tool', callId: 'plan-call', name: 'Todo', state: 'done', text: JSON.stringify({ todos: steps }), result: JSON.stringify({ plan: steps }) }];
       await openConversation(stored.id); setInspector(true, 'tasks');
       let plan = document.getElementById('project-plan');
-      check(document.getElementById('project-inspector').getBoundingClientRect().width === 240, 'Tasks must use the Claude 15–20rem session rail, not the wide document inspector');
+      check(document.getElementById('project-inspector').getBoundingClientRect().width === 240, 'Tasks must use the Studio 15–20rem session rail, not the wide document inspector');
       check(plan && !plan.hidden, 'reopening a task did not restore its plan in the task rail');
       check(plan.querySelectorAll('.mp-plan-step').length === 6, 'the plan did not show its six-step current window');
       check(!document.getElementById('composer-plan') || document.getElementById('composer-plan').hidden, 'the plan still occupies the chat composer');
@@ -144,8 +143,8 @@ app.whenReady().then(async () => {
       await openConversation(stored.id); setInspector(true, 'tasks');
       plan = document.getElementById('project-plan');
       check(!plan.hidden && plan.querySelectorAll('.mp-plan-step').length === 10, 'reopening discarded the plan expansion choice');
-      check(!document.querySelector('#stream .dsh-todo-list'), 'the transcript repeats the plan already shown in the task rail');
-      check(getComputedStyle(document.querySelector('.dsh-user-stack')).maxWidth.startsWith('min(75%'), 'user prompt bubbles must match the reference 75% transcript width');
+      check(!document.querySelector('#stream .mp-chat-todo-list'), 'the transcript repeats the plan already shown in the task rail');
+      check(getComputedStyle(document.querySelector('.mp-chat-user-stack')).maxWidth.startsWith('min(75%'), 'user prompt bubbles must match the reference 75% transcript width');
       let childStatus = 'awaiting_user';
       let childResponse;
       Data.subagents = async () => ({ ok: true, tasks: [{ id: 'child-background', parentCallId: 'agent-call',

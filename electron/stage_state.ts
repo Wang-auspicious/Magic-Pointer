@@ -1,17 +1,3 @@
-// PointerStage state machine (pure, no Electron imports).
-//
-// Lifecycle: hidden -> targeting -> frozen -> capsule-voice | capsule-text
-//            -> processing -> result | error -> dismissing -> hidden
-//
-// A session accumulates `turns`: one entry per thing the user asked for, in
-// order, each carrying the ask and its outcome. The capsule is a composer that
-// stays put; a result never replaces the question that produced it, and a
-// follow-up appends instead of wiping the thread.
-//
-// `transition(state, event)` is a pure function: illegal transitions return the
-// incoming state object unchanged (same reference), so callers can cheaply
-// detect no-ops. Loaded both from node tests (CommonJS) and from the stage
-// renderer via a plain <script> tag (globalThis.StageState).
 
 (() => {
 type InputMode = 'text' | 'voice';
@@ -81,17 +67,9 @@ function initialState(config: unknown = {}): StageMachineState {
     command: '',
     result: null,
     error: null,
-    // The conversation so far, oldest first. Each turn is
-    // { id, ask, status: 'pending' | 'done' | 'failed', result, error }.
-    // Kept for the whole session: a follow-up appends a turn rather than
-    // discarding the one before it, so the user can still read what they asked.
     turns: [],
     nextTurnId: 1,
-    // Real UIA draft-write progress ({ step, totalSteps, label }) or null.
-    // Only ever set from genuine DELIVERY_PROGRESS events — never synthesized.
     deliveryProgress: null,
-    // A transient status line ({ message }) or null. Cleared the moment a real
-    // outcome arrives, so "正在读取…" can never sit under a finished answer.
     notice: null,
     config: { reducedMotion: Boolean(settings?.reducedMotion) },
   };
@@ -111,8 +89,6 @@ function normalizeRect(value: unknown): Rect | null {
   return rect;
 }
 
-// Delivery progress must describe a real, bounded write ({ step, totalSteps }).
-// Malformed payloads are rejected so the UI can never render invented progress.
 function normalizeDeliveryProgress(value: unknown): DeliveryProgress | null {
   const candidate = recordOf(value);
   if (candidate === null) return null;
@@ -130,8 +106,6 @@ function toDismissing(state: StageMachineState): StageMachineState {
   return { ...state, name: 'dismissing' };
 }
 
-// Open a turn for something the user just asked for. The ask is recorded up
-// front so the question is on screen while the answer is still being produced.
 function openTurn(state: StageMachineState, ask: unknown): Pick<StageMachineState, 'nextTurnId' | 'turns'> {
   const turn: Turn = {
     id: state.nextTurnId,
@@ -143,9 +117,6 @@ function openTurn(state: StageMachineState, ask: unknown): Pick<StageMachineStat
   return { turns: [...state.turns, turn], nextTurnId: state.nextTurnId + 1 };
 }
 
-// Settle the newest pending turn. Results can also arrive without a preceding
-// ask (a runtime-issue capture, an ineligible selection), in which case the
-// outcome opens and closes a turn of its own so the thread stays complete.
 function closeTurn(
   state: StageMachineState,
   { result = null, error = null }: { error?: unknown; result?: unknown },
@@ -191,16 +162,10 @@ function transition(
   if (candidate === null || typeof candidate.type !== 'string') return state;
   const type = candidate.type;
 
-  // Reduced motion may change at any time (OS setting toggle) without
-  // disturbing the interaction state.
   if (type === 'SET_REDUCED_MOTION') {
     return { ...state, config: { ...state.config, reducedMotion: Boolean(candidate.value) } };
   }
 
-  // A transient line of status ("正在读取选中的内容…"), shown while something
-  // slow is genuinely still running. It is not an interaction state: a waiting
-  // read must not move the machine, or a slow first-run read would look like a
-  // different phase than a fast one.
   if (type === 'NOTICE') {
     const message = String(recordOf(candidate.notice)?.message || '');
     return { ...state, notice: message ? { message } : null };
@@ -229,8 +194,6 @@ function transition(
     case 'targeting':
       if (type === 'TARGET_MOVE') return { ...state, target: normalizeRect(candidate.target) };
       if (type === 'FREEZE') return { ...state, name: 'frozen', target: normalizeRect(candidate.target) || state.target };
-      // Direct results (runtime-issue capture) and early errors (ineligible
-      // selection) may land before the capsule ever opens.
       if (type === 'RESULT') return toResult(state, candidate);
       if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DISMISS') return toDismissing(state);
@@ -260,7 +223,6 @@ function transition(
         const command = candidate.command == null ? state.transcript : String(candidate.command);
         return { ...state, name: 'processing', command, ...openTurn(state, command) };
       }
-      // Dictation failures surface immediately from the capsule.
       if (type === 'RESULT') return toResult(state, candidate);
       if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DISMISS') return toDismissing(state);
@@ -282,9 +244,6 @@ function transition(
     case 'result':
     case 'error':
       if (type === 'DISMISS') return toDismissing(state);
-      // A follow-up reopens the composer over the same thread. `turns` is
-      // deliberately preserved: the earlier question and its answer stay on
-      // screen instead of being replaced by whatever comes next.
       if (type === 'OPEN_CAPSULE') {
         const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
         return {
@@ -297,8 +256,6 @@ function transition(
           deliveryProgress: null,
         };
       }
-      // The composer stays live under a finished thread, so a follow-up can be
-      // typed and sent without first reopening the capsule.
       if (type === 'SUBMIT') {
         const command = candidate.command == null ? state.transcript : String(candidate.command);
         return {
@@ -338,19 +295,12 @@ function transition(
   }
 }
 
-// --- Word-level diff (pure helper for the text-draft result card) ------------
-// Lives in this module (not stage.js) so plain `node tests/...` can require it;
-// stage.js is a DOM-bound IIFE. Tokens: each CJK char individually, whitespace
-// runs, and runs of everything else — so Chinese and space-delimited text both
-// diff at natural word granularity.
 
 function tokenizeWords(text: unknown): string[] {
   if (text == null) return [];
   return String(text).match(/[㐀-鿿]|\s+|[^\s㐀-鿿]+/g) || [];
 }
 
-// Classic LCS diff. Returns merged segments:
-// [{ type: 'equal' | 'ins' | 'del', text }].
 function wordDiff(oldText: unknown, newText: unknown): Array<{ text: string; type: 'del' | 'equal' | 'ins' }> {
   const a = tokenizeWords(oldText);
   const b = tokenizeWords(newText);

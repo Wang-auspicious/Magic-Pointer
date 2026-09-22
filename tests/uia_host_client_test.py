@@ -1,4 +1,3 @@
-"""Resident UIA host client tests: protocol + circuit breaker (no OS pipe)."""
 
 from __future__ import annotations
 
@@ -89,9 +88,8 @@ def test_circuit_opens_after_repeated_transport_failures() -> None:
     client._exchange = dead  # type: ignore[assignment]
     assert client.ping() is False
     assert client.ping() is False
-    assert client.available() is False  # circuit open
+    assert client.available() is False
     assert client.probe(1234) is None
-    # open circuit refuses without touching the transport
     count = {"n": 0}
 
     def counting(_line: str) -> str:
@@ -138,6 +136,6 @@ def test_success_resets_consecutive_failures() -> None:
 
     client._exchange = exchange  # type: ignore[assignment]
     assert client.ping() is False
-    assert client.ping() is True  # success resets the streak
+    assert client.ping() is True
     assert client.ping() is False
-    assert client.available() is True  # streak is 1, below the limit
+    assert client.available() is True

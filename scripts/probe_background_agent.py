@@ -1,4 +1,3 @@
-"""Real configured-provider acceptance in a fresh, disposable task workspace."""
 from __future__ import annotations
 
 import json

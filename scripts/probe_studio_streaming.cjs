@@ -1,5 +1,4 @@
 'use strict';
-// Offline events exercise the shipped renderer in real Chromium; no model claims.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +10,7 @@ const deadline = setTimeout(() => app.exit(1), 25000);
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1240, height: 850, show: false, webPreferences: {
     offscreen: true, sandbox: false, contextIsolation: true,
-    preload: path.resolve('scripts/probe_studio_claude_preload.js'),
+    preload: path.resolve('scripts/probe_studio_layout_preload.js'),
     additionalArguments: ['--mp-probe-theme=light', '--mp-probe-state=landing'],
   } });
   try {
@@ -25,11 +24,11 @@ app.whenReady().then(async () => {
       activeConversationId = 'studio-streaming-probe';
       const host = document.createElement('div');
       document.getElementById('studio-home').hidden = true;
-      const flow = document.querySelector('.dsh-flow') || document.querySelector('.dshw-scrollbody');
+      const flow = document.querySelector('.mp-chat-flow') || document.querySelector('.mpw-scrollbody');
       flow.appendChild(host);
       let paints = 0;
-      const renderer = DshChat.createLiveTurn(host, 'studio-streaming#0', { taskPanel: true });
-      DshChat.bindDelegation(host);
+      const renderer = ChatView.createLiveTurn(host, 'studio-streaming#0', { taskPanel: true });
+      ChatView.bindDelegation(host);
       pendingConversation = { body: host, records: new Map(), streamText: '', reasoningText: '',
         transcript: ConversationControl.createTranscript(), renderer: { update: value => { paints++; renderer.update(value); } } };
       const event = (phase, fields) => renderConversationProgress({ phase, fields });
@@ -38,7 +37,7 @@ app.whenReady().then(async () => {
       for (let i = 0; i < 100; i++) event('reasoning_chunk', { b64: btoa('Inspect sources. ') });
       await wait(230);
       check(paints <= 4, '100 chunks caused ' + paints + ' paints');
-      check(host.querySelector('.dsh-think-body').textContent === 'Inspect sources. '.repeat(100), 'batched text lost chunks');
+      check(host.querySelector('.mp-chat-think-body').textContent === 'Inspect sources. '.repeat(100), 'batched text lost chunks');
       event('model_response', {});
       const todos = [{ content: 'Inspect task sources', status: 'in_progress' }, { content: 'Verify the delivered result', status: 'pending' }];
       event('tool_call', { id: 'plan-probe', name: 'Todo', args: JSON.stringify({ todos }) });
@@ -56,7 +55,7 @@ app.whenReady().then(async () => {
       entry.click();
       await wait(60);
       check(activeInspectorTab === 'tasks' && shell.dataset.inspector === 'open', 'child entry did not open the Tasks panel');
-      check(!host.querySelector('.dsh-todo-list') && !host.textContent.includes('Inspect task sources'), 'Studio body repeats the task plan');
+      check(!host.querySelector('.mp-chat-todo-list') && !host.textContent.includes('Inspect task sources'), 'Studio body repeats the task plan');
       check(document.getElementById('project-plan').textContent.includes('Inspect task sources'), 'the only task plan is missing from the right rail');
       const row = document.querySelector('[data-task-id="child-a"]');
       check(!!row, 'child row missing');
@@ -103,7 +102,7 @@ app.whenReady().then(async () => {
       check(after.textContent.includes('Parent ID is preserved'), 'child thinking is absent');
       check(after.textContent.includes('event sink found'), 'tool output is absent');
       check(!host.textContent.includes('Parent ID is preserved') && !host.textContent.includes('Checking DOM stability'), 'Studio body repeats the child transcript');
-      check(!host.querySelector('.dsh-subagent-heartbeat'), 'Studio body retains a duplicate child heartbeat');
+      check(!host.querySelector('.mp-chat-subagent-heartbeat'), 'Studio body retains a duplicate child heartbeat');
       a.status = 'completed'; a.phase = 'completed'; a.answer = 'Runtime verified.';
       event('subagent', { b64: blob(a) });
       event('tool_result', { id: 'parent-a', name: 'Agent', args: '{"task":"Inspect runtime"}', state: 'ok', result: '[subagent id=child-a status=completed steps=1] Runtime verified.' });
@@ -131,7 +130,7 @@ app.whenReady().then(async () => {
       setInspector(true, 'tasks');
       check(document.getElementById('inspector-title').textContent === 'Background tasks', 'reopening the same background panel overwrites its title');
       check(!!document.querySelector('[data-task-id="child-a"]'), 'a transcript entry cannot reveal a dismissed finished task');
-      check(!host.querySelector('.dsh-todo-list') && !host.querySelector('.dsh-subagent-heartbeat'), 'completion restored duplicate task content');
+      check(!host.querySelector('.mp-chat-todo-list') && !host.querySelector('.mp-chat-subagent-heartbeat'), 'completion restored duplicate task content');
       syncInspectorGeometry();
       const backgroundTurns = activeConversationTurns;
       activeConversationId = 'plan-only-probe';
@@ -144,56 +143,56 @@ app.whenReady().then(async () => {
       renderProjectTasks();
       const continuityHost = document.createElement('div');
       flow.appendChild(continuityHost);
-      DshChat.bindDelegation(continuityHost);
-      const continuity = DshChat.createLiveTurn(continuityHost, 'continuity#0');
+      ChatView.bindDelegation(continuityHost);
+      const continuity = ChatView.createLiveTurn(continuityHost, 'continuity#0');
       const trajectory = [
         { kind: 'tool', callId: 'read-1', name: 'Read', text: '{"path":"one.md"}', result: 'one', state: 'done' },
         { kind: 'message', turn: 2, reasoning: 'Compare the second source.', state: 'done' },
         { kind: 'tool', callId: 'read-2', name: 'Read', text: '{"path":"two.md"}', state: 'running' },
       ];
       continuity.update({ trajectory });
-      const thoughtId = continuityHost.querySelector('.dsh-think').dataset.rowId;
-      continuityHost.querySelector('.dsh-think .dsh-row').click();
-      continuityHost.querySelector('.dsh-tool-group-header').click();
+      const thoughtId = continuityHost.querySelector('.mp-chat-think').dataset.rowId;
+      continuityHost.querySelector('.mp-chat-think .mp-chat-row').click();
+      continuityHost.querySelector('.mp-chat-tool-group-header').click();
       await wait(0); // Native details.toggle must reach the delegated store.
       trajectory[2].result = 'two';
       trajectory[2].state = 'done';
       continuity.update({ trajectory });
       continuity.finish({ conversationId: 'continuity', turnIndex: 0, trajectory, answer: 'Compared.' });
-      const settledThought = continuityHost.querySelector('.dsh-think');
+      const settledThought = continuityHost.querySelector('.mp-chat-think');
       check(settledThought.dataset.rowId === thoughtId && settledThought.dataset.open === 'true', 'folding the transcript lost the opened thought');
-      check(continuityHost.querySelector('.dsh-tool-group').open, 'completion closed the opened tool group');
+      check(continuityHost.querySelector('.mp-chat-tool-group').open, 'completion closed the opened tool group');
       const mergeHost = document.createElement('div');
       flow.appendChild(mergeHost);
-      DshChat.bindDelegation(mergeHost);
-      const merged = DshChat.createLiveTurn(mergeHost, 'merge-later#0');
+      ChatView.bindDelegation(mergeHost);
+      const merged = ChatView.createLiveTurn(mergeHost, 'merge-later#0');
       merged.update({ trajectory });
-      mergeHost.querySelectorAll('.dsh-tool-group-header')[1].click();
+      mergeHost.querySelectorAll('.mp-chat-tool-group-header')[1].click();
       await wait(0);
-      check(!mergeHost.querySelector('.dsh-tool-group').open, 'merge fixture accidentally opened the first group');
+      check(!mergeHost.querySelector('.mp-chat-tool-group').open, 'merge fixture accidentally opened the first group');
       const mergedTurn = { conversationId: 'merge-later', turnIndex: 0, trajectory, answer: 'Merged.' };
       merged.finish(mergedTurn);
-      check(mergeHost.querySelectorAll('.dsh-tool-group').length === 1 && mergeHost.querySelector('.dsh-tool-group').open,
+      check(mergeHost.querySelectorAll('.mp-chat-tool-group').length === 1 && mergeHost.querySelector('.mp-chat-tool-group').open,
         'completion hid the opened second group inside the merged group');
-      check(mergeHost.querySelectorAll('.dsh-tool')[1].querySelector('.dsh-disclosure').dataset.open === 'true',
+      check(mergeHost.querySelectorAll('.mp-chat-tool')[1].querySelector('.mp-chat-disclosure').dataset.open === 'true',
         'merging the second singleton group hid its visible result body');
       await wait(0);
-      if (mergeHost.querySelector('.dsh-tool-group').open) mergeHost.querySelector('.dsh-tool-group-header').click();
+      if (mergeHost.querySelector('.mp-chat-tool-group').open) mergeHost.querySelector('.mp-chat-tool-group-header').click();
       await wait(0);
-      check(!mergeHost.querySelector('.dsh-tool-group').open, 'merged group did not close on click');
+      check(!mergeHost.querySelector('.mp-chat-tool-group').open, 'merged group did not close on click');
       merged.finish(mergedTurn);
       await wait(0);
-      check(!mergeHost.querySelector('.dsh-tool-group').open, 'rebuilding a merged group undid the user collapse');
+      check(!mergeHost.querySelector('.mp-chat-tool-group').open, 'rebuilding a merged group undid the user collapse');
       const otherHost = document.createElement('div');
       flow.appendChild(otherHost);
-      DshChat.bindDelegation(otherHost);
-      DshChat.createConversationView(otherHost).update({ id: 'other-session', turns: [{ trajectory, answer: 'Other answer.' }] });
-      check(!otherHost.querySelector('.dsh-tool-group').open, 'another session inherited tool expansion');
-      const standalone = DshChat.createLiveTurn(otherHost);
+      ChatView.bindDelegation(otherHost);
+      ChatView.createConversationView(otherHost).update({ id: 'other-session', turns: [{ trajectory, answer: 'Other answer.' }] });
+      check(!otherHost.querySelector('.mp-chat-tool-group').open, 'another session inherited tool expansion');
+      const standalone = ChatView.createLiveTurn(otherHost);
       standalone.update({ thinking: 'Inspect selection.' });
-      otherHost.querySelector('.dsh-think .dsh-row').click();
+      otherHost.querySelector('.mp-chat-think .mp-chat-row').click();
       standalone.finish({ thinking: 'Inspect selection.', answer: 'Selected answer.' });
-      check(otherHost.querySelector('.dsh-think').dataset.open === 'true', 'standalone Stage completion lost expansion');
+      check(otherHost.querySelector('.mp-chat-think').dataset.open === 'true', 'standalone Stage completion lost expansion');
       continuityHost.remove();
       mergeHost.remove();
       otherHost.remove();

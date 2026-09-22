@@ -1,4 +1,3 @@
-"""Concurrent pytest sessions must never remove each other's live fixtures."""
 from __future__ import annotations
 
 import os
@@ -30,8 +29,6 @@ def test_live_fixture(tmp_path):
             time.sleep(0.05)
         assert marker.exists(), 'a second pytest session deleted a live fixture'
 ''', encoding='utf-8')
-        # Exercise the real configuration function and pytest's real fixture
-        # cleanup, forcing only the documented poisoned-system-temp condition.
         bootstrap = control / 'run.py'
         bootstrap.write_text('''import ast, os, pathlib, sys, tempfile
 import pytest

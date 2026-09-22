@@ -36,17 +36,9 @@ function boundedTaskInput(value: unknown): UnknownRecord | null {
 }
 
 function onPayload(channel: string, callback: PayloadCallback): void {
-  // The ipcRenderer return value must never cross the bridge: it IS
-  // ipcRenderer, and contextBridge would proxy send/invoke/sendSync into the
-  // isolated world (electron audit P2). Return nothing.
   ipcRenderer.on(channel, (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload));
 }
 
-// Signal channels carry no payload, so the callback is invoked with no arguments
-// at all. Forwarding ipcRenderer's own listener signature would hand the renderer
-// an IpcRendererEvent — and `event.sender` is ipcRenderer itself, which
-// contextBridge would proxy straight into the isolated world. Dropping the
-// arguments here is what keeps `SignalCallback = () => void` true at runtime.
 function onSignal(channel: string, callback: SignalCallback): void {
   ipcRenderer.on(channel, () => callback());
 }
@@ -62,9 +54,6 @@ contextBridge.exposeInMainWorld('magicPointer', {
   onShow: (callback: PayloadCallback) => onPayload('overlay:show', callback),
   onHide: (callback: SignalCallback) => onSignal('overlay:hide', callback),
   onCursor: (callback: PayloadCallback) => onPayload('overlay:cursor', callback),
-  // 双生鼠标（twin cursor）的显式指令：approach / mark / move / click /
-  // hold / release / clear。主进程由 ipcMain.on('agent:cursor') 收下
-  // （见 main.ts.patch），再按屏幕分发给对应的光标表面。
   onAgentCursor: (callback: PayloadCallback) => onPayload('overlay:agent-cursor', callback),
   onGuidePoint: (callback: PayloadCallback) => onPayload('overlay:guide-point', callback),
   onElementGhosts: (callback: PayloadCallback) => onPayload('overlay:element-ghosts', callback),
@@ -99,18 +88,11 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   dismiss: () => ipcRenderer.send('stage:dismiss'),
   submitSelectionCommand: (payload: StageCommandPayload) => ipcRenderer.send('stage:submit-selection-command', {
     selectionSessionToken: payload?.selectionSessionToken || null,
-    // Bounded at the bridge like keptStrokeIndexes: a compromised renderer
-    // must not feed megabyte commands into the bridge / pendingQuestions
-    // (electron audit P2).
     command: String(payload?.command || '').slice(0, MAX_COMMAND_CHARS),
     inputMode: payload?.inputMode || null,
-    // Which strokes survived the user's edits in the composer. Bounded here so a
-    // renderer cannot send an unbounded list into the main process.
     keptStrokeIndexes: Array.isArray(payload?.keptStrokeIndexes)
       ? payload.keptStrokeIndexes.slice(0, 12).map((value: unknown) => Number(value) || 0)
       : [],
-    // The element the user clicked on, if any. Geometry only — the renderer
-    // never gets to name a window or an app, so it cannot aim a read at one.
     pickedElement: payload?.pickedElement && payload.pickedElement.rect ? {
       rect: {
         x: Number(payload.pickedElement.rect.x) || 0,
@@ -131,22 +113,16 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     ipcRenderer.invoke('stage:stop-selection-command', {
       selectionSessionToken: String(payload?.selectionSessionToken || ''),
     }),
-  // Mid-run steer: a distinct IPC from submit so it can never start a second
-  // loop — it only writes the durable inbox the running loop already claims.
   steerSelectionCommand: (payload: { selectionSessionToken?: unknown; text?: unknown; taskInput?: unknown }) =>
     ipcRenderer.invoke('stage:steer-selection-command', {
       selectionSessionToken: payload?.selectionSessionToken || null,
       text: String(payload?.text || '').slice(0, 4000),
       taskInput: boundedTaskInput(payload?.taskInput),
     }),
-  // The renderer sends the text it is showing; the target window and point stay
-  // in main, bound to the selection session, so a renderer cannot aim a write.
   insertResultText: (payload: { text?: unknown; selectionSessionToken?: unknown }) => ipcRenderer.send('stage:insert-result-text', {
     text: String(payload?.text || ''),
     selectionSessionToken: payload?.selectionSessionToken || null,
   }),
-  // 就地展开回答里的一段。invoke 而不是 send：调用方要等展开后的那段字回来
-  // 换掉原来那段，而不是等一条新的舞台事件——它不是新的一轮。
   expandPassage: (payload: { context?: unknown; passage?: unknown; selectionSessionToken?: unknown }) => ipcRenderer.invoke('stage:expand-passage', {
     selectionSessionToken: payload?.selectionSessionToken || null,
     passage: String(payload?.passage || '').slice(0, 8000),
@@ -178,7 +154,6 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   }),
   onShow: (callback: PayloadCallback) => onPayload('stage:show', callback),
   onUpdate: (callback: PayloadCallback) => onPayload('stage:update', callback),
-  // 桥跑到哪一步了。结果还没出来之前，这是界面上唯一有信息量的东西。
   onCardPatch: (callback: PayloadCallback) => onPayload('stage:card-patch', callback),
   onHide: (callback: SignalCallback) => onSignal('stage:hide', callback),
   onDictationResult: (callback: PayloadCallback) => onPayload('dictation:result', callback),
@@ -201,13 +176,6 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   selectModel: (model: unknown, profileId?: string) => ipcRenderer.invoke('models:select', { model, profileId }),
   modelQuota: (options: { force?: unknown } = {}) => ipcRenderer.invoke('models:quota', { force: options?.force === true }),
   slashDirectory: () => ipcRenderer.invoke('slash:directory'),
-  requestState: () => ipcRenderer.send('dashboard:request-state'),
-  setChecked: (payload: unknown) => ipcRenderer.send('dashboard:set-checked', payload),
-  undoAdd: (payload: unknown) => ipcRenderer.send('dashboard:undo-add', payload),
-  calendarRequestState: () => ipcRenderer.send('dashboard:calendar-request-state'),
-  calendarPreview: (payload: unknown) => ipcRenderer.send('dashboard:calendar-preview', payload),
-  calendarCreate: (payload: unknown) => ipcRenderer.send('dashboard:calendar-create', payload),
-  calendarUndoCreate: (payload: unknown) => ipcRenderer.send('dashboard:calendar-undo-create', payload),
   undoAction: (payload: { taskId?: unknown; sessionId?: unknown; actionId?: unknown } = {}) => ipcRenderer.invoke('actions:undo', {
     taskId: String(payload?.taskId || payload?.sessionId || '').slice(0, 200),
     actionId: String(payload?.actionId || '').slice(0, 200),
@@ -221,8 +189,6 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   onShow: (callback: PayloadCallback) => onPayload('dashboard:show', callback),
   onFabricState: (callback: PayloadCallback) => onPayload('dashboard:fabric-state', callback),
-  onState: (callback: PayloadCallback) => onPayload('dashboard:state', callback),
-  onCalendarState: (callback: PayloadCallback) => onPayload('dashboard:calendar-state', callback),
   onRouteResult: (callback: PayloadCallback) => onPayload('dashboard:route-result', callback),
   onVoiceResidencyStatus: (callback: PayloadCallback) => onPayload('dashboard:voice-residency-status', callback),
   onPreflightEvent: (callback: PayloadCallback) => onPayload('dashboard:preflight-event', callback),
@@ -470,8 +436,6 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       payload,
     ),
   },
-  // 后台任务的进度。走的是和胶囊同一条通道——三个界面收到的是同一份补丁，
-  // 所以同一次出图在哪个窗口看都是同一个进度。
   onCardPatch: (callback: PayloadCallback) => onPayload('stage:card-patch', callback),
 });
 

@@ -1,1 +1,0 @@
-{"files": 29, "pdf": "D:\\Desktop\\CVPR 2027 选题核验.pdf", "trace": ["desktop shell items read: 29"]}

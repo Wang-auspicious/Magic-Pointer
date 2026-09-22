@@ -1,16 +1,7 @@
-/*
- * RECON WORKER E — hot-path microbenchmarks for the Electron layer.
- *
- * Everything here is a pure module require'd straight from electron/*.ts via
- * tsx. No Electron, no GUI, no windows. Each block prints the per-call cost so
- * a rate (per pointer tick, per frame, per stream chunk) can be multiplied out.
- *
- * Run:  npx tsx tools/measure_electron_hotpath.js
- */
 const { performance } = require('node:perf_hooks');
 
 function bench(label, iterations, fn) {
-  fn(); fn(); // warm
+  fn(); fn();  
   const t0 = performance.now();
   for (let i = 0; i < iterations; i += 1) fn(i);
   const t1 = performance.now();
@@ -27,10 +18,8 @@ function section(name) {
   console.log(`\n=== ${name} ===`);
 }
 
-// ---------------------------------------------------------------------------
 section('1. stage_hit_policy.pointInRegions — runs on EVERY pointer tick');
 const hitPolicy = require('../electron/stage_hit_policy.ts');
-// 16 regions is the cap applied by interactiveStageRegions()/visibleStageRegions().
 const regions16 = Array.from({ length: 16 }, (_, i) => ({
   x: 100 + i * 40, y: 200 + i * 10, width: 180, height: 48,
 }));
@@ -46,7 +35,6 @@ bench('nativeShapeRegions(16 regions)', 200000, () => hitRegions.nativeShapeRegi
   platform: 'win32', screenApi: null, stageBounds: { x: 0, y: 0, width: 2560, height: 1440 }, regions: regions16,
 }));
 
-// ---------------------------------------------------------------------------
 section('4. wiggle_detector.push — the body of the 20ms setInterval');
 const { WiggleDetector } = require('../electron/wiggle_detector.ts');
 {
@@ -54,7 +42,6 @@ const { WiggleDetector } = require('../electron/wiggle_detector.ts');
   let t = 0;
   let x = 400;
   const samples = [];
-  // 400 samples = 8 seconds of the 20ms loop, a slow oscillating cursor.
   for (let i = 0; i < 400; i += 1) {
     t += 20;
     x += Math.sin(i / 6) * 9 + 0.4;
@@ -66,8 +53,6 @@ const { WiggleDetector } = require('../electron/wiggle_detector.ts');
     idx += 1;
     detector.push(s);
   });
-  // Monotonic clock version — this is the shape production actually sees
-  // (Date.now() never goes backwards), so the window trim actually trims.
   const detector2 = new WiggleDetector({ sensitivity: 0.5, disabledApps: [], cooldownMs: 1200 });
   let t2 = 0;
   let x2 = 400;
@@ -86,7 +71,6 @@ const { MouseActivationDetector } = require('../electron/mouse_activation.ts');
   bench('MouseActivationDetector.push', 200000, (i) => det.push({ t: i * 20, buttons: 0, mode: 'xbutton1' }));
 }
 
-// ---------------------------------------------------------------------------
 section('6. completeSelectionGesture — the pointerup path (per-point work only)');
 const GestureCapture = require('../electron/gesture_capture.ts');
 function makeStroke(n) {
@@ -99,12 +83,10 @@ for (const n of [256, 1024, 4096]) {
   bench(`boundGestureInput(${n} points)`, 2000, () => GestureCapture.boundGestureInput(stroke, null, { maxPoints: 4096, maxStrokes: 32 }));
   const bounded = GestureCapture.boundGestureInput(stroke, null, { maxPoints: 4096, maxStrokes: 32 });
   const r = bench(`summarizeGesture(${n} points)`, 2000, () => GestureCapture.summarizeGesture(bounded.points, bounded.strokes));
-  // toPhysical() in main.ts does one screen.getDisplayNearestPoint() per point.
   console.log(`    -> if getDisplayNearestPoint were ~1us native, ${n} points = ${(n * 1).toFixed(0)}us of pure native lookup`);
   void r;
 }
 
-// ---------------------------------------------------------------------------
 section('7. sweep_visual.buildSdfPath — runs once per rAF frame while drawing');
 const sweep = require('../electron/renderer/sweep_visual.ts');
 for (const n of [64, 256, 1024, 4096]) {
@@ -112,7 +94,6 @@ for (const n of [64, 256, 1024, 4096]) {
   bench(`buildSdfPath(${n} raw points)  [per drawing frame]`, 2000, () => sweep.buildSdfPath(pts, 22));
 }
 
-// ---------------------------------------------------------------------------
 section('8. bridge_progress_lines — per stderr chunk of every Python bridge');
 const { createProgressLineSplitter } = require('../electron/bridge_progress_lines.ts');
 {
@@ -129,16 +110,10 @@ const { createProgressLineSplitter } = require('../electron/bridge_progress_line
   });
 }
 
-// ---------------------------------------------------------------------------
 section('9. renderer-side per-tick rebuild proxies');
-// stage.ts syncHitRegions() is called from handleVoicePointerInput on every
-// stage:pointer-input IPC (main polls at 20ms) AND on every window mousemove.
-// The cost it pays is: 2x getBoundingClientRect sweeps + the JSON key above.
 {
-  const elCount = 9; // visibleStageRegions(): up to 9 elements
-  const btnCount = 12; // interactiveStageRegions(): + every enabled button
-  // getBoundingClientRect is a forced layout read once the DOM is dirty.
-  // Measure the JS bookkeeping only; the layout cost is measured by Chromium.
+  const elCount = 9;  
+  const btnCount = 12;  
   bench('region mapping arithmetic for 21 elements', 200000, () => {
     let acc = 0;
     for (let i = 0; i < elCount + btnCount; i += 1) {
@@ -154,7 +129,6 @@ section('9. renderer-side per-tick rebuild proxies');
   });
 }
 
-// ---------------------------------------------------------------------------
 section('10. studio stream replay: replaceChildren + String growth');
 {
   const n = 2000;
@@ -171,7 +145,6 @@ section('10. studio stream replay: replaceChildren + String growth');
   });
 }
 
-// ---------------------------------------------------------------------------
 section('11. conversation_store / settings JSON round-trips');
 const store = require('../electron/conversation_store.ts');
 {

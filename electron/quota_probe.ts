@@ -1,26 +1,5 @@
 'use strict';
 
-/*
- * Provider quota probe.
- *
- * The context popover shows two kinds of number: what this session used (we
- * count that ourselves) and what is left on the account. The second kind can
- * only come from the provider, so it is fetched — never estimated. A provider
- * we have no adapter for produces no rows at all: an invented percentage is
- * worse than a missing line, because the user cannot tell the two apart.
- *
- * Adapter contract: each entry says how to recognise the provider, which URL
- * to call, and how to turn the documented response into rows. Adding a
- * provider means adding one entry to QUOTA_ADAPTERS — no changes anywhere
- * else.
- *
- * Provenance of every endpoint below:
- *   deepseek    documented  https://api-docs.deepseek.com/api/get-user-balance
- *   openrouter  documented  https://openrouter.ai/docs/api-reference/limits
- *   moonshot    documented  https://platform.kimi.ai/docs/api/balance
- *   opencode    Official source verified 2026-09-19:
- *               anomalyco/opencode packages/console/app/src/routes/zen/go/v1/usage.ts
- */
 
 type UnknownRecord = Record<string, any>;
 
@@ -28,7 +7,6 @@ type QuotaRow = {
   id: string;
   label: string;
   value: string;
-  /** 0-100 when the provider reports a window, null when it reports money. */
   percent: number | null;
   detail: string;
 };
@@ -36,7 +14,6 @@ type QuotaRow = {
 type QuotaAdapter = {
   id: string;
   label: string;
-  /** Recognise the provider from the profile's provider id and base URL. */
   matches(host: string, provider: string): boolean;
   url(origin: string, host: string): string;
   headers(credential: string): Record<string, string>;
@@ -85,8 +62,6 @@ function resetDetail(resetsAt: unknown, now: number): string {
   const minutes = Math.max(0, Math.round((at - now) / 60000));
   if (minutes < 60) return `${minutes} 分钟后重置`;
   if (minutes < 60 * 48) return `${Math.round(minutes / 60)} 小时后重置`;
-  /* 远处的窗口给日期，但「重置」两个字不能省：只留一个孤零零的日期，
-     读起来像这条配额本身的有效期。 */
   return `${new Date(at).toLocaleDateString()} 重置`;
 }
 
@@ -100,9 +75,6 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
       Authorization: `Bearer ${credential}`,
       Accept: 'application/json',
     }),
-    /* {"is_available":true,"balance_infos":[{"currency":"CNY",
-        "total_balance":"110.00","granted_balance":"10.00",
-        "topped_up_balance":"100.00"}]}   — amounts are strings. */
     parse: (payload) => {
       const body = asRecord(payload);
       const infos = Array.isArray(body?.balance_infos) ? body.balance_infos : [];
@@ -138,9 +110,6 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
     matches: (host, provider) => provider === 'openrouter' || host.endsWith('openrouter.ai'),
     url: (origin) => `${origin}/api/v1/key`,
     headers: (credential) => ({ Authorization: `Bearer ${credential}` }),
-    /* The key endpoint reports a spend cap plus spend per window. A null
-       `limit` means the key is uncapped, which is a fact worth showing rather
-       than a missing row. */
     parse: (payload) => {
       const data = asRecord(asRecord(payload)?.data);
       if (!data) return [];
@@ -184,9 +153,6 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
     ),
     url: (origin) => `${origin}/v1/users/me/balance`,
     headers: (credential) => ({ Authorization: `Bearer ${credential}` }),
-    /* {"code":0,"data":{"available_balance":49.58894,
-        "voucher_balance":46.58893,"cash_balance":3.00001},"status":true}
-       The CN host bills in CNY, the international host in USD. */
     parse: (payload, host) => {
       const data = asRecord(asRecord(payload)?.data);
       if (!data) return [];
@@ -213,10 +179,6 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
     matches: (host, provider) => provider === 'opencode' || host.endsWith('opencode.ai'),
     url: (origin) => `${origin}/zen/go/v1/usage`,
     headers: (credential) => ({ Authorization: `Bearer ${credential}` }),
-    /* Shape returned by the official route's formatUsage():
-       {"usage":{"rolling":{"status":"ok","percent":4,"resetsAt":"…"},
-                 "weekly":{…},"monthly":{…}}}
-       `percent` is the share already spent. */
     parse: (payload, _host) => {
       const usage = asRecord(asRecord(payload)?.usage);
       if (!usage) return [];
@@ -244,12 +206,10 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
   },
 ];
 
-/** The adapter that owns this profile, or null when we have none. */
 function quotaAdapterFor(profile: UnknownRecord | null): QuotaAdapter | null {
   if (!profile) return null;
   const host = hostOf(profile.baseUrl);
   const provider = String(profile.provider || '').trim().toLowerCase();
-  /* `local` apiMode talks to a bundled runtime with no account behind it. */
   if (String(profile.apiMode || '') === 'local') return null;
   return QUOTA_ADAPTERS.find((adapter) => adapter.matches(host, provider)) || null;
 }
@@ -263,11 +223,6 @@ type ProbeInput = {
   now?: number;
 };
 
-/**
- * Ask the provider what is left. Never throws and never invents a row:
- * a recognised provider that fails returns an empty row list plus the reason,
- * an unrecognised one returns a null adapter and the caller draws nothing.
- */
 async function probeQuota(input: ProbeInput): Promise<UnknownRecord> {
   const now = Number.isFinite(Number(input.now)) ? Number(input.now) : Date.now();
   const adapter = quotaAdapterFor({

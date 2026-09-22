@@ -51,9 +51,6 @@ assert.deepStrictEqual(
   'fullscreen surfaces must dock opposite a right-side focus rectangle',
 );
 
-// 真机 9·3：终端窗口在 2560 宽的屏幕上只占中间一块，右侧空隙放不下面板，
-// 于是面板贴到了**屏幕**右上角——离它正在回答的那个窗口十万八千里，看上去
-// 不属于任何东西。没有空隙时它要贴的是那个窗口自己的边。
 assert.deepStrictEqual(
   chooseAdaptivePanelAnchor({
     source: { x: 300, y: 120, width: 1900, height: 800 },
@@ -76,7 +73,6 @@ assert.deepStrictEqual(
   'fullscreen fallback must clamp an oversized panel to the work-area edge',
 );
 
-// 窗口矩形没解出来时（没识别到是哪个软件），才退回屏幕边。
 assert.deepStrictEqual(
   chooseAdaptivePanelAnchor({
     source: null,

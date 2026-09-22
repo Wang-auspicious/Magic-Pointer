@@ -472,7 +472,6 @@ export class FigmaLoopbackBridge {
       return;
     }
     // Exported node previews are bounded local PNG evidence and can legitimately
-    // exceed the tiny command-body budget.
     const body = await readBody(request, MAX_RESULT_BODY_BYTES);
     const command = this.commands.get(nonEmpty(body.commandId));
     if (

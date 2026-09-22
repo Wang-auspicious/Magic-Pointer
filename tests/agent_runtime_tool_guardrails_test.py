@@ -1,9 +1,3 @@
-"""Behavior tests for semantic tool-loop guardrails.
-
-These tests distinguish a turn fuse from progress detection: useful new read
-results and successful writes may continue, while repeated failures or repeated
-evidence are diagnosed as a stalled agent trajectory.
-"""
 
 from __future__ import annotations
 

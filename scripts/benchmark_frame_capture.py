@@ -1,14 +1,3 @@
-"""Cold/warm frame capture benchmark for the resident capture worker.
-
-Starts ONE worker subprocess, arms/commits N rounds against the current
-display (or a user-provided bbox), validates every returned artifact (contract,
-hash, dimensions) and emits a JSON report plus a human summary. A failed round
-stays in the denominator. The GDI/Pillow backend is measured here honestly; it
-does not prove WGC/D3D target performance.
-
-``--backend test`` runs the same protocol against the deterministic in-process
-backend so the harness can be exercised without a real desktop.
-"""
 
 from __future__ import annotations
 
@@ -105,14 +94,13 @@ def format_human_summary(report: dict[str, Any]) -> str:
 
 
 def _current_display_bbox() -> list[int]:
-    """Physical virtual-desktop bounds, including negative-monitor origins."""
     if os.name == "nt":
         try:
             user32 = ctypes.windll.user32
-            left = int(user32.GetSystemMetrics(76))   # SM_XVIRTUALSCREEN
-            top = int(user32.GetSystemMetrics(77))    # SM_YVIRTUALSCREEN
-            width = int(user32.GetSystemMetrics(78))  # SM_CXVIRTUALSCREEN
-            height = int(user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
+            left = int(user32.GetSystemMetrics(76))
+            top = int(user32.GetSystemMetrics(77))
+            width = int(user32.GetSystemMetrics(78))
+            height = int(user32.GetSystemMetrics(79))
             if width > 0 and height > 0:
                 return [left, top, left + width, top + height]
         except Exception:

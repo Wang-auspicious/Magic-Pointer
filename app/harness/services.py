@@ -1,9 +1,3 @@
-"""Stable service definitions exposed to harness plugins.
-
-Providers implement these protocols; consumers depend on the service key and
-protocol rather than importing a concrete backend. This is the small Python
-form of DSH's Service Definition / Provider / Consumer seam triangle.
-"""
 
 from __future__ import annotations
 
@@ -14,7 +8,6 @@ __all__ = ["LlmProvider", "SessionProvider"]
 
 @runtime_checkable
 class LlmProvider(Protocol):
-    """Factory seam behind ``ctx.get("llm")``."""
 
     @property
     def used_backend(self) -> str: ...
@@ -30,7 +23,6 @@ class LlmProvider(Protocol):
 
 @runtime_checkable
 class SessionProvider(Protocol):
-    """Persistence/fork seam behind ``ctx.get("sessions")``."""
 
     def open_or_create(self, session_id: str, *, repair: bool = True) -> Any: ...
 

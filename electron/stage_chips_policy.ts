@@ -1,14 +1,3 @@
-// Contextual chips policy (pure, no Electron imports).
-//
-// Decides whether contextual suggestion chips are visible and which chips a
-// selected object kind offers. Chips appear only for a click-selected object
-// while the capsule is idle: the moment the user types the first keystroke
-// (capsuleText becomes non-empty) or starts speaking (inputMode === 'voice'),
-// `shouldShowChips` returns false and the chips disappear. Callers re-evaluate
-// on every input change; there is no internal state here.
-//
-// Loaded both from node tests (CommonJS) and from the stage renderer via a
-// plain <script> tag (globalThis.StageChipsPolicy).
 
 (() => {
 type Chip = Readonly<{ id: string; label: string }>;
@@ -21,7 +10,6 @@ const COMMAND_BY_CHIP: Readonly<Record<string, string>> = Object.freeze({
   rewrite: '改写这段文字',
   translate: '把这段文字翻译成中文',
   summarize: '总结这段文字',
-  'add-to-calendar': '添加到日历',
 });
 
 const CHIPS_BY_KIND: Readonly<Record<string, readonly Chip[]>> = Object.freeze({
@@ -34,14 +22,8 @@ const CHIPS_BY_KIND: Readonly<Record<string, readonly Chip[]>> = Object.freeze({
     Object.freeze({ id: 'translate', label: '翻译' }),
     Object.freeze({ id: 'summarize', label: '摘要' }),
   ]),
-  date: Object.freeze([
-    Object.freeze({ id: 'add-to-calendar', label: '加入日历' }),
-  ]),
 });
 
-// True ONLY when the object was click-selected, the input mode is not voice,
-// and the capsule text is empty/whitespace. Defensive: any missing or
-// malformed input yields false.
 function recordOf(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
 }
@@ -52,15 +34,11 @@ function shouldShowChips(input?: unknown): boolean {
   const { selectionSource, inputMode, capsuleText } = candidate;
   if (selectionSource !== 'click') return false;
   if (inputMode === 'voice') return false;
-  // Absent capsule text means nothing typed yet — treat as empty. Any other
-  // non-string value is malformed input.
   if (capsuleText == null) return true;
   if (typeof capsuleText !== 'string') return false;
   return capsuleText.trim() === '';
 }
 
-// Returns at most MAX_CHIPS chips ({ id, label }) for a known objectKind;
-// unknown kinds get [] — never guess.
 function deriveChips(input: unknown): Array<{ id: string; label: string }> {
   const candidate = recordOf(input);
   if (candidate === null) return [];

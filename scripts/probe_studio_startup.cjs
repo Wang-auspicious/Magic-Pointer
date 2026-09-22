@@ -1,6 +1,5 @@
 'use strict';
 
-// Actual Chromium layout and renderer races; catalog/stash are offline fixtures.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -17,7 +16,7 @@ app.whenReady().then(async () => {
   const check = (ok, message) => { if (!ok) failures.push(message); };
   const win = new BrowserWindow({ width: 1239, height: 820, useContentSize: true, show: false,
     webPreferences: { offscreen: true, sandbox: false, contextIsolation: true,
-      preload: path.join(root, 'scripts/probe_studio_claude_preload.js'),
+      preload: path.join(root, 'scripts/probe_studio_layout_preload.js'),
       additionalArguments: ['--mp-probe-theme=light', '--mp-probe-state=landing'] } });
   const wc = win.webContents;
   try {

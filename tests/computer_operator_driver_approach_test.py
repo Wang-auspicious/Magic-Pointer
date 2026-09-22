@@ -1,19 +1,3 @@
-"""The approach pre-roll and the drag settle on the real ``Win32InputDriver``.
-
-Why this file exists, and it is the same reason
-``tests/computer_operator_driver_motion_test.py`` exists: the driver is the one
-part of the computer-operator stack that the fake-driver tests never execute. A
-name that is used but not imported, an argument that does not exist, or a branch
-that only runs when an observer is attached all pass a fake-driver suite and
-fail on the user's desktop.
-
-So every test here instantiates the **real** ``Win32InputDriver`` and stubs only
-the three side-effecting seams (``_position``, ``_mouse``, ``_sleep``) plus the
-pointer read. Nothing in this file moves the user's actual cursor, and nothing
-sleeps.
-
-Windows-only: the driver refuses to construct anywhere else.
-"""
 
 from __future__ import annotations
 
@@ -33,7 +17,6 @@ from app.governance.cancellation import CancelledError  # noqa: E402
 
 
 class Observer:
-    """A real observer, recording what the driver announced."""
 
     def __init__(self) -> None:
         self.approaches: list[tuple[tuple[int, int], int]] = []
@@ -47,7 +30,6 @@ class Observer:
 
 
 class RecordingDriver(Win32InputDriver):
-    """The real driver with its three side effects remembered, not performed."""
 
     def __init__(self, observer: Observer | None = None) -> None:
         super().__init__(approach_observer=observer)
@@ -67,7 +49,6 @@ class RecordingDriver(Win32InputDriver):
     def _sleep(self, seconds: float) -> None:
         self.sleeps.append(round(float(seconds), 6))
 
-    # -- assertions helpers ------------------------------------------------
 
     @property
     def positions(self) -> list[tuple[int, int]]:
@@ -128,8 +109,6 @@ class TestApproachLeadIsPure:
 
 class TestClickWithoutAnObserver:
     def test_the_clicks_are_unchanged_when_nothing_is_watching(self) -> None:
-        # With no twin cursor there is nothing to synchronise the press with,
-        # so the 600 ms pre-roll would be pure added latency.
         plain = RecordingDriver(observer=None)
         plain.click((300, 300), button="left", count=1)
         assert plain.positions == [(300, 300)]
@@ -155,16 +134,12 @@ class TestClickWithAnObserver:
     def test_the_cursor_is_on_target_before_the_button_goes_down(
         self, observer: Observer, driver: RecordingDriver
     ) -> None:
-        # The whole point of the feature: the press must not land while the
-        # cursor is still travelling. Assert the last pointer position precedes
-        # the button-down, in event order, not just in wall time.
         driver.click((900, 500), button="left", count=1)
         assert driver.index_of_last_position() < driver.index_of_first_mouse(0x0002)
         assert driver.positions[-1] == (900, 500)
 
     def test_the_lead_is_spent_moving_not_waiting(self, driver: RecordingDriver) -> None:
         driver.click((900, 500), button="left", count=1)
-        # A glide of many intermediate points, not one jump plus a pause.
         assert len(driver.positions) > 5
 
     def test_the_glow_is_announced_at_the_press_not_at_the_approach(
@@ -177,9 +152,6 @@ class TestClickWithAnObserver:
         driver.click((1600, 900), button="left", count=1)
         point, lead = observer.approaches[0]
         assert point == (1600, 900)
-        # The announced lead is the whole glide, not a decoration on top of it:
-        # the press costs the lead, the settle, and the 35 ms hold, and nothing
-        # else.
         spent = sum(driver.sleeps)
         expected = (lead + motion.CLICK_SETTLE_MS + motion.CLICK_HOLD_MS) / 1000.0
         assert spent == pytest.approx(expected, abs=0.001)
@@ -212,22 +184,15 @@ class TestClickWithAnObserver:
 
 class TestMoveEdgeCases:
     def test_an_absurd_duration_does_not_become_an_absurd_stall(self, driver: RecordingDriver) -> None:
-        # duration_ms arrives from the model. Before the bound, a hallucinated
-        # ten-minute move held the input lock for ten minutes.
         driver.move((900, 600), duration_ms=600_000)
         assert sum(driver.sleeps) <= motion.GLIDE_HARD_MAX_MS / 1000.0 + 0.05
         assert driver.positions[-1] == (900, 600)
 
     def test_a_negative_duration_falls_back_to_the_distance_rule(self, driver: RecordingDriver) -> None:
-        # A caller-supplied duration of -1 is not a request for a teleport: it
-        # is a request that failed to parse, and the policy then derives one
-        # from distance (tests/computer_motion_test.py pins this).
         driver.move((900, 600), duration_ms=-1)
         assert len(driver.positions) > 2
 
     def test_a_zero_duration_glide_is_still_a_teleport(self, driver: RecordingDriver) -> None:
-        # The seam itself: duration <= 0 means "place the pointer now", which
-        # is what the caller's single final SetCursorPos does.
         driver._glide((0, 0), (900, 600), 0)
         assert driver.positions == [(900, 600)]
         assert driver.sleeps == []
@@ -250,9 +215,6 @@ class TestMoveEdgeCases:
 
 class TestDrag:
     def test_the_drop_is_settled_before_the_button_comes_up(self, driver: RecordingDriver) -> None:
-        # SetCursorPos only queues the final move. A drop delivered before the
-        # target window processes it lands at the previous position — for a
-        # drag-and-drop that is a file in the wrong folder.
         driver.drag((10, 10), (600, 400), duration_ms=200)
         up_index = driver.index_of_first_mouse(0x0004)
         assert driver.index_of_last_position() < up_index
@@ -290,9 +252,6 @@ class TestCancellation:
         assert driver.positions[-1] != (1500, 900), "a cancelled move must not finish"
 
     def test_a_cancelled_drag_still_releases_the_button(self, driver: RecordingDriver) -> None:
-        # The worst failure mode in the file: a drag cancelled with the button
-        # still down turns the user's next mouse move into a drag they did not
-        # ask for.
         calls = {"n": 0}
 
         def cancel() -> None:
@@ -327,7 +286,6 @@ class TestCancellation:
 
 
 class _Scope:
-    """A stand-in for the operator's cancel scope."""
 
     def __init__(self, cancelled: bool = False) -> None:
         self.cancelled = cancelled
@@ -338,7 +296,6 @@ class _Scope:
 
 
 class _SilentDriver:
-    """A driver double that does not implement ``bind_cancel_check``."""
 
     def __init__(self) -> None:
         self.moves: list[tuple[int, int]] = []
@@ -363,7 +320,7 @@ class TestBackendBindsTheCancelCheck:
 
     def test_a_driver_double_without_the_binder_is_not_a_crash(self, tmp_path) -> None:
         backend = WindowsComputerOperatorBackend(output_root=tmp_path, driver=_SilentDriver())
-        backend._bind_cancel(_Scope())  # must not raise
+        backend._bind_cancel(_Scope())
         backend._bind_cancel(None)
 
     def test_the_check_raises_the_scopes_own_cancellation(self, tmp_path) -> None:
@@ -382,7 +339,6 @@ class TestBackendBindsTheCancelCheck:
         driver._cancel_check()
 
     def test_the_binding_is_cleared_after_the_action(self, tmp_path) -> None:
-        # A stale scope from action N must never be able to abort action N+1.
         from datetime import UTC, datetime, timedelta
 
         from app.computer_operator.schema import (
@@ -418,8 +374,6 @@ class TestBackendBindsTheCancelCheck:
         assert driver._cancel_check is None
 
     def test_the_driver_is_interrupted_by_the_actions_own_scope(self, tmp_path) -> None:
-        # End to end: the backend hands the driver a check that raises, and a
-        # long glide stops early instead of running to completion.
         from datetime import UTC, datetime, timedelta
 
         from app.computer_operator.schema import (

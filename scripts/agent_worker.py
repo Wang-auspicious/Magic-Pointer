@@ -90,7 +90,6 @@ def _queued_events(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
 
 
 def _pi_rpc_response_error(value: dict[str, Any], *, request_id: str) -> str | None:
-    """Return a stable error when Pi rejects one correlated RPC command."""
     if (
         value.get("type") != "response"
         or str(value.get("id") or "") != str(request_id)
@@ -103,7 +102,6 @@ def _pi_rpc_response_error(value: dict[str, Any], *, request_id: str) -> str | N
 
 
 def _pi_rpc_terminal_error(agent_end: dict[str, Any] | None) -> str | None:
-    """Read Pi's final assistant stop reason; settlement alone does not mean success."""
     if not isinstance(agent_end, dict) or agent_end.get("type") != "agent_end":
         return None
     messages = agent_end.get("messages")

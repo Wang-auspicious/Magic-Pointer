@@ -1,14 +1,3 @@
-"""Wiring-batch integration tests (review 2026-08-13 Q9).
-
-Covers the seams the review called out:
-(a) loop x guard factory (fail-closed + passing chain),
-(b) loop x permission mode (including discovered write tools),
-(c) streaming backend auto-fallback (HTTP failure + empty SSE),
-(d) evidence hard fence + explicit truncation + gesture-centered window,
-(e) a scripted fake model discovering and executing a guarded write.
-
-Nothing real is called: no network, no desktop, no probe.
-"""
 
 from __future__ import annotations
 
@@ -83,7 +72,6 @@ def _anchor() -> Anchor:
 
 
 class FakeProbe:
-    """Guard probe over a fixed scene."""
 
     def __init__(self, *, exact: bool = True, focused: bool = True, hash_match: bool = True) -> None:
         self.exact = exact
@@ -148,8 +136,6 @@ def test_guard_chain_executes_when_all_guards_pass():
             TurnDone(usage=None, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="ok")],
-        # The guarded write has no result verifier; answer its verification
-        # nudge explicitly instead of exhausting the scripted provider.
         [TurnDone(usage=None, raw_text="已执行但未验证。")],
     )
     client = LoopModelClient(backend)
@@ -167,7 +153,7 @@ def test_guard_chain_fails_closed_when_anchor_missing():
     import asyncio
 
     factory = build_context_factory(
-        FakeProbe(), lambda args: None  # no fallback anchor extractable
+        FakeProbe(), lambda args: None
     )
     spec, state = _guarded_tool(factory)
     registry = ToolRegistry()
@@ -250,7 +236,6 @@ class FakeStreamResponse:
 
 
 class FakeStreamClient:
-    """Stubbed httpx client factory: first call streams, later calls post."""
 
     def __init__(self, calls: list, stream_response: FakeStreamResponse) -> None:
         self._calls = calls
@@ -332,10 +317,9 @@ def test_streaming_backend_falls_back_on_http_error(monkeypatch):
 
 
 def test_streaming_backend_falls_back_on_empty_sse(monkeypatch):
-    """A gateway that ignores stream:true returns plain JSON -> fallback."""
     _stream_config(monkeypatch)
     calls: list = []
-    lines = ['data: {"choices":[]}']  # no delta frames at all
+    lines = ['data: {"choices":[]}']
     backend = _streaming_backend(calls, FakeStreamResponse(200, lines))
 
     events = list(backend.generate([_user("hi")], [], budget_ms=3000))
@@ -460,7 +444,6 @@ def test_streaming_token_limit_reaches_agent_recovery_without_http_fallback(
 
 @pytest.mark.parametrize("allow_write", [True, False])
 def test_loaded_reversible_tool_still_executes_under_guards(allow_write):
-    """Deferred exposure does not change the real write permission boundary."""
     import asyncio
 
     from app.agent_runtime.tool_discovery import register_find_capability

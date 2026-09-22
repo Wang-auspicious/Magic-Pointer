@@ -1,16 +1,3 @@
-"""B3 Shell 基础设施：cwd 持久化、后台完成通知、rg 加速的 grep、glob mtime 排序。
-
-对照 CC Shell.ts（`pwd -P` 回读、cd 生效且跨调用保持）与 Hermes
-terminal_tool（后台 notify_on_complete 完成推送一次）：
-- run_command 会话内 cwd 持久化：命令里的 `cd` 跨调用生效；
-  显式 cwd 参数只影响本条命令（CC 语义）。
-- 后台 job 结束由 watcher 线程推一条 durable inbox 消息（"next-step"，
-  下一模型轮即携带），meta 落 exit code。
-- grep 用 ripgrep --json 子进程（无 rg 退回纯 Python），支持 -A/-B/-C
-  上下文与 offset 分页；凭据文件命中打码。
-- glob 按 mtime 降序（最近改的排前）。
-- 只读白名单补 git 只读子命令与 rg。
-"""
 
 from __future__ import annotations
 
@@ -50,7 +37,6 @@ def _run(registry: ToolRegistry, command: str, **kw):
     return registry.execute_tool("run_command", {"command": command, **kw})
 
 
-# --- cwd 持久化 ---------------------------------------------------------------
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows cmd 语义")
@@ -80,8 +66,6 @@ def test_explicit_cwd_does_not_persist(registry: ToolRegistry, ws: Path) -> None
 
 
 def test_shell_state_shared_per_workspace_across_registrations(ws: Path) -> None:
-    """cwd 状态按 workspace 共享（工具按轮重注册，闭包状态活不过一轮；
-    `cd` 的意义正是跨轮保持）。子代理与父会话共享、可见、可 cd 回来。"""
     reg1 = ToolRegistry()
     register_coding_tools(reg1, workspace_root=ws)
     reg2 = ToolRegistry()
@@ -94,7 +78,6 @@ def test_shell_state_shared_per_workspace_across_registrations(ws: Path) -> None
         assert str(ws / "sub").lower() in str(probe.value or "").lower()
 
 
-# --- 后台 job：exit code + 完成通知 --------------------------------------------
 
 
 def test_background_job_reports_exit_code(registry: ToolRegistry, ws: Path) -> None:
@@ -135,7 +118,6 @@ def test_background_completion_pushes_inbox(tmp_path: Path) -> None:
     assert "exit=0" in received[0]
 
 
-# --- grep：上下文行 / offset / 凭据打码 ------------------------------------------
 
 
 def test_grep_context_lines(registry: ToolRegistry) -> None:
@@ -176,7 +158,6 @@ def test_grep_masks_credential_files(registry: ToolRegistry, ws: Path) -> None:
     assert "super-secret-123" not in value, ".env 命中内容必须打码"
 
 
-# --- glob mtime 排序 -----------------------------------------------------------
 
 
 def test_glob_sorts_recent_first(registry: ToolRegistry, ws: Path) -> None:
@@ -191,7 +172,6 @@ def test_glob_sorts_recent_first(registry: ToolRegistry, ws: Path) -> None:
     assert value.index("new.txt") < value.index("old.txt"), value
 
 
-# --- 只读白名单 / 默认超时 --------------------------------------------------------
 
 
 def test_readonly_allowlist_includes_git_read_and_rg(registry: ToolRegistry) -> None:

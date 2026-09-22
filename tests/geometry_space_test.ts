@@ -4,18 +4,9 @@ const assert = require('assert');
 
 const { PHYSICAL_SPACE, isPhysicalGeometry, toPhysicalGeometry } = require('../electron/geometry_space');
 
-/**
- * The defect: the gesture payload declares `coordinateSpace:
- * 'physical_screen_pixels'` and converts every point field to physical except
- * `geometry`, which went out raw in `dip_window` — the one field in the object
- * that disagreed with the object's own declared space.
- */
 
-// A stand-in for main.ts's toPhysical: +100/+50 then ×2, so a converted point
-// is distinguishable from an unconverted one in every component.
 const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p.y + 50) * 2 });
 
-// --- polygon_region --------------------------------------------------------
 
 {
   const ring = [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }];
@@ -28,7 +19,6 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
 }
 
 {
-  // The input must not be mutated: the caller still holds the summary.
   const ring = [{ x: 1, y: 2 }];
   const source = { type: 'polygon_region', ring, coordinateSpace: 'dip_window' };
   toPhysicalGeometry(source, toPhysical);
@@ -37,7 +27,6 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
   console.log('geometry_space_test: the source geometry is not mutated');
 }
 
-// --- band_corridor ---------------------------------------------------------
 
 {
   const out = toPhysicalGeometry({
@@ -64,7 +53,6 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
   console.log('geometry_space_test: a missing corridor array is tolerated');
 }
 
-// --- point_target ----------------------------------------------------------
 
 {
   const out = toPhysicalGeometry({
@@ -78,11 +66,8 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
   console.log('geometry_space_test: point target converts');
 }
 
-// --- refusal ---------------------------------------------------------------
 
 {
-  // A geometry that cannot be converted is worse than none: a consumer that
-  // has one assumes it is in the space it was told.
   assert.strictEqual(toPhysicalGeometry(null, toPhysical), undefined);
   assert.strictEqual(toPhysicalGeometry(undefined, toPhysical), undefined);
   assert.strictEqual(toPhysicalGeometry('nonsense', toPhysical), undefined);
@@ -96,7 +81,6 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
 }
 
 {
-  // One bad vertex must not silently deform the ring by dropping just it.
   const out = toPhysicalGeometry({
     type: 'polygon_region',
     ring: [{ x: 1, y: 1 }, { x: 'nope', y: 2 }, { x: 3, y: 3 }],
@@ -114,7 +98,6 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
   console.log('geometry_space_test: a missing mapper refuses rather than half-converts');
 }
 
-// --- isPhysicalGeometry ----------------------------------------------------
 
 {
   assert.strictEqual(isPhysicalGeometry({ coordinateSpace: PHYSICAL_SPACE }), true);
@@ -126,12 +109,8 @@ const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p
 
 console.log('geometry_space_test: all assertions passed');
 
-// --- array shape (the real payload) ---------------------------------------
 
 {
-  // `summary.geometry` is `strokeSummaries.map(s => s.geometry)` — an array,
-  // even for a single-stroke gesture. A converter that only understood a bare
-  // object would drop the whole thing silently.
   const out = toPhysicalGeometry([
     { type: 'polygon_region', ring: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 1 }] },
   ], toPhysical);
@@ -152,8 +131,6 @@ console.log('geometry_space_test: all assertions passed');
 }
 
 {
-  // One unconvertible entry refuses the batch rather than shipping a region
-  // that covers the wrong place.
   const out = toPhysicalGeometry([
     { type: 'polygon_region', ring: [{ x: 1, y: 1 }, { x: 2, y: 2 }] },
     { type: 'unknown_shape' },

@@ -1,8 +1,3 @@
-"""B5 工具改名：CC 风格命名（Read/Edit/Bash/Observe…）+ 旧名别名兼容。
-
-别名契约：旧名在 get/execute/权限解析里路由到规范工具，但绝不进 schema；
-一个版本后别名可移除。
-"""
 
 from __future__ import annotations
 

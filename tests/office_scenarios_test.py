@@ -1,10 +1,3 @@
-"""Deterministic office/design acceptance contracts.
-
-These tests use injected scripted decisions and an in-memory adapter to assert
-observable trajectories and final state.  They do not call a real model or a
-real Office/Figma application, so passing here is not a claim that a scenario
-has passed product acceptance.
-"""
 
 from __future__ import annotations
 

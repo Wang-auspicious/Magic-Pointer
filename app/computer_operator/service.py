@@ -1,4 +1,3 @@
-"""Explicitly-authorized entry point for visual computer tasks."""
 
 from __future__ import annotations
 
@@ -38,13 +37,6 @@ def _visual_change_verifier(
 
 
 class ComputerTaskService:
-    """Create a guarded visual loop only from an explicit effect grant.
-
-    This is a Harness service, not a generic model-facing tool. The caller
-    must already have classified and authorized the whole GUI task's maximum
-    effect. That keeps an ambiguous visual click from silently downgrading
-    itself to a read or reversible action.
-    """
 
     def __init__(
         self,

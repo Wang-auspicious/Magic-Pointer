@@ -1,34 +1,10 @@
 'use strict';
 
-// When may a typed command be submitted?
-//
-// The capsule opens before perception finishes, so a fast typist can press
-// Enter while the snapshot is still being read. The old rule was a fixed 6s
-// deadline: wait up to six seconds for grounding, then tell the user
-// "目标识别没能完成，请重新选择一次。"
-//
-// On 2026-08-04 a first-run read took 12.9s and finished successfully at 13.6s.
-// The user got the failure message 0.8s before their own selection was ready,
-// was told to select again, and the retry worked — which is the worst possible
-// shape: the work succeeded, the app said it failed, and the advice was wrong.
-//
-// A deadline is the wrong instrument. What matters is whether the perception
-// bridge is still working: while it is, waiting is correct and the honest thing
-// to show is progress. The ceiling exists only to catch a bridge that died
-// without reporting, so it is tied to the bridge's own timeout rather than to
-// how long a person is assumed to tolerate.
 
-// Matches the snapshot bridge's own budget (see BRIDGE_TIMEOUTS in main.js).
-// If the bridge is alive at this point it will be killed by its own timeout, so
-// waiting past it can only produce a hang.
 const MAX_GROUNDING_WAIT_MS = 20000;
 
-// How long to wait when we cannot tell whether a capture is running. Short,
-// because "no capture in flight and no snapshot" usually means the session is
-// genuinely gone rather than slow.
 const UNKNOWN_CAPTURE_WAIT_MS = 1500;
 
-// Past this, say something. A silent spinner and a slow read look identical.
 const PROGRESS_NOTICE_AFTER_MS = 1200;
 
 const DECISION_SUBMIT = 'submit';
@@ -68,7 +44,6 @@ function decideSubmitGate(input?: SubmitGateInput): SubmitGateDecision {
   }
   if (captureInFlight) {
     if (elapsed >= MAX_GROUNDING_WAIT_MS) {
-      // The bridge outlived its own timeout, so it is not going to answer.
       return {
         decision: DECISION_FAIL,
         message: '读取这个选区花的时间超出了预期，已经停下。请再选一次，或换一个小一点的范围。',
@@ -78,7 +53,6 @@ function decideSubmitGate(input?: SubmitGateInput): SubmitGateDecision {
     return {
       decision: DECISION_WAIT,
       reason: 'capture_in_flight',
-      // Only after a beat: a fast read should not flash a notice.
       notice: elapsed >= PROGRESS_NOTICE_AFTER_MS ? '正在读取选中的内容，马上就好…' : '',
     };
   }
@@ -87,8 +61,6 @@ function decideSubmitGate(input?: SubmitGateInput): SubmitGateDecision {
   }
   return {
     decision: DECISION_FAIL,
-    // Says what happened and what to do, and does not claim the selection was
-    // wrong — it usually was not.
     message: '这次没能读到选中的内容，请再选一次。',
     reason: 'no_capture_running',
   };

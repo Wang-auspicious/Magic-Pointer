@@ -49,7 +49,6 @@ def _reject_secret_fields(value: dict[str, Any]) -> None:
 
 @dataclass(frozen=True)
 class ModelProfile:
-    """Versioned, non-secret description of one user-selected model."""
 
     id: str
     display_name: str
@@ -162,7 +161,6 @@ class ModelProfile:
 
 @dataclass(frozen=True)
 class ModelProfileStore:
-    """Settings-safe collection. It serializes references, never credentials."""
 
     profiles: tuple[ModelProfile, ...]
     default_profile_id: str | None

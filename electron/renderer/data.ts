@@ -1,12 +1,5 @@
-/* ============================================================
-   数据层
-   ------------------------------------------------------------
-   有桥就走桥（Electron 里的真实记录），没有桥就用样例（浏览器里预览）。
-   页面只跟这一层打交道，不直接碰 IPC——所以换数据源不用改渲染。
-   ============================================================ */
 
 declare global {
-  /* ---- 渲染层各 classic script 之间的共享名字 ---- */
 
   interface MagicPointerTaskInput {
     inputId: string;
@@ -69,9 +62,6 @@ declare global {
     [key: string]: unknown;
   }
 
-  /* 一轮用掉的 token，按来源分开记。缓存命中/写入只有 provider 报了才有这个
-     键——缺键和 0 是两回事：缺键表示「这家不报」，0 表示「报了，是零」。
-     上下文卡据此决定画不画那一段，所以两边都不能拿 0 顶替。 */
   interface MagicPointerModelUsage {
     inputTokens?: number;
     outputTokens?: number;
@@ -247,8 +237,7 @@ declare global {
   const renderFoldedProcess: (steps?: unknown[]) => Element | null;
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
 
-  /* DSH 聊天渲染器（deepseek-harness 100% 移植）：classic script 暴露的全局。 */
-  interface MagicPointerDshChatApi {
+  interface MagicPointerChatViewApi {
     userNode(question: string, timeMs?: number, branch?: { conversationId: string; turnIndex: number }): Element;
     assistantTurnNode(turn: Record<string, unknown>, scope?: string, options?: { taskPanel?: boolean }): Element[];
     turnStatusNode(label: string): Element;
@@ -261,12 +250,11 @@ declare global {
     permissionAnswerNode(answer: { decision?: string; rule?: string }): Element;
     formatRunMeta(ms: number, tokens: number | null): string;
   }
-  const DshChat: MagicPointerDshChatApi;
+  const ChatView: MagicPointerChatViewApi;
 
-  const DshMarkdown: {
+  const ChatMarkdown: {
     render(markdown: unknown): Element;
   };
-  /* Studio 会话控制（流式/停止/插话）的纯决策层全局。 */
   interface MagicPointerConversationControlApi {
     createTranscript(): { answer: string; thinking: string; trajectory: Array<Record<string, unknown>> };
     appendTranscript(transcript: ReturnType<MagicPointerConversationControlApi['createTranscript']>, record: unknown): boolean;
@@ -283,14 +271,13 @@ declare global {
   }
   const ConversationControl: MagicPointerConversationControlApi;
 
-  /* 斜杠触发检测（DSH input-trigger detect 层）。 */
   const SlashTrigger: {
     detectSlashToken(textBeforeCaret: string): string | null;
   };
-  const DshIcons: {
+  const ChatIcons: {
     node(name: string, size?: number): Element;
   };
-  const DshTrajectory: {
+  const ChatTrajectory: {
     project(turns: Array<Record<string, any>>): Array<Record<string, any>>;
     render(rows: Array<Record<string, any>>): Element;
   };
@@ -474,8 +461,6 @@ declare global {
     groups?: MagicPointerModelGroup[];
   }
 
-  /* 一行账户配额。provider 报的是窗口就带 percent，报的是余额就没有——
-     `detail` 放「充值/赠送」「N 小时后重置」这类同源补充。 */
   interface MagicPointerQuotaRow {
     id: string;
     label: string;
@@ -562,7 +547,6 @@ declare global {
       rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
       delete?(id: unknown): Promise<{ ok?: boolean; error?: string }>;
       setProject?(id: string, root: string): Promise<{ ok?: boolean; error?: string }>;
-      /* 输入框联想词：一次只读请求，返回 "" 表示「没有建议」。 */
       suggest?(payload: { turns?: unknown; object?: unknown }): Promise<{ ok?: boolean; suggestion?: string; error?: string }>;
       stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
       steer?(payload: { agentSessionId?: unknown; text?: unknown; taskInput?: MagicPointerTaskInput; sources?: Record<string, unknown>[] }): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
@@ -825,7 +809,6 @@ declare global {
     pointerContinuesGestureChain(previous: unknown, next: unknown, minimumDistance?: unknown): boolean;
     summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, thresholds?: unknown): Record<string, unknown>;
   }
-  // var 声明才是全局对象属性：classic script 之间用 globalThis.X 互访。
   var GestureCapture: MagicPointerGestureCaptureApi;
 
   interface MagicPointerSweepSample {
@@ -862,8 +845,6 @@ declare global {
     SWEEP_STYLE: Record<string, unknown>;
     VERTEX_SHADER_SOURCE: string;
     FRAGMENT_SHADER_SOURCE: string;
-    /* 每帧几何重建的增量缓存句柄：不透明对象，只有 sweep_visual 自己解释。
-       调用方可以拿一份自己的（一个 canvas 一份），也可以不传。 */
     createSweepPathCache(): unknown;
     buildSdfPath(points: unknown, requestedWidth?: number, cache?: unknown): MagicPointerSweepPath | null;
     sweepProfile(progress: number): MagicPointerSweepProfile;
@@ -883,12 +864,10 @@ declare global {
     magicPointerStage: MagicPointerStageApi;
   }
 
-  /* ---- studio / stage 共享的渲染层函数（实现留在各自 classic script） ---- */
   function formatTime(ms: number | null | undefined): string;
   function dayLabel(ms: number | undefined): string;
   function renderSettings(): void;
 
-  /* ---- 舞台桥。载荷形状见 preload.ts；渲染层只按松散形状取用。 ---- */
   interface MagicPointerStageApi {
     respondInput?(payload: Omit<MagicPointerInputResponse, 'conversationId'> & { selectionSessionToken: string }): Promise<Record<string, any>>;
     onConversationProgress?(callback: (payload: { requestId: string; conversationId?: string; turnIndex?: number; record: any }) => void): (() => void) | void;
@@ -920,7 +899,6 @@ declare global {
     onModelHealth(cb: (payload: Record<string, unknown>) => void): void;
   }
 
-  /* ---- stage 的 classic-script 全局（契约在 electron/*.ts，渲染层只取用） ---- */
   var StageState: any;
   var StageAnchor: any;
   var StageSurfacePolicy: any;
@@ -942,96 +920,6 @@ declare global {
 
 const bridge = (): MagicPointerDashboardApi | null => window.magicPointerDashboard || null;
 const hasBridge = () => Boolean(bridge()?.conversations);
-
-/* ---------- 样例：只在没有桥的时候用 ---------- */
-const DEMO_CONVERSATIONS = [
-  {
-    id: 'demo-1',
-    title: '这段代码在干嘛？',
-    subtitle: 'VS Code · uia_text_adapter.py',
-    updatedAt: Date.parse('2026-08-06T12:33:00'),
-    object: { app: 'VS Code', windowTitle: 'uia_text_adapter.py', label: '第 118 行' },
-    outcomes: ['结构层'],
-    turns: [{
-      at: Date.parse('2026-08-06T12:33:00'),
-      question: '把这个模块的读取超时修好，并说明你改了什么。',
-      answer: [
-        '## 已完成',
-        '',
-        '我把读取路径改成了**冻结帧优先**，并保留 UIA 作为结构化证据。现在 `pointerup` 之后不会再抓到更晚的画面。',
-        '',
-        '- 固定了 200ms 探针预算的归属',
-        '- 为帧租约补上了回归测试',
-        '- 保留完整目标表面，不再只存手势小裁剪',
-        '',
-        '| 验证 | 结果 |',
-        '| --- | --- |',
-        '| Python | 通过 |',
-        '| TypeScript | 通过 |',
-        '',
-        '```pwsh',
-        'python -m pytest tests/frame_lease_test.py -q',
-        '```',
-      ].join('\n'),
-      activities: [{ kind: 'model', turn: 1, state: 'done', latencyMs: 2840, firstTokenMs: 612 }],
-      events: [
-        { name: 'pwsh', arguments: { command: 'rg -n "pointerup|capture" electron' }, result: 'electron/main.ts:1398', isError: false, usedBackend: 'subprocess', latencyMs: 86 },
-        { name: 'read', arguments: { path: 'electron/main.ts', line: 1380 }, result: 'capturePage(rect)', isError: false, usedBackend: 'filesystem', latencyMs: 12 },
-        { name: 'edit', arguments: { path: 'electron/main.ts' }, result: 'Done', isError: false, usedBackend: 'workspace', latencyMs: 44 },
-      ],
-      modelUsage: { inputTokens: 1842, outputTokens: 286, totalTokens: 2128 },
-      timingMs: 3218,
-      usedBackend: 'openai-compatible',
-    }],
-  },
-  {
-    id: 'demo-2',
-    title: '把这三列汇总',
-    subtitle: 'Excel · 2026Q3.xlsx',
-    updatedAt: Date.parse('2026-08-06T11:12:00'),
-    object: { app: 'Excel', windowTitle: '2026Q3.xlsx', label: 'C:E 列' },
-    outcomes: ['已写回'],
-    turns: [],
-  },
-  {
-    id: 'demo-3',
-    title: '这条报错什么意思',
-    subtitle: 'Windows 终端',
-    updatedAt: Date.parse('2026-08-06T09:44:00'),
-    object: { app: 'Windows 终端', windowTitle: '', label: '像素兜底' },
-    outcomes: ['像素来源'],
-    turns: [],
-  },
-];
-
-const DEMO_STASH = [
-  { id: 'b1', title: '看 Oreo 那套组件', app: 'Chrome', icon: 'ic-window', time: '14:22', kind: '灵感',
-    items: [
-      { t: 'shot', w: 196, h: 126, desc: '进度条拆成五段的通知卡' },
-      { t: 'shot', w: 150, h: 126, desc: '决策卡：稍后决定 / 批准' },
-      { t: 'note', text: '这个五段进度条是五个独立 scaleX，不是一条 width 动画' },
-    ] },
-  { id: 'b2', title: 'Claude 的交接', app: 'Windows 终端', icon: 'ic-term', time: '13:58', kind: '交接',
-    items: [
-      { t: 'shot', w: 230, h: 150, desc: 'UIA 超时预算要按窗口分档' },
-      { t: 'note', text: '175ms 是探针自身冷启动，200ms 预算只剩 25ms 给读取' },
-    ] },
-  { id: 'b3', title: '订阅与续费', app: '支付宝 · 邮件', icon: 'ic-file', time: '11:40', kind: '凭证',
-    items: [
-      { t: 'shot', w: 168, h: 110, desc: '设计资源 ¥348/年 · 8842-1109' },
-      { t: 'shot', w: 168, h: 110, desc: '域名续费 · 到期 2027-03-11' },
-      { t: 'shot', w: 168, h: 110, desc: '差旅报销 ¥1,240 · 待提交' },
-    ] },
-  { id: 'b4', title: '首屏背景候选', app: 'Pinterest · Unsplash', icon: 'ic-img', time: '10:07', kind: '素材',
-    items: [
-      { t: 'shot', w: 150, h: 100, desc: '暖调云层' },
-      { t: 'shot', w: 150, h: 100, desc: '窗帘逆光' },
-      { t: 'shot', w: 150, h: 100, desc: '干草地低光' },
-      { t: 'shot', w: 150, h: 100, desc: '空桌与光柱' },
-    ] },
-];
-
-/* ---------- 对外 ---------- */
 
 // classic-script 全局 API，被 overlay/stage/settings 等以 global 方式消费。
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1158,7 +1046,7 @@ const Data: MagicPointerDataApi = {
   },
 
   async conversations(): Promise<MagicPointerConversation[]> {
-    if (!hasBridge()) return DEMO_CONVERSATIONS;
+    if (!hasBridge()) return [];
     const list = await bridge()!.conversations.list();
     return Array.isArray(list) ? list : [];
   },
@@ -1173,7 +1061,7 @@ const Data: MagicPointerDataApi = {
   },
 
   async conversation(id: string): Promise<MagicPointerConversation | undefined> {
-    if (!hasBridge()) return DEMO_CONVERSATIONS.find((c) => c.id === id) || DEMO_CONVERSATIONS[0];
+    if (!hasBridge()) return undefined;
     return bridge()!.conversations.get(id);
   },
 
@@ -1229,8 +1117,6 @@ const Data: MagicPointerDataApi = {
     return api.setProject(id, root);
   },
 
-  /* 联想词永远只返回一个字符串：通道缺失、请求失败、模型没建议，都是空串。
-     调用方不需要为它写错误分支——没有建议就是没有建议。 */
   async suggestNextPrompt(turns: unknown, object: unknown = {}): Promise<string> {
     if (!hasBridge() || !bridge()!.conversations.suggest) return '';
     try {
@@ -1288,8 +1174,6 @@ const Data: MagicPointerDataApi = {
     }
   },
 
-  /* 账户配额。返回 null 表示「问不到」——调用方据此不画配额分组，
-     而不是退回到一个自己算的数。 */
   async modelQuota(options: { force?: boolean } = {}): Promise<MagicPointerQuotaReport | null> {
     if (!hasBridge()) return null;
     try {
@@ -1301,29 +1185,19 @@ const Data: MagicPointerDataApi = {
   },
 
   async timeline(): Promise<MagicPointerTimelineDay[]> {
-    if (!hasBridge()) {
-      return [{ key: 'demo', at: Date.now(), items: DEMO_CONVERSATIONS }];
-    }
+    if (!hasBridge()) return [];
     const days = await bridge()!.conversations.timeline();
     return Array.isArray(days) ? days : [];
   },
 
   async memories(): Promise<unknown[]> {
-    if (!hasBridge()) {
-      return DEMO_CONVERSATIONS.slice(0, 2).map((c) => ({
-        key: c.id, object: c.object, subtitle: c.subtitle,
-        touches: 3, lastAt: c.updatedAt, questions: [c.title],
-      }));
-    }
+    if (!hasBridge()) return [];
     const list = await bridge()!.conversations.memories();
     return Array.isArray(list) ? list : [];
   },
 
   async artifacts(): Promise<unknown[]> {
-    if (!hasBridge()) {
-      return [{ name: '超时预算复测报告', kind: 'text', at: Date.parse('2026-08-06T12:33:00'),
-        from: '这段代码在干嘛？', conversationId: 'demo-1' }];
-    }
+    if (!hasBridge()) return [];
     const list = await bridge()!.conversations.artifacts();
     return Array.isArray(list) ? list : [];
   },
@@ -1419,10 +1293,9 @@ const Data: MagicPointerDataApi = {
   },
 
   async stash(): Promise<MagicPointerStashEntry[]> {
-    if (!bridge()?.stash) return DEMO_STASH;
+    if (!bridge()?.stash) return [];
     const bursts = await bridge()!.stash.list();
     if (!Array.isArray(bursts) || !bursts.length) return [];
-    // 主进程给的是「一簇里若干条」，画布要的是「一簇里若干个节点」
     return bursts.map((b: MagicPointerStashBurst) => ({
       id: b.id,
       title: b.items![0]?.desc || b.app || '一组',
@@ -1506,7 +1379,6 @@ const Data: MagicPointerDataApi = {
     return stash.remove(id);
   },
 
-  // 悬停收藏图片 1 秒后调本地视觉模型出 3-4 句简介
   async describeStashImage(src: string): Promise<string | null | undefined> {
     if (!bridge()?.stash?.describe) return null;
     try {
@@ -1535,7 +1407,6 @@ function formatTime(ms: number | null | undefined): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-// classic-script 全局 API（settings 等文件直接调用 dayLabel）。
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function dayLabel(ms: number): string {
   const d = new Date(ms);

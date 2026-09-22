@@ -1,4 +1,3 @@
-"""Launch isolated, no-window background learning reviews."""
 
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ _LEARNING_TERMINALS = {
 
 
 class BackgroundReviewLauncher:
-    """Start one independent review worker and return immediately."""
 
     def __init__(
         self,
@@ -90,7 +88,6 @@ class BackgroundReviewLauncher:
         }
 
     def prepare(self, session_id: str, *, terminal_reason: str) -> dict[str, Any]:
-        """Build a path-free request for a persistent host to schedule."""
         reason = str(terminal_reason or "")
         if not self.enabled:
             return {

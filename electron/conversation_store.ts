@@ -1,13 +1,5 @@
 'use strict';
 
-// 对话记录：你指过什么、问了什么、它答了什么、留下了什么。
-//
-// 之前只有 session_timeline（诊断用的耗时环），里面没有"你问的那句话"，
-// 也没有"你指的那个对象"。所以工作室里只能摆写死的样例。这个模块补上
-// 真正的那一份，并且按**你指的对象**归类——你记得的是"那个 Excel 的第三列"，
-// 不是"周二下午的第 4 次会话"。
-//
-// 落盘，不常驻内存：关掉窗口再打开，历史还在。
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -49,14 +41,8 @@ interface TurnEntry {
   modelId?: string;
   timingMs?: number;
   usedBackend?: string;
-  /** 划线轮次的现场证据：截图存档 + 标注图 + 当时读到的内容摘要。追问时随桥回上下文。 */
   evidence?: TurnEvidence;
-  /** 这一轮是「回答一道权限门」，不是用户新起的一句话。
-   *  它带的是决定（allow once / allow / deny），显示层据此画一枚授权回执，
-   *  而不是一个用户气泡——否则读起来像用户又发了一条消息，把权限门和对话
-   *  轮次混成同一件事。 */
   permissionAnswer?: { decision: 'once' | 'grant' | 'deny'; rule: string };
-  /** 结构化提问（ask_user_question / 权限门）随轮存档：会话重开后审批卡靠它 reconstruct。 */
   pendingInput?: TurnPendingInput;
 }
 
@@ -83,7 +69,6 @@ interface Conversation {
   id: string;
   objectKey: string;
   title: string;
-  /** 用户重命名过：后续追问的自动标题不再覆盖它。 */
   titleCustom?: boolean;
   subtitle: string;
   object: ReferencedObject;
@@ -92,13 +77,10 @@ interface Conversation {
   closed: boolean;
   turns?: TurnEntry[];
   workspaceRoot?: string;
-  /** 可跨重启继续的 Agent session 与其最后一个真实终态。 */
   agentSessionId?: string;
   hasPendingWork?: boolean;
-  /** Codex thread workspace_roots：线程级绑定，追问保持，显式换才跟随。 */
   permissionGrants?: string[];
   permissionDenials?: string[];
-  /** CC toolPermissionDecision：用户在本会话授予/拒绝过的工具名。 */
   taskContext?: Record<string, unknown>;
 }
 
@@ -139,46 +121,16 @@ interface TurnInput {
 interface ConversationStoreOptions {
   baseDir: string;
   now?: () => number;
-  /**
-   * Coalesce whole-store writes instead of rewriting on every mutation.
-   * Off by default so callers get the old synchronous semantics; production
-   * turns it on and must call `flush()` before exit.
-   */
   deferPersist?: boolean;
-  /** Coalescing window when `deferPersist` is on. */
   persistDebounceMs?: number;
-  /**
-   * Report a write failure. Called from `flush()`/`persist()` *and* from the
-   * background write, so a store that silently stopped saving has something
-   * watching it. Deliberately bounded (see `reportPersistFailure`): the point
-   * is to be noticed, not to fill the log.
-   */
   onPersistError?: (error: unknown, context: string) => void;
 }
 
-/**
- * How long a deferred store may sit dirty. Chosen to be under the point where
- * an interrupted session loses anything a user would notice, and well above
- * the ~300 ms cadence of the stage's live-answer flush it exists to absorb.
- */
 const CONVERSATION_PERSIST_DEBOUNCE_MS = 1000;
 
-/**
- * Failure reporting budget. A store on a read-only or full disk fails on every
- * single mutation; without a ceiling that is a log flood on the same thread.
- * The first failure always reports, then at most one per minute, then nothing —
- * the counter (not the log) carries the real total.
- */
 const MAX_PERSIST_FAILURE_REPORTS = 5;
 const PERSIST_FAILURE_REPORT_INTERVAL_MS = 60_000;
 
-/**
- * How many times the background write retries itself after a failure before it
- * stops and waits for the next mutation instead. Without a cap, a disk that is
- * full or a directory that has gone away turns the debounce timer into a
- * permanent 1 Hz failing-write loop. The store stays dirty either way, so the
- * next `persist()`/`flush()` is a retry — this only stops the *self*-retry.
- */
 const ASYNC_WRITE_RETRY_BUDGET = 3;
 
 interface ProjectRecord {
@@ -194,10 +146,6 @@ function isTurnSettled(outcome: unknown): boolean {
   return !['进行中', 'running', 'in_progress', 'pending', 'waiting'].includes(value);
 }
 
-// 同一个对象的稳定标识：进程 + 窗口标题 + 元素路径。
-// 拿不到元素路径就退到标题；都拿不到就用进程名——宁可粗一点，也不要每次都算成新对象。
-// elementPath 形如 `selection-<uuid>`（每次划线都是新的）时不算稳定标识，
-// 否则同一个对象会被 UUID 拆成无数条碎片记忆。UUID 段降级丢弃。
 const TRANSIENT_ELEMENT_RE = /^(selection|snapshot|obj)-[a-f0-9]{8,}$/i;
 
 function stableElementPath(elementPath: unknown): string {
@@ -213,8 +161,6 @@ function objectKey(object: ReferencedObject = {}): string {
   return filled.length ? filled.join('|') : 'unknown';
 }
 
-// 这条提问有信息量吗？问候/泛问（你好、在吗、这是什么、这啥）不构成
-// 记忆——记下的是「用户对某个对象做过什么」，不是「用户说过什么」。
 const VAPID_QUESTION_RE =
   /^(你好|您好|嗨|在吗|在不在|你是谁|你叫什么|hello|hi|hey|这是什么|这是啥|这啥|那是什么|这啥意思|这啥字|啥意思|什么意思)$/i;
 
@@ -222,20 +168,15 @@ function isSubstantiveQuestion(title: unknown = ''): boolean {
   const t = String(title).trim();
   if (!t) return false;
   if (VAPID_QUESTION_RE.test(t)) return false;
-  // 泛问的规则化结果（如「这是什么」剥成「这」）也挡掉
   if (t.length <= 2 && /^[这那它啥谁]/.test(t)) return false;
   return true;
 }
 
-// 标题不是用户问题的截断——把问题压成一句「对象 + 动作」的小结。
-// 纯规则、零延迟、不调模型：句子短、疑问词与语气词剥掉、保留名词。
-// 规则做不好（句子太怪）才退回截断，绝不显示「你问的那句原话」。
 function titleFrom(question: unknown = ''): string {
   const clean = String(question).replace(/\s+/g, ' ').trim();
   if (!clean) return '未命名';
 
   let t = clean;
-  // 剥问句尾巴：这些词结尾时截掉，问句变陈述
   t = t.replace(/([？?])$/, '');
   for (const tail of [
     '是什么意思',
@@ -252,14 +193,12 @@ function titleFrom(question: unknown = ''): string {
       break;
     }
   }
-  // 剥开头语气词
   t = t.replace(/^(请|帮我|麻烦|能不能|可以|怎么|如何|为什么)/, '');
   t = t.replace(/^(请问|我想问|问一下)/, '');
   t = t.replace(/^(这个|这段|这行|这里|那边)/, '');
   t = t.trim();
   if (!t) t = clean;
 
-  // 太长就按标点断第一句；还长就截断
   if (t.length > TITLE_MAX) {
     const cut = t.search(/[，。；,;:：]/);
     if (cut > 0 && cut < TITLE_MAX) t = t.slice(0, cut).trim();
@@ -268,7 +207,6 @@ function titleFrom(question: unknown = ''): string {
   return t;
 }
 
-// 侧栏那一行副标题：应用 + 你指的那个东西。
 function subtitleFrom(object: ReferencedObject = {}): string {
   const bits = [object.app, object.label || object.windowTitle].filter(Boolean);
   return bits.join(' · ');
@@ -292,7 +230,6 @@ function createConversationStore(
   let dirty = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // --- failure reporting ---------------------------------------------------
   let failureReports = 0;
   let lastFailureReportAt = 0;
 
@@ -309,13 +246,6 @@ function createConversationStore(
     }
   }
 
-  // --- per-conversation serialisation cache --------------------------------
-  //
-  // `persist()` was `JSON.stringify(all conversations)` on every mutation —
-  // measured at 45.7 ms for a 13 MB store, 60.6 ms end-to-end. Only one
-  // conversation actually changed per mutation (the streaming answer), so the
-  // other 49 were re-serialised for nothing. Each conversation is serialised
-  // once and reused until something marks it dirty.
   interface SerializedConversation {
     ref: Conversation;
     json: string;
@@ -324,12 +254,7 @@ function createConversationStore(
     title: string;
   }
   const serializedConversations = new Map<string, SerializedConversation>();
-  // Authoritative invalidation: every mutating path marks what it touched.
   const dirtyConversations = new WeakSet<object>();
-  // Belt and braces for mutations that bypass those paths (a caller holding a
-  // reference from `get()` and mutating it): the structural fields below are
-  // compared as well, and a mismatch forces a re-serialisation. This can only
-  // ever *invalidate* the cache, never wrongly validate it.
 
   function markDirty(conversation: Conversation | null | undefined): void {
     if (conversation && typeof conversation === 'object') dirtyConversations.add(conversation);
@@ -366,8 +291,6 @@ function createConversationStore(
       dirtyConversations.delete(conversation);
       parts.push(json);
     }
-    // Dropped conversations (remove/clear) must not keep
-    // their JSON alive.
     for (const id of [...serializedConversations.keys()]) {
       if (!live.has(id)) serializedConversations.delete(id);
     }
@@ -385,8 +308,6 @@ function createConversationStore(
     return items;
   }
 
-  // A synchronous write is the one that must win: it is what `flush()` uses on
-  // the exit paths, and it always serialises the current state.
   let syncWriteCount = 0;
   let asyncWritePending = false;
   let asyncRetryBudget = ASYNC_WRITE_RETRY_BUDGET;
@@ -400,16 +321,6 @@ function createConversationStore(
     syncWriteCount += 1;
   }
 
-  /**
-   * The debounced write, off the main thread.
-   *
-   * `writeFileSync` of a 13 MB payload measured 19.3 ms — on the same thread as
-   * every IPC and the pointer poll. The coalescing timer exists precisely to
-   * get this off the interactive path, so the I/O moves to the thread pool too.
-   * Ordering is preserved by `syncWriteCount`: if a synchronous flush landed a
-   * newer payload while this was in flight, this one is discarded rather than
-   * renamed over it.
-   */
   function writeNowAsync(): void {
     if (asyncWritePending) return;
     dirty = false;
@@ -434,9 +345,6 @@ function createConversationStore(
       }
       dirty = true;
       reportPersistFailure(error, 'background-write');
-      // Retry on the normal debounce cadence; a transient lock must not lose
-      // the changes that are still only in memory. Bounded, so a permanent
-      // failure goes quiet rather than pulsing a failing write every second.
       if (persistTimer === null && asyncRetryBudget > 0) {
         asyncRetryBudget -= 1;
         persistTimer = setTimeout(() => {
@@ -454,8 +362,6 @@ function createConversationStore(
       fs.writeFile(tmp, payload, 'utf8', (writeError: NodeJS.ErrnoException | null) => {
         if (writeError) { finish(writeError); return; }
         if (syncWriteCount !== startedAtSyncWrite) {
-          // A synchronous flush already replaced the file with newer data.
-          // Drop this payload instead of renaming stale bytes over it.
           finish(null);
           return;
         }
@@ -467,20 +373,6 @@ function createConversationStore(
     });
   }
 
-  /**
-   * 落盘整个对话库。
-   *
-   * 这是「把全部对话 JSON.stringify 一遍再写盘」——实测 3MB 库 18ms，
-   * 13MB 库 85ms，跑在主进程线程上。它挂在每一次 updateTurn 上，而 stage
-   * 的流式回答每 300ms 就 updateTurn 一次，于是主线程每秒有三次要停下来
-   * 重写整库；用户感受到的就是输入卡顿、窗口拖动掉帧。
-   *
-   * deferPersist 打开时，persist() 只标脏并排一次延迟写：同一窗口内的
-   * 多次修改合并成一次落盘。flush() 立刻落盘，退出前必须调用——延迟窗口
-   * 内的修改还在内存里，进程没了就没了。
-   *
-   * 默认关闭，测试仍是同步语义；生产在 conversations() 里显式打开。
-   */
   function persist(): void {
     if (!deferPersist) {
       dirty = true;
@@ -488,13 +380,11 @@ function createConversationStore(
         writeNow();
         dirty = false;
       } catch (error) {
-        // 落盘失败不能把调用方炸掉。重新标脏，下一次 persist/flush 会再试。
         reportPersistFailure(error, 'persist');
       }
       return;
     }
     dirty = true;
-    // A new mutation is a fresh reason to try again.
     asyncRetryBudget = ASYNC_WRITE_RETRY_BUDGET;
     if (persistTimer !== null) return;
     persistTimer = setTimeout(() => {
@@ -502,29 +392,21 @@ function createConversationStore(
       if (!dirty) return;
       writeNowAsync();
     }, persistDebounceMs);
-    // Node 在只有定时器挂着的进程里会一直活着；这里不应该拖住退出。
     if (typeof persistTimer === 'object' && persistTimer !== null && 'unref' in persistTimer) {
       (persistTimer as unknown as { unref(): void }).unref();
     }
   }
 
-  /** 立刻把未落盘的修改写出去。任何退出路径都必须走到这里。 */
   function flush(): void {
     if (persistTimer !== null) {
       clearTimeout(persistTimer);
       persistTimer = null;
     }
-    // An in-flight background write is *not* a reason to skip the flush: it may
-    // not land before the process exits, and it may be carrying older bytes.
-    // writeNow() bumps syncWriteCount, which makes the background write discard
-    // itself rather than rename over this payload.
     if (!dirty && !asyncWritePending) return;
     dirty = false;
     try {
       writeNow();
     } catch (error) {
-      // 落盘失败不能把调用方（往往是退出路径）再炸一次。重新标脏，
-      // 下一次 persist/flush 会再试一次。
       dirty = true;
       reportPersistFailure(error, 'flush');
     }
@@ -550,7 +432,6 @@ function createConversationStore(
     fs.renameSync(tmp, projectsFile);
   }
 
-  /** 一个确定的文件夹就是一个项目。项目先于对话存在，因此单独落盘。 */
   function registerProject(rawRoot: unknown): ProjectRecord | null {
     const input = String(rawRoot || '').trim();
     if (!input) return null;
@@ -604,9 +485,6 @@ function createConversationStore(
       .map((project) => ({ ...project }));
   }
 
-  // 一次追问接在同一条对话上；指向了别的对象就另起一条。
-/* 一轮是不是「回答权限门」：看它带了哪种决定。三种互斥，deny 优先——
-   同时给出 allow 和 deny 没有意义，而把 deny 当 allow 记会更糟。 */
   function permissionAnswerOf(
     turn: TurnInput,
   ): { decision: 'once' | 'grant' | 'deny'; rule: string } | undefined {
@@ -658,9 +536,6 @@ function createConversationStore(
       runtimeTurn: Number.isInteger(Number(turn.runtimeTurn)) && Number(turn.runtimeTurn) > 0 ? Number(turn.runtimeTurn) : undefined,
       timingMs: Number.isFinite(Number(turn.timingMs)) ? Number(turn.timingMs) : undefined,
       usedBackend: turn.usedBackend !== undefined ? String(turn.usedBackend) : undefined,
-      // 划线轮次的现场证据与结构化提问随轮存档：追问时桥把它们带回上下文，
-      // 审批卡在会话重开后还能从这 reconstruct。没有这两样，「五分钟后问
-      // 就接不上」是无解的。
       evidence: sanitizeEvidence(turn.evidence),
       pendingInput: sanitizePendingInput(turn.pendingInput),
     };
@@ -668,8 +543,6 @@ function createConversationStore(
     if (target) {
       if (!Array.isArray(target.turns)) target.turns = [];
       target.turns.push(entry);
-      // Codex thread semantics: the thread keeps its workspace across
-      // follow-ups; an explicit root on this turn moves THIS thread only.
       const explicitRoot = String(turn.workspaceRoot || '').trim();
       if (explicitRoot) target.workspaceRoot = registerProject(explicitRoot)?.root || explicitRoot;
       const agentSessionId = String(turn.agentSessionId || '').trim();
@@ -677,10 +550,7 @@ function createConversationStore(
       if (typeof turn.hasPendingWork === 'boolean') target.hasPendingWork = turn.hasPendingWork;
       const taskContext = sanitizeTaskContext(turn.taskContext);
       if (taskContext) target.taskContext = taskContext;
-      // 用户起过的名字不覆盖；自动标题只在未自定义时跟随最新问题。
       if (!target.titleCustom && !permissionAnswerOf(turn)) target.title = titleFrom(turn.question);
-      // CC toolPermissionDecision: a chip grant/deny joins the thread memo
-      // (dedup); the memo rides every later request in this thread.
       const grant = String(turn.permissionGrant || '').trim();
       if (grant) {
         target.permissionGrants = target.permissionGrants || [];
@@ -692,7 +562,6 @@ function createConversationStore(
         if (!target.permissionDenials.includes(deny)) target.permissionDenials.push(deny);
       }
       target.updatedAt = at;
-      // 换到列表最前面：最近碰过的排最上，和人的记忆顺序一致
       conversations.splice(conversations.indexOf(target), 1);
       conversations.unshift(target);
       markDirty(target);
@@ -725,8 +594,6 @@ function createConversationStore(
     return created;
   }
 
-  // Stage↔GUI 实时同步：先 appendTurn 一条「进行中」的占位 turn，读取
-  // 过程中用 updateTurn 就地补 answer/终态——不再等整轮跑完才在 GUI 出现。
   function sanitizeEvidence(value: unknown): TurnEntry['evidence'] {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
     const raw = value as Record<string, unknown>;
@@ -825,8 +692,6 @@ function createConversationStore(
     if (Number.isFinite(Number(input.timingMs))) turn.timingMs = Number(input.timingMs);
     const updatedAt = now();
     if (!Number.isFinite(Number(turn.startedAt))) turn.startedAt = Number(turn.at) || updatedAt;
-    // `at` was historically overwritten by every stream patch. It now remains
-    // the compatibility alias for the true start; completedAt records the end.
     turn.at = turn.startedAt;
     if (input.outcome !== undefined) {
       if (isTurnSettled(turn.outcome)) turn.completedAt = updatedAt;
@@ -867,7 +732,6 @@ function createConversationStore(
     return { ok: true, conversation: target };
   }
 
-  /** Called once when the owning client starts, before it can create live turns. */
   function recoverInterruptedTurns(): void {
     let changed = false;
     for (const conversation of load()) {
@@ -878,9 +742,6 @@ function createConversationStore(
         turn.outcome = '可恢复';
         turn.failed = true;
         turn.error = '上次客户端会话已中断，可以继续此任务。此前操作结果需恢复后核实。';
-        // Neither restart time nor a missing client owner proves when a tool
-        // finished, or whether an external operation completed. Keep evidence
-        // and timestamps intact; only the latest turn owns pending work.
         if (index === turns.length - 1) conversation.hasPendingWork = true;
         recovered = true;
       }
@@ -892,7 +753,6 @@ function createConversationStore(
     if (changed) persist();
   }
 
-  // 侧栏用：只要摘要，不要把全部 turn 塞进 IPC
   function list(limit = Number.POSITIVE_INFINITY) {
     const conversations = load();
     return conversations.slice(0, limit).map((c) => ({
@@ -908,8 +768,6 @@ function createConversationStore(
       taskContext: sanitizeTaskContext(c.taskContext),
       permissionGrants: Array.isArray(c.permissionGrants) ? c.permissionGrants : [],
       permissionDenials: Array.isArray(c.permissionDenials) ? c.permissionDenials : [],
-      // 磁盘上的旧文件可能没有 turns 字段（早期版本/手改），逐条判空，
-      // 否则一条坏记录会把整个列表、时间线、记忆、产物五个 handler 一起打挂。
       turns: (c.turns || []).length,
       outcomes: [...new Set((c.turns || []).map((t) => t.outcome).filter(Boolean))],
     }));
@@ -919,11 +777,6 @@ function createConversationStore(
     return load().find((conversation) => conversation.id === id) || null;
   }
 
-  /**
-   * 从一个已经完成的回合创建真正的新对话。turnIndex 为包含式索引：
-   * 分支保留该回合及之前的上下文，但清空运行时 session / 待续状态，
-   * 避免两个对话继续写进同一个 Agent session。
-   */
   function branch(id: unknown, turnIndex: unknown, runtime?: { agentSessionId: string; taskContext?: unknown }): Conversation | null {
     const conversations = load();
     const source = conversations.find((conversation) => conversation.id === id);
@@ -958,7 +811,6 @@ function createConversationStore(
     return created;
   }
 
-  // 时间线按天分组；同一天里最近的在上面。
   function timeline(limit = 60) {
     const days = new Map<string, { key: string; at: number; items: ReturnType<typeof list> }>();
     for (const c of list(limit)) {
@@ -970,7 +822,6 @@ function createConversationStore(
     return [...days.values()];
   }
 
-  // 记忆 = 反复被指到的对象。指过一次的不算记忆，指过三次的才是。
   function memories(minTouches = 2) {
     const conversations = load();
     const byObject = new Map<
@@ -1001,7 +852,6 @@ function createConversationStore(
     return (
       [...byObject.values()]
         .filter((m) => m.touches >= minTouches)
-        // 记忆得有内容：纯问候/无信息量提问（你好、这是啥、这是什么）不构成记忆
         .filter((m) => m.questions.some((q) => isSubstantiveQuestion(q)))
         .sort((a, b) => b.lastAt - a.lastAt)
     );
@@ -1115,7 +965,6 @@ function createConversationStore(
     persist();
   }
 
-  /** 用户自定义标题优先于自动标题；空白拒绝，不把对话改成空标题。 */
   function rename(id: unknown, title: unknown): { ok: boolean; conversation?: Conversation } {
     const clean = String(title || '').trim().slice(0, TITLE_MAX);
     if (!clean) return { ok: false };
@@ -1169,8 +1018,6 @@ function createConversationStore(
     registerProject,
     listProjects,
     objectKey,
-    // Only meaningful when deferPersist is on; harmless (and a no-op) when the
-    // store still writes synchronously on every mutation.
     flush,
   };
 }

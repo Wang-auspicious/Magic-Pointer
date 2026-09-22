@@ -14,10 +14,6 @@ let trailAlpha = 1;
 let fadeRaf: number | null = null;
 let captureMode = false;
 let submitting = false;
-// Committed strokes of the current chain. The user can circle several
-// regions before the session finalizes ("circle this, and this, then run
-// the command"); a configurable inactivity window decides when the chain
-// ends and the unified gesture is submitted.
 let strokes: OverlayStroke[] = [];
 let chainTimer: ReturnType<typeof setTimeout> | null = null;
 let chainHintTimer: ReturnType<typeof setTimeout> | null = null;
@@ -31,22 +27,16 @@ let observerMode = false;
 let gestureMode = false;
 let gestureToken: string | null = null;
 let gestureAcceptAt = 0;
-/** @type {string} */
 let gestureLineStyle = 'demo6_band';
 let gestureLineWidth = 22;
-/** @type {string} */
 let gestureInteractionMode = 'exclusive_overlay';
 let hintTimer: ReturnType<typeof setTimeout> | null = null;
 let gestureGraceTimer: ReturnType<typeof setTimeout> | null = null;
-/** @type {string} */
 let currentWorkflow = 'generic';
 
-// ── Clicky 式引导小三角 ──────────────────────────────────────────────
-// 默认不出现。回答带了 [POINT] 指点（overlay:guide-point）时才浮现，
-// 从当前光标沿贝塞尔弧线飞向目标，短暂停留后彻底退出。
-let guideTarget: { x: number; y: number } | null = null;        // { x, y } 指点目标（overlay 局部坐标）
-let guideFlight: GuideFlight | null = null;        // { t, from, to, ctrl, startedAt, duration }
-let guideHideTimer: ReturnType<typeof setTimeout> | null = null;     // 到达后停留定时器
+let guideTarget: { x: number; y: number } | null = null;         
+let guideFlight: GuideFlight | null = null;         
+let guideHideTimer: ReturnType<typeof setTimeout> | null = null;      
 const GUIDE_FLIGHT_MS = 620;
 
 interface OverlayPoint { x: number; y: number; t: number; }
@@ -66,15 +56,12 @@ interface GuideFlight {
 
 function onGuidePoint(payload: Record<string, unknown> | null | undefined) {
   if (!payload || !Number.isFinite(Number(payload.x)) || !Number.isFinite(Number(payload.y))) return;
-  // 上一枚三角的停留定时器还挂着：不清掉的话，新的一枚刚到就会被
-  // 旧定时器在旧时刻抹掉——连续两枚 [POINT] 时第二枚几乎看不见。
   if (guideHideTimer) clearTimeout(guideHideTimer);
   guideHideTimer = null;
   const bounds = overlayBounds();
   const tx = Number(payload.x) - bounds.x;
   const ty = Number(payload.y) - bounds.y;
   const from = lastPointer || { x: tx, y: ty };
-  // 二次贝塞尔：控制点在起点终点连线中点上方，画出一条弧线（clicky 同款）
   const ctrl = {
     x: (from.x + tx) / 2,
     y: (from.y + ty) / 2 - Math.max(90, Math.abs(tx - from.x) * 0.35),
@@ -87,18 +74,11 @@ function onGuidePoint(payload: Record<string, unknown> | null | undefined) {
 }
 
 
-// ── Clicky 式代理光标（双生鼠标）──────────────────────────────────────
-// 只画代理光标。人类光标仍然由操作系统原生 cursor 资源渲染——Clicky 三个
-// 实现里没有一处 HideCursor/SetCursorPos 动过它，代理光标固定画在
-// realCursor + (35,25)，两者永不同址，所以没有 hide/restore 契约要维护。
-// 常量与 app/computer_operator/cursors.py、electron/agent_cursor_policy.ts
-// 逐字对应，tests/agent_cursor_policy_test.ts 交叉校验。
 const AGENT_OFFSET_X = 35;
 const AGENT_OFFSET_Y = 25;
 const AGENT_TRIANGLE_SIZE = 16;
 const AGENT_REST_DEGREES = -35;
 const AGENT_ACCENT = '#3380FF';
-// 右键用另一个色：把右键画成左键，比不画更糟——用户会以为代理做了它没做的事。
 const AGENT_RIGHT_CLICK_ACCENT = '#E8563F';
 const AGENT_SPRING_STIFFNESS = 0.28;
 const AGENT_SPRING_DAMPING = 0.62;
@@ -136,14 +116,11 @@ interface AgentCursor {
   ring: { x: number; y: number } | null;
   ringPhase: number;
   glowUntil: number;
-  /** 1 = 单击，2 = 双击；右键由 accent 表达。 */
   clickCount: number;
   dwellUntil: number;
   scale: number;
   rotation: number;
-  /** 上一次积分到的时刻：弹簧按 16ms tick 定标，不能拿调用次数当 dt。 */
   lastStepAt: number;
-  /** 返程起点处的指针位置：指针挪超过 100px 就放弃返程改成跟随。 */
   returnAnchor: { x: number; y: number } | null;
 }
 
@@ -178,7 +155,6 @@ function agentBezierRotation(
   const dx = 2 * (1 - t) * (ctrl.x - from.x) + 2 * t * (to.x - ctrl.x);
   const dy = 2 * (1 - t) * (ctrl.y - from.y) + 2 * t * (to.y - ctrl.y);
   if (dx === 0 && dy === 0) return AGENT_REST_DEGREES;
-  // 三角尖端在 0° 时朝上，所以 +90（clicky/OverlayWindow.swift:561）。
   return (Math.atan2(dy, dx) * 180) / Math.PI + 90;
 }
 
@@ -220,7 +196,6 @@ function agentBeginFlight(
 
 function agentCursorAdvance(cursor: AgentCursor, now: number) {
   const elapsed = cursor.lastStepAt > 0 ? now - cursor.lastStepAt : 0;
-  // 掉帧不改变落点：一次调用补齐若干个整 tick，但不回放积压（最多 8 个）。
   const steps = Math.min(8, Math.max(0, Math.floor(elapsed / 16)));
   if (steps > 0) cursor.lastStepAt += steps * 16;
   if (steps > 0) {
@@ -238,7 +213,6 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     cursor.rotation = agentBezierRotation(from, ctrl, to, eased);
     cursor.scale = 1 + Math.sin(progress * Math.PI) * AGENT_SCALE_PULSE;
     if (progress >= 1) {
-      // 精确落点：浮点残差会让光标停在离目标 0.4px 的地方，那就是没打中。
       cursor.x = to.x;
       cursor.y = to.y;
       cursor.rotation = AGENT_REST_DEGREES;
@@ -254,7 +228,6 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     return;
   }
   if (cursor.mode === 'dwelling') {
-    // 停在目标上，不追指针：停留的意义就是让人看清指的是哪里。
     if (cursor.ring) {
       cursor.x = cursor.ring.x;
       cursor.y = cursor.ring.y;
@@ -274,7 +247,6 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     cursor.glowUntil = 0;
   }
   if (agentPointer.seen && cursor.returnAnchor) {
-    // 指针被用户拿走了：放弃返程，直接跟随（clicky/OverlayWindow.swift:426）。
     const drift = Math.hypot(agentPointer.x - cursor.returnAnchor.x, agentPointer.y - cursor.returnAnchor.y);
     if (drift > AGENT_CANCEL_DISTANCE_PX) {
       cursor.flight = null;
@@ -289,8 +261,6 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     const targetY = agentPointer.seen ? agentPointer.y + AGENT_OFFSET_Y : cursor.targetY;
     cursor.targetX = targetX;
     cursor.targetY = targetY;
-    // clicky-windows 的显式弹簧积分（ui/overlay.py:492-502）：半隐式欧拉，
-    // 常数按恰好 60Hz 调过，没有 dt 项。
     for (let step = 0; step < steps; step += 1) {
       const ax = (targetX - cursor.x) * AGENT_SPRING_STIFFNESS;
       const ay = (targetY - cursor.y) * AGENT_SPRING_STIFFNESS;
@@ -299,7 +269,6 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
       cursor.x += cursor.vx;
       cursor.y += cursor.vy;
       if (Math.abs(targetX - cursor.x) <= 0.5 && Math.abs(targetY - cursor.y) <= 0.5) {
-        // 渐近积分器不会真的到达，够近就算到了。
         cursor.x = targetX;
         cursor.y = targetY;
         cursor.vx = 0;
@@ -331,7 +300,6 @@ function drawAgentCursor(cursor: AgentCursor) {
     ctx.stroke();
     ctx.restore();
   }
-  // 点击辉光：锚在按下的那一刻，标记"屏幕上刚刚发生了什么"。
   if (cursor.mode === 'clicking') {
     const remaining = Math.max(0, cursor.glowUntil - performance.now());
     const strength = Math.min(1, remaining / 400);
@@ -428,8 +396,6 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
   if (kind === 'clear') {
     agentCursors.clear();
     scheduleRender();
-    // clear 之后 main.ts 会 hide() 这扇窗口，而 hide() 不走 overlay:hide，
-    // 所以在这里把显存还回去，别指望 onHide 那条路径。
     releaseCanvas();
     return;
   }
@@ -452,8 +418,6 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
     cursor.x = x;
     cursor.y = y;
     cursor.mode = 'clicking';
-    // The accent tells the user which button was pressed; a right-click drawn
-    // as a left one is a worse lie than drawing nothing at all.
     if (String(payload.button || '') === 'right') cursor.accent = AGENT_RIGHT_CLICK_ACCENT;
     cursor.clickCount = Math.max(1, Math.min(3, Number(payload.count) || 1));
     cursor.glowUntil = performance.now() + Math.max(400, Math.min(12000, Number(payload.glowMs) || 2400));
@@ -474,10 +438,6 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
   } else if (kind === 'hold' && Boolean(payload.held) && cursor.mode === 'dwelling') {
     cursor.dwellUntil = Number.POSITIVE_INFINITY;
   } else if (kind === 'idle') {
-    // The computer-use turn is over: stop being pointed at anything and go back
-    // to following the pointer. Without this the cursor stayed planted on the
-    // last click target, which reads as "still busy" long after the work
-    // finished — and the Python driver was already emitting the row.
     cursor.flight = null;
     cursor.ring = null;
     cursor.dwellUntil = 0;
@@ -490,7 +450,6 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
       );
     }
   }
-  // 双子光标是画在 canvas 上的（drawAgentCursor），所以这条路径同样需要画布。
   allocateCanvas();
   scheduleRender();
   ensureAgentCursorLoop();
@@ -502,16 +461,12 @@ function onAgentCursorSample(payload: Record<string, unknown> | null | undefined
   const y = Number(payload.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
   agentPointer = { x, y, seen: true };
-  // 采样本身不画东西：没有光标对象时下面不会分配画布，光挪指针不该付全屏显存。
   if (agentCursors.size) allocateCanvas();
   scheduleRender();
   ensureAgentCursorLoop();
 }
 
 
-// ── Hermes drive 回放：结构化元素框 + 语义句柄标签 ─────────────────
-// 主进程在圈选快照落地后发 overlay:element-ghosts（策略层已换算成本
-// overlay 本地 DIP 矩形）。错峰浮现 → 驻留 → 淡出，动画结束整层自动清。
 const ghostLayer = document.getElementById('element-ghosts') as HTMLElement;
 let ghostTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -554,9 +509,7 @@ function overlayBounds() {
   return { x: canvasRect.left, y: canvasRect.top, width: canvasRect.width, height: canvasRect.height };
 }
 
-// 二次贝塞尔插值（纯函数，可单测）：B(t) = (1-t)²P0 + 2(1-t)t·P1 + t²·P2
 // @ts-ignore -- tests/guide_flight_test.js vm-extracts this exact function
-// text (no TS syntax allowed inside); TS 6 ignores JSDoc @param in .ts files.
 function guideFlightPoint(from, ctrl, to, t) {
   const u = 1 - t;
   return {
@@ -566,7 +519,6 @@ function guideFlightPoint(from, ctrl, to, t) {
 }
 
 function updateGuideTriangle() {
-  // Demand-driven only: waking the selection overlay never starts Clicky.
   if (!guideTarget) {
     guideTriangle.dataset.visible = 'false';
     return;
@@ -575,7 +527,6 @@ function updateGuideTriangle() {
   let px;
   let py;
   if (guideTarget && guideFlight && now < guideFlight.startedAt + guideFlight.duration) {
-    // 飞行中：贝塞尔插值
     const t = Math.min(1, (now - guideFlight.startedAt) / guideFlight.duration);
     const eased = 1 - Math.pow(1 - t, 3);
     const { from, to, ctrl } = guideFlight;
@@ -583,7 +534,6 @@ function updateGuideTriangle() {
     px = pos.x;
     py = pos.y;
   } else if (guideTarget) {
-    // 到达目标点：停留 2.5 秒后结束这次引导并销毁临时 overlay。
     guideFlight = null;
     px = guideTarget.x;
     py = guideTarget.y;
@@ -602,21 +552,6 @@ function updateGuideTriangle() {
   guideTriangle.style.transform = `translate3d(${px - 24}px, ${py - 24}px, 0)`;
 }
 
-/* 画布后备存储按需分配。
- *
- * 两件事以前是绑在一起的：窗口建出来 ↔ 全屏画布已分配。但 index.html 同时
- * 被两扇窗口加载——手势 overlay 和双子光标表面（electron/agent_cursor_window.ts）
- * ——两扇都常驻，而各自只在被用上时才需要画布：手势 overlay 等 overlay:show，
- * 双子光标等 overlay:agent-cursor（它的光标确实画在 canvas 上，走 drawAgentCursor，
- * 不是 CSS 光标；CSS 光标那条契约只管 capture/observer 模式）。
- *
- * 同机实测：三扇全屏透明窗隐藏时 GPU 进程 106MB，应用启动后 267MB，差额 161MB
- * 正是这两扇窗口里按 innerWidth×innerHeight×dpr 预分配的一份 2D + 一份 WebGL2
- * 后备存储——《probe_bare_electron.cjs》确认隐藏的全屏透明窗本身几乎不花 GPU。
- *
- * 所以分配推迟到真正要画的那一刻，隐藏时再还回去。窗口本身仍然常驻：这里只动
- * 显存，不动 main.ts 那套"窗口建一次、别再销毁重建"的约定。
- */
 let canvasAllocated = false;
 
 function allocateCanvas() {
@@ -625,7 +560,6 @@ function allocateCanvas() {
   resize();
 }
 
-/** 还回全屏后备存储。隐藏后留着它只是让一张空画布占着显存。 */
 function releaseCanvas() {
   if (!canvasAllocated) return;
   canvasAllocated = false;
@@ -633,7 +567,6 @@ function releaseCanvas() {
   renderRaf = null;
   canvas.width = 0;
   canvas.height = 0;
-  // WebGL 的 drawing buffer 跟着 canvas 尺寸走，1×1 就足以释放那一大块。
   sweepRenderer.resize(0, 0, 1);
 }
 
@@ -646,8 +579,6 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   sweepRenderer.resize(window.innerWidth, window.innerHeight, dpr);
   clear();
-  // clear() 之后画面是空的：以前靠 30 fps 脉冲最多 33ms 后补画，
-  // 现在脉冲只在可见且非手势时存在，这里显式补一帧，行为反而更即时。
   scheduleRender();
 }
 
@@ -706,9 +637,6 @@ function drawSmoothPath(path: OverlayPoint[], alpha = 1) {
     ctx.stroke();
   }
 
-  // Demo 6 default: one text-row-high translucent band with round ends.
-  // No canvas shadow: Windows transparent surfaces can retain rectangular
-  // backing-store ghosts around blurred strokes.
   if (gestureLineStyle === 'thin') {
     trace(gestureLineWidth, 'rgba(49, 119, 255, 0.34)', alpha);
     trace(Math.max(1.15, gestureLineWidth * 0.22), 'rgba(226, 241, 255, 0.64)', alpha);
@@ -731,12 +659,8 @@ function drawHitTestPixel(p: OverlayPoint | null) {
 }
 
 function render() {
-  // 画布没分配就没有可画的表面。agentCursorLoop 直接调 render()，不经过
-  // scheduleRender()，所以这道闸放在这里而不是那里。
   if (!canvasAllocated) return;
   if (gestureMode) {
-    // 唤醒瞬间（gestureAcceptAt 之前）不可画：不清屏直接返回——
-    // 清了又不画就是黑屏闪一帧，三角在唤醒时「闪现」的根源。
     if (Date.now() < gestureAcceptAt) return;
     clear();
     if (strokes.length) {
@@ -758,17 +682,12 @@ function render() {
         drawSmoothPath(points, trailAlpha);
       }
     } else if (!strokes.length) {
-      // Keep the transparent window hit-testable before the first stroke.
       drawHitTestPixel(lastPointer);
     }
     drawAgentCursors();
     return;
   }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
-  // 人类光标依旧不画：由操作系统原生 cursor 资源渲染，带阴影和正确的 DPI
-  // 缩放。这里画的是代理光标（双生鼠标），它固定停在 realCursor + (35,25)，
-  // 与真实光标永不同址——Clicky 三个实现都是这个模型，所以没有 hide/restore
-  // 契约需要维护。
   drawAgentCursors();
 }
 
@@ -818,7 +737,6 @@ function computeSelectionPayload() {
 }
 
 // @ts-ignore -- same reason as guideFlightPoint: inside the vm-extracted
-// slice of tests/overlay_static_test.js, so no TS parameter syntax allowed.
 function showChainHint(count) {
   if (!gestureMode) return;
   hint.textContent = `已圈选 ${count} 处 · 继续圈选其他内容，或按 Enter 完成`;
@@ -875,7 +793,6 @@ function submitGesture() {
   submitting = true;
   const payload = { ...computeSelectionPayload(), workflow: currentWorkflow };
 
-  // Critical: remove our own overlay before Python ImageGrab runs.
   hideVisualsForCapture();
   requestAnimationFrame(() => {
     window.magicPointer?.done(payload);
@@ -939,10 +856,6 @@ function drawStrokeMarker(index: number, point: { x: number; y: number } | null 
 
 function drawPointTarget(point: OverlayPoint | null | undefined) {
   if (!point) return;
-  // A quick click has no stroke body, so give it an unmistakable target glow
-  // beneath the armed cursor. The former 13 DIP feather was effectively
-  // invisible on light windows and made the detached sequence badge look like
-  // the only feedback.
   const radius = 38;
   const color = '47, 124, 246';
   const feather = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
@@ -966,14 +879,6 @@ function pointMarkerAnchor(point: OverlayPoint | null | undefined): { x: number;
 }
 
 
-/* 30 fps 保活脉冲：在没有 pointer 事件时把已有轨迹按 trailAlpha 重画一遍。
-   它是唯一一个「不依赖任何输入也会持续跑」的循环，因此必须显式设界：
-   - 主进程给 overlay 设了 backgroundThrottling:false（main.ts），浏览器不会
-     因为窗口被遮挡/最小化而自动暂停 rAF，所以一个全屏透明置顶窗口会一直
-     以刷新率空转。用 document.visibilityState 显式停掉。
-   - 手势态完全由 pointer 事件驱动（pointermove → scheduleRender，pointerup →
-     render），脉冲只是额外每秒 30 次清屏 + 重画 WebGL，纯重复劳动。
-   - 采集态（captureMode）不画任何东西，同样不该跑。 */
 function pulseAllowed() {
   return canvasAllocated && document.visibilityState !== 'hidden' && !captureMode && !gestureMode;
 }
@@ -983,7 +888,7 @@ function startPulseLoop() {
   if (!pulseAllowed()) return;
   function tick(now: number) {
     if (!pulseAllowed()) {
-      pulseRaf = null; // 自停：不再排下一帧，等下一次 startPulseLoop。
+      pulseRaf = null;  
       return;
     }
     if (now - lastPulseFrame > 33) {
@@ -1058,8 +963,6 @@ window.addEventListener('pointermove', (e) => {
     const continuesChain = strokes.length > 0 && chainTimer && globalThis.GestureCapture
       .pointerContinuesGestureChain(lastPointer, nextPointer);
     lastPointer = nextPointer;
-    // Deliberate travel toward another target is activity, while tiny pointer
-    // jitter is not. The hard deadline still bounds the total inter-stroke gap.
     if (continuesChain) scheduleChainFinalize();
     scheduleRender();
     return;
@@ -1079,15 +982,10 @@ window.addEventListener('pointerup', (e) => {
   try { canvas.releasePointerCapture(e.pointerId); } catch (_error) { /* best effort */ }
   addPoint(e, { force: true });
   render();
-  // Restore mouse capture after release to prevent revert to normal mouse
   if (window.magicPointer && typeof window.magicPointer.syncHitRegions === 'function') {
     window.magicPointer.syncHitRegions();
   }
-  // Chain capture: commit the stroke, notify main (keeps the arm alive),
-  // and let the user keep circling. The rolling inactivity window or the
-  // Enter key finalizes the whole chain into one unified gesture.
   if (points.length >= 1) {
-    // TS 6 的解析器不接受换行开头的 `as` 断言，所以这一行必须连写。
     const strokeSummary = (globalThis.GestureCapture?.summarizeGesture?.(points, null) || {}) as Record<string, unknown>;
     strokes.push({
       points: [...points],
@@ -1119,11 +1017,6 @@ window.addEventListener('pointercancel', (e) => {
   e.preventDefault();
 });
 
-// Finalize the chain when the window is hidden externally (right-click or
-// Escape) so the renderer never submits a half-drawn chain later.
-// 这里曾另挂了一份 onHide 做链/三角清理——和下方 onHide 里的 resetOverlay
-// 完全重复（resetOverlay 已经清 chainTimer/chainHintTimer/guideTarget/
-// guideFlight/guideHideTimer/chainDeadlineAt），已合并，只留一份。
 
 window.magicPointer?.onGestureSubmit((payload) => {
   if (!gestureMode || String(payload?.token || '') !== String(gestureToken || '')) return;
@@ -1141,8 +1034,6 @@ window.addEventListener('keydown', (e) => {
 
 window.magicPointer?.onShow((payload) => {
   resetOverlay();
-  // 唯一会让这扇窗口画画的入口（手势 reveal、guide-point 指点都发 overlay:show），
-  // 所以画布在这里分配。resetOverlay() 已经跑完，不存在拿旧尺寸继续画的问题。
   allocateCanvas();
   observerMode = payload?.observerMode === true;
   gestureMode = payload?.gestureMode === true;
@@ -1165,8 +1056,6 @@ window.magicPointer?.onShow((payload) => {
   } else {
     hint.classList.add('dim');
   }
-  // 手势态必须显式停掉脉冲：一次 show 可能紧跟在另一次非手势 show 之后
-  // （中间没有 hide），否则画圈时每帧会多出 30 次冗余的全屏重画。
   if (gestureMode) {
     stopPulseLoop();
     window.magicPointer?.gestureReady(gestureToken);
@@ -1177,12 +1066,10 @@ window.magicPointer?.onShow((payload) => {
 window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
-  // 代理光标要在手势态里也跟着走：双生鼠标的意义就是"人在这里，机器在那里"。
   onAgentCursorSample(payload);
   if (gestureMode) return;
   scheduleRender();
 });
-// 主进程来的显式光标指令：approach / mark / move / click / hold / release / clear。
 window.magicPointer?.onAgentCursor?.((payload) => {
   onAgentCursorCommand(payload);
 });
@@ -1191,8 +1078,6 @@ window.magicPointer?.onElementGhosts?.((payload) => {
 });
 window.magicPointer?.onGuidePoint?.((payload) => {
   onGuidePoint(payload);
-  // 飞行是持续动画（620ms），不是一帧——持续 rAF 直到到达/超时，
-  // 否则三角只在起点闪一帧就消失。
   function guideTick() {
     updateGuideTriangle();
     const stillFlying = guideFlight && performance.now() < guideFlight.startedAt + guideFlight.duration;
@@ -1246,6 +1131,4 @@ window.magicPointer?.onHide(() => {
   gestureInteractionMode = 'exclusive_overlay';
 });
 
-// 刻意不在这里 resize()：窗口建出来不等于要画东西。没有 overlay:show 之前，
-// 这两扇窗口（overlay 与双子光标表面）一个像素都不画，不该占全屏显存。
 window.magicPointer?.ready?.();

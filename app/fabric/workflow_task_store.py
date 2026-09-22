@@ -30,12 +30,6 @@ def _sha256_json(value: Any) -> str:
 
 
 class WorkflowTaskStore:
-    """Durable, cross-surface execution gate for signed Fabric plans.
-
-    The complete plan and receipt stay on disk; the public projection exposes
-    only operational metadata. Every mutation is serialized across processes so
-    CLI and GUI cannot both claim the same plan.
-    """
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
@@ -184,9 +178,6 @@ class WorkflowTaskStore:
         recipe_id = str(plan.get("recipeId") or "").strip()
         if not key or not recipe_id or not plan.get("id") or not plan.get("integrityToken"):
             raise WorkflowTaskError("workflow plan is incomplete or unsigned")
-        # The key must bind the same execution-relevant parameters. A caller
-        # that reuses a stale key with changed parameters must not silently
-        # receive the old terminal receipt (fabric audit P1).
         params_fingerprint = _sha256_json(plan.get("parameters") or {})
         with self._mutation_lock():
             existing = self._find_by_idempotency_key(key)

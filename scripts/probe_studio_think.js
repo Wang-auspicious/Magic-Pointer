@@ -1,10 +1,3 @@
-// Headless Studio probe: the REAL renderer chain for the Think (reasoning) row.
-// Loads the real studio.html, submits through the real composer form, then
-// drives the captured conversations.onProgress callback with records shaped
-// exactly like python_bridge_runner emits (phase=reasoning_chunk, fields.b64).
-// Asserts the live Think row renders (running state, streaming text) and
-// captures an offscreen screenshot to data/runtime/.
-//   npx electron scripts/probe_studio_think.js
 
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
@@ -27,10 +20,6 @@ app.whenReady().then(async () => {
       
       
       'conversations:pick-workspace': { ok: true, path: 'C:/tmp/mp-think-ws' },
-      // The renderer owns the requestId; main must echo it back (real main.ts does).
-      // Hold the send open: the composer clears pendingConversation as soon
-      // as the reply lands, and later progress records are dropped. Real
-      // conversations stay pending for the whole bridge run.
       'conversations:send': (payload) => {
         sentRequestIds.push(payload && payload.requestId);
         return new Promise(() => {});
@@ -60,29 +49,20 @@ app.whenReady().then(async () => {
   });
   let failures = [];
   try {
-    // Load the COMPILED renderer (what the installed app actually runs).
     await window.loadFile(path.join(ROOT, 'build', 'electron', 'renderer', 'studio.html'));
     await new Promise((r) => setTimeout(r, 900));
-    // Second pass: persist the project root so boot() reads it from
-    // localStorage (the same key setActiveProject writes in the real app).
     await window.webContents.executeJavaScript(
       `localStorage.setItem('mp:active-project-root', 'C:/tmp/mp-think-ws'); 'stored'`,
     );
-    // Load the COMPILED renderer (what the installed app actually runs).
     await window.loadFile(path.join(ROOT, 'build', 'electron', 'renderer', 'studio.html'));
     await new Promise((r) => setTimeout(r, 900));
 
     const REQUEST_ID = 'req-think-1';
     const CHANNEL = 'conversations:progress';
-    // Minimal main-side handlers for the channels the real preload invokes
-    // during studio boot and composer send.
 
-    // A pending conversation must exist for renderConversationProgress to paint.
-    // Wait for async boot() to settle: startNewChat() focuses the composer and
-    // wipes the stream — submitting before it lands gets the flow erased.
     for (let i = 0; i < 40; i++) {
       const focused = await window.webContents.executeJavaScript(
-        `document.activeElement && document.activeElement.classList.contains('dshw-input')`,
+        `document.activeElement && document.activeElement.classList.contains('mpw-input')`,
       );
       if (focused) break;
       await new Promise((r) => setTimeout(r, 150));
@@ -90,7 +70,7 @@ app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 300));
     await window.webContents.executeJavaScript(`
       (function(){
-        const ta = document.querySelector('.dshw-input');
+        const ta = document.querySelector('.mpw-input');
         ta.value = '验证 Think 行';
         document.getElementById('composer-form').requestSubmit();
         return 'submitted';
@@ -118,16 +98,14 @@ app.whenReady().then(async () => {
     `);
     console.log('debug: submitPost=' + JSON.stringify(submitProbe2));
 
-    // Async boot can still wipe the submitted flow (startNewChat replaceChildren).
-    // Heal: if the pending assistant body vanished, submit again until it sticks.
     for (let attempt = 0; attempt < 4; attempt++) {
       const intact = await window.webContents.executeJavaScript(
-        `Boolean(document.querySelector('.dsh-assistant-body'))`,
+        `Boolean(document.querySelector('.mp-chat-assistant-body'))`,
       );
       if (intact) break;
       await window.webContents.executeJavaScript(`
         (function(){
-          const ta = document.querySelector('.dshw-input');
+          const ta = document.querySelector('.mpw-input');
           ta.value = '验证 Think 行';
           document.getElementById('composer-form').requestSubmit();
           return 'resubmitted';
@@ -136,17 +114,14 @@ app.whenReady().then(async () => {
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    // Drive the REAL channel (preload onPayload -> Data.onConversationProgress ->
-    // studio renderConversationProgress) with records shaped exactly like
-    // python_bridge_runner emits for "@@mp ... reasoning_chunk" lines.
     console.log('debug: sends=' + sentRequestIds.length);
     const bootProbe = await window.webContents.executeJavaScript(`
       (function(){
         return {
           projectRoot: localStorage.getItem('mp:active-project-root'),
-          formIsInputForm: Boolean(document.querySelector('form.dshw-input-form#composer-form')),
+          formIsInputForm: Boolean(document.querySelector('form.mpw-input-form#composer-form')),
           formHidden: (document.getElementById('composer-form')||{}).hidden ?? null,
-          viewSections: [...document.querySelectorAll('main section, .dsh-shell > section')].map(s => s.getAttribute('aria-label') || s.id || s.className).slice(0, 6),
+          viewSections: [...document.querySelectorAll('main section, .mp-chat-shell > section')].map(s => s.getAttribute('aria-label') || s.id || s.className).slice(0, 6),
           gate: Boolean(document.querySelector('[class*=project-gate], [id*=project-gate]')),
           dashKeys: Object.keys(window.magicPointerDashboard || {}),
           projectsKey: typeof (window.magicPointerDashboard || {}).projects,
@@ -167,9 +142,9 @@ app.whenReady().then(async () => {
     const pendingProbe = await window.webContents.executeJavaScript(`
       (function(){
         return {
-          assistants: document.querySelectorAll('.dsh-assistant').length,
-          users: document.querySelectorAll('.dsh-user').length,
-          stream: Boolean(document.querySelector('.dsh-chat-stream') || document.querySelector('[class*=stream]')),
+          assistants: document.querySelectorAll('.mp-chat-assistant').length,
+          users: document.querySelectorAll('.mp-chat-user').length,
+          stream: Boolean(document.querySelector('.mp-chat-chat-stream') || document.querySelector('[class*=stream]')),
         };
       })()
     `);
@@ -185,24 +160,24 @@ app.whenReady().then(async () => {
 
     const afterChunks = await window.webContents.executeJavaScript(`
       (function(){
-        const body = document.querySelector('.dsh-assistant-body');
+        const body = document.querySelector('.mp-chat-assistant-body');
         return {
           bodyChildren: body ? body.children.length : -1,
           bodyHtml: body ? body.innerHTML.slice(0, 400) : '(no body)',
-          disclosures: document.querySelectorAll('.dsh-disclosure').length,
+          disclosures: document.querySelectorAll('.mp-chat-disclosure').length,
         };
       })()
     `);
     console.log('debug: afterChunks=' + JSON.stringify(afterChunks));
     const thinkState = await window.webContents.executeJavaScript(`
       (function(){
-        const row = document.querySelector('.dsh-think');
+        const row = document.querySelector('.mp-chat-think');
         if (!row) return { present: false };
         return {
           present: true,
           state: row.getAttribute('data-state'),
-          summary: (row.querySelector('.dsh-summary') || {}).textContent || '',
-          body: (row.querySelector('.dsh-think-body') || {}).textContent || '',
+          summary: (row.querySelector('.mp-chat-summary') || {}).textContent || '',
+          body: (row.querySelector('.mp-chat-think-body') || {}).textContent || '',
         };
       })()
     `);
@@ -212,7 +187,6 @@ app.whenReady().then(async () => {
       if (!thinkState.body.includes('Edit 前必须先 Read')) failures.push('live Think body missing latest chunk text');
     }
 
-    // Finished turn: thinking arrives on the turn record (bridge result JSON).
     await window.webContents.executeJavaScript(`
       (function(){
         window.magicPointerDashboard.conversations.get = async () => ({
@@ -226,7 +200,6 @@ app.whenReady().then(async () => {
         return 'get-patched';
       })()
     `);
-    // Re-open the conversation through the real renderer path.
     await window.webContents.executeJavaScript(`
       (async function(){
         const api = window.magicPointerDashboard;
@@ -237,9 +210,9 @@ app.whenReady().then(async () => {
     `);
     const finished = await window.webContents.executeJavaScript(`
       (function(){
-        const rows = document.querySelectorAll('.dsh-think');
+        const rows = document.querySelectorAll('.mp-chat-think');
         const any = rows.length > 0;
-        const bodyText = [...document.querySelectorAll('.dsh-think-body')].map(n => n.textContent).join('|');
+        const bodyText = [...document.querySelectorAll('.mp-chat-think-body')].map(n => n.textContent).join('|');
         return { any, count: rows.length, bodyText };
       })()
     `);

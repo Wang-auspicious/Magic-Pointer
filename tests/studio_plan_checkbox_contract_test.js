@@ -5,9 +5,9 @@ const fs = require('node:fs');
 
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
-const css = fs.readFileSync('electron/renderer/claude_chat.css', 'utf8');
+const css = fs.readFileSync('electron/renderer/chat_styles.css', 'utf8');
 const railCss = fs.readFileSync('electron/renderer/plan_list.css', 'utf8');
-const DshChat = require('../electron/renderer/dsh_chat');
+const ChatView = require('../electron/renderer/chat_view');
 
 assert(!html.includes('sv_motion.js'));
 assert(!source.includes('SvMotion'));
@@ -21,18 +21,18 @@ assert(source.includes('composerPlan = PlanList.project(turns)'), 'opening a con
 assert(source.includes('composerPlan = PlanList.project(activeConversationTurns)'), 'external updates refresh the same durable plan');
 assert(source.includes('PlanList.render(host, composerPlan,'));
 
-const todo = DshChat.toolRowNode(DshChat.toolRowModel('Todo', JSON.stringify({ todos: [
+const todo = ChatView.toolRowNode(ChatView.toolRowModel('Todo', JSON.stringify({ todos: [
   { content: 'Read source', status: 'completed' },
   { content: 'Verify change', status: 'in_progress' },
 ] }), { text: 'ok', isError: false }, 'todo-call'));
 const markup = todo.outerHTML;
-assert(markup.includes('class="dsh-todo-list"'), 'Todo details render a checklist instead of raw argument JSON');
+assert(markup.includes('class="mp-chat-todo-list"'), 'Todo details render a checklist instead of raw argument JSON');
 assert(markup.includes('data-state="completed"') && markup.includes('Read source'));
 assert(markup.includes('data-state="in_progress"') && markup.includes('Verify change'));
 assert(markup.includes('data-call-id="todo-call"'), 'the plan rail can locate its source tool row');
-assert.match(css, /\.dsh-todo-item\[data-state="completed"\] \.dsh-todo-label\s*\{[^}]*text-decoration:\s*line-through/s,
+assert.match(css, /\.mp-chat-todo-item\[data-state="completed"\] \.mp-chat-todo-label\s*\{[^}]*text-decoration:\s*line-through/s,
   'completed items in a Todo tool detail remain visibly completed');
-assert.match(css, /\.dsh-todo-item\[data-state="in_progress"\] \.dsh-todo-check\s*\{[^}]*var\(--mp-clay\)/s);
+assert.match(css, /\.mp-chat-todo-item\[data-state="in_progress"\] \.mp-chat-todo-check\s*\{[^}]*var\(--mp-clay\)/s);
 assert.match(railCss, /\.mp-plan-row\s*\{[^}]*min-height:\s*28px/s);
 assert.match(railCss, /\.mp-plan-track\s*\{[^}]*0 0 12px/s);
 assert.match(railCss, /\.mp-plan-dot\s*\{[^}]*width:\s*6px/s);

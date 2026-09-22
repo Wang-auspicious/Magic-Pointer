@@ -1,18 +1,3 @@
-"""Model gateway health: know it is down before burning the user's time on it.
-
-The 2026-08-04 acceptance run failed on a gateway that answered HTTP 402
-(balance exhausted) to every request. Nothing knew that, so every single bubble
-command paid a full model timeout first and only then fell back — the user saw
-slow failures instead of fast honest ones, four scenarios in a row.
-
-This module is the circuit breaker. A hard gateway verdict (auth, payment,
-model-not-found) opens the circuit; while it is open, model calls return
-immediately with a sentence a person can act on, and every non-model capability
-keeps working. A success closes it again.
-
-State lives in one small JSON file so the Electron side, the bridges, and any
-worker process all see the same verdict without an IPC round trip.
-"""
 
 from __future__ import annotations
 
@@ -31,8 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 _HEALTH_LOCK = threading.RLock()
 
-# A balance problem does not fix itself in ten seconds; a 500 might. The cooldown
-# is how long we trust a bad verdict before probing again.
 COOLDOWN_S = {
     "payment_required": 240.0,
     "unauthorized": 240.0,
@@ -45,10 +28,7 @@ DEFAULT_COOLDOWN_S = 30.0
 
 _TRANSIENT_STATES = frozenset({"unreachable", "server_error", "rate_limited"})
 _TRANSIENT_STREAK_TO_OPEN = 2
-"""Consecutive transient failures before the breaker trips. One flap is a
-fact about a request, not about the endpoint (see record_failure)."""
 
-# Codes stage_contract.js knows how to say out loud.
 STATE_ERROR_CODES = {
     "payment_required": "model_gateway_payment_required",
     "unauthorized": "model_gateway_unauthorized",
@@ -69,14 +49,6 @@ STATE_MESSAGES = {
     "unconfigured": "还没有配置模型密钥，所以没有调用模型。可在设置的「模型与网络」里填写。",
 }
 
-# 限流有两种，对用户是完全不同的两件事：
-#
-#   短时突发限流 —— 等几十秒就好，「稍后自动重试」是对的。
-#   套餐额度用完 —— 要等几个小时，或者去充值。这时候还说「稍后自动重试」，
-#                   用户会以为是配置坏了，然后去改本来是对的配置。
-#
-# 网关自己在响应体里说清了恢复时间和解决办法（OpenCode Go 的 GoUsageLimitError
-# 就带着「Resets in 3hr 45min」）。那句话原样带出来，比我们复述一遍准确。
 _QUOTA_HINTS = re.compile(
     r"(usage limit|quota|insufficient|额度|配额|超出限制|resets? in)",
     re.IGNORECASE,
@@ -85,11 +57,6 @@ _RESET_HINT = re.compile(r"resets? in\s+([0-9]+\s*hr[^.,\"}]*|[0-9]+\s*min[^.,\"
 
 
 def _quota_detail(detail: str) -> str:
-    """从网关的原始报错里摘出「什么时候恢复」这一句。
-
-    只在确实是额度类报错时才摘——普通的突发限流没有恢复时间可说，
-    硬编一个出来就是在撒谎。
-    """
     text = str(detail or "")
     if not text or not _QUOTA_HINTS.search(text):
         return ""
@@ -119,7 +86,7 @@ def _state_path() -> Path:
 
 @dataclass
 class GatewayHealth:
-    state: str = "unknown"          # ok | unknown | one of COOLDOWN_S keys | unconfigured
+    state: str = "unknown"
     http_status: int | None = None
     detail: str = ""
     checked_at: float = 0.0
@@ -134,7 +101,6 @@ class GatewayHealth:
 
     @property
     def circuit_open(self) -> bool:
-        """True while we already know a model call cannot succeed."""
         return self.state not in ("ok", "unknown") and time.time() < self.open_until
 
     @property
@@ -146,10 +112,6 @@ class GatewayHealth:
         base = STATE_MESSAGES.get(self.state, "模型端点当前不可用，已跳过模型调用。")
         detail = _quota_detail(self.detail)
         text = f"{base} {detail}" if detail else base
-        # roadmap §12.2: tell the user when the circuit will let them retry
-        # instead of a bare "稍后自动重试" with no horizon. ``open_until``
-        # is only set by an actual failure verdict, so this never invents
-        # a deadline for a healthy endpoint.
         if self.circuit_open and self.open_until > 0:
             remaining = max(1, math.ceil(self.open_until - time.time()))
             text = f"{text} 约 {remaining} 秒后可重试。"
@@ -172,7 +134,6 @@ class GatewayHealth:
 
 
 def _redact_base_url(value: str) -> str:
-    """Show the host so a person can recognise it; never the query or key."""
     text = str(value or "")
     if "?" in text:
         text = text.split("?", 1)[0]
@@ -198,15 +159,6 @@ def state_for_status(status: int | None, exception_name: str = "") -> str:
 
 
 def read_health(base_url: str | None = None) -> GatewayHealth:
-    """Read the health entry for ``base_url`` (or the text endpoint when None).
-
-    Health is stored per endpoint: a vision-endpoint failure must never open
-    the circuit for the text endpoint and vice versa. With ``base_url=None``
-    the currently configured text endpoint's entry is returned (lazy
-    ``ai_client.get_ai_config``); if that endpoint has no entry, a legacy
-    single-entry file or the ``""`` key is used as fallback. An unknown
-    endpoint returns a blank :class:`GatewayHealth` (state ``unknown``).
-    """
     entries = _read_entries()
     if base_url is not None:
         raw = entries.get(str(base_url).rstrip("/"))
@@ -217,15 +169,10 @@ def read_health(base_url: str | None = None) -> GatewayHealth:
             raw = entries[text]
         elif "" in entries:
             raw = entries[""]
-        # No single-entry fallback: one lone entry belongs to whichever
-        # endpoint recorded it — using it for an unknown base_url made a
-        # vision endpoint's circuit breaker short-circuit the text path
-        # (fabric audit P2, per-endpoint isolation).
     return _health_from_raw(raw) if isinstance(raw, dict) else GatewayHealth()
 
 
 def _configured_text_base_url() -> str:
-    """The currently configured text endpoint, normalized; "" when unknown."""
     try:
         from app.ai_client import get_ai_config
 
@@ -263,7 +210,6 @@ def _read_entries() -> dict[str, Any]:
     entries = raw.get("entries")
     if isinstance(entries, dict):
         return entries
-    # Legacy v1 single-object file: adopt it under its own base_url (or "").
     base = raw.get("base_url")
     key = base.rstrip("/") if isinstance(base, str) and base.strip() else ""
     return {key: raw}
@@ -278,14 +224,10 @@ def _write_health(health: GatewayHealth) -> None:
             key = (health.base_url or "").rstrip("/")
             entries[key] = asdict(health)
             payload = {"schema": 2, "entries": entries}
-            # Unique temp name: two processes recording two endpoints at once
-            # used to collide on one ".tmp" handle and one entry was lost
-            # (fabric audit P2), silently reopening/covering a circuit.
             tmp = path.with_name(path.name + f".{uuid.uuid4().hex[:8]}.tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             tmp.replace(path)
         except OSError:
-            # Health tracking must never be the reason a command fails.
             pass
 
 
@@ -310,8 +252,6 @@ def record_note(
     model: str = "",
     base_url: str = "",
 ) -> GatewayHealth:
-    """Non-poisoning audit note: the endpoint stays healthy (state ok), the
-    detail records a soft event like a streaming fallback."""
     health = GatewayHealth(
         state="ok",
         http_status=200,
@@ -339,11 +279,6 @@ def record_failure(
     now = time.time()
     key = (base_url or "").rstrip("/")
     previous = read_health(key if base_url else None)
-    # Real-machine lesson (notepad-edit): ONE transient SSL flap during an
-    # auxiliary call opened the breaker for 20s and the main call right after
-    # was skipped — ten productive rounds died with it. Transient states
-    # (unreachable / 5xx / 429) must streak before they trip; hard states
-    # (401/402/404) are facts, not flaps, and open immediately.
     if state in _TRANSIENT_STATES:
         streak = int(getattr(previous, "transient_streak", 0) or 0) + 1
         if streak < _TRANSIENT_STREAK_TO_OPEN:
@@ -396,12 +331,6 @@ def clear_health() -> None:
 
 
 def short_circuit_message(base_url: str | None = None) -> str | None:
-    """The sentence to return instead of calling the model, or None to go ahead.
-
-    The verdict is read per endpoint (``base_url``), so a downed vision
-    gateway never suppresses text answers and vice versa. ``None`` reads the
-    configured text endpoint's entry.
-    """
     if os.environ.get("MAGIC_POINTER_IGNORE_MODEL_HEALTH") == "1":
         return None
     health = read_health(base_url)
@@ -409,11 +338,6 @@ def short_circuit_message(base_url: str | None = None) -> str | None:
 
 
 def probe_gateway(*, timeout_s: float = 6.0) -> GatewayHealth:
-    """Ask the gateway one cheap question and record the verdict.
-
-    Called at startup and from the settings page. It uses /models rather than a
-    completion so it costs nothing and still surfaces 401/402/404.
-    """
     from app.ai_client import (
         _completion_endpoint,
         _completion_headers,
@@ -431,10 +355,6 @@ def probe_gateway(*, timeout_s: float = 6.0) -> GatewayHealth:
         api_mode = get_ai_api_mode(endpoint)
         with httpx.Client(timeout=timeout_s, follow_redirects=False) as client:
             if api_mode == "messages":
-                # Anthropic-compatible relays commonly have no /models route.
-                # A one-token message verifies auth, model routing and actual
-                # completion availability instead of declaring a healthy GET
-                # endpoint while every user question times out.
                 response = client.post(
                     _completion_endpoint(endpoint, api_mode),
                     headers=_completion_headers(str(api_key), api_mode),

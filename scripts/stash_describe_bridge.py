@@ -1,11 +1,3 @@
-"""stash 收藏箱图片的悬停摘要桥。
-
-读一条收藏的本地图片路径，用配置的视觉模型（qwen3.7-plus）给 3-4 句
-简介。输入是本地文件——不是截屏上传，不走 upload_screenshots 开关。
-
-stdin: {"imagePath": "..."}
-stdout: {"ok": true, "summary": "..."} 或 {"ok": false, "error": "..."}
-"""
 from __future__ import annotations
 
 import json

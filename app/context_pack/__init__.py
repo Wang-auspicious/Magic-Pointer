@@ -1,4 +1,3 @@
-"""Persistent, agent-neutral context packs built from desktop evidence."""
 
 from .browser_reader import BrowserContextReader
 from .chat_reader import ChatReader, DesktopChatNavigator, SurfaceChatHistoryBackend
@@ -38,8 +37,6 @@ from .sources import (
 
 
 def __getattr__(name: str):
-    # EventSession needs source value objects, not Office parsers. Background
-    # completion workers must not import numpy/openpyxl merely to enqueue text.
     if name == "DocumentReader":
         from .document_reader import DocumentReader
         globals()[name] = DocumentReader

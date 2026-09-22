@@ -29,6 +29,7 @@ async function main() {
       return { ok: true, pendingRecovery: [] };
     },
   };
+  sandbox.handleSessionRead = sandbox.runPythonBridgePromise;
   vm.runInNewContext(compiled, sandbox);
   const missing = await invoke({}, { conversationId: 'missing' });
   assert.equal(missing.error, 'session_not_found', 'missing runtime evidence is reported honestly without rejecting IPC');

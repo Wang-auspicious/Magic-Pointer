@@ -1,10 +1,3 @@
-"""Canonical reasoning-effort policy shared by the Runtime and transports.
-
-Effort controls how much work the agent should invest, not how terse or ornate
-the final prose should be.  The system-prompt directive is the deterministic
-semantic floor; compatible chat-completions providers also receive the native
-``reasoning_effort`` field.
-"""
 
 from __future__ import annotations
 
@@ -60,11 +53,6 @@ def effort_instruction(value: object) -> str:
 
 
 def native_effort_fields(model: str, api_mode: str, value: object | None) -> dict:
-    """Map MP's selection onto a protocol the selected model actually speaks.
-
-    Claude 4.6 capabilities are confirmed by the local reference snapshot.
-    Other Messages models keep the existing semantic prompt fallback.
-    """
     if value is None:
         return {}
     effort = normalize_effort(value)

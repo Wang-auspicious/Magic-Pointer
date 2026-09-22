@@ -1,4 +1,3 @@
-"""One MCP stdio connection must have exactly one response reader at a time."""
 
 from __future__ import annotations
 

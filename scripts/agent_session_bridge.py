@@ -1,4 +1,3 @@
-"""Bounded local bridge for durable Agent steer and pending inspection."""
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Packaged Python runs with -I, which excludes the script directory.
 _BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 if str(_BRIDGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_BRIDGE_ROOT))
@@ -20,7 +18,7 @@ try:
         read_bounded_json_payload,
         write_json,
     )
-except ModuleNotFoundError:  # direct script execution
+except ModuleNotFoundError:
     from _bridge_common import (  # type: ignore[no-redef]
         PayloadTooLargeError,
         ensure_root_on_path,
@@ -48,8 +46,6 @@ def _session_root() -> Path:
 
 
 def _context_usage(session: EventSession) -> dict[str, int] | None:
-    """Read the last measured request and replay only its input surface."""
-    # Steer/cancel do not need to import the model loop; only this read does.
     from app.agent_runtime.loop import _real_prompt_tokens  # noqa: PLC0415
     from app.agent_runtime.token_estimate import estimate_request_tokens  # noqa: PLC0415
     from app.agent_runtime.types import Role  # noqa: PLC0415
@@ -140,10 +136,6 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
         from app.agent_runtime.background_agent import read_status, stop
         if read_status(_session_root(), session_id) is not None:
             return stop(_session_root(), str(payload.get('parentSessionId') or ''), session_id)
-        # Graceful stop (O3): the running loop polls this at the next round
-        # boundary and terminates with a Receipt instead of being killed.
-        # A repeat click while one is already pending stays ok: a cancel IS
-        # pending.
         turn = session.open_turn
         if turn is None:
             return {"ok": False, "error": "no_open_turn"}
@@ -159,8 +151,6 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
             "turn": int(event.data["turn"]),
         }
     if action == "status":
-        """Pending-work query (D2): lets the GUI offer continuation of an
-        unfinished task after a restart instead of silently forgetting it."""
         last_reason = None
         for event in reversed(session.events):
             if event.type == "turn/end":

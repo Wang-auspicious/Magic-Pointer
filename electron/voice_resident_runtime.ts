@@ -292,9 +292,6 @@ class VoiceResidentRuntime {
       if (!details.expected) {
         this.active = null;
         this._publishStatus('error', 'voice_worker_crashed');
-        // 非预期崩溃自动重启：退避 1s/2s/4s/8s/16s，上限 5 次后停手
-        // （避免崩溃循环烧 CPU）。有活跃会话时不重启（会话自己会失败
-        // 返回，用户可重试）。
         this._scheduleRestart();
       }
     });

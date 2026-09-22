@@ -130,10 +130,6 @@ class OfficeAdapter(AppAdapter):
     def read_context(self, window: JsonDict, **kwargs: Any) -> AdapterReadContext:
         app = office_app_from_window(window) or "office"
         if app == "excel":
-            # Point sampling fires once per sampled point during a fallback
-            # sweep; Excel COM Selection reads are global and useless there,
-            # and each probe spins up a PowerShell + Excel round-trip that can
-            # take seconds. Only region reads (the user's mark) use COM.
             if kwargs.get("target_region") is None and kwargs.get("target_point") is not None:
                 return AdapterReadContext(
                     adapter=self.name,

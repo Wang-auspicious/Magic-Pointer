@@ -1,11 +1,3 @@
-"""Desktop action surface: Kimi's 13 tools on the main loop.
-
-The model may read the screen today, but it cannot act. These tests pin the
-contracts borrowed from Kimi CU (snapshot_id, index XOR coords, input
-ownership, used_backend + verification), UFO² (native semantic action first)
-and Clicky (turn_ended releases the real-input lock). Drivers are fakes —
-nothing touches the live desktop.
-"""
 
 from __future__ import annotations
 
@@ -480,9 +472,6 @@ def test_type_text_reports_unavailable_when_uia_cannot_confirm() -> None:
 
 
 def test_press_key_accepts_common_aliases() -> None:
-    """真机 turn-3 事故：模型按 Return 被拒（只认 Enter）——别名在生产驱动
-    的键表里解析（Win32InputDriver._KEYS），会话层必须放行不报
-    unsupported_key。"""
     registry, session = _registry()
     snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
@@ -495,15 +484,12 @@ def test_press_key_accepts_common_aliases() -> None:
     assert not result.is_error, result.value
     downs = [call for call in session.driver.calls if call[0] in {"down", "key_down"}]
     assert downs, session.driver.calls
-    # 生产驱动的键表确实认识这个别名（防回归钉住）。
     from app.computer_operator.windows import _KEYS
 
     assert _KEYS["return"] == _KEYS["enter"]
 
 
 def test_get_app_state_finds_window_by_class_when_process_name_empty() -> None:
-    """真机 turn-3 事故：Win11 记事本 process_name 为空，app=Notepad /
-    app=Notepad.exe 全部 window not found——app 匹配必须回退到 class 与标题。"""
     windows = [
         {"hwnd": 11, "pid": 1, "title": "mp-doc.txt - Notepad", "class_name": "Notepad",
          "process_name": "", "rect": [0, 0, 400, 300]},
@@ -519,33 +505,28 @@ def test_get_app_state_finds_window_by_class_when_process_name_empty() -> None:
 
 
 def test_session_end_listener_releases_input_lock() -> None:
-    """loop 终态自动归还输入锁：模型忘调 turn_ended 不再卡死下一个会话。"""
     import json as _json
 
     registry, session = _registry()
-    # 拿一个快照 + 占锁（模拟模型做过一次点击但忘了 turn_ended）
     state = registry.execute_tool("Observe", {})
     snapshot_id = _json.loads(str(state.value))["snapshot_id"]
     first_click = registry.execute_tool("Click", {"snapshot_id": snapshot_id, "index": 1})
     assert first_click.is_error is False, first_click.error_message
-    # 第二个会话：同一把进程锁、不同 session_id（生产 = process_input_lock）。
     other_session = _session(session_id="s2", ownership=session.ownership)
     other = ToolRegistry()
     register_desktop_action_tools(other, other_session)
     other_state = other.execute_tool("Observe", {})
     other_snapshot = _json.loads(str(other_state.value))["snapshot_id"]
     busy = other.execute_tool("Click", {"snapshot_id": other_snapshot, "index": 1})
-    assert busy.is_error is True  # 锁被占着
+    assert busy.is_error is True
 
-    registry.notify_session_end()  # loop 终态
+    registry.notify_session_end()
 
     retried = other.execute_tool("Click", {"snapshot_id": other_snapshot, "index": 1})
     assert retried.is_error is False, f"终态后锁必须已自动归还: {retried.error_message}"
 
 
 def test_get_app_state_compresses_element_flood() -> None:
-    """元素树压缩：零面积剔除、去重、长文本截断、100 上限 + 截断计数。
-    模型上下文不被大窗口的 JSON 洪水冲掉（对照 Kimi/Anthropic 的观察压缩）。"""
     raw = []
     for i in range(150):
         raw.append({
@@ -554,7 +535,7 @@ def test_get_app_state_compresses_element_flood() -> None:
             "name": f"行 {i} " + "x" * 200,
             "rect": [0, i * 20, 200, i * 20 + 18],
         })
-    raw.append({"index": 200, "role": "pane", "name": "", "rect": [5, 5, 5, 5]})  # 零面积
+    raw.append({"index": 200, "role": "pane", "name": "", "rect": [5, 5, 5, 5]})
     session = _session(elements_probe=lambda hwnd: list(raw))
     registry = ToolRegistry()
     register_desktop_action_tools(registry, session)
@@ -571,7 +552,6 @@ def test_get_app_state_compresses_element_flood() -> None:
 
 
 def test_click_reports_changes_after() -> None:
-    """点完必须再观察——Click 直接带回元素变化摘要，省一轮 Observe。"""
     calls = {"n": 0}
     before = [
         {"index": 1, "role": "button", "name": "打开", "rect": [100, 100, 160, 120]},
@@ -601,26 +581,17 @@ def test_click_reports_changes_after() -> None:
 
 
 def test_observe_defaults_to_the_marked_window_not_the_foreground() -> None:
-    """真机 9·3：气泡弹出后终端失去前台，不带参数的 Observe 读到了桌面，
-    回答里于是冒出桌面上那四个快捷方式——用户圈的明明是终端里的一行。
-
-    圈选发生在哪个窗口，"观察一下"的默认目标就是哪个窗口。
-    """
-    # 前台（windows[0]）是记事本，圈选发生在飞书那个窗口上。
     registry, _bound = _registry(_session(origin_window_hwnd=7))
     payload = _payload(_exec(registry, "Observe"))
     assert payload["windows"][0]["hwnd"] == 7, "默认目标是圈选所在的窗口"
     assert payload["is_origin_window"] is True
 
-    # 显式指定别的窗口仍然可以，只是要说出来读的不是圈选那个。
     other = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))
     assert other["windows"][0]["hwnd"] == 42
     assert other["is_origin_window"] is False
 
 
 def test_observe_says_so_when_the_marked_window_is_gone() -> None:
-    """圈选那个窗口被关掉之后，退回前台是合理的——但必须写在证据里，
-    不能悄悄换一个窗口继续回答。"""
     registry, _bound = _registry(_session(origin_window_hwnd=99999))
     payload = _payload(_exec(registry, "Observe"))
     assert payload["windows"][0]["hwnd"] == 42

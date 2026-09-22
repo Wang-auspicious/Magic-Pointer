@@ -33,7 +33,6 @@ def _digest(value: Any) -> str:
 
 
 class AgentContextHandoffStore:
-    """Immutable Context Packet plus provider-neutral dispatch contract."""
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
@@ -224,7 +223,6 @@ class AgentContextHandoffStore:
         *,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Refresh delivery states from the durable AgentTaskStore truth."""
         with self._lock():
             paths = sorted(
                 self.root.glob("*/context.json"),

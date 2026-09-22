@@ -20,15 +20,6 @@ WRITE_ACTIONS = {
     "paste_text_to_foreground",
     "wechat_send_message",
 }
-INTERNAL_DASHBOARD_ACTIONS = {
-    "shopping_list_add",
-    "shopping_list_add_many",
-    "shopping_list_set_checked",
-    "shopping_list_undo_add",
-}
-SHOPPING_LIST_TARGET_URI = "magic-pointer://dashboard/shopping-list/default"
-CALENDAR_TARGET_URI = "magic-pointer://dashboard/calendar/local"
-CALENDAR_ACTIONS = {"calendar_event_create", "calendar_event_undo_create"}
 FABRIC_TARGET_PREFIX = "magic-pointer://fabric/recipe/"
 
 
@@ -49,7 +40,6 @@ class PermissionDecision:
 
 
 class LocalPermissionPolicy:
-    """Hard local policy; model text cannot grant itself permission."""
 
     def decide(self, proposal: ActionProposal) -> PermissionDecision:
         action_type = proposal.action_type
@@ -79,18 +69,6 @@ class LocalPermissionPolicy:
             )
         if action_type in WRITE_ACTIONS:
             return PermissionDecision(True, True, f"{action_type} writes to another app and needs explicit confirmation.", SafetyLevel.HIGH)
-        if action_type in INTERNAL_DASHBOARD_ACTIONS:
-            target_uri = proposal.target.object_id if proposal.target is not None else None
-            if target_uri != SHOPPING_LIST_TARGET_URI:
-                return PermissionDecision(False, True, "internal dashboard action target is not allowlisted", SafetyLevel.DESTRUCTIVE)
-            return PermissionDecision(True, False, "reversible local Magic Pointer dashboard action", SafetyLevel.LOW)
-        if action_type in CALENDAR_ACTIONS:
-            target_uri = proposal.target.object_id if proposal.target is not None else None
-            if target_uri != CALENDAR_TARGET_URI:
-                return PermissionDecision(False, True, "local calendar action target is not allowlisted", SafetyLevel.DESTRUCTIVE)
-            if action_type == "calendar_event_create":
-                return PermissionDecision(True, True, "calendar creation requires explicit review and confirmation", SafetyLevel.MEDIUM)
-            return PermissionDecision(True, False, "receipt-bound local calendar undo", SafetyLevel.LOW)
         if action_type == "fabric_recipe_execute":
             target_uri = proposal.target.object_id if proposal.target is not None else None
             trusted = (

@@ -1,8 +1,5 @@
 'use strict';
 
-/* 权限预设（渲染层镜像）。
-   执行真值在 app/agent_runtime/permission_presets.py：这里只负责展示与
-   选择，桥对未知预设 fail-closed。custom 是派生展示态，不可选。 */
 
 interface PresetOption {
   value: string;
@@ -11,25 +8,17 @@ interface PresetOption {
   label: string;
   primary?: boolean;
   confirm?: { title: string; description: string };
-  /** 行尾的短标记（参考里 Auto 后面的 `Start`）。 */
   badge?: string;
-  /** 有值时行尾不放编号，改放这个可点的动作（参考里 Bypass 行的 `Enable`）。 */
   action?: string;
-  /** 菜单打开时的数字快捷键。 */
   shortcut?: string;
 }
 
-/* 顺序即菜单顺序，照参考：Auto / Manual / Accept edits / Plan / Bypass permissions。
-   `badge` 是参考里 Auto 行后面那个小标记，`action` 是 Bypass 行右侧的字（参考里
-   它是 Enable，在我们这里点下去走的就是既有的风险确认门）。
-   `shortcut` 是菜单打开时的数字快捷键；Bypass 没有编号——参考里它也是唯一
-   一行没有编号的，因为它不是一个「切换过去」的档，而是一次要确认的开启。 */
 const PRESETS: PresetOption[] = [
   {
     value: 'auto',
     name: '自动',
     label: 'Auto',
-    description: 'Claude handles permission decisions',
+    description: 'Magic Pointer handles permission decisions',
     primary: true,
     badge: 'Start',
     shortcut: '1',
@@ -87,7 +76,6 @@ function optionOf(value: string): PresetOption | undefined {
   return PRESETS.find(option => option.value === value);
 }
 
-/** 与 Studio 其余控件一致的 24px / 1.5px 线性图标。 */
 function presetSvg(option: PresetOption): string {
   const paths: Record<string, string> = {
     plan: 'M5 6h9M5 11h9M5 16h6M17 5v12M14.5 14.5 17 17l2.5-2.5',

@@ -1,9 +1,3 @@
-"""SenseVoice Small ASR bridge via sherpa-onnx.
-
-Drop-in replacement for local_voice_bridge.py. Exposes the same interface
-(load_model / transcribe / run_microphone_with_model / load_voice_profile)
-so the LocalVoiceWorker can swap backends without code changes.
-"""
 
 from __future__ import annotations
 
@@ -20,9 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_DIR = ROOT / "data" / "models" / "sense-voice-small"
 SAMPLE_RATE = 16000
 
-# ---------------------------------------------------------------------------
-# Voice profile — same shape as local_voice_bridge.VoiceProfile
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -50,7 +41,6 @@ class VoiceProfile:
 
 
 def load_voice_profile(context_path: str | None = None) -> VoiceProfile:
-    """Load voice profile from context path (same protocol as Whisper bridge)."""
     profile = VoiceProfile()
     if context_path:
         config_file = Path(context_path) / "voice-profile.json"
@@ -72,9 +62,6 @@ def validated_model_name(value: object) -> str:
     return name
 
 
-# ---------------------------------------------------------------------------
-# Model loading
-# ---------------------------------------------------------------------------
 
 _model_cache: dict[str, Any] = {}
 
@@ -87,7 +74,6 @@ def _resolve_model_dir() -> Path:
 
 
 def load_model(model_name: str = "sense-voice-small") -> Any:
-    """Load SenseVoice Small ONNX model via sherpa-onnx. Cached per process."""
     name = validated_model_name(model_name)
     if name in _model_cache:
         return _model_cache[name]
@@ -115,9 +101,6 @@ def load_model(model_name: str = "sense-voice-small") -> Any:
     return recognizer
 
 
-# ---------------------------------------------------------------------------
-# Transcription
-# ---------------------------------------------------------------------------
 
 
 def transcribe(
@@ -132,11 +115,9 @@ def transcribe(
     mixed_spacing: bool = True,
     hallucination_guard: str = "off",
 ) -> str:
-    """Transcribe a NumPy audio array (float32, 16kHz mono) to text."""
     if audio.size == 0:
         return ""
 
-    # Ensure float32, 16kHz mono
     if audio.dtype != np.float32:
         audio = audio.astype(np.float32)
     if audio.ndim > 1:
@@ -147,20 +128,15 @@ def transcribe(
     model.decode_stream(stream)
     text = (stream.result.text or "").strip()
 
-    # Strip SenseVoice emotion/language tags like "<|zh|><|HAPPY|>内容"
     import re
     text = re.sub(r"<\|[^|]+\|>", "", text).strip()
 
     return text
 
 
-# ---------------------------------------------------------------------------
-# Microphone VAD + ASR
-# ---------------------------------------------------------------------------
 
 
 class VoiceActivity:
-    """Tracks per-sample loudness for VAD decisions — same API as Whisper bridge."""
 
     def __init__(self) -> None:
         self.current_prob: float = 0.0
@@ -169,15 +145,6 @@ class VoiceActivity:
 
 
 def _create_vad() -> Any:
-    """Return the VAD handle used by the SenseVoice microphone loop.
-
-    The loop performs energy-based voice-activity detection in the audio
-    callback (``_process_audio``), so no sherpa VAD model is required.  The
-    sherpa ``VoiceActivityDetector`` constructor ABORTS the whole process when
-    the config has no VAD model files (observed as exit 4294967295 on
-    Windows), so this helper intentionally returns ``None`` and must never
-    construct that object without model files.
-    """
     return None
 
 
@@ -189,21 +156,17 @@ def run_microphone_with_model(
     stop_state: Callable[[VoiceActivity], str | None],
     event_sink: Callable[[str, dict[str, Any]], None],
 ) -> None:
-    """Run microphone VAD loop with SenseVoice ASR.
-
-    Follows the same callback protocol as local_voice_bridge.run_microphone_with_model.
-    """
     try:
         import sounddevice as sd
     except ImportError:
         event_sink("error", {"code": "sounddevice_missing", "error": "sounddevice not installed"})
         return
 
-    vad = _create_vad()  # None: energy VAD is used in the callback below
+    vad = _create_vad()
     activity = VoiceActivity()
     buffer: list[np.ndarray] = []
     buffer_samples = 0
-    chunk_samples = int(SAMPLE_RATE * 0.3)  # 300ms chunks
+    chunk_samples = int(SAMPLE_RATE * 0.3)
     speech_started = False
 
     def _reset_buffer() -> np.ndarray:
@@ -226,11 +189,9 @@ def run_microphone_with_model(
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
 
-        # Energy-based VAD (no external VAD model: sherpa's VoiceActivityDetector
-        # aborts the process when no VAD model files are configured)
         rms = float(np.sqrt(np.mean(audio ** 2)))
         activity.current_prob = rms
-        is_speech = rms > 0.005  # adjustable threshold
+        is_speech = rms > 0.005
 
         if is_speech:
             activity.speech_detected = True
@@ -247,7 +208,6 @@ def run_microphone_with_model(
 
             silence_sec = activity.silence_since
             if silence_ms > 0 and silence_sec >= silence_ms / 1000.0:
-                # End of utterance — transcribe
                 combined = _reset_buffer()
                 if combined.size > 0:
                     try:
@@ -262,10 +222,8 @@ def run_microphone_with_model(
                 activity.speech_detected = False
                 activity.silence_since = None
         else:
-            # No speech yet, just track ambient noise
             activity.silence_since = (activity.silence_since or 0) + (audio.size / SAMPLE_RATE)
 
-        # Check stop condition
         stop_reason = stop_state(activity)
         if stop_reason:
             if speech_started and buffer:
@@ -287,7 +245,6 @@ def run_microphone_with_model(
             blocksize=chunk_samples,
             callback=lambda indata, _frames, _time, _status: _process_audio(indata.copy()),
         ):
-            # Block until stop_state returns non-None
             while stop_state(activity) is None:
                 time.sleep(0.05)
     except sd.PortAudioError as exc:
@@ -296,9 +253,6 @@ def run_microphone_with_model(
         event_sink("error", {"code": "microphone_runner_failed", "error": f"{type(exc).__name__}: {exc}"})
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point — same protocol as local_voice_bridge.py
-# ---------------------------------------------------------------------------
 
 
 def _stop_capture_state(stop_file: Path | str | None, activity: VoiceActivity) -> str | None:
@@ -308,8 +262,6 @@ def _stop_capture_state(stop_file: Path | str | None, activity: VoiceActivity) -
 
 
 def _emit(kind: str, payload: dict[str, Any] | None = None, **extra: Any) -> None:
-    # Accept both call styles: _emit("ready", engine="...") and the
-    # run_microphone_with_model protocol event_sink(kind, payload_dict).
     record: dict[str, Any] = {"type": kind}
     if payload:
         record.update(payload)

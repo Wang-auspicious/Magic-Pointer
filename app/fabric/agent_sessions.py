@@ -31,11 +31,6 @@ def _same_path(left: Path | str, right: Path | str) -> bool:
 
 
 def _mtime(path: Path) -> float:
-    """File mtime, 0.0 when the file vanished between enumeration and stat.
-
-    Agent CLIs rewrite/delete their own session files while we enumerate;
-    an unguarded stat() raised and took down the whole provider list.
-    """
     try:
         return float(path.stat().st_mtime)
     except OSError:
@@ -143,7 +138,6 @@ def _metadata_lines(
     byte_limit: int = _SESSION_METADATA_BYTE_LIMIT,
     tail: bool = False,
 ) -> Iterable[dict[str, Any]]:
-    """Parse complete JSONL records from one fixed-size prefix or tail read."""
     try:
         size = path.stat().st_size
         bounded = max(0, min(int(byte_limit), _SESSION_METADATA_BYTE_LIMIT))
@@ -158,7 +152,6 @@ def _metadata_lines(
         return
     lines = data.splitlines()
     if not tail and size > len(data) and not data.endswith((b"\n", b"\r")):
-        # Never parse a prefix record whose remainder is outside the byte budget.
         lines = lines[:-1]
     for raw_line in lines[: max(0, int(limit))]:
         try:
@@ -170,7 +163,6 @@ def _metadata_lines(
 
 
 def _session_records(path: Path) -> list[dict[str, Any]]:
-    """Read at most 128 KB and 64 complete records per session file."""
     try:
         size = path.stat().st_size
     except OSError:
@@ -340,7 +332,6 @@ class AgentSession:
 
 
 class AgentSessionRegistry:
-    """Discover verifiable saved sessions without reading or returning prompts."""
 
     def __init__(
         self,
@@ -407,8 +398,6 @@ class AgentSessionRegistry:
                 continue
             source = payload.get("source")
             if isinstance(source, dict) and isinstance(source.get("subagent"), dict):
-                # Codex v2 deliberately rejects direct turn/start on child agents.
-                # Excluding them here prevents the UI from offering an unusable binding.
                 continue
             session_id = str(payload.get("id") or "").strip()
             cwd = str(payload.get("cwd") or "").strip()

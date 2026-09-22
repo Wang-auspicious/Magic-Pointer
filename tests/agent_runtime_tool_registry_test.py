@@ -1,20 +1,3 @@
-"""Tests for the agent runtime tool registry (plan T2.2).
-
-Covers, per plan and the CC toolExecution/toolOrchestration port notes:
-- ToolSpec contract: name/description/input_schema/effect/is_concurrency_safe/
-  used_backend/execute/timeout_ms
-- register validation (name format, schema structure, effect, execute,
-  duplicate rejection), get/list, schemas_for_model shape (CC API tools
-  parameters format)
-- validate_input strict error lists (missing required, extra fields, type
-  mismatch)
-- concurrency_partition (CC isConcurrencySafe batching with input order)
-- execute_tool result wrapping (ActionFailure failure_type passthrough,
-  ordinary exceptions -> FailureType.tool_error, is_error semantics, honest
-  used_backend/latency recording)
-
-Only fake pure-function tools are registered; nothing real is touched.
-"""
 
 from __future__ import annotations
 
@@ -240,9 +223,6 @@ class TestGetAndList:
 
 class TestSchemasForModel:
     def test_examples_are_surfaced_in_schema_when_present(self) -> None:
-        """ToolSpec.examples (CC prompt_sample / Codex examples) ride the
-        schema so the model sees one concrete usage on the first round instead
-        of guessing argument shapes (roadmap §1.1)."""
         registry = ToolRegistry()
         registry.register(make_spec(
             name="echo_tool",
@@ -259,8 +239,6 @@ class TestSchemasForModel:
         assert set(first) == {"name", "description", "parameters"}
 
     def test_search_hits_words_that_only_appear_in_examples(self) -> None:
-        """find_capability must find a tool whose keyword lives only in
-        examples, not in name/description (roadmap §1.2)."""
         registry = ToolRegistry()
         registry.register(make_spec(
             name="apply_patch",

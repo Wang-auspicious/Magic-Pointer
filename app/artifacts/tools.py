@@ -1,4 +1,3 @@
-"""Explicit, model-selected editable deliverables in the session journal."""
 
 from __future__ import annotations
 
@@ -73,9 +72,6 @@ def register_artifact_tools(registry: ToolRegistry, *, session_getter: Callable[
             name=name, description=description,
             input_schema={"type": "object", "properties": properties, "required": required},
             execute=execute,
-            # Draft edits are internal conversation state, like Todo and
-            # Document.propose_patch; external file/application writes use
-            # their own permission and verification contracts.
             effect=Effect.READ,
             is_concurrency_safe=name == "Artifact.read",
             resource_keys=("draft-artifacts",),

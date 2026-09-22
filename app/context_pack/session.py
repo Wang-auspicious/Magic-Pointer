@@ -22,7 +22,6 @@ class ContextSessionError(RuntimeError):
 
 
 class ContextSessionConflict(ContextSessionError):
-    """The active pack changed after a compiler took its read snapshot."""
 
     pass
 

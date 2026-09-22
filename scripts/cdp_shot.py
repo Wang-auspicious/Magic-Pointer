@@ -1,7 +1,3 @@
-"""CDP screenshot of a live page via Electron's remote-debugging port.
-
-Usage: python scripts/cdp_shot.py <title-substring> <out.png>
-"""
 from __future__ import annotations
 
 import base64

@@ -1,20 +1,3 @@
-"""Terminal-to-answer mapping for the loop-driven answer path (batch 4).
-
-``selection_bridge``'s answer contract is a plain dict with ``answer``,
-``answerShape``, ``route`` etc. When the free loop drives the answer
-(``run_agent_turn``), the :class:`Terminal` must map back into that shape
-without leaking harness internals. This module owns the mapping so it can be
-tested headlessly; it performs no I/O and no model calls.
-
-Honest rules:
-- ``LOCAL_ACTION`` terminals return the deterministic action instead of
-  fabricating a model answer.
-- Non-completed terminations (budget, max turns, interrupt) still return
-  the partial answer text with ``loopTerminatedReason`` so the caller can
-  decide whether to fall back to the legacy single-shot path.
-- Tool receipts are exposed as ``loopReceipts`` (used_backend / latency /
-  failure_type) for audit, never merged into the answer text.
-"""
 
 from __future__ import annotations
 
@@ -32,7 +15,6 @@ _PARTIAL_DELIVERY_REASONS = frozenset({
 
 
 def _backend_error_brief(reason: str) -> str:
-    """backend_error:xxx → 短人话。"""
     code = str(reason or "").split(":", 1)[1] if ":" in str(reason or "") else ""
     if code.startswith("http_5"):
         return f"HTTP {code[5:]}"
@@ -44,7 +26,6 @@ def _backend_error_brief(reason: str) -> str:
 
 
 def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
-    """Map a loop :class:`Terminal` to the selection_bridge answer shape."""
     if terminal.reason is TransitionReason.LOCAL_ACTION:
         return {
             "ok": True,
@@ -73,12 +54,6 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             visible_answer += "\n\n" + "\n".join(
                 f"{index}. {option}" for index, option in enumerate(options, 1)
             )
-        # 权限门与普通澄清共用 AWAITING_USER 通道，但回答的语义完全不同：澄清
-        # 的选项就是用户要说的话，权限门的选项必须变成 grant/once/deny 重新进
-        # loop，否则工具被拦、重新提问、再被拦。裁掉 kind/tool 会把前者退化成
-        # 后者——Studio 的审批卡和会话存储都在等这两个字段
-        # （conversation_store.recordPermissionDecision 就按 pendingInput.kind
-        # 判断要不要清掉这道门）。
         pending_input: dict[str, Any] = {"question": question, "options": options}
         if pending.get('requestId'):
             pending_input['requestId'] = pending['requestId']
@@ -118,12 +93,6 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
         and terminal.reason in _PARTIAL_DELIVERY_REASONS
         and any(not result.is_error for result in terminal.results)
     ):
-        # Real-machine lesson (notepad-edit): a transient provider failure
-        # AFTER the work was done used to throw the whole turn away — the
-        # document had actually been edited, yet the user only saw "Agent
-        # 未完成". Design §10.2: reaching a budget is not fake completion;
-        # it means handing back the evidence, the finished steps and the
-        # honest gap. The same applies to a dead endpoint.
         done_steps = [
             result.tool_name or result.tool_call_id
             for result in terminal.results
@@ -161,8 +130,6 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             "modelUsage": terminal.model_usage,
         }
     answer = terminal.message or ""
-    # 原始后端错误码（backend_error:http_500 之类）不得当答案渲染：
-    # 翻成人话 + 下一步，原始码留在 loopTerminatedReason/error 里供诊断。
     if terminated and answer.startswith("backend_error:"):
         answer = (
             f"模型服务刚才没有响应（{_backend_error_brief(answer)}）。"
@@ -205,11 +172,6 @@ def _receipts(terminal: Terminal) -> list[dict[str, Any]]:
 
 
 def _events(terminal: Terminal) -> list[dict[str, Any]]:
-    """Tool-call chain for the GUI (DSH tool rows: name/arguments/result).
-
-    Pure projection of the same receipts; the renderer shows each tool as an
-    IN/OUT row instead of hiding the agent chain behind the final answer.
-    """
     events: list[dict[str, Any]] = []
     for result in terminal.results:
         name = result.tool_name

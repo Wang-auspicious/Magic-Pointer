@@ -1,4 +1,3 @@
-"""Explicit deliverables through the real harness, loop and durable session."""
 
 from __future__ import annotations
 
@@ -66,7 +65,6 @@ def test_explicit_create_update_read_and_chat_keep_one_durable_deliverable(tmp_p
     assert _latest_turn_artifact_summaries(session)[0]["name"] == draft.title
     assert project_receipts(session.events)[-1].artifact_ids == (draft.artifact_id,)
 
-    # A user edit is real durable state, not a model-visible message.
     session.record_artifact_patched(draft.artifact_id, "# 纪要\n用户补充", author="user", expected_revision=1)
     session = store.resume("deliverable", repair=True)
     terminal = run(session, tmp_path,

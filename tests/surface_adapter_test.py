@@ -1,4 +1,3 @@
-"""SurfaceAdapter SDK tests: manifest matching, registry chain, WeChat sample."""
 
 from __future__ import annotations
 
@@ -36,8 +35,6 @@ def test_manifest_claims_wechat_windows() -> None:
 
 
 def test_manifest_does_not_claim_lookalike_processes_or_titles() -> None:
-    """Perception-audit P2: substring app-id matching used to claim
-    evilwechat.exe and any window whose title merely contained 微信."""
     assert WECHAT_MANIFEST.matches_window({"process_name": "evilwechat.exe"}) is False
     assert WECHAT_MANIFEST.matches_window({"process_name": "WeChat.exe.bak"}) is False
     assert WECHAT_MANIFEST.matches_window({"title": "微信使用技巧 - Chrome"}) is False
@@ -49,8 +46,6 @@ def test_manifest_rejects_type_confused_array_fields() -> None:
 
     from app.surface_adapter.manifest import SurfaceAdapterManifest
 
-    # A string instead of an array used to iterate into single characters and
-    # claim almost every window (perception-audit P2).
     with pytest.raises(ValueError, match="app_ids must be an array"):
         SurfaceAdapterManifest.from_dict(
             {"id": "x", "display_name": "x", "app_ids": "wechat"}
@@ -195,7 +190,6 @@ def test_plugin_unload_waits_for_inflight_surface_resolution() -> None:
 
 
 def test_wechat_adapter_opaque_tree_returns_anchor(monkeypatch):
-    """Opaque UIA tree: honest region anchor, pixel evidence merges on top."""
     from app.surface_adapter.adapters import wechat_adapter
 
     fake_probe = type("ProbeResult", (), {"ok": False, "data": {}})()
@@ -220,7 +214,6 @@ def test_wechat_adapter_opaque_tree_returns_anchor(monkeypatch):
 
 
 def test_wechat_adapter_uses_container_uia_when_exposed(monkeypatch):
-    """Some builds expose an accessibility subtree: use it, with evidence."""
     from app.surface_adapter.adapters import wechat_adapter
 
     fake_probe = type("ProbeResult", (), {"ok": True, "data": {"text": "消息一"}})()

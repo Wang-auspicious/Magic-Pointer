@@ -1,25 +1,3 @@
-"""The other half of MCP: use the servers the user already configured.
-
-Magic Pointer is an MCP server — an agent can point it at the screen. The loop
-only closes if the reverse is also true: the tools the user has already set up
-elsewhere (their notes, their tracker, their database) should be available to a
-command about something on screen, without configuring them a second time here.
-
-This speaks the same stdio JSON-RPC dialect our own server does, from the client
-side: spawn, initialize, list tools, call one. Deliberately minimal — no
-sampling, no roots, no notifications. The value is "your tools are reachable",
-and every line beyond that is surface area on a process we did not write.
-
-Three rules that shape it:
-
-  **A server that misbehaves must not take the command down.** Every call is
-  bounded by a timeout and every failure is a value, not an exception. An MCP
-  server is third-party code on the user's machine and it will hang one day.
-  **Nothing is called without being asked for.** Discovery lists tools; calling
-  one is a separate act. A tool named `delete_everything` must never be invoked
-  as part of finding out that it exists.
-  **The user's config is read, never written.** We are a guest in that file.
-"""
 
 from __future__ import annotations
 
@@ -36,14 +14,9 @@ from app.process.job_object import attach_kill_on_close
 
 PROTOCOL_VERSION = "2025-06-18"
 
-# A server that has not answered in this long is not going to. The command that
-# triggered this is on screen in a bubble; it cannot wait on someone else's
-# process.
 DEFAULT_TIMEOUT_S = 8.0
 STARTUP_TIMEOUT_S = 12.0
 
-# Tool descriptions go into a model prompt, so an enormous manifest is both a
-# cost and a way for a third party to fill the context window.
 MAX_TOOLS_PER_SERVER = 40
 MAX_DESCRIPTION_CHARS = 400
 MAX_RESPONSE_CHARS = 2_000_000
@@ -71,7 +44,6 @@ class McpTool:
 
     @property
     def qualified_name(self) -> str:
-        """Namespaced, so two servers offering `search` stay distinguishable."""
         return f"{self.server}__{self.name}"
 
     def to_dict(self) -> dict[str, Any]:
@@ -128,12 +100,6 @@ class McpServerConfig:
 
 
 def load_server_configs(path: Path | str) -> list[McpServerConfig]:
-    """Read an `mcpServers` map — the shape Claude Desktop and friends all use.
-
-    A malformed entry is skipped rather than raised: one bad server must not make
-    every other one unreachable, and the user is far more likely to have a typo in
-    one entry than a broken file.
-    """
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -150,7 +116,6 @@ def load_server_configs(path: Path | str) -> list[McpServerConfig]:
 
 
 class McpStdioClient:
-    """One connection to one MCP server, over its stdin/stdout."""
 
     def __init__(self, config: McpServerConfig, *, timeout: float = DEFAULT_TIMEOUT_S) -> None:
         self.config = config
@@ -205,7 +170,6 @@ class McpStdioClient:
                 process.kill()
 
     def _abort(self) -> None:
-        """Immediately discard a protocol-violating process and its stream."""
         process = self._process
         self._process = None
         if process is None:
@@ -240,7 +204,6 @@ class McpStdioClient:
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Complete one write/read exchange while owning the stdio stream."""
         self._next_id += 1
         request_id = self._next_id
         self._write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
@@ -270,11 +233,6 @@ class McpStdioClient:
                 try:
                     message = json.loads(text)
                 except (ValueError, RecursionError, MemoryError):
-                    # Servers log to stdout despite the spec. Skip, do not
-                    # fail. RecursionError/MemoryError are deep-nesting parse
-                    # bombs: the line is under the size cap but json.loads
-                    # still explodes; treat them as protocol noise and never
-                    # report an empty dict as a real result.
                     continue
                 if message.get("id") != request_id:
                     continue
@@ -289,7 +247,6 @@ class McpStdioClient:
         reader.start()
         reader.join(deadline)
         if reader.is_alive():
-            # A hung third-party process must not hold a bubble open.
             self._abort()
             raise McpClientError(f"{self.config.name} did not answer within {deadline:.0f}s")
         if error:
@@ -322,7 +279,6 @@ class McpStdioClient:
         return tools
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Call one tool. Only ever from an explicit request — never from discovery."""
         payload = self._request("tools/call", {
             "name": str(name),
             "arguments": dict(arguments or {}),
@@ -343,12 +299,6 @@ def discover_tools(
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
 ) -> tuple[list[McpTool], list[str]]:
-    """Ask every configured server what it offers. Returns (tools, warnings).
-
-    Nothing is called here. A server that fails contributes a warning and no
-    tools, because one broken entry in someone's config must not remove every
-    other integration they have.
-    """
     tools: list[McpTool] = []
     warnings: list[str] = []
     for config in configs:

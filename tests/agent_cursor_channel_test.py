@@ -1,10 +1,3 @@
-"""The twin cursor's message channel.
-
-The gap this closes: the driver knew where it was about to click and how long
-the flight would take, the Electron side knew how to draw and animate a cursor,
-and nothing carried the news between them. The cursor followed the pointer and
-was never pointed at anything.
-"""
 
 from app.computer_operator.agent_cursor_channel import (
     ACTION_APPROACH,
@@ -34,7 +27,6 @@ class TestProtocol:
     def test_it_satisfies_the_driver_observer_protocol(self) -> None:
         from app.computer_operator.windows import ApproachObserver
 
-        # structural check: every method the driver calls must exist
         for name in ("cursor_approach", "cursor_clicked"):
             assert callable(getattr(AgentCursorEmitter(None), name)), name
         assert hasattr(ApproachObserver, "cursor_approach")
@@ -42,7 +34,7 @@ class TestProtocol:
     def test_disabled_without_a_sink(self) -> None:
         emitter = AgentCursorEmitter(None)
         assert emitter.enabled is False
-        emitter.cursor_approach((1, 2), lead_ms=600)  # must not raise
+        emitter.cursor_approach((1, 2), lead_ms=600)
         emitter.cursor_clicked((1, 2), button="left", count=1)
         emitter.idle()
 
@@ -92,7 +84,6 @@ class TestClick:
 
 class TestIdle:
     def test_idle_before_any_motion_says_nothing(self) -> None:
-        # There is no cursor to release yet; an idle row would create one.
         sink = Recorder()
         AgentCursorEmitter(sink).idle()
         assert sink.marks == []
@@ -109,7 +100,7 @@ class TestIdle:
 class TestNeverFailsTheAction:
     def test_a_raising_sink_is_swallowed(self) -> None:
         emitter = AgentCursorEmitter(Exploding())
-        emitter.cursor_approach((1, 1), lead_ms=100)  # must not raise
+        emitter.cursor_approach((1, 1), lead_ms=100)
         emitter.cursor_clicked((1, 1), button="left", count=1)
         emitter.idle()
 
@@ -128,15 +119,6 @@ class TestNeverFailsTheAction:
 
 
 class TestSessionAttachment:
-    """The driver is built lazily by the session factory, so the emitter has to
-    be attached there rather than passed down.
-
-    These deliberately exercise the PRODUCTION order — driver first, sink
-    second. The first version of this file built the driver after setting the
-    sink, which is the opposite of what both bridges do, so it passed while
-    production announced nothing at all: `boot_loop_context` constructs the
-    driver hundreds of lines before the bridge knows which clock it reports on.
-    """
 
     def _driver_with_fake(self):
         import app.computer_operator.windows as windows_module
@@ -157,9 +139,9 @@ class TestSessionAttachment:
         seen, real, windows_module = self._driver_with_fake()
         try:
             session_module.set_agent_cursor_sink(None)
-            session_module._live_driver()          # driver FIRST, as production does
+            session_module._live_driver()
             sink = Recorder()
-            session_module.set_agent_cursor_sink(sink)   # sink SECOND
+            session_module.set_agent_cursor_sink(sink)
             assert seen["observer"] is not None
             seen["observer"].cursor_clicked((3, 4), button="left", count=1)
             assert sink.marks, (
@@ -172,8 +154,6 @@ class TestSessionAttachment:
             session_module.set_agent_cursor_sink(None)
 
     def test_the_observer_is_always_attached(self) -> None:
-        # Not conditional on a sink being present: the decision has to be made
-        # per announcement, not per construction.
         import app.desktop_actions.session as session_module
 
         seen, real, windows_module = self._driver_with_fake()
@@ -191,7 +171,7 @@ class TestSessionAttachment:
         try:
             session_module.set_agent_cursor_sink(None)
             session_module._live_driver()
-            seen["observer"].cursor_clicked((3, 4), button="left", count=1)  # must not raise
+            seen["observer"].cursor_clicked((3, 4), button="left", count=1)
         finally:
             windows_module.Win32InputDriver = real  # type: ignore[assignment]
 

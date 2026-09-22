@@ -101,8 +101,6 @@ function compactNumber(value: unknown): string {
   return Math.round(number).toLocaleString('zh-CN');
 }
 
-/* Claude's overview keeps ordinary counts readable at their full precision
-   ("52,275"), while only the token total switches to compact B/M/K notation. */
 function countNumber(value: unknown): string {
   return Math.round(finite(value)).toLocaleString('en-US');
 }

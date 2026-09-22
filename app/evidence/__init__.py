@@ -1,7 +1,3 @@
-"""Enforced perception evidence contract (harness gap review L6).
-
-Pure Python: no UI automation, Electron, or OS-specific APIs here.
-"""
 
 from .contract import (
     MIN_CONFIDENCE_FOR_TRUST,

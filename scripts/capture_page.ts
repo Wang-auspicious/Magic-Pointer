@@ -1,8 +1,3 @@
-// 用 Electron 自己把一个渲染层页面整页截下来。
-// 和产品跑在同一个 Chromium 里——所以看到的就是用户会看到的，
-// 不是另一个浏览器渲染出来的近似值。
-//
-//   npx electron build/scripts/capture_page.js <page.html> <out.png> [width]
 
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
@@ -12,7 +7,11 @@ const ROOT = path.resolve(__dirname, '..');
 const args = process.argv
   .slice(2)
   .filter((a) => !a.startsWith('--') && !/capture_page\.[jt]s$/.test(a));
-const pageArg = args[0] || 'electron/renderer/gallery.html';
+const pageArg = args[0];
+if (!pageArg) {
+  process.stderr.write('Usage: electron capture_page.js <html-path> [output.png] [width]\n');
+  process.exit(1);
+}
 const outArg = args[1] || path.join(ROOT, 'data', 'runtime', 'page.png');
 const width = Number(args[2]) || 1500;
 
@@ -33,7 +32,6 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(path.isAbsolute(pageArg) ? pageArg : path.join(ROOT, pageArg));
     await new Promise((resolve) => setTimeout(resolve, 700));
-    // 整页：把窗口撑到内容高度再截，省得只拿到第一屏
     const height = await window.webContents.executeJavaScript(
       'document.documentElement.scrollHeight',
     );

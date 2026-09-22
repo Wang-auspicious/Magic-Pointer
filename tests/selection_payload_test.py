@@ -1,4 +1,3 @@
-"""A normal multi-source selection must reach the command router intact."""
 
 import io
 import json
@@ -7,8 +6,6 @@ from scripts import selection_bridge
 
 
 def test_three_material_snapshot_is_not_rejected_as_a_large_user_selection(monkeypatch):
-    # Region providers retain element geometry and traces as well as the text;
-    # three ordinary windows already exceed the old generic 64 KiB stdin cap.
     materials = []
     for index, name in enumerate(("Weixin.exe", "Weixin.exe", "explorer.exe")):
         materials.append({

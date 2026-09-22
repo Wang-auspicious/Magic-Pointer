@@ -1,23 +1,3 @@
-"""Undo/compensation ledger for action_guard (harness gap review L5).
-
-Every mutating action records a :class:`Compensation` before it runs:
-what was written, where the cursor was, whether the target was newly
-created. :class:`UndoLog` is the thread-safe stack that replays those
-compensations on demand, newest first (LIFO) or by ``action_id``.
-
-Failure semantics (documented contract):
-  * ``undo()`` on an empty stack raises :class:`UndoEmptyError`.
-  * ``undo(action_id)`` with no matching entry raises
-    :class:`UndoNotFoundError`; undoing the same id twice therefore
-    fails with ``UndoNotFoundError`` the second time.
-  * If ``compensate`` raises, :class:`UndoFailedError` carries the
-    ``action_id`` and the original cause. The entry is still removed:
-    a failed compensation is never silently re-queued, and a single
-    failure never blocks later undos. Callers decide whether to retry.
-
-Pure Python (``threading.Lock`` only); timestamps are supplied by the
-caller so the ledger stays deterministic and clock-free.
-"""
 
 from __future__ import annotations
 
@@ -29,19 +9,14 @@ DEFAULT_UNDO_CAPACITY = 20
 
 
 class UndoEmptyError(RuntimeError):
-    """Raised when ``undo()`` is asked to pop an empty stack."""
+    pass
 
 
 class UndoNotFoundError(RuntimeError):
-    """Raised when ``undo(action_id)`` cannot find the given id."""
+    pass
 
 
 class UndoFailedError(RuntimeError):
-    """A compensation ran and failed; the entry was still removed.
-
-    ``action_id`` identifies the failed action; ``cause`` is the original
-    exception raised by ``compensate``.
-    """
 
     __slots__ = ("action_id", "cause")
 
@@ -55,12 +30,6 @@ class UndoFailedError(RuntimeError):
 
 @dataclass(frozen=True)
 class Compensation:
-    """Everything needed to undo one action.
-
-    ``compensate`` is injected (e.g. a closure over the real target) so
-    tests can use fake targets and production code stays free of
-    action-specific logic.
-    """
 
     action_id: str
     tool_name: str
@@ -73,7 +42,6 @@ class Compensation:
 
 
 class UndoLog:
-    """Thread-safe, capacity-bounded stack of compensations."""
 
     __slots__ = ("_capacity", "_lock", "_stack")
 
@@ -85,19 +53,12 @@ class UndoLog:
         self._stack: list[Compensation] = []
 
     def record(self, compensation: Compensation) -> None:
-        """Push a compensation; evict the oldest entry when over capacity."""
         with self._lock:
             self._stack.append(compensation)
             if len(self._stack) > self._capacity:
                 del self._stack[0]
 
     def undo(self, action_id: str | None = None) -> Compensation:
-        """Undo newest entry (``action_id=None``) or the entry with id.
-
-        The matched entry is removed *before* ``compensate`` runs. If
-        ``compensate`` raises, :class:`UndoFailedError` is raised and the
-        entry stays removed; later ``undo`` calls still work.
-        """
         with self._lock:
             if action_id is None:
                 if not self._stack:
@@ -133,6 +94,5 @@ class UndoLog:
             return self._stack[-1]
 
     def all_actions(self) -> list[Compensation]:
-        """Audit view of the stack, oldest first (record order)."""
         with self._lock:
             return list(self._stack)

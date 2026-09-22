@@ -7,7 +7,7 @@ const {
 const index = buildStudioSearchIndex({
   conversations: [{
     id: 'c1',
-    title: 'Claude 界面',
+    title: 'Studio 界面',
     subtitle: 'Studio',
     workspaceRoot: 'D:/Magic',
     updatedAt: 10,
@@ -18,7 +18,7 @@ const index = buildStudioSearchIndex({
   routes: [{ id: 'customize', label: '自定义', keywords: ['设置', '插件'] }],
 });
 
-assert.deepStrictEqual(searchStudioIndex(index, 'Claude').map((item: { key: string }) => item.key), [
+assert.deepStrictEqual(searchStudioIndex(index, 'Studio').map((item: { key: string }) => item.key), [
   'conversation:c1',
 ]);
 assert.strictEqual(searchStudioIndex(index, 'Magic')[0].key, 'project:D:/Magic');

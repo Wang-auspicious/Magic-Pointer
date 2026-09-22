@@ -1,4 +1,3 @@
-"""Prompt identity and durable selection over the real harness/session path."""
 
 import asyncio
 import hashlib
@@ -140,7 +139,6 @@ def test_resume_after_prompt_edit_uses_old_snapshot(tmp_path, monkeypatch, caplo
         assert drift[0].data["currentHash"] != _hash(old_text)
         assert "Using the saved system prompt" in caplog.text
         assert len([e for e in session.events if e.type == "prompt/frozen"]) == 1
-        # Read the actual JSONL, not a reconstructed example.
         persisted = [json.loads(line) for line in session.path.read_text(encoding="utf-8").splitlines()]
         assert [e for e in persisted if e["type"] == "model/request"][-1]["data"] == requests[-1].data
     finally:

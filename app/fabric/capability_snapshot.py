@@ -50,9 +50,6 @@ class CapabilityStatus:
 class CapabilitySnapshot:
     platform: str
     capabilities: tuple[CapabilityStatus, ...]
-    # Plugin manifests that failed to load. A folder of recipes that silently
-    # does nothing is the worst outcome for "drop a folder in and it works":
-    # the user has no way to tell a broken plugin from one they installed wrong.
     plugin_warnings: tuple[str, ...] = ()
 
     def by_id(self, capability_id: str) -> CapabilityStatus:
@@ -190,7 +187,6 @@ _LOCAL_EXECUTORS = frozenset({
     "artifact.evidence",
     "artifact.compare",
     "artifact.visual_context",
-    "artifact.list",
     "local.task",
     "maps.deep_link",
 })
@@ -225,10 +221,6 @@ def _engine_provider_for_recipe(
             else ("unavailable:agent_not_available", "agent_not_available")
         )
     if provider == "inplace.text":
-        # No agent fallback, for the same reason engine.py refuses one: an agent
-        # asked to "rewrite this in place" writes somewhere else, leaving the
-        # user's own text untouched. Reporting it as agent-executable would
-        # advertise a capability that cannot be delivered.
         return provider, "engine_provider_contract"
     if provider == "model.text" or provider.startswith("unavailable:"):
         if agent_available:
@@ -258,12 +250,6 @@ def build_engine_capability_snapshot(
     platform: str | None = None,
     recipes: Sequence[RecipeDefinition] = RECIPE_CATALOG,
 ) -> CapabilitySnapshot:
-    """Describe the providers the current FabricEngine can actually dispatch.
-
-    This intentionally does not infer availability from the public recipe's
-    aspirational provider list.  It uses the engine dispatch contract, cheap
-    local executable/module evidence, and the persisted policy only.
-    """
     current_platform = str(platform or _current_platform()).strip().casefold()
     enabled = recipe_enabled or {}
     defaults = permission_defaults or {}

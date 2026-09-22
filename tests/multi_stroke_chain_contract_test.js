@@ -1,11 +1,5 @@
 'use strict';
 
-// Contract for the unified multi-stroke chain:
-// - one activation path, no "modes": a chain of strokes is collected on the
-//   overlay and finalized into ONE gesture (this/these regions together);
-// - the capsule anchors at the FIRST stroke and never jumps;
-// - the arm stays alive between strokes (overlay:gesture-stroke);
-// - the stage capsule reports how many regions were selected.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -22,7 +16,6 @@ const {
   summarizeGesture,
 } = require('../electron/gesture_capture');
 
-// ── summarizeGesture contract ────────────────────────────────────────────
 const multi = summarizeGesture(
   [],
   [
@@ -46,7 +39,6 @@ assert.strictEqual(multi.strokes.length, 2);
 assert.deepStrictEqual(multi.anchorPoint, { x: 190, y: 163 });
 assert.deepStrictEqual(multi.releasePoint, { x: 690, y: 302 });
 
-// ── overlay chaining ─────────────────────────────────────────────────────
 assert(overlay.includes('let strokes: OverlayStroke[] = [];'), 'chain state must exist');
 assert(overlay.includes('CHAIN_GAP_MS'), 'rolling finalize window must exist');
 assert(overlay.includes('strokes.push({'), 'pointerup must commit the stroke to the chain');
@@ -67,7 +59,6 @@ assert(overlay.includes('strokes: strokes.map((s) => ({ points: [...s.points] })
   'the done() payload must carry every stroke');
 assert(overlay.includes('finalizeGesture'), 'finalize helper must exist');
 
-// ── main keeps the arm alive between strokes ─────────────────────────────
 assert(main.includes("ipcMain.on('overlay:gesture-stroke'"),
   'main must handle committed strokes');
 const strokeHandler = main.slice(
@@ -89,7 +80,6 @@ assert(preload.includes("onGestureSubmit:"),
 assert(overlay.includes('window.magicPointer?.onGestureSubmit'),
   'overlay must finalize when the main-process Enter shortcut fires');
 
-// ── completeSelectionGesture consumes multi-stroke summaries ─────────────
 const complete = main.slice(
   main.indexOf('function completeSelectionGesture('),
   main.indexOf('function processPassThroughGestureSample('),
@@ -98,7 +88,6 @@ assert(complete.includes('summarizeGesture(') && complete.includes('payload?.str
   'gesture completion must accept committed strokes (bounded against hostile point floods)');
 assert(complete.includes('anchorPoint'), 'gesture must carry the first-stroke anchor');
 
-// ── capsule anchors at the first stroke, count chip present ──────────────
 const begin = main.slice(
   main.indexOf('function beginSelectionSession('),
   main.indexOf('app.whenReady().then('),

@@ -1,4 +1,3 @@
-"""Renamed tool schemas must keep the durable interrupted-action barrier."""
 
 from __future__ import annotations
 

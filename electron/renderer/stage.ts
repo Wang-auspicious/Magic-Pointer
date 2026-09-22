@@ -1,11 +1,3 @@
-// PointerStage renderer: hosts every ephemeral visual (targeting outline,
-// frozen glow, command capsule, processing shimmer, result/error surfaces)
-// on one transparent click-through window. State lives in the pure machine
-// electron/stage_state.js (loaded as a plain script -> globalThis.StageState).
-//
-// Motion is CSS keyframes + the Web Animations API only. GSAP is NOT a
-// dependency; if the choreography outgrows this, vendor a local GSAP file
-// later (no CDN, no npm) and swap the timeline code behind these helpers.
 (() => {
   const machine = globalThis.StageState;
   const anchor = globalThis.StageAnchor;
@@ -16,16 +8,12 @@
   const { initialState, transition } = machine;
   const api = window.magicPointerStage;
 
-  // 静态 DOM：stage.html 里这些 id 固定存在，迁移期先按 non-null 取用
-  // （overlay.ts 同款写法），页面结构变化时再收紧。
   const stageRoot = document.getElementById('stage') as HTMLElement;
   const targetingOutline = document.getElementById('targeting-outline') as HTMLElement;
   const captureProofLayer = document.getElementById('capture-proof') as HTMLElement;
   const screenPointLayer = document.getElementById('screen-points') as HTMLElement;
   const selectionStretch = document.getElementById('selection-stretch') as HTMLElement;
   const selectionStretchHint = document.getElementById('selection-stretch-hint') as HTMLElement;
-  // Live drag on a selection handle, or null. Mirrors stretchDrag on the answer
-  // card and shares its policy, so the same pull means the same thing.
   let selectionStretchDrag: {
     edge: string | undefined; startY: number; currentLines: number; currentChars: number; intent: any;
   } | null = null;
@@ -33,9 +21,6 @@
   const capsule = document.getElementById('capsule') as HTMLElement;
   const capsuleCount = document.getElementById('capsule-count') as HTMLElement;
   const capsuleRefs = document.getElementById('capsule-refs') as HTMLElement;
-  // One entry per stroke the user drew, in draw order. Dropping one here drops
-  // it from the command, so a mis-drawn stroke costs one click rather than a
-  // whole redraw.
   let strokeRefs: { strokeIndex: number; label: string; referenceId: string | null }[] = [];
   let referenceBindings = new Map<string, any>();
   let taskInputSequence = 0;
@@ -63,25 +48,16 @@
   const consentReject = document.getElementById('consent-reject') as HTMLButtonElement;
   const consentApprove = document.getElementById('consent-approve') as HTMLButtonElement;
   const shapePolicy = globalThis.AnswerShapePolicy || null;
-  // 这次回答是「要送出去的」还是「自己看的」。它决定三件事：面板贴哪儿、
-  // 正文解不解析 markdown、要不要出现那一下点头。
   let answerShape: { shape: string; allowMarkdown: boolean; needsConsent: boolean; reason: string } = { shape: 'inspect', allowMarkdown: true, needsConsent: false, reason: 'init' };
   const passageExpand = document.getElementById('passage-expand') as HTMLElement;
-  // 就地展开：用户在回答里选中的那一段，以及它属于哪个文本节点。展开回来的
-  // 字直接换掉这一段，所以这里记的是节点+偏移，不是「第几个字」。
   let passagePick: { range: Range; text: string; answer: HTMLElement } | null = null;
   let passageBusy = false;
   const errorCard = document.getElementById('stage-error') as HTMLElement;
   const chipsBox = document.getElementById('stage-chips') as HTMLElement;
   const stretchPolicy = globalThis.StageStretchPolicy || null;
-  // Pick mode: the element the user last picked, so an unchanged pick does not
-  // restart the highlight animation (that reads as flicker).
   let pickTargetShown: { rect: any; label: string } | null = null;
-  // The element the user last clicked on, and therefore what a question is about.
   let pickedElement: { rect: any; label: string; source: string } | null = null;
   let pickInFlight = false;
-  // Where this window sits on the virtual desktop, learned from the pointer
-  // stream (which carries both spaces) rather than assumed to be zero.
   let stageOriginX = 0;
   let stageOriginY = 0;
   const noticeBox = document.getElementById('stage-notice') as HTMLElement;
@@ -115,14 +91,9 @@
   let renderedTranscript = '';
   let dismissTimer: ReturnType<typeof setTimeout> | null = null;
   let hasShown = false;
-  // Selection metadata rides on stage:show/stage:update payloads (not the
-  // machine): the chips policy needs it, the lifecycle does not.
   const meta: { selectionSource: string | null; objectKind: string | null } = { selectionSource: null, objectKind: null };
   let renderedChipIds = '';
-  // Signature of the turns currently in the DOM, so an unchanged thread is
-  // never rebuilt (see renderThread).
   let renderedTurnSignature = '';
-  // Live wiring context from main (stage:show / stage:update payloads).
   const session: {
     token: string | null;
     taskId: string | null;
@@ -148,15 +119,10 @@
     resultDragged: boolean;
     consentDismissedForTurn: unknown;
     selectionCount: number;
-    // 选中内容的字数（不是内容）。拉伸手势要把「屏幕上几行」换算成「多少字」，
-    // 因为引擎只认后者。
     selectionChars: number;
-    // 目标窗口在舞台坐标系里的矩形，和一个显示用的名字。只有几何和名字，
-    // 没有句柄也没有进程 id——渲染层能画在哪儿，不等于它能读哪儿或写哪儿。
     targetWindowRect: { x: number; y: number; width: number; height: number } | null;
     targetAppLabel: string;
     voiceState: string;
-    // "r, g, b" from appearance settings; empty means keep the stylesheet default.
     accentRgb: string;
     visualTuning: Record<keyof typeof DEFAULT_VISUAL_TUNING, number>;
   } = {
@@ -181,15 +147,10 @@
     resultDragged: false,
     consentDismissedForTurn: null,
     selectionCount: 1,
-    // 选中内容的字数（不是内容）。拉伸手势要把「屏幕上几行」换算成「多少字」，
-    // 因为引擎只认后者。
     selectionChars: 0,
-    // 目标窗口在舞台坐标系里的矩形，和一个显示用的名字。只有几何和名字，
-    // 没有句柄也没有进程 id——渲染层能画在哪儿，不等于它能读哪儿或写哪儿。
     targetWindowRect: null,
     targetAppLabel: '',
     voiceState: 'idle',
-    // "r, g, b" from appearance settings; empty means keep the stylesheet default.
     accentRgb: '',
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
@@ -215,8 +176,8 @@
   let previousPointerButtons = 0;
   let pointerWasOverCapsule = false;
   let lastPointerPoint: { x: number; y: number } | null = null;
-  let capsuleDrag: { startX: number; startY: number; originLeft: number; originTop: number } | null = null; // { startX, startY, originLeft, originTop }
-  let surfaceDrag: { element: HTMLElement; startX: number; startY: number; originLeft: number; originTop: number } | null = null; // { element, startX, startY, originLeft, originTop }
+  let capsuleDrag: { startX: number; startY: number; originLeft: number; originTop: number } | null = null;  
+  let surfaceDrag: { element: HTMLElement; startX: number; startY: number; originLeft: number; originTop: number } | null = null;  
   let reportedState = '';
   let targetSweepComplete = false;
   let targetSweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,9 +187,6 @@
   });
 
   function dispatch(event: any) {
-    // Proof bands are evidence about a finished read, not a state of the
-    // machine. They ride along on whatever event carried the result so the
-    // rectangles and the answer appear together.
     if (event && Object.prototype.hasOwnProperty.call(event, 'captureProof')) {
       renderCaptureProof(event.captureProof);
     }
@@ -242,10 +200,6 @@
     syncEffects();
   }
 
-  // Outline every rectangle we actually laid hands on, one band per rectangle,
-  // staggered so they light up in reading order. Blue means the app handed us
-  // those characters; amber means we recognised them from pixels. The colours
-  // are load-bearing — see stage.css.
   function renderCaptureProof(bands: any) {
     if (!captureProofLayer) return;
     captureProofLayer.replaceChildren();
@@ -255,10 +209,6 @@
       captureProofLayer.hidden = true;
       return;
     }
-    // The same screen -> stage-window transform showPickHighlight uses, so a
-    // proof band and a pick highlight always land in the same place. If that
-    // transform is wrong on a scaled display it is wrong for both, and there is
-    // one place to fix it.
     const mapped = policy.toStageRects(list, {
       origin: { x: stageOriginX, y: stageOriginY },
     });
@@ -280,16 +230,10 @@
     captureProofLayer.hidden = index === 0;
   }
 
-  // An arrow per [POINT] the answer carried, numbered the way the sentence is:
-  // first this, then that. Screen coordinates use the same transform as the
-  // proof bands and the pick highlight.
   function renderScreenPoints(points: any) {
     if (!screenPointLayer) return;
     screenPointLayer.replaceChildren();
     const list = Array.isArray(points) ? points : [];
-    // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出）。stage 窗口
-    // 坐标是 DIP——先减窗口原点、再除缩放（和 captureProof 同一套换算，
-    // 否则 200% 缩放屏上箭头落在二分之一处）。
     const scale = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
     let drawn = 0;
     for (const point of list) {
@@ -312,9 +256,6 @@
     screenPointLayer.hidden = drawn === 0;
   }
 
-  // Place the pair of handles around whatever the user has selected. Hidden
-  // whenever there is no resolved region to stretch — handles floating over
-  // nothing would invite a gesture that cannot be honoured.
   function renderSelectionStretch() {
     if (!selectionStretch) return;
     const rect = state.target;
@@ -333,7 +274,6 @@
   function selectionLineCount() {
     const rect = state.target;
     if (!isUsableTargetRect(rect)) return 1;
-    // The selection's own height in lines, at the same scale the policy uses.
     return Math.max(1, Math.round(Number(rect.height) / 20));
   }
 
@@ -350,8 +290,6 @@
 
   function updateSelectionStretch(y: number) {
     if (!selectionStretchDrag || !stretchPolicy) return;
-    // The top handle moves the opposite way: dragging it up makes the region
-    // taller, which is the same "more" as dragging the bottom one down.
     const raw = y - selectionStretchDrag.startY;
     const dragPx = selectionStretchDrag.edge === 'top' ? -raw : raw;
     selectionStretchDrag.intent = stretchPolicy.stretchIntent({
@@ -369,8 +307,6 @@
     if (selectionStretchHint) selectionStretchHint.textContent = '';
     if (!drag || !drag.intent || !stretchPolicy) return;
     const command = stretchPolicy.stretchCommand(drag.intent, 'selection');
-    // Submitted through the ordinary composer path, so the gesture shows up in
-    // the thread as an ask like any other and can be undone by asking again.
     if (command) submitCommand(command);
   }
 
@@ -426,14 +362,6 @@
     capsule.dataset.voiceState = session.voiceState;
   }
 
-  // Dragging used to start anywhere inside a surface that was not a button,
-  // textarea or input. That negative list could never enumerate everything —
-  // native scrollbars are not elements, so pulling one dragged the whole
-  // bubble across the screen. Dragging is now positive: it starts only on an
-  // element that declares itself a handle, and never inside [data-no-drag].
-  // Pick mode: ask what element is under this screen point and outline the whole
-  // thing. Screen coordinates, because the answer comes from the target app's
-  // automation tree, not from our window.
   async function pickElementAt(screenX: number, screenY: number) {
     if (pickInFlight || !api || typeof api.pickElement !== 'function') return;
     pickInFlight = true;
@@ -446,12 +374,8 @@
       if (response?.ok !== true || !response.rect) return;
       const picked = { rect: response.rect, label: String(response.label || '') };
       const pickPolicy = globalThis.StagePickPolicy;
-      // Repainting the same rectangle restarts its animation; skip it.
       if (pickPolicy && pickPolicy.isSameTarget(pickTargetShown, picked)) return;
       pickTargetShown = picked;
-      // A pick is not just a highlight: it becomes what the next question is
-      // about. Without this the element lights up and the command still goes to
-      // whatever was selected before, which is the worst kind of near-miss.
       pickedElement = {
         rect: picked.rect,
         label: String(picked.label || '').slice(0, 40),
@@ -467,12 +391,8 @@
     }
   }
 
-  // Reuses the frozen-glow surface and its sweep-band styling, so a picked
-  // element looks like a drawn selection rather than a second visual language.
   function showPickHighlight(picked: any) {
     const rect = picked.rect;
-    // Screen -> stage-window coordinates. The stage window's own origin is the
-    // offset, and it is tracked from the pointer stream (screenX minus x).
     placeRect(frozenGlow, {
       x: rect.x - stageOriginX,
       y: rect.y - stageOriginY,
@@ -481,13 +401,10 @@
     });
     frozenGlow.hidden = false;
     frozenGlow.classList.remove('is-picked');
-    // Force a reflow so the animation restarts for a genuinely new target.
     void frozenGlow.offsetWidth;
     frozenGlow.classList.add('is-picked');
   }
 
-  // One chip per stroke, numbered the way the composed command numbers them, so
-  // the ① on screen is the ① the model is told about.
   function renderStrokeRefs() {
     if (!capsuleRefs) return;
     const stream = globalThis.StageTurnStream;
@@ -561,10 +478,6 @@
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   }
 
-  // A press on our own floating surfaces (chips, selection handles, error card,
-  // consent bar, notice, delivery row) belongs to the UI, not to pick mode.
-  // Without this, clicking a chip also picked the element behind it in the
-  // target app and hijacked the next question's target.
   function isInsideStageSurface(x: number, y: number, element: HTMLElement | null) {
     return Boolean(element && !element.hidden && isPointInside(x, y, element));
   }
@@ -589,15 +502,6 @@
     const buttons = Number(payload?.buttons || 0);
     if (![t, x, y, buttons].every(Number.isFinite)) return;
     lastPointerPoint = { x, y };
-    // stageOriginX/Y is consumed as a PHYSICAL screen origin: both
-    // CaptureProofPolicy.toStageRects and renderScreenPoints subtract it from
-    // a physical coordinate taken off the frozen frame. main sends it directly
-    // (stageOriginX/Y on this payload) because the renderer cannot derive it —
-    // screenX here is DIP, so `screenX - x` produced a DIP origin that only
-    // happened to be right at 100% scale with the display at virtual origin 0.
-    // The subtraction stays as a fallback for a main process that predates the
-    // field; it is wrong at other scales, which is why it is no longer the
-    // primary path.
     if (Number.isFinite(payload?.stageOriginX) && Number.isFinite(payload?.stageOriginY)) {
       stageOriginX = Number(payload.stageOriginX);
       stageOriginY = Number(payload.stageOriginY);
@@ -616,9 +520,6 @@
     const overResult = !threadPanel.hidden
       && x >= resultRect.left && x <= resultRect.right
       && y >= resultRect.top && y <= resultRect.bottom;
-    // Pick mode: a click that lands outside our own surfaces, while the composer
-    // is open, means "tell me about that thing" — the element under the cursor
-    // lights up whole. Inside our surfaces the click belongs to the UI.
     const overOwnSurface = isInsideStageSurface(x, y, chipsBox)
       || isInsideStageSurface(x, y, selectionStretch)
       || isInsideStageSurface(x, y, errorCard)
@@ -632,8 +533,6 @@
         pickElementAt(Number(payload.screenX), Number(payload.screenY));
       }
     }
-    // Selection handles first: they sit outside our panels, on the user's own
-    // content, so a press there is unambiguous.
     if (primaryDown && !previousPrimaryDown && !selectionStretchDrag && selectionStretch && !selectionStretch.hidden) {
       for (const handle of selectionStretch.querySelectorAll<HTMLElement>('.selection-stretch-handle')) {
         if (isPointInside(x, y, handle)) {
@@ -646,9 +545,6 @@
       updateSelectionStretch(y);
       if (!primaryDown && previousPrimaryDown) endSelectionStretch();
     }
-    // 答案底边那条拉伸把手已经撤掉了：现在改答案长度的做法是在答案里划中一段
-    // 再点「展开讲讲」（见 expandPickedPassage）。那条把手会开新的一轮，而这里
-    // 用户只是想把第一轮的一段话讲细一点。
     if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
       if (isDragHandleAt(x, y, threadPanel)) {
         surfaceDrag = { element: threadPanel, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
@@ -670,10 +566,8 @@
       surfaceDrag.element.classList.remove('is-dragging');
       surfaceDrag = null;
       session.resultDragged = true;
-      // Release pointer capture in the same tick the button came up.
       syncHitRegions();
     }
-    // Drag the capsule: press on its body (not inside the text input) and move.
     if (overCapsule && primaryDown && !previousPrimaryDown && !capsuleDrag) {
       if (isDragHandleAt(x, y, capsule)) {
         capsuleDrag = { startX: x, startY: y, originLeft: capsuleRect.left, originTop: capsuleRect.top };
@@ -713,20 +607,11 @@
     }
   }
 
-  // The transparent stage may ask main to receive mouse events only while it
-  // has a control a user can actually operate. A result/error card is usually
-  // presentation only, so its presence alone must not turn the full-screen
-  // stage into a click-blocking layer.
   function hasInteractiveStageSurface() {
     const name = state.name;
     if (name === 'hidden' || name === 'dismissing') return false;
     if (name === 'capsule-text') return !capsule.hidden && !capsuleInput.disabled;
-    // The voice capsule needs pointer events too: drag-to-move and
-    // push-to-talk / hover triggering both rely on stage mouse capture.
     if (name === 'capsule-voice') return !capsule.hidden;
-    // Anything the user can grab or press counts, in every remaining state.
-    // While processing, the fixed thread is the only visible surface; it owns
-    // the stop affordance and must not fall through to the app underneath.
     if (!capsule.hidden || !threadPanel.hidden) return true;
     const hasEnabledButton = (element: HTMLElement) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
@@ -735,8 +620,6 @@
   }
 
   function visibleStageRegions() {
-    // consentBox 是「要送出去」那一路的点头按钮：它悬在胶囊下方，若不在
-    // shape 区域内，点击会穿透到下层应用，整个同意流程点不响。
     return [targetingOutline, frozenGlow, capsule, threadPanel, errorCard, chipsBox, consentBox, deliveryBox, passageExpand]
       .filter((element) => !element.hidden)
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
@@ -757,7 +640,6 @@
 
   function interactiveStageRegions() {
     const elements = [];
-    // The capsule is operable only while it is the visible entry surface.
     if (!capsule.hidden && !(state.name === 'capsule-text' && capsuleInput.disabled)) {
       elements.push(capsule);
     }
@@ -785,10 +667,6 @@
 
   function syncHitRegions() {
     const name = state.name;
-    // One source of truth. The old form gated every state other than
-    // capsule-text/result/error behind `!chipsBox.hidden`, which silently
-    // disabled capture during `processing` — exactly when the thread and the
-    // composer are both on screen and grabbable.
     const hasInteractiveSurface = hasInteractiveStageSurface();
     const interactiveRegions = interactiveStageRegions();
     const wantCapture = hitPolicy.shouldCaptureMouse({
@@ -798,9 +676,6 @@
       dragging: Boolean(capsuleDrag || surfaceDrag),
     });
     const requestFocus = name === 'capsule-text';
-    // A shaped window clips the pointer to its regions. During a drag that
-    // would hand the mouse back to the app underneath the moment the cursor
-    // outruns the panel, so the stage claims the whole viewport until release.
     const regions = (capsuleDrag || surfaceDrag)
       ? [{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }]
       : visibleStageRegions();
@@ -825,9 +700,6 @@
     hitRegionRefreshTimer = setTimeout(syncHitRegions, 240);
   }
 
-  // Side effects that follow the machine, not the DOM: dictation lifecycle,
-  // main-process mouse capture (the stage window is click-through by default),
-  // and state reporting for the main-process log.
   function syncEffects() {
     const name = state.name;
     const wantDictation = name === 'capsule-voice' && session.groundingReady === true;
@@ -859,15 +731,9 @@
     const trimmed = String(command == null ? '' : command).trim();
     if (!trimmed) return;
     const inputMode = state.inputMode;
-    // Chips the user removed are removed from the request too, or the chip is a
-    // decoration that lies about what was sent.
     const keptStrokeIndexes = globalThis.StageTurnStream?.keptStrokeIndexes?.(strokeRefs)
       || strokeRefs.map((ref) => ref.strokeIndex);
     if (state.name === 'processing') {
-      // A turn is already running: this is a steer, not a second request. The
-      // text goes into the durable session inbox and the loop claims it at the
-      // next round boundary (next-step), so mid-run course corrections no
-      // longer require killing the run (O1/O2).
       steerSelectionCommand(trimmed);
       return;
     }
@@ -1031,7 +897,6 @@
   function renderTranscript() {
     const text = state.transcript || '';
     if (text === renderedTranscript) return;
-    // A single text node avoids thousands of spans during streaming dictation.
     transcriptBox.textContent = text;
     renderedTranscript = text;
   }
@@ -1071,9 +936,6 @@
     element.dataset.quadrant = placement.quadrant;
   }
 
-  // Process/result surfaces prefer the free gutter beside the source app and
-  // preserve that side for the whole session. The capsule is only the fallback
-  // anchor when the adaptive placement policy is unavailable.
   function placeThreadSurface() {
     if (session.resultDragged && session.resultPlacement) {
       threadPanel.style.left = `${session.resultPlacement.x}px`;
@@ -1119,9 +981,6 @@
   }
 
   function anchorCapsuleToTarget(width: number) {
-    // Anchor exactly once per session: the capsule must appear next to the
-    // selection and then stay put (the user can drag it). Re-anchoring when
-    // grounding later resolves made the bubble jump across the screen.
     if (session.capsulePlaced || session.capsuleDragged) return;
     const height = surfacePolicy.surfaceSize('composer', {
       width: window.innerWidth,
@@ -1181,8 +1040,6 @@
   function applyVisualTuning() {
     stageRoot.style.setProperty('--stage-sweep-duration', `${session.visualTuning.sweepDurationMs}ms`);
     stageRoot.style.setProperty('--stage-sweep-fade', `${session.visualTuning.sweepFadeMs}ms`);
-    // One assignment retints every accent in the stage, because stage.css
-    // composes all of them from these channels rather than repeating literals.
     if (session.accentRgb) {
       stageRoot.style.setProperty('--stage-accent-rgb', session.accentRgb);
     }
@@ -1190,8 +1047,6 @@
 
 
 
-  // 失败也是一张卡——同一套版式，只是 state 是 failed。原来它走的是另一条
-  // 渲染路径，于是「成功长这样、失败长那样」，用户看到的是两个产品。
   function renderFailure(container: HTMLElement, error: any) {
     const message = typeof error === 'string'
       ? error
@@ -1208,9 +1063,6 @@
 
 
 
-  // renderCalendarDraft / renderTableCompare / renderTextDraft 三个渲染器已经
-  // 并进 renderer/card_render.js（对应 calendar / table / diff 三种卡）。
-  // 舞台、随行窗、工作室从此共用同一份实现——不再是三份各写一遍。
 
 
   function safeAgentSession(raw: any) {
@@ -1343,10 +1195,6 @@
     container.appendChild(draft);
   }
 
-  // Action buttons carry only opaque tokens/ids from the stage contract; the
-  // renderer never sees prompts or proposal parameters.
-  // Copy the answers, not the scaffolding: the ask labels are there to orient
-  // the reader on screen, and the wait dots are not content at all.
   function resultPlainText(container: HTMLElement) {
     const clone = container.cloneNode(true) as HTMLElement;
     clone.querySelectorAll<HTMLElement>('.turn-answer[data-answer]').forEach((node) => { node.textContent = node.dataset.answer || ''; });
@@ -1381,16 +1229,6 @@
     document.body.removeChild(area);
   }
 
-  // --- 就地展开 ---------------------------------------------------------------
-  //
-  // 在回答里划中一段字，贴着选区冒出一个小按钮；点它，那一段被展开后的字换掉。
-  //
-  // 三条它必须守住的规矩：
-  // 1. **不是第二轮。** 不走 submitCommand，不 dispatch，不动 state.turns。
-  //    轮次计数因此不变——用户只是在第一轮的答案上做了一处修改。
-  // 2. **换掉的是那一段，不是整张卡。** 记的是 Range（节点+偏移），不是「第几
-  //    个字」，所以卡里有加粗、代码、图片时位置也不会错。
-  // 3. **换回去的字要能看出来。** 新的那一段自己黄一下再褪掉，用户不用去比对。
   const PASSAGE_MIN_CHARS = 8;
 
   function hidePassageExpand() {
@@ -1400,8 +1238,6 @@
     scheduleHitRegionRefresh();
   }
 
-  // 选区必须整个落在一条已经出完的回答里。落在提问行上、跨了两轮、或者那一轮
-  // 还在跑，都不给按钮——展开一段还在变的字没有意义。
   function passageRangeFrom(selection: Selection | null) {
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
     const range = selection.getRangeAt(0);
@@ -1432,8 +1268,6 @@
     }
     passagePick = pick;
     passageExpand.hidden = false;
-    // 贴在选区下缘的左端；下面放不下就翻到上缘。和胶囊的锚定同一套规矩：
-    // 一次算好，不跟着鼠标漂。
     const rect = pick.range.getBoundingClientRect();
     const size = passageExpand.getBoundingClientRect();
     const width = size.width || 108;
@@ -1445,9 +1279,6 @@
     scheduleHitRegionRefresh();
   }
 
-  // 桥回来的是纯文本。它可能有换行，所以按行拆成 <br> 分隔的文本节点——
-  // 这里一律 createTextNode：这是一块渲染模型输出的界面，转义必须是结构性的，
-  // 不能靠记得转义（stage.js 因此被钉死不许出现那个赋值 HTML 字符串的属性）。
   function passageNodes(value: unknown) {
     const span = document.createElement('span');
     span.className = 'passage-fresh';
@@ -1473,7 +1304,6 @@
       reply = await api.expandPassage({
         selectionSessionToken: session.token,
         passage: pick.text,
-        // 整段回答只作参考，让展开出来的话接得上前后文。
         context: (pick.answer.textContent || '').trim(),
       });
     } catch (error) {
@@ -1483,9 +1313,6 @@
     passageExpand.dataset.busy = 'false';
     if (label) label.textContent = originalLabel;
     if (!reply || reply.ok !== true || !String(reply.text || '').trim()) {
-      // 说清楚哪一段没被改动，而不是静默地什么都不发生。
-      // 说清楚哪一段没被改动，而不是静默地什么都不发生。走已有的那一行提示，
-      // 不另开一个只有这里用得上的红字条。
       dispatch({ type: 'NOTICE', notice: { message: String(reply?.error || '这次没能展开，那一段保持原样。') } });
       setTimeout(() => {
         if (state.notice) dispatch({ type: 'NOTICE', notice: { message: '' } });
@@ -1493,8 +1320,6 @@
       hidePassageExpand();
       return;
     }
-    // 等模型的这几秒里用户可能已经问了下一个问题，那一轮重画会把这些节点
-    // 摘掉。往一堆孤儿节点里塞字是看不见的，所以先确认它还挂在树上。
     if (!resultCard.contains(pick.range.commonAncestorContainer)) {
       hidePassageExpand();
       return;
@@ -1507,8 +1332,6 @@
     placeThreadSurface();
   }
 
-  // mousedown 上就阻止默认行为，否则按钮一拿到焦点选区就塌了，
-  // 等 click 到达时已经没有可展开的东西。
   passageExpand.addEventListener('mousedown', (event) => event.preventDefault());
   passageExpand.addEventListener('click', () => {
     console.log('[stage] passage-expand click pick=', passagePick ? 'present' : 'null',
@@ -1520,13 +1343,8 @@
     if (!passageExpand.hidden) syncPassageExpand();
   });
 
-  // The thread bar replaces the per-answer toolbar: with the composer always
-  // live underneath, a "追问" button is redundant — you just type.
   threadCopy.addEventListener('click', () => copyResultText(resultCard, threadCopy));
 
-  // --- 追问条 -----------------------------------------------------------------
-  // 底栏那条输入不是第二个输入框：它和胶囊走同一条提交路径，只是手更近——
-  // 你刚读完这段回答，光标就在这儿。
   function syncFollowupReady() {
     threadSend.dataset.ready = threadFollowup.value.trim() ? 'true' : 'false';
   }
@@ -1547,9 +1365,6 @@
   threadSend.addEventListener('mousedown', (event) => event.preventDefault());
   threadSend.addEventListener('click', submitFollowup);
 
-  // --- 点头的那一下 -------------------------------------------------------------
-  // 只有「要送出去」的那一类才有。定稿的那段话先回到问题框里，你看着它按同意，
-  // 才真的往别人的窗口里写。拒绝＝什么都不做，框留着，可以继续改。
   function syncConsent() {
     const currentTurnId = state.turns.at(-1)?.id ?? null;
     const want = answerShape.needsConsent
@@ -1563,12 +1378,9 @@
         consentBox.hidden = true;
         scheduleHitRegionRefresh();
       }
-      // 新的一轮重新点亮同意按钮：上一轮的写入早已结束或失败。
       resetConsentButton();
       return;
     }
-    // 那段话只在框刚出现的那一下复制回去一次。之后用户改了框里的字，
-    // 任何一次重画（NOTICE、模型健康、语音状态）都不能把它改回原样。
     consentTarget.textContent = session.targetAppLabel
       ? `写回 ${session.targetAppLabel}`
       : '写回你刚才那个窗口';
@@ -1590,8 +1402,6 @@
     scheduleHitRegionRefresh();
   });
 
-  // 写入是异步的（桥可能跑好几秒）。上一版用 setTimeout 1.6s 重新点亮按钮，
-  // 用户在此期间再点一次就是往同一个窗口里写两遍同一段话。
   let consentBusy = false;
   function resetConsentButton() {
     consentBusy = false;
@@ -1616,25 +1426,12 @@
       if (response?.ok !== true) threadStop.disabled = false;
     } catch { threadStop.disabled = false; }
   });
-  // 重问一次：把上一轮问过的那句话原样再提交一遍。参考图里那张提案卡左下角
-  // 那个重跑图标就是这件事——不满意的时候，最省事的动作是「再来一次」，
-  // 而不是把问题重新打一遍。
   threadRetry.addEventListener('click', () => {
     const last = [...state.turns].reverse().find((turn) => turn.status !== 'pending');
     const ask = String(last?.ask || '').trim();
     if (ask) submitCommand(ask);
   });
 
-  // Result payloads are discriminated by `kind`; anything unknown falls back
-  // to the plain inline text rendering.
-  // 结果按 kind 分派。
-  //
-  // 除了 agent-prompt-draft，全部走共享的 renderCard——舞台、随行窗、工作室
-  // 因此渲染的是同一张卡，同一次问答在三个界面上长得一模一样。上一版是三份
-  // 各写一遍的模板，于是它们各长各的。
-  //
-  // agent-prompt-draft 留在原地：它不是一张卡，是一个带会话选择器和自己那套
-  // IPC 的控件。硬塞进卡片契约只会两头不讨好。
   function renderStructured(container: HTMLElement, payload: any, scope?: string) {
     container.replaceChildren();
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
@@ -1645,7 +1442,7 @@
     }
     if (!kind || kind === 'inline' || kind === 'prose' || kind === 'text') {
       const turn = payload && typeof payload === 'object' ? payload : { answer: String(payload || '') };
-      container.replaceChildren(...DshChat.assistantTurnNode(turn, scope));
+      container.replaceChildren(...ChatView.assistantTurnNode(turn, scope));
       container.dataset.answer = String(turn.answer || '');
       const actions = Array.isArray(payload?.actions) ? payload.actions : [];
       if (actions.length) {
@@ -1663,16 +1460,13 @@
         container.appendChild(footer);
         bindCardActions(container, payload);
       }
-      DshChat.bindDelegation(container);
+      ChatView.bindDelegation(container);
       return;
     }
     const card = CardModel.normalizeCard(payload && typeof payload === 'object'
       ? payload
       : { kind: 'prose', answer: String(payload || '') });
     card.runningLabel = CardModel.runningLabel(card);
-    // 要送出去的那一路不解析 markdown。对面读到的是字面量的 `**` 和 `-`，
-    // 所以在我们这儿就不能把它渲染成粗体和列表——渲染出来的样子会让人以为
-    // 发过去也是那样。渲染层和系统提示词说的必须是同一件事。
     const shape = shapePolicy
       ? shapePolicy.answerShape({ result: payload, command: String(state.turns.at(-1)?.ask || '') })
       : { allowMarkdown: true };
@@ -1682,8 +1476,6 @@
     bindCardActions(container, payload);
   }
 
-  // 卡片本身是纯 HTML，动作用一次事件委托挂上来。按钮做什么由 payload.actions
-  // 决定——和原来逐个 addEventListener 时的行为一致，只是绑定点变成了一个。
   function bindCardActions(container: HTMLElement, payload: any) {
     const actions: any[] = payload && Array.isArray(payload.actions) ? payload.actions : [];
     if (!actions.length) return;
@@ -1717,10 +1509,6 @@
     });
   }
 
-  // 等待中的那张卡。它和最终那张是同一张——同一个 id、同一种 kind、同一套
-  // 版式，只是 state 还是 running。所以结果到了不是「换一张卡」，是这张卡
-  // 自己长出身子来。上一版这里是一个通用的转圈加一个秒数，那是在告诉用户
-  // 「我不打算让你知道我在干什么」。
   const runningCards = new Map<string, { snapshot: MagicPointerLiveProgress; renderer?: MagicPointerLiveTurn }>();
 
   function stageTurnScope(turn: any): string {
@@ -1738,13 +1526,12 @@
   function paintRunningCard(container: HTMLElement, turn: any) {
     const card = runningCardFor(turn);
     if (!card.renderer) {
-      card.renderer = DshChat.createLiveTurn(container, stageTurnScope(turn));
-      DshChat.bindDelegation(container);
+      card.renderer = ChatView.createLiveTurn(container, stageTurnScope(turn));
+      ChatView.bindDelegation(container);
     }
     card.renderer.update(card.snapshot);
   }
 
-  // 桥报上来一步，就给正在等的那张卡打一个补丁并重画。
   function patchRunningCard(patch: any) {
     const turn = [...state.turns].reverse().find((t) => t.status === 'pending');
     if (!turn) return;
@@ -1783,9 +1570,6 @@
     return node;
   }
 
-  // Turns are rebuilt only when one is added or settles. Skipping the no-op
-  // re-render keeps the scroll position and, more importantly, does not wipe
-  // the agent-prompt textarea while the user is editing it.
   function renderThread(turns: any[]) {
     const signature = turns.map((turn) => `${turn.id}:${turn.status}`).join(',');
     if (signature !== renderedTurnSignature) {
@@ -1806,18 +1590,12 @@
     threadStop.hidden = !pending;
     if (!pending) threadStop.disabled = false;
     threadPanel.dataset.turnCount = String(turns.length);
-    // 标题说的是「这个窗口是谁」，不是你问了什么。你问的那句话是一条消息，
-    // 它属于对话流里靠右的那一条——把它抬进标题，就等于每问一句都在改窗口
-    // 名，而且第一轮的问题永远读不到第二遍。
     const firstAsk = String(turns[0]?.ask || '').trim();
     const surfaceTitle = session.targetAppLabel || '选中的内容';
     threadTitle.textContent = surfaceTitle;
     threadTitle.title = surfaceTitle;
     const failed = turns[turns.length - 1]?.status === 'failed';
     const awaiting = turns[turns.length - 1]?.status === 'awaiting';
-    // 状态词从卡头撤走。运行中的证据流、失败卡、等待输入的选项本身就在正文
-    // 里写着，卡头再用等宽全大写重复一遍（WORKING / TASK FINISHED），既难看
-    // 也没有增加任何信息。节点留着只为 ARIA 播报。
     threadEyebrow.hidden = true;
     threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
     threadClose.setAttribute('aria-label', '关闭');
@@ -1830,15 +1608,11 @@
         : failed
           ? '这次没完成'
           : '已完成';
-    // 还在跑的时候没有可复制的东西。一个点了没反应的按钮比一个明显不能点的
-    // 按钮更让人以为是坏了。
     const settled = !pending && turns.some((turn) => turn.status === 'done');
     threadCopy.disabled = !settled;
-    // 追问框绑当前这张卡在讲什么，用户因此不用交代背景（Vida.md §3 第 5 条）。
     threadFollowup.placeholder = firstAsk
       ? `继续问关于「${firstAsk.slice(0, 12)}${firstAsk.length > 12 ? '…' : ''}」的`
       : '继续问点什么…';
-    // 这一轮定下来之后，形态才算数：桥可能在结果里明说，也可能要靠命令猜。
     const newest = turns[turns.length - 1];
     if (shapePolicy && settled) {
       answerShape = shapePolicy.answerShape({
@@ -1848,7 +1622,6 @@
     }
     threadPanel.dataset.shape = answerShape.shape;
     syncConsent();
-    // 卡重画过，之前记住的那段选区已经指向摘掉的节点了。
     hidePassageExpand();
   }
 
@@ -1976,8 +1749,6 @@
     return button;
   }
 
-  // Idle canned chips: click-selected object + idle capsule only.
-  // Questions and permissions use DecisionCard; canned chips are idle actions.
   function renderChips(idleAllowed: boolean) {
     const newest = state.turns[state.turns.length - 1];
     const awaiting = newest?.status === 'awaiting';
@@ -2016,10 +1787,6 @@
     deliveryBar.style.transform = 'scaleX(0)';
   }
 
-  // Delivery progress mirrors REAL UIA draft-write events only: the bar moves
-  // exclusively when a genuine deliveryProgress payload arrives. No events ->
-  // this stays hidden and the shimmer alone communicates "working"
-  // (design §2.2: no fake foreign-app animation).
   function renderDelivery(name: string) {
     const progress = state.deliveryProgress;
     const anchorEl = name === 'processing' ? threadPanel : name === 'result' ? threadPanel : null;
@@ -2076,7 +1843,6 @@
     capsule.dataset.voiceState = session.voiceState;
 
     if (name === 'hidden') {
-      // Empty state renders nothing: zero dynamic DOM content while hidden.
       clearAll();
       stageRoot.hidden = true;
       if (api && hasShown && typeof api.hidden === 'function') api.hidden();
@@ -2108,8 +1874,6 @@
         && session.selectionVisual === 'sweep_band'
         && !targetSweepTimer
       ) {
-        // animationend can be skipped when a transparent window is hidden or
-        // moved between displays. The timer is a deterministic cleanup guard.
         targetSweepTimer = setTimeout(() => {
           targetSweepTimer = null;
           targetSweepComplete = true;
@@ -2124,15 +1888,11 @@
     const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text'
       || ((name === 'result' || name === 'error') && !resultOwnsComposer)
       || (name === 'dismissing' && !capsule.hidden);
-    // Once submitted, the question belongs to the fixed work panel. Clear the
-    // input transcript even though that separate entry surface is now hidden.
     if ((name === 'processing' || name === 'result' || name === 'error') && state.transcript) {
       state = { ...state, transcript: '' };
     }
     if (capsuleOpen) {
       renderStrokeRefs();
-      // The bare "2 处" badge is redundant once each stroke has its own chip:
-      // the chips say how many, and which.
       const showCount = session.selectionCount > 1 && strokeRefs.length === 0;
       if (showCount) {
         capsuleCount.textContent = `${session.selectionCount} 处`;
@@ -2149,27 +1909,17 @@
         capsule.classList.remove('is-exiting');
         capsule.classList.add('is-entering');
       }
-      // An unsolicited result (no capsule was ever opened) still gets a
-      // typeable composer, so a follow-up costs one keystroke rather than a
-      // hunt for the right button.
       const composerMode = state.inputMode
         || (name === 'result' || name === 'error' ? 'text' : 'voice');
       capsule.dataset.mode = composerMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = 'input';
       capsuleInput.placeholder = composerMode === 'text' ? '问点什么…' : '';
-      // Once submitted, the question lives in the thread. Emptying the field
-      // here is what makes the composer feel like a composer instead of a box
-      // still holding the thing you already sent.
       if (name === 'result' || name === 'error') capsuleInput.value = '';
       renderTranscript();
       const capsuleWidth = syncCapsuleWidth();
       anchorCapsuleToTarget(capsuleWidth);
-      // Coordinates are committed before the element becomes paintable, so a
-      // new session can never expose the browser's default (0,0) position.
       if (capsuleWasHidden) capsule.hidden = false;
       scheduleHitRegionRefresh();
-      // Focus follows the user, never the machine: it is taken when they open
-      // the composer, and kept if they were already typing when a turn landed.
       if (name === 'capsule-text') capsuleInput.focus();
       else if (capsuleHadFocus && composerMode === 'text' && !capsuleInput.disabled) capsuleInput.focus();
     } else {
@@ -2179,8 +1929,6 @@
     }
     shimmer.hidden = name !== 'processing';
 
-    // The thread is driven by `turns`, not by the latest result, so a question
-    // and its answer stay on screen once a follow-up is under way.
     if (state.turns.length && name !== 'hidden') {
       renderThread(state.turns);
       renderStageDecision();
@@ -2192,11 +1940,8 @@
       resultCard.replaceChildren();
       renderStageDecision();
     }
-    // Idle canned chips only while the capsule is open.
     renderChips(name === 'capsule-voice' || name === 'capsule-text');
 
-    // Errors that belong to a turn already render inside the thread. The
-    // standalone card is only for failures with no thread to attach to.
     if (name === 'error' && !state.turns.length) {
       errorCard.replaceChildren();
       renderFailure(errorCard, state.error);
@@ -2206,8 +1951,6 @@
       errorCard.hidden = true;
     }
 
-    // After the result/error surfaces have been placed, so the progress row
-    // can anchor below whichever surface is live.
     renderDelivery(name);
     renderModelNotice(name);
 
@@ -2221,9 +1964,6 @@
     }
   }
 
-  // One notice line, two sources. A transient status from the main process
-  // ("正在读取选中的内容…") wins over the standing gateway warning: it is about
-  // what is happening right now, and it clears itself when the outcome lands.
   function renderModelNotice(name: string) {
     if (!noticeBox) return;
     const transient = String(state.notice?.message || '');
@@ -2273,8 +2013,6 @@
     }
   });
 
-  // 提交键。跑起来之后同一个按钮是「停」——按下去等于放弃这一轮，界面立刻
-  // 回到可以再问的状态，而不是让用户对着一个转不停的圈干等。
   capsuleSend.addEventListener('mousedown', (event) => event.preventDefault());
   capsuleSend.addEventListener('click', () => {
     if (state.name === 'processing') {
@@ -2363,8 +2101,6 @@
       const chars = Number(payload.selectionChars);
       session.selectionChars = Number.isFinite(chars) && chars > 0 ? Math.round(chars) : 0;
     }
-    // 目标窗口在舞台坐标系里的那一块，以及一个显示用的名字。「要送出去」的
-    // 回答框贴在它右侧外沿，「同意」那一行也用这个名字说清写到哪儿去。
     if ('targetWindowRect' in payload) {
       const rect = payload.targetWindowRect;
       session.targetWindowRect = rect && Number.isFinite(Number(rect.width)) && Number(rect.width) > 0
@@ -2401,9 +2137,6 @@
     if ('selectionCount' in payload) {
       const count = Number(payload.selectionCount);
       session.selectionCount = Number.isFinite(count) ? Math.max(1, Math.min(8, Math.round(count))) : 1;
-      // Multi-stroke gestures become one chip per stroke. Rebuilt only when the
-      // count actually changes, so a re-render never resurrects a chip the user
-      // just removed.
       if (session.selectionCount !== strokeRefs.length && session.selectionCount > 1) {
         strokeRefs = Array.from({ length: session.selectionCount }, (_unused, index) => ({
           strokeIndex: index,
@@ -2424,8 +2157,6 @@
       session.pointer = { x: Number(payload.pointer.x), y: Number(payload.pointer.y) };
     }
     if (typeof payload.accentRgb === 'string') {
-      // Validated in the main process; the renderer only checks the shape so a
-      // malformed value cannot inject arbitrary CSS.
       session.accentRgb = /^\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*$/.test(payload.accentRgb)
         ? payload.accentRgb.trim()
         : '';
@@ -2499,7 +2230,6 @@
       const groundingChanged = previousGroundingReady !== session.groundingReady;
       const metaChanged = applyMeta(payload);
       if (payload?.deliveryProgress) {
-        // Only legal in processing/result; the machine drops it elsewhere.
         dispatch({ type: 'DELIVERY_PROGRESS', progress: payload.deliveryProgress });
       }
       const events = Array.isArray(payload?.eventSequence) ? payload.eventSequence : [payload?.event];
@@ -2515,8 +2245,6 @@
       if (state.name === 'hidden') return;
       dispatch({ type: 'DISMISS' });
     });
-    // 阶段补丁不走状态机：它不改变舞台处在哪个状态，只是给正在等的那张卡
-    // 添一行。过状态机会引起整轮重建，把用户正在读的东西闪掉。
     if (typeof api.onCardPatch === 'function') {
       api.onCardPatch((payload) => {
         if (!payload || state.name === 'hidden') return;
@@ -2546,7 +2274,6 @@
         } else if (session.voiceAutoSubmit || session.submitOnFinal) {
           submitCommand(transcript);
         } else {
-          // No auto-submit: hand the transcript to the text capsule for review.
           dispatch({ type: 'OPEN_CAPSULE', mode: 'text' });
           capsuleInput.value = transcript;
           syncCapsuleWidth();

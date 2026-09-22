@@ -24,7 +24,6 @@ def test_window_ownership_is_captured_before_slow_structure(monkeypatch, tmp_pat
     ]}
     gesture = capture._normalized_gesture(gesture)
     def read(wins, **kwargs):
-        # The user starts typing after capture; the IME now covers a mark.
         live[:] = [{"hwnd": 99, "pid": 50, "title": "IME", "bbox": [0, 0, 2800, 1700]}, *windows]
         return wins[0] if wins else None, None, {}, None, None
     monkeypatch.setattr(capture, "_fuse_snapshot_perception", read)

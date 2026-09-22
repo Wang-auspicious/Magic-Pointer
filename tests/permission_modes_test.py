@@ -1,8 +1,6 @@
 
 
 def test_ask_feedback_for_dangerous_effects_never_offers_a_grant():
-    """Hermes/Codex plan-mode 契约：外发/破坏/购买是「脚本级变更」，
-    只能走计划提案确认卡，绝不提供「总是允许」快授。"""
     from app.agent_runtime.permission_modes import (
         PermissionDecision,
         PermissionDecisionResult,

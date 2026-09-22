@@ -129,14 +129,11 @@ const missingPidTarget = captureEligibility({
 });
 assert.strictEqual(missingPidTarget.commandReady, false);
 
-// classifyResult: PointerStage surface modes ('inline' | 'card' | 'error').
 
-// Failure with no action proposals renders the stage error surface.
 assert.strictEqual(classifyResult({ ok: false, error: 'x' }), 'error');
 assert.strictEqual(classifyResult({ ok: false, error: 'x', actionProposals: [] }), 'error');
 assert.strictEqual(classifyResult(null), 'error');
 
-// Failure WITH action proposals still surfaces the proposals, not an error.
 const failedWithProposal = classifyResult({
   ok: false,
   error: 'partial failure',
@@ -145,12 +142,6 @@ const failedWithProposal = classifyResult({
 assert.notStrictEqual(failedWithProposal, 'error');
 assert.strictEqual(failedWithProposal, 'inline');
 
-// Structured payloads map to stage cards.
-assert.strictEqual(classifyResult({
-  ok: true,
-  intentKind: 'calendar_event_draft',
-  calendarDraft: { event: { title: '周会', start_at: '2026-07-27 10:00' } },
-}), 'card');
 assert.strictEqual(classifyResult({
   ok: true,
   intentKind: 'route_draft',
@@ -162,11 +153,8 @@ assert.strictEqual(classifyResult({
   actionProposals: [{ action_type: 'office_replace_selection' }],
 }), 'card');
 
-// Declared intent without its draft body falls back to inline.
-assert.strictEqual(classifyResult({ ok: true, intentKind: 'calendar_event_draft' }), 'inline');
 assert.strictEqual(classifyResult({ ok: true, intentKind: 'route_draft' }), 'inline');
 
-// Plain answers stay inline regardless of length or generic proposals.
 assert.strictEqual(classifyResult({ ok: true, answer: '短译文', actionProposals: [] }), 'inline');
 assert.strictEqual(classifyResult({ ok: true, answer: 'x'.repeat(500), actionProposals: [] }), 'inline');
 assert.strictEqual(classifyResult({

@@ -17,8 +17,6 @@ class SettingsError(RuntimeError):
 
 
 def deep_merge_settings(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-    """RFC 7396 merge-patch: dicts merge recursively, scalars/arrays replace,
-    JSON null deletes the key. ``base`` is never mutated."""
     merged: dict[str, Any] = dict(base)
     for key, value in patch.items():
         if value is None:
@@ -141,7 +139,7 @@ class InteractionSettings:
     voice_resident_enabled: bool = False
     voice_engine: str = "auto"
     voice_memory_limit_mb: int = 1024
-    voice_idle_unload_ms: int = 0  # 0 = keep the voice model resident
+    voice_idle_unload_ms: int = 0
     voice_glossaries: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -272,12 +270,6 @@ class ShortcutSettings:
 
 
 def _normalized_accent_rgb(value: object) -> str:
-    """Accept "r, g, b" or "#rrggbb"; reject anything that is not a colour.
-
-    Fails closed to the default rather than raising: an unreadable accent is a
-    cosmetic problem, and refusing to start over it would turn a typo in a
-    settings file into an app that will not open.
-    """
     text = str(value or "").strip()
     if text.startswith("#"):
         digits = text[1:]
@@ -323,9 +315,6 @@ class AppearanceSettings:
     capsule_inline_gap_dip: float = 18
     gesture_line_style: str = "demo6_band"
     gesture_line_width_dip: float = 22
-    # The accent every stage surface derives from, as "r, g, b". Stored as
-    # channels rather than a hex string because the stage composes a dozen
-    # alphas from it, and a hue change has to reach all of them at once.
     accent_rgb: str = "38, 115, 235"
 
     def __post_init__(self) -> None:
@@ -513,8 +502,6 @@ class PrivacySettings:
     background_learning_enabled: bool = False
     default_capture_mode: str = "follow_global"
     app_capture_modes: dict[str, str] = field(default_factory=dict)
-    # 冻结帧、选区截图活多久。7 天是默认：够回看一周内的工作，又不至于
-    # 让 data/runtime 无限长——每个手势是一张整屏 PNG（还有一份带笔迹的副本）。
     retain_captures_days: int = 7
     retain_artifacts_days: int = 30
     retain_audit_days: int = 30

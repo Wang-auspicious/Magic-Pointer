@@ -1,11 +1,5 @@
 const crypto = require('crypto');
 const TaskSources = require('./task_sources');
-// A locator's bbox is physical screen pixels, and the discriminant that says so
-// has one spelling in this codebase: the enum in ./coordinate_space. This file
-// used to write the hyphenated spelling instead, which is a value no consumer
-// recognises (app/grounding/evidence_binding.py:142 and
-// scripts/selection_snapshot_bridge.py:1042 both require the underscored form),
-// so a locator produced here could not be validated anywhere.
 const { COORDINATE_SPACES } = require('./coordinate_space');
 
 type UnknownRecord = Record<string, unknown>;
@@ -509,9 +503,6 @@ class InteractionEpisodeStore {
     const taskId = String(options?.taskId || '').trim();
     if (!taskId) throw new Error('bindCommandTarget requires an authoritative taskId');
     let episode = this.ensureActive(now);
-    // A submitted command creates a new Runtime task unless main explicitly
-    // passes the same taskId (the W02 continuation path). Preview objects from
-    // an earlier task must never leak merely because its UI episode TTL lives.
     if (episode.taskId && episode.taskId !== taskId) episode = this.start(now);
     episode.taskId = taskId;
     const taskContext: UnknownRecord = episode.taskContext || TaskSources.emptyTaskContext(taskId);

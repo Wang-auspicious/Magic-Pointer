@@ -1,12 +1,3 @@
-"""Tests for the egress gate (harness gap review L7.4 / L5, task D2).
-
-Covers: default-deny construction, scope allow/disallow, instruction vs data
-origin semantics (data-driven egress requires explicit approval even when
-the scope is allowed — L7 channel separation + L5 irreversible-action
-confirmation), the EgressDeniedError carrying its decision, the chronological
-event audit trail, close() semantics, EgressAudit.summarize accounting, and
-thread-safety under concurrent calls.
-"""
 
 from __future__ import annotations
 
@@ -282,7 +273,7 @@ class TestConcurrency:
                     origin=ORIGIN_INSTRUCTION,
                 )
                 results.append(decision.allowed)
-            except BaseException as exc:  # pragma: no cover - failure path
+            except BaseException as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]

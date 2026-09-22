@@ -23,8 +23,6 @@ from scripts.selection_snapshot_bridge import _window_dicts
 
 
 def _lease_for(tmp_path: Path, window: dict, gesture: dict, size=(2000, 1200)) -> dict:
-    """A valid frozen lease whose target window matches ``window`` and whose
-    surface contains the whole gesture (the bridge's frozen-frame contract)."""
     artifact = tmp_path / "frozen.png"
     Image.new("RGB", size, "white").save(artifact)
     return {
@@ -623,8 +621,6 @@ def test_gesture_snapshot_consumes_frozen_surface_instead_of_live_capture(tmp_pa
     )
 
     snapshot = payload["selectionSnapshot"]
-    # With a valid lease the committed surface is the visual evidence and the
-    # live grabber is never called (the frozen frame replaces live capture).
     assert calls == []
     assert snapshot["capture_bbox"] == [0, 0, 2000, 1200]
     assert snapshot["selection_bbox"] == [520, 470, 180, 64]
@@ -632,9 +628,6 @@ def test_gesture_snapshot_consumes_frozen_surface_instead_of_live_capture(tmp_pa
     assert artifacts["selection_rectangles"] == [[520, 470, 180, 64]]
     assert artifacts["selection_geometry_kind"] == "gesture_region"
     assert Path(snapshot["capture_path"]).is_file()
-    # 冻结的那份原样保留；标注画在它的副本上，仍然不碰实时屏幕（上面 assert
-    # calls == [] 已经证明没有重抓）。没有笔迹的整屏图，模型只能自己在里面猜
-    # 「用户圈的是哪」。
     annotated = Path(snapshot["annotated_path"])
     assert annotated.is_file()
     assert annotated.parent == Path(snapshot["capture_path"]).parent
@@ -710,8 +703,6 @@ def test_rejected_structured_container_falls_back_to_the_user_mark_bbox(tmp_path
     assert snapshot["structured_covers_mark"] is False
     assert snapshot["structured_gap_reason"] == "container_not_selection"
     assert snapshot["selection_bbox"] == [300, 326, 600, 8]
-    # The frozen lease surface is the authoritative visual evidence; the
-    # capture bbox is the surface, not a live bounded grab.
     assert snapshot["capture_bbox"] == [0, 0, 2000, 1200]
     assert snapshot["context"]["content"] == ""
     assert registry.adapter.calls == 1
@@ -759,8 +750,6 @@ def test_visual_capture_retries_desktop_when_only_the_requested_window_crop_is_b
         calls.append({"window": window, "bbox": bbox, "all_screens": all_screens})
         if window is not None:
             image = Image.new("RGB", (1000, 700), "black")
-            # PrintWindow returned a title-bar icon, so the whole frame is not
-            # blank, but the requested content crop still is.
             image.putpixel((10, 10), (255, 255, 255))
             return image
         return Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white")
@@ -992,11 +981,6 @@ def test_capture_retention_removes_only_expired_owned_pngs(tmp_path) -> None:
 
 
 def test_frozen_frames_are_pruned_by_the_same_retention_setting(tmp_path) -> None:
-    """冻结帧目录以前没人清理：每个手势一张整屏 PNG，只增不减。
-
-    它清的是 `frame-*.png`——包括这一版新增的带笔迹副本；`screen-*.png` 属于另一个
-    目录，碰都不该碰。
-    """
     old_frame = tmp_path / "frame-old.png"
     old_marked = tmp_path / "frame-old.pointer.png"
     recent_frame = tmp_path / "frame-recent.png"
@@ -1018,7 +1002,6 @@ def test_frozen_frames_are_pruned_by_the_same_retention_setting(tmp_path) -> Non
 
 
 def test_the_frame_in_use_is_never_pruned(tmp_path) -> None:
-    """正在用的那一份不能被自己删掉——这不该依赖它的 mtime 恰好是新的。"""
     current = tmp_path / "frame-current.png"
     current.write_bytes(b"test")
     reference = datetime(2026, 9, 19, tzinfo=timezone.utc)
@@ -1260,7 +1243,7 @@ def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_poin
     payload = capture_snapshot(
         [window],
         registry=registry,
-        target_point={"x": 150, "y": 120},  # Deliberately points at row A.
+        target_point={"x": 150, "y": 120},
         gesture=gesture,
         frame_lease=_lease_for(tmp_path, window, gesture),
     )
@@ -1446,9 +1429,6 @@ def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candid
 
     assert payload["selectionSnapshot"]["selection_bbox"] == [110, 154, 280, 27]
     assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
-    # Grounding stays honest even when the frozen surface supplies the visual
-    # record: the selected evidence layer is the lease surface, not a fake
-    # structured resolution of the gesture.
     assert payload["selectionSnapshot"]["perception_trace"]["selectedLayer"] == "screen_region"
     assert payload["selectionSnapshot"]["context"]["adapter"] == "screen_region"
 
@@ -1497,8 +1477,6 @@ def test_structured_text_without_a_physical_rectangle_is_not_claimed_as_gesture_
     )
 
     assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
-    # The frozen lease surface still supplies the visual record even when the
-    # structured grounder cannot resolve the gesture; grounding stays honest.
     assert payload["selectionSnapshot"]["context"]["adapter"] == "screen_region"
 
 
@@ -1664,9 +1642,6 @@ def test_bounded_visual_evidence_does_not_relabel_a_structured_gesture_as_pixel_
     assert trace["selectedLayer"] == "uia"
     assert trace["selectedAdapter"] == "uia_text_selection"
     assert trace["pixelFallbackUsed"] is False
-    # The bounded live grab is replaced by the committed lease surface; the
-    # structured gesture result must still not be relabeled as a pixel
-    # fallback (the layer selection stays uia).
     assert trace["attempts"][-1]["reason"] == "frame_lease_consumed"
 
 

@@ -1,26 +1,4 @@
-"""Request-level rough token estimation.
-
-Ported from HermesAgent ``agent/model_metadata.py``
-(``estimate_tokens_rough`` / ``estimate_messages_tokens_rough`` /
-``estimate_request_tokens_rough``, MIT, Copyright (c) 2025 Nous Research).
-
-Two things carried over from Hermes and one thing deliberately left behind:
-
-- **Ceiling division at ~4 chars/token.** Floor division makes a turn full of
-  short tool results estimate as nothing, which systematically under-counts
-  exactly when compaction matters most.
-- **The request is three buckets, not one.** System prompt and tool schemas
-  are part of what the provider bills and what fills the window. Magic
-  Pointer's system prompt carries memory (up to 4000 chars) and skills (up to
-  12000); the desktop tool schemas add more. Counting messages alone made the
-  compaction threshold fire far too late.
-- Hermes also prices image parts at a flat 1500 tokens each. Magic Pointer's
-  :class:`~app.agent_runtime.types.AgentMessage` carries ``content: str``, and
-  vision results reach the loop as text, so there is no image branch here.
-
-These are pre-flight estimates. Where a provider reports real ``prompt_tokens``
-that number wins; this is for deciding when to compact before the call.
-"""
+# MIT, Copyright (c) 2025 Nous Research.
 
 from __future__ import annotations
 
@@ -38,18 +16,7 @@ __all__ = [
 
 _CHARS_PER_TOKEN = 4
 _CJK_CHARS_PER_TOKEN = 1
-"""CJK scripts tokenize at roughly one token per character (mimo/deepseek/
-gpt families all land near 1.0-1.5); English averages ~4 chars/token. The
-real-machine notepad-edit run proved the flat 4-char rate underestimates an
-all-Chinese desktop context by ~2x (real prompt_tokens 86k while the
-estimator said ~48k), which delayed compaction by whole rounds. Text is
-therefore counted in two buckets: CJK codepoints at 1 token each, everything
-else at 4 chars per token."""
 
-# Unicode 15.0 EastAsianWidth W/F ranges, compiled once so scanning stays in
-# the regex engine instead of crossing Python -> unicodedata for every codepoint.
-# This deliberately includes fullwidth forms and the wide emoji ranges: the
-# estimator historically counted both, and dropping them would delay compaction.
 _WIDE_RUN_RE = re.compile(
     "["
     r"\u1100-\u115F\u231A-\u231B\u2329-\u232A\u23E9-\u23EC\u23F0\u23F3\u25FD-\u25FE\u2614-\u2615"
@@ -91,13 +58,6 @@ def _count_wide_legacy(text: str) -> int:
 
 
 def _has_fragmented_wide_runs(text: str) -> bool:
-    """Sample three local windows before choosing the regex fast path.
-
-    A regex is fast for prose-sized wide runs but slower for alternating
-    ``a中a中...`` because every one-character run becomes a match. Sampling is
-    bounded; fragmented text falls back to the legacy scan instead of paying
-    that allocation cost across the full context.
-    """
     width = _FRAGMENT_SAMPLE_CHARS
     middle = max(0, len(text) // 2 - width // 2)
     sample = text[:width] + text[middle:middle + width] + text[-width:]
@@ -118,13 +78,10 @@ def _count_cjk(text: str) -> int:
         return 0
     if len(text) < _FRAGMENT_SAMPLE_CHARS * 3 or _has_fragmented_wide_runs(text):
         return _count_wide_legacy(text)
-    # ``sub`` materializes one final string, not one Python object per match.
-    # The sampled path above keeps highly fragmented text away from regex.
     return len(text) - len(_WIDE_RUN_RE.sub("", text))
 
 
 def estimate_text_tokens(text: str | None) -> int:
-    """Rough token count for a blob of text, rounding up."""
     if not text:
         return 0
     cjk = _count_cjk(text)
@@ -136,7 +93,6 @@ def estimate_text_tokens(text: str | None) -> int:
 
 
 def _message_text(message: Any) -> str:
-    """Text counted for one message, including tool-call envelopes."""
     content = getattr(message, "content", None) or ""
     tool_calls = getattr(message, "tool_calls", ()) or ()
     if tool_calls:
@@ -145,7 +101,6 @@ def _message_text(message: Any) -> str:
 
 
 def estimate_messages_tokens(messages: Iterable[Any]) -> int:
-    """Rough token count for a message list, including tool-call envelopes."""
     cjk_total = 0
     other_total = 0
     batch: list[str] = []
@@ -181,7 +136,6 @@ def estimate_request_tokens(
     system_prompt: str | None = None,
     tools: Sequence[dict[str, Any]] | None = None,
 ) -> int:
-    """Rough token count for everything the loop sends in one model call."""
     total = estimate_messages_tokens(messages)
     total += estimate_text_tokens(system_prompt)
     if tools:

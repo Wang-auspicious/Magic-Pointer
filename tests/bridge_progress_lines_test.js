@@ -9,7 +9,6 @@ const {
 
 assert.strictEqual(PROGRESS_PREFIX, '@@mp ');
 
-// Real tool output is structured data, not a 120-character phase token.
 {
   const result = '工具输出\n'.repeat(6000);
   const payload = { id: 'look-1', name: 'Look', args: '{"target":"右侧区域"}', result, state: 'done', latency_ms: 412 };
@@ -25,7 +24,6 @@ assert.strictEqual(PROGRESS_PREFIX, '@@mp ');
   assert.strictEqual(seen[0].fields.b64, undefined, 'decoded output is not duplicated in every live snapshot');
 }
 
-// --- parseProgressLine ---
 assert.deepStrictEqual(
   parseProgressLine('@@mp phase=pixels_frozen ms=412 d=90 scope=selection_snapshot w=2950'),
   {
@@ -45,11 +43,9 @@ assert.strictEqual(
   'a non-numeric ms degrades to null rather than NaN',
 );
 
-// --- createProgressLineSplitter ---
 {
   const seen = [];
   const feed = createProgressLineSplitter(record => seen.push(record.phase));
-  // A record split across two stream chunks must still arrive exactly once.
   feed('@@mp phase=payload_read ms=3 scope=s\n@@mp phase=win');
   assert.deepStrictEqual(seen, ['payload_read'], 'a partial line must not fire early');
   feed('dows_enumerated ms=40 scope=s\n');
@@ -64,15 +60,11 @@ assert.strictEqual(
 }
 
 {
-  // A consumer that throws is a caller bug and must not propagate into the
-  // bridge's stderr handler, which would kill an in-flight capture.
   const feed = createProgressLineSplitter(() => { throw new Error('consumer exploded'); });
   assert.doesNotThrow(() => feed('@@mp phase=a ms=1 scope=s\n'));
 }
 
 {
-  // A writer that never emits a newline must not grow the pending buffer without
-  // bound; after the cap is passed the buffer resets instead of accumulating.
   const seen = [];
   const feed = createProgressLineSplitter(record => seen.push(record.phase));
   feed('x'.repeat(20000));

@@ -1,4 +1,3 @@
-"""Resident selection worker JSONL transport smoke tests."""
 
 from __future__ import annotations
 

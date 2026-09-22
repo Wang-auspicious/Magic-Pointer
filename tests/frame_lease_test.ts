@@ -1,8 +1,5 @@
 'use strict';
 
-// FrameLease v1 contract: an immutable full-surface frame bound before
-// structured perception starts. Both Electron and the Python capture worker
-// share this shape, so the two validators must agree on every field.
 
 const assert = require('assert');
 const { validateFrameLease, cloneFrameLease } = require('../electron/frame_lease');
@@ -32,7 +29,6 @@ function fixtureLease() {
   };
 }
 
-// Accepts an immutable frame lease with physical coordinates.
 {
   const lease = validateFrameLease(fixtureLease());
   assert.strictEqual(lease.frameLeaseId, 'frame-1');
@@ -55,7 +51,6 @@ function fixtureLease() {
   assert.strictEqual(lease.captureLatencyMs, 12.5);
 }
 
-// Rejects non-physical or incomplete frame leases.
 {
   assert.throws(() => validateFrameLease({ schemaVersion: 1 }), /frameLeaseId/);
   assert.throws(() => validateFrameLease(null), /frameLease/);
@@ -75,8 +70,6 @@ function fixtureLease() {
     /targetWindow\./);
 }
 
-// Deeply frozen copies: the consumer may never mutate the committed frame's
-// metadata, and a later caller cannot alias the same nested objects.
 {
   const lease = validateFrameLease(fixtureLease());
   assert.strictEqual(Object.isFrozen(lease), true);

@@ -1,8 +1,3 @@
-"""Read-only acceptance of the user's frozen three-material selection.
-
-No current screenshot replaces the historical frame. Geometry is reconstructed
-from the annotated example, not represented as the original recorded polyline.
-"""
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +17,6 @@ def main():
     out = ROOT / "data/runtime/selection-multisource-20260919"
     out.mkdir(parents=True, exist_ok=True)
     frame = ROOT / "data/runtime/frame-leases/frame-2dc5410ab4c44c55.png"
-    # Three marks at physical-pixel coordinates in the 3120x2080 frozen image.
     strokes = [
         {"points": [{"x": x, "y": y} for x, y in [(1795, 1290), (2120, 1293), (2470, 1300)]]},
         {"points": [{"x": x, "y": y} for x, y in [(2255, 460), (2110, 500), (2105, 540), (2235, 583), (2330, 570), (2395, 500), (2310, 453), (2255, 460)]]},
@@ -35,8 +29,6 @@ def main():
         raise RuntimeError("WeChat window is no longer at the frozen location; do not attest live structure to this frame")
     if list(target["bbox"]) != [1130, 188, 2626, 1960]:
         raise RuntimeError("WeChat geometry changed since the historical frame")
-    # Live overlays now cover the historical scene. Replay the historical
-    # surface ownership explicitly; UIA stays bound to those target HWNDs.
     windows = [target, capture._desktop_window()]
     lease = {
         "schemaVersion": 1, "frameLeaseId": "selection-replay-20260919", "epochId": "selection-replay",

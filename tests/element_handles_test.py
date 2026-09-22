@@ -1,11 +1,3 @@
-"""语义句柄文法（Hermes drive 通道的移植）：圈选完成后在屏幕上回放
-「元素框 + 句柄标签」的句柄在这里生成。
-
-文法（三级降级，与 Hermes 观察到的规则一致）：
-1. 元素自带 automation_id → ``A#<id>``（应用自己给的锚点，最稳）；
-2. 否则 ``<TYPE>-<文本slug>``（内容寻址，模型可直接读懂）；
-3. slug 冲突 → 同组追加序号 ``-2``、``-3``（不是全局索引）。
-"""
 
 from __future__ import annotations
 
@@ -70,10 +62,6 @@ def test_role_tokens_cover_common_types():
 
 
 def test_snapshot_bridge_attaches_handles_to_structured_context():
-    """快照桥的 context 带结构化元素时必须发出 element_handles。
-
-    这是屏幕回放（Hermes drive 通道）的数据源：主进程读到它才画框+标签。
-    """
     from scripts.selection_snapshot_bridge import _context_with_element_handles
 
     context = {
@@ -90,17 +78,11 @@ def test_snapshot_bridge_attaches_handles_to_structured_context():
     assert handles[0]["ref"] == "A#copy-btn"
     assert enriched["artifacts"]["element_handles_coordinate_space"] == "physical_screen_pixels"
 
-    # 自绘应用（无 region_elements）原样返回，不造假框。
     bare = {"adapter": "screen_region", "artifacts": {"capture_path": "x.png"}}
     assert _context_with_element_handles(bare) is bare
 
 
 def test_element_handles_are_resolvable_as_look_anchors():
-    """句柄不只是画给人看的：它必须真的能当锚点去取图。
-
-    模型从截图里记住一组像素坐标再自己写 bbox，就是「看错、偏移」的来源。
-    按控件地址取图，用的是窗口自己给的几何。
-    """
     from scripts.selection_bridge import _frozen_reference_resolver
 
     snapshot = {
@@ -118,10 +100,8 @@ def test_element_handles_are_resolvable_as_look_anchors():
     }
     resolve = _frozen_reference_resolver((), snapshot)
     assert resolve("element:A#copy-btn") == (100, 200, 148, 232)
-    # 没有面积的句柄不发框，画不出框的就不该被解析成一个位置。
     assert resolve("element:TXT-标题") is None
     assert resolve("element:A#missing") is None
-    # 没有句柄的快照（自绘应用）照旧诚实失败，不猜一个位置出来。
     assert _frozen_reference_resolver((), {"snapshot_id": "s", "context": {}})("element:A#copy-btn") is None
     assert _frozen_reference_resolver((), None)("element:A#copy-btn") is None
 
@@ -153,7 +133,6 @@ def test_element_handles_reach_the_model_as_addressable_facts():
     parsed = json.loads(handle_fact["value"])
     assert parsed == [{"ref": "A#copy-btn", "role": "Button", "name": "复制", "rect": [100, 200, 48, 32]}]
 
-    # 句柄太多时按整条裁剪，模型读到的永远是能解析的清单，不是半截 JSON。
     many = AdapterReadContext(
         adapter="uia_text_selection", app="application", window=window, content="正文一段",
         artifacts={"element_handles": [

@@ -1,13 +1,9 @@
 'use strict';
 
-// 渲染层权限预设镜像：表结构与 Python 真值（app/agent_runtime/permission_presets.py）
-// 保持同档同名，custom 只作展示。执行 fail-closed 在桥那端，这里钉的是 UI 数据面。
 
 const assert = require('assert');
 const { PRESETS, PRIMARY_PRESETS, optionOf, presetSvg } = require('../electron/renderer/permission_presets');
 
-/* 顺序即菜单顺序，照参考里的 Mode 菜单：Auto / Manual / Accept edits / Plan /
-   Bypass permissions。以前钉的是另一套顺序（Plan 打头），参考推翻了它。 */
 const VALUES = PRESETS.map(option => option.value);
 assert.deepStrictEqual(VALUES,
   ['auto', 'read-only', 'workspace-write', 'plan', 'danger-full-access'],
@@ -18,7 +14,6 @@ assert.deepStrictEqual(PRESETS.map(option => option.label), [
 assert.deepStrictEqual(PRIMARY_PRESETS.map(option => option.value), [
   'auto', 'workspace-write', 'plan', 'danger-full-access',
 ]);
-/* 行尾的编号与动作词也照参考：只有前四档有编号，Bypass 那行右侧是 Enable。 */
 assert.deepStrictEqual(PRESETS.map(option => option.shortcut || ''),
   ['1', '2', '3', '4', '']);
 assert.strictEqual(optionOf('danger-full-access').action, 'Enable');
@@ -40,19 +35,15 @@ for (const option of PRESETS) {
     `${option.value} 必须使用 Studio 统一的 24px / 1.5px 线性图标`);
 }
 
-// Full access 带确认门文案；其余档位没有。
 const full = optionOf('danger-full-access');
 assert.ok(full && full.confirm && full.confirm.title.includes('Full access'));
 assert.ok(PRESETS.filter(o => o.value !== 'danger-full-access').every(o => !o.confirm));
 
-// custom 是派生展示态：能查到，但不在切换列表里。
 const custom = optionOf('custom');
 assert.ok(custom && custom.value === 'custom');
 assert.ok(!VALUES.includes('custom'));
 
-// 未知值查不到（渲染层绝不编造档位）。
 assert.strictEqual(optionOf('bypass'), undefined);
-// plan 是真实档位（不在 Python 真值表之外的展示态）。
 assert.ok(optionOf('plan') && optionOf('plan').value === 'plan');
 
 console.log('permission_presets render mirror: PASS');

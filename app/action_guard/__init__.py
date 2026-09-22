@@ -1,4 +1,3 @@
-"""Action guard: fail-closed preconditions and egress checks that gate actions."""
 
 from app.action_guard.approval import (
     NON_HUMAN_APPROVERS,

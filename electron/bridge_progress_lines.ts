@@ -1,19 +1,7 @@
 'use strict';
 
-// Bridges emit phase timings on stderr so the main process can react before the
-// process exits. stdout stays a pure JSON contract (python_bridge_runner only
-// parses its last line), and stderr keeps flowing into electron.log unchanged —
-// progress lines are additive, never a replacement.
-//
-// Wire format, one per line:
-//   @@mp phase=<name> ms=<int> [key=value ...]
-//
-// Keys and values are whitespace-free tokens. Anything unparseable is dropped
-// rather than thrown: a malformed diagnostic must never take down a capture.
 
 const PROGRESS_PREFIX = '@@mp ';
-// A supported tool result holds 64,000 characters, plus arguments, UTF-8 and
-// base64 framing. 8 KiB discarded normal Read/Look results between chunks.
 const MAX_PENDING_BYTES = 1024 * 1024;
 
 type ProgressRecord = {
@@ -48,8 +36,6 @@ function parseProgressLine(line: unknown): ProgressRecord | null {
   return { phase, ms: Number.isFinite(ms) ? ms : null, fields };
 }
 
-// Returns a chunk consumer that tolerates progress records split across stream
-// chunks. The trailing partial line is held until its newline arrives.
 function createProgressLineSplitter(onProgress: unknown): (chunk: unknown) => void {
   const emit: (record: ProgressRecord) => void =
     typeof onProgress === 'function' ? (onProgress as (record: ProgressRecord) => void) : () => {};
@@ -58,7 +44,6 @@ function createProgressLineSplitter(onProgress: unknown): (chunk: unknown) => vo
     pending += String(chunk == null ? '' : chunk);
     const lines = pending.split(/\r?\n/);
     pending = lines.pop() || '';
-    // A writer that never emits a newline must not grow this buffer forever.
     if (pending.length > MAX_PENDING_BYTES) pending = '';
     for (const line of lines) {
       const record = parseProgressLine(line);

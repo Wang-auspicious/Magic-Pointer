@@ -1,4 +1,3 @@
-"""Regressions for source continuity found by tracing the production readers."""
 
 from pathlib import Path
 

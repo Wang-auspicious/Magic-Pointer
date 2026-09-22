@@ -1,4 +1,3 @@
-"""Finite Figma node operations routed through the local plugin bridge."""
 
 from __future__ import annotations
 
@@ -94,9 +93,6 @@ class FigmaActionHandler:
             return {
                 "op": "set_fill",
                 "nodeId": node_id,
-                # DocumentPatch exposes a normalized RGBA value to the user, while
-                # the plugin compares the complete native paint array immediately
-                # before mutation.  Keep both checks instead of weakening either.
                 "before": node.get("fills"),
                 "after": operation.after,
             }

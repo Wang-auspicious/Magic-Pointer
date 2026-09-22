@@ -33,9 +33,6 @@ assert.strictEqual(shouldCaptureMouse({
   interactiveRegions: [capsule],
 }), false);
 
-// Pointer capture: a drag owns the mouse from press to release. Without this
-// the cursor flickered between the stage and the app below, and dragging the
-// bubble selected text in whatever was underneath it.
 assert.strictEqual(shouldCaptureMouse({
   hasInteractiveSurface: true,
   pointer: { x: 4000, y: 4000 },
@@ -55,10 +52,6 @@ assert.strictEqual(shouldCaptureMouse({
   dragging: false,
 }), false, 'releasing the drag restores normal region-based capture');
 
-// The drag lease. `dragging` is a flag the caller owns, and a lost pointer-up
-// (which gesture_capture.ts:1-2 documents as normal on Windows) leaves it set.
-// Before this bound existed the overlay held the mouse for the rest of the
-// session: shouldCaptureMouse returned true for every subsequent call.
 assert.strictEqual(shouldCaptureMouse({
   hasInteractiveSurface: true,
   pointer: { x: 4000, y: 4000 },

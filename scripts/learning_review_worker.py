@@ -1,4 +1,3 @@
-"""Detached entry point for one self-improvement review."""
 
 from __future__ import annotations
 

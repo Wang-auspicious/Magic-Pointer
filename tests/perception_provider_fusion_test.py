@@ -1,10 +1,3 @@
-"""Provider protocol + fusion: the seam that lets a second evidence class in.
-
-The structured broker already fans out. What it could not do was let a pixel
-provider join the same read on the same frozen frame, which is why a UIA
-container name used to be replaced wholesale by an OCR context in a different
-process — with nobody able to see that two sources had spoken.
-"""
 
 from __future__ import annotations
 
@@ -35,8 +28,6 @@ WINDOW = {
 MARK = (100, 400, 300, 20)
 CONTAINER_RECT = [0, 0, 1000, 760]
 LINE_RECT = [100, 400, 300, 20]
-# What UIA actually returned for a stroke across one console line on
-# 2026-08-04: the container telling us its own name.
 CONSOLE_EXE_PATH = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 
@@ -140,12 +131,6 @@ def _request(**overrides: object) -> PerceptionRequest:
 
 
 def test_pixel_provider_is_never_started_when_structured_covers_the_mark() -> None:
-    """A clean structured read must not spend OCR CPU on the frozen frame.
-
-    Concurrency is not "always launch every source" (blueprint §7.3): the
-    expensive tier is planned, and a Notepad read that already has exact text
-    has nothing to gain from recognising its own pixels.
-    """
     calls: list[str] = []
     structured = _structured(
         "uia-line",
@@ -165,16 +150,6 @@ def test_pixel_provider_is_never_started_when_structured_covers_the_mark() -> No
 
 
 def test_container_only_structured_read_is_superseded_but_never_erased() -> None:
-    """The 2026-08-04 failure, expressed as evidence instead of replacement.
-
-    UIA answered with the console's own executable path. Today that content is
-    thrown away and an OCR context takes its place in another process. It must
-    instead lose on merit and stay visible as a container observation.
-
-    The supersession is a note, not a conflict: the two sources do not disagree
-    about content, one of them answered about the surface. Filing it as a
-    conflict would put a confirmation prompt in front of every pixel-only app.
-    """
     container = _structured("uia-container", CONSOLE_EXE_PATH, rects=[CONTAINER_RECT])
     body = _pixel(
         "frozen-ocr",
@@ -204,7 +179,6 @@ def test_container_only_structured_read_is_superseded_but_never_erased() -> None
 
 
 def test_agreeing_cross_tier_reads_are_corroboration_not_disagreement() -> None:
-    """OCR noise is not disagreement; a different number is."""
     structured = _structured(
         "uia-line",
         "Get-ChildItem failed because the path does not exist",
@@ -326,8 +300,6 @@ def test_every_source_unread_is_reported_unread_not_empty_confirmed() -> None:
 
 
 def test_pixel_provider_without_a_frozen_frame_is_unsupported_not_live_capture() -> None:
-    """No lease means no pixels. Grabbing the live screen here would certify a
-    post-gesture frame as the moment the user pointed at."""
     calls: list[str] = []
     pixels = _pixel("frozen-ocr", "live screen text", rects=[LINE_RECT], calls=calls)
 
@@ -367,12 +339,6 @@ def test_a_stalled_provider_cannot_hold_the_verdict_past_its_deadline() -> None:
 
 
 def test_observations_survive_a_trace_round_trip_and_fuse_the_same_way() -> None:
-    """The plan spans two processes; the verdict must not.
-
-    The snapshot bridge owns the frozen frame and the structured tier; the
-    answer bridge adds the pixel tier. Both must reach the same verdict from
-    the same fusion, or "one perception truth" is a slogan.
-    """
     container = _observation(
         _structured("uia-container", CONSOLE_EXE_PATH, rects=[CONTAINER_RECT]),
         index=0,
@@ -406,13 +372,6 @@ def _observation(provider: _FakeProvider, *, index: int) -> PerceptionObservatio
 
 
 def test_a_glyph_only_read_does_not_count_as_reading_the_mark() -> None:
-    """真机 9·3：终端里划过 Claude Code 的转圈符 `*`。
-
-    结构化层读回一个星号——非空，于是被当成「读到了圈选内容」，模型拿着一枚
-    字形去回答。「非空」和「读到了」不是一回事：一行里没有任何字母、数字或
-    汉字，读到的就是装饰，不是内容。它必须和只读回容器名一样降级，好让像素
-    层还有机会真的读一次。
-    """
     glyph = _structured("uia-glyph", "*", rects=[LINE_RECT])
     body = _pixel(
         "frozen-ocr",
@@ -433,7 +392,6 @@ def test_a_glyph_only_read_does_not_count_as_reading_the_mark() -> None:
 
 
 def test_punctuation_inside_real_text_is_not_glyph_only() -> None:
-    """降级的判据是「一个词字符都没有」，不是「含有符号」。"""
     real = _structured("uia-line", ">>> print('hi')", rects=[LINE_RECT])
     pixels = _pixel("frozen-ocr", "should not run", rects=[LINE_RECT])
 

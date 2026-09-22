@@ -1,31 +1,9 @@
-"""Turn an image into words a text-only model can act on.
-
-This is "give a blind model eyes". The user points at a picture — a chart, a UI
-screenshot, an error dialog, a photo — and gets a description they can paste
-into DeepSeek, a local Llama, or any chat box that cannot see. Projects that do
-this exist as one-offs; here it is a capability over anything on screen.
-
-Three layers, cheapest first, and every one of them is optional:
-
-  text      OCR — the words in the image, with their layout
-  elements  detected UI components (OmniParser when installed) — what kind of
-            thing is where
-  caption   a vision model's own description — only when one is configured and
-            the user has allowed the image to leave the machine
-
-The layers that are available get composed; the ones that are not get *named* as
-missing. A description that quietly omits the visual layer would let a user
-believe a text-only model was told what the picture looks like, which is exactly
-the lie this feature exists to avoid.
-"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-# A prompt longer than this stops being useful context and starts crowding out
-# the user's own question in the target model's window.
 MAX_PROMPT_CHARS = 6000
 MAX_TEXT_CHARS = 3000
 MAX_ELEMENTS = 40
@@ -33,7 +11,6 @@ MAX_ELEMENTS = 40
 
 @dataclass
 class ImagePromptLayers:
-    """What we actually managed to read. Absent layers stay absent."""
 
     text: str = ""
     text_engine: str = ""
@@ -43,7 +20,6 @@ class ImagePromptLayers:
     caption_model: str = ""
     width: int = 0
     height: int = 0
-    # Why a layer is missing, keyed by layer name. Reported, never hidden.
     missing: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -81,12 +57,6 @@ def compose_prompt(
     *,
     question: str = "",
 ) -> str:
-    """Compose the paste-ready description.
-
-    Written for a model that cannot see: it says what is known, where it came
-    from, and — critically — what is NOT known, so the receiving model does not
-    confidently answer a question about pixels nobody described to it.
-    """
     if not layers.has_anything:
         return ""
 
@@ -111,9 +81,6 @@ def compose_prompt(
             + more
         )
 
-    # The honest part. A receiving model told "here is a description of an image"
-    # will answer questions about colour, style and composition unless it is told
-    # nobody described those.
     if "caption" not in layers.available_layers:
         reason = layers.missing.get("caption", "没有可用的视觉模型")
         sections.append(
@@ -133,7 +100,6 @@ def compose_prompt(
 
 
 def describe_coverage(layers: ImagePromptLayers) -> str:
-    """One line for the bubble: what the description is actually based on."""
     names = {"text": "文字", "elements": "界面元件", "caption": "视觉描述"}
     available = [names[layer] for layer in layers.available_layers]
     if not available:

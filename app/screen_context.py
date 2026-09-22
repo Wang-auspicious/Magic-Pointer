@@ -78,7 +78,6 @@ def intersect(a: Rect, b: Rect) -> Rect | None:
 
 
 def subtract_rect(base: Rect, cutter: Rect) -> list[Rect]:
-    """Return rectangles left after subtracting cutter from base."""
 
     inter = intersect(base, cutter)
     if inter is None:
@@ -86,16 +85,12 @@ def subtract_rect(base: Rect, cutter: Rect) -> list[Rect]:
     x1, y1, x2, y2 = base
     ix1, iy1, ix2, iy2 = inter
     pieces: list[Rect] = []
-    # Top
     if y1 < iy1:
         pieces.append((x1, y1, x2, iy1))
-    # Bottom
     if iy2 < y2:
         pieces.append((x1, iy2, x2, y2))
-    # Left middle
     if x1 < ix1:
         pieces.append((x1, iy1, ix1, iy2))
-    # Right middle
     if ix2 < x2:
         pieces.append((ix2, iy1, x2, iy2))
     return [p for p in pieces if rect_area(p) > 0]
@@ -130,8 +125,6 @@ def build_screen_context(selection_bbox: Rect, image_path: Path) -> ScreenContex
         item["clipped_bbox"] = clipped
         intersecting.append(item)
 
-    # EnumWindows is top-to-bottom z-order. For each window, estimate visible
-    # portion by subtracting the clipped rectangles of windows above it.
     windows: list[WindowObject] = []
     above_clips: list[Rect] = []
     for idx, item in enumerate(intersecting, 1):

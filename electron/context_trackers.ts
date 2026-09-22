@@ -239,7 +239,6 @@ async function readFileObservation(paths: string[], now = Date.now): Promise<Fil
 function watchFilePath(watchedPath: string, onEvent: (event: { eventType: string; filename?: string }) => void): WatchHandle {
   let isDirectory = false;
   try { isDirectory = fs.statSync(watchedPath).isDirectory(); } catch (_) {}
-  // Parent watches survive deleted files and the atomic replacement used by editors.
   const root = isDirectory ? watchedPath : path.dirname(watchedPath);
   const watcher = fs.watch(root, { persistent: false, recursive: isDirectory }, (eventType: string, filename: string | Buffer | null) => {
     if (!isDirectory && filename && String(filename) !== path.basename(watchedPath)) return;

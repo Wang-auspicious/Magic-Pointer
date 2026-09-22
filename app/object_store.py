@@ -9,12 +9,6 @@ from typing import Any
 
 @dataclass
 class PointerObject:
-    """A user-selected screen object.
-
-    ObjectStore is a durable local log, not the active AI context. Active
-    this/that/group references are session-scoped by TaskContextStore so old
-    screenshots do not pollute new tasks.
-    """
 
     id: str
     alias: str
@@ -54,11 +48,6 @@ class ObjectStore:
         return objects
 
     def recent(self, limit: int = 5) -> list[dict[str, Any]]:
-        """Return recent log objects for history/debug UI only.
-
-        Do not use this as implicit model context. TaskContextStore decides the
-        current task scope.
-        """
 
         if limit <= 0:
             return []
@@ -71,10 +60,6 @@ class ObjectStore:
         return None
 
     def latest_alias_snapshot(self) -> dict[str, Any]:
-        """Return persisted-log aliases for diagnostics only.
-
-        Runtime aliases are task-scoped and are built by TaskContextStore.
-        """
 
         objects = self.iter_objects()
         if not objects:
@@ -88,11 +73,6 @@ class ObjectStore:
         }
 
     def build_reference_context(self, current_id: str, current_bbox: tuple[int, int, int, int], limit: int = 4) -> str:
-        """Build diagnostic history context.
-
-        Kept for compatibility/tests. Model calls should prefer
-        TaskContextStore.build_reference_context().
-        """
 
         recent = self.recent(limit)
         lines = [

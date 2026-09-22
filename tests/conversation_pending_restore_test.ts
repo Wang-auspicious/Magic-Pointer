@@ -13,7 +13,7 @@ async function main() {
   const context = { path, FABRIC_DATA_DIR: 'fixture', restoredContextUsage: new Map(),
     fs: { promises: { stat: async () => ({ mtimeMs: 1 }) } },
     conversations: () => ({ updateTurn: (value: any) => { persisted = value; }, flush() {} }),
-    runPythonBridgePromise: async () => ({ ok: true, pendingInput: pending, lastInputAnswer: pending ? null : {
+    handleSessionRead: async () => ({ ok: true, pendingInput: pending, lastInputAnswer: pending ? null : {
       requestId: 'real-ask', message: { content: '{"answered":true,"awaitingUserInput":false}' },
     } }),
   };

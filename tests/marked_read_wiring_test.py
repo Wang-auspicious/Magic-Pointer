@@ -1,18 +1,3 @@
-"""这一条链断在哪儿，就在哪儿钉住。
-
-2026-08-04 实机复现（PowerShell 窗口，一条 1175×30 的下划线）：
-
-  UIA region 读回 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    → 非空，判为"结构层已成功"
-    → source_kind = native_selection
-    → OCR 富化的两道门（source_kind 必须是 screen_region、content 必须为空）双双关死
-    → 用户看到"我知道这是哪个窗口，但没读到你划的那一行"
-
-同一张截图事后单跑 OCR，53 个块里精确命中 1 个，把那行原样读了出来。像素一直都在。
-
-另外同一次里选区被从 1175×30 扩成 2346×1142——笔画穿过的是覆盖整窗的容器元素，
-"穿过了"被当成了"选中了"。
-"""
 
 from __future__ import annotations
 
@@ -56,7 +41,6 @@ def _identity_context(capture: Path) -> AdapterReadContext:
 
 
 def test_a_structured_read_that_missed_the_mark_does_not_block_ocr(monkeypatch, tmp_path) -> None:
-    """核心回归：非空 content 不再是"已经读到了"的证明。"""
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"capture")
     _fake_ocr(monkeypatch)
@@ -65,8 +49,6 @@ def test_a_structured_read_that_missed_the_mark_does_not_block_ocr(monkeypatch, 
         {"title": "Windows PowerShell"},
         _identity_context(capture),
         {
-            # 注意：source_kind 不是 screen_region，且 content 非空——旧代码在这里
-            # 两道门都会直接放行原样返回。
             "source_kind": "native_selection",
             "structured_covers_mark": False,
             "structured_gap_reason": "identity_only",
@@ -79,7 +61,6 @@ def test_a_structured_read_that_missed_the_mark_does_not_block_ocr(monkeypatch, 
 
 
 def test_a_structured_read_that_covered_the_mark_is_left_alone(monkeypatch, tmp_path) -> None:
-    """Notepad / Word 这类本来就读得到的应用不能被这个修复误伤。"""
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"capture")
     _fake_ocr(monkeypatch, "不应该出现的 OCR 结果")
@@ -108,12 +89,6 @@ def test_a_structured_read_that_covered_the_mark_is_left_alone(monkeypatch, tmp_
 def test_a_snapshot_without_the_coverage_field_is_judged_by_its_own_content(
     monkeypatch, tmp_path
 ) -> None:
-    """缺字段不再等于"当作已经读到了"。
-
-    旧规则靠 `structured_covers_mark` 这个布尔值决定要不要跑像素；字段不存在时
-    就整条跳过。现在这一层拿着结构读取本身，覆盖判定就地重算——同一段
-    `powershell.exe` 无论快照什么时候写的，都是"读到了容器名"，不是答案。
-    """
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"capture")
     _fake_ocr(monkeypatch)
@@ -125,7 +100,6 @@ def test_a_snapshot_without_the_coverage_field_is_judged_by_its_own_content(
     )
 
     assert context.content == "LINE-ALPHA 第一行 hello"
-    # 被压过的结构观测仍然留在裁决里，且明说压过它的理由。
     _, trace = _fuse_pixel_tier(
         {"title": "Windows PowerShell"},
         _identity_context(capture),
@@ -133,7 +107,6 @@ def test_a_snapshot_without_the_coverage_field_is_judged_by_its_own_content(
     )
     assert [item["reason"] for item in trace["notes"]] == ["identity_only"]
 
-    # screen_region + 空 content：仍会跑 OCR。
     empty = AdapterReadContext(
         adapter="screen_region",
         app="screen",
@@ -151,10 +124,6 @@ def test_a_snapshot_without_the_coverage_field_is_judged_by_its_own_content(
 
 
 def test_unbound_text_does_not_claim_the_mark() -> None:
-    """「有文字、没有矩形」过去直接算命中，于是像素兜底被关掉。
-
-    一段没有几何的文字，没有任何证据说明它是圈中的那一行、而不是整篇正文。
-    """
     from app.grounding.marked_read import structured_read_covers_mark
 
     coverage = structured_read_covers_mark(
@@ -169,7 +138,6 @@ def test_unbound_text_does_not_claim_the_mark() -> None:
 
 
 def test_a_read_that_named_something_still_covers_without_geometry() -> None:
-    """Word COM / DOM 这类有真文本没几何的读取不能被误伤。"""
     from app.grounding.marked_read import structured_read_covers_mark
 
     coverage = structured_read_covers_mark(
@@ -183,14 +151,12 @@ def test_a_read_that_named_something_still_covers_without_geometry() -> None:
 
 
 def test_the_binding_flag_defaults_to_the_previous_answer() -> None:
-    """没有意见的调用方（手势接地、终端行判定）行为不变。"""
     from app.grounding.marked_read import structured_read_covers_mark
 
     assert structured_read_covers_mark(
         content="某段文字", window={"title": "任意窗口"},
         element_rects=[], mark_bbox=[100, 200, 300, 20],
     ).covers is True
-    # 没有圈选对象时无法判断，谁都不降级。
     assert structured_read_covers_mark(
         content="某段文字", window={"title": "任意窗口"},
         element_rects=[], mark_bbox=None, has_explicit_binding=False,
@@ -212,14 +178,12 @@ def test_only_reads_that_name_an_object_count_as_bound() -> None:
     assert context_is_explicitly_bound(context(dom_selector="#submit")) is True
     assert context_is_explicitly_bound(context(perception_result_kind="point_element")) is True
     assert context_is_explicitly_bound(context(perception_result_kind="terminal_buffer")) is True
-    # 只有一段文字：没指名任何对象。
     assert context_is_explicitly_bound(context()) is False
     assert context_is_explicitly_bound(context(selection_text_chars=42)) is False
     assert context_is_explicitly_bound(None) is False
 
 
 def test_an_unbound_structured_read_hands_the_mark_to_the_pixel_tier() -> None:
-    """接线检查：降级必须真的让像素层被派上去，否则只是换了个说法。"""
     from app.adapters.base import AdapterReadContext
     from app.evidence.contract import EvidenceStatus
     from app.perception.providers import (
@@ -256,7 +220,6 @@ def test_an_unbound_structured_read_hands_the_mark_to_the_pixel_tier() -> None:
     assert reason == "structured_did_not_cover_mark"
 
 
-# --- 快照桥一侧 -------------------------------------------------------------
 
 
 def test_an_identity_only_read_reports_the_gap_and_hands_over_to_pixels() -> None:
@@ -281,7 +244,6 @@ def test_an_identity_only_read_reports_the_gap_and_hands_over_to_pixels() -> Non
 
 
 def test_zero_height_line_keeps_a_real_gesture_region() -> None:
-    """A perfectly horizontal underline must not collapse into a 16px pointer."""
     from scripts.selection_snapshot_bridge import _bounded_gesture_capture_bbox, _gesture_mark_bbox
 
     gesture = {
@@ -303,17 +265,14 @@ def test_zero_height_line_keeps_a_real_gesture_region() -> None:
 
 
 def test_a_stroke_through_a_full_window_element_does_not_select_the_whole_window() -> None:
-    """穿过 ≠ 选中。覆盖整窗的容器被每一条画在它里面的线穿过。"""
     from app.grounding.marked_read import rect_is_container
 
     window = {"title": "Windows PowerShell", "bbox": [194, 196, 2544, 1421]}
     assert rect_is_container([196, 277, 2346, 1142], window=window, mark_bbox=[429, 286, 1175, 30]) is True
-    # 一段普通的段落元素不是容器。
     assert rect_is_container([200, 300, 800, 120], window=window, mark_bbox=[429, 286, 1175, 30]) is False
 
 
 def test_the_grounding_keeps_the_drawn_mark_when_only_a_container_was_crossed() -> None:
-    """接线检查：光有策略没接上等于没修。"""
     source = Path(__file__).resolve().parents[1] / "scripts" / "selection_snapshot_bridge.py"
     text = source.read_text(encoding="utf-8")
     assert "rect_is_container(resolved_bbox" in text, "容器判定没接进手势接地"
@@ -321,19 +280,11 @@ def test_the_grounding_keeps_the_drawn_mark_when_only_a_container_was_crossed() 
     assert '"stroke_crossed_no_element"' in text, "笔画一个元素都没穿过时仍会宣称已解析"
     assert "structured_read_covers_mark(" in text
     assert '"structured_covers_mark": bool(mark_coverage.covers)' in text, "判断没写进快照"
-    # 命令桥这一侧不再读这个布尔：覆盖判断随 observation 过河，由第二段融合排序。
-    # 真接线由 perception_two_stage_seam_test 跑出来，不靠在这里 grep 字符串。
 
 
-# --- 模型挂掉时 -------------------------------------------------------------
 
 
 def test_a_dead_gateway_still_shows_the_line_that_was_read() -> None:
-    """读到了却只显示"AI 调用失败"，和根本没读到长得一模一样。
-
-    2026-08-04 网关维护期间实测到的形态：气泡说"已跳过模型调用，用本地能力尽力
-    回答"，然后什么也没回答——而那一行明明已经 OCR 出来了。
-    """
     from scripts.selection_bridge import answer_with_read_text_on_model_failure
 
     read = "LINE-ALPHA 第一行 hello"
@@ -342,7 +293,6 @@ def test_a_dead_gateway_still_shows_the_line_that_was_read() -> None:
         read,
     )
     assert read in answer
-    # 原因也要留着，否则用户不知道为什么只有原文没有回答。
     assert "连不上模型端点" in answer
 
 

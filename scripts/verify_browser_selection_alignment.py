@@ -81,10 +81,10 @@ def _wait_for_window(timeout: float = 15.0) -> dict:
 
 def _bring_to_foreground(hwnd: int, target_point: dict[str, int], timeout: float = 3.0) -> None:
     user32 = ctypes.windll.user32
-    user32.ShowWindow(int(hwnd), 9)  # SW_RESTORE
+    user32.ShowWindow(int(hwnd), 9)
     user32.SetWindowPos(
         int(hwnd), ctypes.c_void_p(-1), 0, 0, 0, 0,
-        0x0001 | 0x0002 | 0x0010 | 0x0040,  # NOSIZE | NOMOVE | NOACTIVATE | SHOWWINDOW
+        0x0001 | 0x0002 | 0x0010 | 0x0040,
     )
     user32.SetForegroundWindow(int(hwnd))
     deadline = time.time() + timeout
@@ -93,7 +93,7 @@ def _bring_to_foreground(hwnd: int, target_point: dict[str, int], timeout: float
             int(target_point["x"]),
             int(target_point["y"]),
         ))
-        if int(user32.GetAncestor(point_window, 2)) == int(hwnd):  # GA_ROOT
+        if int(user32.GetAncestor(point_window, 2)) == int(hwnd):
             return
         time.sleep(0.05)
         user32.SetForegroundWindow(int(hwnd))

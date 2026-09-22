@@ -1,34 +1,3 @@
-"""End-to-end integration tests: agent loop + fabric tool registry (T5.2).
-
-Simulates the composite task "圈选段落 → 扩写 → 翻译 → 写回" over the real
-loop interpreter (:func:`app.agent_runtime.loop.run_agent_loop`) and the real
-engine entry (:func:`app.fabric.engine.run_agent_turn`), proving the loop
-feeds tool results back to the model, converges over multiple rounds and
-delivers the right artifacts.
-
-Scenarios:
-
-1. Four-step tool chain: Around -> selection_expand -> translate_in_place
-   -> final text. The fake model verifies each tool result's content before
-   deciding the next step (a missed result fails the test).
-2. Natural-language routing: compound requests always enter the model loop;
-   words such as "copy" or "screenshot" never trigger a zero-model action.
-3. Failure recovery: ``Around`` raises ActionFailure(TIMEOUT) once; the
-   model sees the is_error tool message and retries successfully; the loop
-   survives.
-4. Honest write-back failure: ``translate_in_place`` fails with
-   content_changed; the Terminal carries the failure and the loop does not
-   pretend success.
-5. Budget-truncated delivery: the fake clock blows the FULL_ANSWER budget
-   mid-run; Terminal(budget_exhausted) still preserves completed results.
-6. Cancellation generation: cancel_all_in_flight during round 2 raises
-   CancelledError and no further model calls happen.
-7. Registry coexistence: perception tools (register_all) and fabric tools
-   (register_fabric_tools) register side by side without conflicts.
-
-Everything is fake: fake model backends, fake clock, in-memory document
-store tools; no network, clipboard, model, or file writes.
-"""
 
 from __future__ import annotations
 
@@ -75,12 +44,6 @@ FINAL_TEXT = "已翻译并写回：一只敏捷的棕色狐狸跳过了懒狗。
 
 
 class FakeDocumentStore:
-    """In-memory document the fake tools operate on; no files, no clipboard.
-
-    Tool methods double as ToolSpec.execute callables (they accept the
-    harness's injected ``scope`` keyword). ``on_tool`` is an optional hook
-    fired before every call, used by the budget/cancellation scenarios.
-    """
 
     def __init__(self, text: str) -> None:
         self.text = text
@@ -130,7 +93,6 @@ class FakeDocumentStore:
 
 
 def _ms_budget(ms: int) -> Any:
-    """A single FULL_ANSWER budget policy with a millisecond cap."""
     from app.governance.latency_budget import BudgetPolicy, TimeoutAction
 
     return BudgetPolicy(
@@ -141,7 +103,6 @@ def _ms_budget(ms: int) -> Any:
 
 
 def _register_fake_tools(registry: ToolRegistry, doc: FakeDocumentStore) -> ToolRegistry:
-    """Register the four fake chain tools (read/expand/translate/deliver)."""
     registry.register(
         ToolSpec(
             name="Around",
@@ -215,13 +176,6 @@ def _register_fake_tools(registry: ToolRegistry, doc: FakeDocumentStore) -> Tool
 
 
 class ChainBackend:
-    """Fake model that replays a plan of tool-call rounds, verifying results.
-
-    Each round is a list of ``(name, arguments, expect, call_id)`` steps
-    emitted in one model turn. Before every tool step it checks that the
-    previous tool result's content actually reached the model; a mismatch
-    fails the test loudly. The last turn answers with ``final_text``.
-    """
 
     def __init__(self, rounds: list[list[tuple]], final_text: str) -> None:
         self._rounds = [list(round_) for round_ in rounds]
@@ -248,7 +202,6 @@ class ChainBackend:
 
 
 class FakeClock:
-    """Callable fake clock: manual elapsed-ms advance."""
 
     def __init__(self) -> None:
         self.elapsed = 0.0
@@ -261,7 +214,6 @@ class FakeClock:
 
 
 async def _collect(params: LoopParams) -> tuple[list, Terminal]:
-    """Consume the loop async generator; return (events, terminal)."""
     events = []
     generator = run_agent_loop(params)
     while True:
@@ -273,9 +225,6 @@ async def _collect(params: LoopParams) -> tuple[list, Terminal]:
     return events, events[-1].terminal
 
 
-# ---------------------------------------------------------------------------
-# 1. Four-step tool chain: results are fed back, loop converges
-# ---------------------------------------------------------------------------
 
 
 def test_four_step_tool_chain_feedback_and_convergence() -> None:
@@ -307,7 +256,6 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
     events, terminal = asyncio.run(_collect(params))
 
     assert terminal.reason is TransitionReason.COMPLETED
-    # translate_in_place 是无验证回执的写入 → 验证门 nudge 一轮再收工（turn 4→5）
     assert [e for e in events if type(e).__name__ == "VerificationNudged"]
     assert terminal.turns == 5
     assert terminal.message == FINAL_TEXT
@@ -330,7 +278,6 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
         [Role.USER, Role.ASSISTANT, Role.TOOL],
         [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL],
         [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL],
-        # 第 5 轮：模型第 4 轮的最终回答已入列，验证门在其后注入 nudge（USER）
         [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.USER],
     ]
     assert "The quick brown fox" in backend.received[1][0][2].content
@@ -344,20 +291,14 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_RESULT,
-        TransitionReason.STOP_HOOK,      # 验证门 nudge（复用 stop_hook 转移语义）
+        TransitionReason.STOP_HOOK,
         TransitionReason.COMPLETED,
     ]
 
 
-# ---------------------------------------------------------------------------
-# 2. Natural-language requests share one model-loop entry
-# ---------------------------------------------------------------------------
 
 
 def test_run_agent_turn_forwards_keepalive_to_the_loop() -> None:
-    """The bridge passes ``keepalive`` to keep the IPC idle deadline alive
-    during long model calls/tools; the loop entry must forward it, otherwise
-    the first message dies with TypeError in production (2026-08-23 bug)."""
     doc = FakeDocumentStore(PARAGRAPH)
     registry = _register_fake_tools(ToolRegistry(), doc)
     beats: list[str] = []
@@ -372,13 +313,11 @@ def test_run_agent_turn_forwards_keepalive_to_the_loop() -> None:
     )
 
     assert terminal.reason is TransitionReason.COMPLETED
-    assert len(beats) >= 1, beats  # at least the turn-start beat
+    assert len(beats) >= 1, beats
     assert all(isinstance(b, str) and b for b in beats)
 
 
 def test_run_agent_turn_forwards_todo_store_for_partial_delivery() -> None:
-    """BUDGET_EXHAUSTED must list pending todos; ``run_agent_turn`` must
-    forward the bridge's todo_store into the loop (roadmap §12.1)."""
     class _Todo:
         def read(self):
             return [
@@ -390,8 +329,6 @@ def test_run_agent_turn_forwards_todo_store_for_partial_delivery() -> None:
     registry = _register_fake_tools(ToolRegistry(), doc)
     backend = ChainBackend(rounds=[], final_text="x")
 
-    # Budget 1 ms + no progress yet → BUDGET_EXHAUSTED on the first check.
-    # (first clock call = loop start, later calls = past deadline)
     _clock_state = {"calls": 0}
 
     def _past_deadline_clock() -> float:
@@ -507,9 +444,6 @@ def test_agent_turn_has_no_recipe_lifetime_control() -> None:
     assert terminal.turns == 2
 
 
-# ---------------------------------------------------------------------------
-# 3. Failure recovery: timeout is fed back, model retries, loop survives
-# ---------------------------------------------------------------------------
 
 
 def test_failed_read_is_fed_back_and_retry_succeeds() -> None:
@@ -543,9 +477,6 @@ def test_failed_read_is_fed_back_and_retry_succeeds() -> None:
     assert "read worker busy" in second_turn_messages[2].content
 
 
-# ---------------------------------------------------------------------------
-# 4. Honest write-back failure: the Terminal carries the failure
-# ---------------------------------------------------------------------------
 
 
 def test_write_back_failure_is_not_disguised_as_success() -> None:
@@ -583,9 +514,6 @@ def test_write_back_failure_is_not_disguised_as_success() -> None:
     assert doc.deliveries == []
 
 
-# ---------------------------------------------------------------------------
-# 5. Budget limit: truncated delivery keeps completed results
-# ---------------------------------------------------------------------------
 
 
 def test_budget_exhaustion_keeps_completed_results() -> None:
@@ -614,8 +542,6 @@ def test_budget_exhaustion_keeps_completed_results() -> None:
 
     assert len(backend.received) == 1
     assert terminal.reason is TransitionReason.BUDGET_EXHAUSTED
-    # 12.1/§B1: the terminal message is now an honest partial delivery
-    # listing completed steps, not a bare "budget exhausted" stub.
     assert terminal.message.startswith("full answer budget exhausted")
     assert "completed steps:" in terminal.message
     assert "/resume" in terminal.message
@@ -628,9 +554,6 @@ def test_budget_exhaustion_keeps_completed_results() -> None:
     assert doc.calls["translate_in_place"] == 0
 
 
-# ---------------------------------------------------------------------------
-# 6. Cancellation generation: no further model calls after cancel
-# ---------------------------------------------------------------------------
 
 
 def test_cancel_in_round_two_raises_and_stops_model_calls() -> None:
@@ -657,9 +580,6 @@ def test_cancel_in_round_two_raises_and_stops_model_calls() -> None:
     assert doc.calls["translate_in_place"] == 0
 
 
-# ---------------------------------------------------------------------------
-# 7. Registry coexistence: perception + fabric tools side by side
-# ---------------------------------------------------------------------------
 
 
 class FakePerceptionBackend:
@@ -707,7 +627,6 @@ def test_fabric_and_perception_tools_coexist_in_one_registry() -> None:
         "task-store",
     )
 
-    # 再注册一次不会新增：fabric 的工具已经在上面那一批里了。
     register_fabric_tools(registry)
     assert len(registry.list()) == 24
 

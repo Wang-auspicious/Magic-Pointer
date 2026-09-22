@@ -1,8 +1,3 @@
-"""Lossless evidence factoring and read deduplication for provider requests.
-
-The session owns the full receipts. This pure projection never edits the log,
-and a duplicate only points at a result present in this same request.
-"""
 
 import json
 from dataclasses import replace
@@ -17,7 +12,7 @@ def _factor_read_result(result: dict) -> dict:
     if not all(isinstance(f, dict) and isinstance(f.get("locator"), dict) for f in fragments):
         return result
     projected = dict(result)
-    projected.pop("latencyMs", None)  # The durable receipt retains actual timing.
+    projected.pop("latencyMs", None)
     projected["fragments"] = fragments = [dict(f) for f in fragments]
     common_metadata = {}
     for key in ("sourceTitle", "sourceRevision"):

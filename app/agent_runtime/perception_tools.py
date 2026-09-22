@@ -1,23 +1,3 @@
-"""Harness perception-as-tools namespace (gap review L2 / L6).
-
-The model pulls perception on demand instead of the harness pushing a
-fixed packet: ``read_around`` / ``dump_subtree`` / ``find_in_window`` /
-``list_windows`` / ``get_focused`` mirror the gap-review L2 tool list.
-
-Every tool returns an :class:`Evidence` (L6 contract), never a bare value:
-
-- backend raises :class:`BackendBusy` -> ``busy_evidence`` (did not read)
-- backend returns ``None``/empty -> ``empty_confirmed`` (confirmed empty)
-- backend success -> ``ok_evidence`` (or ``empty_confirmed`` when nothing
-  readable); the container heuristic (L6) degrades values that merely
-  repeat a container/control-type name
-- backend timeouts raise :class:`ActionFailure` (TIMEOUT); any other
-  backend failure is re-raised as ``ActionFailure`` (TOOL_ERROR). The
-  registry layer wraps those into structured ToolResults.
-
-The backend is injected (``PerceptionBackend`` protocol); this module is
-pure Python and never touches the real desktop.
-"""
 
 from __future__ import annotations
 
@@ -43,47 +23,37 @@ DEPTH_MAX = 8
 CONTAINER_LIKE_TEXTS = frozenset(
     {"Window", "Pane", "List", "Group", "Tree", "Tab", "Menu", "ScrollBar", "Edit"}
 )
-"""L6 anti-container heuristic set: control/container type names that must
-never count as evidence content."""
 
 
 class BackendBusy(Exception):
-    """Backend perception worker is occupied; nothing was read."""
+    pass
 
 
 @runtime_checkable
 class PerceptionBackend(Protocol):
-    """Injected perception backend (fake in tests, real UIA/CDP host later)."""
 
     def read_around(self, anchor: str, radius: int) -> list[dict]:
-        """Read text items around ``anchor`` (text/source/bbox_ltrb/confidence)."""
         ...
 
     def dump_subtree(self, anchor: str, depth: int) -> dict | None:
-        """Structured accessibility subtree rooted at ``anchor``."""
         ...
 
     def find_in_window(self, pattern: str) -> list[dict]:
-        """Text matches in the current window (text/bbox_ltrb)."""
         ...
 
     def list_windows(self) -> list[dict]:
-        """Window table (hwnd/title/process_name/pid)."""
         ...
 
     def get_focused(self) -> dict | None:
-        """Focused window descriptor, or None when nothing is focused."""
         ...
 
 
 class PerceptionTools:
-    """Evidence-returning facade over one injected :class:`PerceptionBackend`."""
 
     def __init__(self, backend: PerceptionBackend) -> None:
         self._backend = backend
         self.source = EvidenceSource.UIA
 
-    # -- tools -------------------------------------------------------------
 
     def read_around(self, anchor: str, radius: int = 3, scope: object = None) -> Evidence:
         radius = _clamp_int(radius, RADIUS_MIN, RADIUS_MAX)
@@ -192,15 +162,6 @@ class PerceptionTools:
         process_name: str = "",
         scope: object = None,
     ) -> Evidence:
-        """圈里的文件卡片，在本机的哪个位置。
-
-        这是本地文件系统查询，不经过 perception backend —— 它要回答的不是「屏幕上
-        有什么」，而是「卡片上那个文件躺在硬盘的哪里」。
-
-        只按确切文件名查：猜错一个字符就是把另一个文件交出去读。查不到回
-        `empty_confirmed` 并说清楚找过哪些根目录，模型据此可以改问用户，而不是
-        自己编一个路径。
-        """
         del scope
         from app.context_pack.chat_local_files import (
             WECHAT_PROCESSES, DINGTALK_PROCESSES, FEISHU_PROCESSES,
@@ -224,8 +185,6 @@ class PerceptionTools:
             if not roots:
                 continue
             for root in roots:
-                # 同一份仓库会被多个进程名命中（weixin.exe / wechat.exe 是同一个
-                # 数据根），列两遍只会让「查过哪里」这句话变长。
                 text = str(root)
                 if text not in searched:
                     searched.append(text)
@@ -266,11 +225,8 @@ class PerceptionTools:
         evidence = ok_evidence(value, self.source, note="focused window")
         return apply_container_heuristic(evidence, CONTAINER_LIKE_TEXTS)
 
-    # -- registration ------------------------------------------------------
 
     def register_all(self, registry: ToolRegistry) -> None:
-        """Register all five perception tools as model-usable ToolSpecs."""
-        # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
         registry.register_alias("read_around", "Around")
         registry.register_alias("dump_subtree", "Tree")
         registry.register_alias("find_in_window", "Find")
@@ -299,7 +255,7 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.read_around,
-                deferred=True,  # 冻帧三件套：Stage 手势路径专用，find_capability 按需加载
+                deferred=True,
             )
         )
         registry.register(
@@ -409,13 +365,6 @@ class PerceptionTools:
 
 
 def evidence_to_text(evidence: Evidence) -> str:
-    """Serialize an Evidence into model-readable tool-message text.
-
-    The loop's message boundary calls this so the model reads
-    ``{status, confidence, value, note}`` JSON instead of a dataclass repr.
-    The Evidence object itself is untouched at the registry layer (full
-    target-surface evidence is retained for fusion/decisions).
-    """
     return json.dumps(
         {
             "status": evidence.status.value,
@@ -428,7 +377,6 @@ def evidence_to_text(evidence: Evidence) -> str:
 
 
 def _clamp_int(value: object, lo: int, hi: int) -> int:
-    """Clamp a caller-supplied integer into ``lo..hi`` (non-int -> lo)."""
     if not isinstance(value, int) or isinstance(value, bool):
         return lo
     return max(lo, min(hi, value))
@@ -437,12 +385,6 @@ def _clamp_int(value: object, lo: int, hi: int) -> int:
 def _serialize_tree(
     node: Any, depth_remaining: int, visited: set[int] | None = None
 ) -> tuple[str, bool, bool]:
-    """Serialize a tree to compact JSON with depth cap and cycle truncation.
-
-    Returns ``(value, cycle_detected, depth_capped)``. Cycles are detected by
-    object identity of dict nodes; a repeated node is replaced by
-    ``"[cycle]"``. Deeper levels are replaced by ``"[max_depth]"``.
-    """
     if visited is None:
         visited = set()
     root = node

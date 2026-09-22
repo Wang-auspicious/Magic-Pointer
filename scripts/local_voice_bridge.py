@@ -61,7 +61,6 @@ class VoiceActivity:
         return max(0.009, self.noise_floor * 3.2)
 
     def _is_speech_like(self, values: np.ndarray, level: float) -> bool:
-        """Reject steady mains hum and brief impulses before starting capture."""
         if level < self.threshold or values.size < 2:
             return False
         magnitude = np.abs(values)
@@ -92,11 +91,6 @@ class VoiceActivity:
                 self.speech_samples += count
                 self.silent_samples = 0
                 return "speech"
-            # Asymmetric envelope follower: fast release (downward tracking
-            # when the environment genuinely quiets), slow attack (upward
-            # movement rejects transient noise like keystrokes or door slams).
-            # The symmetric 0.92/0.08 EMA poisoned the noise floor on every
-            # transient, causing missed speech or early cutoffs.
             if level <= self.noise_floor:
                 self.noise_floor = 0.01 * self.noise_floor + 0.99 * level
             else:
@@ -119,7 +113,6 @@ class VoiceActivity:
 
 
 def stop_capture_state(stop_file: Path | str | None, activity: VoiceActivity) -> str | None:
-    """Return a capture outcome for an existing stop file without mutating it."""
     if stop_file is None:
         return None
     try:
@@ -133,7 +126,6 @@ def stop_capture_state(stop_file: Path | str | None, activity: VoiceActivity) ->
 
 
 def requested_stop_state(requested: bool, activity: VoiceActivity) -> str | None:
-    """Convert a cooperative in-memory stop signal into the same VAD outcome."""
     if not requested:
         return None
     minimum_samples = activity.sample_rate * activity.minimum_speech_ms / 1000
@@ -276,7 +268,6 @@ def cached_model_path(model_name: str) -> Path:
 
 
 def available_logical_cpu_count() -> int | None:
-    """Return the CPU capacity available to this process when it is known."""
     process_cpu_count = getattr(os, "process_cpu_count", None)
     for counter in (process_cpu_count, os.cpu_count):
         if not callable(counter):
@@ -295,7 +286,6 @@ def select_whisper_cpu_threads(
     logical_cpu_count: int | None = None,
     environment: dict[str, str] | None = None,
 ) -> int:
-    """Choose a bounded CPU thread count, with a strict desktop-test override."""
     detected_count = available_logical_cpu_count() if logical_cpu_count is None else logical_cpu_count
     if (
         not isinstance(detected_count, int)
@@ -550,9 +540,6 @@ def run_microphone_with_model(
                 if state == "final" or requested_stop == "final":
                     break
 
-        # A final/terminal event is the lifecycle boundary: no background
-        # partial may outlive it, and final inference must never overlap the
-        # same Whisper model with an in-flight partial.
         collect_partial(wait=True, emit_result=False)
         if terminal_error is not None:
             send("error", error=terminal_error, engine=f"whisper-{model_name}-local")

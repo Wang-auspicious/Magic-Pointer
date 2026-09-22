@@ -5,6 +5,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+import pytest
+
 from app.fabric.agents import AgentInvocation, AgentRequest
 from app.fabric.artifacts import ArtifactRegistry
 from app.fabric.catalog import RECIPE_CATALOG
@@ -15,6 +17,12 @@ from app.fabric.settings import FabricSettings
 from app.fabric.task_store import AgentTaskStore
 from app.fabric.workflow_task_store import WorkflowTaskError, WorkflowTaskStore
 from app.models.profiles import ModelProfile, ModelProfileStore
+
+
+@pytest.fixture(autouse=True)
+def local_workspace(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, capture_output=True)
+    monkeypatch.chdir(tmp_path)
 
 
 def _object(object_id: str = "obj-1", content: str = "Hello  123  456") -> dict:
@@ -283,12 +291,6 @@ def test_visual_agent_attachment_requires_enabled_privacy_setting_and_confirmati
 
 
 def test_a_blocked_upload_gets_a_visual_relay_and_zero_image_attachments(tmp_path: Path) -> None:
-    """上传被挡住时，交接仍然给结构化中继，但一张图都不带。
-
-    这条以前叫「纯文本模型…」，中继模式由 profile 的 visionInput 决定，隐私
-    开关反而排在它后面——于是「关掉上传」也能被一次模型能力判定绕过。文字/
-    视觉两分取消之后，唯一的闸门就是隐私开关本身。
-    """
     image = tmp_path / "pointer-region.png"
     image.write_bytes(b"fixture")
     starts: list[dict] = []
@@ -575,10 +577,6 @@ def test_provider_backed_recipe_never_claims_success_when_unconfigured(tmp_path:
 
 
 def test_model_text_recipe_uses_local_model_when_transform_wired(tmp_path: Path) -> None:
-    """Review R3: a model.text recipe (text.summarize_route) must run through
-    the local model transform when one is wired — the Notepad incident showed
-    the production bridge left it unwired, so the plan fell back to
-    agent.task and the user got AgentGatewayError instead of a summary."""
     calls: list[tuple] = []
 
     def fake_transform(command: str, context_text: str, recipe_id: str) -> str:
@@ -680,8 +678,6 @@ def test_safe_local_task_route_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_concurrent_task_adds_do_not_lose_updates(tmp_path: Path) -> None:
-    """Red-team T5: lockless read-modify-write lost ~47% of concurrent adds
-    and crashed one process with PermissionError on the shared .tmp handle."""
     settings = FabricSettings.defaults()
     settings.permissions.recipe_overrides["task.route"] = "allow"
 
@@ -715,10 +711,6 @@ def test_concurrent_task_adds_do_not_lose_updates(tmp_path: Path) -> None:
 
 
 def test_idempotency_key_is_stable_for_identical_replans(tmp_path: Path) -> None:
-    """Fabric-audit P1: the target lease's random id + wall-clock timestamps
-    used to land in the canonical, so an identical re-plan produced a new key
-    and durable receipt reuse never fired (a retry could execute a write
-    twice). The key must depend only on execution-relevant content."""
     engine = FabricEngine(root=tmp_path)
     first = engine.plan(
         "把这个错误建成任务",
@@ -740,13 +732,6 @@ def test_idempotency_key_is_stable_for_identical_replans(tmp_path: Path) -> None
 def test_editing_an_unrelated_file_does_not_change_the_idempotency_key(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Same P1, second volatile field: the packet carries the repo's dirty state.
-
-    `git status`/`git diff` output is ambient — saving any file in the workspace
-    changed the key, so a retry of the same send never found its receipt. This
-    is not hypothetical during a test run: the suite writes files under the repo
-    and two identical re-plans seconds apart hashed differently.
-    """
     from app.fabric import context_packet
 
     engine = FabricEngine(root=tmp_path)
@@ -773,7 +758,6 @@ def test_editing_an_unrelated_file_does_not_change_the_idempotency_key(
     after = engine.plan("把这个错误建成任务", objects=[_object(content="E42 failed")])["plan"]
 
     assert after["idempotencyKey"] == before["idempotencyKey"]
-    # The evidence itself still moves the key.
     other = engine.plan("把这个错误建成任务", objects=[_object(content="E43 failed")])["plan"]
     assert other["idempotencyKey"] != before["idempotencyKey"]
 
@@ -883,8 +867,6 @@ def test_disabled_recipe_fails_closed_before_plan_creation(tmp_path: Path) -> No
 
 
 def test_plan_composes_target_lease_capture_policy_packet_and_bounded_capabilities(tmp_path: Path) -> None:
-    # A repo-local pytest temp directory otherwise inherits the entire developer
-    # repository, making component discovery scan unrelated real source files.
     subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, capture_output=True)
     (tmp_path / ".gitignore").write_text("screen.png\n", encoding="utf-8")
     image = tmp_path / "screen.png"

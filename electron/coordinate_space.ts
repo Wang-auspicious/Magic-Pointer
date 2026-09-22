@@ -30,25 +30,12 @@ interface GestureInput {
   strokes?: unknown;
 }
 
-// The named coordinate spaces, in one place. Every producer and consumer of a
-// discriminant uses these values; nothing spells its own. See the contract in
-// docs/research/2026-09-16-vida-circle-point.md.
-//
-//   physical_screen_pixels — physical px on the virtual desktop. The wire
-//                            format for gesture geometry, UIA/OCR rects and
-//                            every cross-process payload.
-//   dip_screen             — DIP with the virtual-desktop origin (Electron's
-//                            own screen.* APIs).
-//   dip_window             — DIP local to one window (DOM, CSS, renderer math).
 const COORDINATE_SPACES = Object.freeze({
   PHYSICAL_SCREEN_PIXELS: 'physical_screen_pixels',
   DIP_SCREEN: 'dip_screen',
   DIP_WINDOW: 'dip_window',
 });
 
-// Spellings older builds wrote before the spaces were named here. A gesture or
-// locator persisted by an older version still resolves to its canonical space
-// instead of being rejected outright, but nothing may emit these again.
 const LEGACY_COORDINATE_SPACES: Record<string, string> = Object.freeze({
   'physical-screen-pixels': COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
   electron_dip: COORDINATE_SPACES.DIP_SCREEN,
@@ -60,8 +47,6 @@ const COORDINATE_SPACE_VALUES: readonly string[] = Object.freeze(
   Object.values(COORDINATE_SPACES),
 );
 
-// Canonical name for a coordinate-space discriminant, or null when the value is
-// not a space this build knows. Unknown is not a guess: fail closed.
 function normalizeCoordinateSpace(value: unknown): string | null {
   if (typeof value !== 'string' || !value) return null;
   if (COORDINATE_SPACE_VALUES.includes(value)) return value;
@@ -139,9 +124,6 @@ function physicalGestureBoundingBox(points: unknown, minimumThickness: unknown =
   };
 }
 
-// A gesture that cannot become a physical trace must say why. `null` on its own
-// is indistinguishable from "the user did not gesture", so the caller can only
-// drop the circle silently — which is what the user sees today.
 type GestureTraceResult =
   | { ok: true; reason: null; trace: UnknownRecord }
   | { ok: false; reason: string; trace: null };
@@ -154,8 +136,6 @@ function physicalGestureTraceResult(
     return { ok: false, reason: 'gesture_absent', trace: null };
   }
   if (isPhysicalScreenPixels(gesture.coordinateSpace)) {
-    // Already physical (completeSelectionGesture output): normalize the
-    // shape without a second DIP -> physical conversion.
     const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
       ? gesture.strokes
       : [{ points: Array.isArray(gesture.points) ? gesture.points : [] }];
@@ -179,9 +159,6 @@ function physicalGestureTraceResult(
     if (points.length < 2) {
       return { ok: false, reason: 'gesture_too_short', trace: null };
     }
-    // `Number(x) || 0` relocated a corrupt release point to (0, 0) — the
-    // top-left of the primary monitor — instead of failing. Fall back to the
-    // last real point instead: it is always finite here.
     const releasePoint = finitePoint(gesture.releasePoint) || points.at(-1)!;
     return {
       ok: true,
@@ -201,9 +178,6 @@ function physicalGestureTraceResult(
       },
     };
   }
-  // Without DIP -> physical there is no trace at all, and today that is
-  // reported as "no gesture". Name it instead, so the stage can say why the
-  // stroke the user just drew did nothing.
   if (!screenApi || typeof screenApi.dipToScreenPoint !== 'function') {
     return { ok: false, reason: 'screen_api_unavailable', trace: null };
   }
@@ -245,8 +219,6 @@ function physicalGestureTraceResult(
   };
 }
 
-// Compatibility shim: the trace itself, or null. Callers that can surface a
-// reason should use `physicalGestureTraceResult` instead.
 function physicalGestureTrace(
   screenApi: ScreenApi | null | undefined,
   gesture: GestureInput | null | undefined,
@@ -261,8 +233,6 @@ function physicalDisplayBounds({
   bounds: Rect;
   scaleFactor: number;
 }): [number, number, number, number] {
-  // Round origin and size separately. A DIP width is never a physical width:
-  // on a 150% display a 1707 DIP-wide monitor is 2561 physical pixels wide.
   const scale = Number(scaleFactor);
   if (!Number.isFinite(scale) || scale <= 0) {
     throw new TypeError('scaleFactor must be a finite positive number');

@@ -50,9 +50,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 
-#: The bridge behind the Studio conversation surface. It speaks the same
-#: protocol Electron speaks to it: one JSON request line on stdin, one JSON
-#: result line on stdout, phase timings on stderr.
 BRIDGE = "scripts/conversation_bridge.py"
 
 DEFAULT_TASK = "列出当前打开的所有窗口标题，然后告诉我一共几个。必须调用工具获取。"
@@ -70,7 +67,6 @@ def _parse_fields(rest: str) -> dict[str, str]:
 
 
 def _phases(stderr_text: str) -> list[dict[str, str]]:
-    """Every ``@@mp`` line, in order, as field dicts."""
     rows: list[dict[str, str]] = []
     for line in stderr_text.splitlines():
         match = _PHASE_LINE.match(line.strip())
@@ -87,7 +83,6 @@ def _ms(value: str | None) -> float | None:
 
 
 class RunOutcome:
-    """One bridge invocation, reduced to the numbers worth comparing."""
 
     def __init__(self, *, ok: bool, wall_ms: float, error: str = "") -> None:
         self.ok = ok
@@ -95,9 +90,7 @@ class RunOutcome:
         self.error = error
         self.total_ms: float | None = None
         self.boot_ms: float | None = None
-        #: Time from each ``model_request`` to the first chunk that answered it.
         self.ttft_ms: list[float] = []
-        #: Executed tool latencies, as the tools themselves reported them.
         self.tool_ms: list[float] = []
         self.tool_names: list[str] = []
         self.turns = 0
@@ -125,7 +118,6 @@ class RunOutcome:
 
 
 def _reduce(rows: list[dict[str, str]], outcome: RunOutcome) -> None:
-    """Fold the phase stream into per-round waits and per-tool latencies."""
     pending_request_ms: float | None = None
     for row in rows:
         phase = row.get("phase", "")
@@ -139,9 +131,6 @@ def _reduce(rows: list[dict[str, str]], outcome: RunOutcome) -> None:
         elif phase == "model_request":
             pending_request_ms = at_ms
         elif phase in {"reasoning_chunk", "answer_chunk", "model_first_chunk", "tool_call"}:
-            # The first thing to come back after a request closes that round's
-            # wait, whatever kind of chunk it happens to be. Reasoning counts:
-            # the user is still staring at nothing while the model thinks.
             if pending_request_ms is not None and at_ms is not None:
                 outcome.ttft_ms.append(at_ms - pending_request_ms)
                 pending_request_ms = None

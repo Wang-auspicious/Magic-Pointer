@@ -18,7 +18,6 @@ import scripts.electron_bridge as electron_bridge
 import scripts.selection_bridge as selection_bridge
 from app.adapters.base import AdapterReadContext
 from scripts.selection_bridge import (
-    _calendar_response,
     _crop_roi_for_ocr,
     _route_response,
     _context_from_snapshot,
@@ -27,20 +26,16 @@ from scripts.selection_bridge import (
     _exact_readback_response,
     _reference_label_response,
     _read_target_context,
-    _shopping_list_response,
     _wants_undo,
 )
 
 
 def _enrich_screen_region_context(target_window, app_ctx, snapshot):
-    """The pixel tier as the answer stage runs it, without the fused trace."""
     context, _trace = _fuse_pixel_tier(target_window, app_ctx, snapshot)
     return context
 
 
 def test_selection_bridge_wires_local_model_transform(monkeypatch) -> None:
-    """Review R3: the production bridge must wire the local text model into
-    FabricEngine so model.text recipes never fall back to agent.task."""
     captured = {}
 
     def fake_ask(
@@ -468,10 +463,6 @@ def test_fabric_object_keeps_structured_browser_devtools_evidence() -> None:
 
 
 def test_old_snapshot_is_still_readable() -> None:
-    """定格住的那一刻不会因为时间流逝而失效。
-
-    旧行为是 120s 硬过期：证据还完整躺在磁盘上，第二个问题却被判死。
-    """
     long_past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     window, context, snapshot, error = _context_from_snapshot({
         "selectionSnapshot": {
@@ -482,13 +473,12 @@ def test_old_snapshot_is_still_readable() -> None:
         }
     })
     assert error is None
-    assert context is None  # 这份快照本来就没带 context
+    assert context is None
     assert window == {"title": "doc.docx - Word"}
     assert snapshot["snapshot_id"] == "aged"
 
 
 def test_malformed_snapshot_still_fails_closed() -> None:
-    """时间不再是错误来源，结构坏掉仍然是。"""
     _, _, _, error = _context_from_snapshot({
         "selectionSnapshot": {
             "snapshot_id": "broken",
@@ -516,72 +506,6 @@ def test_interaction_episode_context_exposes_only_bound_slots() -> None:
     assert "THIS" in text and "THAT" in text and "THESE[1]" in text and "HERE" in text
     assert "Alpha" in text and "Beta" in text
     assert "global history" in text
-
-
-def test_shopping_list_response_is_local_typed_action() -> None:
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
-    payload = {
-        "command": "Add this",
-        "selectionSessionId": "session-1",
-        "selectionSnapshot": {
-            "snapshot_id": "snapshot-1",
-            "expires_at": expires_at,
-            "source_window": {"title": "Recipe.pdf - Microsoft Edge", "hwnd": 123},
-            "context": {
-                "adapter": "uia_text_selection",
-                "app": "pdf",
-                "window": {"title": "Recipe.pdf - Microsoft Edge", "hwnd": 123},
-                "content": "1 lb Spaghetti",
-                "label": "Recipe.pdf",
-                "method": "uia:text-pattern.selection",
-                "capabilities": [],
-                "artifacts": {},
-                "error": None,
-            },
-        },
-    }
-    target, app_ctx, snapshot, error = _context_from_snapshot(payload)
-    assert error is None
-    output = _shopping_list_response(payload, target, app_ctx, snapshot)
-    assert output is not None
-    assert output["ok"] is True
-    assert output["intentKind"] == "shopping_list_add"
-    assert output["answer"] == "正在加入购物清单…"
-    assert output["autoExecuteProposalId"] == output["actionProposals"][0]["id"]
-    assert output["actionProposals"][0]["action_type"] == "shopping_list_add"
-    assert output["selectionSnapshotId"] == "snapshot-1"
-
-    assert _shopping_list_response({**payload, "command": "Explain this"}, target, app_ctx, snapshot) is None
-
-
-def test_calendar_response_opens_reviewable_draft_without_action() -> None:
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
-    payload = {
-        "command": "添加到日历",
-        "selectionSessionId": "session-calendar",
-        "selectionSnapshot": {
-            "snapshot_id": "snapshot-calendar",
-            "expires_at": expires_at,
-            "source_window": {"title": "活动.pdf - Microsoft Edge", "hwnd": 123},
-            "context": {
-                "adapter": "uia_text_selection",
-                "app": "pdf",
-                "window": {"title": "活动.pdf - Microsoft Edge", "hwnd": 123},
-                "content": "设计评审\n2026年7月20日 10:00-11:00\n地点：A 会议室",
-                "label": "活动.pdf",
-                "method": "uia:text-pattern.selection",
-                "capabilities": [],
-                "artifacts": {},
-                "error": None,
-            },
-        },
-    }
-    target, app_ctx, snapshot, error = _context_from_snapshot(payload)
-    assert error is None
-    output = _calendar_response(payload, target, app_ctx, snapshot)
-    assert output["intentKind"] == "calendar_event_draft"
-    assert output["calendarDraft"]["event"]["title"] == "设计评审"
-    assert output["actionProposals"] == []
 
 
 def test_route_response_uses_bound_episode_without_model_action() -> None:
@@ -675,8 +599,8 @@ def test_crop_roi_for_ocr_crops_selection_bbox_with_padding(tmp_path) -> None:
     capture = tmp_path / "screen.png"
     image = Image.new("RGB", (100, 100), "white")
     draw = ImageDraw.Draw(image)
-    draw.rectangle((10, 10, 30, 30), fill="black")  # outside ROI
-    draw.rectangle((40, 40, 60, 60), fill="black")  # inside ROI
+    draw.rectangle((10, 10, 30, 30), fill="black")
+    draw.rectangle((40, 40, 60, 60), fill="black")
     image.save(capture)
 
     roi = _crop_roi_for_ocr(capture, [40, 40, 20, 20], [0, 0, 100, 100], padding=4)
@@ -749,9 +673,6 @@ def test_legacy_bounded_crop_without_coordinate_mapping_is_not_filtered_by_scree
             "source_kind": "screen_region",
             "capture_path": str(capture),
             "selection_bbox": [872, 489, 16, 16],
-            # Old/public episode objects did not retain capture_bbox. The OCR
-            # box above is crop-local, so comparing it to screen coordinates
-            # would incorrectly erase the only grounded text.
         },
     )
 
@@ -825,9 +746,6 @@ def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(
     assert context is not None
     assert context.content == "FULL TEXT"
     assert context.artifacts.get("ocr_full_screen") is True
-    # 这行识别结果没有矩形（Tesseract 那条路）。文字要保住，但位置不能编：
-    # 块数按「定位到的块」计，所以是 0，并且明确写成 unlocated，
-    # 于是证据以 unlocated_text 的身份进模型，而不是假装我们圈中了它。
     assert context.artifacts.get("ocr_block_count_selected") == 0
     assert context.artifacts.get("ocr_text_scope") == "unlocated"
     assert context.artifacts.get("captured_rects") == []
@@ -838,7 +756,7 @@ def test_screen_region_enrich_uses_stroke_collision_not_union_bbox(monkeypatch, 
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"png-bytes")
     blocks = [
-        {"text": "李明瑄", "rect": [120, 100, 80, 26], "conf": 0.9},      # thumbnail text, not crossed
+        {"text": "李明瑄", "rect": [120, 100, 80, 26], "conf": 0.9},
         {"text": "first marked sentence", "rect": [100, 300, 300, 26], "conf": 0.9},
         {"text": "unrelated middle paragraph", "rect": [100, 340, 300, 26], "conf": 0.9},
         {"text": "second marked sentence", "rect": [100, 500, 300, 26], "conf": 0.9},
@@ -851,7 +769,7 @@ def test_screen_region_enrich_uses_stroke_collision_not_union_bbox(monkeypatch, 
     gesture = {
         "schemaVersion": 2,
         "coordinateSpace": "physical_screen_pixels",
-        "bbox": {"x": 100, "y": 300, "width": 300, "height": 226},  # union is huge
+        "bbox": {"x": 100, "y": 300, "width": 300, "height": 226},
         "strokes": [
             {"points": [{"x": 100, "y": 308}, {"x": 300, "y": 310}, {"x": 400, "y": 308}]},
             {"points": [{"x": 100, "y": 508}, {"x": 250, "y": 510}, {"x": 400, "y": 508}]},
@@ -927,7 +845,6 @@ def test_enclosed_loop_collects_all_blocks_in_region_not_just_crossed_lines(monk
         "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
     )
-    # A closed loop around the first three lines (first point near last point).
     gesture = {
         "schemaVersion": 2,
         "coordinateSpace": "physical_screen_pixels",
@@ -969,7 +886,6 @@ def test_open_stroke_blocks_are_sorted_in_reading_order(monkeypatch, tmp_path) -
         "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
     )
-    # Two open underline strokes crossing both rows.
     gesture = {
         "schemaVersion": 2,
         "coordinateSpace": "physical_screen_pixels",
@@ -995,13 +911,7 @@ def test_open_stroke_blocks_are_sorted_in_reading_order(monkeypatch, tmp_path) -
     assert top != -1 and bottom != -1 and top < bottom
 
 
-# ── 回答形态判定：deliver 只看证据（8·29 删关键词分类器）──────────────
 def test_deliver_shape_requires_proposal_evidence() -> None:
-    """问题文本永不触发 deliver；模型真的生成了执行方案才算。
-
-    「你刚刚在回复这段话的过程中…」句中出现「回复」就被旧正则判成
-    要写回，凭空拉出同意条——意图由模型理解，桥只认 actionProposals。
-    """
     source = (Path(__file__).resolve().parents[1] / "scripts" / "selection_bridge.py").read_text(encoding="utf-8")
     assert "_is_deliver_request" not in source, "关键词分类器必须已删除"
     assert "action_proposals" in source, "deliver 判定必须来自执行方案证据"
@@ -1027,7 +937,6 @@ def test_pointing_instruction_is_only_added_for_location_questions() -> None:
     ) == ""
 
 
-# ── 自动记忆（Vida 式主动层）：敏感挡、去重、非敏感记 ──────────────
 def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
     import json
 
@@ -1046,8 +955,8 @@ def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
     _record_auto_memory(
         '这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。',
         enabled=True, source_id='source:wechat:m-42', locator=locator,
-    )  # 去重
-    _record_auto_memory('帮我查一下密码是什么', ctx, {'title': '微信'}, '密码是 abc', enabled=True)  # 敏感挡
+    )
+    _record_auto_memory('帮我查一下密码是什么', ctx, {'title': '微信'}, '密码是 abc', enabled=True)
     data = json.loads((tmp_path / 'screen-memory.json').read_text(encoding='utf-8'))
     entries = data['entries']
     assert len(entries) == 1, f'期望 1 条（去重+敏感挡），实际 {len(entries)}'
@@ -1055,8 +964,6 @@ def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
     assert entries[0]['sourceId'] == 'source:wechat:m-42'
     assert entries[0]['locator'] == locator
     assert entries[0]['provenanceMissing'] is False
-
-# --- Batch-4 loop answer path (MAGIC_POINTER_LOOP_ANSWER gate) -----------------
 
 
 def _fake_terminal(reason_value="completed", message="循环答案", local_action=None):
@@ -1096,14 +1003,10 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
     )
 
     assert recorded["input"] == "帮我看看"
-    # The evidence block travels as a separate origin=data message, never
-    # inside the instruction channel (invariant ⑤).
     assert recorded["evidence"] and "[本次圈选对象证据]" in recorded["evidence"]
     assert "帮我看看" not in (recorded["evidence"] or "")
     assert recorded["objects"] == [{"id": "o1"}]
     assert recorded["allowed"] == tuple(Effect)
-    # Stage path rides the same idle-deadline heartbeat + partial delivery
-    # as the conversation path (B1.3/§12.1) — both must reach run_agent_turn.
     assert callable(recorded["keepalive"])
     assert recorded["todo_store"] is not None
     assert recorded["tool_limit"] == 128
@@ -1235,7 +1138,6 @@ def test_selection_metadata_preserves_runtime_permission_suspension_and_receipts
 def test_loop_router_persists_frozen_source_and_locator_before_model(
     monkeypatch, tmp_path
 ) -> None:
-    """The first pointed object is durable task context, not prompt-only prose."""
     from app.context_pack.source_store import task_references, task_sources
     from app.fabric import engine as engine_module
 
@@ -1296,8 +1198,6 @@ def test_loop_router_persists_frozen_source_and_locator_before_model(
     ]
     assert seen["context_read"].is_error is True, "an unread frozen image is not successful text evidence"
 
-    # Opening the same Runtime task again must replay, not duplicate, its
-    # authoritative source/reference binding.
     from app.agent_runtime.session import FileSessionStore
 
     resumed = FileSessionStore(tmp_path / "agent-sessions").resume("agent-selection-w01")
@@ -1490,7 +1390,6 @@ def test_selection_budget_never_kills_a_normal_answer() -> None:
 def test_screen_region_without_explicit_image_path_never_uses_local_image_route(
     monkeypatch, tmp_path
 ) -> None:
-    """A frozen screen capture is evidence, not a selected local image file."""
     from PIL import Image
 
     capture = tmp_path / "screen.png"
@@ -1531,7 +1430,6 @@ def test_screen_region_without_explicit_image_path_never_uses_local_image_route(
 
 
 def test_main_has_one_agent_route_and_no_post_loop_model_fallback() -> None:
-    """Normal commands get one Agent state machine, not stacked routers."""
     module_source = inspect.getsource(selection_bridge)
     source = inspect.getsource(selection_bridge.main)
     assert source.count("loop_result = _loop_router") == 1
@@ -1542,11 +1440,7 @@ def test_main_has_one_agent_route_and_no_post_loop_model_fallback() -> None:
     assert "IntentRouter(" not in source
     assert "def _classify_with_model" not in module_source
     assert "def _general_fallback_answer" not in module_source
-    # The dead screen-region vision helper grabbed the LIVE screen via
-    # ImageGrab (frozen-frame invariant violation if ever rewired) — removed.
     assert "def _screen_region_vision_answer" not in module_source
-    assert "_shopping_list_response(" not in source
-    assert "_calendar_response(" not in source
     assert "_route_response(" not in source
     assert "_length_target_response(" not in source
 
@@ -1573,13 +1467,6 @@ def test_frozen_frame_crop_translates_physical_coordinates_to_image_local(
 
 
 def test_the_loop_backend_names_the_reader_that_actually_read(monkeypatch) -> None:
-    """`read_around` must not sign OCR's work with UIA's name.
-
-    The loop weighs evidence by where it came from, and after fusion the winner
-    is often not the structured tier. A backend that answers "source: uia,
-    confidence: 1.0" for a recognised line hands the model a certainty nobody
-    produced.
-    """
     app_ctx = AdapterReadContext(
         adapter="local_ocr",
         app="screen",
@@ -1637,15 +1524,12 @@ def test_only_completed_loop_terminal_can_become_the_user_answer() -> None:
         "loopTerminated": True,
         "loopTerminatedReason": "budget_exhausted",
     }) is False
-    # 部分交付：终止但携带实质完成内容（notepad-edit 教训）——
-    # 活干完了不得只报一句错误。
     assert selection_bridge._loop_result_is_answer({
         "ok": True,
         "answer": "模型连接中断，未能生成最终答复。此前已完成的操作：\n1. click\n2. type_text\n（以上操作已真实执行）",
         "loopTerminated": True,
         "loopTerminatedReason": "provider_unavailable",
     }) is True
-    # 终止且没有实质内容的仍然走失败路径。
     assert selection_bridge._loop_result_is_answer({
         "ok": True,
         "answer": "",
@@ -1755,7 +1639,6 @@ def test_loop_router_collects_capability_proposals(monkeypatch):
 
 
 def test_loop_router_keeps_ordinary_selection_out_of_profile_coding_workspace(monkeypatch, tmp_path):
-    """A gesture is material selection, not an implicit advanced-code grant."""
     from app.agent_runtime.tool_registry import Effect
     from app.fabric import engine as engine_module
     from types import SimpleNamespace
@@ -1843,12 +1726,6 @@ def test_loop_router_keeps_ordinary_selection_out_of_profile_coding_workspace(mo
 
 
 def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
-    """Stage 长任务与 Studio 对话同权：计划没做完不许静默收工。
-
-    conversation_bridge 有计划门 nudge（最多两次），selection_bridge 拿了
-    todo_store 却只做 partial-delivery——loop 的 nudge_hooks 恒为空元组，
-    Stage 长任务做到一半写完 todo 就能直接 COMPLETED。
-    """
     from types import SimpleNamespace
 
     from app.agent_runtime.tool_registry import ToolRegistry
@@ -1886,7 +1763,7 @@ def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
                 return SimpleNamespace(open_or_create=lambda sid, *a, **k: _StubAgentSession())
             if key == "context_budget":
                 return 64000
-            return SimpleNamespace()  # model_client/compactor/estimator/hooks/...
+            return SimpleNamespace()
 
     class _StubAgentSession:
         open_turn = None
@@ -1942,19 +1819,12 @@ def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
     assert hooks and callable(hooks[0]), "Stage 路径必须带计划门 nudge hook"
     first = hooks[0]()
     assert first and "计划门" in first and "修完三个种子 bug" in first
-    hooks[0]()  # 第二次仍 nudge（上限内）
+    hooks[0]()
     assert hooks[0]() is None, "计划门最多 nudge 两次，防死循环"
     assert result["ok"] is True
 
 
 def test_main_passes_reply_style_into_the_loop_router(monkeypatch):
-    """划线问句走到 Agent loop 不得死在未定义名上。
-
-    1.0.14 的 replyStyle 批把 ``reply_style = payload.get(...)`` 写进了
-    build_agent_prompt_draft 的作用域，main() 里的 _loop_router 调用
-    却引用它——NameError：自 1.0.14 起每个走到 loop 的手势问句必死
-    （精确读回不走 loop 所以看着正常），GUI 只显示兜底文案。
-    """
     from datetime import datetime, timedelta, timezone
 
     captured = {}
@@ -2006,11 +1876,6 @@ def test_main_passes_reply_style_into_the_loop_router(monkeypatch):
 
 
 def test_aged_snapshot_followup_keeps_the_frozen_evidence(tmp_path, monkeypatch):
-    """追问时冻结帧已经很旧：证据照用，不再降级成「只剩对话历史」。
-
-    真机 8·29 的老 bug 是 TTL 120s 比一轮长答案的往返还短，第二条追问必死。
-    现在那一刻是定格的，所以第二条追问看到的仍然是同一份屏幕证据。
-    """
     from datetime import datetime, timedelta, timezone
 
     sessions_dir = tmp_path / "data" / "runtime" / "agent-sessions"
@@ -2065,7 +1930,6 @@ def test_aged_snapshot_followup_keeps_the_frozen_evidence(tmp_path, monkeypatch)
 
 
 def test_aged_snapshot_first_question_still_answers(tmp_path, monkeypatch):
-    """首问（无历史会话）用一份很旧的冻结帧，照样跑通。"""
     from datetime import datetime, timedelta, timezone
 
     monkeypatch.setattr(selection_bridge, "ROOT", tmp_path)
@@ -2111,7 +1975,6 @@ def test_aged_snapshot_first_question_still_answers(tmp_path, monkeypatch):
 
 
 def test_loop_router_does_not_create_relative_tool_result_dir_without_workspace(monkeypatch, tmp_path):
-    """Ordinary Stage tasks must not spill large results into process cwd/.mp."""
     from types import SimpleNamespace
 
     from app.agent_runtime.tool_registry import ToolRegistry
@@ -2180,18 +2043,12 @@ def test_loop_router_does_not_create_relative_tool_result_dir_without_workspace(
 
 
 def test_tool_activity_line_is_verb_plus_object() -> None:
-    """过程流里的一行必须说出「它去动了什么」。
-
-    真机 9·3：小窗展开十一行「思考过程」，十一行全是管道流水账（读了设置 /
-    过了一遍窗口 / 冻住了这块画面 / 交给模型 …），没有一行是一次真实的动作。
-    """
     line = selection_bridge.tool_activity_line(
         "Read",
         {"path": r"D:\Desktop\Magic Pointer\electron\renderer\stage.ts"},
         value="2371 lines\nrest",
     )
     assert line["tool"] == "Read"
-    # 路径里带空格（Magic Pointer）也要正确收成末两段。
     assert line["target"] == "…/renderer/stage.ts"
     assert line["ok"] is True
     assert line["detail"] == "2371 lines"
@@ -2203,11 +2060,9 @@ def test_tool_activity_line_is_verb_plus_object() -> None:
     assert failed["target"] == "npm test"
     assert failed["detail"] == "TOOL_ERROR"
 
-    # 命令里的斜杠不是路径，不许被截成 …/。
     piped = selection_bridge.tool_activity_line("Bash", {"command": "ls /tmp && echo ok"})
     assert piped["target"] == "ls /tmp && echo ok"
 
-    # 没有约定键时也不能只剩一个工具名。
     guessed = selection_bridge.tool_activity_line("Grep", {"whatever": "hello world"})
     assert guessed["target"] == "hello world"
 

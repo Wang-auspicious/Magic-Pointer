@@ -1,4 +1,3 @@
-"""Desktop action session: snapshot, ownership, and the 13 Kimi CU tools."""
 
 from __future__ import annotations
 
@@ -43,7 +42,6 @@ _ACTION_SCOPE: ContextVar[object] = ContextVar("desktop_action_scope", default=N
 
 
 class InputOwnershipLock:
-    """One session may hold real mouse/keyboard/clipboard at a time."""
 
     def __init__(self, *, mutex_name: str | None = None) -> None:
         self._holder: str | None = None
@@ -59,8 +57,6 @@ class InputOwnershipLock:
         acquired = []
 
         def hold() -> None:
-            # A Win32 mutex belongs to its acquiring thread. Keep that thread
-            # asleep while the session owns input; tool workers may change.
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.wintypes.BOOL, ctypes.wintypes.LPCWSTR]
             kernel.CreateMutexW.restype = ctypes.wintypes.HANDLE
@@ -133,11 +129,6 @@ class _Snapshot:
 
 
 class DesktopActionSession:
-    """Observe-then-act binding for one loop session.
-
-    Drivers are injected. Tests pass fakes; production uses Win32 + window
-    enumeration. Nothing here guesses a live desktop if a probe is missing.
-    """
 
     def __init__(
         self,
@@ -160,17 +151,12 @@ class DesktopActionSession:
         self.session_id = session_id
         self.surface_probe = surface_probe
         self.ownership = ownership or InputOwnershipLock()
-        # 这一轮是围绕哪个窗口发生的。用户划线圈的是终端里的一行，那么
-        # 「不带参数地观察一下」就必须是观察那个终端——而不是此刻碰巧在前台
-        # 的东西。真机 9·3：气泡弹出后终端失去前台，Observe 拿到了桌面，
-        # 回答里于是出现了桌面上那四个快捷方式。
         self.origin_window_hwnd = int(origin_window_hwnd or 0) or None
         self._snapshots: dict[str, _Snapshot] = {}
         self._root_refs: dict[str, str] = {}
         self._root_by_ref: dict[str, str] = {}
 
     def _default_window(self, windows: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """The marked window, while it still exists."""
         if not self.origin_window_hwnd:
             return None
         for item in windows:
@@ -182,15 +168,6 @@ class DesktopActionSession:
         apps = [_public_window(item) for item in self._windows()]
         return _dump({"apps": apps})
 
-    # ------------------------------------------------------------------
-    # Pi computer-use parity surface.
-    #
-    # These methods deliberately sit on the existing DesktopActionSession:
-    # they reuse its window admission, UIA normalization, snapshot staleness
-    # checks, and input ownership instead of creating a second desktop truth.
-    # A state id is the existing snapshot id; @r/@e refs are model-facing
-    # projections over the same bounded snapshot.
-    # ------------------------------------------------------------------
 
     def find_roots(
         self,
@@ -238,8 +215,6 @@ class DesktopActionSession:
         if root:
             hwnd = self._root_by_ref.get(str(root).strip())
             if hwnd is None:
-                # Be forgiving for a restored/hand-written @r reference: root
-                # discovery is cheap metadata and does not activate windows.
                 self.find_roots()
                 hwnd = self._root_by_ref.get(str(root).strip())
             if hwnd is None:
@@ -304,15 +279,10 @@ class DesktopActionSession:
         return _dump(result)
 
     def candidate_pool(self, state_id: str) -> list[dict[str, Any]]:
-        """Complete snapshot candidates for deterministic or model-assisted ranking.
-
-        Ranking does not create refs: execution still revalidates this state.
-        """
         snap = self._require_snapshot(state_id)
         return [{**deepcopy(item), "ref": self._element_ref(item)} for item in snap.raw_elements]
 
     def action_effect(self, name: str, args: dict[str, Any]) -> Effect:
-        """Classify from the bound target and explicit operation, without I/O."""
         if name == "act_ui":
             effects = []
             for action in args.get("actions") or []:
@@ -589,8 +559,6 @@ class DesktopActionSession:
             "elements": elements,
             "mode": resolved,
         }
-        # 说清楚这次读的是不是「用户圈的那个窗口」。读了别的窗口而不说，
-        # 就是把另一块屏幕的内容当成用户问的那件事回答出去。
         if self.origin_window_hwnd:
             payload["is_origin_window"] = hwnd == self.origin_window_hwnd
             if not asked and hwnd != self.origin_window_hwnd:
@@ -724,7 +692,6 @@ class DesktopActionSession:
         confirm = self.uia_act("read_value", element)
         observed_value = confirm.get("value")
         if isinstance(observed_value, float):
-            # RangeValue uses doubles; ValuePattern remains exact text.
             try:
                 value_matches = observed_value == float(value)
             except (TypeError, ValueError):
@@ -896,15 +863,6 @@ class DesktopActionSession:
         live_window: dict[str, Any],
         index: int,
     ) -> None:
-        """Re-probe the element an index action targets before acting.
-
-        Window geometry alone does not prove the tree still matches: a list
-        that replaced row 5 leaves hwnd/pid/rect untouched while ``index=5``
-        now points at a different control. Kimi's snapshot contract binds an
-        action to the observed element, so the element at that index must
-        still carry the same role, name and rect; anything else is a new
-        state and the caller must re-observe.
-        """
         snapshotted = next(
             (
                 item
@@ -932,8 +890,6 @@ class DesktopActionSession:
             ),
             None,
         )
-        # 指纹比较用同一视图：快照侧存的是压缩元素（长文本截断），live 侧
-        # 不过同一把压缩就会在截断差异上报假 stale。
         if (
             current is None
             or _element_fingerprint(current) != _element_fingerprint(snapshotted)
@@ -978,8 +934,6 @@ class DesktopActionSession:
                     raise ActionFailure(FailureType.STALE_SNAPSHOT, "coordinate actions require a recent Observe(mode=full) pixel snapshot")
                 live_surface = self.surface_probe(snap.window)
                 left, top, right, bottom = _bounds(snap.window)
-                # Compare the actual target neighborhood, not unrelated clocks
-                # or animations elsewhere in the window. No image hashes.
                 px = round((point[0] - left) * snap.surface.width / max(1, right - left))
                 py = round((point[1] - top) * snap.surface.height / max(1, bottom - top))
                 box = (max(0, px - 32), max(0, py - 32), min(snap.surface.width, px + 33), min(snap.surface.height, py + 33))
@@ -995,10 +949,6 @@ class DesktopActionSession:
         return point, element
 
     def _with_changes_after(self, snap: _Snapshot, result: str) -> str:
-        """点完必须再观察：click 直接带回元素变化摘要（省一轮 Observe）。
-
-        UIA 树重探失败时静默省略——变化摘要是增益，不是新增失败面。
-        """
         try:
             changes = self._changes_after(snap)
         except Exception:  # noqa: BLE001
@@ -1072,7 +1022,6 @@ def register_desktop_action_tools(
     observe_execute: Callable[..., Any] | None = None,
     observe_access_for: Callable[[dict[str, Any]], Any] | None = None,
 ) -> None:
-    """Register Kimi's 13 Windows tools in whitelist order."""
     specs = (
         ToolSpec(
             name="find_roots",
@@ -1378,8 +1327,6 @@ def register_desktop_action_tools(
             properties = dict(spec.input_schema.get("properties") or {})
             properties["intent"] = {"type": "string", "enum": ["input", "send", "submit", "delete", "run", "purchase"], "description": "实际动作效果；发送/删除/执行必须声明，不能用 input 降低已识别目标的效果。"}
             spec = replace(spec, input_schema={**spec.input_schema, "properties": properties}, effect_for=lambda args, name=spec.name: session.action_effect(name, args), access_for=lambda args, name=spec.name: session.action_access(name, args))
-        # Observation starts without a discovery round. Specialized actions
-        # keep their complete contracts, loaded together when needed.
         def scoped_execute(*, scope=None, _execute=spec.execute, **args):
             token = _ACTION_SCOPE.set(scope)
             check = getattr(scope, "raise_if_cancelled", None) or getattr(getattr(scope, "token", None), "raise_if_cancelled", None)
@@ -1393,7 +1340,6 @@ def register_desktop_action_tools(
             finally:
                 _ACTION_SCOPE.reset(token)
         registry.register(replace(spec, execute=scoped_execute, deferred=spec.name not in {"ListApps", "Observe"}))
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("list_apps", "ListApps")
     registry.register_alias("launch_app", "Launch")
     registry.register_alias("activate_window", "Focus")
@@ -1406,8 +1352,6 @@ def register_desktop_action_tools(
     registry.register_alias("perform_secondary_action", "Act")
     registry.register_alias("select_text", "Select")
     registry.register_alias("drag", "Drag")
-    # loop 终态自动归还输入锁（COMPLETED/INTERRUPT/CRASH 都算）——模型
-    # 忘调 turn_ended 不再卡死下一个会话。turn_ended 工具保留为"提前让锁"。
     try:
         registry.add_session_end_listener(session.turn_ended)
     except Exception:  # noqa: BLE001 - 钩子失败不拦工具注册
@@ -1419,7 +1363,6 @@ def default_session(
     session_id: str | None = None,
     origin_window_hwnd: int | None = None,
 ) -> DesktopActionSession:
-    """Production session: live window list, COM UIA tree/act, Win32 driver."""
     return DesktopActionSession(
         driver=_live_driver(),
         windows_probe=_live_windows,
@@ -1457,13 +1400,6 @@ class _UnavailableDriver:
 
 
 def set_agent_cursor_sink(sink: Any) -> None:
-    """Point the twin cursor at ``sink`` (anything with ``mark(phase, **fields)``).
-
-    The storage lives in :mod:`app.computer_operator.agent_cursor_channel`
-    because the visual computer-use backend builds its own driver and needs the
-    same sink; this is a thin alias so the bridges have one obvious name to
-    call.
-    """
     from app.computer_operator.agent_cursor_channel import set_agent_cursor_sink as _set
 
     _set(sink)
@@ -1476,15 +1412,6 @@ def _live_driver() -> Any:
         from app.computer_operator.agent_cursor_channel import agent_cursor_observer
         from app.computer_operator.windows import Win32InputDriver
 
-        # The observer is always attached and resolves the sink lazily.
-        #
-        # It used to be attached only when a sink was already set — but this
-        # driver is constructed while the plugin tree boots, and the bridge sets
-        # the sink hundreds of lines later, after it knows which clock it is
-        # reporting on. So the check was always false and the cursor was
-        # silently never announced from production, while the test (which set
-        # the sink first) passed. A lazy lookup removes the ordering dependency
-        # rather than depending on it.
         return Win32InputDriver(approach_observer=agent_cursor_observer())
     except Exception:
         return _UnavailableDriver()
@@ -1615,7 +1542,6 @@ def _select_window(
     if app:
         needle = str(app).casefold().strip()
         needle_exe = needle[:-4] if needle.endswith(".exe") else needle
-        # 1) Exact process or title match.
         for item in windows:
             process = str(item.get("process_name") or "").casefold()
             title = str(item.get("title") or "").casefold()
@@ -1623,15 +1549,10 @@ def _select_window(
                 return item
             if title == needle:
                 return item
-        # 2) Window class match. Win11 Notepad exposes an EMPTY
-        # process_name with class "Notepad" — the real-machine turn-3 run
-        # had app=Notepad/app=Notepad.exe fail as window-not-found while
-        # the target sat right there.
         for item in windows:
             class_name = str(item.get("class_name") or "").casefold()
             if class_name and class_name in (needle, needle_exe):
                 return item
-        # 3) Title contains the app name (last resort; most ambiguous).
         for item in windows:
             title = str(item.get("title") or "").casefold()
             if needle_exe and needle_exe in title:
@@ -1664,11 +1585,6 @@ def _element_by_index(elements: list[dict[str, Any]], index: int | None) -> dict
 
 
 def _element_fingerprint(element: dict[str, Any]) -> tuple[Any, ...]:
-    """Semantic identity of one observed element (P4): role + name + rect.
-
-    A replaced element at the same index (list refresh, renamed button)
-    changes at least one of these; geometry-only identity cannot see it.
-    """
     raw_rect = element.get("rect") or element.get("bbox") or (0, 0, 0, 0)
     try:
         rect = tuple(int(value) for value in raw_rect)
@@ -1708,9 +1624,6 @@ _COMPRESS_MAX_ELEMENTS = 100
 def _compress_elements(
     elements: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int]:
-    """观察压缩（对照 Kimi/Anthropic computer-use 的 token 预算实践）：
-    零面积剔除、同形状去重、长文本截断、100 上限。保留探针原 index——
-    动作绑定与失效校验都按它对齐。"""
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str, tuple[int, ...]]] = set()
     for item in elements:
@@ -1728,7 +1641,7 @@ def _compress_elements(
             continue
         seen.add(key)
         slim = dict(item)
-        slim.pop("text", None)  # Full TextPattern content stays addressable by read_text.
+        slim.pop("text", None)
         if len(name) > _COMPRESS_TEXT_CAP:
             slim["name"] = name[:_COMPRESS_TEXT_CAP] + "…"
         value = slim.get("value")
@@ -1743,7 +1656,6 @@ def _compress_elements(
 
 
 def _snapshot_changes(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Small deterministic successor diff for state-scoped act_ui results."""
     def view(rows: list[dict[str, Any]]) -> dict[int, tuple[str, str, str]]:
         return {
             int(row.get("index") or 0): (
@@ -1785,7 +1697,6 @@ def _unavailable() -> dict[str, Any]:
 
 
 def _acted(backend: str, *, matched: bool, **extra: Any) -> str:
-    """Report result verification, never mere input or UIA dispatch success."""
     payload = {
         "used_backend": backend,
         "verification": _matched() if matched else _unavailable(),

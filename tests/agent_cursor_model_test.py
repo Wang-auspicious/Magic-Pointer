@@ -1,14 +1,3 @@
-"""The addressable multi-cursor model (``app/computer_operator/cursors.py``).
-
-Why this file exists: the twin cursor is the product's headline feature, and
-the difference between "a second cursor" and "a cursor that feels like Clicky"
-is entirely in these numbers and transitions. They are pure and clock-injected
-precisely so they can be pinned here rather than eyeballed in a GUI.
-
-The four things the brief asks to be provable are marked in the class names:
-a flight reaches its target exactly, a TTL expires, two cursors do not
-interfere, and tick is monotonic and deterministic.
-"""
 
 from __future__ import annotations
 
@@ -35,7 +24,6 @@ def run_until_landed(
     step_ms: int = 16,
     limit_ms: int = 20_000,
 ):
-    """Tick until the cursor stops flying, returning the final frame."""
     frame = None
     now = start_ms
     while now <= start_ms + limit_ms:
@@ -47,8 +35,6 @@ def run_until_landed(
 
 
 class TestMotionSpecConstants:
-    """The spec values, pinned. A silent change to one of these is a silent
-    change to how the product feels."""
 
     def test_dwell_is_three_seconds(self) -> None:
         assert cursors.DWELL_MS == 3000
@@ -69,18 +55,14 @@ class TestMotionSpecConstants:
         assert cursors.GLOW_MAX_MS == 12000
 
     def test_pulse_is_bounded_and_starts_at_the_midpoint(self) -> None:
-        # sin(0) == 0, so phase 0 is a half-lit ring, not an invisible one.
         assert cursors.ring_pulse(0.0) == pytest.approx(0.5)
         pulses = [cursors.ring_pulse(i / 20.0) for i in range(200)]
         assert all(0.0 <= value <= 1.0 for value in pulses)
 
     def test_flight_timing_reuses_the_driver_policy(self) -> None:
-        # One source of truth: a cursor and the OS pointer must never disagree
-        # about how long the same hop takes.
         model = registry()
         model.spawn("twin", (0, 0), now_ms=0)
         model.begin_flight("twin", (1000, 0), now_ms=0)
-        # 1000 px at 800 px/s is 1250 ms, inside the clamp.
         frame = next(f for f in model.tick(16) if f.cursor_id == "twin")
         assert frame.state == cursors.CursorState.FLYING.value
         assert run_until_landed(model, "twin", start_ms=16).x == 1000
@@ -96,8 +78,6 @@ class TestFlightReachesTargetExactly:
         assert frame.state == cursors.CursorState.DWELLING.value
 
     def test_a_flight_does_not_arrive_before_its_duration(self) -> None:
-        # The point of a flight is that the user can follow it. A cursor that
-        # is already there at t = 0 is a teleport with extra steps.
         model = registry()
         model.spawn("twin", (0, 0), now_ms=0)
         model.begin_flight("twin", (800, 0), duration_ms=1000, now_ms=0)
@@ -110,7 +90,6 @@ class TestFlightReachesTargetExactly:
             model = registry()
             model.spawn("twin", (0, 0), now_ms=0)
             model.begin_flight("twin", target, now_ms=0)
-            # Still flying one tick before the clamp, landed after it.
             just_before = next(
                 f for f in model.tick(expected_ms - 32) if f.cursor_id == "twin"
             )
@@ -119,8 +98,6 @@ class TestFlightReachesTargetExactly:
             assert landed.state != cursors.CursorState.FLYING.value
 
     def test_the_path_bows_above_the_straight_line(self) -> None:
-        # Clicky's arc, not a straight slide: the control point is raised by
-        # min(distance * 0.2, 80) and the sampled path must show it.
         model = registry()
         model.spawn("twin", (0, 400), now_ms=0)
         model.begin_flight("twin", (1000, 400), duration_ms=1000, now_ms=0)
@@ -143,8 +120,6 @@ class TestFlightReachesTargetExactly:
         assert landed.scale == 1.0
 
     def test_rotation_follows_the_curve_tangent(self) -> None:
-        # Not the static -35 rest angle: the avatar leans into its direction of
-        # travel, which is what makes it read as a creature flying.
         model = registry()
         model.spawn("twin", (0, 0), now_ms=0)
         model.begin_flight("twin", (800, 0), duration_ms=1000, now_ms=0)
@@ -169,7 +144,6 @@ class TestDwellAndReturn:
         model.begin_flight("twin", (400, 0), duration_ms=600, now_ms=0)
         landed = run_until_landed(model, "twin", start_ms=0)
         assert landed.state == cursors.CursorState.DWELLING.value
-        # Still planted two seconds later, gone shortly after three.
         assert next(f for f in model.tick(2000) if f.cursor_id == "twin").state == (
             cursors.CursorState.DWELLING.value
         )
@@ -186,7 +160,6 @@ class TestDwellAndReturn:
             model.release_dwell("twin", now_ms=0)
             frame = next(f for f in model.tick(0) if f.cursor_id == "twin")
             assert frame.state == cursors.CursorState.FLYING.value
-            # 1400 ms of travel even for a 30 px hop.
             mid = next(f for f in model.tick(700) if f.cursor_id == "twin")
             assert mid.state == cursors.CursorState.FLYING.value
 
@@ -204,8 +177,6 @@ class TestDwellAndReturn:
         assert later.state != cursors.CursorState.DWELLING.value
 
     def test_holding_before_arrival_survives_the_landing(self) -> None:
-        # The hold is most often set while the cursor is still flying — the
-        # agent asks for a point and starts talking in the same breath.
         model = registry(pointer=(0.0, 0.0))
         model.spawn("twin", (0, 0), follow_pointer=True, now_ms=0)
         model.begin_flight("twin", (400, 0), duration_ms=600, now_ms=0)
@@ -217,8 +188,6 @@ class TestDwellAndReturn:
         )
 
     def test_a_pointer_move_cancels_the_return_leg(self) -> None:
-        # clicky/OverlayWindow.swift:426 — a >100 px move during the return
-        # means the user took the mouse back.
         model = registry(pointer=(0.0, 0.0))
         model.spawn("twin", (0, 0), follow_pointer=True, now_ms=0)
         model.begin_flight("twin", (400, 0), duration_ms=600, now_ms=0)
@@ -261,8 +230,6 @@ class TestTtlExpiry:
         assert model.ids() == []
 
     def test_a_ttl_of_zero_is_floored_not_ignored(self) -> None:
-        # openclicky floors the TTL at 0.2 s: a caller passing 0 wants a flash,
-        # not an invisible no-op.
         model = registry()
         frame = model.spawn("marker", (10, 10), ttl_ms=0, now_ms=0)
         assert frame.ttl_remaining_ms == cursors.TTL_MIN_MS
@@ -313,8 +280,6 @@ class TestTwoCursorsDoNotInterfere:
         assert frames["b"].caption == "second"
 
     def test_only_the_follow_anchored_cursor_chases_the_pointer(self) -> None:
-        # This is what makes several cursors usable at once: markers stay where
-        # they were put instead of piling up on the pointer.
         model = registry(pointer=(100.0, 100.0))
         model.spawn("twin", (0, 0), follow_pointer=True, now_ms=0)
         model.spawn("marker", (600, 600), follow_pointer=False, now_ms=0)
@@ -388,9 +353,6 @@ class TestTickIsMonotonicAndDeterministic:
         model.spawn("twin", (0, 0), ttl_ms=1000, now_ms=0)
         model.tick(5000)
         assert model.get("twin") is not None
-        # A stale timestamp is read as "now", never as a rewind: the lifetime
-        # has elapsed whether or not the caller's clock agrees, and the safe
-        # direction for a stale sample is expired, not immortal.
         assert model.expire(100) == ["twin"]
 
     def test_a_flight_closes_on_its_target_monotonically(self) -> None:
@@ -405,8 +367,6 @@ class TestTickIsMonotonicAndDeterministic:
         assert remaining[-1] == 0
 
     def test_the_spring_is_a_function_of_the_clock_not_the_call_count(self) -> None:
-        # A dropped frame must not change where the cursor ends up: one tick at
-        # t=128 has to land where eight 16 ms ticks would.
         def advance(step_ms: int) -> tuple[int, int]:
             model = registry(pointer=(0.0, 0.0))
             model.spawn("twin", (0, 0), follow_pointer=True, now_ms=0)
@@ -422,8 +382,6 @@ class TestTickIsMonotonicAndDeterministic:
         assert advance(128) == advance(64) == advance(16)
 
     def test_a_long_stall_does_not_replay_a_backlog_of_spring_steps(self) -> None:
-        # A ten-second stall must not integrate ten seconds of spring in one
-        # call: the cursor would jump, and the jump would be the animation.
         def frame_at(now_ms: int):
             model = registry(pointer=(0.0, 0.0))
             model.spawn("twin", (0, 0), follow_pointer=True, now_ms=0)
@@ -431,10 +389,7 @@ class TestTickIsMonotonicAndDeterministic:
             model.set_pointer((400.0, 0.0))
             return next(f for f in model.tick(now_ms) if f.cursor_id == "twin")
 
-        # The backlog is dropped, not replayed: a ten-second stall costs
-        # exactly the eight ticks the catch-up cap allows.
         assert frame_at(10_000) == frame_at(cursors.TICK_CATCHUP_MAX * cursors.TICK_MS)
-        # And the spring has not silently finished during the stall.
         assert frame_at(10_000).x != 400 + cursors.OFFSET_X
 
     def test_the_spring_snaps_shut_on_the_follow_anchor(self) -> None:
@@ -455,7 +410,6 @@ class TestTickIsMonotonicAndDeterministic:
         late = next(f for f in model.tick(5000) if f.cursor_id == "twin").ring_radius
         assert early is not None and late is not None
         assert early != late
-        # Always within the documented 26..32 band.
         for now in range(5000, 6000, 50):
             radius = next(f for f in model.tick(now) if f.cursor_id == "twin").ring_radius
             assert radius is not None
@@ -529,12 +483,9 @@ class TestPayload:
 
 
 def test_no_public_helper_reads_the_wall_clock() -> None:
-    """The model is clock-injected. A ``time`` import here would make every
-    number above untestable the moment it mattered."""
     import inspect
 
     source = inspect.getsource(cursors)
-    # Docstrings may talk about wall-clock reading; the code must not do it.
     body = "\n".join(
         line for line in source.splitlines() if not line.lstrip().startswith(("#", '"""', "*"))
     )
@@ -543,8 +494,6 @@ def test_no_public_helper_reads_the_wall_clock() -> None:
 
 
 def test_the_follow_spring_is_the_documented_integrator() -> None:
-    """clicky-windows' constants, verbatim: applied per 16 ms tick with no dt
-    term, so the tick length is part of the spec."""
     assert cursors.SPRING_STIFFNESS == 0.28
     assert cursors.SPRING_DAMPING == 0.62
     assert cursors.TICK_MS == 16

@@ -131,8 +131,6 @@
     };
   }
 
-  /* 单段 Catmull-Rom 展开。smoothPath 与增量缓存共用这一份实现——两条路径
-     必须逐位一致，所以折段逻辑只能有一处。 */
   function foldSegment(source: SweepPoint[], index: number, result: SweepPoint[]): void {
     const p0 = source[Math.max(0, index - 1)];
     const p1 = source[index];
@@ -159,8 +157,6 @@
     return result;
   }
 
-  /* cumulative[i] = 折线累计到 points[i] 的长度，cumulative[0] === 0。
-     可从任意已有前缀续算，这是增量重采样能命中缓存的前提。 */
   function syncCumulative(points: SweepPoint[], cumulative: number[]): void {
     if (!cumulative.length) cumulative.push(0);
     for (let index = cumulative.length; index < points.length; index += 1) {
@@ -274,25 +270,6 @@
     return finalizePath(addArcProgress(sampled), requestedWidth);
   }
 
-  /* ---- 增量几何缓存 -------------------------------------------------------
-     buildSdfPath 以前每帧都从完整点数组重建几何。overlay.ts 的调用形状是
-     「同一条数组、只 append 新点、已有元素对象从不改写」（addPoint 只 push
-     新建的 {x,y,t}，整条数组只在起笔时被替换），所以每帧真正变的只有尾巴。
-
-     哪些部分不会变：折段 index 用到 source[index-1..index+2]，
-     p3 = source[min(len-1, index+2)]，所以只要 index+2 <= len-1
-     （即 index <= len-3），追加新点不会改变这一段的结果。因此
-     foldedSegments 只累积到 len-2 段，最后一段（index = len-2，p3 被 clamp
-     到自己）每帧单独折一次。这条「最后一段不进缓存」的规则，正是增量结果
-     与逐帧全量重建逐位一致的原因。
-
-     缓存持有的不变量（不满足就整体丢弃重建）：
-       source         上次调用时传入的那个数组对象（引用相等才算命中）
-       sourceLength   已经吃进缓存的源点个数
-       tailRef        source[sourceLength-1] 的对象引用（尾巴被换掉就失效）
-       smoothed       前 foldedSegments 段折出的点（含首点），与 cumulative 等长
-       cumulative     smoothed 的累计折线长度
-     ---------------------------------------------------------------------- */
 
   interface SweepPathCache {
     source: unknown;
@@ -326,13 +303,10 @@
     cache.travelled = 0;
     cache.longEnough = false;
     cache.foldedSegments = 0;
-    // smoothPath 的结果永远以首点开头，种子必须现在就放进去，否则第一折
-    // 会读到 undefined 的前驱点。
     cache.smoothed = list.length ? [{ x: list[0].x, y: list[0].y }] : [];
     cache.cumulative = list.length ? [0] : [];
   }
 
-  /* 返回 undefined 表示「这次调用用不了缓存」，调用方回落到全量实现。 */
   function buildSdfPathCached(
     cache: SweepPathCache,
     points: unknown,
@@ -350,8 +324,6 @@
       if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return undefined;
       if (index > 0 && !cache.longEnough) {
         cache.travelled += Math.hypot(point.x - list[index - 1].x, point.y - list[index - 1].y);
-        // 0.1 只是「这条路至少有长度」的下限；一旦超过就永远超过（只增不减
-        // 的累计长度），所以之后可以完全跳过累加。
         if (cache.travelled > 0.1) cache.longEnough = true;
       }
     }
@@ -366,14 +338,13 @@
       );
     }
 
-    const foldTarget = length - 2; // 段 0..length-3 是稳定的
+    const foldTarget = length - 2;  
     while (cache.foldedSegments < foldTarget) {
       foldSegment(list, cache.foldedSegments, cache.smoothed);
       cache.foldedSegments += 1;
     }
     syncCumulative(cache.smoothed, cache.cumulative);
     const prefixLength = cache.smoothed.length;
-    // 最后一段（p3 clamp 到自己）每帧都重算，算完即用，用完就还原成前缀。
     foldSegment(list, length - 2, cache.smoothed);
     syncCumulative(cache.smoothed, cache.cumulative);
     const sampled = cache.smoothed.length <= MAX_POINTS
@@ -395,8 +366,6 @@
     if (cache) {
       const cached = buildSdfPathCached(cache, points, requestedWidth);
       if (cached !== undefined) return cached;
-      // 缓存这次不可用（出现了非有限坐标，过滤器会改变下标对应关系）：
-      // 丢弃缓存状态，这次走全量实现。
       resetPathCache(cache, null);
     }
     return buildSdfPathStateless(points, requestedWidth);
@@ -462,7 +431,6 @@
 
     constructor(canvas: HTMLCanvasElement) {
       this.canvas = canvas;
-      // 每个渲染器自己一份缓存：两个 canvas 交替调用不会互相把缓存踢掉。
       this.pathCache = createSweepPathCache();
       this.gl = null;
       this.ctx = null;

@@ -1,18 +1,3 @@
-"""B2 Edit/Read 智能：readFileState 门、读去重、模糊匹配阶梯、批量 edits。
-
-对照 CC FileReadTool/FileEditTool 与 Hermes fuzzy_match：
-- 未读先写门 + 读后修改检测（CC errorCode 6/7）
-- 读去重 stub（CC file_unchanged，18% Read 是同文件碰撞）+ force 逃生
-- 连读熔断（Hermes 3 警 4 断的 MP 变体）
-- 弯引号归一化已有；新增 line-trimmed / whitespace-normalized /
-  indentation-flexible 阶梯（Hermes 策略 2/3/4）
-- preserveQuoteStyle（CC：new_string 引号跟随文件花引号风格）
-- BOM 剥离还原（Pi）
-- 批量 edits[]（Pi：全部对原文件匹配、重叠拒绝、倒序应用）
-- 空 new_string 删行（CC applyEditToFile）
-- 相似文件建议（CC findSimilarFile）
-- 二进制/设备文件诚实拒绝（CC validateInput / Hermes blocked devices）
-"""
 
 from __future__ import annotations
 
@@ -52,7 +37,6 @@ def _write(registry: ToolRegistry, path: str, content: str):
     return registry.execute_tool("write_file", {"path": path, "content": content})
 
 
-# --- 未读先写门 ---------------------------------------------------------------
 
 
 def test_edit_file_requires_read_first(registry: ToolRegistry, ws: Path) -> None:
@@ -75,7 +59,7 @@ def test_edit_allowed_after_read(registry: ToolRegistry, ws: Path) -> None:
 def test_edit_rejected_when_modified_since_read(registry: ToolRegistry, ws: Path) -> None:
     (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
     _read(registry, "a.py")
-    (ws / "a.py").write_text("x = 999\n", encoding="utf-8")  # 外部修改
+    (ws / "a.py").write_text("x = 999\n", encoding="utf-8")
     result = _edit(registry, "a.py", "x = 1", "x = 2")
     assert result.is_error is True
     assert "modified since read" in str(result.error_message or "")
@@ -84,7 +68,6 @@ def test_edit_rejected_when_modified_since_read(registry: ToolRegistry, ws: Path
 def test_edit_accepts_when_mtime_churned_but_content_identical(
     registry: ToolRegistry, ws: Path
 ) -> None:
-    """云同步/杀软会拨 mtime：内容逐字节相同就放行（CC content fallback）。"""
     import os
 
     (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
@@ -98,7 +81,6 @@ def test_edit_accepts_when_mtime_churned_but_content_identical(
 def test_edit_after_offset_read_is_allowed_with_note(
     registry: ToolRegistry, ws: Path
 ) -> None:
-    """CC 语义：分页读（offset/limit）不阻止编辑，帽截断才硬拒。"""
     content = "\n".join(f"line {i}" for i in range(1, 51)) + "\n"
     (ws / "big.txt").write_text(content, encoding="utf-8")
     _read(registry, "big.txt", offset=10, limit=5)
@@ -107,7 +89,6 @@ def test_edit_after_offset_read_is_allowed_with_note(
 
 
 def test_edit_rejected_after_truncated_read(registry: ToolRegistry, ws: Path) -> None:
-    """帽截断的读（模型没看全）硬拒编辑，要求重读目标区域（CC isPartialView）。"""
     (ws / "huge.txt").write_text("x" * 60_000 + "\n" + "tail = 1\n", encoding="utf-8")
     _read(registry, "huge.txt")
     result = _edit(registry, "huge.txt", "tail = 1", "tail = 2")
@@ -120,7 +101,6 @@ def test_write_file_requires_read_for_existing_file(registry: ToolRegistry, ws: 
     result = _write(registry, "a.txt", "new\n")
     assert result.is_error is True
     assert "read" in str(result.error_message or "").casefold()
-    # 新文件不受门限制
     ok = _write(registry, "brand-new.txt", "new\n")
     assert ok.is_error is False
 
@@ -142,7 +122,6 @@ def test_restore_files_invalidates_read_state(registry: ToolRegistry, ws: Path) 
     assert result.is_error is True, "回滚后必须重读（内容已被 harness 改回）"
 
 
-# --- 读去重 + 连读熔断 ---------------------------------------------------------
 
 
 def test_read_dedup_returns_stub_same_range(registry: ToolRegistry, ws: Path) -> None:
@@ -173,7 +152,6 @@ def test_read_dedup_cleared_when_file_changes(registry: ToolRegistry, ws: Path) 
 
 
 def test_consecutive_read_loop_breaker(registry: ToolRegistry, ws: Path) -> None:
-    """同一区间连读：3 次警告、5 次硬阻断（force 可逃生）。"""
     (ws / "a.txt").write_text("hello\n", encoding="utf-8")
     _read(registry, "a.txt")
     _read(registry, "a.txt")
@@ -193,13 +171,12 @@ def test_other_tool_resets_read_streak(registry: ToolRegistry, ws: Path) -> None
     (ws / "b.txt").write_text("world\n", encoding="utf-8")
     for _ in range(2):
         _read(registry, "a.txt")
-    _read(registry, "b.txt")  # 换了工具调用目标
+    _read(registry, "b.txt")
     again = _read(registry, "a.txt")
     assert again.is_error is False
     assert "already read" not in str(again.value or "").casefold()
 
 
-# --- 二进制 / 设备 / 相似文件 ----------------------------------------------------
 
 
 def test_read_binary_file_is_honest_error(registry: ToolRegistry, ws: Path) -> None:
@@ -230,7 +207,6 @@ def test_read_missing_file_suggests_similar(registry: ToolRegistry, ws: Path) ->
     assert "handler.py" in str(result.error_message or ""), "拼错文件名要给 Did you mean"
 
 
-# --- 模糊匹配阶梯 --------------------------------------------------------------
 
 
 def test_edit_line_trimmed_strategy_matches_trailing_whitespace(
@@ -238,7 +214,6 @@ def test_edit_line_trimmed_strategy_matches_trailing_whitespace(
 ) -> None:
     (ws / "a.py").write_text("def f():\n    return 1   \n", encoding="utf-8")
     _read(registry, "a.py")
-    # 模型发的 old_string 没有行尾空格；文件里有
     ok = _edit(registry, "a.py", "return 1", "return 2")
     assert ok.is_error is False, ok.error_message
     assert (ws / "a.py").read_text(encoding="utf-8") == "def f():\n    return 2   \n"
@@ -272,7 +247,6 @@ def test_fuzzy_match_reports_strategy_and_uniqueness_still_applies(
 
 
 def test_quote_style_preserved_into_new_string(registry: ToolRegistry, ws: Path) -> None:
-    """文件用弯引号、模型发直引号：替换文本的引号跟随文件风格（CC preserveQuoteStyle）。"""
     (ws / "story.md").write_text("他说：“你好”\n", encoding="utf-8")
     _read(registry, "story.md")
     ok = _edit(registry, "story.md", '他说："你好"', "他说：\"再见\"")
@@ -300,7 +274,6 @@ def test_empty_new_string_deletes_whole_line(registry: ToolRegistry, ws: Path) -
     assert (ws / "a.txt").read_text(encoding="utf-8") == "keep\nkeep2\n"
 
 
-# --- 批量 edits ----------------------------------------------------------------
 
 
 def test_edit_batch_edits_single_call(registry: ToolRegistry, ws: Path) -> None:
@@ -318,8 +291,6 @@ def test_edit_batch_edits_single_call(registry: ToolRegistry, ws: Path) -> None:
 
 
 def test_edit_batch_all_matched_against_original(registry: ToolRegistry, ws: Path) -> None:
-    """两个 edit 针对同一原文的不同位置（第二个的 old 在第一个的 new 里也出现，
-    仍按原文匹配）。"""
     (ws / "a.txt").write_text("x\ny\n", encoding="utf-8")
     _read(registry, "a.txt")
     ok = registry.execute_tool("edit_file", {

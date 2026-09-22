@@ -5,7 +5,6 @@ function processAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-/** Workers publish atomically. Reading their snapshots does not start Python. */
 export async function readBackgroundAgents(root: string, parentId: string,
   alive: (pid: number) => boolean = processAlive): Promise<Record<string, any>[]> {
   let names: string[];

@@ -1,4 +1,3 @@
-"""DingTalk public desktop-surface adapter."""
 
 from __future__ import annotations
 

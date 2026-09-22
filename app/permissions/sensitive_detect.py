@@ -1,22 +1,3 @@
-"""Sensitive content detection and in-place redaction (harness gap review L10).
-
-Sensitive text is redacted **at the source**: the redacted form is what goes
-into the context packet, the original is never forwarded. Detection is
-conservative:
-
-- credit card: 16 digits (optionally space/hyphen separated) that pass the
-  Luhn checksum;
-- ID card: 18-character ``\\d{17}[\\dXx]`` pattern (no checksum);
-- phone: exactly 11 consecutive digits matching ``1[3-9]\\d{9}``.
-
-Every hit keeps the first 4 and last 4 characters of the matched span and
-masks the middle with ``*``. Overlapping hits are merged into one span.
-
-``PASSWORD_FIELD_MARKER`` is the future hook point for the UIA ``IsPassword``
-property; no real UIA wiring happens in this batch.
-
-This module is pure Python and has no I/O or platform dependencies.
-"""
 
 from __future__ import annotations
 
@@ -37,7 +18,6 @@ _REMOVE_SEPARATORS = re.compile(r"[ -]")
 
 
 def _luhn_valid(digits: str) -> bool:
-    """Standard Luhn checksum over a digit-only string."""
     total = 0
     for i, char in enumerate(reversed(digits)):
         value = int(char)
@@ -51,7 +31,6 @@ def _luhn_valid(digits: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class RedactionHit:
-    """One redacted span within the source text."""
 
     pattern: str
     start: int
@@ -61,14 +40,12 @@ class RedactionHit:
 
 @dataclass(frozen=True, slots=True)
 class RedactionResult:
-    """Redacted text plus every hit that was masked."""
 
     text_redacted: str
     hits: tuple[RedactionHit, ...]
 
 
 def _mask_span(text: str, start: int, end: int) -> str:
-    """Keep the first 4 and last 4 chars of ``text[start:end]``, mask the middle."""
     span = text[start:end]
     keep = 4
     if len(span) <= keep * 2:
@@ -77,7 +54,6 @@ def _mask_span(text: str, start: int, end: int) -> str:
 
 
 def _candidate_spans(text: str, pattern_name: str) -> list[tuple[int, int, str]]:
-    """Raw (start, end, pattern_name) spans; Luhn gate applied for cards."""
     spans: list[tuple[int, int, str]] = []
     if pattern_name == CREDIT_CARD_PATTERN:
         for match in _CREDIT_CARD_RE.finditer(text):
@@ -95,13 +71,6 @@ def _candidate_spans(text: str, pattern_name: str) -> list[tuple[int, int, str]]
 
 
 def redact(text: str) -> RedactionResult:
-    """Return a new text with all sensitive spans masked.
-
-    The input string is never modified; a fresh :class:`RedactionResult` is
-    returned. When nothing is sensitive, ``text_redacted`` equals the input
-    and ``hits`` is empty. Hits are reported in ascending source order and
-    never overlap.
-    """
     raw = [
         *_candidate_spans(text, CREDIT_CARD_PATTERN),
         *_candidate_spans(text, ID_CARD_PATTERN),
@@ -126,5 +95,4 @@ def redact(text: str) -> RedactionResult:
 
 
 def contains_sensitive(text: str) -> bool:
-    """True when ``redact`` would mask at least one span."""
     return bool(redact(text).hits)

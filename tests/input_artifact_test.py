@@ -118,8 +118,6 @@ def test_public_projection_is_stable_and_directly_renderable() -> None:
     assert public["utterance"] == "把这个整理成表格"
     assert public["frameLeaseId"] == "frame-lease-1"
     assert public["gestureKind"] == "region"
-    # UIA read something else on this window — that is the conflict below, not a
-    # second source for the DOM text.
     assert public["target"] == {
         "label": "Orders table",
         "kind": "browser",
@@ -241,7 +239,6 @@ def _fused_trace(
     corroborations: list[dict] | None = None,
     selected: str = "ocr",
 ) -> dict:
-    """The two-stage shape: a container read superseded by the pixel tier."""
     return {
         "schemaVersion": 1,
         "selectedLayer": selected,
@@ -293,7 +290,6 @@ def _ocr_context() -> AdapterReadContext:
 
 
 def test_a_superseded_reader_is_not_named_as_a_source_of_the_content() -> None:
-    """UIA read the window's own name; only OCR read this line."""
     snapshot = _gesture_snapshot()
     snapshot["perception_trace"] = _fused_trace(
         notes=[{"kind": "structured_superseded", "sources": ["structured-gesture"]}],
@@ -334,12 +330,6 @@ def test_readers_that_agreed_are_both_named_as_sources() -> None:
 
 
 def test_the_projected_window_is_the_one_the_mark_is_in() -> None:
-    """A 60k console buffer marked near the middle must not project its head.
-
-    The bound is on how much text the model gets, not on which text: projecting
-    the first 16k characters of a long buffer is a projection that reliably
-    excludes the line the user drew on.
-    """
     content = "A" * 30_000 + "MARKED-LINE" + "B" * 30_000
     context = AdapterReadContext(
         adapter="uia_text_selection",
@@ -370,7 +360,6 @@ def test_the_projected_window_is_the_one_the_mark_is_in() -> None:
 
 
 def test_the_window_follows_the_mark_down_the_document() -> None:
-    """Same document, two marks: each projection contains its own mark."""
     content = "-" * 70_000
     near_top, near_bottom = 7_000, 54_000
     content = (
@@ -392,13 +381,6 @@ def test_the_window_follows_the_mark_down_the_document() -> None:
 
 
 def test_the_frozen_surface_is_offered_as_a_ready_to_use_look_anchor() -> None:
-    """The loop is told to look at the frozen surface, so it must get the box.
-
-    `look` takes `bbox:l,t,r,b` and crops the frozen frame. Naming the surface
-    in prose, or handing over the selection rectangle in a different coordinate
-    format, leaves the model to guess a box — and a guessed box is either an
-    error or a crop of the wrong part of the screen.
-    """
     snapshot = _gesture_snapshot()
     snapshot["frame_lease"]["surfaceBoundsPx"] = [1720, 446, 2682, 1836]
 
@@ -454,8 +436,6 @@ def test_marked_panel_keeps_os_window_identity_and_position_in_model_evidence() 
         "selectionLocation": "top-right",
     }
     assert facts["window"]["sources"] == ["WINDOW"]
-    # 细节 anchor 给的是**圈选所在的窗口**，不是「选区加一圈边距」：只把划的那一行
-    # 剪下来，模型就不知道这是哪个应用、这一行在窗口的什么位置。
     assert "bbox:0,0,3120,1985" in facts["selection_visual_anchor"]["value"]
     assert "bbox:0,0,3120,2080" in facts["visual_anchor"]["value"]
 
@@ -472,12 +452,10 @@ def test_window_fact_is_available_without_ocr_and_preserves_monitor_offsets() ->
     assert identity["boundsLTRB"] == [-1800, 100, -200, 1000]
     assert identity["selectionBoundsXYWH"] == [-1700, 200, 100, 48]
     assert identity["selectionLocation"] == "top-left"
-    # 负坐标显示器上的窗口矩形照原样带出来，不需要任何换算。
     assert "bbox:-1800,100,-200,1000" in facts["selection_visual_anchor"]
 
 
 def test_the_visual_anchor_falls_back_to_the_mark_when_the_window_is_unknown() -> None:
-    """窗口矩形拿不到时退回旧行为，而不是给出一个不存在的锚点。"""
     snapshot = _gesture_snapshot()
     snapshot["selection_bbox"] = [2505, 206, 598, 482]
     snapshot["frame_lease"]["surfaceBoundsPx"] = [0, 0, 3120, 2080]
@@ -487,7 +465,6 @@ def test_the_visual_anchor_falls_back_to_the_mark_when_the_window_is_unknown() -
 
 
 def test_a_window_outside_the_frozen_surface_is_not_used_as_the_anchor() -> None:
-    """窗口已经被移走/缩到冻结面之外时，裁剪只会得到空白，退回笔迹那一块。"""
     snapshot = _gesture_snapshot()
     snapshot["selection_bbox"] = [2505, 206, 598, 482]
     snapshot["frame_lease"]["surfaceBoundsPx"] = [0, 0, 3120, 2080]

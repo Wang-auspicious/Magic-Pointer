@@ -1,4 +1,3 @@
-"""Resident JSONL worker for selection requests and the Agent harness."""
 
 from __future__ import annotations
 
@@ -22,11 +21,6 @@ from scripts import selection_bridge  # noqa: E402
 
 _MAX_LINE_CHARS = 8 * 1024 * 1024
 
-# The client writes the request id first, so it survives even a line we refuse
-# to parse. Recovering it is what keeps a payload error from becoming silence:
-# electron/selection_worker_client.ts drops every reply whose id does not match
-# the request it is waiting on, so an id-less error is indistinguishable from a
-# worker that never answered, and the caller only sees its own timeout.
 _REQUEST_ID = re.compile(r'"id"\s*:\s*"([^"\\]{1,200})"')
 
 

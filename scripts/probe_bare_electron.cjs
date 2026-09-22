@@ -1,15 +1,5 @@
 'use strict';
 
-// How much does a fullscreen transparent BrowserWindow cost the GPU process?
-//
-// Magic Pointer holds three of them from startup (overlay, twin-cursor surface,
-// stage) and its GPU process sits near 270MB, while a bare Electron start --
-// same binary, one hidden window -- shows no page-in storm at all. This
-// isolates the window shape from everything the app does inside them.
-//
-//   electron scripts/probe_bare_electron.cjs --count 3 --transparent
-//   electron scripts/probe_bare_electron.cjs --count 3
-//   electron scripts/probe_bare_electron.cjs --count 3 --visible
 const { app, BrowserWindow, screen } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');

@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 def get_foreground_window_handle() -> int:
-    """Return the exact foreground top-level window handle on Windows."""
 
     try:
         return int(ctypes.windll.user32.GetForegroundWindow() or 0)
@@ -16,7 +15,6 @@ def get_foreground_window_handle() -> int:
 
 
 def enable_dpi_awareness() -> None:
-    """Make screen coordinates match physical pixels as much as possible."""
 
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -58,7 +56,6 @@ def _query_process_image_path(pid: int) -> str:
 
 
 def process_name_for_pid(pid: int, *, query_path=None) -> str:
-    """Best-effort executable basename for a window PID; never guesses."""
 
     if int(pid or 0) <= 0:
         return ""
@@ -74,13 +71,6 @@ def _intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> b
 
 
 def list_visible_windows() -> list[dict[str, object]]:
-    """Return visible top-level windows with titles, class names, pids and rects.
-
-    EnumWindows normally returns windows in top-to-bottom z-order. We keep that
-    order because it is useful for estimating occlusion and for future target
-    disambiguation. This is still a cheap desktop metadata layer, not a full
-    accessibility tree.
-    """
 
     windows: list[dict[str, object]] = []
     user32 = ctypes.windll.user32
@@ -96,7 +86,6 @@ def list_visible_windows() -> list[dict[str, object]]:
     def is_cloaked(hwnd) -> bool:
         try:
             cloaked = ctypes.c_int(0)
-            # DWMWA_CLOAKED = 14
             result = ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
             return result == 0 and cloaked.value != 0
         except Exception:
@@ -105,7 +94,6 @@ def list_visible_windows() -> list[dict[str, object]]:
     def get_rect(hwnd) -> tuple[int, int, int, int] | None:
         rect = RECT()
         try:
-            # DWMWA_EXTENDED_FRAME_BOUNDS = 9, more accurate for modern windows.
             result = ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))
             if result != 0 and not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
                 return None

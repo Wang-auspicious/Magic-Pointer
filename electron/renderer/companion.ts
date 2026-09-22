@@ -1,23 +1,17 @@
-/* 随行窗 —— 与工作室共用会话，这里只管本窗的渲染与交互 */
 
-/* 头像/球：与 studio.js 同一套；装了 @oreo-design/avatar 后统一换掉 */
 function hash(s: string) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function rng(seed: unknown) { let s = hash(String(seed)) || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 function makeOrb(seed: unknown, size = 64) {
   const r = rng(seed);
-  // 色相对：黄绿 ↔ 青蓝 那一段最耐看；由种子在这个区间里取一对，
-  // 中间再插一个过渡色，所以三段之间没有硬边。
-  const h1 = 68 + Math.floor(r() * 32);            // 68–100  黄绿
-  const h3 = 178 + Math.floor(r() * 38);           // 178–216 青蓝
-  const h2 = Math.round((h1 + h3) / 2);            // 中间色
+  const h1 = 68 + Math.floor(r() * 32);             
+  const h3 = 178 + Math.floor(r() * 38);            
+  const h2 = Math.round((h1 + h3) / 2);             
   const A = `hsl(${h1} 62% 68%)`;
   const M = `hsl(${h2} 56% 66%)`;
   const B = `hsl(${h3} 60% 66%)`;
   const id = 'o' + hash(seed as string).toString(36);
-  const dur = (7 + r() * 5).toFixed(1);            // 7–12s，一屏里不齐步走
+  const dur = (7 + r() * 5).toFixed(1);             
 
-  // 渐变轴：从右下角指向左上角，色带因此平行于反对角线。
-  // 跨度取两倍并让色序首尾同色，平移整整一个周期就能无缝循环。
   return `<svg viewBox="0 0 64 64" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="${id}g" x1="1.5" y1="1.5" x2="-0.5" y2="-0.5">
@@ -42,13 +36,6 @@ function makeOrb(seed: unknown, size = 64) {
   </svg>`;
 }
 
-/* ============================================================
-   内容
-   ------------------------------------------------------------
-   随行窗和工作室是同一次会话的两个视图，所以它们读同一份 Data、
-   渲染同一批 renderCard。上一版随行窗是一屏写死的样例，于是用户在
-   小窗看到的和主窗看到的对不上——「他们俩应该是完全同步的才对」。
-   ============================================================ */
 
 let currentId: string | null = null;
 let currentWorkspaceRoot = '';
@@ -68,7 +55,6 @@ function showEmpty(on: boolean) {
   if (stream) stream.hidden = on;
 }
 
-/* 一轮问答摊成若干张卡。与 studio.js 的 turnCards 是同一套映射。 */
 function turnCards(turn: MagicPointerTurn, conversation: MagicPointerConversation | null) {
   const object = conversation && conversation.object ? conversation.object : null;
   const cards = [CardModel.normalizeCard({
@@ -85,8 +71,6 @@ function turnCards(turn: MagicPointerTurn, conversation: MagicPointerConversatio
   if ((turn.facts || []).length) {
     cards.push(CardModel.normalizeCard({ id: `${turn.at || 0}-f`, kind: 'facts', rows: turn.facts }));
   }
-  // 产物卡。上一版这里只有 回答+事实 两张，工作室那套却把 artifact 也摊开——
-  // 同一次对话在小窗和主窗里长得不一样，说是「同一套映射」其实不是。
   for (const [i, art] of (turn.artifacts || []).entries()) {
     cards.push(CardModel.normalizeCard(art.kind === 'image'
       ? { id: `${turn.at || 0}-i${i}`, kind: 'image', src: art.src, caption: art.name, w: art.w, h: art.h }
@@ -136,16 +120,6 @@ async function renderConversation(id: string | null) {
   stream.scrollTop = stream.scrollHeight;
 }
 
-/* ============================================================
-   输入条
-   ------------------------------------------------------------
-   和工作室同一个组件（composer.js），只是密度不同。上一版这里是一段
-   手写的 <form>，跟工作室那段各写各的——同一个产品里两根条两个样。
-
-   placeholder 跟着当前对象走（Vida 的 `Ask Vida anything about this page…`）：
-   小窗是贴着屏幕上那个东西的，问的就是它，写死「继续问…」等于把这层
-   上下文藏起来。
-   ============================================================ */
 let cpComposer: MagicPointerComposerInstance | null = null;
 let cpRequestId: string | null = null;
 let cpAgentSessionId: string | null = null;
@@ -222,8 +196,6 @@ function bindComposerToObject(object: MagicPointerObject | null | undefined) {
   cpComposer.setPlaceholder(name ? `关于「${String(name).slice(0, 22)}」再问…` : '继续问…');
 }
 
-/* 顶栏动作。桥提供了 pin / expand / hide 三个通道，但上一版只在这里切换
-   is-on 一个 class——「固定」钉不住窗口，「展开到工作室」「关闭」点了没反应。 */
 document.addEventListener('click', (e) => {
   const pin = (e.target as Element).closest('[title="固定"]');
   if (pin) {
@@ -242,7 +214,6 @@ document.addEventListener('click', (e) => {
   }
 });
 
-/* 有新一轮就重画。桥推的是「哪条对话动了」，不是整份数据。 */
 Data.onChange(() => renderConversation(currentId));
 Data.onConversationProgress((payload) => {
   if (!cpRequestId || payload.requestId !== cpRequestId || !payload.record) return;
@@ -253,7 +224,6 @@ Data.onConversationProgress((payload) => {
   }
 });
 
-/* ?empty=1 看空态 */
 if (new URLSearchParams(location.search).has('empty')) {
   showEmpty(true);
   setTitle('未命名对话', 'mp');
@@ -261,7 +231,6 @@ if (new URLSearchParams(location.search).has('empty')) {
   renderConversation(null);
 }
 
-/* 后台任务的进度，和工作室收的是同一份补丁 */
 const cpBridge = window.magicPointerCompanion || window.magicPointerDashboard;
 if (cpBridge?.onCardPatch) {
   cpBridge.onCardPatch((payload: MagicPointerCardPatchPayload) => {

@@ -7,7 +7,6 @@ from app.fabric.settings import FabricSettings
 
 
 def context_item_object(item: dict[str, Any]) -> dict[str, Any]:
-    """Translate a persisted Context Pack item into the shared capture-policy contract."""
     source = item.get("source")
     source = dict(source) if isinstance(source, dict) else {}
     window = source.get("window")

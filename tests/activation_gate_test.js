@@ -29,7 +29,6 @@ for (const reason of ['wiggle', 'shortcut-wake', 'shortcut-text', 'shortcut-voic
 assert(mainSource.includes("decision === 'dismiss'"));
 assert(mainSource.includes("decision === 'activate'"));
 assert(mainSource.includes('isActivationBusy: hasActiveSelectionCapture()'));
-// The stage is the only temporary surface left after Task 5.
 assert(mainSource.includes('stageWindow.isVisible()'));
 assert(!mainSource.includes('resultWindow'));
 

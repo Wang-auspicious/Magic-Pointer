@@ -1,6 +1,3 @@
-// Render deterministic stage scenes for visual regression review.
-//   npx electron build/scripts/capture_stage.js <out.png> [finished|processing-right|processing-left]
-// It only touches DOM: layout evidence, not a mocked product workflow.
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');

@@ -1,5 +1,3 @@
-// Headless screenshot probe for delivery evidence.
-//   npx electron build/scripts/probe_studio_shot.js <out-prefix>
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('node:fs');
@@ -33,7 +31,6 @@ app.whenReady().then(async () => {
     const shot1 = await window.webContents.capturePage();
     fs.writeFileSync(path.join(OUTDIR, `${PREFIX}-chat.png`), shot1.toPNG());
 
-    // Design 概览(新 bento)
     await window.webContents.executeJavaScript(
       "(function(){ const b=document.querySelector('[data-goto=\"design\"]'); if(b) b.click(); return 'ok'; })()",
     );
@@ -41,7 +38,6 @@ app.whenReady().then(async () => {
     const shot2 = await window.webContents.capturePage();
     fs.writeFileSync(path.join(OUTDIR, `${PREFIX}-design.png`), shot2.toPNG());
 
-    // 深色主题(View Transition 揭幕后的终态)
     await window.webContents.executeJavaScript(
       "(function(){ document.querySelector('#theme-toggle')?.click(); return 'ok'; })()",
     );

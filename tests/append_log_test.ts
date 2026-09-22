@@ -4,14 +4,6 @@ const assert = require('assert');
 
 const { createBufferedLog } = require('../electron/append_log');
 
-/**
- * The defect this covers: main.ts's log() was `mkdirSync` + `appendFileSync`
- * per call, executed on the same thread that services the 20 ms pointer poll
- * and every IPC. Measured at 1.20 ms per call across ~150 call sites.
- *
- * These tests use an injected fs so they assert the *behaviour* — batching,
- * one directory creation, ordering, error tolerance — without touching disk.
- */
 
 type Written = { path: string; data: string };
 
@@ -59,7 +51,6 @@ function harness(options: { failAppend?: boolean } = {}) {
   };
 }
 
-// --- the hot-path property -------------------------------------------------
 
 {
   const h = harness();
@@ -70,7 +61,6 @@ function harness(options: { failAppend?: boolean } = {}) {
   console.log('append_log_test: log() performs no file I/O');
 }
 
-// --- batching --------------------------------------------------------------
 
 {
   const h = harness();
@@ -85,7 +75,6 @@ function harness(options: { failAppend?: boolean } = {}) {
   console.log('append_log_test: lines batch into a single append');
 }
 
-// --- ordering --------------------------------------------------------------
 
 {
   const h = harness();
@@ -99,7 +88,6 @@ function harness(options: { failAppend?: boolean } = {}) {
   console.log('append_log_test: order is preserved');
 }
 
-// --- explicit flush --------------------------------------------------------
 
 {
   const h = harness();
@@ -112,7 +100,6 @@ function harness(options: { failAppend?: boolean } = {}) {
   console.log('append_log_test: flush() is immediate and idempotent');
 }
 
-// --- buffer ceiling --------------------------------------------------------
 
 {
   const written: Written[] = [];
@@ -133,18 +120,16 @@ function harness(options: { failAppend?: boolean } = {}) {
   console.log('append_log_test: a burst cannot grow the buffer without bound');
 }
 
-// --- error tolerance -------------------------------------------------------
 
 {
   const h = harness({ failAppend: true });
   h.log.log('dropped');
-  h.fireTimer(); // must not throw
+  h.fireTimer();  
   assert.strictEqual(h.log.pendingCount(), 0, 'a failed write must not accumulate forever');
   console.log('append_log_test: a failing append never throws and never accumulates');
 }
 
 {
-  // A throwing clock is pathological, and must still not take down the caller.
   const written: Written[] = [];
   const log = createBufferedLog({
     filePath: 'C:/runtime/electron.log',
@@ -158,13 +143,12 @@ function harness(options: { failAppend?: boolean } = {}) {
       clearTimer: () => {},
     },
   });
-  log.log('ignored'); // must not throw
+  log.log('ignored');  
   log.flush();
   assert.strictEqual(written.length, 0);
   console.log('append_log_test: a throwing clock is swallowed');
 }
 
-// --- directory recreation --------------------------------------------------
 
 {
   let attempts = 0;
@@ -191,7 +175,6 @@ function harness(options: { failAppend?: boolean } = {}) {
   console.log('append_log_test: the directory is recreated after a failed write');
 }
 
-// --- dispose ---------------------------------------------------------------
 
 {
   const h = harness();

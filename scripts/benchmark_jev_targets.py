@@ -1,4 +1,3 @@
-"""Small synthetic target-choice comparison; sends no desktop or user files."""
 from __future__ import annotations
 import json
 import sys
@@ -31,7 +30,6 @@ def main():
             "localExact": None if baseline is None else f"@e{baseline}", "jev": chosen,
             "correct": chosen["ref"] == expected_ref})
         print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
-    # One compact comparison to the project's already configured subscription model.
     _, endpoint, model = get_ai_config()
     main_model = {"model": model, "endpoint": endpoint}
     if endpoint.startswith("https://opencode.ai/zen/go/"):

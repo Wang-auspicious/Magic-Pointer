@@ -18,12 +18,6 @@ JsonDict = dict[str, Any]
 
 
 def _as_int(value: Any, default: int = -1) -> int:
-    """Parse an int that may be None / '' / non-numeric, returning `default`.
-
-    `default` must be the caller's sentinel: the cold-tree judgement needs
-    -1 (unknown) to stay distinct from 0 (measured zero documents), so this
-    helper must never be written as `value or -1` — 0 is a legal answer.
-    """
     if value is None:
         return default
     try:
@@ -35,12 +29,6 @@ ROOT = Path(__file__).resolve().parents[2]
 UIA_PROBE_SOURCE = ROOT / "scripts" / "uia_selection_probe.cs"
 UIA_PROBE_EXE = ROOT / "data" / "runtime" / "uia_selection_probe.exe"
 
-# These classes get app-specific treatment further down (PDF text-layer
-# verification, terminal buffer extraction, Chromium's lazy tree). The set is a
-# routing hint, NOT an admission list: it used to gate match_window, which meant
-# Notepad, Explorer, WeChat and every ordinary Win32 input box were refused
-# before the probe ever ran -- not because UIA could not read them, but because
-# they were not enumerated here. A new app was unsupported by default.
 UIA_WINDOW_CLASSES = {
     "AcrobatMDIFrame",
     "AcrobatSDIWindow",
@@ -50,19 +38,16 @@ UIA_WINDOW_CLASSES = {
     "ConsoleWindowClass",
 }
 
-# Surfaces with no user text to read. Asking UIA about them costs a probe and can
-# only answer "nothing selected", so they stay excluded even though the default
-# is now to admit.
 UIA_EXCLUDED_WINDOW_CLASSES = {
-    "Progman",                      # desktop
-    "WorkerW",                      # desktop wallpaper host
-    "Shell_TrayWnd",                # taskbar
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
     "TrayNotifyWnd",
     "NotifyIconOverflowWindow",
     "Shell_SecondaryTrayWnd",
-    "#32768",                       # menus
+    "#32768",
     "tooltips_class32",
-    "Windows.UI.Core.CoreWindow",   # shell overlays (Start, Search)
+    "Windows.UI.Core.CoreWindow",
     "XamlExplorerHostIslandWindow",
 }
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel"}
@@ -115,27 +100,11 @@ def uia_app_from_window(window: JsonDict) -> str:
 
 
 def _window_scope_mode() -> str:
-    """'open' (default) admits any window; 'whitelist' restores the old gate.
-
-    Read per call rather than cached at import: this is a stop-the-bleeding switch,
-    and needing to restart the app to use it would defeat the point.
-    """
     value = str(os.environ.get("MAGIC_POINTER_UIA_WINDOW_SCOPE") or "").strip().casefold()
     return "whitelist" if value == "whitelist" else "open"
 
 
 def clipboard_fallback_forbidden(window: JsonDict) -> tuple[bool, str]:
-    """Whether synthesizing Ctrl+C to read this window is unsafe.
-
-    Nothing sends Ctrl+C today; UIA is a pure query. This exists because opening
-    match_window to every app makes such a fallback tempting for the windows UIA
-    cannot read, and in a terminal Ctrl+C is not "copy" -- it is SIGINT to
-    whatever is running. A fallback added later without this check would kill the
-    user's build to read their selection.
-
-    Returns (forbidden, reason). Callers that synthesize keys must consult this
-    and treat a forbidden window as unreadable rather than working around it.
-    """
     if uia_app_from_window(window) == "terminal":
         return True, "ctrl_c_is_sigint_in_terminals"
     if str(window.get("title") or "") in MAGIC_WINDOW_TITLES:
@@ -207,10 +176,6 @@ def _ensure_uia_probe() -> UiaProbeResult:
     return _compile_uia_probe()
 
 
-# ---------------------------------------------------------------------------
-# Resident UIA host (Phase C): same probe logic, one long-lived process on a
-# named pipe. Kills the ~570ms per-read process cold-start tax.
-# ---------------------------------------------------------------------------
 
 UIA_HOST_EXE = ROOT / "data" / "runtime" / "uia_resident_host.exe"
 
@@ -282,7 +247,6 @@ def _ensure_uia_resident_host() -> UiaProbeResult:
 
 
 def _spawn_resident_host() -> None:
-    """Best-effort detached spawn; the pipe ping decides whether it worked."""
     try:
         pipe_name = os.environ.get("MAGIC_POINTER_UIA_HOST_PIPE", "MagicPointerUIAHost")
         env = dict(os.environ)
@@ -301,7 +265,6 @@ def _spawn_resident_host() -> None:
 
 
 def get_uia_host_client():
-    """The process-wide resident host client; None when disabled."""
     global _uia_host_client
     if not _host_enabled():
         return None
@@ -318,8 +281,6 @@ def _resident_probe(
     target_point: dict[str, int] | None = None,
     target_region: dict[str, int] | None = None,
 ) -> UiaProbeResult | None:
-    """One probe over the resident host; None when the host path is unusable
-    (caller falls back to the per-request probe process)."""
     global _last_host_spawn_ms
     client = get_uia_host_client()
     if client is None or not client.available():
@@ -336,8 +297,6 @@ def _resident_probe(
     except Exception:
         data = None
     if not isinstance(data, dict):
-        # Transport failure: the host may simply not be running. Spawn once
-        # per cooldown window and give it one retry before falling back.
         now = time.monotonic()
         if now - _last_host_spawn_ms >= 30.0:
             _last_host_spawn_ms = now
@@ -367,14 +326,6 @@ def _run_uia_selection_probe(
     target_region: dict[str, int] | None = None,
     timeout: float = 2.5,
 ) -> UiaProbeResult:
-    # 2.5s default, not 1.0s. The probe caps its own UIA work at
-    # UiaProbeHardTimeoutMs (1200ms) and then still has to serialize its result,
-    # and process startup costs ~70ms warm. Measured wall clock on live windows
-    # reached 1194ms, so the old 1.0s budget killed the probe *while it was
-    # answering correctly*, and the caller treated that as a read failure. This
-    # timeout only bounds a wedged process, so it must stay above the probe's own
-    # ceiling — callers that pass their own value are responsible for the same.
-    # 区域模式的遍历天花板是 3s（C# RegionHardTimeoutMs），调用超时必须高于它。
     probe_timeout = 6.0 if target_region is not None else timeout
     resident = _resident_probe(
         int(hwnd),
@@ -449,46 +400,27 @@ def _is_chromium_window(window: JsonDict) -> bool:
     return "edge" in title or "chrome" in title or "brave" in title
 
 
-# 已知的 web 宿主外壳类名。判冷的第一个必要条件：这个窗口里**本来该有**一份
-# 网页文档，只是还没挂上来。不在这张表里的窗口没有「正文迟到」这回事。
 COLD_TREE_WEB_HOST_CLASSES = (
-    "WRY_WEBVIEW",              # Tauri
-    "Chrome_WidgetWin_",        # Chromium / Electron / Edge，带 _0 _1 后缀
+    "WRY_WEBVIEW",
+    "Chrome_WidgetWin_",
     "Chrome_RenderWidgetHostHWND",
-    "Intermediate D3D Window",  # Chromium 合成层，冷热都在
+    "Intermediate D3D Window",
     "Tauri Window",
     "WebView2",
     "Microsoft.UI.Content.DesktopChildSiteBridge",
 )
 
-# 自绘 / 非 UIA 承载的窗口。这些窗口的树**永远**长成冷树的样子，等多久都不会变。
-# 少了这张表，每次点微信都白等 60ms，换来的还是那 8 个节点。
 COLD_TREE_DENY_CLASSES = (
-    "MMUIRenderSubWindowHW",           # 微信主窗
-    "Qt5",                             # Qt 自绘，含 Qt51514QWindowIcon 等
+    "MMUIRenderSubWindowHW",
+    "Qt5",
     "Qt6",
-    "CASCADIA_HOSTING_WINDOW_CLASS",   # Windows Terminal
+    "CASCADIA_HOSTING_WINDOW_CLASS",
     "ConsoleWindowClass",
-    "SunAwtFrame",                     # JetBrains / Swing 自绘
+    "SunAwtFrame",
     "GLFW30",
 )
 
 
-# 自绘窗口：UIA 树里**永远**没有用户看得见的文字，探针只会白跑一趟。
-#
-# 2026-09-19 本机实测：微信（Qt51514QWindowIcon）documents=0，探针 415ms 空手而归；
-# 向日葵（FLUTTER_RUNNER_WIN32_WINDOW）同样 documents=0；Obsidian 更糟，探针直接在
-# 里面挂住。用户对 Qt 的裁决是明确的：「QT 就明确不要 uia 了」。
-#
-# 这张表就是 `COLD_TREE_DENY_CLASSES`——「这些窗口的树永远长成冷树的样子，等多久都
-# 不会变」——减去那两个**有专门读取器**的终端类。Windows Terminal / conhost 的终端
-# 缓冲区是真读得出来的（tests/terminal_structured_read_test.py 钉着），把它们一起跳掉
-# 是拿一个能用的功能换一点时间。
-#
-# 代价是明确的：这些类别的窗口从此只走像素层，`structured_gap_reason` 会从
-# `no_structured_text` 变成 `no_structured_provider`。要找回某个应用的 UIA，把它的
-# 类名从这张表里删掉，或者整个关掉这个快速通道：
-# `MAGIC_POINTER_UIA_WINDOW_SCOPE=whitelist` 回到白名单制。
 SELF_DRAWN_WINDOW_CLASSES = tuple(
     name
     for name in COLD_TREE_DENY_CLASSES
@@ -497,7 +429,6 @@ SELF_DRAWN_WINDOW_CLASSES = tuple(
 
 
 def _is_self_drawn_window(class_name: str) -> bool:
-    """这张表按前缀匹配，和 `is_cold_tree` 用的是同一套写法（`Qt5` 盖住 `Qt51514QWindowIcon`）。"""
     return any(str(class_name).startswith(prefix) for prefix in SELF_DRAWN_WINDOW_CLASSES)
 
 
@@ -508,25 +439,6 @@ def is_cold_tree(
     max_depth: int | None = None,
     named_count: int | None = None,
 ) -> bool:
-    """这棵树是「壳起来了但正文还没挂上」吗？是的话值得隔 60ms 再读一次。
-
-    判据只有三步，按顺序：排除表 → 宿主表 → 有没有 Document。
-
-    `document_count` 是探针里 `FindAll(TreeScope.Descendants, ControlType.Document)`
-    的结果，`-1` 表示那一趟没跑（探针提前读到了选区，那按定义就不冷）。
-    不知道就不算冷 —— 拿不到就留空绝不猜。
-
-    **`max_depth` 和 `named_count` 是可选的，而且不是阈值**，只用来确认传进来的
-    确实是一棵树；没量过就别传，不要拿假数字填。
-    Vida.md §7.3 原方案拿它们当判据（`max_depth <= 8` 且 `named_count < 30`），
-    真实 dump 把两条都证伪了，数字见 tests/uia_cold_tree_test.py 的模块注释：
-    冷树实测 11 层（浏览器外壳自己就有十来层，冷的不是层数少是层里没东西），
-    而冷 21 / 热 27 个有名字的节点只差 6 个，落在噪声里。
-
-    误判的代价是不对称的，所以判据往「宁可多读一次」偏：
-    判热了其实是冷 → 用户第一次划线静默读不到，这正是要修的 bug；
-    判冷了其实是热 → 多 60ms 一次，只重试一次不递归。
-    """
     classes = [str(item) for item in (class_chain or []) if str(item).strip()]
     if any(name.startswith(deny) for name in classes for deny in COLD_TREE_DENY_CLASSES):
         return False
@@ -534,7 +446,6 @@ def is_cold_tree(
         return False
     if document_count != 0:
         return False
-    # 连根节点都没有：这不是一棵冷树，是一次失败的读取，交给上面的错误分支。
     if max_depth is not None and max_depth <= 0:
         return False
     return named_count is None or named_count >= 0
@@ -546,16 +457,6 @@ class UiaTextSelectionAdapter(AppAdapter):
     perception_priority = 30
 
     def match_window(self, window: JsonDict) -> bool:
-        """Admit any real window unless we know there is nothing to read there.
-
-        Inverted from a whitelist deliberately. Gating on UIA_WINDOW_CLASSES meant
-        an app was unsupported until someone added its class name, so Notepad,
-        Explorer and WeChat fell through to OCR while UIA could have read them.
-        Admitting by default costs a probe on windows with no selection; refusing
-        by default costs every app nobody has enumerated yet.
-
-        Set MAGIC_POINTER_UIA_WINDOW_SCOPE=whitelist to restore the old gate.
-        """
         title = str(window.get("title") or "")
         if title in MAGIC_WINDOW_TITLES:
             return False
@@ -565,13 +466,8 @@ class UiaTextSelectionAdapter(AppAdapter):
         if class_name in UIA_EXCLUDED_WINDOW_CLASSES:
             return False
         if not class_name:
-            # No class name means the enumeration itself is suspect; the probe
-            # needs a real HWND anyway and read_context checks that separately.
             return False
         if _is_self_drawn_window(class_name):
-            # 自绘窗口不探：探针在它们身上只会花掉一次进程往返（实测 415ms 起）再
-            # 空手而归，而它返回的「没有文字」还可能被当成一次成功的结构读取。
-            # 直接不认领，让下面的融合把这块地方判给像素层。
             return False
         return True
 
@@ -634,11 +530,6 @@ class UiaTextSelectionAdapter(AppAdapter):
                 return _run_uia_selection_probe(hwnd, target_point=target_point)
             return _run_uia_selection_probe(hwnd)
 
-        # 两种重试，原因不同，等的时间也不同。别再把它们并成一条。
-        #
-        # 一、探针一个字都没吐出来：超时、崩了、或者编译没成。这条从前就有
-        #    （`if not probe.data`），只是注释挂的是「懒建树」的名头——它其实
-        #    从来只在这种情况下触发。450ms 这个值没有实测支撑，先原样留着。
         if not probe.data and _is_chromium_window(window):
             try:
                 import time as _time
@@ -648,17 +539,8 @@ class UiaTextSelectionAdapter(AppAdapter):
                 pass
             probe = _reprobe()
 
-        # 二、冷树：Chromium/WebView2/Tauri 懒建无障碍树，第一次 UIA 触碰摸到的
-        #    是一具外壳。这条以前**从来没有触发过**——冷树恰恰是有 data 的
-        #    （实测冷启动 Edge 返回 48 个节点、21 个有名字的，只是里面一个
-        #    Document 都没有），所以它一直被上面那条的 `not probe.data` 挡在外面，
-        #    用户第一次划线还是静默读不到。非空不等于读到了。
-        #    判据见 is_cold_tree；60ms 来自 E4 受控实验（0ms 时 0 个 Document，
-        #    50ms 时 2 个，此后稳定），留 20% 余量。只重试一次，不递归。
         if not probe.ok and is_cold_tree(
             [str(window.get("class_name") or ""), str(probe.data.get("class_name") or "")],
-            # 不能写 `x or -1`：冷树的 document_count 正好是 0，会被当成假值
-            # 换成 -1（未知），判据直接翻面，重试又一次都不触发。
             _as_int(probe.data.get("document_count"), -1),
         ):
             try:
@@ -766,9 +648,6 @@ class UiaTextSelectionAdapter(AppAdapter):
             if result_kind == "region_elements"
             else "uia:element-from-point"
             if result_kind == "point_element"
-            # Geometry with no readable name: the probe found the box the user
-            # pointed at but nothing to read from it. Worth reporting, because it
-            # clips the pixel fallback to that box instead of the whole screen.
             else "uia:element-region-from-point"
             if result_kind == "point_region"
             else "uia:text-pattern.selection"

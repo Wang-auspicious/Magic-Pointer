@@ -1,4 +1,3 @@
-"""Opt-in live gateway acceptance using MP's parent and child runtime kernels."""
 from __future__ import annotations
 
 import json

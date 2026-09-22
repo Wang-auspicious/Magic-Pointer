@@ -6,7 +6,6 @@ const ts = require('typescript');
 const source = fs.readFileSync('electron/main.ts', 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
 const ready = ast.statements.find(n => ts.isIfStatement(n) && n.expression.getText(ast) === 'gotLock');
-// Execute the real readiness callback with OS surfaces stubbed. Drain startup timers.
 const calls = [];
 const timers = [];
 const noop = new Proxy(function () {}, { get: (_target, key) => key === Symbol.toPrimitive ? () => '' : noop, apply: () => noop });

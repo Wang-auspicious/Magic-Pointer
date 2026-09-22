@@ -1,4 +1,3 @@
-"""Final model output cannot overrule Stop or turn missing content into success."""
 
 from __future__ import annotations
 

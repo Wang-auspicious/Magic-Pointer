@@ -7,18 +7,18 @@
   <title>Magic Pointer</title>
   <script src="theme_boot.js?v=26"></script>
   <link rel="stylesheet" href="cds_icons.css?v=1" />
-  <link rel="stylesheet" href="claude_tokens.css?v=35" />
-  <link rel="stylesheet" href="claude_shell.css?v=34" />
-  <link rel="stylesheet" href="claude_chat.css?v=34" />
+  <link rel="stylesheet" href="theme_tokens.css?v=35" />
+  <link rel="stylesheet" href="studio_layout.css?v=34" />
+  <link rel="stylesheet" href="chat_styles.css?v=34" />
   <link rel="stylesheet" href="decision_card.css" />
   <link rel="stylesheet" href="plan_list.css" />
   <link rel="stylesheet" href="studio_artifacts.css?v=1" />
-  <link rel="stylesheet" href="assets/claude-reference/artifact-previews.css" />
+  <link rel="stylesheet" href="assets/library-previews/artifact-previews.css" />
   <link rel="stylesheet" href="studio_libraries.css?v=1" />
   <link rel="stylesheet" href="studio_stash.css?v=1" />
 </head>
 <body class="studio">
-  <div class="dshw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
+  <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
     <header class="mp-window-titlebar mp-window-bar" id="window-titlebar">
       <div class="mp-window-titlebar-leading">
         <button type="button" class="mp-toolbar-button" id="app-menu" aria-label="应用菜单" title="应用菜单" aria-haspopup="menu" aria-expanded="false">
@@ -40,9 +40,9 @@
       <div class="mp-window-caption-safe" aria-hidden="true"></div>
     </header>
 
-    <aside class="dshw-sidebar-col">
-      <div class="dshw-sidebar">
-        <div class="dshw-logo-row">
+    <aside class="mpw-sidebar-col">
+      <div class="mpw-sidebar">
+        <div class="mpw-logo-row">
           <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="工作模式">
             <button type="button" id="mode-work" data-product-mode="walker" role="tab" aria-selected="true">
               <span class="cds-icon" data-size="small" data-glyph="&#xE10C;" aria-hidden="true"></span><span>Work</span>
@@ -54,27 +54,25 @@
         </div>
 
         <nav class="mp-main-navigation" aria-label="Main navigation">
-        <button class="dshw-new-session" id="nav-new-chat" data-goto="chat">
-          <span class="mp-nav-leading"><span class="mp-new-circle"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></span></span><span class="mp-nav-label dshw-new-session-label">New</span>
+        <button class="mpw-new-session" id="nav-new-chat" data-goto="chat">
+          <span class="mp-nav-leading"><span class="mp-new-circle"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></span></span><span class="mp-nav-label mpw-new-session-label">New</span>
         </button>
-        <!-- `dshw-customize` 这个名字是历史遗留，它现在的实际含义是「侧栏导航
-             行」——New / Artifacts / Customize 共用一套排版，所以三行同一个类。 -->
-        <button class="dshw-customize" id="nav-projects" data-goto="projects" data-library-nav="projects">
+        <button class="mpw-customize" id="nav-projects" data-goto="projects" data-library-nav="projects">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE0C9;" aria-hidden="true"></span></span><span class="mp-nav-label">Projects</span>
         </button>
-        <div class="mp-nav-row"><button class="dshw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
+        <div class="mp-nav-row"><button class="mpw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
         </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="创建产物" title="创建产物"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
-        <button class="dshw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
+        <button class="mpw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Scheduled</span>
         </button>
-        <button class="dshw-customize" id="nav-designs" data-goto="designs" data-library-nav="designs">
+        <button class="mpw-customize" id="nav-designs" data-goto="designs" data-library-nav="designs">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE0B8;" aria-hidden="true"></span></span><span class="mp-nav-label">Design</span>
         </button>
-        <button class="dshw-customize" id="nav-customize" data-goto="customize" data-library-nav="customize">
+        <button class="mpw-customize" id="nav-customize" data-goto="customize" data-library-nav="customize">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE100;" aria-hidden="true"></span></span><span class="mp-nav-label">Customize</span>
         </button>
-        <button class="dshw-customize" id="sidebar-more" aria-haspopup="menu" aria-expanded="false">
+        <button class="mpw-customize" id="sidebar-more" aria-haspopup="menu" aria-expanded="false">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE027;" aria-hidden="true"></span></span><span class="mp-nav-label">More</span>
         </button>
         </nav>
@@ -86,36 +84,36 @@
           <button type="button" data-goto="artifacts"><svg class="codex-icon" aria-hidden="true"><use href="#ic-docs" /></svg><span>Artifacts</span></button>
         </nav>
 
-        <section class="dshw-workspace-browser" aria-label="对话浏览器">
+        <section class="mpw-workspace-browser" aria-label="对话浏览器">
           <div class="mp-session-heading"><span>Projects</span><button type="button" data-goto="chats" aria-label="View all chats and tasks" title="View all"><span class="cds-icon" data-size="small" data-glyph="&#xE015;" aria-hidden="true"></span></button><button type="button" id="sidebar-group-sort" aria-label="Group and sort" title="Group and sort" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="small" data-glyph="&#xE070;" aria-hidden="true"></span></button></div>
-          <div class="dshw-workspace-header">
+          <div class="mpw-workspace-header">
             <span class="mp-projects-label">项目</span>
-            <div class="dshw-workspace-search">
-              <button type="button" class="dshw-workspace-search-button" id="side-search-toggle"
+            <div class="mpw-workspace-search">
+              <button type="button" class="mpw-workspace-search-button" id="side-search-toggle"
                 aria-label="搜索对话" aria-expanded="false" title="搜索对话">
                 <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>
               </button>
               <input id="side-search" type="search" autocomplete="off" placeholder="搜索对话" aria-label="搜索对话" />
-              <button type="button" class="dshw-workspace-clear" id="side-search-clear"
+              <button type="button" class="mpw-workspace-clear" id="side-search-clear"
                 aria-label="清除搜索" title="清除搜索" hidden>
                 <span class="cds-icon" data-size="large" aria-hidden="true">&#xE10F;</span>
               </button>
             </div>
-            <button type="button" class="dshw-workspace-action" id="workspace-filter" hidden
+            <button type="button" class="mpw-workspace-action" id="workspace-filter" hidden
               aria-label="只看最近项目" title="只看最近项目">
               <span class="cds-icon" data-size="small" aria-hidden="true">&#xE070;</span>
             </button>
-            <button type="button" class="dshw-workspace-action" id="workspace-add"
+            <button type="button" class="mpw-workspace-action" id="workspace-add"
               aria-label="打开项目" title="打开项目文件夹">
               <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
             </button>
           </div>
-          <div class="dshw-session-list-seat">
+          <div class="mpw-session-list-seat">
             <div id="side-convos"></div>
           </div>
         </section>
 
-        <div class="dshw-foot">
+        <div class="mpw-foot">
           <button type="button" class="mp-update-card" id="update-card" hidden>
             <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">重启以更新</strong><small id="update-card-detail"></small></span><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
@@ -141,8 +139,7 @@
       </div>
     </aside>
 
-    <main class="dshw-center-col">
-      <!-- 收藏与产物页共用页头；聊天有自己的紧凑顶栏。 -->
+    <main class="mpw-center-col">
       <header class="workspace-header" id="workspace-header">
         <div>
           <p class="workspace-eyebrow" id="workspace-eyebrow">ACTIVE WORK</p>
@@ -152,21 +149,21 @@
         <div class="workspace-header-actions" id="workspace-header-actions" aria-live="polite"></div>
       </header>
 
-      <section class="dshw-conversation" id="view-chat">
-        <header class="dshw-header">
-          <div class="dshw-title-row">
-            <div class="dshw-title-cluster">
+      <section class="mpw-conversation" id="view-chat">
+        <header class="mpw-header">
+          <div class="mpw-title-row">
+            <div class="mpw-title-cluster">
               <span class="cds-icon" data-size="small" data-glyph="&#xE093;" aria-hidden="true"></span>
-              <b class="dshw-title" id="chat-title">新对话</b>
+              <b class="mpw-title" id="chat-title">新对话</b>
               <span class="mp-chat-project"><span id="chat-project-label">Local</span></span>
             </div>
-            <div class="dshw-header-actions">
-              <div class="dshw-source-preview" id="chat-source-preview" hidden>
-                <button type="button" class="dshw-source-thumb" id="chat-origin"
+            <div class="mpw-header-actions">
+              <div class="mpw-source-preview" id="chat-source-preview" hidden>
+                <button type="button" class="mpw-source-thumb" id="chat-origin"
                   aria-label="预览划线选区" aria-describedby="chat-peek">
                   <img id="chat-source-thumb" alt="划线选区缩略图" />
                 </button>
-                <span class="dshw-peek" role="tooltip" id="chat-peek" hidden>
+                <span class="mpw-peek" role="tooltip" id="chat-peek" hidden>
                   <span class="peek-top"><svg><use href="#ic-eye" /></svg>来源<em id="peek-label">选区预览</em></span>
                   <img id="peek-image" class="peek-img" alt="划线选区预览" />
                 </span>
@@ -210,7 +207,7 @@
           </section>
         </header>
 
-        <div class="dshw-scrollbody">
+        <div class="mpw-scrollbody">
           <section class="mp-studio-home" id="studio-home" aria-label="Studio 首页" hidden>
             <header class="mp-home-heading">
               <span class="mp-home-mark" aria-hidden="true"></span>
@@ -237,22 +234,22 @@
               <div class="mp-home-tooltip" id="studio-home-tooltip" role="tooltip" hidden></div>
             </section>
           </section>
-          <button type="button" class="dshw-scroll-pill" id="scroll-pill" hidden aria-label="回到底部">
+          <button type="button" class="mpw-scroll-pill" id="scroll-pill" hidden aria-label="回到底部">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 11.5L2.5 6l1-1L8 9.5 12.5 5l1 1z" fill="currentColor"/></svg>
           </button>
           <div id="conversation-recovery" hidden></div>
-          <div class="dshw-stream" id="stream">
-            <div class="dshw-blank" aria-hidden="true"></div>
+          <div class="mpw-stream" id="stream">
+            <div class="mpw-blank" aria-hidden="true"></div>
           </div>
-          <div class="dshw-rail" id="stream-rail" hidden>
-            <div class="dshw-rail-marks" id="stream-rail-marks" aria-hidden="true"></div>
-            <div class="dshw-rail-menu" id="stream-rail-menu" role="menu" aria-label="跳到某一段"></div>
+          <div class="mpw-rail" id="stream-rail" hidden>
+            <div class="mpw-rail-marks" id="stream-rail-marks" aria-hidden="true"></div>
+            <div class="mpw-rail-menu" id="stream-rail-menu" role="menu" aria-label="跳到某一段"></div>
           </div>
-          <div class="dshw-trajectory-seat" id="trajectory" hidden></div>
+          <div class="mpw-trajectory-seat" id="trajectory" hidden></div>
 
-          <div class="dshw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="需要你的决定"></div>
-          <div class="dshw-composer-seat">
-            <div class="dshw-composer-stack">
+          <div class="mpw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="需要你的决定"></div>
+          <div class="mpw-composer-seat">
+            <div class="mpw-composer-stack">
               <div class="mp-repository-context" id="composer-repository-context" hidden aria-label="Repository status">
                 <div class="mp-repository-identity">
                   <button type="button" class="mp-repository-location" id="composer-repository-location" title="Open project changes">
@@ -290,52 +287,52 @@
                   <span>Worktree</span>
                 </button>
               </div>
-              <form class="dshw-input-form mp-compact-composer" id="composer-form">
-                <div class="dshw-input-root">
-                  <div class="dshw-card">
-                    <div class="dshw-scroll">
-                      <div class="dshw-grow">
-                        <textarea class="dshw-input" rows="1" maxlength="12000"
+              <form class="mpw-input-form mp-compact-composer" id="composer-form">
+                <div class="mpw-input-root">
+                  <div class="mpw-card">
+                    <div class="mpw-scroll">
+                      <div class="mpw-grow">
+                        <textarea class="mpw-input" rows="1" maxlength="12000"
                           placeholder="Describe a task or ask a question" aria-label="Continue conversation"></textarea>
                       </div>
-                      <button type="submit" class="dshw-primary" title="Send" aria-label="Send" disabled>
+                      <button type="submit" class="mpw-primary" title="Send" aria-label="Send" disabled>
                         <span class="cds-icon" data-size="large" data-glyph="&#xE00F;" aria-hidden="true"></span>
                       </button>
                     </div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>
                     <div class="mp-composer-attachments mp-composer-materials" id="composer-materials" hidden aria-label="下一步使用的任务材料"></div>
-                    <div class="dshw-row">
-                      <div class="dshw-tools">
-                        <button type="button" class="dshw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
+                    <div class="mpw-row">
+                      <div class="mpw-tools">
+                        <button type="button" class="mpw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
                           <span class="cds-icon" data-size="large" aria-hidden="true">&#xE001;</span>
                         </button>
                         <div class="mp-compact-menu" id="composer-attach-menu" hidden role="menu" aria-label="Add"></div>
-                        <div class="dshw-add-menu dshw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
+                        <div class="mpw-add-menu mpw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
                           <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
-                          <div class="dshw-slash-rows" id="composer-slash-rows"></div>
+                          <div class="mpw-slash-rows" id="composer-slash-rows"></div>
                         </div>
-                        <button type="button" class="dshw-add mp-composer-secondary" id="composer-mention" aria-label="提及上下文" title="提及文件或上下文">
+                        <button type="button" class="mpw-add mp-composer-secondary" id="composer-mention" aria-label="提及上下文" title="提及文件或上下文">
                           <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
                         </button>
-                        <button type="button" class="dshw-add mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
+                        <button type="button" class="mpw-add mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
                           <span class="cds-icon" data-size="large" aria-hidden="true">&#xE0AB;</span>
                         </button>
-                        <button type="button" class="dshw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
-                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
-                          <span class="dshw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
-                          <span class="dshw-perm-label" id="composer-permission-label">项目写入</span>
+                        <button type="button" class="mpw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
+                          <svg class="mpw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
+                          <span class="mpw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
+                          <span class="mpw-perm-label" id="composer-permission-label">项目写入</span>
                         </button>
-                        <div class="dshw-perm-menu mp-permission-menu-seat" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
+                        <div class="mpw-perm-menu mp-permission-menu-seat" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
                       </div>
-                      <div class="dshw-trailing">
-                        <button type="button" class="dshw-perm dshw-model" id="composer-model" aria-haspopup="listbox" aria-expanded="false" title="模型">
-                          <span class="dshw-perm-label" id="composer-model-label">默认模型</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
+                      <div class="mpw-trailing">
+                        <button type="button" class="mpw-perm mpw-model" id="composer-model" aria-haspopup="listbox" aria-expanded="false" title="模型">
+                          <span class="mpw-perm-label" id="composer-model-label">默认模型</span>
+                          <svg class="mpw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                         </button>
-                        <div class="dshw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
-                        <button type="button" class="dshw-add mp-composer-secondary" id="composer-effort" aria-label="Reasoning effort: Extra" aria-haspopup="listbox" aria-expanded="false" title="Reasoning effort"><span id="composer-effort-label">Extra</span></button>
-                        <div class="dshw-perm-menu mp-effort-menu" id="composer-effort-menu" hidden role="listbox" aria-label="Reasoning effort"></div>
-                        <button type="button" class="dshw-ring" id="composer-context" aria-label="Context usage"
+                        <div class="mpw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
+                        <button type="button" class="mpw-add mp-composer-secondary" id="composer-effort" aria-label="Reasoning effort: Extra" aria-haspopup="listbox" aria-expanded="false" title="Reasoning effort"><span id="composer-effort-label">Extra</span></button>
+                        <div class="mpw-perm-menu mp-effort-menu" id="composer-effort-menu" hidden role="listbox" aria-label="Reasoning effort"></div>
+                        <button type="button" class="mpw-ring" id="composer-context" aria-label="Context usage"
                           aria-haspopup="dialog" aria-expanded="false" title="Context usage">
                           <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
                             <circle class="mp-context-track" cx="10" cy="10" r="7" pathLength="100" />
@@ -355,7 +352,7 @@
         </div>
       </section>
 
-      <section class="dshw-view mp-design-home" id="view-design" hidden>
+      <section class="mpw-view mp-design-home" id="view-design" hidden>
         <div class="mp-design-intro">
           <h1>Cowork</h1>
           <span>Work with files, visual references, and generated artifacts in the same local workspace.</span>
@@ -384,28 +381,27 @@
         </div>
       </section>
 
-      <section class="dshw-view mp-library-view" id="view-projects" hidden><div class="mp-library" id="library-projects"></div></section>
-      <section class="dshw-view mp-library-view" id="view-scheduled" hidden><div class="mp-library" id="library-scheduled"></div></section>
-      <section class="dshw-view mp-library-view" id="view-customize" hidden><div class="mp-library" id="library-customize"></div></section>
-      <section class="dshw-view mp-library-view" id="view-chats" hidden><div class="mp-library" id="library-chats"></div></section>
-      <section class="dshw-view mp-library-view" id="view-designs" hidden><div class="mp-library" id="library-designs"></div></section>
+      <section class="mpw-view mp-library-view" id="view-projects" hidden><div class="mp-library" id="library-projects"></div></section>
+      <section class="mpw-view mp-library-view" id="view-scheduled" hidden><div class="mp-library" id="library-scheduled"></div></section>
+      <section class="mpw-view mp-library-view" id="view-customize" hidden><div class="mp-library" id="library-customize"></div></section>
+      <section class="mpw-view mp-library-view" id="view-chats" hidden><div class="mp-library" id="library-chats"></div></section>
+      <section class="mpw-view mp-library-view" id="view-designs" hidden><div class="mp-library" id="library-designs"></div></section>
 
-      <!-- ===== 收藏箱（保留原画布/列表机制，外壳换 DSH 令牌） ===== -->
-      <section class="dshw-view" id="view-stash" hidden>
+      <section class="mpw-view" id="view-stash" hidden>
         <div class="page-toolbar">
           <span class="pill" id="stash-count">0 项</span>
-          <label class="dshw-settings-search mp-stash-search">
+          <label class="mpw-settings-search mp-stash-search">
             <svg aria-hidden="true"><use href="#ic-search" /></svg>
             <input id="stash-search" type="search" autocomplete="off" placeholder="搜索收藏材料" aria-label="搜索收藏材料" />
           </label>
           <button type="button" class="mp-toolbar-button" id="stash-add-file">加入文件</button>
           <button type="button" class="mp-toolbar-button" id="stash-add-note">加入笔记</button>
-          <div class="dshw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
+          <div class="mpw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
         </div>
         <div class="stash-filters" aria-label="收藏分类">
-          <button class="dshw-tab is-on" data-kind="">全部</button><button class="dshw-tab" data-kind="灵感">灵感</button>
-          <button class="dshw-tab" data-kind="交接">交接</button><button class="dshw-tab" data-kind="凭证">凭证</button>
-          <button class="dshw-tab" data-kind="素材">素材</button><button class="dshw-tab" data-kind="片段">片段</button>
+          <button class="mpw-tab is-on" data-kind="">全部</button><button class="mpw-tab" data-kind="灵感">灵感</button>
+          <button class="mpw-tab" data-kind="交接">交接</button><button class="mpw-tab" data-kind="凭证">凭证</button>
+          <button class="mpw-tab" data-kind="素材">素材</button><button class="mpw-tab" data-kind="片段">片段</button>
         </div>
         <div class="canvas" id="canvas">
           <div class="canvas-rail">
@@ -417,10 +413,7 @@
         <div class="stash-list" id="stash-list" hidden></div>
       </section>
 
-      <!-- 产物页照 claude.ai 的 Artifacts 页搭骨架：标题（页头，衬线）→ tab 行 +
-           右侧工具条 → 按日期分组的一行一条。参考里的推广卡和「Make something
-           new」模板行在这里没有数据，不做。 -->
-      <section class="dshw-view" id="view-artifacts" hidden>
+      <section class="mpw-view" id="view-artifacts" hidden>
         <div class="mp-artifacts">
           <div class="mp-artifacts-bar">
             <div class="mp-artifacts-tabs" role="group" aria-label="产物范围">
@@ -457,30 +450,29 @@
         </div>
       </section>
 
-      <!-- 设置采用 Claude Desktop 的双栏 sheet：左侧目录，右侧平铺设置。 -->
       <section id="view-settings" hidden>
-        <div class="dshw-settings-overlay" role="dialog" aria-modal="true" aria-label="设置">
-          <div class="dshw-settings-mask" data-settings-close aria-hidden="true"></div>
-          <div class="dshw-settings-panel">
-            <nav class="dshw-settings-nav" aria-label="设置分类">
-              <div class="dshw-settings-nav-title">Settings</div>
-              <label class="dshw-settings-search">
+        <div class="mpw-settings-overlay" role="dialog" aria-modal="true" aria-label="设置">
+          <div class="mpw-settings-mask" data-settings-close aria-hidden="true"></div>
+          <div class="mpw-settings-panel">
+            <nav class="mpw-settings-nav" aria-label="设置分类">
+              <div class="mpw-settings-nav-title">Settings</div>
+              <label class="mpw-settings-search">
                 <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>
                 <input id="settings-search" type="search" autocomplete="off" placeholder="Search settings" aria-label="Search settings" />
               </label>
-              <div class="dshw-settings-nav-list" id="set-nav"></div>
+              <div class="mpw-settings-nav-list" id="set-nav"></div>
               <button type="button" class="mp-customize-directory" data-directory-open>
                 <svg aria-hidden="true"><use href="#ic-plug" /></svg><span>Skills & commands</span>
               </button>
             </nav>
-            <div class="dshw-settings-content">
-              <div class="dshw-settings-header">
+            <div class="mpw-settings-content">
+              <div class="mpw-settings-header">
                 <span></span>
-                <button class="dshw-settings-close" data-settings-close aria-label="关闭设置">
+                <button class="mpw-settings-close" data-settings-close aria-label="关闭设置">
                   <svg aria-hidden="true"><use href="#ic-x" /></svg>
                 </button>
               </div>
-              <div class="dshw-settings-options" id="set-body"></div>
+              <div class="mpw-settings-options" id="set-body"></div>
             </div>
           </div>
         </div>
@@ -658,30 +650,23 @@
     </div>
   </section>
 
-  <!-- 25 个 classic script（约 584 KB）原本是 parser-blocking：解析器必须停下来
-       逐个下载+执行，`studio.js` 还要等前面 24 个都求值完才能跑。加 defer 之后
-       浏览器先把 HTML 解析完（首屏能画出来），再按同一顺序执行——defer 对
-       classic script 保证顺序，所以这里的依赖关系（后面的脚本依赖前面的全局量，
-       例如 studio.js 依赖 data.js / studio_home.js）逐字不变。
-       theme_boot.js 在 <head> 里保持同步阻塞，它必须在首帧前把主题写进
-       documentElement，defer 会让首帧闪一下错主题。 -->
   <script defer src="icons.js?v=23"></script>
   <script defer src="../cards.js?v=23"></script>
   <script defer src="../studio_shell.js?v=23"></script>
   <script defer src="card_render.js?v=23"></script>
   <script defer src="live_cards.js?v=23"></script>
-  <script defer src="dsh_markdown.js?v=24"></script>
-  <script defer src="dsh_icons.js?v=25"></script>
-  <script defer src="claude_marks.js?v=1"></script>
+  <script defer src="chat_markdown.js?v=24"></script>
+  <script defer src="chat_icons.js?v=25"></script>
+  <script defer src="activity_marks.js?v=1"></script>
   <script defer src="cds_icons.js?v=1"></script>
-  <script defer src="dsh_highlight.js?v=1"></script>
-  <script defer src="dsh_chat.js?v=27"></script>
-  <script defer src="dsh_trajectory.js?v=25"></script>
+  <script defer src="chat_highlight.js?v=1"></script>
+  <script defer src="chat_view.js?v=27"></script>
+  <script defer src="chat_trajectory.js?v=25"></script>
   <script defer src="../conversation_control.js?v=23"></script>
   <script defer src="../slash_trigger.js?v=23"></script>
   <script defer src="permission_presets.js?v=23"></script>
   <script defer src="effort_levels.js?v=33"></script>
-  <script defer src="assets/claude/effort-shaders.js"></script>
+  <script defer src="assets/activity/effort-shaders.js"></script>
   <script defer src="effort_particles.js"></script>
   <script defer src="popover_position.js?v=33"></script>
   <script defer src="sidebar_groups.js?v=23"></script>

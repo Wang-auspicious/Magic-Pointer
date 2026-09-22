@@ -1,17 +1,3 @@
-"""CaptureProvider contract (design Phase B): replaceable frame backends.
-
-The FrameLease contract demands the *source* be declared per capture; the
-provider contract is where sources live:
-
-- ``gdi-fallback`` — Pillow ImageGrab (today's production path);
-- ``wgc-window`` — Windows.Graphics.Capture window capture via the native
-  ``wgc_capture_tool.exe`` (design target: pointerup->freeze p95 <= 30ms);
-- ``test`` — deterministic solid frames for protocol tests.
-
-Every provider reports ``available()`` and an honest ``unavailable_reason``:
-a missing native tool compiles to "the provider exists, this machine cannot
-run it yet", never to a silent GDI fallback pretending to be WGC.
-"""
 
 from __future__ import annotations
 
@@ -27,11 +13,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def capture_window(hwnd: int) -> Any:
-    """Capture the bound HWND itself, even when another window covers it.
-
-    Pillow's Windows window mode uses PrintWindow; a desktop bbox fallback
-    would silently substitute the occluder's pixels and is not equivalent.
-    """
     from PIL import ImageGrab
 
     if not int(hwnd):
@@ -48,7 +29,6 @@ __all__ = [
 
 
 class CaptureProvider(Protocol):
-    """One frame-capture backend (Phase B contract)."""
 
     source: str
 
@@ -61,7 +41,6 @@ class CaptureProvider(Protocol):
 
 
 class GdiFallbackCaptureProvider:
-    """Desktop grab via Pillow ImageGrab (today's production path)."""
 
     source = "gdi-fallback"
 
@@ -89,13 +68,6 @@ class GdiFallbackCaptureProvider:
 
 
 class WgcWindowCaptureProvider:
-    """WGC window capture through ``wgc_capture_tool.exe`` (native helper).
-
-    Honest state machine: the tool is built with the same machine-local csc
-    used for the UIA probe (``scripts/build_wgc_tool.py``); until it builds
-    and the machine runs a successful capture, ``available()`` is False and
-    the lease keeps ``source=gdi-fallback``.
-    """
 
     source = "wgc-window"
     TOOL_PATH = ROOT / "data" / "runtime" / "wgc_capture_tool.exe"
@@ -119,7 +91,7 @@ class WgcWindowCaptureProvider:
     def capture(self, bbox_ltrb: tuple[int, int, int, int]) -> Any:
         from PIL import Image
 
-        hwnd = 0  # the tool derives the hwnd under the bbox at capture time
+        hwnd = 0
         proc = subprocess.run(
             [
                 str(self._tool_path),
@@ -144,9 +116,6 @@ class WgcWindowCaptureProvider:
 
 
 def provider_for(source: str | None) -> CaptureProvider:
-    """Provider selection: env ``MAGIC_POINTER_CAPTURE_BACKEND`` overrides the
-    caller; a requested-but-unavailable provider is still returned — the
-    caller must check ``available()`` and fall back honestly."""
     resolved = (source or os.environ.get("MAGIC_POINTER_CAPTURE_BACKEND", "gdi-fallback")).strip()
     if resolved == "wgc-window":
         return WgcWindowCaptureProvider()
@@ -183,7 +152,6 @@ def benchmark_provider(
     *,
     samples: int = 20,
 ) -> CaptureBenchmarkResult:
-    """Median/p95/p99 wall time over ``samples`` captures (design Phase B)."""
     if not provider.available():
         return CaptureBenchmarkResult(
             source=provider.source,

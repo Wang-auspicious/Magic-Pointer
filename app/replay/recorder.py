@@ -1,9 +1,3 @@
-"""DesktopTraceRecorder: record a real desktop interaction into a replayable trace.
-
-The recorder never captures the real screen by itself. ``capture_frame`` only
-captures when an explicit capture backend (``Callable[[ltrb], Image.Image]``)
-is passed; the default ``None`` records nothing.
-"""
 
 from __future__ import annotations
 
@@ -41,7 +35,6 @@ class _PendingUia:
 
 
 class DesktopTraceRecorder:
-    """Incremental builder that writes a DesktopTrace fixture into a directory."""
 
     def __init__(self, trace_id: str | None = None, clock: Clock | None = None) -> None:
         self.trace_id = trace_id or f"trace-{uuid.uuid4().hex[:12]}"

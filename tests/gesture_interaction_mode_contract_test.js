@@ -5,12 +5,6 @@ const fs = require('fs');
 const { defaultSettings, validate } = require('../electron/settings_store');
 const { gestureRuntimeContract } = require('../electron/gesture_runtime_settings');
 
-// The default must stay on the mode that can actually draw. pass_through was
-// briefly made the default and shipped broken: the hook swallows
-// WM_LBUTTONDOWN, so GetAsyncKeyState never reports the press, so the poller
-// never starts a stroke and every gesture expired after 5s without a line.
-// Do not flip this default again without drawing a real stroke on a real
-// machine first — no unit test in this repo can catch that failure.
 const defaults = defaultSettings();
 assert.strictEqual(
   defaults.activation.gesture_interaction_mode,

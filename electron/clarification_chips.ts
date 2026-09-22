@@ -1,10 +1,3 @@
-// Clarification option chips (pure, no Electron imports).
-//
-// Maps an awaiting turn's pendingInput.options onto clickable chips. Idle
-// canned suggestions stay in StageChipsPolicy; this helper never consults it.
-// Clicking a chip submits the option TEXT as the follow-up command.
-// Loaded both from node tests (CommonJS) and from the stage renderer via a
-// plain <script> tag (globalThis.ClarificationChips).
 
 (() => {
 type Chip = Readonly<{ command: string; id: string; label: string }>;

@@ -1,9 +1,5 @@
 'use strict';
 
-// Persistent JSONL RPC client for scripts/frame_capture_worker.py.
-// One child process is reused across arm/commit for every gesture; the worker
-// stays idle between gestures. Frame contents (artifact paths, hashes, pixel
-// data) never appear in logs or emitted events.
 
 const { EventEmitter } = require('events');
 const path = require('path');
@@ -197,8 +193,6 @@ class FrameCaptureWorkerClient extends EventEmitter {
         const epochId = String(recordOf(params)?.epochId || '');
         if (epochId) {
           const cancelId = `rpc-${++this.requestSeq}`;
-          // Register a no-op pending so the cancel response resolves quietly
-          // instead of surfacing as an unknown_request_id protocol error.
           const cancelTimer = setTimeout(() => {
             this.pending.delete(cancelId);
           }, this.requestTimeoutMs);
@@ -261,8 +255,6 @@ class FrameCaptureWorkerClient extends EventEmitter {
     }
     const requestId = typeof candidate.id === 'string' ? candidate.id : '';
     if (!requestId) {
-      // Error lines for unparseable/hostile input carry no id (worker
-      // contract); they are diagnostic noise, not protocol corruption.
       return;
     }
     const pending = requestId ? this.pending.get(requestId) : undefined;
@@ -278,7 +270,6 @@ class FrameCaptureWorkerClient extends EventEmitter {
       return;
     }
     if (!('result' in candidate)) {
-      // Malformed for this request only: the rest of the pending queue stays alive.
       this.pending.delete(requestId);
       clearTimeout(pending.timer);
       this.emit('protocol-error', { error: 'malformed_response', id: requestId });

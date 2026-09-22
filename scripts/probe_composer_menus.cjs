@@ -1,6 +1,5 @@
 'use strict';
 
-// Actual Chromium layout, pointer and keyboard acceptance for the composer menus.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,7 +13,7 @@ app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1199, height: 800, useContentSize: true, frame: false, show: false,
     webPreferences: { offscreen: true, sandbox: false, contextIsolation: true,
-      preload: path.join(root, 'scripts/probe_studio_claude_preload.js'),
+      preload: path.join(root, 'scripts/probe_studio_layout_preload.js'),
       additionalArguments: ['--mp-probe-theme=light', '--mp-probe-state=landing'] } });
   const wc = win.webContents;
   const failures = [], measurements = {};
@@ -65,7 +64,7 @@ app.whenReady().then(async () => {
     await wait(100);
     check(drawsAfterClose===await wc.executeJavaScript('window.effortDraws'),'closed effort menu must stop GPU drawing');
     measurements.permission=await measure('composer-permission-menu');
-    const rows=await wc.executeJavaScript("[...document.querySelectorAll('#composer-permission-menu .dshw-perm-row')].map(n=>n.getBoundingClientRect().height)");
+    const rows=await wc.executeJavaScript("[...document.querySelectorAll('#composer-permission-menu .mpw-perm-row')].map(n=>n.getBoundingClientRect().height)");
     check(rows.length===5 && rows.every(h=>h===40.5), `mode rows ${JSON.stringify(rows)}; expected Claude compact 40.5px`);
     check(measurements.permission.width<300,'Mode menu must use native content width, not fixed 320px');
     fs.writeFileSync(path.join(out,'mode.png'),(await wc.capturePage()).toPNG());

@@ -1,4 +1,3 @@
-/* Pending tool input is a form, separate from the chat composer. */
 declare global {
   interface MagicPointerDecisionQuestion {
     header?: string;

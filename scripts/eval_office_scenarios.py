@@ -65,7 +65,6 @@ def _string_list(value: Any, name: str) -> list[str]:
 
 
 def load_case_catalog(path: Path | str = DEFAULT_CATALOG) -> dict[str, dict[str, Any]]:
-    """Load and validate the committed twelve-case catalog in declared order."""
 
     catalog_path = Path(path)
     raw = json.loads(catalog_path.read_text(encoding="utf-8"))
@@ -122,7 +121,6 @@ def _normalized_observation(value: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def assess_observation(case: Mapping[str, Any], observation: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Compare exact observable state with one case's deterministic boundary."""
 
     observed = _normalized_observation(observation)
     assertions = dict(case.get("assertions") or {})
@@ -164,7 +162,6 @@ def build_runtime_payload(
     workspace_root: Path | None = None,
     permission_preset: str = "read-only",
 ) -> dict[str, Any]:
-    """Build the Studio-compatible request consumed by conversation_bridge."""
 
     if permission_preset not in {"read-only", "workspace-write"}:
         raise ValueError("eval runner permission preset must be read-only or workspace-write")
@@ -238,7 +235,6 @@ def sanitize_for_report(
     *,
     fixture_paths: Mapping[Path, str] | None = None,
 ) -> Any:
-    """Redact credentials and replace private fixture paths with stable aliases."""
 
     replacements = {
         str(Path(path).expanduser().resolve()): str(alias)
@@ -299,7 +295,6 @@ def _last_json(stdout: str) -> dict[str, Any]:
 
 
 def run_mp_runtime(payload: Mapping[str, Any], *, timeout_seconds: float = 0) -> dict[str, Any]:
-    """Invoke the same MP conversation bridge as Studio; never call a model directly."""
 
     command = [sys.executable, str(PROJECT_ROOT / "scripts" / "conversation_bridge.py")]
     started = time.perf_counter()
@@ -351,7 +346,6 @@ def _collect_string_values(value: Any, keys: set[str]) -> set[str]:
 
 
 def observation_from_runtime(run: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract only facts the Runtime record actually exposes; leave the rest missing."""
 
     result = run.get("result") if isinstance(run.get("result"), Mapping) else {}
     evidence = _collect_string_values(result, {"evidenceId", "sourceId", "referenceId"})

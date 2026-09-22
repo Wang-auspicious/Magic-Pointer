@@ -11,7 +11,7 @@ from scripts import action_bridge
 def _proposal(action_id: str = "write-1") -> ActionProposal:
     return ActionProposal(
         id=action_id,
-        action_type="shopping_list_add",
+        action_type="office_replace_selection",
         parameters={"item": "milk"},
         safety_level=SafetyLevel.LOW,
         confirmation_required=False,
@@ -21,7 +21,7 @@ def _proposal(action_id: str = "write-1") -> ActionProposal:
 def _undo_proposal() -> dict:
     return ActionProposal(
         id="undo-write-1",
-        action_type="shopping_list_undo_add",
+        action_type="office_undo_last_action",
         parameters={"receipt_id": "receipt-1"},
         safety_level=SafetyLevel.LOW,
         confirmation_required=False,
@@ -38,7 +38,7 @@ class FakeExecutor:
             proposal_id=proposal.id,
             action_type=proposal.action_type,
             status=ExecutionStatus.SUCCEEDED,
-            output={"undo_proposal": _undo_proposal()} if proposal.action_type == "shopping_list_add" else {},
+            output={"undo_proposal": _undo_proposal()} if proposal.action_type == "office_replace_selection" else {},
         )
 
 
@@ -53,7 +53,7 @@ def test_broker_journals_successful_undo_proposal(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["kind"] == "record"
     assert rows[-1]["task_id"] == "task-1"
-    assert rows[-1]["undo_proposal"]["action_type"] == "shopping_list_undo_add"
+    assert rows[-1]["undo_proposal"]["action_type"] == "office_undo_last_action"
 
 
 def test_broker_rehydrates_compensation_after_process_restart(tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ def test_broker_rehydrates_compensation_after_process_restart(tmp_path: Path) ->
     restored = restarted.undo()
 
     assert restored.action_id == "write-1"
-    assert second.calls == [("shopping_list_undo_add", True)]
+    assert second.calls == [("office_undo_last_action", True)]
     rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
     assert rows[-1] == {"kind": "undone", "task_id": "task-1", "action_id": "write-1"}
 
@@ -77,7 +77,7 @@ def test_action_bridge_routes_durable_undo_operation(monkeypatch) -> None:
 
     class FakeCompensation:
         action_id = "write-1"
-        tool_name = "shopping_list_add"
+        tool_name = "office_replace_selection"
 
     class FakeBroker:
         def __init__(self, *, task_id: str) -> None:

@@ -244,8 +244,6 @@ class _CancelAfterOneBackend(_Backend):
         self.token: CancellationToken | None = None
 
     def execute(self, action, _grant, *, scope=None):
-        # First action succeeds and returns a receipt; the cancel lands while
-        # the agent is about to verify it.
         result = super().execute(action, _grant, scope=scope)
         if self.token is not None:
             self.token.cancel()
@@ -257,8 +255,6 @@ class _CancelAfterOneBackend(_Backend):
 
 
 def test_ui_tars_cancellation_releases_executed_actions() -> None:
-    """Perception-audit P1: a KEY_DOWN already executed must be aborted when
-    the run is cancelled — otherwise Ctrl/Shift stay physically held down."""
     backend = _CancelAfterOneBackend()
     token = CancellationToken()
     backend.token = token

@@ -1,4 +1,3 @@
-"""Task-bound source authorization projected from the EventSession log."""
 
 from __future__ import annotations
 
@@ -195,7 +194,6 @@ def ensure_folder_read_scope(
     *,
     grant_id: str = "workspace-materials",
 ) -> Any | None:
-    """Persist the trusted folder-picker's read scope without duplicate events."""
     normalized = str(Path(folder_root).expanduser().resolve(strict=False))
     desired = ScopeGrant(
         grant_id=grant_id,

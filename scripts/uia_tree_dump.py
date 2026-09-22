@@ -1,10 +1,3 @@
-"""Compile and run the read-only UIA tree dump against a live window.
-
-    python scripts/uia_tree_dump.py --title-contains 微信 --all
-
-Reuses the same csc discovery and assembly references as the production probe, so
-what this tool can see is exactly what the probe could see if it chose to.
-"""
 
 from __future__ import annotations
 

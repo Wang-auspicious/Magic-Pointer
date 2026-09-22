@@ -28,7 +28,6 @@ from app.agent_runtime.types import ToolCall
 
 
 class _BenchBackend:
-    """Fake backend: returns two tool calls, then a final answer."""
 
     def __init__(self, tool_names: list[str], turns_until_done: int = 2) -> None:
         self._tool_names = tool_names

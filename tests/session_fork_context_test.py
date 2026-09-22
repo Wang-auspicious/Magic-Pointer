@@ -1,4 +1,3 @@
-"""Fork keeps task-owned state usable under the child's durable identity."""
 
 from __future__ import annotations
 

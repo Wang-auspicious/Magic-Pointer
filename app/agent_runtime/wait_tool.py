@@ -1,18 +1,3 @@
-"""Wait：确定性条件等待（模型可调用）。
-
-桌面 agent 的高频序列是"动作 → 等 UI 出现 → 下一个动作"。没有 Wait 时
-模型只能连发 get_app_state 空转，一轮一秒地烧；CC 的 SleepTool 是裸 sleep
-（等少了不够、等多了浪费），Hermes 的 watch_patterns 只覆盖后台输出。
-Wait 把"等 UI/文件就绪"变成一次带超时的确定性调用：
-
-- window_title: 任一可见窗口标题包含该子串
-- element_text: window_title 过滤（可选）的窗口里，UIA 元素文本包含该子串
-- file_exists: 工作区内路径出现
-- 进程退出等进程条件不在这里（后台 job 的完成推送已覆盖）
-
-全部条件 OR 关系；诚实返回 {satisfied, condition, elapsed_s, note}。
-注入探针（windows/elements），本模块不碰真实桌面，测试用 fake。
-"""
 
 from __future__ import annotations
 
@@ -28,11 +13,9 @@ __all__ = ["WaitTool"]
 DEFAULT_TIMEOUT_S = 20.0
 MAX_TIMEOUT_S = 120.0
 _ELEMENT_SCAN_EVERY = 2
-"""元素树扫描比窗口枚举贵（UIA 走 COM），隔一次轮询扫一次。"""
 
 
 class WaitTool:
-    """条件等待：任一条件成立即返回；超时诚实返回 unsatisfied。"""
 
     def __init__(
         self,
@@ -65,8 +48,6 @@ class WaitTool:
         while True:
             scan_tick += 1
             try:
-                # element_text 在场时 window_title 降级为它的过滤条件，
-                # 不再单独成条件（否则过滤条件自己先"满足"）。
                 if element_text:
                     if scan_tick % _ELEMENT_SCAN_EVERY == 0 and self._element_ready(
                         element_text, window_title
@@ -182,7 +163,7 @@ class WaitTool:
             },
             execute=self._execute,
             effect=Effect.READ,
-            is_concurrency_safe=False,  # UIA 探针与 Observe 共用宿主
+            is_concurrency_safe=False,
             used_backend="wait_probe",
             timeout_ms=130_000,
         ))

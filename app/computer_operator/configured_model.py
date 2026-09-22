@@ -1,7 +1,5 @@
-# Adapted from ByteDance UI-TARS desktop action prompt.
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates.
 # SPDX-License-Identifier: Apache-2.0
-"""Configured multimodal-gateway adapter for the UI-TARS action loop."""
 
 from __future__ import annotations
 
@@ -95,7 +93,6 @@ def _bounded_history(history: Sequence[dict[str, Any]]) -> str:
 
 
 class ConfiguredUiTarsModel:
-    """Use Magic Pointer's configured vision endpoint as an action model."""
 
     used_backend = "magic_pointer.configured_vision_ui_tars"
 

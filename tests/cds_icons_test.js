@@ -1,12 +1,5 @@
 'use strict';
 
-/*
- * The codepoint table is transcribed by hand from a scraped manifest, so what
- * needs guarding is the transcription itself: the exact set of names, and the
- * two names that deliberately share one codepoint. A silent typo here renders
- * a tofu box in the UI and nothing crashes, which is the kind of failure that
- * ships.
- */
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -38,9 +31,7 @@ const SPOT_CHECKS = {
   'new-chat': 0xe001,
   dictate: 0xe0ab,
   'sidebar-panel': 0xe0dd,
-  // Projects 页头那个排序图标：官方 icon-catalog 里 Sort 的码位。
   sort: 0xe0e3,
-  // 侧栏会话菜单用的：PinSlash / Box / Trash / ArrowDown / ArrowOutSquare / Archive。
   unpin: 0xe0bf,
   box: 0xe020,
   trash: 0xe101,
@@ -82,8 +73,6 @@ assert.ok(send.includes('data-glyph="&#xE013;"'), send);
 assert.ok(send.includes('aria-hidden="true"'), send);
 assert.ok(!send.includes(String.fromCharCode(0xe013)),
   'the codepoint must be an entity, never a raw PUA character');
-/* 字形不能是元素的内容：内容会进 textContent，带图标的菜单行读出来就会多一个
-   私有区字符。CSS 从 data-glyph 取出来画，元素本身必须是空的。 */
 const sendContent = send.slice(send.indexOf('>') + 1, send.lastIndexOf('<'));
 assert.strictEqual(sendContent, '',
   'the span must carry no text content; the glyph is drawn from data-glyph');

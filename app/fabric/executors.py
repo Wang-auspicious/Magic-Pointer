@@ -33,8 +33,6 @@ def _sha256(value: str | bytes) -> str:
 
 def _atomic_text(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Unique temp name: two processes writing the same path concurrently must
-    # not collide on one ".tmp" handle (Windows: open PermissionError).
     temp = path.with_name(path.name + f".{uuid.uuid4().hex[:8]}.tmp")
     try:
         temp.write_text(text, encoding="utf-8", newline="\n")
@@ -57,7 +55,6 @@ _LOCKS: dict[str, threading.RLock] = {}
 
 @contextmanager
 def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
-    """Cross-process advisory lock (msvcrt byte-lock), like session.py's."""
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_key = str(lock_path.resolve())
     with _LOCK_GUARD:
@@ -135,15 +132,6 @@ def _parse_table(text: str) -> list[list[str]]:
 
 
 def _numbered_lines(reply: str, expected: int) -> list[str]:
-    """Read a "1. text" reply back into positional slots.
-
-    Models drop lines, merge them, add a preamble, or renumber from scratch. Any
-    of those, taken as a plain list, shifts every later translation onto the
-    wrong sentence — which on an overlay means a confident mistranslation sitting
-    on top of the real text. So the numbers are honoured where present: a line
-    that says which slot it belongs to goes in that slot, and slots nobody claimed
-    stay empty and simply do not get covered.
-    """
     slots = [""] * max(0, int(expected))
     unnumbered: list[str] = []
     for raw in str(reply or "").splitlines():
@@ -158,8 +146,6 @@ def _numbered_lines(reply: str, expected: int) -> list[str]:
                 slots[index] = value
             continue
         unnumbered.append(line)
-    # A reply with no numbering at all is still usable if it has exactly as many
-    # lines as we asked about; anything else is too ambiguous to place.
     if not any(slots) and len(unnumbered) == len(slots):
         return unnumbered
     return slots
@@ -216,14 +202,9 @@ class FabricExecutors:
         if plan.provider == "artifact.compare":
             return self._compare(plan)
         if plan.provider == "artifact.visual_context":
-            # image.to_prompt wants words a text-only model can act on; the older
-            # vision.prompt_bridge wants the structured packet. Same provider,
-            # different output shape, so the recipe decides.
             if plan.recipe_id == "image.to_prompt":
                 return self._image_prompt(plan)
             return self._visual_context(plan)
-        if plan.provider == "artifact.list":
-            return self._list(plan)
         if plan.provider == "local.memory":
             return self._memory_recall(plan)
         if plan.provider == "local.task":
@@ -360,9 +341,6 @@ class FabricExecutors:
         actual = self.clipboard_reader() if self.clipboard_reader is not None else value
         verified = actual == value
         if verified:
-            # One place records history: the moment a copy is known to have
-            # landed. Recording before the readback would remember copies that
-            # never happened.
             try:
                 from app.actions.clipboard_history import ClipboardHistory
 
@@ -388,12 +366,6 @@ class FabricExecutors:
         )
 
     def _memory_recall(self, plan: OperationPlan) -> ExecutionReceipt:
-        """Answer "what was I reading this morning" from the local screen memory.
-
-        Read-only, and empty is a real answer rather than a failure: the memory
-        may be switched off, or the thing simply was not seen. Saying "I have
-        nothing from that time" is useful; failing is not.
-        """
         from app.context_pack.screen_memory import ScreenMemory
 
         memory = ScreenMemory(enabled=plan.parameters.get("enabled") is not False)
@@ -417,12 +389,6 @@ class FabricExecutors:
         )
 
     def _clipboard_history(self, plan: OperationPlan) -> ExecutionReceipt:
-        """Look back at what was copied, and put one of them back.
-
-        Read-only by default. Restoring is a write, so it only happens when the
-        user names an entry — recalling history must never silently change what
-        is on the clipboard right now.
-        """
         from app.actions.clipboard_history import ClipboardHistory
 
         history = ClipboardHistory()
@@ -488,9 +454,6 @@ class FabricExecutors:
         actual = self.clipboard_reader() if self.clipboard_reader is not None else value
         verified = actual == value
         if verified:
-            # One place records history: the moment a copy is known to have
-            # landed. Recording before the readback would remember copies that
-            # never happened.
             try:
                 from app.actions.clipboard_history import ClipboardHistory
 
@@ -613,13 +576,6 @@ class FabricExecutors:
         return _receipt(plan, status="succeeded", output={"artifact": str(artifact)}, verified=artifact.exists(), verification={"objects": len(objects)})
 
     def _image_prompt(self, plan: OperationPlan) -> ExecutionReceipt:
-        """Compose a paste-ready description of an image for a blind model.
-
-        Reads whichever layers are available from the grounded object and names
-        the ones that are not. Never claims a visual layer it does not have: a
-        description that silently omits appearance would let the user believe
-        DeepSeek was told what the picture looks like.
-        """
         from app.vision.image_prompt import ImagePromptLayers, compose_prompt, describe_coverage
 
         objects = _objects(plan)
@@ -651,8 +607,6 @@ class FabricExecutors:
         if not elements:
             missing["elements"] = "这个窗口没有向系统汇报界面元件"
 
-        # The caption needs a vision model AND permission for the image to leave
-        # the machine. Absent either, the layer is missing and says which.
         caption = str(artifacts.get("vision_caption") or "").strip()
         caption_model = str(artifacts.get("vision_caption_model") or "")
         if not caption:
@@ -674,8 +628,6 @@ class FabricExecutors:
         )
         prompt = compose_prompt(layers, question=str(plan.parameters.get("question") or ""))
         if not prompt:
-            # Nothing readable at all. An empty shell that says "this is an image"
-            # would be worse than saying so.
             return _receipt(
                 plan,
                 status="capability_unavailable",
@@ -699,31 +651,14 @@ class FabricExecutors:
             verification={
                 "layers": ",".join(layers.available_layers),
                 "characters": len(prompt),
-                # What is missing is part of the receipt, not a footnote.
                 "missing": ",".join(sorted(missing)),
             },
         )
 
-    def _list(self, plan: OperationPlan) -> ExecutionReceipt:
-        items: list[dict[str, str]] = []
-        for obj in _objects(plan):
-            for line in _content(obj).splitlines():
-                clean = re.sub(r"^\s*[-*•\d.)]+\s*", "", line).strip()
-                if clean:
-                    items.append({"text": clean})
-        if not items:
-            return _receipt(plan, status="failed", error="no_list_items")
-        artifact = self.root / "artifacts" / f"{plan.idempotency_key[:16]}-list.json"
-        _atomic_json(artifact, {"schemaVersion": 1, "items": items, "sourceObjectIds": list(plan.object_ids)})
-        return _receipt(plan, status="succeeded", output={"artifact": str(artifact), "items": items}, verified=artifact.exists(), verification={"items": len(items)})
 
     def _task(self, plan: OperationPlan) -> ExecutionReceipt:
         path = self.root / "tasks" / "tasks.json"
         lock_path = path.with_name("tasks.json.lock")
-        # Concurrent selection sessions both run local tasks; the read-modify-
-        # write below lost updates and crashed on a shared .tmp handle without
-        # a lock (red-team T5: 3 procs x 300 adds -> 315/600 kept). The lock is
-        # held across read+write so each add sees the previous one.
         with _exclusive_file_lock(lock_path):
             try:
                 state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"schemaVersion": 1, "tasks": []}
@@ -767,15 +702,6 @@ class FabricExecutors:
         return _receipt(plan, status="succeeded" if opened else "verification_failed", output={"url": url}, verified=opened, verification={"allowlisted": True, "opened": opened}, error=None if opened else "url_open_not_verified")
 
     def _overlay_translation(self, plan: OperationPlan) -> ExecutionReceipt:
-        """Translate a screen region block by block, to be drawn where it was read.
-
-        The value of overlay translation is that the user keeps reading the
-        interface they were reading, so the output is not prose — it is a list of
-        rectangles with text that fits inside them. Pairing is positional and one
-        line per block, because a model that merges or reorders lines would put
-        each translation on the wrong sentence, and a wrong sentence rendered
-        confidently over the real one is worse than no translation at all.
-        """
         from app.vision.overlay_translation import coverage_summary, plan_overlay
 
         if self.model_transform is None:
@@ -809,9 +735,6 @@ class FabricExecutors:
         planned = plan_overlay(blocks, translations)
         coverage = coverage_summary(blocks, planned)
         if not planned:
-            # Nothing to draw is a real outcome — usually the region is already in
-            # the target language. Reporting success with an empty overlay would
-            # leave the user waiting for something that is never coming.
             return _receipt(
                 plan,
                 status="succeeded",
@@ -852,21 +775,6 @@ class FabricExecutors:
         return _receipt(plan, status="succeeded", output={"artifact": str(artifact), "text": transformed}, verified=artifact.exists(), verification={"characters": len(transformed), "mode": "artifact_only"})
 
     def _inplace_text(self, plan: OperationPlan) -> ExecutionReceipt:
-        """Rewrite/translate text that is supposed to land back in the source app.
-
-        This provider exists to keep "in place" honest. It used to share
-        `model.text` with `text.summarize_route`, whose contract genuinely is
-        "produce an artifact" -- so writing a .md file and returning succeeded was
-        correct there and a lie here: the recipes promise the user's own document
-        changes, and outside Word nothing was ever written back.
-
-        Writing back is a privileged act (it needs the target's identity checked,
-        a confirmation, and an undo path), so it belongs to the action layer, not
-        to this executor. What this provider does is produce the replacement text
-        and then refuse to claim the write happened. The transformed text is kept
-        in an artifact so a caller that can write back has something to write, and
-        so the user's work is not lost when nobody can.
-        """
         if self.model_transform is None:
             return _receipt(plan, status="capability_unavailable", error="text_model_not_configured")
         source = "\n\n".join(_content(obj) for obj in _objects(plan) if _content(obj))
@@ -1057,23 +965,11 @@ class FabricExecutors:
         )
 
 
-# ---------------------------------------------------------------------------
-# Tool registry migration: high-traffic actions as registered tools.
-#
-# This block only ADDS tool envelopes around the existing executor methods.
-# Nothing above is modified: the engine's provider dispatch keeps working
-# exactly as before, and every registered tool routes through the very same
-# methods. Envelopes serialise tool arguments into an OperationPlan, call the
-# existing method, and return the receipt serialised as a JSON string.
-# ---------------------------------------------------------------------------
-
-
 def _fabric_input_schema(
     *,
     extra: dict[str, dict[str, Any]] | None = None,
     required: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Input schema shared by all fabric tools, plus action-specific fields."""
     properties: dict[str, Any] = {
         "command": {
             "type": "string",
@@ -1111,9 +1007,6 @@ def _fabric_input_schema(
 
 
 def _sanitize_idempotency_key(value: Any) -> str:
-    """Artifact names embed ``key[:16]`` — a model/caller-controlled key must
-    never escape the artifact directory through ``..`` or separators (fabric
-    audit P1). Keep hex runs and fall back to a fresh random token otherwise."""
     if isinstance(value, str):
         cleaned = "".join(char for char in value if char in "0123456789abcdefABCDEF")
         if len(cleaned) >= 16:
@@ -1133,7 +1026,6 @@ def _fabric_tool_plan(
     idempotency_key: str = "",
     extra: dict[str, Any] | None = None,
 ) -> OperationPlan:
-    """Compose the OperationPlan a tool envelope hands to an executor method."""
     parameters: dict[str, Any] = dict(extra or {})
     if objects is not None:
         parameters["objects"] = [
@@ -1167,14 +1059,6 @@ def _fabric_tool_execute(
     risk: RiskLevel,
     method_name: str,
 ) -> Callable[..., str]:
-    """Build the ToolSpec.execute envelope for one executor method.
-
-    The envelope never reimplements logic: it serialises tool arguments into
-    an OperationPlan and calls the existing method at call time (so a
-    monkeypatched or injected method is honoured). ``scope`` is accepted
-    because the harness forwards its cancellation token; it is not threaded
-    into the executor methods, which have no cancellation support today.
-    """
 
     def execute(
         *,
@@ -1208,19 +1092,6 @@ def register_fabric_tools(
     *,
     executors: FabricExecutors | None = None,
 ) -> None:
-    """Register the high-traffic fabric actions as ToolSpec entries.
-
-    One tool per recipe. The tool name is the short recipe-style id (registry
-    names must match ``[a-z0-9_]+``, so the dotted recipe id lives in the
-    description). Every envelope calls the existing executor method and
-    returns the receipt serialised as a JSON string. Re-registering the same
-    registry is a no-op: names already present are skipped, so both a fresh
-    registry and a process-wide singleton stay safe.
-
-    ``executors`` is the runner the envelopes call; when omitted a default
-    instance (``root=Path.cwd()``) is constructed — registration performs no
-    I/O either way.
-    """
     from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 
     runner = executors if executors is not None else FabricExecutors(root=Path.cwd())
@@ -1600,4 +1471,3 @@ def register_fabric_tools(
             registry.get(spec.name)
         except KeyError:
             registry.register(spec)
-

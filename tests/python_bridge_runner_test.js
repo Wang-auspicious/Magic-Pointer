@@ -61,9 +61,6 @@ function fakeChild() {
 }
 
 {
-  // A clean process exit with no stdout is not a valid bridge response.  The
-  // old JSON.parse('{}') fallback turned this into an object with no `ok` or
-  // `error`, which the Studio later mislabeled as “模型没有返回内容”。
   const child = fakeChild();
   const delivered = [];
   const logs = [];
@@ -79,8 +76,6 @@ function fakeChild() {
   }]);
   assert(logs.some(line => line.includes('bridge no-output stderr tail')));
 
-  // 1.0.24 真机事故：进程 import 崩溃（traceback 只进 stderr），runner 把
-  // stderr 一起丢掉 → bridge_no_output 无从诊断。尾巴必须随错误带出。
   const crashed = fakeChild();
   const crashedDelivered = [];
   const crashedRunner = createPythonBridgeRunner({ spawnImpl: () => crashed });
@@ -108,10 +103,6 @@ function fakeChild() {
 }
 
 {
-  // The deadline is inactivity, not wall clock. A bridge that keeps producing
-  // output is working, and a long job must be allowed to keep working: the old
-  // wall-clock kill made any task past 60s impossible regardless of progress.
-  // Only silence means hung.
   const child = fakeChild();
   const delivered = [];
   let fire = null;

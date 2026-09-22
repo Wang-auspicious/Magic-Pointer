@@ -1,44 +1,3 @@
-"""Tests for the agent runtime loop interpreter (plan T2.4a + guards batch).
-
-Covers the loop skeleton, main flow, concurrency-safe batching, withheld-turn
-recovery, truncation invalidation, stop-hook gateway, interrupt checks and
-compact-callback wiring:
-
-1. Single-turn direct answer: 1 turn, natural Terminal reason
-2. Two tools executed serially, results fed back, second turn answers:
-   message order user -> tool -> tool -> assistant
-3. ActionFailure(timeout) -> is_error=True fed back, error text visible
-   in the tool message
-4. validate_input failure -> is_error result without executing the tool
-5. emergency invariant fuse -> Terminal(invariant_failed), results preserved
-6. budget exhaustion (fake clock) -> Terminal(budget_exhausted), no new
-   model calls after the budget blows
-7. cancel_all mid-turn -> CancelledError propagates, no new model/tool
-   calls afterwards
-8. transition sequence across consecutive turns is recorded correctly
-9. tool_limit truncation: 20 registered tools -> <= 12 schemas in registry order
-10. concurrency-safe tools run on a worker thread pool: two 150 ms tools
-    finish well under the 300 ms serial floor; events stay in call order
-11. sequential (unsafe) tools keep input order, main-thread execution and
-    the serial time floor
-12. mixed round: the parallel batch runs first, sequential tools after
-13. ActionFailure inside a parallel batch keeps execute_tool semantics
-14. withheld x3 recovers and completes; recovery message and counter
-    transitions are recorded
-15. withheld x4 terminates with reason=max_output_tokens_recovered
-16. last_truncated invalidates the round's tool calls (0 executions), one
-    "输出被截断，重新生成" tool message is fed back, next round completes
-17. stop hook prevent_continuation -> Terminal(stop_hook)
-18. a raising stop hook does not kill the loop; stop_hook_active is set
-    True then skipped/reset next round
-19. interrupt_check True on round 2 -> Terminal(user_interrupt) before any
-    second model call
-20. compact_callback fires exactly once across repeated withheld rounds
-21. full chain: truncation -> tool round -> completion
-
-All tests inject fake model backends, fake clocks and fake pure-function
-tools; nothing real is touched, no network, no desktop.
-"""
 
 from __future__ import annotations
 
@@ -98,7 +57,6 @@ EMPTY_SCHEMA = {"type": "object", "properties": {}, "required": []}
 
 
 class ScriptedBackend:
-    """Injected ModelBackend: replays one canned event scene per turn."""
 
     def __init__(self, *scenes) -> None:
         self._scenes = list(scenes)
@@ -113,7 +71,6 @@ class ScriptedBackend:
 
 
 class FakeClock:
-    """Callable fake clock: manual elapsed-ms advance."""
 
     def __init__(self) -> None:
         self.elapsed = 0.0
@@ -137,12 +94,6 @@ def make_counting_tool(
     concurrency_safe=False,
     delay=0.0,
 ):
-    """ToolSpec whose execute is a counter; ``fail`` is a raised exception.
-
-    ``concurrency_safe`` declares the tool for the parallel batch;
-    ``delay`` sleeps real wall time at the start of ``execute`` (used by
-    the concurrency timing tests; the injected fake clock is untouched).
-    """
 
     state = {"calls": 0}
 
@@ -169,7 +120,6 @@ def make_counting_tool(
 
 
 def withheld_scene(reason="max_output_tokens"):
-    """One model round that is withheld (CC withhold-until-recover)."""
 
     return [TurnWithheld(reason=reason), TurnDone(usage=None, raw_text=None)]
 
@@ -197,12 +147,6 @@ def make_params(
 
 
 async def collect(params: LoopParams) -> tuple[list, Terminal]:
-    """Consume the async generator; return (events, terminal).
-
-    PEP 525 forbids ``return value`` in async generators, so the Terminal
-    arrives as the final LoopStopped event (the CC dual-channel return
-    value is emulated by the event).
-    """
 
     events = []
     generator = run_agent_loop(params)
@@ -315,13 +259,6 @@ def test_user_input_tool_suspends_without_another_model_round() -> None:
 
 
 def test_clarification_skipped_calls_are_durably_recorded(tmp_path: Path) -> None:
-    """A write beside ask_user_question must be recoverable as not-started.
-
-    Clarification is a turn boundary: sibling calls are skipped.  They still
-    appear in the assistant surface and therefore need an operation/prepared
-    + operation/settled pair so crash repair can distinguish them from work
-    that may have run.
-    """
     import json
 
     registry = ToolRegistry()
@@ -414,13 +351,6 @@ def test_model_usage_is_aggregated_across_agent_rounds() -> None:
 
 
 def test_model_usage_records_provider_cache_hit_fields() -> None:
-    """缓存命中必须可观测，否则 prefix cache 的省钱效果无法验收。
-
-    DeepSeek（chat-completions）报 ``prompt_cache_hit_tokens``；
-    Anthropic（messages）报 ``cache_read_input_tokens`` /
-    ``cache_creation_input_tokens``。_merge_model_usage 此前只认
-    input/output/total，命中率被静默丢弃。
-    """
     aggregate: dict = {}
     _merge_model_usage(aggregate, {
         "prompt_tokens": 100,
@@ -439,7 +369,6 @@ def test_model_usage_records_provider_cache_hit_fields() -> None:
     assert aggregate["cacheReadTokens"] == 110
     assert aggregate["cacheWriteTokens"] == 7
 
-    # 未知/缺省 provider：键不出现，消费方以键存在为准。
     plain: dict = {}
     _merge_model_usage(plain, {"prompt_tokens": 10, "completion_tokens": 2})
     assert "cacheReadTokens" not in plain
@@ -482,14 +411,6 @@ def test_non_finite_provider_usage_cannot_crash_a_valid_answer() -> None:
 
 
 def test_default_emergency_fuse_clears_real_long_run_workloads() -> None:
-    """The fuse is an invariant backstop, so it must sit above real workloads.
-
-    OSWorld 2.0's long-horizon desktop tasks average 318 tool calls. A fuse at
-    90 turns is not a backstop for those, it is the ceiling — and it reports
-    ``INVARIANT_FAILED``, telling the user a normal long job was an internal
-    error. Stall detection (tool guardrails) is what stops spinning; the fuse
-    only catches genuine runaway.
-    """
     assert make_params().emergency_turn_fuse >= 500
     assert _LOOP_EMERGENCY_TURN_FUSE >= 500
 
@@ -1096,10 +1017,6 @@ def test_budget_exhaustion_stops_model_calls():
 
 
 def test_budget_exhausted_message_includes_partial_delivery():
-    """§13 B1.2: BUDGET_EXHAUSTED message must carry the partial delivery so
-    the user can see what got done, what is still pending, and the path
-    forward — instead of staring at 'full answer budget exhausted'.
-    """
     clock = FakeClock()
     registry = CancellationRegistry()
     slow, _ = make_counting_tool(
@@ -1143,11 +1060,6 @@ def test_budget_exhausted_message_includes_partial_delivery():
 
 
 def test_pending_inbox_renews_budget_on_deadline():
-    """§13 B1.2: a deadline-killed turn that woke because of a pending
-    inbox entry must renew, because the user is steering — killing it
-    before it acts would be exactly what the user is trying to avoid
-    (Codex input_queue.rs pending semantics).
-    """
     clock = FakeClock()
     registry = CancellationRegistry()
     slow, _ = make_counting_tool(
@@ -1155,9 +1067,6 @@ def test_pending_inbox_renews_budget_on_deadline():
     )
     tools = ToolRegistry()
     tools.register(slow)
-    # Two turn scripts: first turn tool call blows the budget; if renewal
-    # works, second turn is reached and the slow tool fires again before
-    # the budget blows a second time without inbox pending.
     backend = ScriptedBackend(
         [
             ToolCallArrived(call=ToolCall(id="c1", name="slow_tool", arguments={})),
@@ -1195,19 +1104,12 @@ def test_pending_inbox_renews_budget_on_deadline():
         TransitionReason.BUDGET_EXHAUSTED,
         TransitionReason.COMPLETED,
     )
-    # The renewal that did fire should have happened at the deadline check
-    # following the first slow_tool call, which is turn 1 -> turn 2.
     assert renewals[0].renewals_used == 1
 
 
 def test_compact_triggered_renews_budget_on_deadline():
-    """§13 B1.2: a turn that fired COMPACT_TRIGGERED without making tool
-    progress must still renew — compaction is itself progress.
-    """
     clock = FakeClock()
     registry = CancellationRegistry()
-    # No tools: the script triggers reactive compaction by emitting nothing,
-    # which forces a compact-only round.
     backend = ScriptedBackend(
         [TurnWithheld(reason="max_output_tokens")],
         [TurnDone(usage=None, raw_text="done after compact")],
@@ -1448,9 +1350,6 @@ def test_parallel_safe_tools_overlap_before_either_can_finish():
     overlapped: list[str] = []
 
     def meet(name):
-        # Both callbacks must be executing at the same time. A sequential
-        # scheduler breaks the barrier and returns error results; elapsed loop
-        # time (imports, telemetry and host load) is irrelevant to this proof.
         rendezvous.wait()
         overlapped.append(name)
 
@@ -2015,7 +1914,6 @@ def test_duplicate_provider_call_id_is_rewritten_against_resumed_history():
 
 
 def test_persistent_backend_errors_terminate_as_provider_unavailable():
-    """Provider retries are bounded below the loop and never become turns."""
     scenes = [
         withheld_scene(reason=f"backend_error:stuck_{index}")
         for index in range(12)
@@ -2033,16 +1931,6 @@ def test_persistent_backend_errors_terminate_as_provider_unavailable():
 
 
 def test_truncation_invalidates_tool_calls_and_feeds_back():
-    """The suffix heuristic is opt-in; see the note on ``parse_tool_calls``.
-
-    Passing ``truncation_suffix`` explicitly is now required for this path.
-    The default used to be ``"…"``, which meant any Chinese tool-calling turn
-    that happened to end its prose with an ellipsis had its calls discarded —
-    including calls whose arguments were complete, as in this case. Real
-    truncation is detected from protocol evidence (``stop_reason ==
-    "max_tokens"`` or a missing stop reason) before tool calls are considered
-    at all. See ``test_ellipsis_ending_no_longer_discards_complete_calls``.
-    """
     trunc_tool, state = make_counting_tool("trunc_tool")
     registry = ToolRegistry()
     registry.register(trunc_tool)
@@ -2185,9 +2073,6 @@ def test_stop_hook_raising_keeps_loop_running():
 
 
 def test_interrupt_check_stops_before_model_call():
-    """A user interrupt observed at any turn boundary terminates the loop with
-    ``USER_INTERRUPT`` (the pre-execution tool check is a runtime contract,
-    not just a model-call one)."""
     tool, _ = make_counting_tool("itool")
     registry = ToolRegistry()
     registry.register(tool)
@@ -2195,7 +2080,6 @@ def test_interrupt_check_stops_before_model_call():
 
     def interrupt_check():
         checks["n"] += 1
-        # Cancel observed between turn 1's model call and the tool dispatch.
         return checks["n"] >= 2
 
     backend = ScriptedBackend(
@@ -2218,10 +2102,6 @@ def test_interrupt_check_stops_before_model_call():
     )
 
     assert terminal.reason is TransitionReason.USER_INTERRUPT
-    # At least two checks fired: one before the model call (False), one
-    # before the tool dispatch (True). The exact count after the tool check
-    # is implementation detail; what matters is that the loop honours
-    # USER_INTERRUPT instead of running the second turn.
     assert checks["n"] >= 2
     assert len(backend.received) == 1
     assert terminal.reason is TransitionReason.USER_INTERRUPT
@@ -2288,14 +2168,6 @@ def test_truncation_then_tool_round_then_complete():
 
 
 def test_compaction_keeps_budget_renewable_on_followup_round() -> None:
-    """T1+T5: a turn that fires compaction makes no tool progress, but the
-    follow-up round must still count as productive relative to the previous
-    tool turn, otherwise the very next model call at the deadline is treated
-    as non-productive and the budget cuts hard. Real-machine notepad-edit:
-    the loop hit the deadline exactly after compaction ran, then a follow-up
-    answer was rejected as BUDGET_EXHAUSTED — the model had progress to
-    show, but the loop killed it on a stale progress marker.
-    """
     from app.fabric.engine import _LOOP_EMERGENCY_TURN_FUSE
     from app.governance.latency_budget import (
         BudgetPolicy,
@@ -2308,8 +2180,6 @@ def test_compaction_keeps_budget_renewable_on_followup_round() -> None:
 
     def advance_clock() -> None:
         call_count["n"] += 1
-        # First tool call: 10s. Second tool call: 14s. Total 24s, just past
-        # the 20s budget so turn 3's deadline check must fire.
         clock.advance(14_000 if call_count["n"] >= 2 else 10_000)
 
     tool, _ = make_counting_tool(
@@ -2322,18 +2192,11 @@ def test_compaction_keeps_budget_renewable_on_followup_round() -> None:
 
     def compactor(messages):
         compactions["n"] += 1
-        # Cut enough messages so the estimator sees a meaningful savings:
-        # the loop only counts the compaction as successful when the
-        # post-call weight is strictly below the pre-call weight, so the
-        # estimator below maps N messages to a larger number and keeps one.
         if len(messages) <= 1:
             return list(messages)
         return messages[:1]
 
     def estimator(messages):
-        # Proportional to message count so a real cut is observed; the
-        # threshold (_PROACTIVE_COMPACT_RATIO * budget) trips on the first
-        # turn when there is enough history to compact.
         return 100 + 10 * len(messages)
 
     backend = ScriptedBackend(
@@ -2378,7 +2241,6 @@ def test_compaction_keeps_budget_renewable_on_followup_round() -> None:
 
 
 def test_budget_renews_after_productive_round_and_emits_event():
-    """T1: a productive round renews the deadline; BudgetRenewed is emitted."""
     clock = FakeClock()
     tool, _ = make_counting_tool(
         "work_tool", value="ok", on_call=lambda: clock.advance(10_000)
@@ -2408,7 +2270,6 @@ def test_budget_renews_after_productive_round_and_emits_event():
 
 
 def test_budget_renewal_denied_for_error_only_rounds():
-    """T1: a round where every tool errored is not productive -> hard cut."""
     clock = FakeClock()
     tool, _ = make_counting_tool(
         "err_tool",
@@ -2436,7 +2297,6 @@ def test_budget_renewal_denied_for_error_only_rounds():
 
 
 def test_budget_renewals_bounded_by_budget_renewals_param():
-    """T1: renewal is bounded; exhausted renewals -> hard cut."""
     clock = FakeClock()
     tool, _ = make_counting_tool(
         "work_tool", value="ok", on_call=lambda: clock.advance(10_000)
@@ -2467,9 +2327,6 @@ def test_budget_renewals_bounded_by_budget_renewals_param():
 
 
 def test_productive_rounds_are_not_hard_cut_when_renewals_are_exhausted():
-    """A productive round must renew even past the renewals cap: the budget
-    constrains feedback rhythm, not loop life. Only non-productive rounds
-    (duplicate evidence, pure errors, stalls) are hard-cut at the deadline."""
     clock = FakeClock()
     values = ["evidence-1", "evidence-2", "evidence-3", "evidence-4"]
     calls = {"n": 0}
@@ -2511,7 +2368,6 @@ def test_productive_rounds_are_not_hard_cut_when_renewals_are_exhausted():
 
 
 def test_proactive_compaction_replaces_history_at_seventy_percent():
-    """Proactive compaction fires before a model call at >=70% token budget."""
     calls = {"n": 0}
 
     def compactor(messages):
@@ -2544,12 +2400,6 @@ def test_proactive_compaction_replaces_history_at_seventy_percent():
 
 
 def test_compaction_fires_again_when_the_context_regrows():
-    """A long job needs to compact more than once.
-
-    The loop used to latch a ``compacted`` flag on the first successful
-    compaction and never look again, so a job that kept accumulating tool
-    results after that point grew unbounded until the provider refused it.
-    """
 
     def compactor(messages):
         return messages[:1]
@@ -2557,8 +2407,6 @@ def test_compaction_fires_again_when_the_context_regrows():
     def estimator(messages):
         return sum(len(m.content or "") for m in messages)
 
-    # Each round's tool result alone pushes the request over the line; after
-    # compacting back to the opening message it is comfortably under.
     bulky, _ = make_counting_tool("bulky", value="y" * 800)
     registry = ToolRegistry()
     registry.register(bulky)
@@ -2599,12 +2447,10 @@ def test_compaction_fires_again_when_the_context_regrows():
 
 
 def test_compaction_that_never_helps_stops_being_retried():
-    """Summarising costs a model call; do not pay it every round for nothing."""
     calls = {"n": 0}
 
     def compactor(messages):
         calls["n"] += 1
-        # Drops one message but never enough to get under the budget.
         return messages[:-1] if len(messages) > 1 else list(messages)
 
     def estimator(messages):
@@ -2639,7 +2485,6 @@ def test_compaction_that_never_helps_stops_being_retried():
         )
     )
 
-    # Two fruitless attempts are enough to conclude it will not help.
     assert calls["n"] <= 2
 
 
@@ -2682,9 +2527,6 @@ def test_raising_event_sink_never_kills_the_loop():
 def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts(
     reported_usage,
 ):
-    """真机事故（notepad-edit）：估算器把全中文上下文低估近一半，真实
-    prompt_tokens 已 86k（预算 64k）压缩还没触发。上一轮 provider 报告的
-    真实 usage 是 ground truth——超过阈值必须直接触发压缩，不等估算器。"""
     compactions = {"n": 0}
 
     def compactor(messages):
@@ -2692,9 +2534,8 @@ def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts(
         return messages[:1]
 
     def estimator(messages):
-        return 10  # 故意严重低估：模拟 CJK 低估场景
+        return 10
 
-    # 第一轮返回真实 usage：prompt_tokens 超过 70% 预算线。
     backend = ScriptedBackend(
         [
             ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
@@ -2725,9 +2566,6 @@ def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts(
 
 
 def test_small_real_usage_does_not_force_compaction():
-    """反过来：估算器超线但上一轮真实 usage 很小（例如刚压缩完），不得因
-    估算误差空转一次摘要调用……不——估算器超线仍要压（防患未然）；
-    此测试钉的是真实 usage 小时不阻止估算路径。"""
     compactions = {"n": 0}
 
     def compactor(messages):
@@ -2735,7 +2573,7 @@ def test_small_real_usage_does_not_force_compaction():
         return messages[:1]
 
     def estimator(messages):
-        return 95  # 超线
+        return 95
 
     backend = ScriptedBackend([TurnDone(usage={"prompt_tokens": 5}, raw_text="done")])
     client = LoopModelClient(backend)
@@ -2757,10 +2595,6 @@ def test_small_real_usage_does_not_force_compaction():
 
 
 def test_transient_backend_error_retries_when_the_turn_has_progress(monkeypatch):
-    """真机事故（notepad-edit）：10 轮成功工作后，一次瞬时 SSL 错误（压缩
-    摘要调用失败 → 熔断器开 20s → 主调用被跳过）把整个 turn 报废成
-    provider_unavailable，answer 为空——活干完了用户却看到失败。有进展的
-    turn 必须先退避重试（等过熔断冷却），而不是立刻终止。"""
     from app.agent_runtime import loop as loop_module
     from app.governance.latency_budget import BudgetPolicy, Stage, TimeoutAction
 
@@ -2776,11 +2610,9 @@ def test_transient_backend_error_retries_when_the_turn_has_progress(monkeypatch)
             ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
             TurnDone(usage=None, raw_text=None),
         ],
-        # 客户端内部重试（max_provider_retries=2）也全部失败：三个相同场景
         withheld_scene,
         withheld_scene,
         withheld_scene,
-        # loop 级退避后恢复
         [TurnDone(usage=None, raw_text="最终答复")],
     )
     tool, _ = make_counting_tool("echo", value="ok")
@@ -2896,7 +2728,6 @@ def test_backend_recovery_wait_honors_interrupt_within_two_seconds(monkeypatch):
 
 
 def test_transient_backend_error_terminates_when_no_progress():
-    """没有进展的 turn（第一轮就失败）不退避——立即终止，避免空等。"""
     from app.agent_runtime import loop as loop_module
 
     withheld_scene = [
@@ -2910,16 +2741,9 @@ def test_transient_backend_error_terminates_when_no_progress():
     assert terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
 
 
-# --- keepalive: IPC idle-deadline heartbeat (long-task blocker) --------------
 
 
 def test_keepalive_fires_at_turn_and_tool_boundaries() -> None:
-    """Each turn boundary and each tool execution must call the keepalive so
-    Electron's stderr-idle deadline (60s) does not kill long agent runs.
-
-    Bridge-side heartbeat line shape is owned by the bridge; the loop only
-    guarantees it sees at least one call per turn start, per model chunk
-    boundary, and per tool finish (one call per non-trivial tool)."""
     beats: list[str] = []
 
     add_schema = {
@@ -2949,15 +2773,12 @@ def test_keepalive_fires_at_turn_and_tool_boundaries() -> None:
         )
     )
     assert terminal.reason is TransitionReason.COMPLETED
-    # Must beat on each turn boundary (≥1 per turn: 2 turns) and after each tool.
     assert add_state["calls"] == 1
     assert len(beats) >= 2, beats
-    # Each beat carries some text the bridge can recognise.
     assert all(isinstance(beat, str) and beat for beat in beats)
 
 
 def test_keepalive_swallows_callback_exceptions() -> None:
-    """A failing heartbeat must never abort the loop — diagnostics own no data."""
 
     def explode(label: str) -> None:
         raise RuntimeError(f"keepalive_broken:{label}")
@@ -2970,20 +2791,13 @@ def test_keepalive_swallows_callback_exceptions() -> None:
     assert terminal.reason is TransitionReason.COMPLETED
 
 
-# --- interrupt_check: must fire on the way INTO a tool call ------------------
 
 
 def test_interrupt_check_terminates_before_long_running_tool_starts() -> None:
-    """A cancel that arrives mid-turn must end the loop at the next tool
-    boundary — not after the entire turn (CC: stop button kills the next tool,
-    not the model). Without this, a 60-second ``run_command`` swallows the
-    user's cancel and reports success anyway.
-    """
-    answer = iter([False, True, True])  # turn start -> False; tool -> True; next-turn recheck -> True
+    answer = iter([False, True, True])
     def interrupt_check() -> bool:
         return next(answer, True)
 
-    # Tool that proves it was NOT called when interrupt fires before it.
     tool_calls: list[str] = []
 
     def slow_tool(**_: object) -> str:
@@ -3025,7 +2839,6 @@ def test_interrupt_check_terminates_before_long_running_tool_starts() -> None:
 
 
 class _SimpleTodoStore:
-    """Minimal in-memory TodoStore that satisfies LoopParams.todo_store."""
 
     def __init__(self, entries):
         self._entries = list(entries)
@@ -3035,24 +2848,20 @@ class _SimpleTodoStore:
 
 
 class _PendingInboxStub:
-    """Inbox stub that always reports a pending entry."""
 
     def has_pending(self):
         return True
 
-    def drain(self, _target=None):  # pragma: no cover - not exercised here
+    def drain(self, _target=None):
         return []
 
-    def drain_items(self, _target=None):  # pragma: no cover - not exercised here
+    def drain_items(self, _target=None):
         return []
 
 
 
 
 def test_invariant_failure_kinds_distinguish_truncation_from_runaway():
-    """§12.3：invariant 不再一锅烩——truncation 路径烧完与回合顶熔断
-    各自带 failure_kind，用户能看到下一步该做什么。"""
-    # 路径 1：turn-top 熔断（无截断参与）→ runaway_rounds
     tool, _ = make_counting_tool("loop_tool", value="x")
     registry = ToolRegistry()
     registry.register(tool)
@@ -3065,7 +2874,6 @@ def test_invariant_failure_kinds_distinguish_truncation_from_runaway():
     )
     assert terminal.failure_kind == "runaway_rounds"
 
-    # 路径 2：truncation 恢复路径上烧完（带工具调用且文本以…结尾）→ output_truncation
     truncating = ScriptedBackend(
         *[
             [
@@ -3090,9 +2898,6 @@ def test_invariant_failure_kinds_distinguish_truncation_from_runaway():
 
 
 def test_keepalive_fires_during_a_long_tool() -> None:
-    """长时间 run_command 中途不能沉默：Electron 的 60s/120s 静默闸会在
-    单个长工具执行期间杀掉 Python 子进程。loop 必须在工具执行中持续打心跳，
-    而不只是回合边界。"""
     beats: list[str] = []
     slow, _state = make_counting_tool("slow_tool", delay=3.0)
     registry = ToolRegistry()
@@ -3119,11 +2924,6 @@ def test_keepalive_fires_during_a_long_tool() -> None:
 
 
 def test_thread_grant_upgrades_ask_tool_in_the_loop() -> None:
-    """线程授权必须让被拒的 ASK 工具真正跑起来（授权条的全部意义）。
-
-    run_command 是 LOCAL_IRREVERSIBLE，workspace-write 预设下 mode 给 ASK；
-    用户点「本会话总是允许」后，memo 要把它抬成 allow，否则同一道门每轮
-    都拦——编程闭环走不完。"""
     from app.agent_runtime.permission_decisions import PermissionDecisions
 
     ran = {"n": 0}
@@ -3156,8 +2956,6 @@ def test_thread_grant_upgrades_ask_tool_in_the_loop() -> None:
             client=client,
             registry=registry,
             permission_mode="default",
-            # Production passes the full ceiling (see _effect_ceiling in the
-            # bridges); the mode gate is what blocks LOCAL_IRREVERSIBLE here.
             allowed_effects=(Effect.READ, Effect.REVERSIBLE_WRITE, Effect.LOCAL_IRREVERSIBLE),
             permission_decisions=PermissionDecisions(allowed=("run_cmd",)),
         )
@@ -3214,12 +3012,6 @@ def test_pre_tool_hook_rewrite_must_recheck_bash_prefix_grant() -> None:
 
 
 def test_transient_http_500_on_fresh_turn_waits_and_retries():
-    """网关 5xx 打在新会话第一条消息上：等一次冷却后重试，而不是把
-    原始错误码当答案终止（真机 8·29 backenderror:http500）。
-
-    凭据缺失类错误不重试——立即终止把真实原因交给用户。"""
-    # LoopModelClient 自带 2 次内部重试；关掉它，才能测到 loop 层的
-    # BackendRecovery 分支（客户端重试穷尽后 withheld 才会浮到 loop）。
     backend = ScriptedBackend(
         withheld_scene("backend_error:http_500"),
         [TurnDone(usage=None, raw_text="好了")],
@@ -3244,8 +3036,6 @@ def test_credential_missing_on_fresh_turn_terminates_immediately():
 
 
 def test_unknown_tool_error_lists_available_tools():
-    """P2-6a：模型拼错工具名时，错误里附上当前可用工具名——否则它只能
-    瞎猜，下一轮大概率再错一次（Hermes conversation_loop 同款）。"""
     tool, _state = make_counting_tool("run_command")
     registry = ToolRegistry()
     registry.register(tool)
@@ -3267,8 +3057,6 @@ def test_unknown_tool_error_lists_available_tools():
 
 
 def test_loop_end_notifies_session_end_listeners():
-    """loop 终态(任意 reason)必须触发 registry 的 session_end 监听——
-    桌面输入锁的自动归还挂在这里，模型忘调 turn_ended 不再卡死下个会话。"""
     released = []
     tool, _state = make_counting_tool("probe")
     registry = ToolRegistry()
@@ -3333,7 +3121,6 @@ def test_dynamic_discovery_reports_tools_dropped_by_the_limit() -> None:
 
 
 def test_loop_exception_notifies_session_end_listeners_once():
-    """异常出口也必须归还桌面输入锁，且不能与正常终态重复通知。"""
     released = []
     registry = ToolRegistry()
     registry.add_session_end_listener(lambda: released.append(True))
@@ -3351,13 +3138,6 @@ def test_loop_exception_notifies_session_end_listeners_once():
 
 
 def test_ellipsis_ending_no_longer_discards_complete_calls():
-    """中文里以「…」收尾是普通标点，不是截断信号。
-
-    这条路径原来默认把「文本以 … 结尾 **且** 有工具调用」判成截断，于是每一轮
-    说了一半的散文后面跟着的完整工具调用都会被丢掉——参数完整也一样丢。真正的
-    截断由协议层证据识别（``stop_reason == "max_tokens"`` 或缺少 stop reason），
-    而那两种情况下 loop 根本不会走到工具调用这一步。
-    """
     ellipsis_tool, state = make_counting_tool("ellipsis_tool")
     registry = ToolRegistry()
     registry.register(ellipsis_tool)
@@ -3369,7 +3149,7 @@ def test_ellipsis_ending_no_longer_discards_complete_calls():
         ],
         [TurnDone(usage=None, raw_text="看完了")],
     )
-    client = LoopModelClient(backend)  # default settings — no suffix heuristic
+    client = LoopModelClient(backend)
 
     events, terminal = asyncio.run(
         collect(make_params(client=client, registry=registry))
@@ -3381,7 +3161,6 @@ def test_ellipsis_ending_no_longer_discards_complete_calls():
 
 
 def test_protocol_truncation_is_still_caught_without_the_heuristic():
-    """去掉文本启发式之后，真正的截断仍然由协议层证据兜住。"""
     trunc_tool, state = make_counting_tool("proto_trunc_tool")
     registry = ToolRegistry()
     registry.register(trunc_tool)

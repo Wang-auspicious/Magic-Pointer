@@ -1,9 +1,3 @@
-"""Conservative, deterministic normalization for locally transcribed voice text.
-
-The bundled simplified/traditional character maps intentionally cover only a
-small, explicit set of common characters.  They are not a replacement for
-OpenCC or a complete script-conversion implementation.
-"""
 
 from __future__ import annotations
 
@@ -14,7 +8,7 @@ from typing import Literal
 
 try:
     from opencc import OpenCC as _OpenCC
-except (ImportError, OSError):  # Packaged fallback remains explicit and bounded.
+except (ImportError, OSError):
     _OpenCC = None
 
 
@@ -26,8 +20,6 @@ _PUNCTUATION_MODES = frozenset({"verbatim", "smart_zh"})
 _SCRIPT_MODES = frozenset({"unchanged", "simplified", "traditional"})
 _MIXED_SPACING_MODES = frozenset({"preserve", "compact_cjk"})
 
-# This intentionally small map is only the fail-closed fallback used when the
-# declared OpenCC runtime dependency is missing.
 _TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
     {
         "體": "体",
@@ -110,11 +102,6 @@ _LATIN_TO_CJK_SPACE = re.compile(rf"(?<=[A-Za-z0-9])[ \t]+(?=[{_CJK}])")
 
 @dataclass(frozen=True, slots=True)
 class VoiceTextPreferences:
-    """User-selectable, bounded normalization settings.
-
-    ``limitedCoverage`` is always true because the script maps are deliberately
-    incomplete and should never be represented as full OpenCC conversion.
-    """
 
     punctuation: Literal["verbatim", "smart_zh"] = "verbatim"
     script: Literal["unchanged", "simplified", "traditional"] = "unchanged"
@@ -128,7 +115,6 @@ class VoiceTextPreferences:
 
 
 def normalize_voice_text(text: str, prefs: VoiceTextPreferences) -> str:
-    """Normalize a bounded transcription with only local, idempotent rules."""
 
     if not isinstance(text, str):
         raise TypeError("text must be a str")

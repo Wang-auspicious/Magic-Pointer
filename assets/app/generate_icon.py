@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Deterministically rasterize Magic Pointer's checked-in vector geometry to ICO.
-
-The companion SVG is the reviewable brand source. Pillow renders the same
-documented vector primitives at 4x resolution, then writes Windows ICO frames.
-Run from the repository root: python assets/app/generate_icon.py
-"""
 from pathlib import Path
 import struct
 from PIL import Image, ImageDraw
@@ -40,7 +34,6 @@ def draw_gradient_polygon(image, vertices, start, end):
 def make_icon():
     image = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
     trail = ImageDraw.Draw(image, "RGBA")
-    # The sampled cubic follows SVG: M37 190 C56 159 78 136 109 116.
     curve = []
     for i in range(61):
         t = i / 60
@@ -67,12 +60,7 @@ def make_icon():
 
 if __name__ == "__main__":
     icon = make_icon()
-    # BMP-backed frames are larger than PNG-backed ICO frames, but they remain
-    # readable by Windows' legacy and current shell icon decoders.
     icon.save(OUTPUT, format="ICO", sizes=tuple((size, size) for size in SIZES), bitmap_format="bmp")
-    # Pillow writes zero into the ICO directory's color-plane field for PNG
-    # frames. Windows' native System.Drawing.Icon parser rejects that otherwise
-    # valid container, so normalize every directory entry to the ICO-required 1.
     encoded = bytearray(OUTPUT.read_bytes())
     image_count = struct.unpack_from("<H", encoded, 4)[0]
     for index in range(image_count):

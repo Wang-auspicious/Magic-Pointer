@@ -1,12 +1,3 @@
-"""System prompt section assembler (CC systemPromptSections pattern).
-
-CC composes its system prompt from ordered, individually-resolvable sections
-(identity / system rules / permission mode / language / tool hints) with a
-dynamic boundary for per-session content. This module is the same contract:
-sections carry an id and render from an injected context; a static prefix
-(identity + rules) stays cache-stable, the dynamic suffix carries the
-session-specific parts. Pure Python.
-"""
 
 from __future__ import annotations
 
@@ -31,7 +22,6 @@ class PromptSection(Protocol):
 
 @dataclass
 class Section:
-    """One resolvable system-prompt section."""
 
     id: str
     title: str
@@ -47,14 +37,12 @@ class Section:
 
 @dataclass(frozen=True)
 class BuiltSystemPrompt:
-    """Exact rendered text and the ordered identity of its non-empty blocks."""
 
     text: str
     sections: tuple[tuple[str, str], ...]
 
 
 class SystemPromptBuilder:
-    """Ordered section list; static sections first, dynamic after the boundary."""
 
     def __init__(self) -> None:
         self._sections: list[Section] = []
@@ -64,7 +52,6 @@ class SystemPromptBuilder:
         return self
 
     def remove(self, section_id: str, *, expected: Section | None = None) -> bool:
-        """Remove an exact prompt section registration."""
         for index, section in enumerate(self._sections):
             if section.id != section_id:
                 continue
@@ -75,7 +62,6 @@ class SystemPromptBuilder:
         return False
 
     def scope_for(self, context: Any) -> _ScopedSystemPromptBuilder:
-        """Return a plugin-scope view whose additions auto-unwind."""
         return _ScopedSystemPromptBuilder(self, context)
 
     def build(self, context: dict[str, Any]) -> BuiltSystemPrompt:
@@ -90,7 +76,6 @@ class SystemPromptBuilder:
 
 
 class _ScopedSystemPromptBuilder:
-    """Context-bound prompt registry view."""
 
     def __init__(self, builder: SystemPromptBuilder, context: Any) -> None:
         self._builder = builder
@@ -118,11 +103,6 @@ class _ScopedSystemPromptBuilder:
         return getattr(self._builder, name)
 
 
-# 交付格式不是关键词分类器判的（真机 8·29：「你刚刚在回复这段话的过程中…」
-# 句中出现「回复」就被判成要写回，凭空拉出同意条）。意图由模型自己理解；
-# 这里是一条常驻规则：当模型判断用户要的是「发出去的文字」时遵守纯文本约定。
-# 写回条的出现同样只看证据（模型真的调了交付能力/生成了执行方案），
-# 不看问题文本。
 DELIVER_SYSTEM_PROMPT = (
     "交付格式约定：当你的产出是要发给别人的文字（回消息、回邮件、改写后填回），"
     "禁止使用任何 markdown 标记（**、*、#、-、1. 等），不要加引号包裹，"
@@ -148,13 +128,6 @@ def _deliver_section(ctx: dict[str, Any]) -> str | None:
 
 
 def default_sections() -> list[Section]:
-    """The Magic Pointer loop's default prompt sections: identity, rules,
-    permissions, memory, approved skills and language.
-
-    Exposed separately from :func:`default_builder` so the harness kernel's
-    ``system-prompt`` plugin can register the same sections onto a shared
-    builder (plugin-kernel batch: one source of truth, two mounts).
-    """
 
     def identity(ctx: dict[str, Any]) -> str:
         if ctx.get("has_selection"):
@@ -162,8 +135,6 @@ def default_sections() -> list[Section]:
                 "你是 Magic Pointer 的桌面助手。用户在屏幕上圈选了对象，"
                 "下方或工具结果中是本次圈选的结构化证据。"
             )
-        # 普通文本对话：不谎称有圈选对象。（真机事故："圈选"身份会把
-        # 模型骗去全桌面找并不存在的选区，"回复你好" 跑了 17 轮桌面工具空转。）
         return (
             "你是 Magic Pointer 的桌面助手，帮助用户完成编程与桌面任务。"
             "本任务没有屏幕选区对象：直接处理对话内容与工作区，"
@@ -241,7 +212,6 @@ def default_sections() -> list[Section]:
         )
 
     def environment(ctx: dict[str, Any]) -> str | None:
-        """Stable local facts supplied by the harness, never probed here."""
         lines: list[str] = []
         today = str(ctx.get("today") or "").strip()
         if today:
@@ -288,10 +258,6 @@ def default_sections() -> list[Section]:
         return value or None
 
     def effort(ctx: dict[str, Any]) -> str:
-        # This is work-depth policy, deliberately independent from the voice
-        # and answer formatting sections. Provider-native reasoning effort is
-        # optional; this section keeps every supported backend semantically
-        # honest when it cannot accept a native field.
         return effort_instruction(ctx.get("effort"))
 
     return [
@@ -311,8 +277,6 @@ def default_sections() -> list[Section]:
 
 
 def default_builder() -> SystemPromptBuilder:
-    """The Magic Pointer loop system prompt: identity, rules, permissions,
-    memory, language — mirroring CC's section layout."""
     builder = SystemPromptBuilder()
     for section in default_sections():
         builder.add(section)

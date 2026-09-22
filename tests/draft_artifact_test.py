@@ -1,9 +1,3 @@
-"""DraftArtifact is a versioned editable product, not a chat bubble.
-
-The session log is the store. These tests pin the domain rules before any
-loop wiring: generation, user/agent patches, approve-binds-hash, and the
-ban on empty drafts.
-"""
 
 from __future__ import annotations
 

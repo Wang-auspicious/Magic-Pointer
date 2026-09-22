@@ -1,4 +1,3 @@
-"""Create editable Office files and verify them by reopening their structure."""
 
 from __future__ import annotations
 

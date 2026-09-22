@@ -1,4 +1,3 @@
-"""Checks that clean builds run before probes and sync removes only owned code."""
 import json
 import os
 from pathlib import Path

@@ -1,4 +1,3 @@
-"""Turn Fabric action receipts into a hard Agent tool-result truth boundary."""
 
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ from app.agent_runtime.errors import ActionFailure, FailureType
 
 
 def verify_action_receipt(value: Any) -> None:
-    """Accept only a verified completion or verified dispatch acceptance."""
     try:
         payload = json.loads(value) if isinstance(value, str) else dict(value)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:

@@ -38,44 +38,16 @@ interface SubmitResult {
   reason: 'empty' | 'explicit_submit' | 'selection_without_instruction' | 'silence' | 'still_composing';
 }
 
-// A turn is a stream, not a form you submit.
-//
-// The old shape: draw every stroke, then press Enter, and one message goes out.
-// The user's complaint about it was exact — you cannot see what you have picked
-// until it is too late to change, and typing and drawing feel like two separate
-// acts rather than one sentence.
-//
-// The new shape is one timestamped stream. Every stroke and every word is an
-// entry with a time, in the order they happened, so:
-//
-//   type "把"        -> [word 把]
-//   draw a line      -> [word 把] [chip ①]
-//   type "改成正式的" -> [word 把] [chip ①] [word 改成正式的]
-//
-// and a pronoun binds to the stroke nearest *before* it, which is what the user
-// meant by pointing while talking. AGENT.md already confirmed the multi-object
-// binding exists in InteractionEpisode; what was missing was this bookkeeping.
-//
-// Pure: entries in, composed command and chip list out. No DOM, no IPC, no AI.
 
-// Two entries closer together than this are the same gesture, not a sequence.
-// Below it, a stroke that lands mid-word would split the word around it.
 const SAME_MOMENT_MS = 90;
 
-// A stroke this long after the last word starts a new phrase rather than
-// attaching to what was said before it.
 const PHRASE_GAP_MS = 2500;
 
 const ENTRY_WORD = 'word';
 const ENTRY_STROKE = 'stroke';
 
-// Chinese pronouns that point at something. A pronoun in the text is the signal
-// that a stroke belongs where it stands.
 const POINTING_WORDS = ['这个', '这段', '这张', '这里', '这些', '那个', '它', 'this', 'these', 'that', 'it'];
 
-// Inline reference marks. The chip the user sees says ①, so the command the
-// model receives says ① too — the same symbol on both sides of the boundary
-// means the user can read what was sent and recognise it.
 const ORDINAL_MARKS = Object.freeze(['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫']);
 
 function recordOf(value: unknown): UnknownRecord | null {
@@ -105,8 +77,6 @@ function normalizeEntry(value: unknown, index: number): StreamEntry | null {
   return null;
 }
 
-// Oldest first. Ties keep insertion order, so a stroke and a word stamped in the
-// same millisecond stay in the order they were recorded.
 function orderedEntries(entries: unknown): StreamEntry[] {
   return (Array.isArray(entries) ? entries : [])
     .map(normalizeEntry)
@@ -116,20 +86,12 @@ function orderedEntries(entries: unknown): StreamEntry[] {
     .map((item) => item.entry);
 }
 
-/**
- * The chips to show in the composer, in stream order.
- *
- * A chip is what makes the selection visible before submitting — the third thing
- * this has over the Google demo (the others being that it works muted and that
- * what you picked stays on screen).
- */
 function composerChips(entries: unknown): ComposerChip[] {
   const chips: ComposerChip[] = [];
   for (const entry of orderedEntries(entries)) {
     if (entry.kind !== ENTRY_STROKE) continue;
     chips.push({
       strokeIndex: entry.strokeIndex,
-      // Numbered from one, because the user counts from one.
       ordinal: chips.length + 1,
       label: entry.label,
       at: entry.at,
@@ -188,12 +150,6 @@ function withKeptStrokes(snapshotValue: unknown, keptStrokeIndexesValue: unknown
     selection_gesture: { ...gesture, strokes: kept },
     selection_bbox: null,
   };
-  // 每一笔的材料按位置跟在笔画旁边，并被 reference:<snapshotId>:<index> 这样
-  // 的锚点按位置寻址。删掉一笔却不删它的材料，那条锚点就还活着——它会带着
-  // 已删那笔的窗口、证据和 Look 锚点进入任务，用户删掉的材料照样被读。
-  // 位置重排后 stroke_index 要跟着改回新位置，两个数组才不会各说各话。
-  // 按原始位置逐个搬，位置即新下标：材料数永远等于留下的笔数，缺一个也不会
-  // 让后面所有材料整体错位。
   const materials = snapshot.selection_materials;
   if (Array.isArray(materials)) {
     narrowed.selection_materials = strokes
@@ -207,14 +163,6 @@ function withKeptStrokes(snapshotValue: unknown, keptStrokeIndexesValue: unknown
   return narrowed;
 }
 
-/**
- * The command text the stream composes.
- *
- * Strokes become numbered references inline, at the position they were drawn, so
- * the model sees the same order the user performed. A stroke drawn immediately
- * after a pointing word attaches to it; a stroke drawn out of the blue still
- * appears where it happened rather than being appended at the end.
- */
 function composedCommand(entries: unknown): string {
   const ordered = orderedEntries(entries);
   const parts: string[] = [];
@@ -230,13 +178,6 @@ function composedCommand(entries: unknown): string {
   return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Which stroke does a pointing word refer to?
- *
- * The nearest stroke at or before the word. "把 <draw> 改成正式的" means the
- * thing just drawn, and a stroke drawn after the sentence finished does not
- * retroactively become its subject.
- */
 function strokeForWordAt(entries: unknown, wordAt: unknown): StrokeEntry | null {
   const at = Number(wordAt);
   if (!Number.isFinite(at)) return null;
@@ -249,20 +190,11 @@ function strokeForWordAt(entries: unknown, wordAt: unknown): StrokeEntry | null 
   return best;
 }
 
-// Does the text contain a word that points at something? Used to decide whether
-// a lone stroke needs a pronoun supplied for it.
 function hasPointingWord(text: unknown): boolean {
   const value = String(text || '').toLowerCase();
   return POINTING_WORDS.some((token) => value.includes(token));
 }
 
-/**
- * Is this stream ready to submit?
- *
- * Never on a stroke alone: a drawn line with no instruction is a selection, not
- * a request, and submitting it would produce a guess. Enter always submits;
- * silence submits only once there is something to act on.
- */
 function submitReadiness(input: unknown): SubmitResult {
   const candidate = recordOf(input);
   const entries = orderedEntries(candidate?.entries);

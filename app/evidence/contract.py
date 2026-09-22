@@ -1,12 +1,3 @@
-"""Evidence contract: perception sources never return bare values.
-
-Every perception result is an :class:`Evidence` carrying a status that
-distinguishes "confirmed empty" from "did not read" (busy/timeout), a
-confidence, a source identity, and timing metadata. Fusion and decision
-layers consume only this shape.
-
-This module is pure Python and has no I/O or platform dependencies.
-"""
 
 from __future__ import annotations
 
@@ -17,33 +8,21 @@ from typing import Any, Iterable
 
 MIN_CONFIDENCE_FOR_TRUST = 0.5
 
-# 一个字符类别的问题：`*` 不是一次阅读。
-#
-# 真机 9·3：用户在终端里划过 Claude Code 那个转圈的 `*`，感知层读回来一个
-# 星号，非空、于是被当成「读到了圈选的内容」，模型就拿着一个星号去回答。
-# 「非空」和「读到了」不是一回事——一行里没有任何字母、数字或汉字时，读到的
-# 是一枚字形，不是内容。
 _WORD_LIKE = re.compile(
     "[0-9A-Za-z"
-    "À-ɏ"    # Latin extended
-    "Ͱ-Ͽ"    # Greek
-    "Ѐ-ӿ"    # Cyrillic
-    "֐-ۿ"    # Hebrew / Arabic
-    "぀-ヿ"    # Kana
-    "㐀-䶿"    # CJK extension A
-    "一-鿿"    # CJK
-    "가-힯"    # Hangul
+    "À-ɏ"
+    "Ͱ-Ͽ"
+    "Ѐ-ӿ"
+    "֐-ۿ"
+    "぀-ヿ"
+    "㐀-䶿"
+    "一-鿿"
+    "가-힯"
     "]"
 )
 
 
 def is_glyph_only(text: Any) -> bool:
-    """Does this reading contain no word character at all?
-
-    Punctuation, box-drawing characters, spinners and bullets are surface
-    decoration. A read that returned only those answered nothing about the
-    mark, and must not outrank a source that can still try.
-    """
     stripped = str(text or "").strip()
     if not stripped:
         return False
@@ -74,13 +53,6 @@ class EvidenceSource(str, enum.Enum):
 
 @dataclass(frozen=True, slots=True)
 class Evidence:
-    """A single perception result from one source.
-
-    Validation invariants:
-    - ``confidence`` is always within 0..1.
-    - ``value is None`` is forbidden for ``status=ok``.
-    - ``status=ok`` requires ``confidence >= MIN_CONFIDENCE_FOR_TRUST``.
-    """
 
     value: str | None
     status: EvidenceStatus
@@ -104,7 +76,6 @@ class Evidence:
 
 
 def ok_evidence(value: str | None, source: EvidenceSource, **kwargs: Any) -> Evidence:
-    """Build an ok Evidence; defaults confidence to 1.0."""
     confidence = kwargs.pop("confidence", 1.0)
     return Evidence(
         value=value,
@@ -116,7 +87,6 @@ def ok_evidence(value: str | None, source: EvidenceSource, **kwargs: Any) -> Evi
 
 
 def empty_confirmed(source: EvidenceSource, **kwargs: Any) -> Evidence:
-    """Build an empty_confirmed Evidence (the spot is confirmed empty)."""
     confidence = kwargs.pop("confidence", 1.0)
     return Evidence(
         value=None,
@@ -128,7 +98,6 @@ def empty_confirmed(source: EvidenceSource, **kwargs: Any) -> Evidence:
 
 
 def busy_evidence(source: EvidenceSource, latency_ms: float | None, **kwargs: Any) -> Evidence:
-    """Build a busy Evidence (did not read: worker occupied)."""
     confidence = kwargs.pop("confidence", 0.0)
     return Evidence(
         value=None,
@@ -146,7 +115,6 @@ def failed_evidence(
     note: str | None,
     **kwargs: Any,
 ) -> Evidence:
-    """Build a failed Evidence for timeout/unsupported/denied/error."""
     confidence = kwargs.pop("confidence", 0.0)
     return Evidence(
         value=None,
@@ -162,15 +130,6 @@ def apply_container_heuristic(
     evidence: Evidence,
     container_like_texts: Iterable[str],
 ) -> Evidence:
-    """Flag values that merely repeat container/window/control-type names.
-
-    If ``evidence.value`` is non-empty and its stripped text matches any
-    entry of ``container_like_texts`` — OR (multi-line reads) every
-    non-empty line matches an entry — return a new Evidence with
-    ``container_hint=True``, confidence capped at 0.2, and status downgraded
-    from ok to degraded. Otherwise the original immutable Evidence is
-    returned unchanged.
-    """
     if evidence.value is None:
         return evidence
     stripped = evidence.value.strip()
@@ -203,18 +162,6 @@ _SEVERE_PRIORITY = (
 
 
 def merge_for_decision(evidences: Iterable[Evidence]) -> Evidence:
-    """Fuse all source evidence into a single decision input.
-
-    Rules, in order:
-    - no evidence at all -> synthetic empty_confirmed
-    - any trustworthy ok (status=ok, not container_hint) -> highest confidence
-    - any severe status (error > denied > timeout > busy > unsupported) with
-      no ok -> most severe, value None
-    - only container hints -> degraded, keep best value
-    - only empty_confirmed -> empty_confirmed
-    - anything else -> degraded with value when a container hint exists,
-      otherwise empty_confirmed
-    """
     items = list(evidences)
     note = " ".join(f"{e.source.value}:{e.status.value}" for e in items)
 
@@ -305,7 +252,6 @@ def merge_for_decision(evidences: Iterable[Evidence]) -> Evidence:
 
 
 def is_trustworthy(evidence: Evidence) -> bool:
-    """True only for ok evidence above the trust threshold, not a container hint."""
     return (
         evidence.status is EvidenceStatus.OK
         and evidence.confidence >= MIN_CONFIDENCE_FOR_TRUST

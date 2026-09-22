@@ -1,9 +1,3 @@
-"""Task-scoped, structure-preserving readers for local documents.
-
-Each task reader reuses a bounded set of parsed documents until their file
-metadata or source revision changes. It does not watch the filesystem or
-create a machine-wide knowledge base: a SourceRef remains the authorization.
-"""
 
 from __future__ import annotations
 
@@ -89,8 +83,6 @@ def _decode_text(path: Path) -> tuple[str, str]:
 
 
 def _paragraph_text(paragraph: Any) -> str:
-    # python-docx exposes hyperlink text in recent releases, while collecting
-    # w:t nodes also keeps it for older supported builds.
     return "".join(node.text or "" for node in paragraph._p.xpath(".//w:t")).strip()
 
 
@@ -109,13 +101,6 @@ def _metadata_text(value: Any) -> str:
 
 
 class DocumentReader:
-    """Read and search an explicitly registered local source.
-
-    ``ocr_page`` is optional and page-scoped.  It receives ``(path,
-    zero_based_page_index, png_bytes)`` and returns recognized text.  Without
-    it, image-only PDF pages are reported as a coverage limitation instead of
-    being mistaken for empty pages.
-    """
 
     def __init__(
         self,
@@ -144,7 +129,6 @@ class DocumentReader:
             if cached is not None:
                 self._documents.move_to_end(key)
                 return cached
-        # Parsing unrelated files can overlap; only cache bookkeeping is locked.
         parsed = self._parse_file(path, source)
         with self._documents_lock:
             for old_key in list(self._documents):
@@ -388,8 +372,6 @@ class DocumentReader:
                 for child in shape.shapes:
                     visit_shape(child, slide_id=slide_id, slide_index=slide_index, parent_shape_id=shape_id)
             elif not getattr(shape, "has_text_frame", False) and not getattr(shape, "has_table", False):
-                # Image/graphic names and stable identity remain discoverable;
-                # their pixels are still interpreted by the visual evidence path.
                 units.append(_Unit(
                     FragmentLocator("slide-shape", dict(locator_value)),
                     f"[shape] {shape.name}",
@@ -588,12 +570,6 @@ class DocumentReader:
         needle: str,
         terms: tuple[str, ...],
     ) -> list[tuple[bool, int, int, _Unit]]:
-        """Search names first, then the readable content of each direct child.
-
-        A directory result binds its fragment id to the entry name, so adding
-        another file cannot make ``follow`` reinterpret an old array index.
-        The precise locator inside the child remains attached to the hit.
-        """
         matches: list[tuple[bool, int, int, _Unit]] = []
         for index, entry in enumerate(parsed.units):
             entry_haystack = f"{entry.text} {_metadata_text(entry.metadata)}".casefold()
@@ -671,7 +647,6 @@ class DocumentReader:
 
     @staticmethod
     def _search_group_key(index: int, unit: _Unit) -> tuple[str, Any]:
-        """Group structure that users perceive as one searchable unit."""
         if unit.locator.kind == "pdf-region":
             return "pdf-page", unit.locator.value.get("pageIndex")
         if unit.locator.kind == "slide-shape":
@@ -757,12 +732,6 @@ class DocumentReader:
         source: SourceRef,
         indexed_units: list[tuple[int, _Unit]],
     ) -> list[tuple[int, _Unit]]:
-        """Keep a prefix whose complete structured result stays model-visible.
-
-        The Runtime has a final 64k result guard.  Paging here, while unit
-        indices and cursors are still known, prevents that guard from silently
-        replacing the middle of a document with a truncation marker.
-        """
         kept: list[tuple[int, _Unit]] = []
         used = 2_048
         for index, unit in indexed_units:
@@ -848,8 +817,6 @@ class DocumentReader:
             cursor_kind = "unit"
             if (view == "text" and locator is None and parsed.structure.get("kind") == "pdf"
                     and not str(cursor or "").startswith("unit:")):
-                # Summaries need page text, not hundreds of bounding-box records.
-                # Explicit locators and structured view retain exact block access.
                 pages: dict[int, list[str]] = {}
                 for unit in parsed.units:
                     pages.setdefault(unit.locator.value["pageIndex"], []).append(unit.text)
@@ -865,9 +832,6 @@ class DocumentReader:
                 parsed = replace(parsed, units=tuple(units))
                 cursor_kind = "page"
             else:
-                # A long paragraph/line remains a real document unit. Split
-                # its read surface, not its stored text, so a terminal cursor
-                # never conceals a permanently inaccessible [TRUNCATED] tail.
                 units = []
                 for unit in parsed.units:
                     if len(unit.text) <= self.max_fragment_chars:
@@ -911,9 +875,6 @@ class DocumentReader:
                 else:
                     start = max(0, target - 1)
                     candidates = list(enumerate(parsed.units[start:target + 2], start=start))
-                # An explicit locator names the object the caller needs now.
-                # Returning earlier neighbors first can exhaust a small budget
-                # before the requested object is ever read.
                 candidates = [(target, target_unit), *(
                     item for item in candidates if item[0] != target
                 )]
@@ -1049,7 +1010,6 @@ class DocumentReader:
         if parsed.structure.get("kind") == "directory":
             prefix = f"fragment:{source.source_id}:entry:"
             if not fragment_id.startswith(prefix):
-                # An old positional ID cannot prove which file was observed.
                 return ()
             name = fragment_id[len(prefix):]
             unit = next((item for item in parsed.units
@@ -1072,9 +1032,6 @@ class DocumentReader:
         return (self._child_source(source, path),)
 
     def preview(self, source: SourceRef, *, max_chars: int = 16_000) -> ReadResult:
-        """Return a bounded first reading; callers retain the cursor to continue."""
-        # A character budget and a unit budget are deliberately separate.  The
-        # former protects prompts, the latter keeps structured locators intact.
         result = self.read(source, None, None, 100)
         if sum(len(fragment.text) for fragment in result.fragments) <= max_chars:
             return result
@@ -1093,8 +1050,6 @@ class DocumentReader:
                 citations=fragment.citations,
             ))
             used += len(text)
-        # A preview may end inside a unit. Resume at that unit so its unread
-        # suffix is still reachable through the ordinary unit cursor.
         next_index = len(kept)
         if kept and len(kept[-1].text) < len(result.fragments[next_index - 1].text):
             next_index -= 1

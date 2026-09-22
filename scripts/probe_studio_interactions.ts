@@ -1,12 +1,6 @@
 // @ts-nocheck
 'use strict';
 
-/*
- * Real-input witness for the Studio controls copied from Claude Desktop.
- * The Node entry re-launches this built file through Electron. The Electron
- * entry loads the production renderer with deterministic preload data, sends
- * mouse input at measured element centres, and emits one bounded JSON record.
- */
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -76,7 +70,6 @@ async function realClick(window, selector, settleMs = 90) {
   await wait(settleMs);
 }
 
-/* 按横向比例点：滑块的两端不是同一档，取中点只能验到中间那一档。 */
 async function realClickAt(window, selector, ratio, settleMs = 90) {
   const box = await window.webContents.executeJavaScript(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -85,7 +78,6 @@ async function realClickAt(window, selector, ratio, settleMs = 90) {
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
   })()`);
   if (!box) throw new Error(`realClickAt: no box for ${selector}`);
-  // ratio=1 会落到盒子右边界之外那一像素上，命中不到元素本身。
   const x = Math.min(Math.round(box.left + box.width * ratio), Math.round(box.left + box.width) - 1);
   const y = Math.round(box.top + box.height / 2);
   window.webContents.sendInputEvent({ type: 'mouseMove', x, y });
@@ -116,7 +108,7 @@ async function runElectron() {
   const height = 800;
   const output = path.resolve(String(option(
     'output',
-    path.join(ROOT, 'data', 'runtime', 'studio-claude-interactions-20260905.png'),
+    path.join(ROOT, 'data', 'runtime', 'studio-interactions-20260905.png'),
   )));
   app.commandLine.appendSwitch('force-device-scale-factor', '1');
   const profile = path.join(ROOT, 'data', 'runtime', 'probe-studio-interactions-profile');
@@ -139,7 +131,7 @@ async function runElectron() {
       nodeIntegration: false,
       sandbox: false,
       offscreen: true,
-      preload: path.join(ROOT, 'scripts', 'probe_studio_claude_preload.js'),
+      preload: path.join(ROOT, 'scripts', 'probe_studio_layout_preload.js'),
       additionalArguments: [
         '--mp-probe-theme=light',
         '--mp-probe-state=landing',
@@ -210,8 +202,6 @@ async function runElectron() {
 
     await realClick(window, '#composer-effort');
     const effortBounds = await visibleBounds(window.webContents, '#composer-effort-menu');
-    /* effort 从一列选项变成了一根滑块：能读的是两端的方向标签、当前档名和
-       刻度数，选档靠点在轨道上的位置。 */
     const effortLabels = await window.webContents.executeJavaScript(`({
       scale: Array.from(document.querySelectorAll('#composer-effort-menu .mp-effort-scale > span')).map((node) => node.textContent.trim()),
       current: document.querySelector('#composer-effort-menu .mp-effort-head-value')?.textContent.trim() || '',
@@ -220,11 +210,6 @@ async function runElectron() {
     await captureWitness('effort');
     await realClickAt(window, '#composer-effort-menu .mp-effort-track', 1);
 
-    /* 上下文卡：参考里是「标题行 + 彩色分段条 + 分组 + 行 + 页脚」，不是竖排
-       的标签/值。截一张图，标题行那个百分比和分段条的宽度都能直接看。
-       这个流程跑在空会话上，卡片的「什么都没有」那一态本来就不该有段——真正
-       要看的是有数的时候。所以先塞一轮真用量：没有缓存字段，正是 provider
-       不报缓存时的默认路径，条上应当只有新输入和输出两段、两个颜色。 */
     const usageEmptySegments = await window.webContents.executeJavaScript(`(() => {
       renderUsageMeter([]);
       const empty = document.querySelectorAll('#composer-usage-popover .mp-usage-seg').length;
@@ -248,8 +233,6 @@ async function runElectron() {
     const usageSegmentKinds = await window.webContents.executeJavaScript(
       `Array.from(document.querySelectorAll('#composer-usage-popover .mp-usage-seg')).map((node) => node.dataset.kind || '')`,
     );
-    /* 只数带类别的填充：配额那几行也会画 .mp-usage-row-fill，但它们不属于
-       上下文的类别，混进来会让这条断言在接上配额适配器之后莫名其妙地红。 */
     const usageRowKinds = await window.webContents.executeJavaScript(
       `Array.from(document.querySelectorAll('#composer-usage-breakdown .mp-usage-context-row')).map((node) => node.dataset.kind || '')`,
     );
@@ -275,8 +258,6 @@ async function runElectron() {
     if (!await visibleBounds(window.webContents, '#composer-usage-popover')) throw new Error('context arrow closed the main card');
     await realClick(window, '#composer-context');
 
-    /* 工作目录小卡：参考里点文件夹先出「No folder / Recent / <项目> ✓ /
-       Open folder…」，不是直接弹系统对话框。 */
     await realClick(window, '#composer-workspace');
     const workspaceBounds = await visibleBounds(window.webContents, '#composer-workspace-menu');
     const workspaceItems = await window.webContents.executeJavaScript(
@@ -304,8 +285,6 @@ async function runElectron() {
       `document.getElementById('studio-home-tooltip')?.textContent.trim() || ''`,
     );
 
-    // Leave the five-level menu open in the screenshot witness so row density,
-    // alignment, selected state, and viewport containment can be inspected.
     await realClick(window, '#composer-effort');
     await wait(80);
     const finalEffortBounds = await visibleBounds(window.webContents, '#composer-effort-menu');
@@ -316,11 +295,11 @@ async function runElectron() {
     await realClick(window, '#composer-effort');
     await window.webContents.executeJavaScript(`show('stash')`);
     await realClick(window, '#stash-add-note');
-    const noteDialogBounds = await visibleBounds(window.webContents, '.dshw-perm-confirm');
+    const noteDialogBounds = await visibleBounds(window.webContents, '.mpw-perm-confirm');
     const noteInput = await window.webContents.executeJavaScript(
-      `Boolean(document.querySelector('.dshw-perm-confirm textarea'))`,
+      `Boolean(document.querySelector('.mpw-perm-confirm textarea'))`,
     );
-    if (noteDialogBounds) await realClick(window, '.dshw-perm-confirm-actions button');
+    if (noteDialogBounds) await realClick(window, '.mpw-perm-confirm-actions button');
 
     const witness = {
       viewport: { width, height },
@@ -366,8 +345,6 @@ async function runElectron() {
       || selectedEffort !== 'Max'
       || !usageBounds
       || !usageHead
-      /* 有数的时候一条一段：这一轮的输入总量（唯一到过的类别）加上输出。
-         空会话那一条相反，一段都不该有——零宽的彩色段看着像「这里有东西」。 */
       || usageSegments !== 4
       || usageSegmentKinds.join(',') !== 'system,tools,messages,results'
       || usageRowKinds.join(',') !== 'system,tools,messages,results,available'

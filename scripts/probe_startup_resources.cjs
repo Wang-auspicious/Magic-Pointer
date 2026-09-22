@@ -1,7 +1,5 @@
 'use strict';
 
-// Execute actual application startup in an isolated profile and hidden windows.
-// External health requests/login registration are disabled; native hosts are real.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -51,8 +49,6 @@ production.filename = MAIN_PATH;
 production.paths = Module._nodeModulePaths(path.dirname(MAIN_PATH));
 let extension = '\nrefreshModelHealth = async () => modelHealth;\nmodule.exports.openStudio = () => showDashboard({}, { activate: false });';
 if (realStash) {
-  // The real stash is read through its production IPC handler. No watcher or
-  // write operation is started against the user's material library.
   const source = path.join(process.env.APPDATA, 'magic-pointer', 'stash');
   extension = '\nrefreshModelHealth = async () => modelHealth;\nmodule.exports.openStudio = () => { stashRuntime?.stop(); stashRuntime = createStashRuntime({baseDir:' + JSON.stringify(source) + ', clipboard}); return showDashboard({}, { activate:false }); };';
 }

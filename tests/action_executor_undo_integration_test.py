@@ -8,12 +8,12 @@ from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus,
 def _write_result() -> ExecutionResult:
     return ExecutionResult(
         proposal_id="write-1",
-        action_type="shopping_list_add",
+        action_type="office_replace_selection",
         status=ExecutionStatus.SUCCEEDED,
         output={
             "undo_proposal": ActionProposal(
                 id="undo-write-1",
-                action_type="shopping_list_undo_add",
+                action_type="office_undo_last_action",
                 parameters={"receipt_id": "receipt-1"},
                 safety_level=SafetyLevel.LOW,
                 confirmation_required=False,
@@ -52,7 +52,7 @@ def test_undo_compensation_reenters_executor_and_requires_success(monkeypatch) -
     restored = log.undo()
 
     assert restored.action_id == "write-1"
-    assert calls == [("shopping_list_undo_add", True)]
+    assert calls == [("office_undo_last_action", True)]
 
 
 def test_default_executors_share_process_undo_ledger() -> None:

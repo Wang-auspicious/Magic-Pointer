@@ -1,4 +1,3 @@
-"""Shared locations for the runtime's user extensions and their inventory."""
 
 from __future__ import annotations
 

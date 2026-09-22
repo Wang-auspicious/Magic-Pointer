@@ -1,14 +1,3 @@
-"""Bind an immutable frame to the window and gesture it claims to represent.
-
-FrameLease schema validation proves that a payload is well formed.  This module
-proves the cross-object facts that the schema cannot prove on its own: the
-structured source is the same process/window, the image dimensions describe the
-declared physical surface, and the gesture is expressed inside that surface.
-
-The boundary is deliberately small.  It does not capture, read accessibility,
-run OCR, or infer identity from pixels.  A caller receives one verified binding
-or one stable fail-closed reason.
-"""
 
 from __future__ import annotations
 
@@ -159,7 +148,6 @@ def bind_frozen_evidence(
     source_window: Mapping[str, Any] | None,
     gesture: Mapping[str, Any] | None,
 ) -> EvidenceBinding:
-    """Return a verified cross-evidence binding or raise one stable reason."""
 
     target = _identity(lease.get("targetWindow"))
     observed = _identity(source_window)

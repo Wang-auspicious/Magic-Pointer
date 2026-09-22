@@ -1,8 +1,3 @@
-"""One-off latency probe for the UIA selection probe timeout change.
-
-Not part of the test suite: it needs live windows, so it only makes sense run by
-hand with real HWNDs passed on the command line.
-"""
 from __future__ import annotations
 
 import sys

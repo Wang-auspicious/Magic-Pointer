@@ -1,11 +1,3 @@
-"""AskUserQuestion + TodoWrite tools (CC patterns ported).
-
-CC's AskUserQuestion lets the model ask a multi-choice question instead of
-guessing; TodoWrite keeps an explicit plan the user can see. Here both are
-harness-owned READ tools whose answers come from the injected bridge
-callbacks (real UI wiring lands with the renderer), so the model can
-clarify and plan inside the loop instead of silently choosing.
-"""
 
 from __future__ import annotations
 
@@ -23,8 +15,6 @@ def register_ask_user_question(
     registry: ToolRegistry,
     ask: AskQuestionFn | None = None,
 ) -> ToolSpec:
-    """Register the CC-style clarification tool; ``ask`` is the UI bridge."""
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("ask_user_question", "AskUser")
     registry.register_alias("AskUserQuestion", "AskUser")
     registry.register_alias("todo_write", "Todo")
@@ -52,9 +42,6 @@ def register_ask_user_question(
             raise ValueError("question must not be empty")
         if len(normalized_options) < 2:
             raise ValueError("options must contain at least two non-empty choices")
-        # Structured permission question (CC canUseTool): the granted tool
-        # rides as data so the renderer can map a chip click onto a real
-        # grant instead of regexing Chinese option text.
         payload = {
             "asked": True,
             "awaitingUserInput": True,
@@ -131,7 +118,6 @@ def register_todo_write(
     registry: ToolRegistry,
     sink: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> ToolSpec:
-    """Register the CC-style plan tool; ``sink`` persists the plan (UI/log)."""
     registry.register_alias("todo_write", "Todo")
 
     valid_statuses = ("pending", "in_progress", "completed", "blocked", "cancelled")
@@ -149,9 +135,6 @@ def register_todo_write(
                 )
             entries.append({"content": str(item.get("content") or ""), "status": status})
         if sink is not None:
-            # The sink now includes EventSession durability, not just a UI
-            # decoration. If that append fails, reporting a successful plan
-            # update would leave memory and restart state disagreeing.
             sink(entries)
         return json.dumps({"plan": entries}, ensure_ascii=False)
 

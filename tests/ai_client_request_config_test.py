@@ -30,7 +30,6 @@ def test_request_ai_config_overrides_legacy_model_for_one_request(monkeypatch) -
 
 
 def test_request_ai_config_preserves_responses_api_mode(monkeypatch) -> None:
-    """A Responses profile must not be silently downgraded to chat-completions."""
     monkeypatch.setattr(ai_client, "read_local_secret", lambda _name: None)
 
     with ai_client.request_ai_config({
@@ -143,7 +142,6 @@ def test_vision_request_uses_responses_input_format(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(ai_client, "_image_data_url", lambda _path: "data:image/png;base64,YWJj")
     monkeypatch.setattr(ai_client, "short_circuit_message", lambda _base_url: None)
     monkeypatch.setattr(ai_client, "record_success", lambda **_kwargs: None)
-    # Old split-vision settings must never hijack the selected model's request.
     monkeypatch.setenv("MAGIC_POINTER_VISION_MODEL", "gemini-2.5-flash")
     monkeypatch.setenv("MAGIC_POINTER_VISION_BASE_URL", "https://wrong.example/v1")
     monkeypatch.setenv("MAGIC_POINTER_VISION_KEY", "wrong-key")

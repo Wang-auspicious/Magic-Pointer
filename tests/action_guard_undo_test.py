@@ -1,9 +1,3 @@
-"""Tests for app.action_guard.undo_log (Compensation / UndoLog).
-
-All compensations use injected fake targets; no real system state is
-touched. Covers LIFO undo, by-id undo, failure wrapping, capacity
-eviction, audit order and concurrent access.
-"""
 
 from __future__ import annotations
 
@@ -22,7 +16,6 @@ from app.action_guard.undo_log import (
 
 
 class FakeTarget:
-    """Fake editable target whose content a compensation can restore."""
 
     def __init__(self, content: str = "") -> None:
         self.content = content
@@ -38,7 +31,6 @@ def make_comp(
     target_ref: str | None = "anchor-1",
     calls: list[str] | None = None,
 ) -> Compensation:
-    """Build a Compensation with an injected fake compensate."""
 
     def compensate(c: Compensation) -> None:
         if calls is not None:
@@ -217,7 +209,7 @@ def test_concurrent_record_undo_is_safe() -> None:
                 )
                 if i % 3 == 0 and log.can_undo():
                     log.undo()
-        except BaseException as exc:  # pragma: no cover - failure path
+        except BaseException as exc:
             with lock:
                 errors.append(exc)
 

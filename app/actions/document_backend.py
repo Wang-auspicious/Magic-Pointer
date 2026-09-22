@@ -1,4 +1,3 @@
-"""Route DocumentPatch operations to capability-specific action handlers."""
 
 from __future__ import annotations
 
@@ -22,12 +21,6 @@ from app.context_pack.sources import SourceRef
 
 
 class DocumentOperationBackend:
-    """Session-bound backend used by the artifact apply bridge.
-
-    Source identity is resolved before dispatch.  The backend deliberately has
-    no generic Python/script operation: every branch maps one allowlisted patch
-    name to one concrete implementation.
-    """
 
     def __init__(
         self,

@@ -32,12 +32,6 @@ def excerpt(value: str | None, limit: int = 700) -> str:
 
 @dataclass(frozen=True)
 class ActionHistoryRecord:
-    """Audit record for one confirmed local write action.
-
-    For precise delayed undo we keep before/after text locally. This is a local
-    desktop action ledger, not prompt context: callers should surface excerpts in
-    UI and avoid sending full history back to models unless the user asks.
-    """
 
     id: str
     action_type: str
@@ -156,7 +150,6 @@ def _optional_int(value: Any) -> int | None:
 
 
 class ActionHistoryStore:
-    """Append-only JSONL history for local desktop write actions."""
 
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path is not None else DEFAULT_HISTORY_PATH

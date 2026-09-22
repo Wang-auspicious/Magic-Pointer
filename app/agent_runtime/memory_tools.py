@@ -1,8 +1,3 @@
-"""Cross-session memory recall (Hermes session_search discovery shape).
-
-The agent's own past sessions are durable memory — search them (bounded) so
-"上次我们怎么修的" is one tool call instead of amnesia.
-"""
 
 from __future__ import annotations
 
@@ -16,7 +11,6 @@ __all__ = ["register_history_search"]
 
 
 def register_history_search(registry: ToolRegistry, *, sessions_root: Path | str) -> None:
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("search_history", "Recall")
     root = Path(sessions_root).resolve()
 
@@ -26,7 +20,7 @@ def register_history_search(registry: ToolRegistry, *, sessions_root: Path | str
                 try:
                     event = json.loads(line)
                 except ValueError:
-                    continue  # An interrupted append may leave an unfinished tail.
+                    continue
                 if not isinstance(event, dict):
                     continue
                 body = json.dumps(event.get("data", event), ensure_ascii=False, separators=(",", ":"))
@@ -97,5 +91,5 @@ def register_history_search(registry: ToolRegistry, *, sessions_root: Path | str
         is_concurrency_safe=True,
         used_backend="workspace_fs",
         timeout_ms=30_000,
-        deferred=True,  # 跨会话记忆召回是低频动作
+        deferred=True,
     ))

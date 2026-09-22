@@ -12,8 +12,6 @@ interface PlanListOptions {
   onJump?: (toolUseId: string) => void;
 }
 
-/* Code's session rail is a projection of durable tool history. Keep MP's
-   blocked/cancelled states: neither one proves the step was completed. */
 const planListApi = (() => {
   function object(value: unknown): Record<string, unknown> | null {
     if (typeof value === 'string') {

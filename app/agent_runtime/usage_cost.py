@@ -1,8 +1,3 @@
-"""Published-rate cost estimates, kept distinct from provider invoice amounts.
-
-Source: https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-19).
-Rates are USD per million tokens. Unknown models/providers stay unknown.
-"""
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal

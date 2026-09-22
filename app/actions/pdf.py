@@ -1,4 +1,3 @@
-"""PDF annotations and explicit visual edits written to a new PDF copy."""
 
 from __future__ import annotations
 

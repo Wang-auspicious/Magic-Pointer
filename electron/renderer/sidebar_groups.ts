@@ -1,7 +1,5 @@
 'use strict';
 
-/* 侧栏会话分组（DSH ui-workspace 浏览器的 MP 等价物：无 workspace，按时间分组）。
-   纯函数：分组 + 本地搜索过滤，供 Node 测试直接钉。 */
 
 interface SidebarConversationLike {
   id?: string;
@@ -19,7 +17,6 @@ interface SidebarGroup {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** DSH 会话列表的展示顺序：新→旧；组内同样。 */
 function groupConversations(
   conversations: readonly SidebarConversationLike[],
   now: number = Date.now(),
@@ -45,7 +42,6 @@ function groupConversations(
   return groups.filter(group => group.items.length > 0);
 }
 
-/** 本地搜索：标题/副标题大小写不敏感子串；空关键词不过滤。 */
 function filterConversations(
   conversations: readonly SidebarConversationLike[],
   query: string,
@@ -57,8 +53,6 @@ function filterConversations(
     || String(item.subtitle || '').toLowerCase().includes(needle));
 }
 
-/** 会话按线程绑定的真实项目文件夹分组，组头取文件夹名。
- *  没有项目的历史记录不属于 Studio 项目浏览器，直接过滤；组内新→旧。 */
 function groupByWorkspace(
   conversations: readonly (SidebarConversationLike & { workspaceRoot?: string })[],
 ): Array<{ key: string; label: string; workspaceRoot: string; items: SidebarConversationLike[] }> {

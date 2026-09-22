@@ -101,7 +101,6 @@ def _structural_method(method: str) -> bool:
 
 
 def sanitize_terminal_evidence(value: Any) -> dict[str, Any] | None:
-    """Return the bounded TerminalEvidenceV1 projection accepted by handoff/audit paths."""
     if not isinstance(value, dict) or int(value.get("schemaVersion") or 0) != 1:
         return None
     method = _bounded(value.get("method"), 120)

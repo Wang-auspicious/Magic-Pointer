@@ -1,11 +1,3 @@
-"""Replay driver: trace -> snapshot payload -> selection_bridge -> expectation.
-
-Offline end-to-end over the replay fixtures (L12 base): the frozen frame
-and UIA tree come from the trace, nothing touches the live desktop, and the
-result is compared against the trace's ground_truth replay_expectation.
-
-Usage: python scripts/run_trace_replay.py data/replay_traces/fixtures/notepad-document-fallback.trace.json
-"""
 
 from __future__ import annotations
 
@@ -24,12 +16,6 @@ from app.replay.perception_replay import (  # noqa: E402
 
 
 def _run_selection_bridge(payload: dict) -> dict:
-    """Drive selection_bridge.main in-process with the replay payload.
-
-    The bridge writes its result to stdout; replay captures it. In-process
-    import keeps the replay fast and testable (the same main() the Electron
-    runner executes via stdio).
-    """
     import io
     import json as _json
     import contextlib
@@ -77,7 +63,6 @@ class _FakeStdin:
 
 
 def _expectation_met(result: dict, expectation: dict) -> tuple[bool, str]:
-    """Honest, narrow checks: the fixture asserts only its own contract."""
     answer = str(result.get("answer") or "")
     proposals = list(result.get("actionProposals") or [])
     checks: list[tuple[bool, str]] = []

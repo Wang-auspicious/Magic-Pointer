@@ -1,16 +1,4 @@
 #!/usr/bin/env python
-"""Print the tree the harness would actually boot (the ``dsh --dump-config``
-idea from the plugin-kernel batch, plan T5).
-
-Shows the composed plugin tree: core seam services, every row's resolved
-config (env knobs already applied), row status, and any discovery warnings
-from the user plugin directory. Purely diagnostic: nothing is executed
-beyond plugin registration, and no model request is made.
-
-Usage:
-    python scripts/harness_dump_config.py
-    MAGIC_POINTER_PLUGIN_DIR=/path/to/plugins python scripts/harness_dump_config.py
-"""
 
 from __future__ import annotations
 
@@ -35,12 +23,6 @@ _SECRET_KEY = re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|pwd|cre
 
 
 def _plain(value):
-    """Render a config value for display (callables -> <callable>).
-
-    Secret-shaped keys and absolute paths are redacted: this output is meant
-    to be pasted into issues/shared (harness audit P2 — a patch config can
-    carry api keys, and paths leak the user's home directory).
-    """
     if callable(value):
         return "<callable>"
     if isinstance(value, dict):

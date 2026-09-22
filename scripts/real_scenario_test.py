@@ -1,21 +1,3 @@
-"""Real-machine complex scenario tests (vision model as verification eyes).
-
-Each scenario drives the REAL product chain — real window, synthetic
-pointer gesture, real frozen frame (GDI), real snapshot bridge (resident
-UIA host), real selection bridge (live gateway model) — and saves evidence
-(frame PNG, snapshot JSON, answer JSON) for human/vision verification.
-
-Nothing here touches the Electron UI. Nothing sends, deletes or writes
-into target apps. The pointer moves; that is the point of a real test.
-
-Usage: python scripts/real_scenario_test.py <scenario> [...]
-  notepad-complex      long structured mixed-language document
-  notepad-crossref     specific cross-reference question with numbers
-  notepad-injection    screen content containing instructions
-  two-windows-trap     identical-looking second window, gesture on the right one
-  terminal-output      PowerShell console buffer lines
-  image-file           local complex image (vision path)
-"""
 
 from __future__ import annotations
 
@@ -34,8 +16,6 @@ sys.path.insert(0, str(ROOT))
 
 from app.system_context import enable_dpi_awareness
 
-# The process must opt into physical coordinates before the first HWND,
-# window rectangle, cursor position, or ImageGrab call is observed.
 enable_dpi_awareness()
 
 EVIDENCE_ROOT = ROOT / "data" / "runtime" / "scenario-evidence"
@@ -52,7 +32,6 @@ def wait_for_foreground(
     sleeper=None,
     timeout: float = 2.0,
 ) -> bool:
-    """Wait until Windows confirms that ``hwnd`` owns the foreground."""
 
     reader = reader or (lambda: int(user32.GetForegroundWindow() or 0))
     clock = clock or time.monotonic
@@ -66,7 +45,6 @@ def wait_for_foreground(
 
 
 def virtual_screen_bounds(metric_reader=None) -> list[int]:
-    """Return the physical virtual desktop, including negative origins."""
 
     metric_reader = metric_reader or user32.GetSystemMetrics
     left = int(metric_reader(76))
@@ -79,7 +57,6 @@ def virtual_screen_bounds(metric_reader=None) -> list[int]:
 
 
 def window_scale_factor(hwnd: int, *, dpi_reader=None) -> float:
-    """Return the HWND's DPI scale, with 96 DPI as the safe Windows base."""
 
     dpi_reader = dpi_reader or user32.GetDpiForWindow
     try:
@@ -140,7 +117,6 @@ class _Input(ctypes.Structure):
 
 
 def _send_unicode_text(text: str) -> None:
-    """Type UTF-16 through SendInput without reading or changing clipboard."""
 
     units = _unicode_code_units(text)
     if not units:
@@ -195,8 +171,6 @@ def _scenario_window(window: dict, rect: list[int]) -> dict:
 
 
 def _notepad_windows() -> list[dict]:
-    """All visible Notepad main windows (Win11: title is 无标题 - Notepad;
-    the editor has two top-level hwnds — keep the one with real size)."""
     from app.system_context import list_visible_windows
 
     found: list[dict] = []
@@ -206,7 +180,7 @@ def _notepad_windows() -> list[dict]:
             continue
         bbox = window.get("bbox") or (0, 0, 0, 0)
         if bbox[2] - bbox[0] < 200 or bbox[3] - bbox[1] < 200:
-            continue  # 最小化/离屏的旧窗口
+            continue
         found.append(dict(window))
     return found
 
@@ -215,7 +189,6 @@ def select_document_window(
     windows: list[dict],
     document_name: str,
 ) -> dict | None:
-    """Select only the Notepad top-level window showing our exact document."""
 
     expected = str(document_name or "").strip().casefold()
     if not expected:
@@ -242,8 +215,6 @@ def select_document_window(
 
 
 def _open_notepad(document_path: Path | None = None, timeout: float = 10.0) -> dict:
-    """Open a NEW notepad (Win11 notepad is single-instance: the launcher
-    Popen hands off to the shared editor process, so we diff windows)."""
     before = {int(w["hwnd"]) for w in _notepad_windows()}
     command = ["notepad.exe"]
     if document_path is not None:
@@ -274,12 +245,9 @@ def _create_scenario_document(name: str, content: str) -> Path:
 
 
 def _close_notepad(hwnd: int) -> None:
-    """Best effort: WM_CLOSE + Alt+N (Don't save) on the resulting dialog."""
     try:
-        user32.PostMessageW(int(hwnd), 0x0010, 0, 0)  # WM_CLOSE
+        user32.PostMessageW(int(hwnd), 0x0010, 0, 0)
         time.sleep(0.6)
-        # Win11 Notepad 的保存对话框需要前台才收得到 Alt+N；拿不到前台就用
-        # 同一个 ALT 技巧（对话框是模态的，ALT 不会误伤文档内容）。
         try:
             _set_foreground(int(hwnd))
         except RuntimeError:
@@ -298,7 +266,6 @@ def _wait_window(timeout: float = 10.0) -> dict:
     while time.monotonic() < deadline:
         windows = _notepad_windows()
         if windows:
-            # 主窗口：面积最大的那个
             return max(windows, key=lambda w: (
                 (w["bbox"][2] - w["bbox"][0]) * (w["bbox"][3] - w["bbox"][1])
             ))
@@ -313,7 +280,6 @@ def _window_rect(hwnd: int) -> list[int]:
 
 
 def image_has_visible_document_content(image) -> bool:
-    """Reject a title-only/blank Notepad frame before scenario capture."""
 
     width, height = image.size
     if width < 80 or height < 160:
@@ -340,18 +306,11 @@ def _wait_for_document_pixels(hwnd: int, timeout: float = 5.0) -> bool:
 
 
 def _set_foreground(hwnd: int) -> None:
-    """Foreground via the ALT-key trick.
-
-    The Windows foreground lock rejects SetForegroundWindow from a background
-    caller (observed live: ret=0, and AttachThreadInput alone did not help
-    either). Tapping ALT first makes Windows believe the user is interacting
-    with this process, which restores SetForegroundWindow rights — the
-    standard documented workaround. Verified live after the lock engaged."""
-    user32.ShowWindow(hwnd, 5)  # SW_SHOW
-    user32.keybd_event(0x12, 0, 0, 0)  # ALT down
+    user32.ShowWindow(hwnd, 5)
+    user32.keybd_event(0x12, 0, 0, 0)
     time.sleep(0.05)
     user32.SetForegroundWindow(hwnd)
-    user32.keybd_event(0x12, 0, 2, 0)  # ALT up
+    user32.keybd_event(0x12, 0, 2, 0)
     if not wait_for_foreground(hwnd):
         raise RuntimeError("foreground_acquisition_failed")
 
@@ -363,7 +322,7 @@ def _paste_text(text: str) -> None:
 def _mouse_down(x: int, y: int) -> None:
     user32.SetCursorPos(x, y)
     time.sleep(0.08)
-    user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
+    user32.mouse_event(0x0002, 0, 0, 0, 0)
     time.sleep(0.08)
 
 
@@ -373,7 +332,7 @@ def _mouse_move(x: int, y: int) -> None:
 
 
 def _mouse_up() -> None:
-    user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+    user32.mouse_event(0x0004, 0, 0, 0, 0)
     time.sleep(0.2)
 
 
@@ -434,7 +393,6 @@ def _frame_lease(window: dict, gesture_points: list, name: str) -> dict:
 
 
 def _lease_with_mismatched_target_hwnd(lease: dict) -> dict:
-    """Clone a lease and corrupt only its target HWND for a fail-closed probe."""
 
     cloned = copy.deepcopy(lease)
     target = cloned.setdefault("targetWindow", {})
@@ -444,8 +402,6 @@ def _lease_with_mismatched_target_hwnd(lease: dict) -> dict:
 
 
 def _run_bridge(script: str, payload: dict, timeout: int = 180) -> tuple[dict, str]:
-    # CREATE_NO_WINDOW：新 console 窗口会在 Windows 上抢前台焦点，把被测
-    # 终端从前台顶下去（Electron 生产路径用 stdio 管道，同样没有新控制台）。
     CREATE_NO_WINDOW = 0x08000000
     proc = subprocess.run(
         [sys.executable, str(ROOT / script)],
@@ -492,8 +448,6 @@ def _save_mismatch_evidence(name: str, result: dict, stderr: str) -> None:
 
 def _run_chain(name: str, window: dict, gesture_points: list, command: str) -> dict:
     lease = _frame_lease(window, gesture_points, name)
-    # 与 Electron 生产 payload 同键名与手势形状：cursor / cursorSpace /
-    # gesture schemaVersion=2 + strokes（v1 形状必须有 semanticPoint）。
     last_x, last_y = gesture_points[-1]
     snapshot_payload = {
         "selectionSessionId": f"scenario-{name}-{time.time_ns()}",
@@ -525,10 +479,6 @@ def _run_chain(name: str, window: dict, gesture_points: list, command: str) -> d
         "allowVisualFallback": True,
     }
 
-    # Acceptance probe: the same frozen pixels with a forged target identity
-    # must be rejected before UIA/OCR/vision. This produces a real-machine
-    # receipt alongside the successful chain rather than relying only on a
-    # synthetic unit fixture.
     mismatch_payload = copy.deepcopy(snapshot_payload)
     mismatch_payload["frameLease"] = _lease_with_mismatched_target_hwnd(lease)
     mismatch, mismatch_err = _run_bridge(
@@ -573,9 +523,6 @@ def _run_chain(name: str, window: dict, gesture_points: list, command: str) -> d
     return result
 
 
-# ---------------------------------------------------------------------------
-# Scenarios
-# ---------------------------------------------------------------------------
 
 NOTEPAD_DOC = """Magic Pointer 季度复盘报告
 ============================
@@ -705,7 +652,6 @@ def scenario_two_windows_trap() -> None:
         _set_foreground(hwnd_b)
         if not _wait_for_document_pixels(hwnd_b):
             raise RuntimeError("document_b_pixels_not_ready")
-        # B 留在前台；手势划在 B 上
         rect_b = _window_rect(hwnd_b)
         window = _scenario_window(window_b, rect_b)
         points = [(rect_b[0] + 110, rect_b[1] + 50 + i * 12) for i in range(10)]
@@ -723,8 +669,6 @@ def scenario_two_windows_trap() -> None:
 
 
 def _visible_point_in_window(hwnd: int, bbox: tuple) -> tuple[int, int] | None:
-    """A point inside ``bbox`` not covered by any window stacked above it
-    (z-order lower = more front). Returns None when fully covered."""
     from app.system_context import list_visible_windows
 
     windows = sorted(
@@ -759,13 +703,11 @@ def _visible_point_in_window(hwnd: int, bbox: tuple) -> tuple[int, int] | None:
             candidates.append((x, y))
     if not candidates:
         return None
-    # 取最靠中央的候选
     cx, cy = (left + right) // 2, (top + bottom) // 2
     return min(candidates, key=lambda p: (p[0] - cx) ** 2 + (p[1] - cy) ** 2)
 
 
 def scenario_terminal_output() -> None:
-    """只读真终端：用真实终端窗口，手势打在它未被遮挡的可见区域。"""
     from app.system_context import list_visible_windows
 
     console = None
@@ -787,17 +729,12 @@ def scenario_terminal_output() -> None:
     rect = [int(v) for v in console["bbox"]]
     point = _visible_point_in_window(hwnd, tuple(rect))
     if point is None:
-        # 全被遮：先把它带到前台再重算可见点
         user32.SetForegroundWindow(hwnd)
         time.sleep(0.6)
         point = _visible_point_in_window(hwnd, tuple(rect))
     if point is None:
         print("terminal-output: FAIL (terminal fully covered)")
         return
-    # 真实产品里 overlay 会拦截手势，目标应用（终端）收不到鼠标事件、不会
-    # 产生选区——探针走 terminal_buffer 路径（已真机验证）。试验台没有
-    # overlay，直接拖拽会让 Windows Terminal 真的选中文本，改变被测路径。
-    # 所以这里只点一下拿前台，手势坐标是合成载荷，不发物理拖拽。
     window = _scenario_window(
         {
             **console,
@@ -815,7 +752,6 @@ def scenario_terminal_output() -> None:
 
 
 def scenario_image_file() -> None:
-    """一个本地复杂图片：视觉路径（不依赖 UIA）。"""
     from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (1000, 640), "white")
@@ -843,9 +779,6 @@ def scenario_image_file() -> None:
 
 
 def _read_document_text_uia(hwnd: int) -> str:
-    """Independent verification eyes: read the live document text through the
-    compiled UIA probe (document_text fallback), NOT through the product
-    chain under test. Returns '' when the probe cannot serve."""
     exe = ROOT / "data" / "runtime" / "uia_selection_probe.exe"
     if not exe.exists():
         return ""
@@ -898,9 +831,6 @@ def _run_desktop_task_scenario(
     command: str,
     verify,
 ) -> None:
-    """Complex multi-step desktop task: real notepad, real agent loop with
-    desktop action tools, REAL mutation, then an independent UIA read that
-    decides pass/fail — the model's own claim is never the verification."""
     document = _create_scenario_document(name, document_content)
     window = _open_notepad(document)
     if not window:
@@ -938,7 +868,6 @@ Q1 激活 12840 次，Q2 激活 19207 次。
 
 
 def scenario_notepad_edit() -> None:
-    """多步写任务：观察 → 定位 → 写入 → 读回确认。独立 UIA 验证真改没改。"""
 
     def verify(final_text: str, result: dict) -> dict:
         written = "MP-2026" in final_text and "审核通过" in final_text
@@ -967,7 +896,6 @@ BATCH_DOC = """批次处理底稿
 
 
 def scenario_notepad_batch() -> None:
-    """长链写任务：五行逐行追加，每行都要求读回确认——逼出 15+ 轮工具循环。"""
 
     def verify(final_text: str, result: dict) -> dict:
         marks = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]

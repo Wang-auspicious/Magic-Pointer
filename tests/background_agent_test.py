@@ -1,4 +1,3 @@
-"""Real processes + a loopback model: parent exit, approvals, stop, notifications."""
 import json
 import subprocess
 import sys

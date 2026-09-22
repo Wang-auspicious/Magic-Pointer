@@ -42,7 +42,6 @@ def _json_copy(value: Any, name: str) -> Any:
 
 
 class ArtifactRegistry:
-    """Local provenance index and recoverable retention for app-owned files."""
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root).expanduser().resolve()

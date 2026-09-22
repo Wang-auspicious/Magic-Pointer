@@ -13,7 +13,6 @@ def test_routes_high_value_short_commands_without_a_model() -> None:
         "把这张表放进 Excel": "table.to_spreadsheet",
         "把这两个表合并": "table.merge",
         "复制这个公式的 LaTeX": "formula.to_latex",
-        "把这个活动加到日历": "calendar.create_from_screen",
         "从这里到那个地方怎么走": "map.route",
         "让 Codex 修这个": "agent.handoff",
         "在后台交给 Pi 处理": "agent.background_task",
@@ -51,4 +50,3 @@ def test_explicit_recipe_id_is_validated_not_blindly_accepted() -> None:
     unknown = router.route("recipe: system.delete_everything")
     assert unknown.recipe_id is None
     assert unknown.reason == "unknown_recipe"
-

@@ -1,4 +1,3 @@
-"""Bounded IPC bridge for durable editable DraftArtifacts."""
 
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ try:
         read_bounded_json_payload,
         write_json,
     )
-except ModuleNotFoundError:  # direct script execution
+except ModuleNotFoundError:
     from _bridge_common import (  # type: ignore[no-redef]
         PayloadTooLargeError,
         ensure_root_on_path,
@@ -479,9 +478,6 @@ def handle_request(
 
         def read_operation(operation):
             if operation.operation_id in pending_undo_writes and operation.operation == "replace_text":
-                # The original inverse locator describes the pre-undo length.
-                # To verify an already-written inverse, inspect the restored
-                # length even when the old range was an empty insertion point.
                 from dataclasses import replace
                 from app.context_pack.sources import FragmentLocator
 

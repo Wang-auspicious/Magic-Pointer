@@ -21,11 +21,6 @@ interface ClipboardLike {
   readImage(): NativeImageLike;
   readText(): string;
   write(payload: { image?: NativeImageLike; text?: string }): void;
-  /**
-   * 编码后的剪贴板位图。拿它当「变没变」的信号，就不必先把整张位图
-   * decode 出来（C-073）。返回空/抛错都当「这个平台给不了信号」处理，
-   * 调用方会退回原来的 readImage() 路径。
-   */
   readBuffer?(format: string): Buffer | null | undefined;
 }
 
@@ -79,11 +74,9 @@ interface StashRuntimeOptions {
   settings?: () => StashSettings;
 }
 
-// 收藏箱的 IO 层：轮询剪贴板、落盘、把路径写回剪贴板、维护索引。
-// 纯逻辑全在 stash_store.js，这里只做外部世界打交道的部分。
 
-const POLL_MS = 700;          // 剪贴板没有变更事件，只能轮询；700ms 用户感觉是即时的
-const SAMPLE = 16;            // 指纹用 16×16 缩略图，别对全图算哈希
+const POLL_MS = 700;           
+const SAMPLE = 16;             
 
 function createStashRuntime(options: StashRuntimeOptions) {
   const {
@@ -91,7 +84,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
     baseDir,
     log = () => {},
     onEntry = () => {},
-    focusProbe = async (): Promise<FocusInfo> => ({}),   // 由主进程给：当前前台窗口的进程名/标题/UIA 元素
+    focusProbe = async (): Promise<FocusInfo> => ({}),    
     settings = (): StashSettings => ({}),
     pythonExecutable = '',           // 主进程给：跑 describe bridge 用的 Python 解释器
   } = options;
@@ -102,10 +95,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
   let timer: NodeJS.Timeout | null = null;
   let lastFingerprint: string | null = null;
   let lastTextFingerprint: string | null = null;
-  // 上一次看到的剪贴板位图（编码后）的哈希。null = 还没有信号。
   let lastClipboardImageDigest: string | null = null;
-  // 我们自己回写进剪贴板的路径。下一轮轮询会原样读到它们，
-  // 不记住就会把每一次回写都当成一条新的文本采集收进来。
   const ownPaths: string[] = [];
   let busy = false;
 
@@ -131,25 +121,11 @@ function createStashRuntime(options: StashRuntimeOptions) {
 
   function persist(): void {
     fs.mkdirSync(baseDir, { recursive: true });
-    // 先写临时文件再改名：轮询中途崩掉不会留下半截 JSON
     const tmp = `${indexPath}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(entries, null, 0), 'utf8');
     fs.renameSync(tmp, indexPath);
   }
 
-  /**
-   * 剪贴板位图的「变没变」信号——在 readImage() 之前用它。
-   *
-   * 为什么需要：这个轮询是 700ms 一次，而指纹比对发生在 readImage() 和
-   * sampleImage() 的 resize **之后**。于是「剪贴板内容没变」这条最常见的
-   * 路径，每一轮仍然付一次完整的位图解码 + 原生重采样（一张 4K 截图约
-   * 33MB 的原始位图），每秒 1.4 次。而我们自己回写剪贴板时是带着位图的
-   * （见底下 clipboard.write），所以第一次截图之后剪贴板就一直有图。
-   *
-   * 现在改用编码后的 PNG 字节：它比原始位图小一到两个数量级，读出来做一次
-   * 哈希，比 decode 便宜得多。拿不到这个格式就返回 null——调用方会退回
-   * 原来的路径，正确性不受影响，只是没有这份优化。
-   */
   function clipboardImageDigest(): string | null {
     if (typeof clipboard.readBuffer !== 'function') return null;
     try {
@@ -161,7 +137,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
     }
   }
 
-  // 便宜的指纹：缩到 16×16 再取每个像素的一个通道
   function sampleImage(image: NativeImageLike): { width: number; height: number; samples: number[] } | null {
     const size = image.getSize();
     if (!size.width || !size.height) return null;
@@ -172,8 +147,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
     return { width: size.width, height: size.height, samples };
   }
 
-  // 图和文本共用这一段：拿来源、建条目、落盘、更新索引。
-  // 差别只有两处——写什么字节，以及要不要回写剪贴板。
   async function commit(
     input: Record<string, unknown> & { capturedAt: number },
     writeBytes: (absolutePath: string) => void,
@@ -212,8 +185,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
     log(`stash + ${result.entry.media} ${result.entry.kind} ${result.entry.relPath} app=${result.entry.app || '—'}`);
     onEntry(result.entry);
 
-    // 截图入库即自动出简介（不等待 hover）：后台调视觉模型给 3-4 句，
-    // 写回条目并通知界面。失败不影响入库——条目没有简介也能看缩略图。
     if (result.entry.media === 'image') {
       autoDescribeEntry(result.entry, abs);
     }
@@ -221,8 +192,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
     return { entry: result.entry, abs };
   }
 
-  // 入库后异步生成图片简介，写回条目并推送界面更新。
-  // 队列串行：一次收十几张图时不会同时打十几个模型请求。
   let describeQueue: Promise<unknown> = Promise.resolve();
   function describeImage(absPath: string): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
@@ -230,8 +199,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let out = '';
-      // 摘要走 stdout JSON。之前只挂了 stderr 的消费、没挂 stdout 的——
-      // `out` 永远是空串，JSON.parse 必然抛错，自动简介因此从未生效过。
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => { out += chunk; });
       child.stderr.on('data', () => {});
@@ -244,7 +211,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
           resolve(null);
         }
       });
-      // 进程没起来时 stdin 会被销毁，end() 会异步抛 'error'；不挂监听就是未捕获异常。
       child.stdin.on('error', () => {});
       child.stdin.end(JSON.stringify({ imagePath: absPath }));
     });
@@ -268,7 +234,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
     if (!bitmap) return null;
 
     const fingerprint = store.fingerprint(bitmap);
-    if (fingerprint === lastFingerprint) return null;   // 剪贴板没变，直接退
+    if (fingerprint === lastFingerprint) return null;    
     lastFingerprint = fingerprint;
 
     const committed = await commit(
@@ -277,14 +243,11 @@ function createStashRuntime(options: StashRuntimeOptions) {
     );
     if (!committed) return null;
 
-    // 关键的一步：把本地路径写回剪贴板，同时保留位图。
-    // 终端不收位图，Ctrl+V 拿到的就是路径；图片编辑器里粘贴仍然是图。
-    // 只对位图这么做——对文本回写会盖掉用户刚复制的那段字。
     if (settings()?.stash?.clipboard === true && store.writeBackAllowed(committed.entry.media)) {
       const payload = store.clipboardPayload(committed.abs);
       try {
         clipboard.write(payload.keepImage ? { image, text: payload.text } : { text: payload.text });
-        lastFingerprint = fingerprint;   // 我们自己写回的，别当成新内容再收一遍
+        lastFingerprint = fingerprint;    
         rememberOwnPath(committed.abs);
         lastTextFingerprint = store.textFingerprint(payload.text);
       } catch (error) {
@@ -295,8 +258,6 @@ function createStashRuntime(options: StashRuntimeOptions) {
     return committed.entry;
   }
 
-  // 文本采集。默认关——图片是用户明确截下来的，文本不是：
-  // 每一次 Ctrl+C 都会经过这里，包括密码管理器里的那一次。
   async function ingestText(text: string): Promise<RuntimeEntry | null> {
     const fingerprint = store.textFingerprint(text);
     if (!fingerprint || fingerprint === lastTextFingerprint) return null;
@@ -443,18 +404,12 @@ function createStashRuntime(options: StashRuntimeOptions) {
     busy = true;
     try {
       const formats = clipboard.availableFormats();
-      // 位图优先：我们自己回写之后剪贴板里图和文本同时存在，
-      // 先看图才不会把那条路径当成一段值得收藏的文字。
       if (settings()?.stash?.clipboard === true && formats.some((f: string) => f.startsWith('image/'))) {
-        // 先问便宜的信号，再决定要不要 decode 整张位图。
         const digest = clipboardImageDigest();
         if (digest !== null && digest === lastClipboardImageDigest) return;
         const image = clipboard.readImage();
         if (!image.isEmpty()) {
           await ingest(image, 'shot');
-          // ingest 可能把「本地路径 + 位图」回写进剪贴板，那会改变编码后的
-          // 字节；不重新取一次信号，下一轮就会把自己写回的东西当成新内容
-          // 再解码一遍——正是这个缺陷本身。
           lastClipboardImageDigest = clipboardImageDigest();
           return;
         }
@@ -473,12 +428,10 @@ function createStashRuntime(options: StashRuntimeOptions) {
     start() {
       if (timer) return;
       load();
-      // 启动时先记下当前剪贴板，避免把用户开机前复制的东西当成新采集
       try {
         const image = clipboard.readImage();
         if (!image.isEmpty()) lastFingerprint = store.fingerprint(sampleImage(image));
         lastTextFingerprint = store.textFingerprint(clipboard.readText());
-        // 启动时先把当前位图的信号记下来，别让第一轮轮询白 decode 一次。
         lastClipboardImageDigest = clipboardImageDigest();
       } catch (_) {
         // Clipboard access can fail while another application owns it; polling will retry.

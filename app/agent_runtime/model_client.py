@@ -1,37 +1,3 @@
-"""Agent runtime loop model client (harness loop batch, plan T2.3).
-
-Ported semantics from the CC query-loop and Pi agent-loop study notes
-(``docs/harness-port-notes/2026-08-12-cc-query-loop.md``,
-``docs/harness-port-notes/2026-08-12-pi-agent-loop.md``):
-
-- ``ModelTurnEvent`` union: the per-turn model stream is a discriminated
-  union of frozen dataclasses, discriminated via ``isinstance`` (the Python
-  form of the CC ``StreamEvent`` union; the loop consumes
-  :meth:`LoopModelClient.stream_turn` incrementally).
-- CC withhold-until-recover: output-token ``TurnWithheld`` is passed to the
-  semantic loop, whose recovery ceiling is
-  ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT``. Provider/backend failures are a
-  different layer: retryable failures repeat the unchanged request below the
-  agent loop; exhausted or non-retryable failures surface once as
-  ``TurnWithheld(reason="backend_error:...")`` and never become fake user
-  messages or additional semantic turns.
-- Pi StreamFn truncation guard: a turn whose tool calls may have been cut off
-  is marked truncated (``last_truncated``) so the caller discards the calls
-  instead of executing possibly cut-off arguments. The Pi study note detected
-  this from the text ending in a suffix; that heuristic is **off by default
-  here** because it fires on ordinary Chinese punctuation — see the note on
-  :meth:`LoopModelClient.parse_tool_calls`. Protocol evidence
-  (``stop_reason == "max_tokens"``, or a missing stop reason) detects real
-  truncation earlier, in the withheld branch. ``AiClientBackend`` has no stop
-  reason to consult at all — the wrapped call returns one dict — so its own
-  provider ``finish_reason`` is plumbed through instead; before that, the text
-  heuristic was the only detector that path had.
-- ``ModelBackend`` is the StreamFn-style contract: a generator that yields
-  events and never fabricates. ``AiClientBackend`` wraps the real
-  ``app/ai_client`` (read-only) with an honest mapping.
-
-Pure Python, stdlib-only; no network in this module itself.
-"""
 
 from __future__ import annotations
 
@@ -71,52 +37,22 @@ __all__ = [
     "prompt_cache_enabled",
 ]
 
-#: Off by default. See the note on ``parse_tool_calls`` for why the text
-#: heuristic was withdrawn and what replaced it. Kept as a parameter so a
-#: caller with a provider that truncates silently can still opt in.
 _DEFAULT_TRUNCATION_SUFFIX: str | None = None
 _MIN_HTTP_TIMEOUT_S = 0.05
 
-#: Output ceiling to raise a truncated turn to, and how many times that is
-#: allowed to happen in one run.
-#:
-#: The problem this solves: the loop already noticed ``finish_reason ==
-#: "length"`` and retried — but it retried at **the same ceiling**, so a request
-#: that needed more room than 4096 tokens was re-sent at 4096 until
-#: ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT`` ran out and the turn failed. Writing a
-#: 200-line file, one long patch, or a summary of a long command's output all
-#: land in that band. Claude Code's answer is to re-send the identical request
-#: with a much larger ceiling (``CAPPED_DEFAULT_MAX_TOKENS = 8_000`` →
-#: ``ESCALATED_MAX_TOKENS = 64_000``); this is the same idea at a smaller
-#: multiple, because a self-hosted or proxied gateway is more likely to reject
-#: a jump straight to 64k than to accept a graduated one.
 ESCALATED_MAX_TOKENS = 64_000
 
-#: Multiply rather than jump: 4096 -> 16384 -> 64000. Two escalations.
 MAX_OUTPUT_TOKEN_ESCALATIONS = 2
 
-#: A single escalation never asks for less than this, so a low configured
-#: ceiling still gets real headroom on the first retry.
 _ESCALATION_FLOOR = 16_384
 
-#: How much bigger each escalation makes the ceiling.
 _ESCALATION_FACTOR = 4
 
 
 def escalated_max_tokens(current: int, escalations_used: int) -> int:
-    """The ceiling to retry a truncated turn at, or ``0`` to give up.
-
-    Pure, so the policy is testable without a model. ``escalations_used`` is
-    the count *already spent*; the return value is the new ceiling, and ``0``
-    means the ladder is exhausted and the caller should let the existing
-    recovery limit do its job.
-    """
     if escalations_used >= MAX_OUTPUT_TOKEN_ESCALATIONS:
         return 0
     current = max(1, int(current))
-    # Clamp to the cap *before* comparing, not after. The other order reports
-    # 64000 -> 64000 as a successful escalation, which tells the caller to
-    # retry believing it has more room than it does.
     proposed = min(max(current * _ESCALATION_FACTOR, _ESCALATION_FLOOR), ESCALATED_MAX_TOKENS)
     if proposed <= current:
         return 0
@@ -124,7 +60,6 @@ def escalated_max_tokens(current: int, escalations_used: int) -> int:
 
 
 class ModelTurnEvent:
-    """Base of the model turn event union; discriminate via ``isinstance``."""
 
     kind = "event"
 
@@ -142,13 +77,6 @@ class MessageDelta(ModelTurnEvent):
 
 @dataclass(frozen=True, slots=True)
 class ReasoningDelta(ModelTurnEvent):
-    """模型思考流增量（用户裁决：思考流一定要有）。
-
-    DeepSeek/Moonshot/MiMo 的 ``reasoning_content``、OpenRouter 的
-    ``reasoning``、Anthropic 的 thinking 块都归一成这个展示事件。
-    供应商要求回传的 reasoning_content／带签名 thinking 另外保存在
-    TurnDone.provider_items 中，按各自协议投影回历史。
-    """
 
     kind = "reasoning_delta"
     text: str
@@ -170,11 +98,6 @@ class TurnDone(ModelTurnEvent):
 
 @dataclass(frozen=True, slots=True)
 class TurnWithheld(ModelTurnEvent):
-    """Recoverable outcome held back (CC max_output_tokens withhold).
-
-    Not a failure: the loop layer decides retries and caps them at
-    ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT``.
-    """
 
     kind = "turn_withheld"
     reason: str
@@ -182,18 +105,12 @@ class TurnWithheld(ModelTurnEvent):
 
 @dataclass(frozen=True, slots=True)
 class ModelUnsupported(ModelTurnEvent):
-    """Honest capability refusal: no request was (or will be) fabricated."""
 
     kind = "model_unsupported"
     reason: str
 
 
 class ModelBackend(Protocol):
-    """StreamFn-style backend contract: generator, never raises.
-
-    ``cancel_scope`` is an opaque cancellation token the backend may or may
-    not honor; the client passes it through untouched.
-    """
 
     def generate(
         self,
@@ -206,16 +123,6 @@ class ModelBackend(Protocol):
 
 
 class LoopModelClient:
-    """Client over an injected :class:`ModelBackend`.
-
-    ``stream_turn`` forwards committed events as the backend produces them;
-    ``generate_turn`` remains the list-returning compatibility wrapper. The
-    client keeps a cumulative ``withheld_count`` (CC recovery counter) and the
-    ``last_usage`` aggregate from :class:`TurnDone`. ``parse_tool_calls``
-    extracts tool calls and the final text, recording malformed argument
-    JSON into ``last_errors`` instead of raising, and sets ``last_truncated``
-    per the Pi StreamFn truncation guard.
-    """
 
     def __init__(
         self,
@@ -242,21 +149,13 @@ class LoopModelClient:
         self.output_token_escalations = 0
 
     def escalate_output_tokens(self) -> int:
-        """Raise the backend's output ceiling after a truncated turn.
-
-        Returns the new ceiling, or ``0`` when the ceiling cannot rise further
-        — either the ladder is spent or the backend has no ceiling to raise.
-        The loop calls this on the ``max_output_tokens`` recovery path; before
-        this existed, that path re-sent the identical request at the identical
-        ceiling and simply retried until the recovery limit failed the turn.
-        """
         escalate = getattr(self._backend, "escalate_max_tokens", None)
         if not callable(escalate):
             return 0
         try:
             raised = int(escalate(self.output_token_escalations) or 0)
         except Exception:  # noqa: BLE001 -- a backend that cannot escalate is
-            return 0       # not an error, it just retries at the same ceiling
+            return 0
         if raised <= 0:
             return 0
         self.output_token_escalations += 1
@@ -264,7 +163,6 @@ class LoopModelClient:
 
     @property
     def used_backend(self) -> str:
-        """Stable, non-secret identity of the backend that executes turns."""
         declared = str(getattr(self._backend, "used_backend", "") or "").strip()
         if declared:
             return declared
@@ -273,7 +171,6 @@ class LoopModelClient:
 
     @property
     def prompt_cache_requested(self) -> bool:
-        """Whether this concrete backend will attach prompt-cache controls."""
         return bool(getattr(self._backend, "prompt_cache_requested", False))
 
     def generate_turn(
@@ -283,15 +180,6 @@ class LoopModelClient:
         budget_ms: float | None = None,
         cancel_scope: object = None,
     ) -> list[ModelTurnEvent]:
-        """Compatibility wrapper that collects :meth:`stream_turn`.
-
-        Output-token ``TurnWithheld`` events are passed through as-is and the
-        loop owns their recovery ceiling. Retryable ``backend_error`` events
-        cause this client to repeat the exact same request up to
-        ``max_provider_retries``; they do not consume agent turns or mutate
-        messages. ``last_usage`` is reset per turn and set from each
-        ``TurnDone``.
-        """
         return list(self.stream_turn(
             messages,
             tools,
@@ -306,13 +194,6 @@ class LoopModelClient:
         budget_ms: float | None = None,
         cancel_scope: object = None,
     ) -> Iterator[ModelTurnEvent]:
-        """Yield a model turn as it arrives without replaying visible text.
-
-        Retryable provider failures are held below the semantic loop only
-        while an attempt has produced no message, reasoning, or tool call.
-        Once any such event is yielded, retrying the request would duplicate
-        content in the UI, so a later adapter failure is surfaced honestly.
-        """
         self.last_usage = None
         self.last_reasoning = None
         self.last_events = []
@@ -357,10 +238,6 @@ class LoopModelClient:
                     messages, tools, attempt_budget_ms, cancel_scope
                 ):
                     if terminal_seen:
-                        # Drain the backend generator after its terminal event so
-                        # transport cleanup and endpoint-health bookkeeping run.
-                        # Nothing produced during that cleanup may revise the
-                        # already committed terminal result.
                         continue
                     if isinstance(event, TurnWithheld):
                         self.withheld_count += 1
@@ -376,10 +253,6 @@ class LoopModelClient:
                                 yield held
                             buffered.clear()
                         elif isinstance(event, TurnDone):
-                            # A backend may deliver a valid non-streaming answer
-                            # only through TurnDone.raw_text. Keep it buffered so
-                            # zero-output provider failures can still retry, but
-                            # remember that cleanup is now post-terminal.
                             terminal_seen = True
                         continue
                     self._accept_event(event)
@@ -391,7 +264,7 @@ class LoopModelClient:
                     raise
                 if committed:
                     return
-            except Exception as exc:  # third-party model adapter seam
+            except Exception as exc:
                 if terminal_seen:
                     if committed:
                         return
@@ -444,7 +317,6 @@ class LoopModelClient:
             _check_cancelled(cancel_scope)
 
     def _accept_event(self, event: ModelTurnEvent) -> None:
-        """Update the public last-turn snapshot for one committed event."""
         self.last_events.append(event)
         if isinstance(event, TurnDone):
             self.last_usage = event.usage
@@ -457,35 +329,6 @@ class LoopModelClient:
         *,
         truncation_suffix: str | None = None,
     ) -> tuple[list[ToolCall], str | None]:
-        """Extract tool calls and the final text from an event stream.
-
-        Returns ``(calls, text)`` where ``text`` is the concatenated
-        ``MessageDelta`` text, falling back to the last ``TurnDone.raw_text``
-        when no deltas were streamed. Malformed arguments (a string that is
-        not valid JSON, or a non-object argument) are recorded into
-        ``last_errors`` and the offending call is dropped (fail closed) --
-        never raised.
-
-        ``last_truncated`` marks a turn whose tool calls may have been cut off
-        mid-arguments, so the caller discards them rather than executing a
-        half-written argument list. It is **off by default** now, because the
-        text heuristic that used to set it was both redundant and wrong here:
-
-        It fired when the turn's text ended with ``…`` and tool calls were
-        present. In Chinese, ending a sentence with ``…`` is ordinary
-        punctuation, so any tool-calling turn that trailed off in prose had its
-        calls thrown away — a false positive on a common shape.
-
-        What actually detects truncation is protocol evidence, and it was
-        already there: both SSE parsers yield
-        ``TurnWithheld(reason="max_output_tokens")`` on ``stop_reason ==
-        "max_tokens"`` *and* on a missing stop reason (an interrupted stream),
-        and the loop's withheld branch runs before tool calls are ever
-        considered, so a genuinely truncated turn never reaches this function.
-        Genuinely cut-off arguments arrive as invalid JSON and are dropped by
-        the ``last_errors`` path above. ``truncation_suffix`` remains available
-        for a provider that truncates without saying so; pass it explicitly.
-        """
         suffix = (
             self.truncation_suffix
             if truncation_suffix is None
@@ -517,7 +360,6 @@ class LoopModelClient:
         return calls, final_text
 
     def _reserve_call_id(self, call: ToolCall) -> ToolCall:
-        """Keep provider ids when safe; synthesize a conversation-unique id."""
         candidate = str(call.id or "").strip()
         if (
             candidate
@@ -541,27 +383,6 @@ class LoopModelClient:
 
 
 class AiClientBackend:
-    """Real backend over ``app/ai_client`` (read-only, honest mapping).
-
-    API audit of ``app/ai_client.py``: ``ask_text_model_with_tools`` is a
-    chat-completions-style request that accepts a ``tools`` list and returns
-    ``{"text", "toolCalls": [{"name", "arguments"}], "error"}``, so tools
-    *are* supported and real requests are mapped (no
-    ``ModelUnsupported("backend_lacks_tool_protocol")`` needed). Honest
-    limitations of the mapping:
-
-    - The wrapped API takes a single ``user_prompt`` string; the message
-      list is serialized into it. Multi-turn tool-result history cannot be
-      round-tripped through this backend.
-    - Tool call ids do not exist in the gateway protocol and are
-      synthesized locally (``call_<index>``).
-    - ``cancel_scope`` is accepted but not enforced: the wrapped call is
-      synchronous.
-    - The wrapped API never reports usage; ``TurnDone.usage`` is always
-      ``None``.
-    - A backend error is emitted as ``TurnWithheld(reason="backend_error:…")``
-      (CC recoverable-error withhold) followed by an empty ``TurnDone``.
-    """
 
     used_backend = "app.ai_client.ask_text_model_with_tools"
 
@@ -570,7 +391,6 @@ class AiClientBackend:
         self.max_tokens = max(1, int(max_tokens))
 
     def escalate_max_tokens(self, escalations_used: int = 0) -> int:
-        """Raise the output ceiling for a retry of a truncated turn."""
         raised = escalated_max_tokens(self.max_tokens, escalations_used)
         if raised:
             self.max_tokens = raised
@@ -603,14 +423,6 @@ class AiClientBackend:
             yield TurnDone(usage=None, raw_text=None)
             return
         text = (result or {}).get("text") or ""
-        # The provider's own verdict on whether it finished or hit the output
-        # ceiling. This backend has no streaming stop reason to consult — the
-        # wrapped call returns one dict — so before this was plumbed through,
-        # the only truncation signal available here was inspecting the text for
-        # a trailing ellipsis, which is also how a Chinese sentence ending in
-        # "…" got mistaken for a truncation. Withholding the calls here is the
-        # same contract every other backend follows, and it happens before the
-        # loop considers executing anything.
         if _is_length_finish(result or {}):
             if text:
                 yield MessageDelta(text)
@@ -634,22 +446,14 @@ class AiClientBackend:
         yield TurnDone(usage=None, raw_text=text or None)
 
 
-#: Provider finish reasons that mean "stopped because it ran out of room",
-#: across the wire formats this client speaks.
 _LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens", "max_output_tokens"})
 
 
 def _is_length_finish(result: dict) -> bool:
-    """Did the provider stop this turn at the output ceiling?"""
     return str(result.get("finishReason") or "").strip().casefold() in _LENGTH_FINISH_REASONS
 
 
 def _normalize_call(call: ToolCall, errors: list[str]) -> ToolCall | None:
-    """Return ``call`` with dict arguments, or None with an error recorded.
-
-    Backends may pre-parse arguments into a dict or pass the raw JSON
-    string through; anything else is malformed and fail-closed.
-    """
     args = call.arguments
     if isinstance(args, dict):
         return call
@@ -684,9 +488,6 @@ def _normalize_call(call: ToolCall, errors: list[str]) -> ToolCall | None:
 
 
 def _reasoning_from_payload(payload: object, api_mode: str) -> str:
-    """Non-streaming reasoning extraction (chat ``reasoning_content`` /
-    messages ``thinking`` blocks). Empty string when the provider sent none —
-    reasoning is display-only and must never fabricate."""
     if not isinstance(payload, dict):
         return ""
     if api_mode == "messages":
@@ -712,23 +513,6 @@ def _reasoning_from_payload(payload: object, api_mode: str) -> str:
 
 
 class AiClientMessagesBackend:
-    """Real multi-turn backend: the loop's history as a native messages array.
-
-    The gateway receives the full message list (chat-completions or
-    Anthropic-style messages protocol, auto-detected from the base URL):
-    instruction user messages and harness-injected data messages project to
-    ``user`` entries, assistant text to ``assistant`` entries, and tool
-    results to their native OpenAI ``tool`` / Anthropic ``tool_result``
-    shapes, paired with the assistant tool-call ids preserved in loop state.
-
-    Honest limitations (same class of gaps as :class:`AiClientBackend`):
-    - Non-streaming: one HTTP round trip per turn.
-    - ``cancel_scope`` is accepted but not enforced (synchronous call).
-    - The gateway protocol reports no usage; ``TurnDone.usage`` is None.
-    - A request-level timeout is reported as a withheld
-      ``backend_error:model_request_timeout`` without poisoning endpoint
-      health; other failures record health per endpoint.
-    """
 
     used_backend = "magic_pointer.messages_multiturn"
 
@@ -757,14 +541,6 @@ class AiClientMessagesBackend:
         self._client_factory = None
 
     def escalate_max_tokens(self, escalations_used: int = 0) -> int:
-        """Raise the output ceiling for a retry of a truncated turn.
-
-        Both the streaming and non-streaming payload builders read
-        ``self.max_tokens`` per call, so raising it here takes effect on the
-        very next request without rebuilding the client — which matters,
-        because the client carries the system prompt (and therefore the
-        provider's prompt cache) and a rebuild would discard it.
-        """
         raised = escalated_max_tokens(self.max_tokens, escalations_used)
         if raised:
             self.max_tokens = raised
@@ -927,7 +703,6 @@ class AiClientMessagesBackend:
 
 
 def _response_hit_token_limit(payload: object, api_mode: str) -> bool:
-    """Read the native non-streaming completion reason without guessing."""
     if not isinstance(payload, dict):
         return False
     if api_mode == "responses":
@@ -950,7 +725,6 @@ def _response_hit_token_limit(payload: object, api_mode: str) -> bool:
 
 
 def _response_failure_reason(payload: object, api_mode: str) -> str:
-    """Keep provider refusals and incomplete answers out of successful turns."""
     if api_mode != "responses" or not isinstance(payload, dict):
         return ""
     status = str(payload.get("status") or "")
@@ -965,13 +739,6 @@ def _response_failure_reason(payload: object, api_mode: str) -> str:
 
 
 def _message_entry(message: AgentMessage, api_mode: str) -> dict:
-    """Project one loop message into a gateway messages-array entry.
-
-    Assistant messages carrying tool_calls emit the API-native shape
-    (chat-completions ``tool_calls`` / messages ``tool_use`` blocks) and tool
-    results emit the native ``tool`` role / ``tool_result`` block so
-    multi-turn tool history round-trips through the gateway (T4.2).
-    """
     if message.role is Role.ASSISTANT:
         chat_reasoning = next(({'reasoning_content': item['reasoning_content']}
             for item in message.provider_items if item.get('type') == 'chat_reasoning'
@@ -1036,7 +803,6 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
 
 
 def _messages_blocks(content: object) -> list[dict[str, Any]]:
-    """Copy one Messages content value into a mergeable block list."""
     if isinstance(content, list):
         blocks: list[dict[str, Any]] = []
         for block in content:
@@ -1051,14 +817,6 @@ def _messages_blocks(content: object) -> list[dict[str, Any]]:
 
 
 def _merge_messages_entries(entries: list[dict]) -> list[dict]:
-    """Merge adjacent same-role Messages entries without losing block order.
-
-    The loop logs each parallel tool result as its own TOOL message. Anthropic
-    expects all results for one assistant tool-use turn in the immediately
-    following user turn; a later steer can also follow that result as plain
-    user text. Normalizing both shapes here keeps the durable log untouched
-    while projecting one provider-valid message.
-    """
     merged: list[dict] = []
     for raw in entries:
         entry = dict(raw)
@@ -1077,7 +835,6 @@ def _merge_messages_entries(entries: list[dict]) -> list[dict]:
 
 
 def prompt_cache_enabled() -> bool:
-    """Whether Messages requests should carry explicit cache breakpoints."""
     return os.environ.get("MAGIC_POINTER_PROMPT_CACHE", "1").strip().casefold() not in {
         "0", "false", "no", "off",
     }
@@ -1153,9 +910,6 @@ def _messages_payload(
                 if entry.get("role") == "user"
             ]
             if user_indices and user_indices[-1] > 0:
-                # The current trailing user turn changes on every request;
-                # cache the complete stable history immediately before it,
-                # including the previous assistant/tool-use response.
                 _mark_entry_cache_boundary(entries[user_indices[-1] - 1])
         return payload
     payload = {
@@ -1177,7 +931,6 @@ def _messages_payload(
 
 
 def _convert_tools(tools: list[dict], api_mode: str) -> list[dict]:
-    """Convert the loop's tool-schema shape into the gateway protocol shape."""
     converted: list[dict] = []
     for raw in tools:
         if not isinstance(raw, dict) or not raw.get("name"):
@@ -1212,7 +965,6 @@ def _convert_tools(tools: list[dict], api_mode: str) -> list[dict]:
 
 
 def _responses_input(messages: list[AgentMessage]) -> list[dict[str, Any]]:
-    """Project durable loop messages into OpenAI Responses input items."""
     items: list[dict[str, Any]] = []
     for message in messages:
         content = str(message.content or "")
@@ -1255,7 +1007,6 @@ def _provider_items(payload: object, api_mode: str) -> tuple[dict[str, Any], ...
 
 
 def _responses_provider_items(payload: object) -> tuple[dict[str, Any], ...]:
-    """Keep opaque Responses reasoning items for the next request."""
     if not isinstance(payload, dict):
         return ()
     output = payload.get("output")
@@ -1269,14 +1020,6 @@ def _responses_provider_items(payload: object) -> tuple[dict[str, Any], ...]:
 
 
 class StreamingMessagesBackend(AiClientMessagesBackend):
-    """Streaming variant: SSE chunks are parsed into MessageDelta events.
-
-    Same payload contract as :class:`AiClientMessagesBackend` plus
-    ``"stream": true``; ``data: {...}`` lines accumulate
-    ``choices[0].delta.content`` and ``delta.tool_calls`` until
-    ``finish_reason`` arrives. The real-endpoint verification is a
-    真机 item; the parser is fully covered by fake chunk sequences.
-    """
 
     used_backend = "magic_pointer.messages_multiturn_streaming"
 
@@ -1311,11 +1054,6 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
                         stripped_retry_used = True
                         continue
                 if response.status_code >= 400:
-                    # Read the body before deciding what this is. "Too many
-                    # tokens" arrives as an ordinary 400 and is recoverable by
-                    # compacting; anything else at 400 is not. Treating them
-                    # alike is what turned the first context-window overrun of
-                    # a long task into a terminal provider failure.
                     try:
                         error_body = response.read().decode("utf-8", "replace")
                     except Exception:  # noqa: BLE001 -- classification is best-effort
@@ -1497,12 +1235,6 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
         budget_ms: float | None,
         cancel_scope: object,
     ) -> Iterator[ModelTurnEvent]:
-        """One non-streaming retry via the parent backend (auto-degrade).
-
-        The parent records its own health; the loop sees the same event
-        vocabulary, so a successful fallback is indistinguishable from a
-        successful stream (except ``used_backend``).
-        """
         if budget_ms is not None and budget_ms <= 0.0:
             yield TurnWithheld(reason="backend_error:model_request_timeout")
             yield TurnDone(usage=None, raw_text=None)
@@ -1514,7 +1246,6 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
 
 
 def _provider_failure_is_retryable(reason: str) -> bool:
-    """Classify request failures for retries below the semantic agent loop."""
 
     value = str(reason or "").casefold()
     if not value.startswith("backend_error:"):
@@ -1548,13 +1279,6 @@ def _parse_sse(
     api_mode: str = "chat",
     cancel_scope: object = None,
 ) -> Iterator[ModelTurnEvent]:
-    """Parse an SSE line iterator into loop model events.
-
-    OpenAI chat-completions and Anthropic messages streams share the same
-    event vocabulary on output. Comment/event-name/keep-alive lines are
-    skipped; fragmented tool arguments stay raw when malformed so the loop
-    can return a structured correction instead of silently dropping a call.
-    """
     if api_mode == "messages":
         yield from _parse_messages_sse(lines, cancel_scope=cancel_scope)
         return
@@ -1630,10 +1354,6 @@ def _parse_sse(
     if finish_reason == "length":
         yield TurnWithheld(reason="max_output_tokens")
     elif finish_reason is None and (text or has_tool_call or saw_reasoning):
-        # A well-formed chat stream carries a terminal finish_reason.  Some
-        # relays close the SSE body early (occasionally even after [DONE]); the
-        # partial text must enter the existing continuation path, never be
-        # persisted as a completed answer.
         yield TurnWithheld(reason="max_output_tokens")
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")
@@ -1645,7 +1365,6 @@ def _parse_sse(
 def _parse_responses_sse(
     lines, *, cancel_scope: object = None
 ) -> Iterator[ModelTurnEvent]:
-    """Parse Responses' named delta events into the loop's stream contract."""
     text_parts: list[str] = []
     pending: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
@@ -1731,7 +1450,6 @@ def _parse_responses_sse(
 def _parse_messages_sse(
     lines, *, cancel_scope: object = None
 ) -> Iterator[ModelTurnEvent]:
-    """Parse Anthropic Messages SSE frames into the common turn events."""
     text_parts: list[str] = []
     reasoning_blocks: dict[int, dict[str, Any]] = {}
     saw_reasoning = False
@@ -1844,9 +1562,6 @@ def _parse_messages_sse(
     if stop_reason == "max_tokens":
         yield TurnWithheld(reason="max_output_tokens")
     elif stop_reason is None and (text or has_tool_call or saw_reasoning):
-        # Anthropic Messages requires a message_delta stop_reason before the
-        # final message_stop.  Treat a missing reason as an interrupted output
-        # and resume from the committed prefix.
         yield TurnWithheld(reason="max_output_tokens")
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")
@@ -1855,12 +1570,6 @@ def _parse_messages_sse(
 
 
 def _serialize_messages(messages: list[AgentMessage]) -> str:
-    """Serialize the message list into the wrapped API's single prompt.
-
-    Honest text projection: the wrapped ``ask_text_model_with_tools`` only
-    accepts one ``user_prompt`` string, so prior turns are projected into it
-    role-labelled. Empty input degrades to a neutral instruction.
-    """
     lines: list[str] = []
     for message in messages:
         if message.role is Role.USER:

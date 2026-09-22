@@ -1,12 +1,3 @@
-"""Resume reduction: interrupted-turn continuation context (harness-v2 port).
-
-Source of truth: pi ``packages/agent/docs/harness-v2.md`` (dropped at the
-repo root, 2026-08-21) — "resume continues the open operation from what the
-records say; it never starts a new one". MP's session store already records
-turns and tool settlements durably; this adds the reduction + one-shot
-continuation prompt so a crashed/budget-cut task is picked back up on the
-next send instead of silently dying.
-"""
 
 from __future__ import annotations
 
@@ -27,7 +18,6 @@ _LOCATOR_MAX_CHARS = 1_200
 
 
 def active_source_reference_block(events: Any) -> str | None:
-    """Render durable source entrances and active references after compaction."""
     from app.context_pack.source_store import task_references, task_sources
 
     sources = task_sources(events)
@@ -82,13 +72,6 @@ def with_source_availability(
     *,
     live_source_ids: Any = (),
 ) -> dict[str, Any] | None:
-    """Overlay restart-time availability on a durable resume reduction.
-
-    EventSession can remember a source but cannot know whether a live browser,
-    chat window or Figma document has been rebound. Bridges call this only
-    after restoring their current readers/connections. File existence is also
-    checked here, not while replaying the event log.
-    """
     if summary is None:
         return None
     result = copy.deepcopy(summary)
@@ -145,7 +128,6 @@ def with_source_availability(
 
 
 def continuation_prefix(summary: dict[str, Any] | None) -> str:
-    """Build the injected continuation block; empty string when nothing to resume."""
     if not summary:
         return ""
     steps = summary.get("steps") or []

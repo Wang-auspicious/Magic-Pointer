@@ -1,4 +1,3 @@
-"""Regression cases for the 2026-09-20 office audit, using disposable files."""
 from pathlib import Path
 import fitz
 import pytest
@@ -74,7 +73,6 @@ def test_pdf_batch_continues_bound_output_but_rejects_unrelated_file(tmp_path):
     first, second = annotation(output, "first", [40, 40, 90, 60]), annotation(output, "second", [120, 40, 170, 60])
     handler = PdfActionHandler()
     assert handler.execute(source(original), first).ok
-    # A fresh handler must retain binding across bridge invocations.
     assert PdfActionHandler().read_current(source(original), second).value == second.before
     assert PdfActionHandler().execute(source(original), second).ok
     with fitz.open(output) as doc:

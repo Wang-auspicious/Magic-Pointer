@@ -1,26 +1,3 @@
-"""Codex apply_patch contract, ported to Python (Apache-2.0, openai/codex).
-
-Source of truth: ``codex-rs/apply-patch/src/{parser.rs,streaming_parser.rs,
-seek_sequence.rs,file_update.rs}`` at HEAD 536f86e. The patch format is what
-frontier models were trained on, so supporting it verbatim removes a whole
-class of edit-fumbling that per-file string replacement suffers from:
-
-    *** Begin Patch
-    *** Add File: path
-    +line
-    *** Delete File: path
-    *** Update File: path
-    @@ optional context
-    -old line
-     kept line
-    +new line
-    *** End of File
-    *** End Patch
-
-Matching follows Codex ``seek_sequence``: exact → rstrip → trim →
-unicode-punctuation-normalised, with end-of-file anchoring. All paths are
-resolved against and confined to the caller-provided workspace root.
-"""
 
 from __future__ import annotations
 
@@ -47,7 +24,7 @@ EMPTY_CHANGE_CONTEXT_MARKER = "@@"
 
 
 class ApplyPatchError(ValueError):
-    """Raised for malformed patches or failed application."""
+    pass
 
 
 @dataclass
@@ -64,20 +41,16 @@ class UpdateFileChunk:
 
 @dataclass
 class Hunk:
-    kind: str  # "add" | "delete" | "update"
+    kind: str
     path: str
-    contents: list[str] | None = None  # add
-    move_path: str | None = None  # update rename target
-    chunks: list[UpdateFileChunk] = field(default_factory=list)  # update
+    contents: list[str] | None = None
+    move_path: str | None = None
+    chunks: list[UpdateFileChunk] = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Parsing (Codex streaming_parser.rs, lenient boundaries)
-# ---------------------------------------------------------------------------
 
 
 def _strip_heredoc(lines: list[str]) -> list[str]:
-    """Lenient mode: models sometimes wrap the patch in a shell heredoc."""
     if (
         len(lines) >= 4
         and lines[0] in {"<<EOF", "<<'EOF'", '<<"EOF"'}
@@ -195,9 +168,6 @@ def _parse_update_body(lines: list[str], index: int, hunk: Hunk) -> int:
     return index
 
 
-# ---------------------------------------------------------------------------
-# Matching (Codex seek_sequence.rs)
-# ---------------------------------------------------------------------------
 
 _PUNCTUATION_MAP = str.maketrans({
     "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
@@ -227,7 +197,6 @@ def seek_sequence(
     start: int,
     eof: bool,
 ) -> int | None:
-    """Find ``pattern`` in ``lines`` at/after ``start`` (Codex contract)."""
     if not pattern:
         return start
     if len(pattern) > len(lines):
@@ -243,9 +212,6 @@ def seek_sequence(
     return None
 
 
-# ---------------------------------------------------------------------------
-# Application (Codex file_update.rs compute_replacements)
-# ---------------------------------------------------------------------------
 
 
 def _line_number(line_index: int) -> int:
@@ -257,16 +223,6 @@ def _near_miss_lines(
     pattern: list[str],
     limit: int = 3,
 ) -> list[tuple[int, int]]:
-    """Best guesses for where ``pattern`` was meant to go: ``(line, score)``.
-
-    A failed chunk currently reports the expected text and nothing about the
-    file, so the model has to re-read the whole file to find out what moved.
-    Scoring every offset by how many leading lines still match — under the same
-    whitespace tolerance ``seek_sequence`` uses — turns that into one line
-    number it can act on immediately. Scores are counted on the first line of
-    each non-empty pattern line so a single stale line early in the block does
-    not sink an otherwise obvious location.
-    """
     if not pattern or not original_lines:
         return []
     probe = next((line for line in pattern if line.strip()), pattern[0])
@@ -274,16 +230,10 @@ def _near_miss_lines(
     for index, line in enumerate(original_lines):
         score = 0
         for mode in (0, 1, 2, 3):
-            # Same mode on both sides: comparing a normalized file line against
-            # the raw probe would call "x  " and "x" different at mode 0.
             if _match_mode(mode, line) == _match_mode(mode, probe):
                 score = 4 - mode
                 break
         if not score:
-            # Fall back to the longest shared prefix, ignoring whitespace and
-            # case, so the hint survives a word edited inside the line
-            # ("beta" vs "betta"). Requiring half the shorter string keeps a
-            # coincidental two-character opener from matching everything.
             left = line.strip().casefold()
             right = probe.strip().casefold()
             shortest = min(len(left), len(right))
@@ -316,7 +266,6 @@ def _other_match_lines(
     eof: bool,
     limit: int = 3,
 ) -> list[int]:
-    """Line numbers of further matches for an already-applied chunk pattern."""
     if not pattern:
         return []
     found: list[int] = []
@@ -335,16 +284,6 @@ def _compute_replacements(
     display_path: str,
     chunks: list[UpdateFileChunk],
 ) -> tuple[list[tuple[int, int, list[str]]], list[str]]:
-    """Locate every chunk. Returns replacements plus ambiguity notes.
-
-    ``seek_sequence`` takes the first match at or after the cursor, which is the
-    Codex contract and usually right: earlier chunks move the cursor past text
-    that has already been used. It is a guess when a chunk carries no
-    ``change_context`` and its block occurs again later in the file — the patch
-    then edits one of several identical regions with nothing in the patch
-    saying which. That case is reported rather than silently resolved, so the
-    caller can confirm the intended region without re-reading the file.
-    """
     replacements: list[tuple[int, int, list[str]]] = []
     notes: list[str] = []
     line_index = 0
@@ -366,8 +305,6 @@ def _compute_replacements(
         pattern = list(chunk.old_lines)
         found = seek_sequence(original_lines, pattern, line_index, chunk.is_end_of_file)
         if found is None and pattern and pattern[-1] == "":
-            # Trailing empty element represents the region's terminating
-            # newline; retry without it so EOF edits can be located.
             pattern = pattern[:-1]
             found = seek_sequence(original_lines, pattern, line_index, chunk.is_end_of_file)
         if found is None:
@@ -407,7 +344,6 @@ def _apply_replacements(
 
 
 def apply_patch_text(patch: str, root: Path, *, before_write=None) -> str:
-    """Parse and apply ``patch`` confined to ``root``; return a summary."""
     from app.agent_runtime.coding_tools import WorkspaceSpace
 
     space = WorkspaceSpace(root)
@@ -457,7 +393,6 @@ def apply_patch_text(patch: str, root: Path, *, before_write=None) -> str:
                 reports.append(f"Update {display} -> {space.display(final_target)}")
             else:
                 reports.append(f"Update {display}: {len(hunk.chunks)} chunk(s)")
-    # Parse and resolve every hunk before recording undo history or changing files.
     for path, content in changes.items():
         if before_write is not None:
             before_write(path, existed=path.exists())

@@ -8,7 +8,7 @@ const turns = [{
   trajectory: [
     {
       kind: 'tool', callId: 'parent-agent-1', name: 'Agent', state: 'done',
-      text: JSON.stringify({ task: '审查 Claude 设置页信息架构', readonly: true }),
+      text: JSON.stringify({ task: '审查 Studio 设置页信息架构', readonly: true }),
       result: '[subagent id=child-a status=completed steps=3]\n检查完成，设置分为模型、权限和扩展。',
       usedBackend: 'subagent_loop',
       latencyMs: 8120,
@@ -42,7 +42,7 @@ assert.strictEqual(tasks[0].status, 'running');
 assert.strictEqual(tasks[0].stepCount, 2);
 assert.strictEqual(tasks[0].currentTool, 'Read');
 assert.strictEqual(tasks[0].steps[1].status, 'running');
-assert.strictEqual(tasks[1].description, '审查 Claude 设置页信息架构');
+assert.strictEqual(tasks[1].description, '审查 Studio 设置页信息架构');
 assert.strictEqual(tasks[1].status, 'completed');
 assert.strictEqual(tasks[1].stepCount, 3);
 assert(tasks[1].summary.includes('检查完成'));

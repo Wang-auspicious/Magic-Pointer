@@ -1,10 +1,3 @@
-"""Tests for latency budget infrastructure (harness gap review L8).
-
-Covers: enum surfaces, the six-stage default budget table with exact values
-from the review, within/overrun judgement including the exact boundary,
-overrun accounting, custom budget override, missing-stage errors, frozen
-dataclasses, and remaining_ms semantics.
-"""
 
 import dataclasses
 

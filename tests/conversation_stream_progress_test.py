@@ -1,12 +1,3 @@
-"""Studio 流式正文 / 停止 / 插话的桥端协议。
-
-三个用户可见行为的契约（GUI 侧消费同一协议）：
-- answer_chunk：model_chunk 的正文增量以 base64 走 @@mp 进度行，节流合并，
-  尾巴在 turn 边界前必须冲出去；
-- session_ready：携带 sid=，渲染层由此拿到 durable session id 用于停止/插话；
-- plan 推送走 mark_blob，不受 _token 120 字符截断（多步计划此前必然被截断，
-  decodePlanToken 静默失败，计划卡消失）。
-"""
 
 from __future__ import annotations
 
@@ -58,7 +49,7 @@ def _phase_chunks(stream: io.StringIO, phase: str) -> list[str]:
 
 def test_mark_blob_writes_verbatim_token_beyond_token_cap():
     clock, stream = _clock_with_stream()
-    blob = "A" * 500  # 远超 _token 的 120 字符截断
+    blob = "A" * 500
     clock.mark_blob("plan", blob)
     line = [l for l in stream.getvalue().splitlines() if "phase=plan" in l][0]
     assert f"b64={blob}" in line, "mark_blob must carry the full payload verbatim"
@@ -93,7 +84,7 @@ def test_activity_sink_flushes_tail_before_turn_boundary():
     clock, stream = _clock_with_stream()
     sink = conversation_bridge._ConversationActivitySink(clock)
     sink(SimpleNamespace(kind="turn_started", turn=1))
-    sink._last_chunk_flush = time.perf_counter()  # 刚冲过，节流窗口内
+    sink._last_chunk_flush = time.perf_counter()
     sink(SimpleNamespace(kind="model_chunk", text="尾巴"))
     assert not _answer_chunks(stream), "throttled chunk must not emit immediately"
     sink(SimpleNamespace(kind="tool_call_started", id="c1", name="run_command"))

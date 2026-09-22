@@ -1,12 +1,3 @@
-"""One verdict across two processes.
-
-The structured tier runs at pointerup, in the process that owns the frozen
-frame. The pixel tier runs when the user's command arrives, in a different
-process. Before providers existed those were two unrelated decisions: the first
-wrote a boolean, the second read it and replaced whatever the first had found.
-These tests pin the seam instead — the second stage rehydrates the first stage's
-observations, adds one more, and re-runs the same ranking.
-"""
 
 from __future__ import annotations
 
@@ -45,7 +36,6 @@ MARKED_LINE = "PS D:\\Desktop> npm run sync"
 
 
 class _ContainerNameAdapter:
-    """The 2026-08-04 console: UIA answers with the path to the program."""
 
     name = "uia_text_selection"
 
@@ -151,7 +141,6 @@ def _snapshot(tmp_path: Path, adapter: Any) -> dict[str, Any]:
 
 
 def _second_stage_context(snapshot: dict[str, Any]) -> AdapterReadContext | None:
-    """What the answer process actually receives: the snapshot's own context."""
     data = snapshot.get("context")
     return AdapterReadContext.from_dict(data) if isinstance(data, dict) else None
 
@@ -192,12 +181,10 @@ def test_a_container_name_from_the_first_stage_is_superseded_not_erased(
     assert context is not None
     assert context.content == MARKED_LINE
     assert context.adapter == "local_ocr"
-    # The structured read is still in the verdict, still saying what it was.
     kept = {item["layer"]: item for item in trace["observations"]}
     assert kept["uia"]["coversMark"] is False
     assert kept["uia"]["coverageReason"] == "identity_only"
     assert kept["ocr"]["coversMark"] is True
-    # A container name and a line of text are not two answers to one question.
     assert trace["conflicts"] == []
     assert [item["kind"] for item in trace["notes"]] == ["structured_superseded"]
     assert trace["selectedTier"] == "pixel"
@@ -224,7 +211,6 @@ def test_a_structured_read_of_the_marked_line_spends_no_ocr(monkeypatch, tmp_pat
 def test_without_a_capture_the_pixel_tier_reports_unsupported_and_reads_nothing(
     monkeypatch, tmp_path
 ) -> None:
-    """No frozen artifact is an honest gap, never a reason to grab the screen."""
     snapshot = _snapshot(tmp_path, _ContainerNameAdapter())
     snapshot["capture_path"] = None
 
@@ -236,8 +222,6 @@ def test_without_a_capture_the_pixel_tier_reports_unsupported_and_reads_nothing(
     )
 
     assert calls == []
-    # Nothing is invented to fill the gap: the context is the one the snapshot
-    # handed over, and the trace says which reader could not run and why.
     assert context is not None and context.content == ""
     pixel = [item for item in trace["observations"] if item["layer"] == "ocr"]
     assert [item["status"] for item in pixel] == ["unsupported"]

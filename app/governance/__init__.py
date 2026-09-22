@@ -1,7 +1,3 @@
-"""Governance infrastructure: latency budgets and cancellation (review L8).
-
-Pure Python, stdlib-only. No I/O, no Electron coupling, no UI automation.
-"""
 
 from .cancellation import (
     CancellationRegistry,

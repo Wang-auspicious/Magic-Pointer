@@ -1,10 +1,3 @@
-"""Tests for the Anchor model (harness gap review L3).
-
-Covers: build_anchor construction and validation, the five-way
-AnchorResolution discriminant union with resolution_name, the >=2 candidates
-invariant of ResolutionAmbiguous, strict to_dict/from_dict serialization, and
-immutability of the Anchor dataclass.
-"""
 
 import dataclasses
 

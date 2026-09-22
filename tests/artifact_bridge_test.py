@@ -1,4 +1,3 @@
-"""The UI artifact bridge edits, approves, applies, and reports one revision."""
 
 from __future__ import annotations
 

@@ -1,23 +1,10 @@
-"""Model profiles: per-model context windows and quirks (Codex model_family port).
-
-Codex keeps a ``model_family`` table so turn budgets, compaction thresholds
-and output limits adapt to the model actually configured instead of assuming
-one size. MP's equivalent: the compaction budget was a flat 64000 tokens for
-every model — too small for 200k+ models (compaction fires far too early,
-wasting context) and dangerous for 32k ones. The explicit
-``MAGIC_POINTER_CONTEXT_TOKENS`` env always wins; otherwise the profile table
-decides, falling back to the historical 64000 for unknown models.
-"""
 
 from __future__ import annotations
 
 __all__ = ["context_window_for", "context_budget_for"]
 
 _DEFAULT_CONTEXT_WINDOW = 64_000
-"""Historical MP default; also the fallback for unknown models."""
 
-# Longest-prefix match against the configured model id. Numbers are
-# conservative public context windows (input tokens) per family.
 _CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
     ("gemini-2", 1_000_000),
     ("gemini-3", 1_000_000),
@@ -68,7 +55,6 @@ _CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
 )
 
 def context_window_for(model_name: str | None, default: int = _DEFAULT_CONTEXT_WINDOW) -> int:
-    """Best-known context window using a real longest-prefix match."""
     name = str(model_name or "").casefold().strip()
     if not name:
         return default
@@ -83,17 +69,6 @@ def context_window_for(model_name: str | None, default: int = _DEFAULT_CONTEXT_W
 
 
 def context_budget_for(model_name: str | None, configured: int | None = None) -> int:
-    """Model window: explicit config wins, else profile-derived.
-
-    ``configured`` is the raw row value (env override or the historical
-    64000 default). Because the env default cannot be distinguished from "no
-    override" at this layer, an unset env yields ``None`` from the bundle;
-    only an explicit value pins the budget.
-
-    This returns the window itself. The proactive safety margin lives only in
-    ``loop._PROACTIVE_COMPACT_RATIO``; applying it here too used to multiply
-    two 0.7 margins and discard half of every known model window.
-    """
     if configured is not None and int(configured) > 0:
         return int(configured)
     window = context_window_for(model_name)

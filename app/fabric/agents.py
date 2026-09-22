@@ -81,7 +81,6 @@ def _valid_cwd(value: str) -> str:
 
 
 class AgentConnectorRegistry:
-    """Build argv/stdin contracts without a shell or prompt interpolation."""
 
     def build(
         self,

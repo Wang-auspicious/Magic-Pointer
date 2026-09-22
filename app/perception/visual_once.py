@@ -1,8 +1,3 @@
-"""One frozen-frame look when fusion did not cover the mark.
-
-This is not Vision in the perception fan-out. Conversation turns without a
-frozen crop stay honest: they never call look from here.
-"""
 
 from __future__ import annotations
 
@@ -56,16 +51,6 @@ def _ltrb_anchor(left: Any, top: Any, right: Any, bottom: Any) -> str | None:
 
 
 def _material_look_anchor(material: Any) -> str | None:
-    """一笔材料该往哪儿看：它落在的那个窗口，不是它自己那一条细框。
-
-    按 `reference:<snapshotId>:<index>` 看，等于把「这一行」从上下文里剪下来
-    递给视觉模型：它认不出这是微信还是网页，也认不出在哪个会话里，圈里是个什么
-    图标更是无从推断。窗口是这一笔归属的证据，取它不需要模型做任何换算——
-    `source_window.bbox` 是窗口自己报的 LTRB 物理屏幕坐标，和冻结面同一套。
-
-    笔画落在没有窗口的地方（桌面一角）时退回这一笔自己的选区：给一小块，也胜过
-    什么都不看。
-    """
     if not isinstance(material, dict):
         return None
     window = material.get("source_window")
@@ -90,11 +75,6 @@ def _uncovered_material_anchors(
     has_frozen_capture: bool,
     has_vision: bool,
 ) -> list[tuple[str, tuple[int, ...]]]:
-    """没有读到内容的那几笔，按锚点归并：同一块地方只问一次视觉。
-
-    多笔落在同一个窗口是常态（圈一段、再圈旁边一个附件）。每一笔各问一次，问的
-    还是同一张窗口图——同样的像素、同样的钱，换来的是同一个答案的三份抄本。
-    """
     groups: dict[str, list[int]] = {}
     order: list[str] = []
     for index, material in enumerate(materials):
@@ -118,7 +98,6 @@ def _uncovered_material_anchors(
 
 
 def _material_names(indexes: Sequence[int]) -> str:
-    """和图上的字母用同一句 `chr(ord("A") + index)`，两处必须一起改。"""
     return ", ".join(chr(ord("A") + index) for index in indexes)
 
 
@@ -165,9 +144,6 @@ def attach_look_once_if_needed(
         )
         if not windows:
             return artifact
-        # Look owns one per-run quota and declares itself non-concurrent.
-        # Anchor order still follows stroke order, so the facts read in the
-        # order the user drew.
         facts = []
         for anchor, indexes in windows:
             fact = fact_from_look(look(anchor))

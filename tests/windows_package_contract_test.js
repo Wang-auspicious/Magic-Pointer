@@ -1,6 +1,5 @@
 'use strict';
 
-// Static configuration guard only. This does not install or launch a package.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -217,9 +216,6 @@ assert(
   'Fabric smoke must honor the isolated writable user-data directory',
 );
 
-// 1.0.24 真机事故：selection_worker.py 被 electron 源码引用却没进打包
-// 白名单 → 安装版 Stage 必挂 selection_worker_exited。契约：electron 源码
-// 引用的每个运行时脚本都必须出现在 electron-builder.yml 的 files 里。
 {
   const electronDir = path.join(root, 'electron');
   const referenced = new Set();

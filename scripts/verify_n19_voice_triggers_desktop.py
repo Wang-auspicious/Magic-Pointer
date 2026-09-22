@@ -1,11 +1,5 @@
 from __future__ import annotations
 
-"""Real Windows acceptance for N19 mouse-driven voice start strategies.
-
-The harness uses a physical Windows cursor/button transition and the shipped
-native pointer stream (stage:pointer-input).  CDP is read-only and is used only
-to locate the real Stage capsule for the hover scenario.
-"""
 
 import ctypes
 from datetime import datetime, timezone

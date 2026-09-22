@@ -1,15 +1,3 @@
-"""Task-scoped, ordered chat-history reader for public application surfaces.
-
-The reader deliberately knows nothing about WeChat or DingTalk widgets.  A
-backend pages the currently bound conversation through its public UI surface
-and returns raw message observations.  This layer verifies conversation
-identity on every page, merges only adjacent page overlap, and turns attachment
-cards into child ``SourceRef`` objects.
-
-No message fingerprint is computed.  Native message ids are used when the app
-exposes them; otherwise duplicate visible messages remain duplicate unless an
-entire ordered suffix/prefix proves that two adjacent pages overlap.
-"""
 
 from __future__ import annotations
 
@@ -27,22 +15,11 @@ from .sources import Coverage, FragmentLocator, ReadFragment, ReadResult, Source
 
 
 class ChatHistoryBackend(Protocol):
-    """One public-surface page read, optionally after app-level navigation."""
 
     def read_chat_page(self, **request: Any) -> Mapping[str, Any]: ...
 
 
 def _window_xywh(window: Mapping[str, Any]) -> tuple[int, int, int, int] | None:
-    """会话窗口的 (x, y, width, height)。
-
-    `_live_windows` 发出来的 `rect` / `bbox` 是 `GetWindowRect` 与 DWM 扩展边框
-    的 `(left, top, right, bottom)`。同一个名字在别处（选区、元素句柄）指的是
-    `(x, y, width, height)`，所以这里必须按 LTRB 解、解完再换算。
-
-    不换算的后果不是「差一点」：一个 1130..2626 的窗口会被读成 1130..3756，
-    滚动点落到窗口外，`target_region` 也落到窗口外——探针拿一个屏幕上根本不存在
-    的区域去读，读回来的是「没东西」，而调用方看到的是「这个会话没有内容」。
-    """
     raw = window.get("rect") or window.get("bbox")
     if not isinstance(raw, (list, tuple)) or len(raw) != 4:
         return None
@@ -57,7 +34,6 @@ def _window_xywh(window: Mapping[str, Any]) -> tuple[int, int, int, int] | None:
 
 
 class DesktopChatNavigator:
-    """Recorded upward-scroll action against one exact chat window."""
 
     def __init__(self, session: Any, *, wheel_delta: int = 6) -> None:
         self._session = session
@@ -93,8 +69,6 @@ class DesktopChatNavigator:
                 y=top + max(1, height // 2),
                 dy=self._wheel_delta,
             ))
-            # Give a self-drawn surface one paint frame before the adapter reads
-            # it again. This is bounded UI synchronization, not a polling loop.
             time.sleep(0.12)
             return {
                 "ok": True,
@@ -110,13 +84,6 @@ class DesktopChatNavigator:
 
 
 class SurfaceChatHistoryBackend:
-    """Read the current public UI surface through registered chat adapters.
-
-    This default backend never enters a private message database and never
-    silently scrolls the user's application. A host may inject a recorded
-    ``navigate`` action; without one, the result honestly reports that only the
-    current viewport was inspected and points the model to Observe/Scroll.
-    """
 
     def __init__(
         self,
@@ -227,8 +194,6 @@ class SurfaceChatHistoryBackend:
                     "limitations": [str(navigation.get("error") or "history-navigation-failed")],
                     "usedBackend": navigation_backend,
                 }
-            # A navigation action can change the foreground or conversation;
-            # refresh the exact bound HWND before resolving the new viewport.
             windows = [
                 dict(item) for item in list(self._windows_probe() or ())
                 if isinstance(item, Mapping)
@@ -305,9 +270,6 @@ class SurfaceChatHistoryBackend:
             self._last_pages[source_id] = page_keys
         boundary = navigation.get("atBoundary") is True
         if cursor is not None and previous_keys == page_keys and page_keys:
-            # With native ids this proves the same viewport. Without them the
-            # page may genuinely contain repeated short replies, so stop but do
-            # not claim complete history.
             if all(str(item.get("nativeMessageId") or "").strip() for item in messages):
                 boundary = True
             else:
@@ -334,9 +296,6 @@ class SurfaceChatHistoryBackend:
         return {
             "conversationIdentity": actual,
             "messages": messages,
-            # Public UIA has no trustworthy history-boundary signal. A host
-            # with a navigator supplies the next cursor; otherwise the current
-            # viewport is explicitly partial.
             "pagePosition": "before" if cursor is not None else "initial",
             "navigationReceipt": copy.deepcopy(navigation.get("receipt")),
             "complete": complete,
@@ -376,8 +335,6 @@ def _conversation_identity(source: SourceRef) -> dict[str, Any]:
     identity = _mapping(value)
     if not str(identity.get("adapterId") or "").strip():
         raise ValueError("chat source requires conversationIdentity.adapterId")
-    # A title is display metadata, never identity.  The adapter must bind at
-    # least an app/session surface key or a native conversation id.
     if not any(
         str(identity.get(field) or "").strip()
         for field in ("conversationKey", "nativeConversationId")
@@ -437,7 +394,6 @@ def _message_overlap_key(message: Mapping[str, Any]) -> tuple[Any, ...]:
 
 
 def _adjacent_overlap(previous: list[dict[str, Any]], current: list[dict[str, Any]]) -> int:
-    """Largest exact ordered suffix/prefix overlap between adjacent pages."""
     maximum = min(len(previous), len(current))
     for size in range(maximum, 0, -1):
         if [
@@ -455,7 +411,6 @@ def _safe_component(value: str, *, fallback: str) -> str:
 
 
 class ChatReader:
-    """Read and search a bound conversation without confusing equal titles."""
 
     def __init__(self, backend: ChatHistoryBackend, *, max_pages: int = 100) -> None:
         if max_pages < 1:
@@ -541,10 +496,6 @@ class ChatReader:
                 for key in ("nativeAttachmentId", "versionLabel", "size")
                 if key in identity
             }
-            # A discovered but unopened card is a real source identity, but it
-            # is not yet readable.  A public URL/local path makes it followable
-            # by the normal document/file channel; downloading remains an
-            # explicit desktop action and is not hidden inside Context.follow.
             readable = bool(identity.get("absolutePath"))
             if not readable and identity.get("url"):
                 identity["downloadState"] = "requires-download"
@@ -817,8 +768,6 @@ class ChatReader:
         )
         if len(fragments) <= wanted:
             return result
-        # Retain the already acquired viewport/history. Scrolling again to
-        # recover discarded hits would change the public application surface.
         self._result_sequence += 1
         key = str(self._result_sequence)
         self._result_pages[key] = (page_scope, result)
@@ -827,9 +776,6 @@ class ChatReader:
         return self._result_page(result, key, 0, wanted)
 
     def describe(self, source: SourceRef) -> ReadResult:
-        # A bounded first-page read is a useful description: it reports the
-        # bound source's real backend and, critically, whether more history is
-        # available instead of presenting the visible viewport as the whole chat.
         return self._scan(source, locator=None, query=None, cursor=None, limit=1)
 
     def read(

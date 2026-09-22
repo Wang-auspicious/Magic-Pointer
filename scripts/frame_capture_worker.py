@@ -1,23 +1,3 @@
-"""Idle resident frame capture worker.
-
-Arms a bounded in-memory ring of timestamped desktop frames on demand and
-commits exactly one immutable PNG artifact per gesture epoch. The worker stays
-idle (zero captures) between arm and commit; capture only starts for the active
-epoch and stops the moment the epoch is committed or cancelled.
-
-Protocol (newline-delimited JSON on stdio):
-  -> {"id": 1, "method": "ping"}
-  -> {"id": 2, "method": "arm", "params": {"epochId": ..., "displayId": ...,
-      "scaleFactor": ..., "surfaceBoundsPx": [l, t, r, b],
-      "targetWindow": {...}, "overlayExcluded": true}}
-  -> {"id": 3, "method": "commit", "params": {"epochId": ..., "gesture": {...}}}
-  -> {"id": 4, "method": "cancel", "params": {"epochId": ...}}
-  -> {"id": 5, "method": "shutdown"}
-  <- {"id": ..., "result": {...}} | {"id": ..., "error": {"code": ..., "message": ...}}
-
-The first production backend is Pillow/ImageGrab and reports ``gdi-fallback``
-honestly; it is a contract placeholder until a WGC/D3D provider lands.
-"""
 
 from __future__ import annotations
 
@@ -75,7 +55,6 @@ class CaptureBackend(Protocol):
 
 
 class PillowDisplayCaptureBackend:
-    """Desktop grab via Pillow ImageGrab; reports the honest gdi-fallback source."""
 
     source = "gdi-fallback"
 
@@ -87,7 +66,6 @@ class PillowDisplayCaptureBackend:
 
 
 class SolidColorTestBackend:
-    """Deterministic solid-color frames for subprocess protocol tests."""
 
     source = "test"
 
@@ -105,7 +83,6 @@ class SolidColorTestBackend:
 
 
 def initialize_capture_process(*, enable_dpi, create_backend):
-    """Enter physical-coordinate mode before a capture backend can exist."""
 
     enable_dpi()
     return create_backend()
@@ -120,7 +97,6 @@ def _err(rid: Any, code: str, message: str) -> dict[str, Any]:
 
 
 class FrameCaptureService:
-    """Arm/commit/cancel state machine independent of stdio."""
 
     def __init__(
         self,
@@ -142,7 +118,6 @@ class FrameCaptureService:
         self._ring: deque[tuple[float, Any]] | None = None
         self._thread: threading.Thread | None = None
 
-    # -- RPC entry ---------------------------------------------------------
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         rid = request.get("id")
@@ -175,7 +150,6 @@ class FrameCaptureService:
         except Exception as exc:  # noqa: BLE001 - the boundary answers every request
             return _err(rid, "internal_error", str(exc))
 
-    # -- state machine -----------------------------------------------------
 
     def arm(self, params: dict[str, Any]) -> None:
         epoch_id = str(params.get("epochId") or "").strip()
@@ -217,7 +191,6 @@ class FrameCaptureService:
                 self._thread.start()
 
     def capture_once_for_test(self) -> bool:
-        """Synchronous single capture for deterministic tests; no-op when idle."""
         with self._lock:
             if self._stop.is_set() or self._epoch is None:
                 return False
@@ -258,29 +231,18 @@ class FrameCaptureService:
     def close(self) -> None:
         self.cancel({})
 
-    # -- internals ---------------------------------------------------------
 
     def _capture_loop(self) -> None:
-        # Bind this thread to the stop event and epoch it started with.
-        # ``arm`` replaces ``self._stop`` with a fresh event on re-arm; a
-        # thread that keeps reading the attribute would latch onto the NEW
-        # unset event and keep grabbing forever (writing into the new ring),
-        # stacking one zombie capture loop per re-arm (bridge-audit P1).
         stop = self._stop
         while not stop.is_set():
             with self._lock:
                 if stop.is_set() or self._epoch is None:
                     break
                 if self._stop is not stop:
-                    # A newer arm replaced the stop event: this loop is stale.
                     break
                 epoch = self._epoch
                 ring = self._ring
                 bounds = epoch["surfaceBoundsPx"]
-            # Grab OUTSIDE the lock: a slow ImageGrab must not stall
-            # arm/commit/cancel, and the frame's timestamp is the grab
-            # COMPLETION time so commit only selects captures that finished
-            # before pointerup (a grab still running at commit is dropped).
             image = self._backend.capture(bounds)
             captured_at = self._clock.monotonic()
             with self._lock:
@@ -300,13 +262,6 @@ class FrameCaptureService:
         return entry
 
     def _stop_epoch_locked(self) -> None:
-        """Set the stop flag and detach the capture thread.
-
-        The detached thread is never joined: it checks ``_stop`` after its
-        grab and its append is epoch-identity guarded, so it cannot pollute
-        the next epoch. A join (even outside the lock) would stall
-        arm/commit for the duration of a slow in-flight grab.
-        """
         self._stop.set()
         self._thread = None
 
@@ -332,9 +287,6 @@ class FrameCaptureService:
             "schemaVersion": 1,
             "frameLeaseId": f"frame-{uuid.uuid4().hex[:16]}",
             "epochId": epoch["epochId"],
-            # The worker clock is monotonic SECONDS; the lease field is named
-            # Ms, so convert explicitly. Values are only comparable within
-            # this worker process (each process has its own monotonic origin).
             "capturedAtMonotonicMs": int(captured_at * 1000.0),
             "capturedAtUtc": self._clock.utc_iso(),
             "source": self._backend.source,
@@ -371,9 +323,6 @@ def main(argv: list[str] | None = None) -> int:
     def create_backend() -> CaptureBackend:
         if args.backend == "test":
             return SolidColorTestBackend()
-        # CaptureProvider contract (Phase B): the requested source, or an
-        # honest GDI fallback — the lease always declares what it actually
-        # used, so a fallback never pretends to be WGC.
         from app.capture import provider_for
 
         provider = provider_for(args.backend)

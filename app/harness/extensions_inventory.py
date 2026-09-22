@@ -1,9 +1,3 @@
-"""Read configured extensions without importing plugins or connecting MCP.
-
-Configured is a filesystem/configuration fact, not an activation or connection
-verdict. Only identity and display metadata leave this module; executable
-arguments, environment values and transport credentials remain in their files.
-"""
 
 from __future__ import annotations
 
@@ -31,8 +25,6 @@ def _plugins(directory: Path) -> dict[str, Any]:
             continue
         manifest = entry / "plugin.json"
         module = entry / "plugin.py"
-        # Skills are a separate runtime facility; a SKILL.md alone is not a
-        # plugin row. Optional manifests and plugin.py are the real contract.
         if not linked and not manifest.exists() and not module.exists():
             continue
         row = {"id": entry.name, "name": entry.name, "description": "", "path": str(entry), "status": "configured"}

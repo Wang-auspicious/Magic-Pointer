@@ -1,4 +1,3 @@
-"""Batch 3 integration: privacy gate -> ledger -> repair flow -> bench report."""
 
 from __future__ import annotations
 

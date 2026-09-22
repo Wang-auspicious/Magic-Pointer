@@ -13,8 +13,6 @@ def test_native_text_selection_must_cover_the_supplied_pointer() -> None:
 
 def test_rejected_stale_selection_falls_through_to_element_from_point() -> None:
     rejection = SOURCE.index("RejectSelectionOutsideTargetPoint")
-    # 点探测现在走 `RunPointPhaseWithBudget`（自带墙钟预算，见
-    # tests/uia_probe_budget_test.py）：被拒掉的选中项照样要落到点探测上。
     point_fallback = SOURCE.index("RunPointPhaseWithBudget(root, targetPoint.Value, result)")
     assert rejection < point_fallback
 

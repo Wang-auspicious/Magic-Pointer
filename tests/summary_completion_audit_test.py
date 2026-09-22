@@ -1,4 +1,3 @@
-"""An incomplete model answer must never replace durable task history."""
 import pytest
 from app import ai_client
 from app.agent_runtime.compaction_prompt import summarize_history_text

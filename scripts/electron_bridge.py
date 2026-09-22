@@ -64,7 +64,6 @@ def _runtime_issue_mode(payload: dict[str, Any]) -> bool:
 
 
 def _capture_settings():
-    """Read the complete capture policy; fail closed if settings are unreadable."""
     settings_path = (
         Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or RUNTIME_DIR)
         / "fabric-settings.json"
@@ -215,12 +214,6 @@ def _read_payload() -> dict[str, Any]:
 
 
 def _coord_scale(payload: dict[str, Any]) -> float:
-    """Electron renderer sends CSS/DIP coordinates; PIL ImageGrab uses physical pixels.
-
-    On high-DPI Windows this is the difference between the user sweeping a file row
-    and the backend cropping the toolbar above it. Prefer Electron display scale;
-    fall back to renderer DPR for older payloads.
-    """
 
     try:
         scale = float(payload.get("scaleFactor") or 0)
@@ -235,8 +228,6 @@ def _coord_scale(payload: dict[str, Any]) -> float:
 
 
 def _capture_pad_px(payload: dict[str, Any]) -> int:
-    # capturePad is expressed in overlay/DIP units. Convert it with the same DPI
-    # scale as the pointer coordinates, otherwise the context crop is asymmetric.
     try:
         pad = float(payload.get("capturePad") or 54)
     except Exception:
@@ -292,12 +283,6 @@ def _display_rect_px(payload: dict[str, Any]) -> tuple[int, int, int, int] | Non
 
 
 def _expand_capture_bbox(selection_bbox: tuple[int, int, int, int], payload: dict[str, Any]) -> tuple[int, int, int, int]:
-    """Use a broader model crop than the exact stroke bbox.
-
-    A Magic Pointer stroke is a semantic target signal, not a screenshot rectangle.
-    Tiny filename/word sweeps need surrounding UI context for vision models to read
-    the whole row/line reliably. Keep object bbox precise, but send a wider crop.
-    """
 
     x1, y1, x2, y2 = selection_bbox
     scale = _coord_scale(payload)
@@ -315,7 +300,6 @@ def _expand_capture_bbox(selection_bbox: tuple[int, int, int, int], payload: dic
     display = _display_rect_px(payload)
     if display:
         dx1, dy1, dx2, dy2 = display
-        # Preserve requested size as much as possible while staying on-screen.
         if left < dx1:
             right += dx1 - left
             left = dx1
@@ -434,19 +418,12 @@ def _rect_center(r: tuple[int, int, int, int]) -> tuple[float, float]:
 
 
 def _estimate_row_candidates(raw_path: Path, bbox: tuple[int, int, int, int]) -> list[dict[str, Any]]:
-    """Dependency-free row/object candidates for list-like UIs.
-
-    This is not OCR. It finds horizontal bands with enough visual ink, which works
-    well for file lists, menus, tables, and document lines. OmniParser/OCR should
-    replace this later, but this already gives local stroke-aware grounding.
-    """
 
     import numpy as np
 
     with Image.open(raw_path).convert("L") as img:
         arr = np.array(img)
     h, w = arr.shape
-    # Edge/ink density: text/icons differ from background.
     gx = np.abs(np.diff(arr.astype("int16"), axis=1))
     row_score = gx.mean(axis=1)
     if row_score.max() <= 0:
@@ -465,7 +442,6 @@ def _estimate_row_candidates(raw_path: Path, bbox: tuple[int, int, int, int]) ->
     if start is not None and h - start >= 5:
         bands.append((start, h))
 
-    # Merge close fragments into UI rows.
     merged: list[tuple[int, int]] = []
     for a, b in bands:
         if merged and a - merged[-1][1] <= 10:
@@ -475,9 +451,8 @@ def _estimate_row_candidates(raw_path: Path, bbox: tuple[int, int, int, int]) ->
 
     candidates: list[dict[str, Any]] = []
     for idx, (a, b) in enumerate(merged, 1):
-        if b - a > 95:  # likely large toolbar/panel, not a row
+        if b - a > 95:
             continue
-        # Expand to a comfortable row height so stroke/center tests are stable.
         cy = (a + b) / 2
         row_h = max(28, min(58, (b - a) + 18))
         y1 = int(max(0, cy - row_h / 2))
@@ -505,7 +480,6 @@ def _score_stroke_candidates(points: list[tuple[int, int]], bbox: tuple[int, int
     for c in candidates:
         r = c["bbox_global"]
         assert isinstance(r, tuple)
-        # How many stroke samples hit the candidate row.
         hits = sum(1 for p in points if r[0] <= p[0] <= r[2] and r[1] <= p[1] <= r[3])
         hit_ratio = hits / max(1, len(points))
         center_dist = _dist_point_to_rect(stroke_center, r)
@@ -516,7 +490,6 @@ def _score_stroke_candidates(points: list[tuple[int, int]], bbox: tuple[int, int
             score += 4.0
         score += max(0.0, 2.5 - center_dist / 70.0)
         score += max(0.0, 1.8 - end_dist / 60.0)
-        # Prefer rows not spanning the very top toolbar if center is lower.
         if r[3] < stroke_box[1] - 20:
             score -= 2.0
         item = dict(c)

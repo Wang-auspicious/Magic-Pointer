@@ -1,4 +1,3 @@
-"""SourceReader for a browser document bound by instance, target and epoch."""
 
 from __future__ import annotations
 
@@ -13,13 +12,6 @@ class BrowserDocumentBackend(Protocol):
 
 
 class BrowserContextReader:
-    """Read screen-off DOM without selecting a tab by URL or title.
-
-    The SourceRef created at gesture time carries three independent identities:
-    browser instance, page target and document epoch. A navigation changes the
-    epoch, making every old node locator unusable before it can be rebound or
-    used by a write tool.
-    """
 
     def __init__(self, backend: BrowserDocumentBackend) -> None:
         self._backend = backend

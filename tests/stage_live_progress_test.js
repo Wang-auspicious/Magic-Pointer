@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const source = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 const stageHtml = fs.readFileSync('electron/renderer/stage.html', 'utf8');
-for (const dependency of ['claude_marks.js', 'dsh_highlight.js']) {
+for (const dependency of ['activity_marks.js', 'chat_highlight.js']) {
   assert.ok(stageHtml.includes(`src="${dependency}"`), `Stage must load the shared renderer dependency ${dependency}`);
 }
 const start = source.indexOf('  const runningCards = new Map');
@@ -20,7 +20,7 @@ const context = {
   state: { turns: [{ id: 7, status: 'pending' }] },
   resultCard: { querySelector: () => host },
   workPanelScroller: { scrollHeight: 1000, scrollTop: 80, clientHeight: 300 },
-  DshChat: {
+  ChatView: {
     createLiveTurn(node, scope) { assert.equal(node, host); liveScope = scope; creates++; return { update: value => updates.push(value) }; },
     bindDelegation() {},
   },
@@ -63,7 +63,7 @@ const structuredStart = source.indexOf('  function renderStructured(');
 const structuredEnd = source.indexOf('  function bindCardActions(', structuredStart);
 let finalScope;
 const structuredContext = {
-  DshChat: { assistantTurnNode: (_turn, scope) => { finalScope = scope; return []; }, bindDelegation() {} },
+  ChatView: { assistantTurnNode: (_turn, scope) => { finalScope = scope; return []; }, bindDelegation() {} },
 };
 vm.runInNewContext(ts.transpileModule(source.slice(structuredStart, structuredEnd), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },

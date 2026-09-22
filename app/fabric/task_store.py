@@ -27,7 +27,6 @@ _PROCESS_LOCKS_GUARD = threading.Lock()
 
 
 def _serialized_task_mutation(method: Callable[..., Any]) -> Callable[..., Any]:
-    """Serialize one task's read-modify-write cycle across threads/processes."""
 
     @wraps(method)
     def wrapped(self: "AgentTaskStore", task_id: str, *args: Any, **kwargs: Any) -> Any:
@@ -45,8 +44,6 @@ def _process_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":
-        # os.kill(pid, 0) is not a pure existence probe on Windows. Some
-        # Python 3.12 builds leave a chained exception pending for exited PIDs.
         try:
             import ctypes
             from ctypes import wintypes
@@ -65,7 +62,7 @@ def _process_alive(pid: int) -> bool:
                 exit_code = wintypes.DWORD()
                 if not kernel32.GetExitCodeProcess(process, ctypes.byref(exit_code)):
                     return False
-                return exit_code.value == 259  # STILL_ACTIVE
+                return exit_code.value == 259
             finally:
                 kernel32.CloseHandle(process)
         except (AttributeError, OSError, ValueError):
@@ -114,14 +111,6 @@ class AgentTaskStore:
 
     @contextmanager
     def _mutation_lock(self, task_id: str) -> Iterator[None]:
-        """Hold the per-task lock for an entire read-modify-write transition.
-
-        Atomic replacement prevents torn JSON, but it does not prevent two
-        processes from both reading ``running`` and then overwriting each
-        other's terminal state.  The companion lock file closes that race on
-        Windows and POSIX; the in-process RLock also coordinates independent
-        store instances in different threads.
-        """
         task_file = self._task_file(task_id)
         task_file.parent.mkdir(parents=True, exist_ok=True)
         lock_path = task_file.with_suffix(task_file.suffix + ".lock")
@@ -678,7 +667,6 @@ class AgentTaskStore:
 
     @_serialized_task_mutation
     def mark_steer_delivered(self, task_id: str, event_id: str) -> dict[str, Any]:
-        """Acknowledge that the live RPC child accepted one queued steering event."""
         value = self._read(task_id)
         delivered_at = _now()
         receipts = [
@@ -717,7 +705,6 @@ class AgentTaskStore:
         event_id: str,
         error: str,
     ) -> dict[str, Any]:
-        """Record a Pi RPC rejection without pretending the steering was delivered."""
         value = self._read(task_id)
         rejected_at = _now()
         clean_error = str(error or "steering rejected")[:2000]

@@ -1,7 +1,3 @@
-// Headless Studio probe for the 8·25 batch: Work label, titlebar context
-// removed, mode menu not clipped (design option clickable), file tree
-// fidelity (no chevron, source folder/file icons), and zero console errors.
-//   npx electron build/scripts/probe_studio_batch.js
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
@@ -32,18 +28,15 @@ app.whenReady().then(async () => {
     await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'studio.html'));
     await new Promise((r) => setTimeout(r, 1200));
 
-    // 1) 左上角模式名 = Work（不再是 Walker）。
     const modeLabel = await window.webContents.executeJavaScript(
       `document.getElementById('mode-switch-label').textContent`,
     );
     out.push(`modeLabel=${modeLabel}`);
 
-    // 2) 标题栏右上角不再有项目名上下文占位。
     out.push(`hasTitlebarContext=${await window.webContents.executeJavaScript(
       `!!document.getElementById('window-project-context')`,
     )}`);
 
-    // 3) 打开模式菜单：Design 选项可见且可点（不再被新对话按钮盖住）。
     await window.webContents.executeJavaScript(
       `document.getElementById('mode-switch').click()`,
     );
@@ -60,8 +53,6 @@ app.whenReady().then(async () => {
       })()
     `)}`);
 
-    // 4) boot 已通过 projects.list 激活项目；打开 Inspector 文件树：
-    //    目录行不再有 chevron，保留源的文件夹/文件图标。
     await window.webContents.executeJavaScript(
       `document.getElementById('inspector-toggle').click(); 'clicked'`,
     );

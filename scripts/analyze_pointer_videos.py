@@ -44,8 +44,6 @@ def _components(mask: np.ndarray):
 def cursor_candidates(frame: np.ndarray, prev: np.ndarray | None, scale: float = 0.25) -> list[Candidate]:
     small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-    # Standard cursor in the captured demos is mostly white with a dark edge.
-    # Limit to compact white components, then score by local contrast and motion.
     b, g, r = cv2.split(small)
     white = ((r > 215) & (g > 215) & (b > 215)).astype(np.uint8) * 255
     white = cv2.morphologyEx(white, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
@@ -72,7 +70,6 @@ def cursor_candidates(frame: np.ndarray, prev: np.ndarray | None, scale: float =
             continue
         contrast = float(patch.std())
         motion = float(dpatch.mean())
-        # Cursor-like components are compact, high-contrast, and often moving.
         compact_penalty = abs(w - h) * 0.08 + area * 0.002
         score = contrast * 0.9 + motion * 2.2 - compact_penalty
         cands.append(Candidate(cx / scale, cy / scale, score, area, int(w/scale), int(h/scale), motion, contrast))
@@ -89,7 +86,6 @@ def choose_path(all_cands: list[list[Candidate]], frame_w: int, frame_h: int) ->
         chosen = None
         if viable:
             if last is None or missing > 12:
-                # Prefer high score but avoid exact corners/status text by weak center prior.
                 def start_score(c: Candidate) -> float:
                     dx = (c.x - frame_w * 0.5) / frame_w
                     dy = (c.y - frame_h * 0.5) / frame_h
@@ -115,7 +111,6 @@ def choose_path(all_cands: list[list[Candidate]], frame_w: int, frame_h: int) ->
 
 def smooth_path(path: list[Candidate | None]) -> list[tuple[float | None, float | None]]:
     pts: list[tuple[float | None, float | None]] = [(p.x, p.y) if p else (None, None) for p in path]
-    # Median smoothing over visible spans.
     out = []
     for i, (x, y) in enumerate(pts):
         if x is None:
@@ -130,7 +125,6 @@ def smooth_path(path: list[Candidate | None]) -> list[tuple[float | None, float 
 
 
 def make_overlay(video: Path, frames: list[np.ndarray], smooth: list[tuple[float | None, float | None]], motion_scores: list[float]) -> Path:
-    # Downscaled temporal median background keeps this fast and readable.
     ds = 0.35
     picks = np.linspace(0, len(frames)-1, min(18, len(frames))).astype(int)
     smalls = [cv2.resize(frames[i], None, fx=ds, fy=ds, interpolation=cv2.INTER_AREA) for i in picks]
@@ -138,10 +132,9 @@ def make_overlay(video: Path, frames: list[np.ndarray], smooth: list[tuple[float
     overlay = bg.copy()
     pts = [(int(x*ds), int(y*ds)) for x, y in smooth if x is not None and y is not None]
     if len(pts) >= 2:
-        # Draw full trajectory with time gradient.
         for k in range(1, len(pts)):
             t = k / max(1, len(pts)-1)
-            color = (int(255 * (1-t)), int(120 + 100*t), 255)  # BGR purple->cyan-ish
+            color = (int(255 * (1-t)), int(120 + 100*t), 255)
             cv2.line(overlay, pts[k-1], pts[k], color, 4, cv2.LINE_AA)
         for k in range(0, len(pts), max(1, len(pts)//30)):
             cv2.circle(overlay, pts[k], 10, (255, 255, 255), 2, cv2.LINE_AA)
@@ -194,7 +187,6 @@ def analyze_video(video: Path) -> dict:
                 0 if p is None else 1,
             ])
     overlay_path = make_overlay(video, frames, smooth, motion_scores)
-    # Event segmentation by motion peaks and cursor visible spans.
     visible = [i for i, p in enumerate(path) if p is not None]
     spans = []
     if visible:

@@ -1,4 +1,3 @@
-"""A permission wait must bind the real call before any side effect."""
 import asyncio
 import pytest
 
@@ -63,7 +62,6 @@ def test_approved_action_executes_exactly_before_next_model_and_survives_restart
     assert writes == ['approved'], [(result.value, result.failure_type) for result in terminal.results]
     assert terminal.reason.value == 'completed'
     assert session.pending_user_input() is None
-    # A later turn must not replay the already settled approval.
     asyncio.run(collect(make_params(registry=registry, session=store.resume(session.id, repair=False),
         permission_mode='safe', allowed_effects=(Effect.READ, Effect.REVERSIBLE_WRITE))))
     assert writes == ['approved']

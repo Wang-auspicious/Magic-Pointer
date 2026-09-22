@@ -15,8 +15,6 @@ const event = { id: 'selection-c1', turnIndex: 0, liveProgress: { answer: 'parti
 receive(event);
 assert.equal(observed, event, 'Data must preserve the conversation id and live snapshot');
 
-/* Windows 检出（core.autocrlf=true）下 studio.ts 是 CRLF，下面用 '\n}\n' 定位函数
-   结尾会一条都匹配不到、切出空片段，测试就以「不是函数」这种和真实缺陷无关的方式失败。 */
 const studio = fs.readFileSync('electron/renderer/studio.ts', 'utf8').replace(/\r\n/g, '\n');
 const start = studio.indexOf('async function refreshOpenConversation(');
 assert.ok(start >= 0, 'conversation changes must update the current open conversation');

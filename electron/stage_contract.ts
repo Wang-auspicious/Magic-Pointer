@@ -1,7 +1,3 @@
-// Pure contract between Electron main and PointerStage.
-// It deliberately strips bridge payloads down to render-safe fields and action
-// tokens; raw screenshots, native handles, prompts, and proposal parameters do
-// not cross into the renderer.
 
 const { captureProof, proofSummary } = require('./capture_proof_policy');
 
@@ -55,9 +51,6 @@ function modelUsageFromBridge(value: unknown): UnknownRecord | null {
 }
 
 function ledgerFromBridge(value: unknown): UnknownRecord | null {
-  // The interaction bill (O6): only render-safe facts cross the boundary —
-  // rounds, token counts, outcome. Raw session events, stage latency maps
-  // and egress ids stay in main.
   const raw = recordOf(value);
   if (!Object.keys(raw).length) return null;
   const ledger: UnknownRecord = {};
@@ -78,18 +71,12 @@ const CHIP_COMMANDS = Object.freeze({
   summarize: '总结这段文字',
   compare: '对比这个和上一个对象',
   tidy: '整理这个对象',
-  'add-to-calendar': '添加到日历',
 });
 
 const ACTION_LABELS = Object.freeze({
   copy_text_to_clipboard: '确认复制',
   office_replace_selection: '确认替换',
   office_undo_last_action: '撤回本次修改',
-  shopping_list_add: '加入购物清单',
-  shopping_list_set_checked: '更新清单',
-  shopping_list_undo_add: '撤回添加',
-  calendar_event_create: '确认创建日程',
-  calendar_event_undo_create: '撤回日程',
   paste_text_to_foreground: '填入草稿',
   fabric_recipe_execute: '确认执行',
 });
@@ -167,33 +154,6 @@ function executionReceipt(parsed: UnknownRecord) {
   };
 }
 
-function calendarResult(parsed: UnknownRecord, actions: UnknownRecord[]) {
-  const draft = recordOf(parsed.calendarDraft);
-  const event = recordOf(draft.event);
-  const warnings = Array.isArray(draft.warnings) ? draft.warnings.map(String).filter(Boolean) : [];
-  return {
-    kind: 'calendar-draft',
-    title: String(event.title || draft.title || '未命名日程'),
-    start: String(event.start_at || [
-      draft.date,
-      draft.start_time,
-    ].filter(Boolean).join(' ')),
-    end: String(event.end_at || [
-      draft.date,
-      draft.end_time,
-    ].filter(Boolean).join(' ')),
-    location: String(event.location || draft.location || ''),
-    conflict: warnings.join('；'),
-    status: 'draft',
-    statusLabel: '草稿，尚未创建',
-    actions: [{
-      kind: 'context',
-      id: 'open-calendar-draft',
-      label: '审核并创建',
-    }, ...actions].slice(0, 3),
-  };
-}
-
 function routeResult(parsed: UnknownRecord, actions: UnknownRecord[]) {
   const route = recordOf(parsed.routeDraft);
   const origin = String(route.origin || '');
@@ -230,14 +190,6 @@ function textDraftResult(
   };
 }
 
-// Every user-facing string in the bubble is written for a person. Bridge error
-// codes are for the log; the acceptance run put `bridge_timeout` on screen and
-// the user had no idea what had happened or what to do next. This is the one
-// place a code becomes a sentence, so no surface can leak a raw identifier.
-// Honesty note (O4): timeout/cancel/transport failures can land AFTER tools
-// have executed, so these sentences must not claim 「没有改动任何东西」 —
-// completed steps live in the session record; only pre-model failures (capture,
-// policy) can truthfully claim nothing changed.
 const ERROR_MESSAGES = Object.freeze({
   bridge_timeout: '这次处理超时停下了。已完成步骤的记录都保留在会话里；可以重试或换一个更小的范围。',
   bridge_cancelled: '这次处理已停下。已完成的部分都记录在会话里，不会再有新动作。',
@@ -245,9 +197,6 @@ const ERROR_MESSAGES = Object.freeze({
   bridge_stdin_error: '本地处理进程中断了。已完成的部分记录在会话里；请再试一次。',
   bridge_invalid_json: '本地处理返回了看不懂的结果，已停下。已完成的部分记录在会话里。',
   bridge_output_limit: '结果太大了，为了不卡住已经停下。已完成的部分记录在会话里；请缩小选区再试。',
-  // 「选中的内容太大」是错的诊断，用户照着它去缩小选区，而真正的上限在本地
-  // 传输层（Electron ↔ Python），与选区大小无关，也从未走到模型。实话实说，
-  // 并让用户知道重试是有意义的。
   payload_too_large: '这次请求在本地传递时超出了上限，已经停下，没有发出任何动作，也没有交给模型。请重试一次；如果反复出现，请保留这次的会话记录。',
   capture_missing: '没有拿到这块屏幕的画面，因此没有把任何内容交给模型。',
   capture_policy_denied: '当前隐私设置不允许截取这块内容，已停下。可在「隐私与权限」里调整。',
@@ -287,8 +236,6 @@ const ERROR_MESSAGES = Object.freeze({
   invalid_model_plan: '模型给出的计划不合法，已停下没有执行。',
 });
 
-// A code looks like a code: lowercase words joined by underscores, no spaces.
-// Anything else is already a sentence somebody wrote on purpose.
 const CODE_SHAPE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
 
 function humanErrorMessage(raw: unknown, fallback = '这次没能完成。已完成的部分记录在会话里。'): string {
@@ -297,24 +244,16 @@ function humanErrorMessage(raw: unknown, fallback = '这次没能完成。已完
   const messages = ERROR_MESSAGES as Readonly<Record<string, string>>;
   if (messages[value]) return messages[value];
   if (CODE_SHAPE.test(value)) {
-    // An unmapped code still must not reach the bubble as-is. Say the honest
-    // thing and keep the identifier for the log only.
     return fallback;
   }
   return value;
 }
 
-// What the perception layers actually laid hands on, as rectangles the stage can
-// outline. A sentence claiming we read something is worth much less than a band
-// drawn around the words we read — and when the wrong thing lights up, the user
-// can see that too, which is the point.
 function captureProofFromBridge(value: unknown) {
   const parsed = recordOf(value);
   const selectionContext = recordOf(parsed.selectionContext);
   const artifacts = recordOf(selectionContext.artifacts);
   const geometryKind = String(artifacts.selection_geometry_kind || '');
-  // A pointer anchor is where the user's finger was, not what we read. Outlining
-  // it would prove nothing.
   const structured = geometryKind === 'pointer_anchor'
     ? []
     : (Array.isArray(artifacts.selection_rectangles) ? artifacts.selection_rectangles : []);
@@ -352,9 +291,6 @@ function stagePresentationFromBridge(value: unknown) {
       },
     };
   }
-  if (parsed.intentKind === 'calendar_event_draft' && parsed.calendarDraft) {
-    return { type: 'RESULT', result: calendarResult(parsed, actions) };
-  }
   if (parsed.intentKind === 'route_draft' && parsed.routeDraft) {
     return { type: 'RESULT', result: routeResult(parsed, actions) };
   }
@@ -363,8 +299,6 @@ function stagePresentationFromBridge(value: unknown) {
   const replaceProposal = recordOf(replaceProposalValue);
   const receipt = executionReceipt(parsed) as UnknownRecord & { status?: unknown; verified?: unknown };
   const proof = captureProofFromBridge(parsed);
-  // Where the answer points while it explains. Coordinates only; the sentence
-  // itself already had the markers removed on the Python side.
   const screenPoints = (Array.isArray(parsed.screenPoints) ? parsed.screenPoints : [])
     .map(recordOf)
     .filter((point) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
@@ -403,8 +337,6 @@ function stagePresentationFromBridge(value: unknown) {
       presentation: 'answer-card',
       answer: String(parsed.answer || parsed.status || '已处理。'),
       detail: humanErrorMessage(parsed.detail || parsed.error, ''),
-      // 桥在调用模型前判定的回答形态：deliver（要发出去，禁 markdown）
-      // / inspect（自己看）。answer_shape_policy 优先信它，再退到猜命令。
       answerShape: String(parsed.answerShape || recordOf(parsed.route).answerShape || ''),
       awaitingUserInput,
       ...(pendingInput ? { pendingInput } : {}),
@@ -417,9 +349,6 @@ function stagePresentationFromBridge(value: unknown) {
   };
 }
 
-// The surface presentation and the durable turn carry the same runtime facts.
-// In particular COMPLETE is not a license to replace a real answer with a stock
-// sentence, and a failed tool can still have useful partial work to preserve.
 function stageEventFromBridge(value: unknown) {
   const event = stagePresentationFromBridge(value);
   const parsed = recordOf(value);

@@ -1,8 +1,3 @@
-"""UIA tree and native patterns behind the Kimi 13 tools.
-
-Walker and actor are injectable. Production uses COM IUIAutomation
-(ctypes, no comtypes). A failed walk raises; a missing pattern is ``ok: false``.
-"""
 
 from __future__ import annotations
 
@@ -55,7 +50,6 @@ _CONTROL_ROLES: dict[int, str] = {
     50038: "separator",
 }
 
-# Pattern id -> public name. Order is the dump order.
 _PATTERNS: tuple[tuple[int, str], ...] = (
     (10000, "Invoke"),
     (10002, "Value"),
@@ -75,7 +69,6 @@ _RPC_E_CHANGED_MODE = -2147417850
 
 
 class UiaBridge:
-    """Snapshot tree + native act. Tests inject walker/actor; production uses COM."""
 
     def __init__(
         self,
@@ -103,11 +96,6 @@ def normalize_elements(
     *,
     budget: int = NODE_BUDGET,
 ) -> list[dict[str, Any]]:
-    """Turn a raw dump into Kimi elements: 1-based index, role, name, rect, patterns.
-
-    Silent containers (no name, no patterns) are dropped. The budget is a hard
-    cap on indexed elements, matching UFO/WAA's ~400 node ceiling.
-    """
     elements: list[dict[str, Any]] = []
     for node in nodes:
         name = str(node.get("name") or "").strip()
@@ -139,7 +127,6 @@ def normalize_elements(
 
 
 def walk_window(hwnd: int) -> list[dict[str, Any]]:
-    """Live ControlView dump. Failure is distinct from a confirmed empty tree."""
     handle = int(hwnd or 0)
     if handle <= 0 or os.name != "nt":
         return []
@@ -151,7 +138,6 @@ def act_on_element(
     element: dict[str, Any],
     value: str | None = None,
 ) -> dict[str, Any]:
-    """Native pattern dispatch. Missing pattern or COM failure is not a click."""
     name = str(action or "").strip().casefold()
     backend = f"uia_{name or 'action'}"
     if os.name != "nt":
@@ -204,7 +190,6 @@ def _as_rect(raw: Any) -> list[int]:
     return [int(raw[0]), int(raw[1]), int(raw[2]), int(raw[3])]
 
 
-# --- COM (Windows only) -------------------------------------------------------
 
 
 class _GUID(ctypes.Structure):
@@ -261,8 +246,6 @@ def _oleaut32():
 
 
 def _ensure_com() -> None:
-    # The selection frame and DWM window bounds use physical pixels. Without
-    # this, UIA returns a 1560px tree for a 3120px window at 200% scaling.
     from app.system_context import enable_dpi_awareness
 
     enable_dpi_awareness()
@@ -270,8 +253,6 @@ def _ensure_com() -> None:
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
     ole32.CoInitializeEx.restype = ctypes.HRESULT
     hr = int(ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED))
-    # S_OK / S_FALSE: this thread is in an apartment. RPC_E_CHANGED_MODE
-    # means it is already MTA; UIA still works for a one-shot walk.
     if hr < 0 and hr != _RPC_E_CHANGED_MODE:
         raise OSError(f"CoInitializeEx failed: {hr:#x}")
 
@@ -628,7 +609,7 @@ def _read_text(element: int, held: list[int]) -> tuple[bool, str, str]:
     if not pattern:
         return False, "no_pattern", ""
     held.append(pattern)
-    document = _ptr_out(pattern, 7)  # IUIAutomationTextPattern.DocumentRange
+    document = _ptr_out(pattern, 7)
     if not document:
         return False, "text_range_unavailable", ""
     held.append(document)

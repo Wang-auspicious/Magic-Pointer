@@ -1,39 +1,16 @@
-"""Suggest the follow-up the user most plausibly wants, one line, no side effects.
-
-This is the input-box ghost text: after a turn settles, the composer shows what
-the user would most likely type next. It is a *suggestion*, never state — a
-failed or empty suggestion is the normal case and simply leaves the composer's
-own placeholder in place.
-
-Two properties matter more than quality here:
-
-* ``max_tokens`` is small on purpose. Measured against a relay, the ceiling is
-  the wait: the same one-line question cost 26.9 s at a 1200-token cap and
-  12.1 s at 120. A suggestion that arrives after the user has started typing is
-  worth nothing, so the budget is sized for one sentence.
-* Failure is reported as ``""``, never as prose. ``ask_text_model`` returns its
-  failures as a sentence, and a caller that does not check would show
-  "AI 调用失败：…" as if it were the user's own next question. See
-  :func:`app.ai_client.is_ai_failure`.
-"""
 
 from __future__ import annotations
 
 from typing import Final
 
-#: The tail of the conversation is what the suggestion is about; the head is
-#: context the model does not need to name the next move.
 SOURCE_CAP_CHARS: Final = 12_000
 
 NEXT_PROMPT_MAX_TOKENS: Final = 80
 
-#: One attempt. The suggestion is decorative: a retry that lands 20 s later is
-#: worse than no suggestion at all.
 NEXT_PROMPT_ATTEMPTS: Final = 1
 
 NEXT_PROMPT_TIMEOUT_S: Final = 20.0
 
-#: A suggestion longer than this is a paragraph, not something to type.
 MAX_SUGGESTION_CHARS: Final = 120
 
 _SYSTEM_PROMPT: Final = (
@@ -50,18 +27,14 @@ _SYSTEM_PROMPT: Final = (
 
 
 def _clean_suggestion(raw: str) -> str:
-    """Reduce model output to one short line, or ``""`` when there is none."""
     text = str(raw or "").strip()
     if not text:
         return ""
-    # 只取第一行：一个会写小作文的模型不该把整段塞进输入框。
     text = text.splitlines()[0].strip()
-    # 包了引号（中英文都算）就剥掉——引号是模型在「引用」那句话，不是用户要打的字。
     for opening, closing in (('"', '"'), ("'", "'"), ("「", "」"), ("“", "”"), ("《", "》")):
         if text.startswith(opening) and text.endswith(closing) and len(text) > 2:
             text = text[1:-1].strip()
             break
-    # 「1. 」「- 」这类列表前缀同样是包装，不是内容。
     for prefix in ("1. ", "1、", "- ", "* ", "> "):
         if text.startswith(prefix):
             text = text[len(prefix):].strip()
@@ -73,14 +46,8 @@ def _clean_suggestion(raw: str) -> str:
 
 
 def suggest_next_prompt(history_text: str) -> str:
-    """Return a one-line suggestion for what the user types next, or ``""``.
-
-    ``""`` is the contract: no history, no configured model, a failed call, or
-    output that is not a usable sentence all mean "leave the placeholder alone".
-    """
     from app.ai_client import ask_text_model, is_ai_failure
 
-    # 取尾部：建议是关于「下一步」的，开头的上下文对这件事没有帮助。
     source = str(history_text or "")[-SOURCE_CAP_CHARS:]
     if not source.strip():
         return ""

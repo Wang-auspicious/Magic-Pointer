@@ -1,8 +1,3 @@
-"""Stable mapping from a selection-session token to the durable agent session id.
-
-Electron mid-run steer and the selection bridge must agree on this string or a
-steer is appended to a JSONL the live loop never reads.
-"""
 
 from __future__ import annotations
 

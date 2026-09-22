@@ -1,16 +1,3 @@
-"""Memory layer (CC CLAUDE.md / memory files pattern) + compaction.
-
-CC reads layered memory files (user-level, project-level) into the system
-prompt and compacts the conversation when context grows. Here:
-- :class:`MemoryLoader` reads user ``MAGIC_POINTER.md``, approved Hermes-style
-  ``learning/MEMORY.md``, then workspace ``MAGIC_POINTER.md``. All layers are
-  concatenated in that order, deduplicated by resolved path and mtime-cached.
-- :func:`compact_messages` summarizes older rounds into a single condensed
-  user message using an injected summary callable (the loop's compact
-  callback consumes it on the token-withheld path).
-
-Both are pure Python; file I/O only in MemoryLoader.
-"""
 
 from __future__ import annotations
 
@@ -40,7 +27,6 @@ SummarizeFn = Callable[[str], str]
 
 
 class MemoryLoader:
-    """Layered user rules, approved learning and workspace rules."""
 
     def __init__(
         self,
@@ -94,12 +80,10 @@ class MemoryLoader:
 
 
 class SkillLoader:
-    """Select bounded, user-approved skills relevant to the current command."""
 
     def __init__(self, user_dir: Path | str, *, command: str) -> None:
         self._root = Path(user_dir) / "skills"
         self._command = str(command or "").strip()
-        # 使用频次（P2-5）：注入时 bump，同分排序时高频技能靠前。
         from app.agent_runtime.skill_usage import SkillUsageStore
 
         self._usage = SkillUsageStore(user_dir)
@@ -173,23 +157,6 @@ def compact_messages(
     force: bool = False,
     model_free_below_chars: int | None = None,
 ) -> list[AgentMessage]:
-    """Condense history: everything before the recent tail is summarized into
-    one user-role data message (CC compact). Assistant tool calls and tool
-    results retain explicit provenance in the summary source; the append-only
-    session remains the lossless record. Returns the compacted list or the
-    original when there is nothing to compact.
-
-    The tail is sized by tokens, not by message count (Hermes
-    ``_find_tail_cut_by_tokens``). A fixed count is the wrong unit here: four
-    short replies are nothing, while four 64k tool results are the entire
-    problem the compaction was supposed to solve.
-
-    Duplicate tool outputs are pruned from the summarized head before the
-    summarizer sees them (Hermes compaction prune): a long job that polls the
-    same subtree produces byte-identical reads, and paying a summarizer to
-    read the same payload N times buys nothing while pushing the source past
-    its own truncation limit.
-    """
     if not force and len(messages) <= min_tail_messages:
         return list(messages)
     cutoff = (
@@ -197,9 +164,6 @@ def compact_messages(
         if force
         else _tail_cut_by_tokens(messages, tail_token_budget, min_tail_messages)
     )
-    # A tool result is only valid when the assistant tool call that created it
-    # is still present.  Move the compaction boundary to the beginning of that
-    # tool exchange instead of emitting an orphaned ``tool`` message.
     while cutoff < len(messages) and cutoff > 0 and messages[cutoff].role is Role.TOOL:
         cutoff -= 1
     head = _prune_duplicate_tool_results(messages[:cutoff])
@@ -213,13 +177,6 @@ def compact_messages(
     source = _source_from(head)
     if not source.strip():
         return list(messages)
-    # Pruning may already have solved the problem. Duplicate tool results and
-    # stale outputs are removed above, and a long job that polls the same
-    # subtree can have most of its weight in exactly those — in which case the
-    # remaining source is small enough to keep verbatim, and summarizing it
-    # costs a full model call (measured failure mode: a 25 s timeout on a
-    # self-hosted endpoint) to buy nothing. Called out as opt-in because the
-    # caller is the one that knows its budget.
     if (
         not force
         and model_free_below_chars is not None
@@ -232,16 +189,11 @@ def compact_messages(
         part = source[start:start + COMPACT_SOURCE_MODEL_CAP_CHARS]
         summary = str(summarize(part) or "").strip()
         if not summary and len(head) > 2:
-            # Retry the same facts; removing them would falsely accept a partial summary.
             summary = str(summarize(part) or "").strip()
         if not summary:
             return list(messages)
         summaries.append(summary)
     summary = "\n\n".join(summaries)
-    # The summarizer is a model: it can faithfully repeat imperative text
-    # found in tool results or screen content. Re-wrap its output with the
-    # same data fence as fresh evidence so an injection cannot be upgraded
-    # into an instruction by the compaction round-trip (red-team T3).
     condensed = AgentMessage(
         role=Role.USER,
         content=(
@@ -260,13 +212,6 @@ def compact_messages(
 
 
 def _prune_stale_tool_outputs(tail: list[AgentMessage]) -> list[AgentMessage]:
-    """Truncate old tool payloads inside the retained tail (Codex behaviour).
-
-    Compaction keeps a recent tail verbatim, but a tail full of 64k reads is
-    the very weight compaction was meant to shed. When the tail is heavy,
-    every TOOL message except the most recent few keeps only its opening —
-    the lossless record stays in the session log.
-    """
     if estimate_messages_tokens(tail) <= _TAIL_PRUNE_THRESHOLD_TOKENS:
         return tail
     kept = 0
@@ -292,22 +237,11 @@ def _prune_stale_tool_outputs(tail: list[AgentMessage]) -> list[AgentMessage]:
 
 
 _TAIL_PRUNE_THRESHOLD_TOKENS = 4_000
-"""Prune when the retained tail weighs 4k+ tokens (roadmap §3.2 — the
-estimator already counts CJK as 1 字/token, so a single token gate works
-for both CJK and English; no separate char gate, one source of truth)."""
 _TAIL_KEEP_RECENT_TOOLS = 6
-"""The freshest tool results stay verbatim — the model is acting on them."""
 _TAIL_TOOL_KEEP_CHARS = 600
-"""Opening of a pruned older result: enough to know what it was."""
 
 
 def _prune_duplicate_tool_results(head: list[AgentMessage]) -> list[AgentMessage]:
-    """Drop repeated identical tool payloads from the summarized source.
-
-    The first occurrence stays verbatim; every later byte-identical result
-    becomes a one-line provenance note. The session log keeps everything;
-    only the summarizer's source shrinks.
-    """
     seen: set[str] = set()
     pruned: list[AgentMessage] = []
     for message in head:
@@ -341,12 +275,6 @@ def _tail_cut_by_tokens(
     token_budget: int,
     min_tail_messages: int,
 ) -> int:
-    """Index where the verbatim tail starts, walking backward by token weight.
-
-    The message-count floor is honoured only when it stays within 1.5x the
-    budget; past that a run of bulky tool outputs would survive every
-    compaction and defeat it.
-    """
     accumulated = 0
     cut = len(messages)
     for index in range(len(messages) - 1, -1, -1):
@@ -363,7 +291,6 @@ def _tail_cut_by_tokens(
 
 
 def _compaction_source_line(message: AgentMessage) -> str:
-    """Render one complete, provenance-labelled item; callers batch the source."""
     content = (message.content or "").strip()
     if message.role is Role.TOOL:
         return (

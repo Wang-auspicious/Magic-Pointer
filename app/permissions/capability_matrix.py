@@ -1,17 +1,3 @@
-"""Per-app capability matrix (harness gap review L14, task C1).
-
-Capabilities differ per application, and some require user cooperation to
-unlock (e.g. Chrome needs ``--remote-debugging-port``). This module keeps a
-persisted, thread-safe ``应用 × 能力 × 状态`` matrix so cold start can consult
-the per-app profile directly instead of probing every time.
-
-Semantics: ``available`` / ``needs_unlock`` / ``unsupported`` are the only
-three statuses; absence of an entry means "not yet probed", which callers
-must treat as unknown, never as unsupported (degradation must be announced).
-
-This module is pure Python and has no I/O or platform dependencies beyond
-the JSON roundtrip used by :meth:`CapabilityMatrix.save` / ``load``.
-"""
 
 from __future__ import annotations
 
@@ -24,7 +10,6 @@ from typing import Any
 
 
 class Capability(enum.StrEnum):
-    """One capability an application may or may not offer."""
 
     READ_TEXT = "read_text"
     READ_STRUCTURE = "read_structure"
@@ -38,7 +23,6 @@ KNOWN_CAPABILITIES: tuple[Capability, ...] = tuple(Capability)
 
 
 class CapabilityStatus(enum.StrEnum):
-    """How the capability stands for a specific application."""
 
     AVAILABLE = "available"
     NEEDS_UNLOCK = "needs_unlock"
@@ -47,7 +31,6 @@ class CapabilityStatus(enum.StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CapabilityEntry:
-    """One cell of the matrix."""
 
     app: str
     capability: Capability
@@ -56,11 +39,10 @@ class CapabilityEntry:
 
 
 class CapabilityMatrixError(ValueError):
-    """Raised when a matrix file cannot be parsed into a valid matrix."""
+    pass
 
 
 def entry_dict(entry: CapabilityEntry) -> dict[str, Any]:
-    """Serialize one entry to a JSON-friendly dict."""
     return {
         "app": entry.app,
         "capability": entry.capability.value,
@@ -70,12 +52,6 @@ def entry_dict(entry: CapabilityEntry) -> dict[str, Any]:
 
 
 class CapabilityMatrix:
-    """Thread-safe per-app capability matrix.
-
-    ``set`` upserts one cell; ``get`` / ``status_for`` read under the same
-    lock. ``save`` / ``load`` persist the full matrix as JSON and reject
-    corrupt or incomplete files with :class:`CapabilityMatrixError`.
-    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

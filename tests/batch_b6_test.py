@@ -1,5 +1,3 @@
-"""B6 小项：Todo 枚举校验、web_fetch 缓存与重定向回显、Recall 聚合、
-只读子代理并发。"""
 
 from __future__ import annotations
 
@@ -11,7 +9,6 @@ import pytest
 from app.agent_runtime.tool_registry import ToolRegistry
 
 
-# --- Todo status 枚举 ---------------------------------------------------------
 
 
 def _todo_registry() -> ToolRegistry:
@@ -44,7 +41,6 @@ def test_todo_accepts_canonical_statuses() -> None:
     assert len(json.loads(str(ok.value))["plan"]) == 3
 
 
-# --- web_fetch 缓存 + 重定向回显 --------------------------------------------------
 
 
 def test_web_fetch_caches_same_url(monkeypatch) -> None:
@@ -98,7 +94,6 @@ def test_web_fetch_reports_redirect_instead_of_following(monkeypatch) -> None:
     assert len(followed["urls"]) == 1, "重定向不二次请求"
 
 
-# --- Recall（search_history）同文件聚合 -------------------------------------------
 
 
 def test_search_history_caps_per_file_hits(tmp_path: Path) -> None:
@@ -119,7 +114,6 @@ def test_search_history_caps_per_file_hits(tmp_path: Path) -> None:
     assert 0 < len(per_file) <= 3, f"同文件最多 3 条: {per_file}"
 
 
-# --- 只读子代理并发 ---------------------------------------------------------------
 
 
 def test_delegate_readonly_is_read_effect_and_concurrency_safe() -> None:
@@ -181,15 +175,6 @@ def test_delegate_readonly_child_has_no_write_tools(monkeypatch) -> None:
 
 
 def test_delegate_child_tool_surface_is_not_its_work_budget(monkeypatch) -> None:
-    """``max_tool_calls`` must not shrink the tools the child can see.
-
-    ``tool_limit`` is how many tool *schemas* reach the model; ``max_tool_calls``
-    is how much work the child may do. Wiring one into the other meant a small
-    work budget silently deleted tools from the end of the registration order —
-    and the tool registered last is ``Tools`` (``FIND_CAPABILITY_TOOL``), the
-    only way to reach anything beyond the limit. A child with a budget of 4
-    would have been left with 4 tools and no way to discover the rest.
-    """
     from app.fabric import engine as engine_module
 
     captured: dict = {}
@@ -217,8 +202,5 @@ def test_delegate_child_tool_surface_is_not_its_work_budget(monkeypatch) -> None
     )
     registry.execute_tool("delegate_task", {"task": "调研", "readonly": True})
 
-    # The schema ceiling is the parent's, not the work budget.
     assert captured["tool_limit"] >= 128
-    # The work budget still binds the child, through the count the loop
-    # actually keeps.
     assert captured["emergency_turn_fuse"] == 4

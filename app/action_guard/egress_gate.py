@@ -1,20 +1,3 @@
-"""Egress gate: fail-closed checkpoint for every path that leaves this machine.
-
-Harness gap review (docs/harness-gap-review-20260812.md) L7.4: all "send
-data off this machine" routes (send message, upload, external agent handoff,
-web-form submission) must pass through one egress gate that is auditable and
-can be disabled. L5: irreversible actions require explicit confirmation that
-the model cannot trigger itself — implemented here as the rule that data-
-driven egress (content read from the screen driving an external send) needs
-``explicit_approval=True`` even when the scope is allowed; only a genuine
-instruction origin passes on scope alone.
-
-The gate defaults to denying every scope (fail closed). Every decision is
-recorded as a chronological :class:`EgressEvent` for the audit trail; the
-trail survives :meth:`EgressGate.close`.
-
-Pure Python, stdlib-only, thread-safe.
-"""
 
 from __future__ import annotations
 
@@ -28,7 +11,6 @@ from app.agent_runtime.types import ORIGIN_DATA, ORIGIN_INSTRUCTION
 
 
 class EgressScope(enum.StrEnum):
-    """Class of off-machine data transfer (review L7.4 egress points)."""
 
     EXTERNAL_SEND = "external_send"
     AGENT_HANDOFF = "agent_handoff"
@@ -40,7 +22,6 @@ class EgressScope(enum.StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class EgressDecision:
-    """Outcome of one egress check; never mutated after creation."""
 
     allowed: bool
     reason: str
@@ -49,7 +30,6 @@ class EgressDecision:
 
 @dataclass(frozen=True, slots=True)
 class EgressEvent:
-    """One audited egress check, in call order."""
 
     t_utc: str
     scope: EgressScope
@@ -61,11 +41,6 @@ class EgressEvent:
 
 
 class EgressDeniedError(Exception):
-    """Raised by :meth:`EgressGate.assert_allowed` on a denied egress.
-
-    Carries the full :class:`EgressDecision` so callers can log, surface or
-    retry with approval.
-    """
 
     def __init__(self, decision: EgressDecision) -> None:
         super().__init__(f"egress denied: {decision.reason}")
@@ -81,17 +56,6 @@ def _now_utc() -> str:
 
 
 class EgressGate:
-    """Thread-safe, fail-closed checkpoint for off-machine data transfer.
-
-    - ``None``/empty allowed scopes = everything denied until ``allow()``.
-    - Instruction-origin egress passes when the scope is allowed.
-    - Any other origin (default ``ORIGIN_DATA``, including unknown tags)
-      additionally requires ``explicit_approval=True`` — confirmation the
-      model cannot produce on its own.
-    - :meth:`close` empties the allowed scopes and disables the gate; the
-      event trail is preserved and every post-close check is recorded as a
-      denial (auditable close).
-    """
 
     __slots__ = ("_lock", "_allowed", "_closed", "_events")
 
@@ -104,18 +68,15 @@ class EgressGate:
         self._events: list[EgressEvent] = []
 
     def allow(self, scope: EgressScope) -> None:
-        """Permit ``scope``; no-op after :meth:`close`."""
         with self._lock:
             if not self._closed:
                 self._allowed.add(scope)
 
     def disallow(self, scope: EgressScope) -> None:
-        """Revoke ``scope``."""
         with self._lock:
             self._allowed.discard(scope)
 
     def is_allowed(self, scope: EgressScope) -> bool:
-        """True only while the gate is open and ``scope`` is permitted."""
         with self._lock:
             return not self._closed and scope in self._allowed
 
@@ -127,12 +88,6 @@ class EgressGate:
         origin: str = ORIGIN_DATA,
         explicit_approval: bool = False,
     ) -> EgressDecision:
-        """Check one egress; raise :class:`EgressDeniedError` when denied.
-
-        Every check (allowed or denied) appends an :class:`EgressEvent` in
-        call order. Denials when the gate is closed, the scope is not
-        allowed, or a non-instruction origin lacks explicit approval.
-        """
         with self._lock:
             if self._closed:
                 decision = EgressDecision(
@@ -180,16 +135,10 @@ class EgressGate:
         return decision
 
     def events(self) -> list[EgressEvent]:
-        """All audit events in chronological (call) order; a snapshot copy."""
         with self._lock:
             return list(self._events)
 
     def close(self) -> None:
-        """Clear allowed scopes and disable the gate (auditable close).
-
-        The event trail is kept; subsequent ``assert_allowed`` calls are
-        recorded as denials and ``allow()`` becomes a no-op.
-        """
         with self._lock:
             self._closed = True
             self._allowed.clear()
@@ -200,16 +149,9 @@ class EgressGate:
 
 
 class EgressAudit:
-    """Accounting helpers over :class:`EgressEvent` lists."""
 
     @staticmethod
     def summarize(events: Iterable[EgressEvent]) -> dict[str, object]:
-        """Count events per scope plus global allowed/denied figures.
-
-        Result shape: ``{"scopes": {<scope value>: {"allowed", "denied",
-        "total"}}, "total", "allowed", "denied", "allowed_ratio"}``.
-        ``allowed_ratio`` is ``allowed / total``, or ``0.0`` with no events.
-        """
         scopes: dict[str, dict[str, int]] = {}
         allowed = 0
         denied = 0

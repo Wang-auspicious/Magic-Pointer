@@ -1,11 +1,3 @@
-"""The recipe catalog. Loaded from JSON manifests, not hardcoded here.
-
-The tuples that used to live in this file are now
-`data/recipes/builtin.recipes.json`, and plugins can add their own manifests
-without a rebuild (see `recipe_manifest.py`). Every existing import —
-`get_recipe`, `RECIPE_CATALOG`, `public_recipe_catalog` — keeps working
-unchanged.
-"""
 
 from __future__ import annotations
 
@@ -19,9 +11,6 @@ RECIPE_CATALOG, CATALOG_WARNINGS = load_all_recipes()
 
 _BY_ID = {recipe.id: recipe for recipe in RECIPE_CATALOG}
 
-# These recipes are plumbing or task-state operations, not destinations the
-# model should be offered as user-facing capabilities.  Keep this catalogue
-# judgement next to recipe metadata; natural-language routing no longer owns it.
 NON_DESTINATION_RECIPES = frozenset({
     "activate.wiggle",
     "ground.this",
@@ -44,7 +33,6 @@ def is_non_destination_recipe(recipe: object) -> bool:
 
 
 def reload_catalog() -> list[str]:
-    """Re-read the manifests (after installing a plugin) and return warnings."""
     global RECIPE_CATALOG, CATALOG_WARNINGS, _BY_ID
     RECIPE_CATALOG, CATALOG_WARNINGS = load_all_recipes()
     _BY_ID = {recipe.id: recipe for recipe in RECIPE_CATALOG}

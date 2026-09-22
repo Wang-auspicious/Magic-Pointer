@@ -1,4 +1,3 @@
-"""Guarded provider seam for UI-TARS, Codex Computer Use and remote operators."""
 
 from __future__ import annotations
 
@@ -43,7 +42,6 @@ ActionVerifier = Callable[
 
 
 class GuardedComputerOperator:
-    """Core-owned checks around an otherwise untrusted operator provider."""
 
     def __init__(
         self,
@@ -126,7 +124,6 @@ class GuardedComputerOperator:
         *,
         scope: Any = None,
     ) -> OperatorObservation:
-        """Capture one current surface only after authority is revalidated."""
         if grant.expired():
             raise PermissionError("surface_grant_expired")
         if Effect.READ not in grant.allowed_effects:

@@ -1,21 +1,5 @@
 'use strict';
 
-// C-073 / audit F26.
-//
-// The stash poll runs every 700 ms and is gated on `stash.clipboard`. The real
-// defect is narrower than "it polls": the fingerprint check happened *after*
-// `clipboard.readImage()` and `sampleImage()`'s native resize, so an unchanged
-// clipboard image was fully decoded — a 4K screenshot is ~33 MB of raw bitmap
-// plus a native resample — ~1.4 times a second, forever. The app itself writes
-// the bitmap back on every capture, so the clipboard holds an image from the
-// first screenshot onwards.
-//
-// The detector added before the decode is the PNG bytes on the clipboard
-// (`clipboard.readBuffer('image/png')`, hashed). These assertions pin:
-//   1. an unchanged clipboard image is read for a fingerprint exactly once;
-//   2. a genuinely changed image is still detected and still ingested;
-//   3. a clipboard without that format degrades to the old path (no reordering
-//      of correctness, just no optimisation).
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -34,10 +18,6 @@ function fakeImage(seed, w = 800, h = 600) {
   };
 }
 
-/**
- * A clipboard whose encoded PNG bytes are distinct per image, with counters on
- * the two expensive calls.
- */
 function makeClipboard({ exposePng = true } = {}) {
   const state = {
     formats: [],
@@ -78,17 +58,12 @@ function runtimeWith(clipboard, baseDir) {
   });
 }
 
-const POLL_WINDOW_MS = 2200;   // 3+ polls at the 700 ms cadence
+const POLL_WINDOW_MS = 2200;    
 
-// Each case gets its own stash directory: `list()` reads the index that the
-// previous case wrote otherwise.
 function freshDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'mp-stash-detect-'));
 }
 
-// `start()` deliberately snapshots whatever is already on the clipboard so a
-// copy made before launch is not collected. Every case below therefore starts
-// with an empty clipboard and puts the image in afterwards.
 function imagesCollected(rt) {
   return rt.list().flatMap((b) => b.items).filter((e) => e.media === 'image');
 }
@@ -98,7 +73,6 @@ function wait(ms) {
 }
 
 (async () => {
-  // ---- 1. an unchanged clipboard image is not decoded again ----------------
   {
     const clip = makeClipboard();
     const rt = runtimeWith(clip, freshDir());
@@ -118,7 +92,6 @@ function wait(ms) {
     );
   }
 
-  // ---- 2. a genuinely different image is still noticed ---------------------
   {
     const clip = makeClipboard();
     const rt = runtimeWith(clip, freshDir());
@@ -136,7 +109,6 @@ function wait(ms) {
     );
   }
 
-  // ---- 3. no PNG format on the clipboard: old behaviour, not wrong behaviour
   {
     const clip = makeClipboard({ exposePng: false });
     const rt = runtimeWith(clip, freshDir());

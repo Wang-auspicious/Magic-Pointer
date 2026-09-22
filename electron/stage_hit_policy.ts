@@ -42,20 +42,8 @@
     });
   }
 
-  // How long one drag may hold the mouse. `dragging` arrives as a boolean the
-  // caller derives from its own drag state, and pointer-up delivery on Windows
-  // can be lost (electron/gesture_capture.ts:1-2) — if that flag ever latches,
-  // `dragging === true` captures forever and the user cannot click anything
-  // underneath the stage, with no way back short of quitting. The policy
-  // therefore bounds the lease itself instead of trusting the boolean
-  // indefinitely. A real drag is gesture-duration; eight seconds is far past
-  // any deliberate bubble or panel move, and the lease is renewed by each new
-  // press rather than by the passage of time.
   const DRAG_LEASE_MAX_MS = 8000;
 
-  // True when a drag has outlived its lease. An unknown start time cannot be
-  // expired, so a caller that has not been updated keeps today's behaviour
-  // rather than losing drags outright.
   function dragLeaseExpired({
     dragStartedAt,
     now,
@@ -67,11 +55,6 @@
     return current - startedAt > Math.max(1, Number(maxMs) || DRAG_LEASE_MAX_MS);
   }
 
-  // `dragging` is pointer capture: between press and release the surface must
-  // hold the mouse no matter where the pointer has travelled. Without it a
-  // drag that leaves the tracked region for even one frame hands the events to
-  // whatever is underneath, which shows up as the cursor flickering between
-  // the two shapes and as text getting selected in the app below.
   function shouldCaptureMouse({
     hasInteractiveSurface,
     pointer,

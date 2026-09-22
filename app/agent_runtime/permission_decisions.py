@@ -1,15 +1,3 @@
-"""Thread-scoped permission grants (CC toolPermissionDecision pattern).
-
-CC records a user's allow/deny answer per tool rule and applies it to later
-calls without re-asking. MP's equivalent is thread-scoped: the conversation
-record carries the granted tool names, every request re-injects them, and
-the loop consults the memo before refusing an ASK-class call.
-
-Scope guard: a grant only upgrades an ASK for reversible or locally verifiable
-writes. External sends, destructive and purchase
-effects keep asking in every mode — a blanket "always allow" chip must never
-be able to mint invariant ④⑤⑥ authority. An explicit deny always wins.
-"""
 
 from __future__ import annotations
 
@@ -30,7 +18,6 @@ current_permission_decisions: ContextVar[Any] = ContextVar('current_permission_d
 
 @dataclass(frozen=True)
 class PermissionDecisions:
-    """Thread rules plus one-call approvals claimed within this runtime invocation."""
 
     allowed: tuple[str, ...] = ()
     denied: tuple[str, ...] = ()
@@ -40,7 +27,6 @@ class PermissionDecisions:
 
     @staticmethod
     def inherited(session: Any, base: Any = None) -> PermissionDecisions:
-        """Child tasks inherit durable rules, never another call's once grant."""
         from app.agent_runtime.user_input import permission_rule
         allowed, denied = set(getattr(base, 'allowed', ())), set(getattr(base, 'denied', ()))
         for event in session.events if session is not None else ():
@@ -57,7 +43,6 @@ class PermissionDecisions:
         return PermissionDecisions(allowed=tuple(sorted(allowed)), denied=tuple(sorted(denied)))
 
     def lookup(self, tool_name: str, arguments: Mapping[str, Any] | None = None) -> str | None:
-        """``"allow"`` / ``"deny"`` / ``None`` (undecided) for one tool."""
         name = str(tool_name or "").strip()
         if not name:
             return None
@@ -73,19 +58,11 @@ class PermissionDecisions:
         arguments: Mapping[str, Any],
         call_id: str | None = None,
     ) -> bool:
-        """Allow a whole tool or a bounded ``Bash(<prefix>)`` rule.
-
-        Prefix rules apply only to Bash and only on a clean command token
-        boundary. Shell chaining, substitution, redirection, and multiline
-        input never inherit a prefix grant; the user is asked again instead.
-        """
         name = str(tool_name or "").strip()
         if not name or self.lookup(name, arguments) == 'deny':
             return False
         if name in self.allowed:
             return True
-        # An exact approval authorizes the whole displayed command, including
-        # shell operators. Prefix grants below never authorize those operators.
         for rule in self.once:
             if (call_id and rule in self.once_arguments
                     and _matches_rule(name, arguments, rule)
@@ -110,10 +87,6 @@ class PermissionDecisions:
 
     @staticmethod
     def from_allowed(value) -> PermissionDecisions | None:
-        """Build from a bridge payload list of granted tool names.
-
-        ``None``/empty means no memo (every ASK keeps asking).
-        """
         if not isinstance(value, (list, tuple)):
             return None
         allowed = tuple(

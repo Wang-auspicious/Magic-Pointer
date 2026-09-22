@@ -1,13 +1,3 @@
-"""DesktopTrace fixture schema (L12 of docs/harness-gap-review-20260812.md).
-
-One trace records one real desktop interaction so the perception layer can run
-fully offline against it: frames (PNG paths relative to the trace root), UIA
-tree dumps, pointer samples, CDP dumps, focus events, display config and the
-user's ground truth.
-
-``from_dict`` is strict: required fields must exist, unknown fields are
-rejected (ValueError), and ``schema_version`` must match SCHEMA_VERSION.
-"""
 
 from __future__ import annotations
 
@@ -80,7 +70,6 @@ def _optional_float(value: Any, field_name: str) -> float | None:
 
 @dataclass(frozen=True)
 class TraceFrame:
-    """One frozen screen capture; png_path is relative to the trace root."""
 
     frame_id: str
     png_path: str
@@ -118,7 +107,6 @@ class TraceFrame:
 
 @dataclass(frozen=True)
 class PointerSample:
-    """One raw pointer event at a physical screen coordinate."""
 
     t_utc: str
     x: int
@@ -157,7 +145,6 @@ class PointerSample:
 
 @dataclass(frozen=True)
 class UiaSnapshot:
-    """One UIA tree dump; tree_text inline or tree_path relative to trace root."""
 
     snapshot_id: str
     captured_at_utc: str
@@ -202,7 +189,6 @@ class UiaSnapshot:
 
 @dataclass(frozen=True)
 class CdpSnapshot:
-    """One Chrome DevTools Protocol text dump of the page under the gesture."""
 
     snapshot_id: str
     url: str
@@ -232,7 +218,6 @@ class CdpSnapshot:
 
 @dataclass(frozen=True)
 class FocusEvent:
-    """A window focus change observed while recording."""
 
     t_utc: str
     hwnd: int
@@ -262,7 +247,6 @@ class FocusEvent:
 
 @dataclass(frozen=True)
 class DesktopTrace:
-    """One replayable desktop interaction fixture (see L12 of the gap review)."""
 
     trace_id: str
     recorded_at_utc: str

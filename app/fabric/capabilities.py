@@ -87,7 +87,6 @@ def _availability(
 
 
 class CapabilityRegistry:
-    """Return a small, deterministic capability set for the current object and intent."""
 
     def search(
         self,

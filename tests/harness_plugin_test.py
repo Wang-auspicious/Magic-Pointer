@@ -1,10 +1,3 @@
-"""Harness plugin protocol tests (plugin-kernel batch, plan T2).
-
-Pins the DSH plugin shape rewritten in Python: ``name`` / ``inject`` /
-optional ``config_schema`` + ``default_config`` / ``apply(ctx, config)``,
-with directory discovery that isolates broken rows (one bad plugin never
-takes the tree down) and honest missing-dependency reporting.
-"""
 
 from __future__ import annotations
 
@@ -24,7 +17,6 @@ from app.harness.plugin import (
 
 
 def _make_plugin(name="demo", inject=(), apply=None, schema=None, defaults=None):
-    """Build a PluginSpec by executing plugin.py-style source in a temp module."""
 
     import types
 
@@ -143,7 +135,6 @@ def test_broken_apply_is_isolated_to_its_row():
     assert "boom" in results[0].error
     assert results[1].status == "active"
     assert len(good_calls) == 1
-    # the broken row must not have poisoned the tree
     assert ctx.has("tools")
 
 
@@ -206,14 +197,6 @@ def _write_plugin(sandbox, name, *, source=None, manifest=None):
 
 @pytest.fixture
 def sandbox():
-    """A writable plugin directory sandbox at the repo root.
-
-    Deliberately not pytest ``tmp_path``: in this environment any directory
-    created with mode 0o700 (pytest's basetemp and ``tempfile.mkdtemp``
-    default) gets an ACL that denies listing, which breaks both the tests
-    and pytest's own session cleanup. ``os.mkdir`` with the default mode is
-    listable and removable, so the sandbox is built that way.
-    """
     import os
     import shutil
     import uuid
@@ -302,7 +285,7 @@ def test_discover_plugin_dir_isolates_broken_entries(sandbox):
     _write_plugin(sandbox, "manifest_only", manifest={"name": "manifest_only"})
     specs, warnings = discover_plugin_dir(sandbox)
     assert [s.name for s in specs] == ["good"]
-    assert len(warnings) >= 3  # broken import / mismatched / manifest-only
+    assert len(warnings) >= 3
     assert any("broken_import" in w for w in warnings)
     assert any("mismatched" in w for w in warnings)
     assert any("manifest_only" in w for w in warnings)
@@ -317,7 +300,6 @@ def test_discover_empty_or_missing_dir_returns_nothing(sandbox):
 def test_discovery_rejects_reparse_plugin_directories_and_files(
     sandbox, monkeypatch
 ):
-    """Plugin discovery must never follow a symlink/junction out of its root."""
     from app.harness import plugin as plugin_module
 
     linked_dir = _write_plugin(

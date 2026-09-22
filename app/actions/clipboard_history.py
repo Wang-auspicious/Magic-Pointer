@@ -1,26 +1,3 @@
-"""Clipboard history: what you copied, still there when you need it back.
-
-A bounded, local, searchable ring of recent clipboard entries. Deliberately not
-a database — the value is entirely in "the thing I copied ten minutes ago", which
-is a small, recent, disposable set.
-
-Three rules that decide the shape:
-
-  **Never store what should not persist.** A clipboard is where passwords live
-  for thirty seconds. Entries can be excluded by the same sensitive-app rules
-  that gate captures, and anything marked secret by the source is dropped rather
-  than truncated — a truncated password is still a password.
-
-  **Deduplicate by content, not by time.** Copying the same snippet five times is
-  one entry that moved to the top, not five. Otherwise the list fills with the
-  thing you are currently working with and buries what you actually lost.
-
-  **Bounded and self-pruning.** Both by count and by age, checked on write, so it
-  cannot grow into a liability nobody remembers agreeing to.
-
-Pure except for one JSON file — no clipboard access here, so the policy can be
-argued with in a test rather than against a live desktop.
-"""
 
 from __future__ import annotations
 
@@ -111,7 +88,6 @@ class ClipboardHistory:
             )
             os.replace(temp, self.path)
         except OSError:
-            # Losing history is annoying; crashing a copy is not acceptable.
             pass
 
     def record(
@@ -123,7 +99,6 @@ class ClipboardHistory:
         secret: bool = False,
         now: float | None = None,
     ) -> ClipboardEntry | None:
-        """Add what was just copied. Returns the stored entry, or None if skipped."""
         value = str(text or "")
         if not value.strip() or secret:
             return None
@@ -139,7 +114,6 @@ class ClipboardHistory:
             formats=tuple(str(item) for item in formats if str(item)),
             truncated=truncated,
         )
-        # Same content copied again moves to the top rather than adding a row.
         remaining = [item for item in self._load() if item.digest != entry.digest]
         remaining.insert(0, entry)
         self._save(self._prune(remaining, moment))
@@ -154,7 +128,6 @@ class ClipboardHistory:
         return self._load()[: max(0, int(limit))]
 
     def search(self, query: str, *, limit: int = 20) -> list[ClipboardEntry]:
-        """Substring match, case-folded. Small set, so nothing cleverer earns its keep."""
         needle = str(query or "").strip().casefold()
         if not needle:
             return self.recent(limit)

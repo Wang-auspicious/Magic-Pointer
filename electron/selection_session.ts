@@ -86,14 +86,6 @@ function continuationTaskForSelection({
   return owner ? { token: owner.token, taskId: String(owner.taskId).trim() } : null;
 }
 
-// A capture is a *frozen moment*, not a lease on the live screen. Once the
-// pixels and the structured read are in hand, waiting three minutes before
-// asking the next question changes nothing about what that moment contained,
-// so nothing about it may expire. The old 2-minute TTL turned every slow
-// human into "NEEDS ATTENTION" and threw the moment away.
-//
-// What still has a deadline is a capture that never finished: a session stuck
-// in `capturing` holds no evidence, so it is ordinary garbage.
 class SelectionSessionStore {
   readonly ttlMs: number;
   readonly maxFrozen: number;
@@ -110,9 +102,6 @@ class SelectionSessionStore {
     this.idFactory = idFactory;
   }
 
-  // A session holds evidence once a capture landed on it. `unavailable` counts:
-  // "we looked and there was nothing readable there" is itself a frozen fact,
-  // and dropping it would make the same question fail differently over time.
   static isFrozen(entry: SelectionSession): boolean {
     return entry.state === 'ready' || entry.state === 'unavailable' || entry.state === 'running';
   }
@@ -123,15 +112,11 @@ class SelectionSessionStore {
         this.sessions.delete(token);
         continue;
       }
-      // Frozen evidence never ages out. Only a capture that never produced a
-      // snapshot can go stale, because it is holding nothing.
       if (SelectionSessionStore.isFrozen(entry)) continue;
       if (entry.expiresAt <= now) this.sessions.delete(token);
     }
   }
 
-  // Memory, not time, is the only reason a frozen moment is ever released:
-  // keep the newest `maxFrozen` captures and drop the oldest beyond that.
   evictOverflow(): void {
     const frozen = [...this.sessions.entries()].filter(([, entry]) =>
       SelectionSessionStore.isFrozen(entry) && entry.state !== 'running',
@@ -191,8 +176,6 @@ class SelectionSessionStore {
       ? payload.suggestedCommands.slice(0, 4)
       : [];
     entry.state = entry.snapshot ? 'ready' : 'unavailable';
-    // The entry only becomes frozen here, so this is where the cap can first
-    // be exceeded.
     this.evictOverflow();
     return this.sessions.get(entry.token) ?? entry;
   }
@@ -257,14 +240,6 @@ class SelectionSessionStore {
   startRequest(token: unknown, now = Date.now()): string | null {
     const entry = this.get(token, now);
     if (!entry || !entry.snapshot) return null;
-    // One answer in flight at a time. This used to overwrite activeRequestId
-    // unconditionally, and finishRequest only accepts the id it was started
-    // with — so a second stroke while the first answer was still running
-    // orphaned the first request and its result was dropped with no error.
-    // The gesture layer advertises multi-stroke chains ("circle this, and
-    // this, then run the command"), so this is a supported path, not a race.
-    // Refusing the second start keeps the first answer; the caller retries
-    // once finishRequest clears the session.
     if (entry.state === 'running' && entry.activeRequestId) return null;
     const requestId = this.idFactory();
     entry.activeRequestId = requestId;

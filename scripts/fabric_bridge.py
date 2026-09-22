@@ -45,7 +45,6 @@ force_utf8_stdio()
 
 
 def _deep_merge_settings(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-    """RFC 7396 merge-patch over the settings document (review Q6)."""
     from app.fabric.settings import deep_merge_settings
 
     return deep_merge_settings(base, patch)
@@ -64,12 +63,6 @@ def _clipboard_reader() -> str:
 
 
 def map_execute_result(planned: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
-    """Map an execution receipt onto an honest bridge result.
-
-    - verified local synchronous action -> ok:true, state "completed"
-    - queued/running agent task -> ok:true, state "accepted" (explicitly not finished)
-    - anything else -> ok:false with the receipt status preserved
-    """
     status = str(receipt.get("status") or "")
     base = {"match": planned.get("match"), "plan": planned.get("plan"), "receipt": receipt}
     if status == "succeeded":
@@ -214,9 +207,6 @@ def _test_model_profile(
             "error": str(text_probe.get("error") or "model_test_failed"),
             "evidence": {"profileId": profile.id, "apiMode": profile.api_mode},
         }
-    # 模型就是一个模型：能连上、能回话，就够资格处理这个任务里的文字和图像。
-    # 这里以前还会再打一次 1x1 图像的探针，给每个 profile 记一个 visionInput
-    # 判定——那套「文字模型 / 视觉模型」的区分已经取消了。
     return {
         "ok": True,
         "state": "completed",
@@ -252,8 +242,6 @@ def main() -> int:
         elif operation == "catalog":
             result = {"ok": True, "recipes": public_recipe_catalog()}
         elif operation == "model.health":
-            # Cheap read of the last known verdict; `probe: true` asks the
-            # gateway again. Startup probes so the first command already knows.
             from app.ai_client import request_ai_config
             from app.model_health import probe_gateway, read_health
 
@@ -367,10 +355,6 @@ def main() -> int:
         elif operation == "settings.get":
             result = {"ok": True, "settings": store.load().to_dict()}
         elif operation == "settings.save":
-            # RFC 7396 merge-patch semantics (review Q6): dicts merge
-            # recursively, scalar/array values replace, JSON null deletes.
-            # The renderer sends a local patch; whole-object replacement is
-            # the classic lost-update trap (two writers, one stale snapshot).
             patch = dict(payload.get("settings") or {})
             current = store.load().to_dict()
             merged = _deep_merge_settings(current, patch)

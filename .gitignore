@@ -94,4 +94,41 @@ data/acceptance-*/Local Storage/
 
 # Unpacked Claude Desktop bundle kept only as read-only local reference.
 # It is third-party compiled code, not ours to redistribute in the repo.
-/参考claude设计/scraped/extras/
+/参考claude设计/
+
+# Local research, design references and agent working notes are not source releases.
+/_sv_sources/
+/artifacts/
+/CUA-Research-*/
+/*.jpg
+/*.png
+/AGENT.md
+/AGENTS.md
+/PRD.md
+/CLICKY.md
+/Vida.md
+/design.md
+/harness-v2.md
+/v4pro审查.md
+/.codex/
+/tools/scrape_*.js
+/demo/*/
+
+# Keep only maintained public documentation and executable evaluation cases.
+/docs/*
+!/docs/README.md
+!/docs/USER_GUIDE.md
+!/docs/DEVELOPMENT.md
+!/docs/KNOWN_LIMITATIONS.md
+!/docs/evals/
+
+# Product data and replay fixtures; local logs, model downloads and acceptance
+# output stay on the machine that created them.
+/data/*
+!/data/README.md
+!/data/model_capabilities.v1.json
+!/data/preflight_manifest.v1.json
+!/data/plugins/
+!/data/recipes/
+!/data/surface_adapters/
+!/data/replay_traces/

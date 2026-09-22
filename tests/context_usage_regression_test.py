@@ -1,4 +1,3 @@
-"""Regression evidence from the Studio JEV search on 2026-09-18."""
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -70,7 +69,6 @@ def test_default_read_budgets_long_status_entries_without_losing_explicit_access
 
 def test_deepseek_cost_uses_exact_model_host_cache_and_request_time():
     usage = {"contextTokens": 1000000, "lastCacheReadTokens": 600000, "lastOutputTokens": 100000}
-    # Saturday: the current published DeepSeek schedule is off-peak.
     assert estimate_cost_usd(usage, "deepseek-flash", "api.deepseek.com", 1789776000) == 0.1218
     assert estimate_cost_usd(usage, "deepseek-flash", "other-provider.com", 1789776000) is None
     assert estimate_cost_usd(usage, "unknown", "api.deepseek.com", 1789776000) is None

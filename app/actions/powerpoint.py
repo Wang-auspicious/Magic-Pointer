@@ -1,10 +1,3 @@
-"""Identity-bound PowerPoint shape reads and structured local edits.
-
-The model never supplies COM code.  It can only select one of the operations
-defined by :mod:`app.artifacts.document_patch`; this module resolves an exact
-presentation window, slide id, and recursively nested shape id before reading
-or writing through a fixed PowerShell/COM program.
-"""
 
 from __future__ import annotations
 

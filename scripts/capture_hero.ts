@@ -1,5 +1,3 @@
-// Temporary: capture studio.html in hero (first-screen) state.
-//   npx electron build/scripts/capture_hero.js <out.png>
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');

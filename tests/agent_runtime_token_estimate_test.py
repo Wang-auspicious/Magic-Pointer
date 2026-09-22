@@ -1,10 +1,3 @@
-"""Request-level token estimation (Hermes model_metadata port).
-
-The old estimator counted message content only, at ``len(content) // 2``.
-That misses the two largest buckets Magic Pointer actually sends — the system
-prompt (memory up to 4000 chars + skills up to 12000) and the tool schemas —
-so the compaction threshold fired far too late. These tests pin the buckets.
-"""
 
 from __future__ import annotations
 
@@ -86,7 +79,6 @@ def _median_seconds(function, text: str, *, repeats: int = 7) -> float:
 
 
 def test_short_text_never_estimates_to_zero_tokens():
-    # Ceiling division: many short tool results must not sum to nothing.
     assert estimate_text_tokens("a") == 1
     assert estimate_text_tokens("abc") == 1
     assert estimate_text_tokens("abcde") == 2
@@ -116,7 +108,6 @@ def test_system_prompt_and_tool_schemas_are_counted():
     messages = [_message("hi")]
     messages_only = estimate_request_tokens(messages)
 
-    # A realistic Magic Pointer system prompt carries memory and skills.
     with_prompt = estimate_request_tokens(messages, system_prompt="x" * 16_000)
     assert with_prompt - messages_only >= 4_000
 
@@ -141,16 +132,11 @@ def test_repeated_estimates_of_the_same_tool_list_agree():
 
 
 def test_cjk_text_is_not_underestimated_four_fold():
-    """真实事故（notepad-edit 真机测试）：全中文上下文真实 prompt_tokens 已达
-    86k，估算还认为 ~48k——压缩晚了 4 轮。中文约 1 字 1 token，不是 4 字 1
-    token；估算必须分语言计数。"""
-    chinese = "激活次数统计" * 100  # 600 个汉字
+    chinese = "激活次数统计" * 100
     assert estimate_text_tokens(chinese) >= 600
-    ascii_text = "value 12840 " * 100  # 1200 个 ASCII 字符
+    ascii_text = "value 12840 " * 100
     assert 250 <= estimate_text_tokens(ascii_text) <= 400
     mixed = "Q1 激活 12840 次，Q2 激活 19207 次。" * 50
-    # 400 个全角字符 + ~1000 ASCII：正确值 ≈ 400 + 250 = 650；
-    # 旧的平铺 4-chars/token 会给 350——CJK 主导时系统性低估一半。
     assert estimate_text_tokens(mixed) >= 600
 
 
@@ -159,7 +145,7 @@ def test_messages_tokens_count_cjk_content():
 
     message = AgentMessage(
         role=Role.TOOL,
-        content="文档内容：" + "中文测试数据" * 200,  # ~1000+ 汉字
+        content="文档内容：" + "中文测试数据" * 200,
         tool_call_id="t1",
         name="get_app_state",
         origin=ORIGIN_DATA,

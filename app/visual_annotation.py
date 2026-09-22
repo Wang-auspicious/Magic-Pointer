@@ -14,7 +14,6 @@ def _draw_locator_stroke(
     *,
     tag: str,
 ) -> None:
-    """One locator mark: the ink itself, its box, and the tag naming it."""
     if len(local) >= 2:
         draw.line(local, fill=(37, 99, 235, 72), width=12, joint="curve")
         draw.line(local, fill=(219, 234, 254, 235), width=3, joint="curve")
@@ -48,19 +47,7 @@ def make_pointer_annotated_image(
     element_rectangles: Iterable[Iterable[int | float]] | None = None,
     stroke_polylines: Sequence[Sequence[tuple[int, int]]] | None = None,
 ) -> Path:
-    """Render a user locator and optional structured-element boxes on a copy.
 
-    ``stroke_polylines`` 是给「一次手势里有好几笔」用的：每一笔单独成线，各自
-    标上它在手势里的名字（A、B、C……）。名字不是装饰——材料就是按这个顺序发布
-    的（`selection_bridge._initial_task_context` 里同一句
-    `chr(ord("A") + index)`），图上的 B 和模型手里的 B 必须指同一处，否则图看
-    得越清楚，指错得越准。
-
-    传了它就不再画包围全部笔迹的那一个大框：跨窗口的一次手势会让那个框罩住整个
-    屏幕，框本身就变成了噪声。单笔调用方（老路径）行为逐像素不变。
-    """
-
-    # 位置即名字：空的那一笔也留在原位，不然它后面每一笔的字母都会整体前移。
     polylines = (
         [[(int(x), int(y)) for x, y in line] for line in stroke_polylines]
         if stroke_polylines is not None
@@ -97,7 +84,6 @@ def make_pointer_annotated_image(
                         draw.ellipse((rect[0] - 8, rect[1] - 8, rect[0] + 8, rect[1] + 8), fill=(8, 145, 178, 235))
                         draw.text((rect[0] - 3, rect[1] - 6), str(index), fill=(255, 255, 255, 255))
             elif local:
-                # pointer 风格只认单笔的落点：多笔调用方没有「最后一个点」可指。
                 if len(local) >= 2:
                     draw.line(local, fill=(96, 165, 250, 70), width=44, joint="curve")
                     draw.line(local, fill=(59, 130, 246, 115), width=24, joint="curve")

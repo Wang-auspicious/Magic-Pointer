@@ -20,12 +20,6 @@ def wants_copy_path(command: str) -> bool:
 
 @dataclass(frozen=True)
 class PointerOperatorResult:
-    """Pointer-first observation output.
-
-    It is intentionally not an autonomous CU loop. Human pointer input anchors
-    THIS; local grounders enrich it; action proposals are optional and safe by
-    default.
-    """
 
     grounding: GroundingBundle
     proposals: list[ActionProposal] = field(default_factory=list)
@@ -38,11 +32,6 @@ class PointerOperatorResult:
 
 
 class MagicPointerOperator:
-    """Minimal pointer-first operator inspired by UFO + UI-TARS.
-
-    This class replaces the autonomous screenshot->click loop with:
-    human pointer selection -> local grounding -> optional typed proposal.
-    """
 
     def __init__(self) -> None:
         self.grounders = [ExplorerFileGrounder()]

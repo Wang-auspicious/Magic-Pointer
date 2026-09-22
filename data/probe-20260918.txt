@@ -1,5 +1,0 @@
-
-state=tool-cards theme=light viewport=1560x992 dpr=2
-png=D:\Desktop\Magic Pointer\data\acceptance-20260918\tool-cards.png
-metadata=D:\Desktop\Magic Pointer\data\acceptance-20260918\tool-cards.json
-image=3120x1984 horizontal_overflow=0 console_errors=0

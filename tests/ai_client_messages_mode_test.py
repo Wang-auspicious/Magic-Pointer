@@ -111,9 +111,6 @@ def test_messages_tool_payload_and_response_use_anthropic_contract() -> None:
     assert response == {
         "text": "I'll retry it.",
         "toolCalls": [{"id": "toolu_01X", "name": "retry_payment", "arguments": {"orderId": "A-7"}}],
-        # Truncation is detected from protocol evidence, not from how the text
-        # happens to end, so every response carries the provider's own stop
-        # reason even when it is absent from the payload.
         "finishReason": "",
     }
 

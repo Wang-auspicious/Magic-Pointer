@@ -1,8 +1,3 @@
-/* ============================================================
-   Oreo 暖 — 令牌与组件
-   依据 docs/design/GUI.md。对照参考图：D:\Desktop\参考
-   这一份是生产用，不是 demo。令牌在 tokens.css（三个界面共用）。
-   ============================================================ */
 
 :root[data-theme="dark"] .btn-solid { color: #17170F; }
 :root[data-theme="dark"] body {
@@ -12,9 +7,6 @@
     radial-gradient(64% 48% at 74% 96%, rgba(84, 66, 60, .30) 0%, transparent 64%);
 }
 
-/* ============================================================
-   基础
-   ============================================================ */
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -40,7 +32,6 @@ html, body {
 button, input, textarea { font: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; cursor: pointer; }
 
-/* 必须在组件的 display 之后仍然生效 */
 [hidden] { display: none !important; }
 
 :focus-visible {
@@ -59,12 +50,7 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-4); background-clip: content-box; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ============================================================
-   卡片：白，圆角 18，两层暖影，无边框
-   ============================================================ */
 
-/* 玻璃板：模糊层给质感，上缘一道内高光给厚度，发丝环给边。
-   底下那层暖色场是它折射的对象——没有那层，玻璃就是一块白。 */
 .card {
   background: var(--glass);
   backdrop-filter: blur(22px) saturate(1.7);
@@ -78,7 +64,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 }
 .card-lift { box-shadow: var(--shadow-lift); }
 
-/* 卡片进场：translateY(8) + opacity，200ms，错峰 40ms。绝不 scale(0) */
 @keyframes card-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
@@ -89,9 +74,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .enter:nth-child(4) { animation-delay: 120ms; }
 .enter:nth-child(5) { animation-delay: 160ms; }
 
-/* ============================================================
-   药丸 / chip
-   ============================================================ */
 
 .pill {
   display: inline-flex;
@@ -114,7 +96,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .pill-green      { background: var(--green-bg);      color: var(--green); }
 .pill-terracotta { background: var(--terracotta-bg); color: var(--terracotta); }
 
-/* 文件 chip：缩略图 + 文件名 */
 .chip-file {
   display: inline-flex;
   align-items: center;
@@ -139,9 +120,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .chip-file .thumb svg { width: 17px; height: 17px; }
 .chip-file:active { transform: scale(.97); }
 
-/* ============================================================
-   按钮
-   ============================================================ */
 
 .btn {
   display: inline-flex;
@@ -167,7 +145,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .btn-ghost { box-shadow: inset 0 0 0 1px var(--hairline); }
 .btn-danger { color: var(--terracotta); background: var(--terracotta-bg); }
 
-/* 圆形幽灵图标按钮（Oreo 那种 📎 @ ⚙） */
 .icon-btn {
   width: 36px; height: 36px;
   border-radius: var(--r-pill);
@@ -184,7 +161,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .icon-btn.is-plain { box-shadow: none; color: var(--ink-2); }
 .icon-btn.is-on { background: var(--indigo-bg); color: var(--indigo); box-shadow: none; }
 
-/* 发送：实心圆 */
 .send-btn {
   width: 36px; height: 36px;
   border-radius: var(--r-pill);
@@ -207,9 +183,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   .chip-file:hover  { box-shadow: var(--shadow-lift); }
 }
 
-/* ============================================================
-   Composer：输入框 + 底排
-   ============================================================ */
 
 .composer {
   background: var(--card);
@@ -242,7 +215,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 }
 .composer-bar .spacer { flex: 1; }
 
-/* 模型选择器 */
 .model-select {
   display: inline-flex;
   align-items: center;
@@ -262,9 +234,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   .model-select:hover { background: var(--paper-2); color: var(--ink); }
 }
 
-/* ============================================================
-   事实卡：标题 + 计数 + 若干行
-   ============================================================ */
 
 .facts { padding: 0; overflow: hidden; }
 .facts-head {
@@ -288,12 +257,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   display: inline-flex; align-items: center; font-weight: 600; font-size: 13px;
 }
 
-/* ============================================================
-   过程轨迹 trace —— 不是卡片
-   ------------------------------------------------------------
-   每一步都露出来（不是黑盒），但每一步都很轻：13px 灰字 + 左侧发丝轨。
-   卡片留给「结果」，过程只用文字。参考 d1ee3f49 的 Thought for 6s。
-   ============================================================ */
 
 .trace {
   display: flex; flex-direction: column;
@@ -348,11 +311,7 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   .trace-step > summary:hover { color: var(--ink-2); background: var(--paper-2); }
 }
 
-/* ============================================================
-   计划卡：竖排步骤，进行中那行抬起
-   ============================================================ */
 
-/* 计划卡不是卡：它就贴在页底色上，只有「正在做」那一行浮成白卡 */
 .plan { padding: 2px 0; background: transparent; box-shadow: none; }
 .plan-step {
   display: flex; align-items: center; gap: 12px;
@@ -382,13 +341,9 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .plan-step.is-todo .label,
 .plan-step.is-todo .time { color: var(--ink-4); }
 
-/* 旋转小点 */
 .spin { animation: spin 900ms linear infinite; transform-origin: 50% 50%; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ============================================================
-   进行中卡 / 决策卡：顶部 5 段进度
-   ============================================================ */
 
 .seg-bar { display: flex; gap: 6px; margin-bottom: 14px; }
 .seg {
@@ -426,9 +381,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   margin-top: 14px;
 }
 
-/* ============================================================
-   写回卡：三档
-   ============================================================ */
 
 .writeback { padding: 0; overflow: hidden; }
 .writeback-preview {
@@ -449,9 +401,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 }
 .writeback-foot .spacer { flex: 1; }
 
-/* ============================================================
-   产物卡
-   ============================================================ */
 
 .artifact {
   display: flex; align-items: center; gap: 13px;
@@ -475,9 +424,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   .artifact:hover { box-shadow: var(--shadow-lift); }
 }
 
-/* ============================================================
-   提示卡
-   ============================================================ */
 
 .notice {
   display: flex; align-items: flex-start; gap: 12px;
@@ -498,9 +444,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .notice .close { position: absolute; top: 10px; right: 10px; color: var(--ink-3); }
 .notice .close svg { width: 15px; height: 15px; }
 
-/* ============================================================
-   消息
-   ============================================================ */
 
 .msg-user {
   align-self: flex-end;
@@ -514,18 +457,9 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .msg-ai p { margin: 0 0 12px; }
 .msg-ai p:last-child { margin-bottom: 0; }
 
-/* ============================================================
-   对象球：反对角线为轴的流动渐变
-   ------------------------------------------------------------
-   动的是渐变本身（SVG animateTransform），不是元素在转——
-   小到 24px 也看得出来在流。减弱动效下由下面的全局规则停住。
-   ============================================================ */
 
 .orb svg { display: block; width: 100%; height: 100%; }
 
-/* ============================================================
-   减弱动效：更少更轻，不是全关
-   ============================================================ */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -539,12 +473,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   .spin { animation-duration: 1.6s !important; animation-iteration-count: infinite !important; }
 }
 
-/* ============================================================
-   刻度滑杆 —— 一排竖条，抓着走
-   ------------------------------------------------------------
-   条的高度和深浅按离手柄的距离衰减：越近越矮越淡，越远越高越实。
-   所以你一眼就知道自己抓在哪，不用去看数字。数值气泡浮在手柄上。
-   ============================================================ */
 
 .tick {
   position: relative;
@@ -565,7 +493,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   min-width: 2px;
   border-radius: 999px;
   background: var(--ink);
-  /* 高度和透明度由 JS 按距离写在元素上；这里只管过渡 */
   transition: height 260ms var(--ease-out), opacity 260ms var(--ease-out);
 }
 .tick-knob {
@@ -596,12 +523,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 }
 .tick-knob em { display: block; font-style: normal; font-size: 10.5px; font-weight: 500; color: var(--ink-3); }
 
-/* ============================================================
-   数据卡片 —— 给后面那些功能用
-   ------------------------------------------------------------
-   照「强质感」那组：分段进度条 + 一个饱和强调色 + 辉光，
-   大字用 tabular-nums 且小数位调淡，底下一排三个小指标。
-   ============================================================ */
 
 .metric { padding: 16px 18px 14px; }
 .metric-top { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
@@ -622,7 +543,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
   font-size: 12.5px; font-weight: 600;
 }
 
-/* 分段条：一格一格填，最后一格带辉光 */
 .notch { display: flex; gap: 3px; height: 26px; margin: 12px 0 10px; }
 .notch i {
   flex: 1;
@@ -651,7 +571,6 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .metric-foot b { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .metric-foot small { font-size: 11.5px; color: var(--ink-3); }
 
-/* 强调色可换；产品里已有语义的两个来源色也能直接用 */
 .accent-indigo { --accent: var(--indigo); }
 .accent-amber  { --accent: var(--amber); }
 .accent-teal   { --accent: var(--teal); }

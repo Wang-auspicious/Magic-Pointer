@@ -1,4 +1,3 @@
-"""A bounded-by-progress visual action loop behind Magic Pointer authority."""
 
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ from .ui_tars import UiTarsActionIntent, compile_ui_tars_intent, parse_ui_tars_r
 
 
 class UiTarsActionModel(Protocol):
-    """One screenshot in, one data-only UI-TARS response out."""
 
     used_backend: str
 
@@ -89,17 +87,6 @@ def _action_signature(
 
 
 class UiTarsComputerAgent:
-    """Run visual grounding without giving the model desktop authority.
-
-    The loop has no product-level turn limit. Completion is the model's
-    explicit ``finished`` control intent. A high invariant fuse only catches
-    broken code/providers, while repeated identical actions on identical
-    pixels terminate as semantic ``stalled``.
-
-    Exactly one executable action is accepted per screenshot. After that
-    action the guarded operator captures and verifies a new observation before
-    the model can act again.
-    """
 
     def __init__(
         self,
@@ -156,9 +143,6 @@ class UiTarsComputerAgent:
         receipts: list[OperatorActionReceipt] = []
         history: list[dict[str, Any]] = []
         repeats: dict[tuple[object, ...], int] = {}
-        # 取消（CancelledError）沿 run 向上传播，此前 KEY_DOWN 已经按下的键
-        # 永远不会被释放（perception-audit P1：Ctrl/Shift 卡住，后续输入错乱）。
-        # 传播前必须对本轮已登记的回执逐个 abort。
         try:
             return self._run_live(task, grant, receipts, history, repeats, scope=scope)
         except CancelledError:

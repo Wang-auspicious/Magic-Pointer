@@ -156,9 +156,6 @@ api.onShow((payload: MagicPointerPanelShowPayload = {}) => {
   commandInput.placeholder = defaultInputMode === 'text' ? '输入命令…' : '';
   setCapsuleState(defaultInputMode === 'voice' ? 'listening' : 'ready');
   if (!renderCaptureEligibility(payload.captureEligibility)) return;
-  // A frozen capture no longer expires, so the panel no longer dismisses
-  // itself out from under the user while they are still thinking about what
-  // to ask. Closing it is a user action.
   window.setTimeout(() => {
     commandInput.focus();
     if (defaultInputMode === 'voice') api.startDictation();

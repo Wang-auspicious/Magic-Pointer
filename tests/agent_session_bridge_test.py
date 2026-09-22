@@ -145,7 +145,6 @@ def test_agent_session_bridge_cancel_requests_graceful_stop(tmp_path, monkeypatc
         "sessionId": "running-session",
     })
     assert cancelled == {"ok": True, "sessionId": "running-session", "turn": 1}
-    # The production interrupt check sees it and consumes it exactly once.
     check = cancel_interrupt_check(session)
     assert check() is True
     assert check() is False

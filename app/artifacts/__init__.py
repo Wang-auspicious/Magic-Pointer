@@ -1,4 +1,3 @@
-"""Typed DraftArtifact projections over the Agent Runtime session log."""
 
 from .projection import project_artifacts
 from .document_patch import (

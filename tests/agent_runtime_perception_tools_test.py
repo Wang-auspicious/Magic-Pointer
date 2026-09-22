@@ -1,21 +1,3 @@
-"""Tests for the harness perception-as-tools namespace (gap review L2/L6).
-
-Covers the PerceptionTools facade (injectable PerceptionBackend protocol,
-fake backends only — nothing real is touched):
-
-- read_around: success, radius clamping (1..10), BackendBusy -> busy
-  Evidence, empty -> empty_confirmed, timeouts -> ActionFailure
-- dump_subtree: success, depth clamping (1..8), cycle truncation with note
-- find_in_window: hit / miss
-- list_windows / get_focused: success and empty
-- container heuristic: value == container name -> degraded, confidence <= 0.2,
-  container_hint=True (evidence contract function)
-- register_all: 5 ToolSpecs, model-usable schemas (schemas_for_model),
-  is_concurrency_safe=True, effect=read
-- registry.execute_tool integration: ToolResult.is_error=False on success,
-  failure_type passthrough on tool failure
-- input schema validation: validate_input missing/extra fields
-"""
 
 from __future__ import annotations
 
@@ -43,7 +25,6 @@ from app.evidence.contract import EvidenceStatus  # noqa: E402
 
 
 class FakeBackend:
-    """In-memory PerceptionBackend; behaviour switchable per test."""
 
     def __init__(self) -> None:
         self.read_around_calls: list[tuple[str, int]] = []

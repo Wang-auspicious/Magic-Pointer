@@ -42,26 +42,11 @@ from app.models.capability_resolver import ModelCapabilityResolver
 from app.models.visual_relay import VisualRelayPlanner
 
 
-# Which executor runs a recipe now lives on the recipe itself, in
-# data/recipes/builtin.recipes.json. It used to be this second table keyed by
-# recipe id, and two tables that must agree eventually do not: adding
-# image.to_prompt to the catalog without adding it here was a KeyError the
-# moment a user asked for it.
 def provider_for_recipe(recipe_id: str) -> str:
     return get_recipe(recipe_id).provider
 
 
 def _idempotency_stable_params(params: Mapping[str, Any]) -> dict[str, Any]:
-    """Copy of the plan parameters with volatile fields normalized away.
-
-    ``TargetLease`` embeds a random leaseId and wall-clock timestamps, and the
-    permission scope embeds time — put into the canonical directly they make
-    the idempotency key different for every identical re-plan, which disables
-    durable receipt reuse and lets a retry execute a send/write twice. The
-    object fingerprint already proves WHICH frozen selection the lease covers,
-    so it is the only lease content the key needs. Every user-visible
-    execution argument (replacement text, attachments, recipes) stays bound.
-    """
     stable: dict[str, Any] = json.loads(
         json.dumps(dict(params), ensure_ascii=False, default=str)
     )
@@ -73,8 +58,6 @@ def _idempotency_stable_params(params: Mapping[str, Any]) -> dict[str, Any]:
         }
     packet = stable.get("contextPacket")
     if isinstance(packet, dict):
-        # packetId/createdAt are per-compilation UUIDs and wall-clock stamps;
-        # the packet's evidence content is already bound through ``objects``.
         packet.pop("packetId", None)
         packet.pop("createdAt", None)
         if isinstance(packet.get("targetLease"), dict):
@@ -82,11 +65,6 @@ def _idempotency_stable_params(params: Mapping[str, Any]) -> dict[str, Any]:
                 "objectFingerprint": packet["targetLease"].get("objectFingerprint") or "",
                 "objectIds": list(packet["targetLease"].get("objectIds") or []),
             }
-        # The workspace probe carries the repo's live dirty state — HEAD, the
-        # changed-file list, the diff excerpt. Saving any unrelated file in the
-        # workspace would otherwise give an identical re-plan a new key, which
-        # is the same defect as the lease id above: no receipt reuse, and a
-        # retry free to send twice. Where the operation acts still counts.
         if isinstance(packet.get("workspace"), dict):
             packet["workspace"] = {
                 "cwd": packet["workspace"].get("cwd") or "",
@@ -168,7 +146,6 @@ class FabricEngine:
 
     @staticmethod
     def _egress_scope(plan: OperationPlan) -> EgressScope | None:
-        """Classify plans that can leave the machine before execution."""
         if plan.recipe_id in {"agent.handoff", "agent.background_task"}:
             return EgressScope.AGENT_HANDOFF
         if plan.risk is RiskLevel.EXTERNAL_SEND:
@@ -349,10 +326,6 @@ class FabricEngine:
                 handle.flush()
                 os.fsync(handle.fileno())
             try:
-                # A hard link publishes the already-fsynced inode only if the
-                # final name is still absent.  Unlike a shared .tmp + replace,
-                # two first-boot processes can never leave different in-memory
-                # keys behind.
                 os.link(temp, path)
                 return value
             except FileExistsError:
@@ -484,12 +457,6 @@ class FabricEngine:
             needs_agent_fallback = True
             parameters["capabilityFallback"] = "direct_text_model_not_configured"
         elif provider == "inplace.text" and not self.model_transform_available:
-            # Deliberately not an agent fallback. The in-place recipes promise a
-            # change to the text the user selected, in the app they selected it
-            # in. Handing that to Codex or Claude satisfies the recipe's words
-            # and not its meaning: the agent writes somewhere else entirely, and
-            # the user's document stays untouched while the run reports progress.
-            # Better to say the text model is missing.
             parameters["capabilityFallback"] = "direct_text_model_not_configured"
         elif provider.startswith("unavailable:"):
             parameters["capabilityFallback"] = provider.split(":", 1)[1]
@@ -716,10 +683,6 @@ class FabricEngine:
                 "provider": provider,
                 "objectIds": object_ids,
                 "objects": clean_objects,
-                # The durable workflow may reuse a terminal receipt by this
-                # key, so every execution-relevant argument must be bound.
-                # Omitting parameters could replay an earlier write containing
-                # different text against the same object and command.
                 "parameters": _idempotency_stable_params(params),
             },
             ensure_ascii=False,
@@ -778,14 +741,6 @@ class FabricEngine:
         objects: list[dict[str, Any]] | None = None,
         parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Plan from a validated model plan; keyword routing stays the offline fallback.
-
-        The model names tools from :data:`~app.fabric.model_plan.TOOL_REGISTRY`; the
-        local layer maps the primary tool to a recipe and keeps the full validated
-        plan in ``parameters["modelPlan"]`` for executors and audit.  Invalid model
-        output fails closed with a structured error instead of being re-routed by
-        keyword guessing.
-        """
         try:
             model_plan = parse_model_plan(value)
         except ModelPlanError as exc:
@@ -894,10 +849,6 @@ class FabricEngine:
         try:
             receipt_value = self.executors.execute(plan).to_dict()
         except Exception as exc:
-            # Executor exceptions must surface as honest failed receipts,
-            # never as an unshaped exception out of engine.execute (fabric
-            # audit P1: a PermissionError from a concurrent store write used
-            # to blow straight through the bridge). The audit still lands.
             receipt_value = ExecutionReceipt(
                 id=str(uuid.uuid4()),
                 plan_id=plan.id,
@@ -930,8 +881,6 @@ class FabricEngine:
                     ),
                 )
             except AgentTaskError as exc:
-                # Custom/in-process agent starters may return a task id without
-                # using Magic Pointer's durable task store.
                 if str(exc) != "unknown task id":
                     self.audit.append("task.provenance_link_failed", {
                         "planId": plan.id,
@@ -991,22 +940,9 @@ class FabricEngine:
         return receipt_value
 
 
-# ---------------------------------------------------------------------------
-# Agent-loop entry (harness batch 1, L1): recipe is a cache, the loop is the
-# interpreter. Independent of the legacy plan/execute path above; the old
-# functions and their return shapes are untouched.
-# ---------------------------------------------------------------------------
 
 
 async def _consume_agent_loop(params: LoopParams) -> Terminal:
-    """Collect loop events until :class:`LoopStopped`; return its Terminal.
-
-    Every exit path of :func:`run_agent_loop` yields LoopStopped as the final
-    event (PEP 525 forbids an async-generator return value), so a generator
-    that ends without one is a loop-contract violation and fails loudly.
-    Cancellation surfaces as :class:`~app.governance.cancellation.CancelledError`
-    from the generator and propagates unchanged.
-    """
     async for event in run_agent_loop(params):
         if isinstance(event, LoopStopped):
             return event.terminal
@@ -1014,14 +950,6 @@ async def _consume_agent_loop(params: LoopParams) -> Terminal:
 
 
 _LOOP_EMERGENCY_TURN_FUSE = 1000
-"""Emergency invariant fuse, not a normal task-completion policy.
-
-It was 90, which is below real long-horizon desktop work (OSWorld 2.0 tasks
-average 318 tool calls) — so a legitimate long job hit it and was reported to
-the user as ``INVARIANT_FAILED``, an internal error. What stops a spinning
-agent is stall detection in ``tool_guardrails`` plus the rolling budget; this
-fuse only catches genuine runaway.
-"""
 
 
 def run_agent_turn(
@@ -1036,13 +964,6 @@ def run_agent_turn(
     budgets: Mapping | None = None,
     allowed_effects: tuple[Effect, ...] | None = None,
     tool_limit: int | None = None,
-    #: Independent reads in one model turn run concurrently. Four was low for
-    #: real work: a task that reads six files ran them in two waves, and each
-    #: wave is a full model round-trip — the most expensive thing in the loop.
-    #: Claude Code caps at 10 (overridable), dsh defaults to 10, Hermes keeps 8
-    #: workers. The per-turn result budget (``_fit_turn_tool_messages``) is what
-    #: keeps the wider batch from flooding the context, which is why raising
-    #: this is safe: the ceiling on what a batch may inject is unchanged.
     max_parallel_tool_calls: int = 8,
     permission_mode: str = "default",
     budget_renewals: int | None = None,
@@ -1064,28 +985,6 @@ def run_agent_turn(
     tool_result_dir: str | None = None,
     source_scope: Any = None,
 ) -> Terminal:
-    """Run one agentic loop turn to its Terminal (synchronous entry).
-
-    - Routing: every natural-language request enters the same model loop.
-      Explicit UI buttons remain direct tools outside this entry point.
-    - Budgets: ``budgets`` override (default ``DEFAULT_BUDGETS``, FULL_ANSWER
-      full-answer stage); ``emergency_turn_fuse`` is an explicit diagnostic
-      override,
-      otherwise a high emergency fuse. The FULL_ANSWER budget is a rolling
-      deadline renewed per productive round up to ``budget_renewals``
-      (review T1: the budget constrains feedback rhythm, not loop life).
-    - Clock: a millisecond clock unless injected; the default is
-      ``time.monotonic() * 1000`` — ``time.monotonic`` alone returns seconds
-      and silently disabled budget exhaustion (the loop compares clock
-      values against millisecond budgets). ``asyncio.run`` drives the loop,
-      so callers must not call this from inside a running event loop.
-    - Permission mode: forwarded to the loop's per-tool gate (CC permission
-      mode); composes with ``allowed_effects``.
-    - Registry: required explicitly. Production receives the scoped
-      ``ctx.tools`` service from the plugin tree; there is no hidden global
-      fallback that can create a second tool universe. Cancellation during a
-      tool execution propagates as :class:`CancelledError`.
-    """
     if emergency_turn_fuse is None:
         emergency_turn_fuse = _LOOP_EMERGENCY_TURN_FUSE
     params = LoopParams(
@@ -1115,8 +1014,6 @@ def run_agent_turn(
         evidence_input=evidence_input,
         interaction_metadata={
             **(interaction_metadata or {}),
-            # Audit traceability (roadmap §4.2): every ledger row must be
-            # attributable to the mode that authorized it.
             "permissionMode": permission_mode,
         },
         interrupt_check=interrupt_check,
@@ -1131,5 +1028,4 @@ def run_agent_turn(
 
 
 def _default_ms_clock() -> float:
-    """Millisecond monotonic clock (the loop contract consumes ms)."""
     return time.monotonic() * 1000.0

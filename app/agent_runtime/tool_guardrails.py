@@ -1,15 +1,3 @@
-"""Semantic guardrails for an agent that is using tools without progress.
-
-Adapted from HermesAgent's MIT-licensed ``agent/tool_guardrails.py``.  Magic
-Pointer classifies idempotence from the registered :class:`ToolSpec` effect
-instead of maintaining tool-name lists, and also detects the same evidence
-being fetched through different read tools.
-
-This is deliberately not a small turn cap.  A run can continue while each read
-produces new evidence or a permitted write succeeds.  It is stalled only after
-repeated observations demonstrate that retrying is not changing the state
-available to the model.
-"""
 
 from __future__ import annotations
 
@@ -32,13 +20,6 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class ToolCallGuardrailConfig:
-    """Thresholds for evidence-based loop detection.
-
-    Counts include the first observation.  Defaults give the model one direct
-    warning on the second identical outcome and stop only on the fourth.
-    Cross-tool duplicate reads warn immediately because changing the tool name
-    while returning byte-equivalent evidence is already one failed recovery.
-    """
 
     warnings_enabled: bool = True
     hard_stop_enabled: bool = True
@@ -53,20 +34,10 @@ class ToolCallGuardrailConfig:
     repeated_action_warn_after: int = 2
     repeated_action_halt_after: int = 4
     live_poll_tools: frozenset[str] = frozenset({"get_app_state"})
-    """Live observation tools that legitimately poll while waiting.
-
-    A byte-identical live observation means ``nothing changed yet``, which is
-    the correct reading while a progress bar fills or a window appears. These
-    tools are warned like any other stale read but never halted: killing a
-    legitimate wait is exactly the long-task failure this guard must not
-    cause (S5). The rolling wall-clock budget still bounds how long a wait
-    can hold the loop.
-    """
 
 
 @dataclass(frozen=True, slots=True)
 class ToolCallSignature:
-    """Stable non-reversible identity of a tool name and canonical arguments."""
 
     tool_name: str
     args_hash: str
@@ -80,9 +51,8 @@ class ToolCallSignature:
 
 @dataclass(frozen=True, slots=True)
 class ToolGuardrailDecision:
-    """One observation verdict returned to the loop interpreter."""
 
-    action: str = "allow"  # allow | warn | halt
+    action: str = "allow"
     code: str = "allow"
     message: str = ""
     count: int = 0
@@ -95,7 +65,6 @@ class ToolGuardrailDecision:
 
 
 def canonical_tool_args(args: Mapping[str, Any]) -> str:
-    """Return deterministic compact JSON for a parsed tool argument mapping."""
 
     if not isinstance(args, Mapping):
         raise TypeError(f"tool args must be a mapping, got {type(args).__name__}")
@@ -109,7 +78,6 @@ def canonical_tool_args(args: Mapping[str, Any]) -> str:
 
 
 class ToolCallGuardrailController:
-    """Track failure and evidence novelty for one user-initiated agent run."""
 
     def __init__(self, config: ToolCallGuardrailConfig | None = None) -> None:
         self.config = config or ToolCallGuardrailConfig()
@@ -129,7 +97,6 @@ class ToolCallGuardrailController:
         failed: bool,
         effect: Effect,
     ) -> ToolGuardrailDecision:
-        """Observe a completed tool call and classify whether it made progress."""
 
         signature = ToolCallSignature.create(tool_name, args)
         if failed:
@@ -170,9 +137,6 @@ class ToolCallGuardrailController:
                     action_count,
                     signature,
                 )
-            # Reads made before a successful state change cannot demonstrate
-            # that a later readback is stalled, even when the bytes match.
-            # Repeated actions above keep their existing warning/stop history.
             self._read_results.clear()
             self._seen_read_result_hashes.clear()
             self._consecutive_duplicate_reads = 0
@@ -369,7 +333,6 @@ class ToolCallGuardrailController:
 
 
 def append_toolguard_guidance(result: str, decision: ToolGuardrailDecision) -> str:
-    """Append a warning/halt as model-visible data to the tool result."""
 
     if decision.action not in {"warn", "halt"} or not decision.message:
         return result

@@ -1,11 +1,3 @@
-"""Voice engine contract: Whisper (openai-whisper) and SenseVoice (sherpa-onnx).
-
-Both bridges expose the same interface (``load_model`` / ``transcribe`` /
-``run_microphone_with_model`` / ``load_voice_profile``) so the worker can swap
-backends without code changes.  The worker defaults to SenseVoice when it is
-available and fails back to Whisper after repeated load failures (see
-``LocalVoiceWorker._maybe_fallback_after_load_failure``).
-"""
 
 from __future__ import annotations
 
@@ -42,7 +34,6 @@ MicrophoneRunner = Callable[[Any, Any, str, int, Callable[[dict[str, Any]], None
 
 @dataclass(frozen=True)
 class VoiceEngineBundle:
-    """All bridge callables the worker needs, resolved for one engine."""
 
     engine: str
     engine_name: str
@@ -58,8 +49,6 @@ def _whisper_stop_state(stop_event: Any) -> Callable[[Any], str | None]:
 
 
 def _sense_stop_state(stop_event: Any) -> Callable[[Any], str | None]:
-    # The SenseVoice loop already flushes buffered speech to a final event when
-    # stop_state returns truthy, so the worker only needs the cooperative flag.
     return lambda _activity: "final" if stop_event.is_set() else None
 
 
@@ -67,7 +56,6 @@ def make_resident_runner(
     run_microphone: Callable[..., None],
     stop_state_factory: Callable[[Any], Callable[[Any], str | None]],
 ) -> MicrophoneRunner:
-    """Build a worker-compatible microphone runner for a bridge."""
 
     def runner(
         model: Any,
@@ -112,7 +100,6 @@ def _sense_model_dir() -> Path:
 
 
 def sense_voice_available() -> bool:
-    """True when the SenseVoice ONNX model files and sherpa-onnx are present."""
     model_dir = _sense_model_dir()
     if not (model_dir / "model.int8.onnx").is_file() or not (model_dir / "tokens.txt").is_file():
         return False
@@ -127,8 +114,6 @@ def sense_voice_bundle() -> VoiceEngineBundle:
     return VoiceEngineBundle(
         engine=SENSE_VOICE,
         engine_name=SENSE_ENGINE_NAME,
-        # The worker passes its model_name (e.g. "tiny"); SenseVoice has a fixed
-        # model name, so the bundle loader pins it.
         loader=lambda _model_name: sense_load_model("sense-voice-small"),
         pcm_loader=load_pcm_wav,
         profile_loader=sense_load_voice_profile,
@@ -138,7 +123,6 @@ def sense_voice_bundle() -> VoiceEngineBundle:
 
 
 def resolve_engine(requested: str, model_name: str) -> VoiceEngineBundle:
-    """Map a requested engine name (whisper | sense_voice | auto) to a bundle."""
     value = str(requested or DEFAULT_ENGINE).strip().casefold() or DEFAULT_ENGINE
     if value == WHISPER:
         return whisper_bundle(model_name)
@@ -160,7 +144,6 @@ def custom_bundle(
     transcriber: Callable[..., str] | None = None,
     microphone_runner: MicrophoneRunner | None = None,
 ) -> VoiceEngineBundle:
-    """Bundle for tests/explicit injection; missing parts default to Whisper."""
     base = whisper_bundle(model_name)
     return VoiceEngineBundle(
         engine="custom",

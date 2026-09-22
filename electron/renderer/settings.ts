@@ -82,42 +82,42 @@ function controlForSetting(row: any, value: unknown) {
 
 function renderSettingsRow(row: any) {
   const value = row.path ? settingsModel.valueForSetting(row.path, canonicalSettings) : undefined;
-  return `<div class="claude-settings-row" data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
-    <div class="claude-settings-copy"><b>${escSetting(row.label)}</b>${row.description ? `<small>${escSetting(row.description)}</small>` : ''}</div>
-    <div class="claude-settings-control">${controlForSetting(row, value)}</div>
+  return `<div class="mp-settings-row" data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
+    <div class="mp-settings-copy"><b>${escSetting(row.label)}</b>${row.description ? `<small>${escSetting(row.description)}</small>` : ''}</div>
+    <div class="mp-settings-control">${controlForSetting(row, value)}</div>
     <p class="settings-row-error" hidden></p>
   </div>`;
 }
 
 function renderSettingsSection(title: string, rows: any[]) {
-  return `<section class="claude-settings-section">
+  return `<section class="mp-settings-section">
     <h3>${escSetting(title)}</h3>
-    <div class="claude-settings-list">${rows.map(renderSettingsRow).join('')}</div>
+    <div class="mp-settings-list">${rows.map(renderSettingsRow).join('')}</div>
   </section>`;
 }
 
 function renderMemoryLibrary() {
   if (!learnedMemories.length) {
-    return `<section class="claude-settings-section claude-memory-library"><h3>Memory files</h3>
-      <div class="claude-memory-empty">No memory files yet. Repeated work on the same objects will appear here.</div></section>`;
+    return `<section class="mp-settings-section mp-memory-library"><h3>Memory files</h3>
+      <div class="mp-memory-empty">No memory files yet. Repeated work on the same objects will appear here.</div></section>`;
   }
-  return `<section class="claude-settings-section claude-memory-library"><h3>Memory files</h3><div class="claude-memory-list">
+  return `<section class="mp-settings-section mp-memory-library"><h3>Memory files</h3><div class="mp-memory-list">
     ${learnedMemories.slice(0, 12).map((memory) => {
       const identity = String(memory.object?.windowTitle || memory.object?.label || memory.object?.app || 'Untitled object');
       const questions = Array.isArray(memory.questions) ? memory.questions.slice(0, 2) : [];
-      return `<article class="claude-memory-item"><span class="claude-memory-mark">${settingIcon('ic-memory')}</span>
-        <span class="claude-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || 'Local context')}</small></span>
-        <span class="claude-memory-count">${escSetting(memory.touches || 0)} uses</span></article>`;
+      return `<article class="mp-memory-item"><span class="mp-memory-mark">${settingIcon('ic-memory')}</span>
+        <span class="mp-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || 'Local context')}</small></span>
+        <span class="mp-memory-count">${escSetting(memory.touches || 0)} uses</span></article>`;
     }).join('')}
   </div></section>`;
 }
 
 function renderSettingsPage(page: any) {
-  return `<section class="claude-settings-page" data-page="${escSetting(page.id)}">
-    <header class="claude-settings-page-head">
+  return `<section class="mp-settings-page" data-page="${escSetting(page.id)}">
+    <header class="mp-settings-page-head">
       <div><h2>${escSetting(page.title)}</h2><p>${escSetting(page.description)}</p></div>
     </header>
-    <div class="claude-settings-sections">
+    <div class="mp-settings-sections">
       ${page.sections.map((section: any) => renderSettingsSection(section.title, section.rows)).join('')}
     </div>
     ${page.id === 'memory-context' ? renderMemoryLibrary() : ''}
@@ -135,11 +135,11 @@ function renderSettingsSearchResults(query: string) {
     }
   }
   const count = matches.reduce((total, section) => total + section.rows.length, 0);
-  return `<section class="claude-settings-page" data-page="search">
-    <header class="claude-settings-page-head"><div><h2>Search settings</h2><p>“${escSetting(query)}” · ${count} results</p></div></header>
+  return `<section class="mp-settings-page" data-page="search">
+    <header class="mp-settings-page-head"><div><h2>Search settings</h2><p>“${escSetting(query)}” · ${count} results</p></div></header>
     ${matches.length
-      ? `<div class="claude-settings-sections">${matches.map((section) => renderSettingsSection(section.title, section.rows)).join('')}</div>`
-      : '<div class="claude-settings-search-empty">No matching settings.</div>'}
+      ? `<div class="mp-settings-sections">${matches.map((section) => renderSettingsSection(section.title, section.rows)).join('')}</div>`
+      : '<div class="mp-settings-search-empty">No matching settings.</div>'}
   </section>`;
 }
 
@@ -187,7 +187,6 @@ function hydrateCanonical(settings: unknown, modelStatus: unknown = activeModelS
   if (theme) {
     const resolvedTheme = theme === 'system' ? (systemThemeQuery.matches ? 'dark' : 'light') : theme;
     document.documentElement.dataset.theme = resolvedTheme;
-    // DSH 令牌平台的双档开关：body[data-ds-dark-theme]（与 deepseek-harness 同款）
     document.body.toggleAttribute('data-ds-dark-theme', resolvedTheme === 'dark');
     try { localStorage.setItem('mp:theme', resolvedTheme); } catch { /* storage unavailable */ }
     settingsApi()?.setTheme?.(theme);

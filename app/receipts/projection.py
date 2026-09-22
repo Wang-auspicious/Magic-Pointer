@@ -1,4 +1,3 @@
-"""Pure projections of Receipts from session events, plus composition."""
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ from .schema import Receipt, ReceiptProjectionError, ReceiptStatus
 
 
 def project_receipts(events: Iterable[Any]) -> tuple[Receipt, ...]:
-    """Replay receipt/issued events. Unknown event types are ignored."""
     receipts: list[Receipt] = []
     for event in events:
         event_type = str(getattr(event, "type", "") or "")
@@ -58,7 +56,6 @@ def compose_receipt(
     reason: str,
     used_backend: str = "",
 ) -> Receipt:
-    """Deterministic stop proof from the verification gate and terminal reason."""
     ids = tuple(str(item) for item in artifact_ids if str(item))
     reason_key = str(reason or "")
     status, method, effect, failure = _classify(

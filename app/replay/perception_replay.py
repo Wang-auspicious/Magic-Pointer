@@ -1,10 +1,3 @@
-"""Perception replay: a DesktopTrace becomes a selection-bridge payload (L12).
-
-The replay base closes the loop: record a real interaction (or a
-synthetic-but-schema-valid fixture) -> replay it into the perception chain
-offline -> run selection_bridge -> assert the answer/proposals against the
-trace's ground_truth. No live desktop is touched in replay mode.
-"""
 
 from __future__ import annotations
 
@@ -30,8 +23,6 @@ def load_trace(path: Path) -> DesktopTrace:
 
 
 def _uia_content(snapshots: list[UiaSnapshot]) -> tuple[str, str | None]:
-    """tree_text of the last snapshot (falling back to tree_path); ('', None)
-    when the trace has no UIA evidence."""
     for snapshot in reversed(snapshots):
         if snapshot.tree_text is not None:
             return snapshot.tree_text, None
@@ -41,15 +32,6 @@ def _uia_content(snapshots: list[UiaSnapshot]) -> tuple[str, str | None]:
 
 
 def trace_to_snapshot_payload(trace: DesktopTrace) -> dict[str, Any]:
-    """Build the selection_bridge input payload for one trace.
-
-    The payload carries the trace's frozen frame as the capture (the FrameLease
-    contract holds: replay never recaptures the screen) and the UIA tree as the
-    structured context, so selection_bridge runs its normal chain — routing,
-    guard preconditions (against replay data), answer — offline. The snapshot
-    timestamps are stamped at replay time: a replay IS a fresh consumption of
-    the frozen evidence, so the TTL gate must not reject it.
-    """
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
@@ -129,7 +111,6 @@ def trace_to_snapshot_payload(trace: DesktopTrace) -> dict[str, Any]:
 
 
 def expected_from_trace(trace: DesktopTrace) -> dict[str, Any]:
-    """The ground-truth expectation carried inside the trace."""
     ground_truth = trace.ground_truth or {}
     expectation = ground_truth.get(GROUND_TRUTH_KEY)
     if isinstance(expectation, dict):

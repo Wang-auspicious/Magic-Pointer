@@ -1,12 +1,4 @@
-/* 产物页（#view-artifacts）。
-   结构照 claude.ai 的 Artifacts 页：衬线标题 → tab 行 + 右侧工具条 → 按日期分组
-   的一行一条。配色不照抄参考的深色，全部走 Magic Pointer 自己的 token。
 
-   这一页原来的标记（.card / .tile / .side-text）在任何已加载的样式表里都没有
-   定义，所以渲染出来是一颗撑满页面的 `</>` 图标加一行没有层级的文字。这里给
-   产物页自己的类名和尺寸，不再依赖那几个不存在的类。 */
-
-/* ---- 页头：参考里 Artifacts 是页面的衬线大标题，不是工具条上的小字 ---- */
 .mp-shell[data-view="artifacts"] .workspace-header {
   min-height: 0;
   align-items: flex-end;
@@ -24,7 +16,6 @@
   letter-spacing: -.01em;
 }
 
-/* ---- 页面列 ---- */
 .mp-artifacts {
   display: flex;
   min-height: 0;
@@ -36,7 +27,6 @@
   box-sizing: border-box;
 }
 
-/* ---- tab 行 + 工具条 ---- */
 .mp-artifacts-bar {
   position: relative;
   display: flex;
@@ -70,7 +60,6 @@
   color: var(--mp-text);
 }
 
-/* 选中的 tab 是实心药丸，不是下划线——参考里没有下划线。 */
 .mp-artifact-tab.is-on,
 .mp-artifact-tab[aria-pressed="true"] {
   background: var(--mp-active);
@@ -206,7 +195,6 @@
 .mp-artifact-templates strong { font-size: 14px; font-weight: 500; }
 .mp-artifact-templates small { margin-top: 4px; color: var(--mp-text-muted); font-size: 12px; }
 
-/* ---- 搜索行：点搜索图标才出现，是同一排工具的真展开，不是装饰 ---- */
 .mp-artifact-search {
   display: flex;
   align-items: center;
@@ -251,7 +239,6 @@
   color: var(--mp-text-muted);
 }
 
-/* ---- 分组 ---- */
 .mp-artifact-group {
   margin: 24px 0 0;
 }
@@ -267,15 +254,12 @@
   line-height: 18px;
 }
 
-/* ---- 一行一条 ---- */
 .mp-artifact-row {
   display: grid;
   width: 100%;
   min-height: 56px;
   align-items: center;
   gap: 12px;
-  /* 名字列有下限，灰字列下限为 0：来源那一串可以很长，空间不够时先截灰字，
-     不是把标题挤没。 */
   grid-template-columns: 32px minmax(120px, 1fr) minmax(0, auto);
   padding: 8px 42px 8px 12px;
   border: 0;
@@ -323,7 +307,6 @@
   height: 16px;
 }
 
-/* kind 是桥端透传的自由字符串。只给认得的 kind 上色，认不得的保持中性底。 */
 .mp-artifact-tile[data-kind="file"] { background: rgba(37, 102, 208, .10); color: #2566D0; }
 .mp-artifact-tile[data-kind="text"] { background: rgba(217, 119, 87, .14); color: var(--mp-clay-strong); }
 .mp-artifact-tile[data-kind="document_patch"] { background: rgba(46, 125, 79, .12); color: var(--mp-success); }
@@ -354,7 +337,6 @@ body[data-ds-dark-theme] .mp-artifact-tile[data-kind="code"] { background: rgba(
   white-space: nowrap;
 }
 
-/* 网格布局：同一个列表换一种读法，不是第二份内容。 */
 #art-list[data-layout="grid"] {
   display: grid;
   gap: 18px;
@@ -402,7 +384,6 @@ body[data-ds-dark-theme] .mp-artifact-tile[data-kind="code"] { background: rgba(
   .mp-artifact-templates small { display: none; }
 }
 
-/* ---- 空态：参考里只有一行灰字，没有插画 ---- */
 .mp-artifact-empty {
   margin: 8px 0 0;
   color: var(--mp-text-muted);

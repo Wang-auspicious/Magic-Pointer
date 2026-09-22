@@ -1,14 +1,5 @@
 'use strict';
 
-// Deterministic arm/commit/cancel ordering for gesture completion, independent
-// of Electron window timing:
-//
-//   idle -> armed -> committing -> committed | failed | cancelled
-//
-// pointerup must freeze pixels (commit) before the overlay is released and
-// before the selection session opens. On commit failure the overlay is still
-// released and the failure is reported — the old late-capture path is never
-// called silently.
 
 const { randomUUID } = require('crypto');
 const { validateFrameLease } = require('./frame_lease');
@@ -111,9 +102,6 @@ class CaptureCommitCoordinator {
     this.state = 'committing';
     let lease: ReturnType<typeof validateFrameLease> | null = null;
     let failure: unknown = null;
-    // A provider whose commit never settles must not leave pointerup hanging
-    // and the overlay pinned forever (electron audit P2: the coordinator
-    // cannot rely on every provider having its own internal timeout).
     const commitDeadline = Date.now() + this.commitTimeoutMs;
     let commitTimeout: NodeJS.Timeout | null = null;
     try {
@@ -136,10 +124,6 @@ class CaptureCommitCoordinator {
     } finally {
       if (commitTimeout) clearTimeout(commitTimeout);
     }
-    // A newer arm may have replaced this epoch while the commit was in
-    // flight. The stale commit's tail must not touch the new gesture: no
-    // overlay release, no armedRequest clobber, no session for the old
-    // gesture. Discard silently (the newer arm owns the surface now).
     if (this.state !== 'committing' || this.activeToken !== owningToken) {
       return null;
     }
@@ -181,7 +165,6 @@ class CaptureCommitCoordinator {
       this.cancelledDuringCommit = true;
       return;
     }
-    // idle / committed / failed / cancelled: nothing to cancel.
   }
 }
 

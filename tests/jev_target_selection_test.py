@@ -1,4 +1,3 @@
-"""Jev is a bounded advisory selector, never an input executor."""
 import time
 import httpx
 from app.desktop_actions.jev import JevTargetSelector

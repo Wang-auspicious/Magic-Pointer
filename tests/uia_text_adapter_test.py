@@ -58,11 +58,6 @@ def test_uia_window_matching_and_app_classification() -> None:
         "class_name": "Chrome_WidgetWin_1",
         "title": "Magic Pointer Panel",
     }) is False
-    # Word is admitted now. match_window used to gate on UIA_WINDOW_CLASSES, so
-    # OpusApp was refused along with Notepad, Explorer and WeChat. Admission is
-    # not routing: OfficeAdapter has perception_priority 10 against this
-    # adapter's 30, so Word still reads through Office COM first and UIA is only
-    # a fallback behind it.
     assert adapter.match_window({"class_name": "OpusApp", "title": "Document - Word"}) is True
     assert uia_app_from_window(_browser_window()) == "browser"
     assert uia_app_from_window({
@@ -124,10 +119,6 @@ def test_uia_terminal_buffer_becomes_bounded_structural_evidence(monkeypatch) ->
 
 
 def test_uia_document_text_fallback_becomes_structured_content(monkeypatch) -> None:
-    """Review R2: an editor without an active selection now yields the whole
-    document via the probe's document_text fallback (Notepad incident:
-    34,660-char file, zero selection -> previously an empty structured layer
-    and a pixel-only object)."""
     monkeypatch.setattr(
         uia_module,
         "_run_uia_selection_probe",

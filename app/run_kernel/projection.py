@@ -1,4 +1,3 @@
-"""Pure projections from append-only session events."""
 
 from __future__ import annotations
 
@@ -34,7 +33,6 @@ def _unsettled_outcome(*, dispatched: bool) -> OperationOutcome:
 
 
 def project_operations(events: Iterable[Any]) -> tuple[OperationSnapshot, ...]:
-    """Project every operation in prepared order with strict settlement rules."""
     ordered: list[OperationSnapshot] = []
     by_id: dict[str, int] = {}
     for event in events:
@@ -114,7 +112,6 @@ def project_operations(events: Iterable[Any]) -> tuple[OperationSnapshot, ...]:
 
 
 def pending_inbox(events: Iterable[Any], target: str | None = None) -> tuple[InboxMessage, ...]:
-    """Return unconsumed inbox messages in append order."""
     messages: list[InboxMessage] = []
     by_id: dict[str, InboxMessage] = {}
     consumed: set[str] = set()

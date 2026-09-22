@@ -1,15 +1,3 @@
-"""Application-level perception blacklist (harness gap review L10).
-
-Semantics: a denied window is blocked **before any perception happens** —
-no capture, no UIA/DOM/OCR, no context packet. The caller is expected to
-consult :meth:`AppBlacklist.check` as the first gate of the perception
-pipeline and to skip all perception work when the decision denies.
-
-Window identity is a plain dict (``process_name``/``title``/``window_class``)
-so this module has no dependency on ``app.anchor`` and no import cycle risk.
-
-This module is pure Python and has no I/O or platform dependencies.
-"""
 
 from __future__ import annotations
 
@@ -20,11 +8,6 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class BlacklistRule:
-    """One blacklist rule.
-
-    At least one of ``process_name`` / ``title_pattern`` / ``window_class``
-    must be set; a rule with all three unset can never match.
-    """
 
     rule_id: str
     process_name: str | None = None
@@ -35,11 +18,6 @@ class BlacklistRule:
 
 @dataclass(frozen=True, slots=True)
 class BlacklistDecision:
-    """Outcome of one window-identity check.
-
-    ``allowed=True`` with ``reason='no_match'`` means the window may be
-    perceived; ``allowed=False`` carries the matching rule.
-    """
 
     allowed: bool
     rule: BlacklistRule | None = None
@@ -107,17 +85,14 @@ def _field_matches(haystack: str | None, needle: str | None) -> bool:
 
 
 class AppBlacklist:
-    """Rule set consulted before any perception request is issued."""
 
     def __init__(self, rules: Sequence[BlacklistRule] = DEFAULT_RULES) -> None:
         self._rules: list[BlacklistRule] = list(rules)
 
     def add_rule(self, rule: BlacklistRule) -> None:
-        """Append a rule; it is consulted after existing rules."""
         self._rules.append(rule)
 
     def remove_rule(self, rule_id: str) -> bool:
-        """Remove the first rule with ``rule_id``; True when one was removed."""
         for i, rule in enumerate(self._rules):
             if rule.rule_id == rule_id:
                 del self._rules[i]
@@ -125,16 +100,9 @@ class AppBlacklist:
         return False
 
     def list_rules(self) -> list[BlacklistRule]:
-        """Snapshot of the current rules (copy; mutating it is safe)."""
         return list(self._rules)
 
     def check(self, window_identity: dict[str, Any]) -> BlacklistDecision:
-        """Check a window identity against the rules.
-
-        First matching rule wins: process name is an exact (case-insensitive)
-        comparison; title and window class are case-insensitive substring
-        matches. No hit -> ``allowed=True`` with ``reason='no_match'``.
-        """
         process_name = window_identity.get("process_name") or ""
         title = window_identity.get("title") or ""
         window_class = window_identity.get("window_class")
@@ -155,5 +123,4 @@ class AppBlacklist:
         return BlacklistDecision(allowed=True, reason="no_match")
 
     def is_blacklisted(self, window_identity: dict[str, Any]) -> bool:
-        """Convenience wrapper returning just the boolean decision."""
         return not self.check(window_identity).allowed

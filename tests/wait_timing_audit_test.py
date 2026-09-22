@@ -1,4 +1,3 @@
-"""Wait reports observed duration and the actual requested condition."""
 
 from types import SimpleNamespace
 

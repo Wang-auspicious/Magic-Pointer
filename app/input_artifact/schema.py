@@ -1,11 +1,3 @@
-"""InputArtifact v1.
-
-The artifact is the boundary between human expression/perception and the
-Agent loop. It has two projections: a public one for GUI/CLI inspection and a
-minimal data-only one for the model. Construction is pure: callers provide an
-already-bound snapshot and this module never captures the screen or calls a
-model.
-"""
 
 from __future__ import annotations
 
@@ -213,13 +205,6 @@ class InputArtifact:
         }
 
     def to_model_dict(self) -> dict[str, Any]:
-        """Minimal sufficient data projection; intentionally excludes utterance.
-
-        The user's utterance travels in the instruction channel. Repeating it
-        here would blur the data/instruction boundary. Local attachment paths,
-        raw provider payloads, display prose and the full observation trace are
-        also excluded.
-        """
         catalog = []
         for source in self.sources:
             entry = source.to_model_dict(max_content_chars=min(4_000, 16_000 // max(1, len(self.sources))))
@@ -311,14 +296,6 @@ def _observations(trace: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _badges(trace: dict[str, Any]) -> tuple[str, ...]:
-    """Which readers back the content this artifact carries.
-
-    Every reader that ran is in the perception trace, but only the selected one
-    and the ones that agreed with it are sources *of this text*. A superseded
-    container name and a reader that disagreed travel as a note and a conflict;
-    badging them here is how "UIA read the marked line" ends up asserted about a
-    line only OCR ever saw.
-    """
     layers = [trace.get("selectedLayer")]
     for item in list(trace.get("corroborations") or [])[:8]:
         if isinstance(item, dict):
@@ -335,13 +312,6 @@ def _selected_confidence(trace: dict[str, Any], *, has_context: bool) -> float:
 
 
 def _mark_char_center(content: str, snapshot: dict[str, Any]) -> int:
-    """Estimate the character offset under the mark, from the frozen surface.
-
-    Proportional, and deliberately crude: where the mark sits inside the frozen
-    target surface maps to the same ratio over the text. Rows dominate because
-    the text people mark runs in rows. Without a gesture or a surface to measure
-    against, the middle of the document beats its head for the same reason.
-    """
     gesture = snapshot.get("selection_gesture")
     bbox = gesture.get("bbox") if isinstance(gesture, dict) else None
     lease = snapshot.get("frame_lease")
@@ -366,7 +336,6 @@ def _mark_char_center(content: str, snapshot: dict[str, Any]) -> int:
 
 
 def _content_window(content: str, snapshot: dict[str, Any]) -> tuple[str, str]:
-    """Bound the projected text around the mark, and say what was left out."""
     if len(content) <= _SELECTED_TEXT_LIMIT:
         return content, ""
     center = _mark_char_center(content, snapshot)
@@ -388,7 +357,6 @@ def _content_window(content: str, snapshot: dict[str, Any]) -> tuple[str, str]:
 
 
 def _visual_anchor(snapshot: dict[str, Any]) -> str | None:
-    """The frozen target surface as the anchor string `look` accepts verbatim."""
     lease = snapshot.get("frame_lease")
     surface = lease.get("surfaceBoundsPx") if isinstance(lease, dict) else None
     if not isinstance(surface, (list, tuple)) or len(surface) != 4:
@@ -406,12 +374,6 @@ def _mark_window_rect(
     window: dict[str, Any],
     surface: tuple[int, int, int, int],
 ) -> tuple[int, int, int, int] | None:
-    """圈选所在窗口落在冻结面上的那一段——给的是宏观背景，不是划的那一行。
-
-    只看那一行，模型既判断不出这是哪个应用，也判断不出这一行在窗口的什么位置；
-    自绘界面里更是连控件都没有，只剩一条线。窗口矩形是窗口自己报的，不需要模型
-    做任何换算，也就不存在「不同类型坐标之间偏移看错」这一类错误。
-    """
     raw = window.get("bbox")
     if not isinstance(raw, (list, tuple)) or len(raw) != 4:
         return None
@@ -437,9 +399,6 @@ def _facts(
 ) -> tuple[InputFact, ...]:
     facts: list[InputFact] = []
     if window:
-        # OS identity is independent of what OCR/UIA managed to read inside it.
-        # Keep the coordinate formats explicit so a panel's position is not
-        # inferred from familiar labels such as Changes / main / Compare.
         identity = {
             "title": str(window.get("title") or "")[:500],
             "processName": str(window.get("process_name") or "")[:200],
@@ -457,8 +416,6 @@ def _facts(
                 if 0 <= cx <= 1 and 0 <= cy <= 1:
                     horizontal = "left" if cx < 1 / 3 else "right" if cx > 2 / 3 else "center"
                     vertical = "top" if cy < 1 / 3 else "bottom" if cy > 2 / 3 else "middle"
-                    # Coordinates and this coarse geometric description have
-                    # one deterministic owner; the model need not do DPI math.
                     identity["selectionLocation"] = f"{vertical}-{horizontal}"
         facts.append(InputFact(
             "window", json.dumps(identity, ensure_ascii=False, separators=(",", ":")),
@@ -476,7 +433,6 @@ def _facts(
         if detail is None and bounds is not None and surface is not None:
             left, top, right, bottom = surface
             x, y, width, height = bounds
-            # 窗口矩形拿不到时退回到旧行为：圈选区域加上一圈边距。
             detail = (max(left, x - 64), max(top, y - 64),
                       min(right, x + width + 64), min(bottom, y + height + 64))
         if detail is not None and detail[2] > detail[0] and detail[3] > detail[1]:
@@ -534,16 +490,6 @@ def _facts(
 
 
 def _element_handle_facts(artifacts: dict[str, Any], *, cap: int = 4_000) -> str:
-    """结构化元素句柄，作为模型可以**拿来当锚点**的地址清单。
-
-    这些句柄本来就是为「圈选后在屏幕上回放框 + 标签」发的，语法见
-    `app/perception/element_handles.py`（`A#<automation_id>` → `<TYPE>-<slug>`
-    → 冲突加 `-2`）。把它们交给模型，Look 就能按控件地址取图，而不是让模型
-    从截图里记住一组像素坐标再自己写 bbox——后者正是「看错、偏移」的来源。
-
-    收尾按**整条句柄**裁剪而不是截字符串：structure 那条是真被截断过的 JSON，
-    这条不行，模型读到的必须是能解析的清单。
-    """
     raw = artifacts.get("element_handles")
     if not isinstance(raw, list):
         return ""
@@ -593,7 +539,6 @@ def compile_input_artifact(
     references: Iterable[ReferenceBinding | dict[str, Any]] = (),
     coverage: Coverage | dict[str, Any] | None = None,
 ) -> InputArtifact:
-    """Compile the bound selection and utterance into InputArtifact v1."""
     source_items = tuple(
         item if isinstance(item, SourceRef) else SourceRef.from_dict(item)
         for item in sources

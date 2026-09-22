@@ -1,4 +1,3 @@
-"""Concurrent, typed perception collection for a single frozen interaction."""
 
 from .broker import (
     PerceptionBroker,

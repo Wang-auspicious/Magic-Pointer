@@ -1,13 +1,3 @@
-"""Anchor model: a cross-time survivable target handle (harness gap review L3).
-
-An :class:`Anchor` carries redundant identities (process/window, structural
-path, content hash, normalized spatial hint) so a resolver can either return
-the same object or say explicitly that it is gone. Resolution outcomes are a
-discriminated union of five frozen dataclasses; ``ambiguous`` and ``changed``
-are first-class results, never collapsed into ``exact``.
-
-This module is pure Python and has no I/O or platform dependencies.
-"""
 
 from __future__ import annotations
 
@@ -18,7 +8,6 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class AppIdentity:
-    """Process + window identity; the most stable anchor facet."""
 
     process_name: str
     process_id: int | None = None
@@ -28,7 +17,6 @@ class AppIdentity:
 
 @dataclass(frozen=True, slots=True)
 class SpatialHint:
-    """Last-resort normalized spatial facet; coordinates are 0..1."""
 
     normalized_x: float
     normalized_y: float
@@ -45,12 +33,6 @@ class SpatialHint:
 
 @dataclass(frozen=True, slots=True)
 class Anchor:
-    """A cross-time target handle with redundant identity facets.
-
-    Invariants enforced in ``__post_init__``:
-    - ``anchor_id`` and ``captured_at_utc`` are non-empty.
-    - ``dpi_scale`` is strictly positive.
-    """
 
     anchor_id: str
     app_identity: AppIdentity
@@ -70,7 +52,6 @@ class Anchor:
 
 
 def build_anchor(**fields: Any) -> Anchor:
-    """Build an :class:`Anchor`, rejecting missing/empty identity fields."""
     anchor_id = fields.get("anchor_id")
     if not anchor_id or not str(anchor_id).strip():
         raise ValueError("anchor_id is required and must be non-empty")
@@ -82,21 +63,18 @@ def build_anchor(**fields: Any) -> Anchor:
 
 @dataclass(frozen=True, slots=True)
 class AnchorResolution:
-    """Base of the five-way resolution discriminant union."""
 
     anchor: Anchor
 
 
 @dataclass(frozen=True, slots=True)
 class ResolutionExact(AnchorResolution):
-    """The target is the same object at the same place."""
 
     evidence: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class ResolutionMoved(AnchorResolution):
-    """The same target is now at a (normalized) new position, or unknown."""
 
     new_position: tuple[float, float] | None
     evidence: tuple[str, ...]
@@ -104,7 +82,6 @@ class ResolutionMoved(AnchorResolution):
 
 @dataclass(frozen=True, slots=True)
 class ResolutionChanged(AnchorResolution):
-    """The target's content no longer matches the expected hash."""
 
     expected_hash: str | None
     actual_hash: str | None
@@ -113,14 +90,12 @@ class ResolutionChanged(AnchorResolution):
 
 @dataclass(frozen=True, slots=True)
 class ResolutionGone(AnchorResolution):
-    """The target no longer exists; ``reason`` says why."""
 
     reason: str
 
 
 @dataclass(frozen=True, slots=True)
 class ResolutionAmbiguous(AnchorResolution):
-    """Multiple candidates match; never treated as exact."""
 
     candidates: tuple[Anchor, ...]
     evidence: tuple[str, ...]
@@ -133,7 +108,6 @@ class ResolutionAmbiguous(AnchorResolution):
 
 
 def resolution_name(resolution: AnchorResolution) -> str:
-    """Return the discriminant name of a resolution: exact/moved/changed/gone/ambiguous."""
     if isinstance(resolution, ResolutionExact):
         return "exact"
     if isinstance(resolution, ResolutionMoved):
@@ -192,7 +166,6 @@ _SPATIAL_FIELDS = frozenset(
 
 
 def to_dict(anchor: Anchor) -> dict[str, Any]:
-    """Serialize an anchor to a plain dict (None fields are preserved)."""
     return {
         "anchor_id": anchor.anchor_id,
         "app_identity": _identity_to_dict(anchor.app_identity),
@@ -216,7 +189,6 @@ def _check_strict(
 
 
 def from_dict(data: Mapping[str, Any]) -> Anchor:
-    """Deserialize an anchor strictly; unknown or missing fields are rejected."""
     _check_strict(data, _ANCHOR_FIELDS, "anchor")
 
     identity_raw = data["app_identity"]

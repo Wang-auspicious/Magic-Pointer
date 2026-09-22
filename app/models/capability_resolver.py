@@ -18,7 +18,6 @@ def _value(source: dict[str, Any] | None, name: str) -> str | None:
 
 
 class ModelCapabilityResolver:
-    """Resolve capability truth without treating an unknown endpoint as visual."""
 
     def __init__(self, catalog: ModelCapabilityCatalog | None = None) -> None:
         self.catalog = catalog or ModelCapabilityCatalog()

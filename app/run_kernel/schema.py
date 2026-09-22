@@ -1,9 +1,3 @@
-"""Run Kernel value objects.
-
-The durable source is still :mod:`app.agent_runtime.session`.  These frozen
-objects are read models: they make operation and inbox state explicit without
-creating another persistence system.
-"""
 
 from __future__ import annotations
 
@@ -33,7 +27,7 @@ class RecoveryPolicy(enum.StrEnum):
 
 
 class RunProjectionError(RuntimeError):
-    """The event stream cannot be projected without inventing state."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)

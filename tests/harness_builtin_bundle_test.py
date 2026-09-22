@@ -1,9 +1,3 @@
-"""Builtin bundle tests (plugin-kernel batch, plan T4).
-
-Pins the composed plugin tree inventory (perception + local actions +
-Kimi CU 13 desktop tools + tool discovery), the plugin-contributed
-services, legacy env knobs, and isolation of a broken user plugin.
-"""
 
 from __future__ import annotations
 
@@ -17,11 +11,6 @@ from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
 from app.harness.builtin_bundle import LoopHarnessHost, _git_branch, boot_loop_context
 from app.agent_runtime.system_prompt import default_builder, default_sections
 
-# 5 perception tools + Look + state-scoped Pi-compatible desktop tools
-# + 13 legacy desktop CU tools
-# + AskUser/Todo + Search/Fetch
-# + Recall (BashRead only mounts with a workspace)
-# + Tools (the old recipe wrappers are deliberately absent).
 EXPECTED_TOOLS = sorted([
     "Act", "Around", "AskUser",
     "act_ui", "expand_ui", "find_roots", "inspect_ui", "observe_ui", "read_text", "search_ui", "wait_for",
@@ -280,9 +269,7 @@ def test_resident_host_exposes_lazy_mcp_search_when_configured(tmp_path, monkeyp
 def test_system_prompt_stops_gathering_evidence_without_stopping_multi_step_jobs():
     report = boot_loop_context(_runtime(selection_anchor={"kind": "test"}))
     prompt = report.ctx.get("model_client")._backend.system_prompt
-    # 问答形态：证据够了就别再翻，避免为显得勤奋而空转。
     assert "不要为了显得勤奋" in prompt
-    # 多步作业形态：证据够 ≠ 活干完，不得中途收工（任务时长不是边界）。
     assert "做完全部步骤" in prompt
     assert "勿重复 Look" in prompt
     assert "冻结帧" in prompt
@@ -297,8 +284,6 @@ def test_system_prompt_stops_gathering_evidence_without_stopping_multi_step_jobs
 def test_system_prompt_without_selection_evidence_does_not_claim_circled_object():
     report = boot_loop_context(_runtime())
     prompt = report.ctx.get("model_client")._backend.system_prompt
-    # 普通文本对话：摘掉"用户圈选了对象"的谎言，模型才不会被骗去
-    # 全桌面找并不存在的选区（真机事故：17 轮桌面工具空转）。
     assert "圈选" not in prompt
     assert "visual_anchor" not in prompt
     assert "冻结帧" not in prompt
@@ -306,7 +291,6 @@ def test_system_prompt_without_selection_evidence_does_not_claim_circled_object(
 
 
 def _bulky_history() -> list[AgentMessage]:
-    """History heavy enough to cross the production tail-token budget."""
     return [
         AgentMessage(
             role=Role.USER if index % 2 else Role.ASSISTANT,
@@ -321,7 +305,6 @@ def _bulky_history() -> list[AgentMessage]:
 
 def test_the_unfinished_plan_survives_compaction(monkeypatch):
     monkeypatch.setenv("MAGIC_POINTER_CONTEXT_TOKENS", "64000")
-    # A long job's progress must not depend on the summariser remembering it.
     report = boot_loop_context(_runtime(summarize=lambda text: "早期步骤的摘要"))
     report.ctx.get("tools").get("Todo").execute(todos=[
         {"content": "已导出前 90 条", "status": "completed"},
@@ -336,7 +319,6 @@ def test_the_unfinished_plan_survives_compaction(monkeypatch):
     assert weight(compacted) < weight(history)
     carried = "\n".join(message.content or "" for message in compacted)
     assert "继续处理第 91 条起" in carried
-    # Re-injecting finished work would make the model redo it.
     assert "已导出前 90 条" not in carried
     report.ctx.unload()
 
@@ -469,24 +451,12 @@ def test_compaction_context_budget_keeps_the_closing_evidence_fence(tmp_path):
 
 
 def test_model_client_allows_multi_step_desktop_tokens():
-    """The ceiling must be large enough for the work the product does.
-
-    This used to assert ``== 4096``. That number was the defect, not the
-    contract: 4096 output tokens is roughly 4000 Chinese characters, so writing
-    a 200-line file, emitting one long patch, or summarising a long command's
-    output all landed in the truncated band — and the truncation recovery path
-    re-sent the request at the same 4096 until it gave up. The assertion now
-    states the property that was always meant: big enough for a multi-step
-    desktop turn, and sourced from one place.
-    """
     from app.agent_runtime.errors import DEFAULT_MAX_OUTPUT_TOKENS
 
     report = boot_loop_context(_runtime())
     model_cfg = next(
         row.resolved_config for row in report.rows if row.id == "model-client"
     )
-    # The equality is a wiring check (the configured value reaches the row);
-    # the floor below is the assertion with content.
     assert int(model_cfg["max_tokens"]) == DEFAULT_MAX_OUTPUT_TOKENS
     assert int(model_cfg["max_tokens"]) >= 8_000, (
         "a multi-step desktop turn must not be bounded at a value that truncates "
@@ -517,14 +487,11 @@ def test_coding_tools_absent_without_workspace_and_present_with_one(tmp_path):
     assert "Agent" not in names
     report.ctx.unload()
 
-    # A path in runtime metadata alone is not authority to expose generic code,
-    # shell, self-writing, or arbitrary MCP tools.
     report = boot_loop_context(_runtime(workspace_root=str(tmp_path)))
     names = {tool.name for tool in report.ctx.get("tools").list()}
     assert {"Read", "Write", "Edit", "Bash", "Patch", "SaveSkill", "mcp_search"}.isdisjoint(names)
     report.ctx.unload()
 
-    # The existing project/folder choice is the explicit advanced-tool entry.
     report = boot_loop_context(_runtime(
         workspace_root=str(tmp_path),
         advanced_tools=True,
@@ -733,7 +700,7 @@ def test_broken_user_plugin_is_isolated_with_warning():
         )
         report = boot_loop_context(_runtime(), plugin_dir=plugin_dir)
         names = sorted(spec.name for spec in report.ctx.get("tools").list())
-        assert names == EXPECTED_TOOLS  # tree fully booted
+        assert names == EXPECTED_TOOLS
         assert any("boom" in warning for warning in report.warnings)
         report.ctx.unload()
     finally:
@@ -757,7 +724,6 @@ def test_disabled_row_skips_its_registration():
 
 
 def test_effort_reaches_prompt_client_and_request_header() -> None:
-    """Composer effort must alter both prompt semantics and native transport."""
     report = boot_loop_context(_runtime(command="随便问问", effort="xhigh"))
     prompt = report.ctx.get("model_request_header")["systemPrompt"]
     assert "# Effort" in prompt
@@ -898,13 +864,6 @@ def test_coding_prompt_uses_only_canonical_tool_names(tmp_path: Path) -> None:
 
 
 def test_permission_mode_in_prompt_matches_the_mode_the_loop_enforces() -> None:
-    """提示里的权限模式必须是本回合真正执行的那个。
-
-    两座桥都把用户选的预设写进 ``runtime['permission_mode']``，但 model-client
-    行只读 ``MAGIC_POINTER_PERMISSION_MODE`` 环境变量（生产从不设置），所以
-    提示恒为 default：用户选 read-only 时模型仍被告知可逆写可直接执行，
-    连着一轮工具拒绝。
-    """
     report = boot_loop_context(_runtime(permission_mode="safe"))
     model_row = next(row for row in report.rows if row.id == "model-client")
     assert model_row.resolved_config["permission_mode"] == "safe"
@@ -913,7 +872,6 @@ def test_permission_mode_in_prompt_matches_the_mode_the_loop_enforces() -> None:
 
 
 def test_env_permission_mode_still_overrides_when_runtime_says_nothing(monkeypatch) -> None:
-    """回滚开关保持有效：runtime 不带模式时环境变量仍然说话。"""
     monkeypatch.setenv("MAGIC_POINTER_PERMISSION_MODE", "plan")
     runtime = _runtime()
     runtime.pop("permission_mode", None)
@@ -924,13 +882,6 @@ def test_env_permission_mode_still_overrides_when_runtime_says_nothing(monkeypat
 
 
 def test_resident_host_stage_path_passes_selection_anchor_to_model_client(tmp_path):
-    """Stage 常驻 worker 的 model-client 行必须带上 selection_anchor。
-
-    boot_loop_context（conversation 一次性路径）修了 ``has_selection`` 恒
-    False 的骗局，但 Stage 生产路径走 LoopHarnessHost._run_loop_rows——
-    那条 model-client 行没传 anchor，划线任务仍然被提示词告知
-    「本任务没有屏幕选区对象」，冻结帧 / Look 规则全部失效。
-    """
     host = LoopHarnessHost(root=tmp_path, plugin_dir=tmp_path / "plugins")
     report = host.open(_runtime(selection_anchor={"kind": "test"}))
     assert "圈选" in report.ctx.get("model_request_header")["systemPrompt"]
@@ -944,12 +895,6 @@ def test_resident_host_stage_path_passes_selection_anchor_to_model_client(tmp_pa
 
 
 def test_system_prompt_bans_raw_output_dumps_in_answers():
-    """回答是写给用户的对话，不是工具输出的倾倒。
-
-    真机（图3）：用户问「项目里有什么」，模型把 search 的原始输出抄成
-    ASCII 目录树——完全不想沟通。五源码共同的输出契约：先直接回答问题
-    本身，工具输出是证据不是答案；清单/树/原始输出只在用户明确要时给。
-    """
     report = boot_loop_context(_runtime(command="项目里有什么", workspace_root="D:/x"))
     prompt = report.ctx.get("model_request_header")["systemPrompt"]
     assert "倾倒" in prompt

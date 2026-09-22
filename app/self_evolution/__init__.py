@@ -1,4 +1,3 @@
-"""Controlled self-improvement services."""
 
 from app.self_evolution.candidates import (
     CandidateConflictError,

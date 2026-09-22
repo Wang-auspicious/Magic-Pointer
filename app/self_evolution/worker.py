@@ -1,4 +1,3 @@
-"""Background review worker: session snapshot -> pending candidates only."""
 
 from __future__ import annotations
 
@@ -44,8 +43,6 @@ learning exists."""
 _AUTH_HEADER = re.compile(
     r"(?i)(\bauthorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+"
 )
-# 键与分隔符之间允许 JSON 引号（"api_key": "..." / \"api_key\": \"...\"），
-# 值兼容引号串与裸 token；覆盖 pwd/passphrase/credential/AWS AKIA。
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)(\b[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|passwd|pwd|"
     r"passphrase|credential)[A-Za-z0-9_.-]*\b\s*[\"']?\s*[:=]\s*[\"']?)"
@@ -64,14 +61,6 @@ _SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _redact_review_text(value: str) -> str:
-    """Remove common credentials before any background model handoff.
-
-    Two passes: the JSON-aware assignment form first (quoted keys like
-    ``"api_key": "..."`` and ``x-api-key: ...``), then bare well-known token
-    shapes. Both must survive the JSON-escaped quoting the digest round-trip
-    introduces (red-team probe: ``{"api_key": "..."}`` used to pass through
-    untouched because the assignment regex could not see past the quotes).
-    """
     text = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", str(value or ""))
     text = _AUTH_HEADER.sub(r"\1[REDACTED]", text)
     text = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", text)
@@ -100,7 +89,6 @@ def build_review_context(
     *,
     max_chars: int = 60_000,
 ) -> str:
-    """Bounded session + current user-learning state for full-file proposals."""
     root = Path(user_root).resolve()
     limit = max(256, int(max_chars))
     sections = [

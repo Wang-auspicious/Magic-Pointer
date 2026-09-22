@@ -1,10 +1,3 @@
-"""Download SenseVoice Small ONNX model files for offline Chinese ASR.
-
-Usage:
-  python scripts/sense_voice_setup.py              # download to default path
-  python scripts/sense_voice_setup.py --force      # re-download
-  python scripts/sense_voice_setup.py --mirror modelscope  # use ModelScope mirror
-"""
 
 from __future__ import annotations
 
@@ -18,14 +11,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_DIR = ROOT / "data" / "models" / "sense-voice-small"
 
-# SenseVoice Small ONNX model — Apache 2.0, ~230 MB total
-# HuggingFace: csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
 HF_REPO = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
 MODELSCOPE_REPO = "iic/SenseVoiceSmall"
 
 EXPECTED_FILES = {
     "model.int8.onnx": "e4c2d5f3a1b6c7890123456789abcdef0123456789abcdef0123456789abcdef",
-    "tokens.txt": None,  # checksum not validated
+    "tokens.txt": None,
 }
 
 MANIFEST_NAME = "sense-voice-manifest.json"
@@ -33,7 +24,6 @@ EXPECTED_SIZE_MB = 230
 
 
 def _hf_download(repo: str, filenames: list[str], dest: Path) -> bool:
-    """Download files from HuggingFace using huggingface_hub or raw URL fallback."""
     try:
         from huggingface_hub import hf_hub_download
         for name in filenames:
@@ -51,7 +41,6 @@ def _hf_download(repo: str, filenames: list[str], dest: Path) -> bool:
 
 
 def _modelscope_download(repo: str, filenames: list[str], dest: Path) -> bool:
-    """Download files from ModelScope."""
     try:
         from modelscope.hub.snapshot_download import snapshot_download
         _local = snapshot_download(repo, cache_dir=str(dest.parent))
@@ -67,7 +56,6 @@ def _modelscope_download(repo: str, filenames: list[str], dest: Path) -> bool:
 
 
 def verify_model(path: Path) -> dict[str, Any]:
-    """Check that all expected model files exist and have valid sizes."""
     missing = [name for name in EXPECTED_FILES if not (path / name).is_file()]
     total_mb = sum(
         (path / f).stat().st_size for f in EXPECTED_FILES if (path / f).is_file()
@@ -116,7 +104,6 @@ def main() -> int:
         print(f"  ModelScope: https://modelscope.cn/models/{MODELSCOPE_REPO}", file=sys.stderr)
         return 1
 
-    # Write manifest
     manifest = {
         "schemaVersion": 1,
         "model": "SenseVoiceSmall",

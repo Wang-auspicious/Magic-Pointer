@@ -6,7 +6,7 @@
 
 - Node.js 20（见 `.nvmrc`）
 - Python 3.12（见 `.python-version`）
-- Windows 10/11 或 macOS 14+
+- Windows 10/11；其他平台的验证状态见 `docs/KNOWN_LIMITATIONS.md`
 - 建议编辑器：VS Code + `dbaeumer.vscode-eslint` + `esbenp.prettier-vscode` + `charliermarsh.ruff`
 
 首次设置：
@@ -46,8 +46,8 @@ npm run dist:win       # 构建 Windows 安装包
 - [ ] `npm test` 通过
 - [ ] `python -m pytest -q` 通过
 - [ ] 修改了用户可见行为时，同步更新 `CHANGELOG.md`
-- [ ] 修改了 Recipe / MCP 契约时，更新 `docs/ARCHITECTURE.md`
-- [ ] 功能能用了 / 坏了 / 测试数变了，更新 `docs/STATUS.md`
+- [ ] 修改了公开功能或配置时，更新 `docs/USER_GUIDE.md` / `docs/DEVELOPMENT.md`
+- [ ] 支持范围或验证边界变化时，更新 `docs/KNOWN_LIMITATIONS.md`
 - [ ] 与安全相关时，遵守 `SECURITY.md`
 
 ## 报告 Bug

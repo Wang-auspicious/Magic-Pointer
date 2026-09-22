@@ -1,4 +1,3 @@
-"""Process host + cheap run-scope lifecycle contracts."""
 
 from __future__ import annotations
 

@@ -85,42 +85,26 @@ assert.strictEqual(promptDraft.prompt, 'editable prompt');
 assert.strictEqual(store.getAgentPromptDraft('session-1', 295).contextPacket.packetId, 'packet-1');
 
 const request1 = store.startRequest('session-1', 300);
-// This used to start a replacement request and hand back 'request-2'. That
-// overwrote activeRequestId, and finishRequest compares against the id it was
-// started with — so the first answer was dropped with no error whenever a new
-// gesture arrived while the previous one was still running. The old assertions
-// here (request1 no longer current, finishRequest(request1) === null) encoded
-// exactly that data loss. A running session now refuses the second start and
-// keeps the first answer; the caller retries after finishRequest clears it.
 const blocked = store.startRequest('session-1', 350);
 assert.strictEqual(blocked, null, 'a second gesture does not orphan the request in flight');
 assert.strictEqual(store.isCurrentRequest('session-1', request1, 400), true);
 assert.strictEqual(store.finishRequest('session-1', request1, 400).state, 'ready');
-// With the first answer landed the session accepts the next request again.
 const request2 = store.startRequest('session-1', 405);
 assert.strictEqual(request2, 'request-2');
 assert.strictEqual(store.finishRequest('session-1', request2, 410).state, 'ready');
 assert.strictEqual(store.clearAgentPromptDraft('session-1', 410), true);
 assert.strictEqual(store.getAgentPromptDraft('session-1', 420), null);
 
-// A captured moment is frozen, not leased. Three minutes of thinking, or an
-// hour, does not change what that moment contained, so the session survives
-// arbitrarily far past the TTL. The 2-minute expiry is what turned "ask again
-// later" into NEEDS ATTENTION.
 assert.strictEqual(store.get('session-1', 1400).state, 'ready');
 assert.strictEqual(store.get('session-1', 100_000_000).state, 'ready');
 assert.strictEqual(store.get('session-1', 100_000_000).snapshot.snapshot_id, 'snapshot-1');
 
-// A capture that never landed holds no evidence, so it is still ordinary
-// garbage and still expires on the TTL.
 const emptyIds = ['session-empty'];
 const emptyStore = new SelectionSessionStore({ ttlMs: 1000, idFactory: () => emptyIds.shift() });
 emptyStore.create({ reason: 'hotkey' }, 0);
 assert.strictEqual(emptyStore.get('session-empty', 999).state, 'capturing');
 assert.strictEqual(emptyStore.get('session-empty', 1000), null);
 
-// A read that found nothing is itself a frozen fact: keeping it means the same
-// question keeps failing the same way instead of changing answer over time.
 const blankIds = ['session-blank'];
 const blankStore = new SelectionSessionStore({ ttlMs: 1000, idFactory: () => blankIds.shift() });
 blankStore.create({ reason: 'hotkey' }, 0);
@@ -128,8 +112,6 @@ blankStore.attachSnapshot('session-blank', { selectionSnapshot: null }, 10);
 assert.strictEqual(blankStore.get('session-blank', 10).state, 'unavailable');
 assert.strictEqual(blankStore.get('session-blank', 500_000).state, 'unavailable');
 
-// Memory, not time, is the only release: the newest `maxFrozen` captures stay
-// and the oldest beyond the cap is dropped.
 let seq = 0;
 const cappedStore = new SelectionSessionStore({
   ttlMs: 1000,
@@ -146,8 +128,6 @@ assert.strictEqual(cappedStore.get('frozen-1', 40), null);
 assert.strictEqual(cappedStore.get('frozen-2', 40).state, 'ready');
 assert.strictEqual(cappedStore.get('frozen-3', 40).state, 'ready');
 
-// A running request still survives a completion that arrives long after the
-// selection was made.
 const requestIds = ['session-running', 'request-running'];
 const runningStore = new SelectionSessionStore({
   ttlMs: 1000,
@@ -163,7 +143,6 @@ assert.strictEqual(runningStore.isCurrentRequest('session-running', runningReque
 assert.strictEqual(runningStore.finishRequest('session-running', runningRequest, 2500).state, 'ready');
 assert.strictEqual(runningStore.get('session-running', 3500).state, 'ready');
 
-// Closing the bubble is what releases a frozen moment.
 assert.strictEqual(runningStore.cancel('session-running'), true);
 assert.strictEqual(runningStore.get('session-running', 3600), null);
 console.log('selection session test ok');

@@ -1,4 +1,3 @@
-"""A consumed durable Stop request remains active for its entire running loop."""
 
 from __future__ import annotations
 
@@ -67,7 +66,6 @@ def test_consumed_stop_blocks_siblings_and_next_model_request(tmp_path, parallel
     assert sum(event.type == "cancel/consumed" for event in session.events) == 1
     assert session.open_turn is None
 
-    # Consumption stays durable; the latch belongs only to this completed run.
     events = asyncio.run(_collect(params))
     assert events[-1].terminal.reason is TransitionReason.COMPLETED
     assert backend.requests == 2

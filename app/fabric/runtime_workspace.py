@@ -94,7 +94,6 @@ def _command_path_candidates(command_line: str) -> list[str]:
 
 
 def _windows_current_directory(pid: int) -> str:
-    """Best-effort x64 PEB read; returns empty for inaccessible/WOW64 processes."""
     if os.name != "nt" or ctypes.sizeof(ctypes.c_void_p) != 8:
         return ""
     process = None

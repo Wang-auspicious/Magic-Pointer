@@ -1,13 +1,3 @@
-"""Delegate tool: spawn a coding subagent with isolated context (Hermes port).
-
-Contract ported from HermesAgent ``tools/delegate_tool.py`` (MIT):
-each child gets a fresh conversation (no parent history), a restricted
-toolset (coding tools only — no desktop actions, no user interaction, no
-recursive delegation), a focused system prompt, and its own budget cap.
-The parent sees one tool call and one summary result, never the child's
-intermediate rounds. The GUI receives bounded progress snapshots independently.
-Readonly children may run concurrently; editing children use the exclusive lane.
-"""
 
 from __future__ import annotations
 
@@ -22,10 +12,6 @@ from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec, curr
 
 __all__ = ["register_delegate_tool"]
 
-#: Tool schemas offered to a child turn. Matches the ceiling both production
-#: bridges pass (selection_bridge / conversation_bridge): high enough that the
-#: registry is never silently truncated, while still bounded so a runaway
-#: plugin cannot flood the model's context with schemas.
 _CHILD_TOOL_SCHEMA_LIMIT = 128
 
 _SUBAGENT_SYSTEM_PROMPT = (
@@ -53,8 +39,6 @@ def register_delegate_tool(
     parent_session_getter: Callable[[], Any] | None = None,
     detached: bool = False,
 ) -> None:
-    """Register ``delegate_task``; the child runs the same loop kernel."""
-    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("delegate_task", "Agent")
     from app.fabric.engine import run_agent_turn
 
@@ -68,8 +52,6 @@ def register_delegate_tool(
         try:
             subagent_event_sink(payload)
         except Exception:
-            # A visual progress consumer can disappear with its window; it may
-            # never be able to abort or alter the child loop.
             return
 
     def bounded(value: Any, limit: int = 1600) -> str:
@@ -145,8 +127,6 @@ def register_delegate_tool(
         child_permissions = PermissionDecisions.inherited(child_session, child_permissions)
         child_cancelled = cancel_interrupt_check(child_session)
         if previous_background and run_in_background is False:
-            # An explicit foreground resume hands ownership back to this live
-            # parent call; its old background snapshot must not mask new events.
             child_session.path.with_suffix('.agent.json').unlink()
 
         def launch_background(background_prompt: str) -> dict:
@@ -169,8 +149,6 @@ def register_delegate_tool(
         if interrupted():
             raise ActionFailure(FailureType.TOOL_ERROR, f"subagent {child_id} stopped before dispatch")
         steps: list[dict[str, Any]] = []
-        # Resume the actual child transcript, including the attempt that asked
-        # permission. A new model turn must not erase already observed tools.
         prepared = {}
         for event in child_session.events:
             if event.type == 'operation/prepared':
@@ -247,8 +225,6 @@ def register_delegate_tool(
                     reasoning = (reasoning + text)[-6000:]
                 else:
                     answer = (answer + text)[-6000:]
-                # First content and phase transitions paint immediately; bursts
-                # share one snapshot, with an unconditional final flush below.
                 if first or changed or time.perf_counter() - last_publish >= 0.12:
                     publish("running")
                 return
@@ -305,8 +281,6 @@ def register_delegate_tool(
             Effect.LOCAL_IRREVERSIBLE,
         )
         if readonly:
-            # 只读子代理：写工具从 schema 里摘掉（不只是权限挡），调研类
-            # 委派 is_concurrency_safe_for=True 可进并行车道。
             for write_tool in (
                 "Write", "Edit", "Patch", "Bash", "Rewind",
             ):
@@ -329,19 +303,7 @@ def register_delegate_tool(
                 allowed_effects=child_effects,
                 permission_mode=child_mode,
                 permission_decisions=child_permissions,
-                # Two different quantities, kept apart on purpose. The child's
-                # visible tool surface is the same ceiling both production
-                # bridges use; its *work* budget is the turn fuse below.
-                # Passing the work budget as `tool_limit` truncated the child's
-                # schemas by registration order, and the tool registered last
-                # is `Tools` (FIND_CAPABILITY_TOOL) — the only route to
-                # everything past the limit. A child on a small budget lost its
-                # tools and its way of asking for them.
                 tool_limit=_CHILD_TOOL_SCHEMA_LIMIT,
-                # The loop counts turns, not individual calls (a turn may carry
-                # up to eight parallel ones), so this is the honest place to
-                # spend a call budget. It bounds a runaway child; it is not an
-                # exact call count, and the name should not promise one.
                 emergency_turn_fuse=max(1, int(max_tool_calls)),
                 lang="zh",
                 event_sink=child_event,
@@ -366,8 +328,6 @@ def register_delegate_tool(
         )
         result = f"{header}\n{summary or '(no summary)'}"
         if terminal.reason.value == 'awaiting_user':
-            # Return control to the parent UI; the worker waits on this same
-            # child's durable answer, then resumes the exact blocked action.
             if not detached and callable(getattr(llm_provider, 'background_config', None)):
                 launch_background('')
             return result

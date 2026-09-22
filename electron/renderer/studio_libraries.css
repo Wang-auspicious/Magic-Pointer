@@ -1,4 +1,3 @@
-/* Shared browse surfaces, using the locally captured Claude typography and spacing. */
 .mp-main-navigation { display: flex; flex-direction: column; flex: none; margin-bottom: 14px; }
 .mp-main-navigation [hidden] { display: none; }
 .mp-nav-row { position: relative; }
@@ -39,8 +38,6 @@
 .mp-library-tabs button:hover { background: var(--mp-hover); }
 .mp-library-top-tabs { margin-top: 0; padding-bottom: 14px; border-bottom: 1px solid var(--mp-rule); }
 .mp-library-top-tabs button { border-radius: 8px; }
-/* 官方空态组件：gap-md 16px、px-md 12px、py-12 48px，插画 md=96px 且用 text-primary，
-   标题与描述都是 max-w-xs(320px)、text-secondary。 */
 .mp-library-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 48px 12px; }
 .mp-library-empty > .cds-icon { font-size: 48px; width: 64px; height: 64px; font-weight: 400; color: var(--mp-text-secondary); }
 .mp-library-pictogram { display: inline-flex; color: var(--mp-text); --cds-pictogram-highlight-default: #e7e6e1; }
@@ -121,7 +118,6 @@ button.mp-library-card:hover { background: var(--mp-hover); }
 .mp-library-new-menu { position: relative; }
 .mp-library-new-menu summary { list-style: none; }
 .mp-library-new-menu summary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 6px 10px; white-space: nowrap; cursor: pointer; }
-/* Claude 的标题行把 scope 标签和右侧动作并排放；动作是三个图标/主按钮，不是输入框。 */
 .mp-library-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 22px; }
 .mp-library-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .mp-library-actions > button:not(.mp-library-primary), .mp-library-sort summary { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 8px; color: var(--mp-text-secondary); }
@@ -162,8 +158,6 @@ button.mp-library-card:hover { background: var(--mp-hover); }
 .mp-library-popover[data-submenu-side="left"] .mp-library-menu-parent .cds-icon:last-child { transform: rotate(180deg); }
 .mp-library-menu-group:is(:hover, :focus-within) > .mp-library-submenu { display: block; }
 .mp-library-submenu button { justify-content: space-between; }
-/* 参考里的子菜单用一条线把「具体选项」和「None」分开——None 不是又一个取值，
-   是「不分组」这个兜底。 */
 .mp-library-submenu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--mp-rule); }
 .mp-library-popover .is-danger { color: var(--mp-danger); }
 .mp-library-menu-heading { padding: 8px 10px; color: var(--mp-text-muted); font-size: 12px; }

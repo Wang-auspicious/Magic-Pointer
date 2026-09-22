@@ -1,4 +1,3 @@
-"""Figma plugin surface and task-source adapters."""
 
 from __future__ import annotations
 

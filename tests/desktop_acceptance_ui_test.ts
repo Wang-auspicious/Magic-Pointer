@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const { createConversationStore } = require('../electron/conversation_store');
 const control = require('../electron/conversation_control');
-const chat = require('../electron/renderer/dsh_chat');
+const chat = require('../electron/renderer/chat_view');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-desktop-regression-'));
 try {

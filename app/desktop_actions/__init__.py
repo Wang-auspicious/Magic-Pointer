@@ -1,4 +1,3 @@
-"""Kimi-shaped desktop action surface on the main ToolRegistry."""
 
 from .session import (
     DesktopActionSession,

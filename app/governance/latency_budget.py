@@ -1,11 +1,3 @@
-"""Explicit latency budgets (harness gap review L8).
-
-Every pipeline stage carries a hard upper budget. When a stage exceeds its
-budget it degrades immediately (per :class:`TimeoutAction`) instead of
-blocking the whole interaction. Budget numbers come from the L8 review table.
-
-This module is pure Python and has no I/O or platform dependencies.
-"""
 
 from __future__ import annotations
 
@@ -15,7 +7,6 @@ from dataclasses import dataclass
 
 
 class Stage(enum.StrEnum):
-    """Pipeline stages with an explicit latency budget."""
 
     WAKE_DETECTION = "WAKE_DETECTION"
     CAPTURE_FREEZE = "CAPTURE_FREEZE"
@@ -26,7 +17,6 @@ class Stage(enum.StrEnum):
 
 
 class TimeoutAction(enum.StrEnum):
-    """Degradation action taken when a stage exceeds its budget."""
 
     ABANDON = "ABANDON"
     USE_PREVIOUS_FRAME = "USE_PREVIOUS_FRAME"
@@ -37,7 +27,6 @@ class TimeoutAction(enum.StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class BudgetPolicy:
-    """One row of the latency budget table."""
 
     stage: Stage
     budget_ms: int
@@ -80,7 +69,6 @@ DEFAULT_BUDGETS: dict[Stage, BudgetPolicy] = {
 
 @dataclass(frozen=True, slots=True)
 class BudgetResult:
-    """Outcome of one budget check."""
 
     stage: Stage
     elapsed_ms: float
@@ -93,13 +81,6 @@ class BudgetResult:
 def check_budget(
     stage: Stage, elapsed_ms: float, budgets: Mapping[Stage, BudgetPolicy] = DEFAULT_BUDGETS
 ) -> BudgetResult:
-    """Check ``elapsed_ms`` against the stage's budget.
-
-    Within budget: ``action`` is ``None`` and ``overrun_ms`` is ``0.0``.
-    Over budget: ``action`` is the stage's ``on_timeout`` and ``overrun_ms``
-    is the non-negative overrun. Raises :class:`KeyError` when the stage is
-    missing from ``budgets``.
-    """
     policy = budgets[stage]
     elapsed = float(elapsed_ms)
     within_budget = elapsed <= policy.budget_ms
@@ -117,10 +98,5 @@ def check_budget(
 def remaining_ms(
     stage: Stage, elapsed_ms: float, budgets: Mapping[Stage, BudgetPolicy]
 ) -> int:
-    """Milliseconds left in the stage budget; negative when over.
-
-    Fractional input is truncated toward zero. Raises :class:`KeyError` when
-    the stage is missing from ``budgets``.
-    """
     policy = budgets[stage]
     return int(policy.budget_ms - float(elapsed_ms))

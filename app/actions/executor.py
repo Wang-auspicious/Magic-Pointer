@@ -9,8 +9,6 @@ from typing import Any
 
 from app.actions.history import ActionHistoryRecord, ActionHistoryStore, make_word_undo_proposal, new_history_id, excerpt
 from app.actions.office import text_sha256
-from app.actions.shopping_list import make_shopping_list_undo_proposal
-from app.actions.calendar import make_calendar_undo_proposal
 from app.actions.draft_writer import write_draft_to_target
 from app.actions.policy import LocalPermissionPolicy
 from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus, SafetyLevel
@@ -18,8 +16,6 @@ from app.action_guard.approval import ActionApproval, ApprovalError
 from app.action_guard.undo_log import Compensation, UndoLog
 from app.agent_runtime.tool_registry import Effect
 from app.adapters.office_adapter import ALLOWED_WORD_COM_PROG_IDS, WORD_COM_PROG_ID, _run_powershell_json
-from app.dashboard.shopping_list import ShoppingListError, ShoppingListStore
-from app.dashboard.calendar import CalendarConflict, CalendarError, CalendarEventStore
 
 JsonDict = dict[str, Any]
 
@@ -28,7 +24,6 @@ _DEFAULT_UNDO_LOG = UndoLog()
 
 
 def _register(action_type: str):
-    """Decorator: register a private handler method for an action type."""
     def decorate(fn):
         _ACTION_DISPATCH[action_type] = fn
         return fn
@@ -39,12 +34,6 @@ SUPPORTED_ACTION_TYPES = frozenset({
     "copy_text_to_clipboard",
     "office_replace_selection",
     "office_undo_last_action",
-    "shopping_list_add",
-    "shopping_list_add_many",
-    "shopping_list_set_checked",
-    "shopping_list_undo_add",
-    "calendar_event_create",
-    "calendar_event_undo_create",
     "paste_text_to_foreground",
     "fabric_recipe_execute",
     "document_patch_operation",
@@ -69,7 +58,6 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _ps_literal_string(value: str | None) -> str:
-    # Single-quoted PowerShell literal. Only used for hashes/ids, not model text.
     return "'" + str(value or "").replace("'", "''") + "'"
 
 
@@ -79,15 +67,12 @@ def _word_com_prog_id(value: Any) -> str:
 
 
 class SafeActionExecutor:
-    """Typed execution layer with policy, precondition, and history checks."""
 
     def __init__(
         self,
         *,
         policy: LocalPermissionPolicy | None = None,
         history_store: ActionHistoryStore | None = None,
-        shopping_list_store: ShoppingListStore | None = None,
-        calendar_event_store: CalendarEventStore | None = None,
         draft_writer: Any | None = None,
         artifact_revision_probe: Any | None = None,
         document_operation_executor: Any | None = None,
@@ -97,19 +82,11 @@ class SafeActionExecutor:
     ) -> None:
         self.policy = policy or LocalPermissionPolicy()
         self.history_store = history_store or ActionHistoryStore()
-        self.shopping_list_store = shopping_list_store or ShoppingListStore()
-        self.calendar_event_store = calendar_event_store or CalendarEventStore()
         self.draft_writer = draft_writer or write_draft_to_target
         self.artifact_revision_probe = artifact_revision_probe
         self.document_operation_executor = document_operation_executor
         self.fabric_engine = fabric_engine
-        # One ledger can be shared by the Runtime and GUI action bridges.  A
-        # local default keeps old embedders compatible while still recording
-        # every proposal that reaches this execution seam.
         self.approval_ledger = approval_ledger or ActionApproval()
-        # Bridge entry points often construct a short-lived executor for each
-        # call.  Keep their recovery history on the process-wide harness seam;
-        # callers with task/session isolation can still inject their own log.
         self.undo_log = undo_log if undo_log is not None else _DEFAULT_UNDO_LOG
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
@@ -148,8 +125,6 @@ class SafeActionExecutor:
         )
 
     def execute(self, proposal: ActionProposal, *, confirmed: bool = False) -> ExecutionResult:
-        # Confirmation is a trust-boundary bit, not a truthy option. Strings
-        # such as "false" must never authorize an action.
         confirmed = confirmed is True
         started = now_iso()
         decision = self.policy.decide(proposal)
@@ -170,18 +145,6 @@ class SafeActionExecutor:
             return self._finalize_execution(self._office_replace_selection(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "office_undo_last_action":
             return self._finalize_execution(self._office_undo_last_action(proposal, started, confirmed=confirmed, metadata=metadata))
-        if proposal.action_type == "shopping_list_add":
-            return self._finalize_execution(self._shopping_list_add(proposal, started, confirmed=confirmed, metadata=metadata))
-        if proposal.action_type == "shopping_list_add_many":
-            return self._finalize_execution(self._shopping_list_add_many(proposal, started, confirmed=confirmed, metadata=metadata))
-        if proposal.action_type == "shopping_list_set_checked":
-            return self._finalize_execution(self._shopping_list_set_checked(proposal, started, confirmed=confirmed, metadata=metadata))
-        if proposal.action_type == "shopping_list_undo_add":
-            return self._finalize_execution(self._shopping_list_undo_add(proposal, started, confirmed=confirmed, metadata=metadata))
-        if proposal.action_type == "calendar_event_create":
-            return self._finalize_execution(self._calendar_event_create(proposal, started, confirmed=confirmed, metadata=metadata))
-        if proposal.action_type == "calendar_event_undo_create":
-            return self._finalize_execution(self._calendar_event_undo_create(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "paste_text_to_foreground":
             return self._finalize_execution(self._paste_text_to_foreground(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "fabric_recipe_execute":
@@ -196,12 +159,6 @@ class SafeActionExecutor:
         return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="unreachable action dispatch", metadata=metadata)
 
     def _finalize_execution(self, result: ExecutionResult) -> ExecutionResult:
-        """Register a generated compensation after a verified write succeeds.
-
-        Handlers remain responsible for producing a precise, target-bound
-        ``undo_proposal``.  The executor owns the common ledger so every
-        action surface gets the same LIFO recovery semantics.
-        """
         if result.status is not ExecutionStatus.SUCCEEDED:
             return result
         raw = result.output.get("undo_proposal")
@@ -242,13 +199,6 @@ class SafeActionExecutor:
         confirmed: bool,
         metadata: JsonDict,
     ) -> ExecutionResult:
-        """Execute one whitelisted DocumentPatch operation.
-
-        The outer document-patch gate owns source authorization, base reads,
-        revision/acceptance checks, and post-write verification.  This shared
-        executor is still the only route to the physical handler so UI-started
-        edits do not bypass the normal local permission policy.
-        """
         from app.artifacts.document_patch import OperationWriteResult, PatchOperation
 
         if proposal.metadata.get("trusted_document_patch") is not True:
@@ -332,14 +282,6 @@ class SafeActionExecutor:
         proposal: ActionProposal,
         confirmed: bool,
     ) -> Any | None:
-        """Bind the legacy boolean confirmation to the approval ledger.
-
-        Existing callers still receive the same policy result.  The ledger is
-        now the durable semantic record: an unconfirmed irreversible proposal
-        remains PENDING, while an explicitly confirmed one transitions through
-        APPROVED using a non-model actor.  This keeps approval provenance out
-        of individual action handlers.
-        """
         effect = self._effect_for(proposal)
         target = proposal.target.object_id if proposal.target is not None else None
         request = self.approval_ledger.request(
@@ -354,9 +296,6 @@ class SafeActionExecutor:
             try:
                 self.approval_ledger.approve(request.request_id, by=actor)
             except ApprovalError:
-                # The policy result remains authoritative for compatibility;
-                # expose the failed transition in metadata through the
-                # request's PENDING state instead of executing as approved.
                 return request
         return request
 
@@ -399,8 +338,6 @@ class SafeActionExecutor:
                     workflow_store.approve(workflow_task_id, surface="gui")
                 workflow_claim = workflow_store.claim_execution(workflow_task_id, surface="gui")
             except WorkflowTaskError as exc:
-                # A stale or deleted workflow task must not escape execute() as
-                # an exception; every other failure path returns a result.
                 return self._result(
                     proposal,
                     started,
@@ -612,8 +549,6 @@ class SafeActionExecutor:
             if not adaptive_receipt:
                 return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer target mismatch", metadata=metadata)
         delivery_mode = str(receipt.get("delivery_mode") or "full_prompt")
-        # The receipt is JSON from a child process; parse defensively instead of
-        # letting a malformed field raise out of execute().
         source_chars = _optional_int(receipt.get("source_chars"))
         written_chars = _optional_int(receipt.get("written_chars"))
         if delivery_mode == "artifact_reference":
@@ -638,133 +573,6 @@ class SafeActionExecutor:
             metadata=metadata,
         )
 
-    def _shopping_list_add(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
-        params = dict(proposal.parameters)
-        try:
-            stored = self.shopping_list_store.add_item(
-                str(params.get("item_text") or ""),
-                idempotency_key=str(params.get("idempotency_key") or ""),
-                source=params.get("source") or {},
-            )
-            undo = make_shopping_list_undo_proposal(receipt_id=stored["receipt_id"], item=stored["item"])
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.SUCCEEDED,
-                confirmed=confirmed,
-                output={
-                    "verified": stored["verified"],
-                    "receipt_id": stored["receipt_id"],
-                    "item": stored["item"],
-                    "list_id": "default-shopping-list",
-                    "created": stored["created"],
-                    "revision": stored["revision"],
-                    "undo_proposal": undo.to_dict(),
-                },
-                metadata=metadata,
-            )
-        except ShoppingListError as exc:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
-
-    def _shopping_list_add_many(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
-        raw_items = proposal.parameters.get("items")
-        if not isinstance(raw_items, list) or not raw_items:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="batch items are required", metadata=metadata)
-        stored_items: list[JsonDict] = []
-        try:
-            for raw in raw_items[:24]:
-                if not isinstance(raw, dict):
-                    raise ShoppingListError("invalid batch item")
-                stored_items.append(self.shopping_list_store.add_item(
-                    str(raw.get("item_text") or ""),
-                    idempotency_key=str(raw.get("idempotency_key") or ""),
-                    source=raw.get("source") or {},
-                ))
-        except ShoppingListError as exc:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
-        verified = all(item.get("verified") is True for item in stored_items)
-        return self._result(
-            proposal,
-            started,
-            ExecutionStatus.SUCCEEDED if verified else ExecutionStatus.FAILED,
-            confirmed=confirmed,
-            output={
-                "verified": verified,
-                "items": [dict(item.get("item") or {}) for item in stored_items],
-                "created_count": sum(1 for item in stored_items if item.get("created") is True),
-                "list_id": "default-shopping-list",
-                "receipts": [item.get("receipt_id") for item in stored_items],
-            },
-            error=None if verified else "shopping list batch verification failed",
-            metadata=metadata,
-        )
-
-    def _shopping_list_set_checked(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
-        params = dict(proposal.parameters)
-        try:
-            stored = self.shopping_list_store.set_checked(
-                str(params.get("item_id") or ""),
-                params.get("checked"),
-                str(params.get("expected_updated_at") or ""),
-            )
-            return self._result(proposal, started, ExecutionStatus.SUCCEEDED, confirmed=confirmed, output=stored, metadata=metadata)
-        except ShoppingListError as exc:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
-
-    def _shopping_list_undo_add(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
-        params = dict(proposal.parameters)
-        try:
-            stored = self.shopping_list_store.undo_add(
-                str(params.get("item_id") or ""),
-                str(params.get("receipt_id") or ""),
-                str(params.get("expected_updated_at") or ""),
-            )
-            return self._result(proposal, started, ExecutionStatus.SUCCEEDED, confirmed=confirmed, output=stored, metadata=metadata)
-        except ShoppingListError as exc:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
-
-    def _calendar_event_create(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
-        params = dict(proposal.parameters)
-        try:
-            stored = self.calendar_event_store.create_event(
-                params.get("event") or {},
-                idempotency_key=str(params.get("idempotency_key") or ""),
-                source=params.get("source") or {},
-                allow_conflict=params.get("allow_conflict", False),
-            )
-            undo = make_calendar_undo_proposal(receipt_id=stored["receipt_id"], event=stored["event"])
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.SUCCEEDED,
-                confirmed=confirmed,
-                output={**stored, "calendar_id": "local-calendar", "undo_proposal": undo.to_dict()},
-                metadata=metadata,
-            )
-        except CalendarConflict as exc:
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.FAILED,
-                confirmed=confirmed,
-                error=str(exc),
-                output={"conflicts": exc.conflicts},
-                metadata=metadata,
-            )
-        except CalendarError as exc:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
-
-    def _calendar_event_undo_create(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
-        params = dict(proposal.parameters)
-        try:
-            stored = self.calendar_event_store.undo_create(
-                str(params.get("event_id") or ""),
-                str(params.get("receipt_id") or ""),
-                str(params.get("expected_updated_at") or ""),
-            )
-            return self._result(proposal, started, ExecutionStatus.SUCCEEDED, confirmed=confirmed, output=stored, metadata=metadata)
-        except CalendarError as exc:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
 
     def _copy_text_to_clipboard(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
         text = str(proposal.parameters.get("text") or "")

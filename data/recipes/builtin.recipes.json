@@ -605,43 +605,6 @@
       "provider": "unavailable:canvas_adapter_not_configured"
     },
     {
-      "id": "calendar.create_from_screen",
-      "title": "屏幕内容转日历",
-      "description": "从海报、邮件或文字生成事件草稿并检查冲突。",
-      "inputKinds": [
-        "image",
-        "text",
-        "document_region"
-      ],
-      "outputKind": "calendar_event",
-      "providerStrategies": [
-        "calendar_adapter",
-        "deep_link"
-      ],
-      "risk": "external_send",
-      "verification": "event_identity_and_calendar_readback",
-      "keywords": {
-        "zh": [
-          "加到日历",
-          "创建日程",
-          "安排会议",
-          "活动日历"
-        ],
-        "en": [
-          "add to calendar",
-          "create event"
-        ]
-      },
-      "minObjects": 1,
-      "maxObjects": 1,
-      "platforms": [
-        "windows",
-        "macos"
-      ],
-      "version": 1,
-      "provider": "unavailable:calendar_adapter_not_configured"
-    },
-    {
       "id": "map.route",
       "title": "两地点路线",
       "description": "用两个地点对象生成地图路线，不伪造距离。",
@@ -713,43 +676,6 @@
       ],
       "version": 1,
       "provider": "unavailable:place_provider_not_configured"
-    },
-    {
-      "id": "recipe.scale_and_route",
-      "title": "食谱缩放并路由",
-      "description": "识别配料、缩放数量并写入用户清单。",
-      "inputKinds": [
-        "recipe_text",
-        "image",
-        "document_region"
-      ],
-      "outputKind": "structured_list",
-      "providerStrategies": [
-        "recipe_parser",
-        "list_adapter"
-      ],
-      "risk": "local_write",
-      "verification": "item_count_units_and_destination_readback",
-      "keywords": {
-        "zh": [
-          "配料",
-          "做两倍",
-          "加到清单",
-          "购物清单"
-        ],
-        "en": [
-          "double recipe",
-          "ingredients"
-        ]
-      },
-      "minObjects": 1,
-      "maxObjects": 1,
-      "platforms": [
-        "windows",
-        "macos"
-      ],
-      "version": 1,
-      "provider": "artifact.list"
     },
     {
       "id": "task.route",

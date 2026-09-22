@@ -1,19 +1,3 @@
-/*
- * RECON WORKER E — main-process synchronous I/O that sits on interactive paths.
- *
- * Measures the two synchronous fs patterns that run inside the Electron main
- * process (the same thread that services the 20ms pointer poll and every IPC),
- * at the sizes this app actually produces:
- *
- *   - conversation_store.persist(): JSON.stringify(all conversations) + writeFileSync,
- *     called by updateTurn() on every 300ms live-answer flush.
- *   - main.ts log(): mkdirSync + appendFileSync, called ~150 places including
- *     every bridge progress record.
- *
- * Pure Node. No Electron, no GUI. Files land in the OS temp dir.
- *
- * Run:  node tools/measure_main_process_io.js
- */
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

@@ -1,17 +1,3 @@
-"""Tests for the agent-runtime look tool (harness-gap L2: perception as a tool).
-
-Covers the VisionBackend contract and LookTool behaviour:
-- the crop box is decided by the anchor (``bbox:`` / ``element:`` forms), never
-  the full screen; the backend receives exactly the crop for the passed box
-- box size clamping (min/max side) -> ``box_out_of_bounds``, no upscale
-- three-state failure mapping (VisionUnavailable / VisionTimeout / other ->
-  unsupported / timeout / error) and the honest ``vision_not_configured`` path
-  when no backend exists (zero backend calls)
-- registration: look is read / not concurrency-safe; schema export and
-  execution through the registry
-
-All backends are fakes; no real vision model, screen or network is touched.
-"""
 
 from __future__ import annotations
 
@@ -39,7 +25,6 @@ def crop_bytes(box: tuple[int, int, int, int]) -> bytes:
 
 
 class FakeVisionBackend:
-    """Records every describe call; returns a canned result or raises."""
 
     def __init__(
         self,
@@ -67,7 +52,6 @@ class FakeVisionBackend:
         }
 
 
-# --- look: success path -------------------------------------------------------
 
 
 def test_look_success_passes_exact_crop_to_backend():
@@ -115,7 +99,6 @@ def test_look_element_anchor_resolves_via_resolver():
     assert backend.calls[0]["image_bytes"] == b"crop:10,20,110,220"
 
 
-# --- look: honest failure paths -----------------------------------------------
 
 
 def test_look_resolver_miss_is_honest_error():
@@ -177,7 +160,6 @@ def test_look_small_valid_box_accepted():
     assert backend.calls[0]["image_bytes"] == b"crop:0,0,100,100"
 
 
-# --- look: three-state failure mapping ----------------------------------------
 
 
 def test_look_vision_unavailable_maps_to_unsupported():
@@ -217,7 +199,6 @@ def test_look_no_backend_unsupported_and_zero_calls():
     assert backend.calls == []
 
 
-# --- registration + registry execution ----------------------------------------
 
 
 def test_register_exports_look_spec():
@@ -271,8 +252,6 @@ def test_registered_look_resolves_task_reference_without_model_guessing_coordina
     assert backend.calls[0]["image_bytes"] == b"crop:361,1351,510,1427"
 
 def test_look_quota_is_honest_about_exhaustion():
-    """Each look is a real vision call (seconds + money). A model that spams
-    it must get an honest unsupported receipt, not an infinite budget."""
     backend = FakeVisionBackend()
     tool = LookTool(backend, max_calls=2)
     assert tool.look(anchor="bbox:0,0,100,100").status is EvidenceStatus.OK
@@ -284,9 +263,6 @@ def test_look_quota_is_honest_about_exhaustion():
 
 
 def test_empty_capture_bytes_are_honest_unsupported_not_a_backend_call():
-    """真机事故：element anchor 解析出的框拿不到冻结帧裁剪时 capture 返回
-    空字节，旧路径把它发给视觉后端再炸出 AttributeError。必须在进入后端
-    前诚实报 unsupported。"""
     backend = FakeVisionBackend()
     tool = LookTool(backend, capture=lambda box: b"")
     ev = tool.look(anchor="bbox:10,20,110,220", prompt="what")

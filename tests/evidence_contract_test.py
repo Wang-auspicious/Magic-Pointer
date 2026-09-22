@@ -1,8 +1,3 @@
-"""Tests for the enforced perception evidence contract (review L6).
-
-Covers: enum completeness, dataclass validation branches, helper factories,
-the anti-container heuristic, merge_for_decision branches, and trust.
-"""
 
 import pytest
 
@@ -218,8 +213,6 @@ class TestContainerHeuristic:
         assert apply_container_heuristic(ev, self.CONTAINERS) is ev
 
     def test_multiline_all_container_lines_are_downgraded(self) -> None:
-        """A multi-line read whose every line is a container name must be
-        flagged too (review P3.6: exact-match only let joined reads through)."""
         ev = ok_evidence("Window\nPane\nList", EvidenceSource.UIA)
         out = apply_container_heuristic(ev, self.CONTAINERS)
         assert out.container_hint is True

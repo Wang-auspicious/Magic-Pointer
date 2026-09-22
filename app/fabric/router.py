@@ -10,7 +10,6 @@ _EXPLICIT_RE = re.compile(r"^\s*recipe\s*:\s*([a-z0-9_.-]+)\s*$", re.IGNORECASE)
 
 
 class RecipeRouter:
-    """Deterministic first-pass router. A model may only resolve remaining ambiguity."""
 
     def reference_mode(self, command: str) -> str:
         value = command.casefold()
@@ -35,7 +34,6 @@ class RecipeRouter:
             ("text.ocr_clean", ("去掉空格", "清洗文字", "号码空格", "remove spaces")),
             ("text.translate_in_place", ("翻成", "翻译成", "译成", "translate")),
             ("text.rewrite_in_place", ("改得更正式", "改写", "润色", "重写", "rewrite")),
-            ("calendar.create_from_screen", ("加到日历", "创建日程", "安排会议", "add to calendar")),
             ("map.route", ("怎么走", "路线", "从这里到", "导航", "directions")),
             ("agent.handoff", ("让 codex", "让 pi", "让 claude", "让 gemini", "agent 修", "修这个", "send to codex")),
             ("text.ocr_copy", ("识别这个屏幕对象中的文字", "复制这段文字", "识别文字", "提取文字", "复制这段", "copy text", "ocr")),

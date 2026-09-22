@@ -1,26 +1,13 @@
 'use strict';
 
 /* exported ConversationControl */
-// Studio 会话控制的纯决策层：流式正文 / 停止 / 插话共用一条 @@mp 进度协议。
-//
-// 桥端（scripts/conversation_bridge.py）在 stderr 上发：
-//   @@mp phase=session_ready sid=<agent-studio-…>     —— durable session id
-//   @@mp phase=answer_chunk b64=<base64 正文增量>      —— 流式回答
-//   @@mp phase=plan          b64=<base64 计划快照>     —— todo_write 实时推送
-// blob 载荷一律走 b64= 字段：PhaseClock._token 的 120 字符截断会剪断
-// base64，多步计划与正文增量都会被静默毁掉。
-//
-// 渲染层（classic script）与主进程/测试（require）双端共用；base64 解码
-// 不依赖 Buffer——浏览器里没有它。
 
 const ConversationControl = (() => {
   const SESSION_READY_PHASE = 'session_ready';
   const ANSWER_CHUNK_PHASE = 'answer_chunk';
   const PLAN_PHASE = 'plan';
 
-  /** 与 conversation_bridge 当前签发语义一致；旧共享 id 明确不再信任。 */
   const SESSION_ID_PATTERN = /^(?:agent-studio-(?:new|conv)-[0-9a-f]{32}|agent-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/;
-  /** 与 scripts/agent_session_bridge.py 的 MAX_TEXT_CHARS 一致。 */
   const MAX_STEER_CHARS = 12000;
 
   function fieldsOf(record: unknown): Record<string, string> {
@@ -47,7 +34,6 @@ const ConversationControl = (() => {
     ));
   }
 
-  /** session_ready 记录里的 durable session id；任何不合形都拒绝。 */
   function sessionIdFromRecord(record: unknown): string | null {
     if (phaseOf(record) !== SESSION_READY_PHASE) return null;
     const sid = String(fieldsOf(record).sid || '');
@@ -75,7 +61,6 @@ const ConversationControl = (() => {
     return blobToUtf8(String(fields.b64 || ''));
   }
 
-  /** answer_chunk 增量文本；坏数据一律空串——展示通道不能炸 UI。 */
   function decodeChunkBlob(fields: Record<string, string>): string {
     return decodeBlob(fields);
   }
@@ -84,7 +69,6 @@ const ConversationControl = (() => {
     return { answer: '', thinking: '', trajectory: [] };
   }
 
-  /** Keep each model message in its original position, across tool boundaries. */
   function appendTranscript(transcript: ReturnType<typeof createTranscript>, record: unknown): boolean {
     const phase = phaseOf(record);
     const fields = fieldsOf(record);
@@ -136,7 +120,6 @@ const ConversationControl = (() => {
     steps: Array<{ content: string; status: string }>;
   }
 
-  /** Empty steps clears the plan; missing or malformed data leaves it alone. */
   function planStepsFromRecord(record: unknown): PlanSteps | null {
     if (phaseOf(record) !== PLAN_PHASE) return null;
     const raw = decodeBlob(fieldsOf(record));
@@ -200,7 +183,6 @@ const ConversationControl = (() => {
       : { action: 'steer', sessionId, text };
   }
 
-  /** Bounded thread grant: a canonical tool name or one Bash prefix rule. */
   function sanitizePermissionRule(value: unknown): string {
     const rule = String(value || '').trim();
     if (/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(rule)) return rule;
@@ -226,7 +208,6 @@ const ConversationControl = (() => {
       : currentText;
   }
 
-  /** Runtime owns the lossless transcript; only legacy text and scene evidence cross here. */
   function bridgeHistoryTurns(turns: unknown): Array<Record<string, unknown>> {
     if (!Array.isArray(turns)) return [];
     return turns.slice(-12).map(turn => ({

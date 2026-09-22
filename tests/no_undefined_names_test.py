@@ -1,9 +1,3 @@
-"""全库 pyflakes F821 守卫：未定义名不允许存在。
-
-1.0.14 起生产路径带着 ``NameError: name 'reply_style' is not defined`` 跑了
-两周——每个走到 Agent loop 的手势问句必死，GUI 只显示兜底文案，错误详情
-被 worker 兜底。这类错误的唯一可靠防线是静态扫描，不是逐条真机试。
-"""
 
 from __future__ import annotations
 

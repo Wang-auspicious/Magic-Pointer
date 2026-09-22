@@ -125,12 +125,6 @@ function captureEligibility({
   return { commandReady: false, state, message, autoDismissMs: 1800 };
 }
 
-// Maps a parsed bridge payload onto the PointerStage surface modes.
-// Kept consistent with the discrimination logic in
-// electron/stage_contract.js (stageEventFromBridge):
-//   'error'  -> failed payload with no action proposals to act on
-//   'card'   -> structured stage card (calendar draft, route draft, text-draft diff)
-//   'inline' -> everything else renders as a plain inline answer
 interface ActionProposal {
   action_type?: unknown;
 }
@@ -138,7 +132,6 @@ interface ActionProposal {
 interface BridgeResult {
   ok?: unknown;
   intentKind?: unknown;
-  calendarDraft?: unknown;
   routeDraft?: unknown;
   actionProposals?: unknown;
 }
@@ -151,7 +144,6 @@ function classifyResult(parsed: BridgeResult | null = {}): ResultSurface {
     ? (parsed.actionProposals as ActionProposal[])
     : [];
   if (parsed.ok === false && proposals.length === 0) return 'error';
-  if (parsed.intentKind === 'calendar_event_draft' && parsed.calendarDraft) return 'card';
   if (parsed.intentKind === 'route_draft' && parsed.routeDraft) return 'card';
   if (proposals.some((proposal) => proposal?.action_type === 'office_replace_selection'))
     return 'card';

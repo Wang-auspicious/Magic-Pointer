@@ -1,4 +1,3 @@
-"""Task/document-bound client for the local Electron Figma bridge."""
 
 from __future__ import annotations
 

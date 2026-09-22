@@ -47,7 +47,6 @@ def _task_id(payload: dict[str, Any], proposal: ActionProposal | None = None) ->
 
 
 def process_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    """Execute one action or one durable compensation request."""
     if payload.get("operation") == "undo":
         action_id = str(payload.get("actionId") or payload.get("action_id") or "").strip() or None
         broker = ActionBroker(task_id=_task_id(payload))
@@ -89,11 +88,6 @@ def process_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
             "copy_text_to_clipboard": "Copied to clipboard.",
             "office_replace_selection": "文档选区已替换。之后即使继续编辑，也可以通过下方动作尝试精确恢复这一次修改。",
             "office_undo_last_action": "已精确恢复这一次 Magic Pointer 文档修改。",
-            "shopping_list_add": "已加入购物清单。",
-            "shopping_list_set_checked": "购物清单状态已更新。",
-            "shopping_list_undo_add": "已撤销这次购物清单添加。",
-            "calendar_event_create": "本地日历事件已创建并验证。",
-            "calendar_event_undo_create": "已撤销这次本地日历创建。",
             "paste_text_to_foreground": "草稿已完整填入目标输入框，未发送；请检查后由你点击发送。",
         }
         answer = answers.get(proposal.action_type, "Action completed.")

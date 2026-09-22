@@ -1,4 +1,0 @@
-
-> magic-pointer@1.0.47 lint
-> eslint electron scripts tests integrations/figma eslint.config.mjs --max-warnings=0
-

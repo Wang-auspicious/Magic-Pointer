@@ -1,14 +1,12 @@
 'use strict';
 
-// Visual acceptance capture for the DSH Studio transplant. This is intentionally
-// a real hidden Electron window: CSS namespace, local-file loading, device scale
 // and the compiled browser globals are the same ones the installed app uses.
 const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow, nativeImage } = require('electron');
 
 const root = path.resolve(__dirname, '..');
-const output = path.join(root, 'data', 'runtime', 'dsh-fidelity');
+const output = path.join(root, 'data', 'runtime', 'mp-chat-fidelity');
 const reference = process.env.MAGIC_POINTER_REFERENCE || path.join(
   process.env.APPDATA || '', 'magic-pointer', 'stash', '2026-08', '0817-215058-98a1h.png',
 );
@@ -33,8 +31,6 @@ app.whenReady().then(async () => {
   });
   window.setContentSize(1552, 874);
   await window.loadFile(path.join(root, 'build', 'electron', 'renderer', 'studio.html'));
-  // Let the asynchronous initial conversation load settle before overriding
-  // its source thumbnail with the acceptance fixture.
   await wait(1000);
   const previewData = fs.existsSync(reference) ? nativeImage.createFromPath(reference).toDataURL() : '';
   await window.webContents.executeJavaScript(`(() => {

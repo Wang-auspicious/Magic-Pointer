@@ -1,4 +1,3 @@
-"""Structured AskUser requests and answers shared by the loop and durable session."""
 from __future__ import annotations
 
 from collections.abc import Mapping

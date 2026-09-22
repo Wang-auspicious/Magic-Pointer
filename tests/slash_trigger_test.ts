@@ -1,8 +1,6 @@
 const assert = require('node:assert');
 const { detectSlashToken } = require('../electron/slash_trigger');
 
-// 光标前的文本以 "/token" 结束才触发（DSH input-trigger detect 同款边界）：
-// 行首或空白后跟斜杠；token 只收 [a-z0-9-]。
 assert.strictEqual(detectSlashToken('/'), '', 'bare slash triggers with empty token');
 assert.strictEqual(detectSlashToken('查一下 /perm'), 'perm');
 assert.strictEqual(detectSlashToken('\n/model'), 'model');

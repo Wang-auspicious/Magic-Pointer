@@ -1,3 +1,0 @@
-@font-face { font-family: Anthropicons-Variable; src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c0f671921-Dhotchgo.woff2") format("woff2-variations"); font-weight: 400 700; font-display: block; }
-/* NOTE: URL is a public asset CDN reference (how Claude serves its own icon font),
-   not a credential. Do not hotlink in product; vendor the woff2 if licensed. */

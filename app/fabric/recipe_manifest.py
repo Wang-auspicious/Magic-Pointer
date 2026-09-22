@@ -1,20 +1,3 @@
-"""Recipes as data, not Python tuples.
-
-Before this, adding a capability meant editing a hardcoded tuple in
-`catalog.py` and shipping a new build. That is the wrong shape for a plugin
-ecosystem (Phase 3 batch C) and it is the wrong shape for prompt-library
-entries a user saves from repeated L2 patterns (see `router.py`): both want to
-add a recipe without touching Python.
-
-This module loads recipe manifests from JSON — the built-in catalog first,
-then any installed plugin manifests — and turns them into the same
-`RecipeDefinition` objects the rest of the fabric already expects, so nothing
-downstream (engine, router, capabilities, executors) has to change.
-
-A malformed or missing manifest fails that one file closed, not the whole
-catalog: a broken plugin must not take Magic Pointer's own recipes down with
-it.
-"""
 
 from __future__ import annotations
 
@@ -32,7 +15,7 @@ REQUIRED_FIELDS = ("id", "title", "description", "inputKinds", "outputKind", "ri
 
 
 class RecipeManifestError(ValueError):
-    """A manifest file or entry could not be turned into a RecipeDefinition."""
+    pass
 
 
 def _plugin_manifest_dir() -> Path:
@@ -82,7 +65,6 @@ def _recipe_from_entry(entry: dict[str, Any], *, source: str) -> RecipeDefinitio
 
 
 def load_manifest_file(path: Path) -> list[RecipeDefinition]:
-    """Load one manifest file. Raises RecipeManifestError on any problem."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -107,14 +89,6 @@ def _discover_plugin_manifests(plugin_dir: Path) -> list[Path]:
 
 
 def load_all_recipes(*, plugin_dir: Path | None = None) -> tuple[tuple[RecipeDefinition, ...], list[str]]:
-    """Load the built-in catalog plus any installed plugin manifests.
-
-    Returns (recipes, warnings). A broken plugin manifest produces a warning
-    and is skipped rather than raised, because one bad plugin must not disable
-    the whole recipe catalog. The built-in manifest is not optional: if it is
-    missing or broken, that IS raised, because Magic Pointer has no recipes at
-    all without it.
-    """
     warnings: list[str] = []
     builtin = load_manifest_file(BUILTIN_MANIFEST_PATH)
 

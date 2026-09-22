@@ -47,9 +47,6 @@ _PROVIDERS = (
 
 
 def _default_version_probe(path: str, args: tuple[str, ...]) -> str:
-    # Popen + kill-on-timeout instead of subprocess.run: on Windows, npm .cmd
-    # shims spawn a node grandchild that keeps the pipes open, so run()'s
-    # post-kill communicate() drain blocks for several extra seconds.
     process = subprocess.Popen(
         [path, *args],
         stdin=subprocess.DEVNULL,
@@ -126,12 +123,6 @@ class AgentProviderDiscovery:
         return discovered
 
     def _probe_versions(self, executables: dict[str, str]) -> dict[str, tuple[str | None, str | None]]:
-        """Probe every executable concurrently under a hard wall-clock deadline.
-
-        Returns {provider_id: (version, reason)}. A probe that hangs past the
-        deadline yields (None, "version_probe_failed:TimeoutExpired") instead of
-        blocking discovery; the executable's presence stays honestly reported.
-        """
         boxes: dict[str, dict[str, object]] = {}
         threads: dict[str, threading.Thread] = {}
         for provider_id, executable in executables.items():

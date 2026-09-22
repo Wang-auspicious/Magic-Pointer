@@ -1,10 +1,3 @@
-"""Write the capsule answer into the app the user was working in.
-
-One request, one attempt, one honest verdict. The write reuses the existing
-verified channel; when that channel refuses -- or cannot read the text back to
-confirm it -- the answer goes to the clipboard instead and the reply names the
-reason. Nothing here reports a write it did not confirm.
-"""
 
 from __future__ import annotations
 
@@ -51,7 +44,6 @@ def _copy_to_clipboard(executor: SafeActionExecutor, text: str, verdict: Deliver
         return _reply(verdict, ok=False, detail=str(exc))
     result = executor.execute(proposal, confirmed=True)
     if result.status != ExecutionStatus.SUCCEEDED:
-        # The write failed and the clipboard failed too; say both, claim neither.
         return _reply(
             DeliveryVerdict(
                 kind="failed",
@@ -104,7 +96,6 @@ def main() -> int:
             ),
         )
     except DraftDeliveryError as exc:
-        # No trustworthy target: we never guess a window or a coordinate space.
         verdict = DeliveryVerdict(
             kind="clipboard",
             reason_code="missing_target_identity",

@@ -1,13 +1,10 @@
 'use strict';
 
-// 带子契约：Python 记录命中的矩形 → 随响应传出 → stage_contract 算成证据带。
-// 只有行为断言；文件内容钉死（grep 型 wiring pin）已按 review Q9 删除。
 
 const assert = require('assert');
 
 const { captureProofFromBridge, stageEventFromBridge } = require('../electron/stage_contract');
 
-// OCR 命中的块变成像素来源的带子。
 {
   const proof = captureProofFromBridge({
     selectionContext: {
@@ -21,7 +18,6 @@ const { captureProofFromBridge, stageEventFromBridge } = require('../electron/st
   assert.ok(proof.every((band: { source: string }) => band.source === 'pixel'));
 }
 
-// 指针锚点不是"读到的东西"，不能拿它冒充证据。
 {
   const proof = captureProofFromBridge({
     selectionContext: {
@@ -34,7 +30,6 @@ const { captureProofFromBridge, stageEventFromBridge } = require('../electron/st
   assert.deepStrictEqual(proof, []);
 }
 
-// 结构层的选区矩形是蓝色那一档。
 {
   const proof = captureProofFromBridge({
     selectionContext: {
@@ -48,13 +43,11 @@ const { captureProofFromBridge, stageEventFromBridge } = require('../electron/st
   assert.strictEqual(proof[0].source, 'structured');
 }
 
-// 没有任何几何信息时不造带子。
 {
   assert.deepStrictEqual(captureProofFromBridge({}), []);
   assert.deepStrictEqual(captureProofFromBridge(null), []);
 }
 
-// 带子随结果事件一起送到舞台，并附一句人话。
 {
   const event = stageEventFromBridge({
     ok: true,
@@ -68,7 +61,6 @@ const { captureProofFromBridge, stageEventFromBridge } = require('../electron/st
   assert.ok(event.captureProofSummary.includes('认出'));
 }
 
-// 没有证据时不塞空字段——空数组会让渲染端以为"这次读到了零处"。
 {
   const event = stageEventFromBridge({ ok: true, answer: '好的。' });
   assert.ok(!('captureProof' in event), '无证据时仍然带了 captureProof 字段');

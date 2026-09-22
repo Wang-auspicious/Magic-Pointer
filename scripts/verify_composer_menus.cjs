@@ -1,7 +1,5 @@
 'use strict';
 
-// Uses the application's real main, preload, IPC, saved projects and profiles.
-// No fixture statistics, model catalog or conversation data is supplied.
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');

@@ -1,9 +1,5 @@
 'use strict';
 
-// FrameLease v1: the immutable "what the user saw at pointerup" contract.
-// Shared verbatim with scripts/frame_lease.py — the two validators must agree
-// on every field, accepted source and geometry requirement. A lease created
-// here can never be re-pointed at a later image.
 
 type CaptureSource = 'wgc-window' | 'wgc-display' | 'dxgi-display' | 'gdi-fallback' | 'test';
 

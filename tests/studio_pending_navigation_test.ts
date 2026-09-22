@@ -44,7 +44,7 @@ function setup() {
       conversation: async () => durable,
       respondConversation: async () => { responses++; return { ok: false, accepted: false, error: 'input_response_in_progress' }; } },
     DecisionCard: { pending() {}, clear() { questionVisible = false; } },
-    DshChat: { userNode: node, liveActivityNode: node, createLiveTurn: () => ({}), turnErrorNode: node },
+    ChatView: { userNode: node, liveActivityNode: node, createLiveTurn: () => ({}), turnErrorNode: node },
     ConversationControl: { createTranscript: () => ({}), failedDraftValue: (_: unknown, value: string) => value },
     TaskInputTransport: { createTaskInputTransport: () => ({ submit: async (_: unknown, options: any) => { queued = options.onAccepted; } }) },
     buildStudioTaskInput: () => ({}), attachmentSourcesForTask: () => [],

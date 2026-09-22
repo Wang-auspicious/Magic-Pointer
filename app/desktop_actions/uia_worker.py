@@ -1,9 +1,3 @@
-"""Bounded process isolation for CU tree and native-pattern calls.
-
-The resident selection host does not expose these COM tree/action contracts.
-Use the same per-request process boundary until it does; never let a blocked
-provider strand the Runtime's tool worker or keep running after cancellation.
-"""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,3 @@
-"""DSH-style bounded, ordered tool-call scheduling contracts."""
 
 from __future__ import annotations
 

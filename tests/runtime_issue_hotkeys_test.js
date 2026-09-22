@@ -27,16 +27,11 @@ assert(overlay.includes("let currentWorkflow = 'generic';"));
 assert(overlay.includes('workflow: currentWorkflow'));
 assert(overlay.includes("currentWorkflow = String(payload?.workflow || 'generic')"));
 
-// Runtime-issue capture results route to the PointerStage, never back into
-// the overlay (legacy in-overlay receipt retired with Task 5).
 assert(main.includes("reason: 'runtime-issue'"));
 assert(main.includes('stageEventFromBridge(parsed)'));
 assert(!overlay.includes('runtime_issue_recorded'));
 assert(!overlay.includes('autoDismissMs'));
 assert(!html.includes('描述问题或期望，不需要找源码'));
-// P0#5: recovery from a runtime-issue capture is event-driven off overlay:done,
-// not off bridge completion. The overlay must hide at handoff so it can never
-// sit black and input-blocking for the whole bridge run (up to the 120s timeout).
 const overlayDoneBlock = main.slice(
   main.indexOf("ipcMain.on('overlay:done'"),
   main.indexOf("ipcMain.on('stage:submit-selection-command'"),
@@ -46,8 +41,6 @@ assert(nonGestureHandoff.indexOf('hideOverlay()') < nonGestureHandoff.indexOf('r
   'overlay must hide when the capture is handed to the bridge');
 assert.doesNotMatch(overlayDoneBlock, /onComplete:\s*\(parsed\)\s*=>\s*\{\s*hideOverlay\(\)/,
   'overlay hide must not wait for bridge completion');
-// P0#6: the non-gesture handoff must bound points before forwarding to the
-// capture bridge; a compromised renderer must not push an unbounded array.
 assert(main.includes('const MAX_OVERLAY_CAPTURE_POINTS = 4096;'), 'capture points must have a hard cap');
 assert(nonGestureHandoff.includes('rawPoints.slice(0, MAX_OVERLAY_CAPTURE_POINTS)'),
   'handoff must truncate points before forwarding');

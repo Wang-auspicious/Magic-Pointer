@@ -1,8 +1,3 @@
-"""Independent coding Agent processes; durable status, input and completion inbox.
-
-Credentials cross the initial stdin pipe only. The worker owns its status file;
-UI responses go through the existing session journal, never a second tool queue.
-"""
 from __future__ import annotations
 
 import json
@@ -29,8 +24,6 @@ def _path(root: Path, child_id: str) -> Path:
 def _persist(path: Path, value: dict) -> None:
     temporary = path.with_suffix('.pending')
     temporary.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
-    # Windows readers can briefly hold a handle that disallows replacement.
-    # Keep the old complete snapshot visible and retry the same new snapshot.
     for attempt in range(5):
         try:
             temporary.replace(path)
@@ -79,7 +72,6 @@ def respond(root: Path, parent_id: str, child_id: str, request_id: str, response
         status = read_status(root, child_id)
         if not status or status['status'] not in ACTIVE or stop_requested(child):
             raise ValueError('subagent_not_running')
-        # A retried IPC after a lost response must not consume another request.
         answered = next((e for e in child.events if e.type == 'user_input/answered'
                          and e.data['requestId'] == request_id), None)
         if answered:
@@ -113,7 +105,7 @@ def stop(root: Path, parent_id: str, child_id: str) -> dict:
 def launch(*, child, parent, provider: Any, workspace_root: Path, prompt: str,
            mode: str, effort: str, readonly: bool, permissions, parent_call_id: str,
            max_tool_calls: int, max_tokens: int) -> dict:
-    config = provider.background_config()  # Provider explicitly supports process handoff.
+    config = provider.background_config()
     path = _path(child.path.parent, child.id)
     previous = read_status(child.path.parent, child.id)
     if previous and previous['status'] in ACTIVE:
@@ -170,11 +162,8 @@ def run(payload: dict) -> None:
         meta['parentCallId'] = payload['parentCallId']
         meta['startedAt'] = started_at
         meta['elapsedMs'] = round(time.time() * 1000 - started_at)
-        # An approval wait is unfinished work and has no completion timestamp.
         if meta['status'] in ACTIVE:
             meta.pop('completedAt', None)
-        # A terminal state is published only after output and notification are
-        # durable. Pollers must not observe 'completed' before its inbox item.
         if meta['status'] in ACTIVE:
             _persist(path, meta)
 

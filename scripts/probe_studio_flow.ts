@@ -1,6 +1,3 @@
-// Headless Studio interaction probe WITH a mocked bridge: verifies the full
-// renderer chain (chip click -> pick -> submit payload) without Electron IPC.
-//   npx electron build/scripts/probe_studio_flow.js
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
@@ -24,8 +21,6 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'studio.html'));
     await new Promise((r) => setTimeout(r, 900));
-    // Inject the fake bridge AFTER load: data.ts reads window.magicPointerDashboard
-    // lazily at call time, so post-load injection exercises the real send path.
     await window.webContents.executeJavaScript(`
       window.__sent = [];
       window.magicPointerDashboard = {
@@ -44,7 +39,6 @@ app.whenReady().then(async () => {
       'bridged';
     `);
 
-    // 1) Click the workspace chip -> mock picker returns another folder.
     await window.webContents.executeJavaScript(
       `document.getElementById('composer-workspace').click()`,
     );
@@ -53,10 +47,9 @@ app.whenReady().then(async () => {
       `document.getElementById('composer-workspace-label').textContent`,
     );
 
-    // 2) Type a question and submit the composer form.
     await window.webContents.executeJavaScript(`
       (function(){
-        const ta = document.querySelector('.dshw-input');
+        const ta = document.querySelector('.mpw-input');
         ta.value = '列出工作区文件';
         ta.dispatchEvent(new Event('input', { bubbles: true }));
         const form = ta.closest('form');

@@ -1,11 +1,3 @@
-"""Harness layered composition tests (plugin-kernel batch, plan T3).
-
-Pins the DSH profile/bundle/patch idea rewritten in Python: bundle rows
-mount in order, a patch replaces a whole row config by id or inserts new
-rows, disabled rows are skipped, unknown/broken plugins are isolated to
-their row, missing dependencies are reported honestly, and ``dump_config``
-shows the tree the runtime actually booted.
-"""
 
 from __future__ import annotations
 
@@ -19,7 +11,6 @@ from app.harness.plugin import PluginSpec
 
 
 def _spec(name, inject=(), *, apply=None, defaults=None, schema=None, calls=None):
-    """Execute plugin.py-style source into a temp module, return PluginSpec."""
     if calls is None:
         calls = []
     source = textwrap.dedent(
@@ -58,7 +49,6 @@ def test_bundle_rows_mount_in_order():
     assert [row.id for row in report.rows] == ["row-a", "row-b"]
     assert [row.status for row in report.rows] == ["active", "active"]
     assert len(calls) == 2
-    # row-a saw its patched-by-row config; beta saw defaults merged with {} 
     assert calls[0][1] == {"n": 2}
     assert calls[1][1] == {}
     report.ctx.unload()
@@ -72,7 +62,7 @@ def test_patch_replaces_whole_row_config_by_id():
         builtin_plugins={"alpha": alpha},
         patch={"row-a": {"config": {"mode": "off"}}},
     )
-    assert calls[0][1] == {"n": 1, "mode": "off"}  # defaults re-applied, mode replaced
+    assert calls[0][1] == {"n": 1, "mode": "off"}
     report.ctx.unload()
 
 
@@ -90,7 +80,7 @@ def test_patch_inserts_new_rows_and_can_disable():
     )
     statuses = {row.id: row.status for row in report.rows}
     assert statuses == {"row-a": "disabled", "row-b": "active"}
-    assert len(calls) == 1  # only beta mounted
+    assert len(calls) == 1
     report.ctx.unload()
 
 

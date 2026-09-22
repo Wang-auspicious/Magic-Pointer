@@ -1,7 +1,5 @@
 'use strict';
 
-// Real compiled main handlers and preload, Chromium UI, isolated file stores.
-// Data is an explicit local fixture; no AI or third-party catalog is contacted.
 const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -177,7 +175,7 @@ originalWhenReady().then(async () => {
     });
     studio.webContents.on('preload-error', (_event, _file, error) => report.consoleErrors.push(String(error)));
     await studio.loadFile(path.join(ROOT, 'build/electron/renderer/studio.html'), { query: { view: 'chat' } });
-    await waitFor('Studio boot', () => evaluate(`document.activeElement?.classList.contains('dshw-input')`));
+    await waitFor('Studio boot', () => evaluate(`document.activeElement?.classList.contains('mpw-input')`));
     await evaluate('document.fonts.ready.then(() => true)');
     await evaluate(`document.documentElement.dataset.theme='light'; document.documentElement.style.colorScheme='light'; document.body.removeAttribute('data-ds-dark-theme'); true`);
     report.viewport = await evaluate(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
@@ -363,14 +361,14 @@ originalWhenReady().then(async () => {
     });
     await step('timeline-idle-hover', async () => {
       await evaluate(`document.querySelector(${JSON.stringify(`[data-open="${conversationId}"]`)})?.click(); true`);
-      await waitFor('conversation and timeline', () => evaluate(`document.querySelectorAll('#stream .dsh-user').length === 4 && document.querySelectorAll('.dshw-rail-mark').length >= 4`));
+      await waitFor('conversation and timeline', () => evaluate(`document.querySelectorAll('#stream .mp-chat-user').length === 4 && document.querySelectorAll('.mpw-rail-mark').length >= 4`));
       studio.webContents.sendInputEvent({ type: 'mouseMove', x: 1000, y: 850 });
       assert.equal(await evaluate(`getComputedStyle(document.getElementById('stream-rail-menu')).display`), 'none');
       await screenshot('timeline-idle');
       await hover('#stream-rail-marks');
       await waitFor('timeline hover opens labels', () => evaluate(`getComputedStyle(document.getElementById('stream-rail-menu')).display !== 'none'`));
       await screenshot('timeline-hover');
-      return { marks: await evaluate(`document.querySelectorAll('.dshw-rail-mark').length`), labelsOnHover: true };
+      return { marks: await evaluate(`document.querySelectorAll('.mpw-rail-mark').length`), labelsOnHover: true };
     });
     await step('artifact-hover-create', async () => {
       await hover('#nav-artifacts');
@@ -397,8 +395,8 @@ originalWhenReady().then(async () => {
       await screenshot('chats-heading-search');
       await click(`[data-library-chat-menu="${ids[0]}"]`);
       await click('[data-chat-action="rename"]');
-      await evaluate(`document.querySelector('.dshw-rename-input').value='Renamed bulk fixture'; true`);
-      await click('.dshw-perm-confirm .is-primary');
+      await evaluate(`document.querySelector('.mpw-rename-input').value='Renamed bulk fixture'; true`);
+      await click('.mpw-perm-confirm .is-primary');
       await waitFor('rename updates the open Chats library', () => evaluate(`document.querySelector('#library-chats [data-open="${ids[0]}"]')?.textContent.includes('Renamed bulk fixture')`));
       await click(`[data-library-chat-menu="${ids[0]}"]`);
       await click('[data-chat-action="project"]');

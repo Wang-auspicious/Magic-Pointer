@@ -97,9 +97,6 @@ class SelectionWorkerClient {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string | Buffer) => {
       if (this.child !== child) return;
-      // 桥 runner 同款语义：任何输出都是活着的证明。60s 计的是沉默，
-      // 不是总时长——长答案（大上下文的模型调用可以跑 1-2 分钟）必须
-      // 靠持续到来的 @@mp 进度行续期，否则好答案被墙钟误杀（真机 8·29）。
       this._rearm(this.active);
       feedProgress(String(chunk));
     });

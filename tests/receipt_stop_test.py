@@ -1,9 +1,3 @@
-"""Receipt is the stop proof: the model saying done is not enough.
-
-Gate 2: a completed loop must issue a Receipt. Unverified writes are
-unverified, not succeeded. JSON verification.matched from a write tool
-counts as evidence so the 13 desktop tools can satisfy the gate.
-"""
 
 from __future__ import annotations
 

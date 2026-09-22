@@ -1,24 +1,6 @@
 'use strict';
 
-// ============================================================================
-// 后台任务观察器
-// ----------------------------------------------------------------------------
-// 「进度条一直到 100% 以后就返图」这类活要几十秒到几分钟。底层早就齐了——
-// 任务落盘、状态可查、进程存活可验（app/fabric/task_store.py）——缺的整个一环
-// 是 Electron 这边没有任何人在看它。任务起来之后那张卡就静止在那儿，
-// 直到用户重新打开界面才知道结果。
-//
-// 这一份就是那个看的人。三条判断：
-//
-// 1. **进度是推出来的，不是编出来的。** 任务自己报到哪一步就是哪一步；
-//    只知道「在跑」的时候，卡上是不定量条 + 真实秒数，不是一条假的百分比。
-// 2. **退避轮询。** 刚起来的任务变化快，跑了十分钟的任务变化慢。固定 1 秒
-//    轮询一个跑二十分钟的任务是白烧 1200 次进程启动。
-// 3. **结束就停。** 终态之后不再轮询——也不再接受补丁，那条规矩在 cards.js。
-// ============================================================================
 
-// 退避梯度：头 10 秒每秒看一次（这时候最可能出错），之后逐步放慢。
-// 上限 8 秒——再慢用户就会觉得界面卡住了。
 function pollDelayMs(elapsedMs: number): number {
   if (elapsedMs < 10_000) return 1000;
   if (elapsedMs < 60_000) return 2000;
@@ -26,19 +8,8 @@ function pollDelayMs(elapsedMs: number): number {
   return 8000;
 }
 
-// 没人看着的时候用这个间隔。
-//
-// 每一次 probe 都是一个全新的 Python 解释器（runPythonBridgePromise 起
-// agent_bridge.py），一个跑五分钟的后台任务在原先的梯度下要起 95 次进程。
-// 而卡片只在 stage / 随行窗 / 工作室里存在——三个窗口都不可见的时候，
-// 一次探针的产出没有任何人能看见。所以这时把间隔拉到 15 秒：仍然会看到
-// 终态（保底，防止 kick 漏掉），但不再按秒烧进程。
-//
-// 代价说清楚：卡片不可见期间，任务的终态最多晚 15 秒被观察到；窗口重新
-// 可见时会立刻 kick() 一次，把这个延迟收回去（见 task_watcher 的 kick）。
 const IDLE_DELAY_MS = 15_000;
 
-// kick() 时每个任务之间的错峰间隔。
 const KICK_STAGGER_MS = 200;
 
 const TERMINAL = new Set([
@@ -53,11 +24,6 @@ function isTerminal(status: unknown): boolean {
   return TERMINAL.has(String(status || ''));
 }
 
-// 任务状态 → 卡片补丁。
-//
-// 这里是唯一把「后台任务说了什么」翻成「卡上显示什么」的地方。翻译要诚实：
-// paused_target_mismatch 是「停下来等你确认」，不是失败，也不是还在跑——
-// 把它归到任何一头都会让用户误判。
 interface StatusShape {
   state: 'running' | 'done' | 'failed';
   stage?: string;
@@ -81,11 +47,6 @@ const STATUS_CARD: Readonly<Record<string, StatusShape>> = Object.freeze({
   },
 });
 
-// 本地路径 → 渲染层能加载的来源。
-//
-// 注意不能用 /^[a-z]+:/ 判断「已经是 URL 了」：`C:\Users\…` 的盘符正好长得
-// 像一个 scheme，于是 Windows 上每一张出好的图都会原样交给 <img> 而加载不出来。
-// 真正的 scheme 后面跟着 `//`（或者是 data:）。
 function toDisplaySrc(rawPath: unknown): string {
   const value = String(rawPath || '').trim();
   if (!value) return '';
@@ -151,7 +112,6 @@ function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPat
   if (shape.stage) patch.stage = shape.stage;
   if (shape.needsConfirm) patch.needsConfirm = true;
 
-  // 任务自己报的阶段。有就用，没有就让卡片显示不定量条——不编一个数字。
   const result: TaskResult = task.result && typeof task.result === 'object' ? task.result : {};
   const steps = Array.isArray(result.steps)
     ? (result.steps as Array<string | TaskStepInput>)
@@ -178,7 +138,6 @@ function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPat
   }
 
   if (shape.state === 'done') {
-    // 产物落在哪里由任务说。图就显示图，别的就显示一句话加一个打开按钮。
     const image = String(result.imagePath || result.image || '');
     if (image) {
       patch.kind = 'image';
@@ -200,10 +159,6 @@ function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPat
   return patch;
 }
 
-// ---------------------------------------------------------------------------
-// 观察器本体。probe 由主进程给（跑 agent_bridge.py status），
-// 这里不碰子进程，所以它可测。
-// ---------------------------------------------------------------------------
 interface PatchEvent {
   taskId: string;
   cardId: string;
@@ -223,13 +178,7 @@ interface WatcherDependencies {
   schedule?: (callback: () => void, delayMs: number) => ScheduleHandle;
   cancelSchedule?: (handle: ScheduleHandle) => void;
   CardModel?: unknown;
-  /**
-   * 便宜的、同步的闸门：返回 false 时这一轮不 probe，直接按 idleDelayMs 排下一次。
-   * 主进程把它接到「是否有任何一个窗口在显示卡片」上。默认永远为 true（测试与
-   * 无窗口上下文保持原来的行为）。
-   */
   probeEnabled?: () => boolean;
-  /** 闸门关闭时的重排间隔。 */
   idleDelayMs?: number;
 }
 
@@ -252,11 +201,6 @@ interface TaskWatcher {
   stop(taskId: string): void;
   stopAll(): void;
   watching(): string[];
-  /**
-   * 立刻重新看一次所有在看的任务。窗口重新可见时调用：闸门关闭期间攒下的
-   * 状态变化必须马上补上，不能让用户对着旧卡片等下一次 idle 轮询。
-   * 错开排期，避免 N 个任务同时起 N 个解释器。
-   */
   kick(): void;
 }
 
@@ -298,9 +242,6 @@ function createTaskWatcher({
     if (!entry) return;
     entry.handle = null;
 
-    // 闸门先于 probe：没人看得见卡片的时候，一次完整的 Python 冷启动是纯浪费。
-    // 注意这里只跳过「去看」，不放弃这条 watch——重排后仍然会在 idleDelayMs
-    // 内再试一次，kick() 还会立刻叫醒它。
     let enabled = true;
     try {
       enabled = probeEnabled() !== false;
@@ -316,14 +257,12 @@ function createTaskWatcher({
     try {
       task = (await probe?.(taskId)) || null;
     } catch (error) {
-      // 一次查询失败不算任务失败——可能只是解释器启动慢了。接着看。
       log(`task watch probe failed task=${taskId} ${errorDetails(error)}`);
     }
 
     if (task) {
       const status = String(task.status || '');
       const patch = cardPatchFromTask(task, CardModel);
-      // Deduplicate the visible patch, including changes within existing steps.
       const signature = JSON.stringify(patch);
       if (signature !== entry.lastSignature) {
         entry.lastSignature = signature;
@@ -356,7 +295,6 @@ function createTaskWatcher({
         lastSignature: '',
       });
       log(`task watch + ${id} card=${cardId || '—'}`);
-      // 立刻看一次：任务可能已经在我们开始看之前就跑完了
       void tick(id);
       return true;
     },
@@ -368,8 +306,6 @@ function createTaskWatcher({
       return [...watching.keys()];
     },
     kick(): void {
-      // 逐个错开 200ms：一次 kick 往往会命中好几个在看的任务，同时起
-      // 好几个解释器会和用户刚回到前台的这一刻抢 CPU。
       let index = 0;
       for (const [taskId, entry] of watching) {
         const delayMs = index * KICK_STAGGER_MS;

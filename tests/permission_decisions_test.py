@@ -1,13 +1,3 @@
-"""Thread-scoped permission grants (CC toolPermissionDecision, Codex thread scope).
-
-The failure this prevents: a long conversation hits an ASK-class action
-(shell write, irreversible local change) and every single call re-asks —
-in Studio the ask has no consumer, so ASK behaves as DENY until the user
-manually swaps the permission preset. A per-thread allow/deny memo, granted
-once by the user through the clarification chips, lets approved tools pass
-while dangerous classes (external send / destructive / purchase) keep
-asking no matter what was granted.
-"""
 
 from __future__ import annotations
 
@@ -34,7 +24,6 @@ from app.agent_runtime.permission_decisions import PermissionDecisions  # noqa: 
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec  # noqa: E402
 from app.agent_runtime.types import Role, ToolCall  # noqa: E402
 
-# 复用 loop 测试的假件（ScriptedBackend/collect）——同目录导入
 import importlib.util as _ilu  # noqa: E402
 _spec = _ilu.spec_from_file_location(
     "_loop_test_fakes", Path(__file__).resolve().parent / "agent_runtime_loop_test.py")
@@ -64,7 +53,6 @@ def _tool_registry_with(name: str, effect: Effect) -> ToolRegistry:
 
 
 def _two_turn_scene(tool_name: str) -> tuple:
-    """Turn 1 calls the tool (TurnDone carries the calls); turn 2 answers."""
     return (
         [
             ToolCallArrived(call=ToolCall(id="call-1", name=tool_name, arguments={})),
@@ -82,8 +70,6 @@ def _params(registry, backend, decisions) -> LoopParams:
         registry=registry,
         client=LoopModelClient(backend),
         permission_mode="default",
-        # Production bridges declare the full effect ceiling and let the
-        # mode + memo decide (conversation_bridge._effect_ceiling).
         allowed_effects=tuple(_E),
         permission_decisions=decisions,
     )
@@ -129,7 +115,6 @@ def test_bash_prefix_grant_executes_only_the_matching_command():
             TurnDone(usage=None, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="done")],
-        # The write-verification nudge needs a real final response as well.
         [TurnDone(usage=None, raw_text="Command ran; independent verification was unavailable.")],
     )
 
@@ -245,7 +230,6 @@ def test_ungranted_local_irreversible_tool_is_refused_with_ask_feedback():
     )))
     assert terminal.reason is TransitionReason.COMPLETED
     tool_messages = [e for e in events if type(e).__name__ == "TurnFinished"]
-    # The refusal must route the model to the grant question.
     assert any(
         message.role is Role.TOOL and "AskUser" in str(message.content or "")
         for event in tool_messages

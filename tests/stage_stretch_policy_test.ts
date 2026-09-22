@@ -1,8 +1,5 @@
 'use strict';
 
-// The stretch gesture has to be legible and safe: what the hint promises is
-// what gets asked for, a twitch does nothing, and a flick cannot demand thirty
-// lines of invented detail.
 
 const assert = require('assert');
 const {
@@ -12,7 +9,6 @@ const {
   stretchIntent,
 } = require('../electron/stage_stretch_policy');
 
-// Pulling down asks for more, pushing up asks for less.
 {
   const down = stretchIntent({ dragPx: 60, currentLines: 3 });
   assert.strictEqual(down.direction, 'expand');
@@ -26,7 +22,6 @@ const {
   assert(up.hint.includes('更简洁'));
 }
 
-// A twitch is not an instruction — clicking the edge must not fire a rewrite.
 {
   for (const dragPx of [0, 3, -5, MIN_DRAG_PX - 1]) {
     const intent = stretchIntent({ dragPx, currentLines: 5 });
@@ -36,22 +31,18 @@ const {
   }
 }
 
-// A flick is capped. 600px is not a request for thirty invented lines.
 {
   const intent = stretchIntent({ dragPx: 600, currentLines: 4 });
   assert.strictEqual(intent.deltaLines, MAX_DELTA_LINES);
   assert.strictEqual(intent.targetLines, 4 + MAX_DELTA_LINES);
 }
 
-// Never target zero lines: an answer of no lines is not an answer.
 {
   const intent = stretchIntent({ dragPx: -600, currentLines: 3 });
   assert.strictEqual(intent.targetLines, 1);
   assert.strictEqual(intent.direction, 'condense');
 }
 
-// A drag that rounds back to the current size is a no-op, not a pointless
-// round-trip to the model.
 {
   const intent = stretchIntent({ dragPx: 13, currentLines: 5 });
   assert.strictEqual(intent.targetLines, 6);
@@ -60,20 +51,16 @@ const {
   assert.strictEqual(noop.direction, 'none');
 }
 
-// The hint and the command must agree, or the gesture lies about what it did.
 {
   for (const [dragPx, currentLines] of [[80, 2], [-60, 9], [200, 5]]) {
     const intent = stretchIntent({ dragPx, currentLines });
     const command = stretchCommand(intent);
     assert(command.includes(`${intent.targetLines} 行`), `${command} vs hint ${intent.hint}`);
     assert(intent.hint.includes(`${intent.targetLines} 行`));
-    // The command must be one the Python length engine already parses:
-    // target_from_command matches 扩写/压缩 to N 行.
     assert(/(扩写|压缩)到 \d+ 行$/.test(command), command);
   }
 }
 
-// Malformed input yields a no-op rather than a wild target.
 {
   for (const input of [null, {}, { dragPx: NaN, currentLines: 4 }, { dragPx: 50, currentLines: 0 }]) {
     assert.strictEqual(stretchIntent(input).direction, 'none');
@@ -83,22 +70,17 @@ const {
 
 console.log('stage_stretch_policy_test: all assertions passed');
 
-// --- 选区侧把手 -------------------------------------------------------------
-// §4.3 用户点名的功能：选中 8 句里的第 3–4 句，唤出上下两个把手，往下拖三行。
-// 答案卡和选区共用同一套策略，正是为了让"拖这么远"在两处含义一致。
 {
   const { stretchCommand, stretchIntent } = require('../electron/stage_stretch_policy');
   const intent = stretchIntent({ dragPx: 60, currentLines: 2 });
   assert.strictEqual(intent.direction, 'expand');
 
-  // 措辞必须不同：拉答案是改气泡，拉选区是改用户自己的文档。
   const answer = stretchCommand(intent, 'answer');
   const selection = stretchCommand(intent, 'selection');
   assert.ok(answer.includes('这个回答'), answer);
   assert.ok(selection.includes('选中的这段'), selection);
   assert.notStrictEqual(answer, selection);
 
-  // 行数是同一个数——同样的手势不能在两处得到不同的目标。
   const lines = /到 (\d+) 行/;
   const answerMatch = lines.exec(answer);
   const selectionMatch = lines.exec(selection);
@@ -107,14 +89,11 @@ console.log('stage_stretch_policy_test: all assertions passed');
   }
   assert.strictEqual(answerMatch[1], selectionMatch[1]);
 
-  // 默认仍是答案侧，老调用点不受影响。
   assert.strictEqual(stretchCommand(intent), answer);
 
-  // 压缩方向同样成立。
   const shrink = stretchIntent({ dragPx: -60, currentLines: 8 });
   assert.ok(stretchCommand(shrink, 'selection').includes('压缩'));
 
-  // 没有意图就没有命令，两侧一致。
   assert.strictEqual(stretchCommand(null, 'selection'), '');
 }
 console.log('stage_stretch_policy_test: selection-side assertions passed');

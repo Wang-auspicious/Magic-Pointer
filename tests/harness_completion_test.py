@@ -1,5 +1,3 @@
-"""Tests for the harness completion pieces: prompt sections, memory,
-compaction, permission modes, streaming SSE parser, guard factory."""
 
 from __future__ import annotations
 
@@ -93,16 +91,12 @@ def test_compaction_summarizes_head() -> None:
         AgentMessage(role=Role.USER, content=f"m{i}", tool_call_id=None, name=None)
         for i in range(10)
     ]
-    # Each "mN" is one token, so a 3-token tail keeps the last three verbatim.
     compacted = compact_messages(
         messages, lambda source: "前半段摘要", tail_token_budget=3
     )
     assert len(compacted) == 4
     assert "前半段摘要" in compacted[0].content
     assert compacted[0].injected is True
-    # The summary round-trips through a model; it must come back with the
-    # data fence so injected imperative text cannot be upgraded into an
-    # instruction (red-team T3).
     assert "<<<MAGIC_POINTER_EVIDENCE>>>" in compacted[0].content
     assert compacted[0].origin == "data"
 
@@ -132,11 +126,6 @@ def test_manual_compaction_can_summarize_one_legacy_evidence_message() -> None:
 
 
 def test_bulky_tail_messages_do_not_all_survive_compaction() -> None:
-    """A message-count tail lets four 64k tool results ride through untouched.
-
-    Sizing the tail by tokens is the whole point: the run that most needs
-    compaction is exactly the one whose recent messages are huge.
-    """
     messages = [
         AgentMessage(role=Role.USER, content="开始", tool_call_id=None, name=None)
     ]
@@ -161,7 +150,6 @@ def test_bulky_tail_messages_do_not_all_survive_compaction() -> None:
         messages, lambda _source: "摘要", tail_token_budget=2000
     )
 
-    # 2000 tokens is one 40k-char result, not six.
     assert len(compacted) < len(messages)
     assert sum(len(m.content or "") for m in compacted) < 100_000
 
@@ -203,9 +191,6 @@ def test_compaction_prunes_duplicate_tool_results_before_summarizing() -> None:
 
 
 def test_compaction_never_orphans_a_tool_result_from_its_assistant_call() -> None:
-    # 尾部消息用 ASCII：CJK 计数修正后「现在呢」= 3 token 会提前截住尾部，
-    # 走不到工具结果分支；这个测试要覆盖的正是「边界落在 TOOL 上时回退到
-    # 它的 assistant 调用」的孤儿守卫。
     messages = [
         AgentMessage(role=Role.USER, content=f"old-{index}", tool_call_id=None, name=None)
         for index in range(3)

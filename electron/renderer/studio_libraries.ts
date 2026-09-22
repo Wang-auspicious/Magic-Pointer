@@ -17,8 +17,6 @@ const preferences = loadPreferences();
 function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences)); } catch { /* readonly browser storage */ } }
 function setFilter(key: keyof Filters, value: string) { preferences.filters[key] = value; save(); }
 function sessionPreference(id: string): SessionPreference { return preferences.sessions[id] || {}; }
-/* 已用的自定义分组名，去重后按字母排——「移至分组」的子菜单列的就是它们，
-   不另存一份清单：分组名本来就只存在于会话参数里。 */
 function sessionGroups(): string[] {
   const names = new Set<string>();
   for (const value of Object.values(preferences.sessions)) {
@@ -104,7 +102,6 @@ function artifactPreviewMarkup(entry: any, content = '') {
     return `<img class="mp-artifact-image-preview" src="${escape(encodeURI(source))}" alt="" loading="lazy" />`;
   }
   if (/\.(?:html?|svg)$/i.test(String(entry.name || '')) || /^\s*(?:<!doctype html|<html\b|<svg\b|<main\b)/i.test(text)) {
-    // Unique-origin, scriptless preview: no app bridge, forms, popups, or network.
     const policy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data: file:; font-src data:; form-action 'none'; base-uri 'none'";
     let markup = text;
     if (typeof DOMParser !== 'undefined') {
@@ -145,9 +142,9 @@ let previews: Record<string, Preview> = {};
 let pictogramsLoading: Promise<void> | null = null;
 function loadPictograms() {
   if (!pictogramsLoading) pictogramsLoading = Promise.all([ ...['HandBlocks', 'HandShapes', 'ObjectStopwatch'].map(async name => {
-    const response = await fetch(`assets/claude-reference/${name}.svg`);
+    const response = await fetch(`assets/library-previews/${name}.svg`);
     if (response.ok) pictograms.set(name, await response.text());
-  }), fetch('assets/claude-reference/artifact-previews.json').then(async response => { if (response.ok) previews = await response.json(); }) ]).then(() => undefined).catch(() => undefined);
+  }), fetch('assets/library-previews/artifact-previews.json').then(async response => { if (response.ok) previews = await response.json(); }) ]).then(() => undefined).catch(() => undefined);
   return pictogramsLoading;
 }
 function pictogram(name: string) { return `<span class="mp-library-pictogram" aria-hidden="true">${pictograms.get(name) || ''}</span>`; }
@@ -194,8 +191,6 @@ function projectOptionsMarkup(projects: MagicPointerProject[], currentRoot: stri
   const rows = projects.filter(project => `${project.name} ${project.root}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return `${!query ? `<button type="button" data-project-root="" role="menuitemradio" aria-checked="${!currentRoot}"><span>No project</span>${!currentRoot ? glyph('check') : ''}</button>` : ''}${rows.map(project => `<button type="button" data-project-root="${escape(project.root)}" role="menuitemradio" aria-checked="${project.root === currentRoot}"><span>${escape(project.name)}</span>${project.root === currentRoot ? glyph('check') : ''}</button>`).join('')}${!rows.length ? `<p class="mp-library-note">${query ? 'No matching projects' : 'No projects yet'}</p>` : ''}`;
 }
-/* 第三项是「前面加一条分隔线」。参考的子菜单用分隔线把具体取值和兜底项分开
-   （官方菜单项的 separatorBefore 是同一个意思），所以它跟着选项走，不由渲染层写死。 */
 type FilterOption = [string, string, boolean?];
 const FILTER_OPTIONS: Record<keyof Filters, FilterOption[]> = {
   type: [['all', 'All'], ['chat', 'Chat'], ['task', 'Task']],
@@ -296,7 +291,6 @@ function createController(options: ControllerOptions) {
 
   function toolbar(extra = '') { return `<div class="mp-library-toolbar"><label class="mp-library-search">${glyph('search')}<input type="search" data-library-search placeholder="Search" value="${escape(query)}" aria-label="搜索当前页面" /></label>${extra}</div>`; }
   function sortControl(domain: string, value: string, choices: [string, string][]) {
-    // Claude 的 PageShell 把排序做成图标动作：按钮只有 Sort 字形，当前选项在菜单里打勾。
     const current = choices.find(([key]) => key === value)?.[1] || '';
     return `<details class="mp-library-new-menu mp-library-sort"><summary aria-label="Sort by ${escape(current)}" title="Sort by ${escape(current)}">${glyph('sort')}</summary><div role="menu">${choices.map(([key, label]) => `<button type="button" role="menuitemradio" aria-checked="${key === value}" data-library-sort="${domain}" data-sort-value="${key}"><span>${label}</span>${key === value ? glyph('check') : ''}</button>`).join('')}</div></details>`;
   }
@@ -306,9 +300,6 @@ function createController(options: ControllerOptions) {
   }
   function projectPage() {
     const rows = sortProjects(projects.filter(project => `${project.name} ${project.root}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())), conversations, projectSort);
-    // Claude 的 Projects 页把 scope 标签和右侧动作放在同一行：搜索/排序是图标按钮，
-    // 新建是主按钮；搜索展开后才出现输入框。官方只在 scope 多于一个时渲染标签页，
-    // MP 只有「Your projects」一个可见范围，所以这一行只剩右侧动作。
     const header = `<div class="mp-library-head"><div class="mp-library-actions">`
       + `<button type="button" data-library-search-toggle aria-label="Search projects" aria-expanded="${searchingProjects}">${glyph('search')}</button>`
       + sortControl('projects', projectSort, [['activity','Last updated'],['created','Date created'],['name','Alphabetical']])
@@ -329,8 +320,6 @@ function createController(options: ControllerOptions) {
     ['Content ideas', '根据所选素材提出可执行的内容选题，并列出来源。', 'lightbulb'],
     ['Monitor a topic', '跟踪所选主题材料的变化，只报告新的信息和需要我处理的事项。', 'binoculars'],
   ];
-  // Direct translation of Za/eo/to/no/ro/io/ao in the local desktop bundle.
-  // These aria-hidden starter previews are examples, never task results.
   function scheduledPreview(index: number) {
     const bar = (width: string) => `<i style="width:${width}"></i>`;
     const content = index === 0 ? `<strong>Today's brief</strong><span class="mp-mini-line"><b class="mp-mini-check">${glyph('check', 'micro')}</b>${bar('80px')}</span><span class="mp-mini-line"><b class="mp-mini-box"></b>${bar('56px')}</span>`

@@ -1,14 +1,3 @@
-"""Bounded, model-ordered scheduling for one model tool-call batch.
-
-The execution semantics follow DeepSeek Harness's MIT-licensed rolling-pool
-scheduler: parallel-safe calls overlap behind a cap, exclusive calls form
-barriers, physical settlement may be out of order, and committed results stay
-in the model's original order. Kimi-style resource keys prevent overlapping
-access to the same input device, store, document or plugin-owned resource.
-Cancellation drains started work and creates explicit results for calls that
-were accepted from the model but never dispatched, keeping replay
-structurally valid.
-"""
 
 from __future__ import annotations
 
@@ -31,11 +20,6 @@ _OUTCOME_UNKNOWN_AFTER_DISPATCH = (
 
 @dataclass(frozen=True, slots=True)
 class ScheduledCallStarted:
-    """One accepted call entered the durable scheduling lane.
-
-    ``dispatched`` is false for a synthetic cancelled call.  Callers should
-    still journal its call/result pair, but should not present it as executing.
-    """
 
     call: ToolCall
     dispatched: bool
@@ -43,14 +27,6 @@ class ScheduledCallStarted:
 
 @dataclass(frozen=True, slots=True)
 class ScheduledCallCommitted:
-    """One result ready to append in the model's original call order.
-
-    ``outcome_known`` is false only when the body was already dispatched and
-    cancellation stole its result, so the external world may have changed in a
-    way this result does not describe. The scheduler is the only layer that can
-    observe this, so it states it here rather than leaving callers to infer it
-    from ``result.value`` prose.
-    """
 
     call: ToolCall
     result: ToolResult
@@ -67,23 +43,10 @@ def schedule_tool_calls(
     classify: Callable[[ToolCall], ExecutionMode | str],
     conflict_keys: Callable[[ToolCall], Iterable[str]] | None = None,
     execute: Callable[[ToolCall], ToolResult],
-    #: Kept in step with ``app/fabric/engine.py``. It was 4 while the engine
-    #: moved to 8, so anything constructing the scheduler directly got a
-    #: narrower batch than production and no comment said why.
     max_parallel_tool_calls: int = 8,
     is_cancelled: Callable[[], bool] | None = None,
     before_dispatch: Callable[[ToolCall], ToolResult | None] | None = None,
 ) -> Iterator[ToolScheduleEvent]:
-    """Schedule ``calls`` with exclusive barriers and ordered commits.
-
-    ``classify`` and ``conflict_keys`` are evaluated immediately before each
-    start, so a committed tool may replace or reconfigure a later tool. Only
-    the exact string
-    ``"parallel"`` opts into overlap; errors and unknown values fail closed as
-    exclusive.  If cancellation is observed, already-started calls drain,
-    unstarted calls receive synthetic errors, and :class:`CancelledError` is
-    raised after the event stream has become replay-safe.
-    """
     if (
         isinstance(max_parallel_tool_calls, bool)
         or not isinstance(max_parallel_tool_calls, int)
@@ -155,7 +118,6 @@ def _parallel_group(
     is_cancelled: Callable[[], bool],
     before_dispatch: Callable[[ToolCall], ToolResult | None] | None,
 ) -> Iterator[ToolScheduleEvent]:
-    """Run the next live parallel group and return its next unstarted index."""
     next_to_start = start
     next_to_commit = start
     settled: dict[int, ScheduledCallCommitted] = {}
@@ -234,10 +196,6 @@ def _parallel_group(
             if is_cancelled():
                 cancelled = True
 
-        # ``ThreadPoolExecutor.__exit__`` has drained every submitted body.
-        # A lower model-order call can only be absent here if execution raised
-        # an internal scheduler error, which future.result() deliberately
-        # propagated instead of fabricating a model-visible result.
         while next_to_commit in settled:
             yield settled.pop(next_to_commit)
             next_to_commit += 1
@@ -259,7 +217,6 @@ def _claim(
     conflict_keys: Callable[[ToolCall], Iterable[str]] | None,
     call: ToolCall,
 ) -> tuple[ExecutionMode, frozenset[str]]:
-    """Resolve one live scheduling claim; uncertainty is exclusive."""
     mode = _mode(classify, call)
     if mode == "exclusive" or conflict_keys is None:
         return mode, frozenset()

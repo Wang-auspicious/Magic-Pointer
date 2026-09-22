@@ -6,13 +6,13 @@ const { Menu, nativeImage, Tray } = require('electron');
 const { nativeTheme } = require('electron');
 const { shell } = require('electron');
 const { spawn } = require('child_process');
+const { net } = require('electron');
+const { expandPassage } = require('./runtime/text');
+const { resolveModelConfig, listModels } = require('./runtime/model');
+const { handleSessionRead } = require('./runtime/session');
 const fs = require('fs');
 const crypto = require('crypto');
 
-// Keep the long-supported `electron electron/main.js` developer entry working
-// while local main-process modules migrate to TypeScript. Compiled/package
-// output contains runtime_paths.js but never runtime_paths.ts, so production
-// does not load or depend on the development-only tsx runtime.
 if (fs.existsSync(path.join(__dirname, 'runtime_paths.ts'))) {
   require('tsx/cjs');
 }
@@ -133,8 +133,6 @@ function normalizeConversationEffort(value: unknown): string {
 }
 
 let overlayWindow: InstanceType<typeof BrowserWindow> | null = null;
-// 双生鼠标（twin cursor）的独立表面。见 electron/agent_cursor_window.ts 顶部
-// 的三条硬约束：每屏一个窗口、创建后永不移动、底部留 2px。
 let agentCursorSurfaces: InstanceType<typeof AgentCursorSurfaces> | null = null;
 let dashboardWindow: InstanceType<typeof BrowserWindow> | null = null;
 let dashboardBrowserView: InstanceType<typeof WebContentsView> | null = null;
@@ -165,8 +163,6 @@ let selectionGestureArm: {
 } | null = null;
 let selectionGestureArmTimer: NodeJS.Timeout | null = null;
 let selectionGestureExpiryTimer: NodeJS.Timeout | null = null;
-// 划线完成 → 会话开始之间由 capture coordinator 冻结帧：commit 成功后才会
-// release overlay 并打开会话。旧的 34ms 合成器定时器已删除。
 let frameCaptureWorkerClient: InstanceType<typeof FrameCaptureWorkerClient> | null = null;
 let captureCommitCoordinator: InstanceType<typeof CaptureCommitCoordinator> | null = null;
 let selectionWorkerClient: InstanceType<typeof SelectionWorkerClient> | null = null;
@@ -193,8 +189,6 @@ let pointerInputState = {
   captureArmed: false,
 };
 let lastPointerTraceKey = '';
-// 采集发生在剪贴板变化之后 700ms 内，那时前台可能已经被截图工具之类的外壳
-// 抢走。记住「最后一个真正的应用」，收藏箱才能说清这张图是从哪来的。
 let lastStableForegroundApp = '';
 let lastStableForegroundWindow = {
   app: '',
@@ -221,8 +215,6 @@ let surfaceReadinessWaitArmed = false;
 let startupVoiceWarmupScheduled = false;
 const registeredConfigurableHotkeys = new Set();
 
-// Bound what a (possibly compromised) overlay renderer can hand to the
-// capture bridge: distance-filtered real strokes stay far below this.
 const MAX_OVERLAY_CAPTURE_POINTS = 4096;
 const MAX_OVERLAY_CAPTURE_STROKES = 32;
 
@@ -267,12 +259,6 @@ const ALLOWED_ACTION_TYPES = new Set([
   'copy_text_to_clipboard',
   'office_replace_selection',
   'office_undo_last_action',
-  'shopping_list_add',
-  'shopping_list_add_many',
-  'shopping_list_set_checked',
-  'shopping_list_undo_add',
-  'calendar_event_create',
-  'calendar_event_undo_create',
   'paste_text_to_foreground',
   'fabric_recipe_execute',
 ]);
@@ -282,18 +268,9 @@ const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_T
 const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 });
 const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
-// Durable agent session id per live selection session, learned from the
-// bridge's `loop_started` progress line. This is what lets the stop button
-// request a graceful cancel (Receipt + closed turn) instead of only killing
-// the Python child mid-write.
 const activeSessionAgentIds = new Map();
-// Live Studio conversation turns keyed by requestId: the bridge child (kill
-// fallback) plus the durable agent session id learned from `session_ready`.
 const activeConversations = new Map();
 const GRACEFUL_CANCEL_GRACE_MS = 5_000;
-// Recent sessions, as durations a person can read. Every number here was
-// already being emitted to the log; this is what puts it somewhere anybody
-// would look. See session_timeline.ts for why it is memory-only.
 const sessionTimeline = new SessionTimeline();
 const dictationChildren = new Map();
 const dictationStopFiles = new Map();
@@ -311,24 +288,14 @@ const runtimeSnapshot = new RuntimeSnapshot({
   ttlMs: 5000,
 });
 let activeSelectionSessionToken: string | null = null;
-// Last bridge result delivered to the stage; context actions (open calendar /
-// route draft in the dashboard) resolve against it.
 let lastStageResult: { token: string | null; parsed: any } | null = null;
-let dashboardRequestSerial = 0;
-let dashboardOperationQueue = Promise.resolve();
 
-// Buffered: log() is called on hot paths (~150 call sites, including once per
-// bridge progress record) and a synchronous mkdir+append per call measured at
-// 1.20 ms on the same thread that services the pointer poll and every IPC.
-// Lines are queued and written in one batch on a short timer; flushLog() is
-// called on both quit paths so nothing is lost at shutdown.
 const appendLog = createBufferedLog({ filePath: LOG_PATH });
 
 function log(message: unknown) {
   appendLog.log(message);
 }
 
-/** Write anything still queued. Safe to call at any point in shutdown. */
 function flushLog() {
   appendLog.flush();
 }
@@ -338,8 +305,6 @@ securityHardening.install({
   onFatal: ({ kind }: { kind: string }) => {
     try {
       observability.writeEvent('main.fatal', { kind });
-      // Events are buffered; a fatal handler is the last chance to get this
-      // one on disk. flushEvents() is synchronous and never throws.
       observability.flushEvents();
     } catch (_) {}
     log(`fatal handler notified kind=${kind}`);
@@ -468,39 +433,10 @@ function persistCurrentObjectEpisode(session: any) {
       },
     }],
   };
-  // The write is deferred past the current tick (see the note on
-  // pendingEpisodeWrite). The payload is serialised *now* so the snapshot can
-  // never change under us between here and the flush.
-  //
-  // `true` therefore means "built and queued", not "on disk" — no caller reads
-  // it (both call sites ignore it), and a later write failure is logged by
-  // writeEpisodeNow rather than swallowed.
   queueEpisodeWrite(currentObjectPath, `${JSON.stringify(value, null, 2)}\n`);
   return true;
 }
 
-// C-067: persistCurrentObjectEpisode used to do mkdir + writeFileSync +
-// renameSync synchronously, and `onComplete` calls it between pointerup and
-// `setPanelLayout`/`showStage` — i.e. inside the latency the user experiences
-// as "the bubble finally showed up".
-//
-// Measured on this machine (tools-style bench, payload = one object with the
-// full selected content plus captureAttestation/perceptionTrace):
-//   content=10KB   pretty stringify 0.04ms   writeFileSync+rename 1.39ms
-//   content=100KB  pretty stringify 0.14ms   writeFileSync+rename 1.61ms
-//   content=400KB  pretty stringify 0.87ms   writeFileSync+rename 1.75ms
-// The file I/O is the cost, not the indentation, so this defers the *write*
-// and keeps the pretty-print: current-object.json is a documented, inspected
-// runtime artifact (SECURITY.md, docs/AGENT_INTEGRATION.md) and the indent
-// costs ~0.2 ms at the largest realistic payload.
-//
-// Durability: every reader of this file is a Python process spawned later —
-// fabric_bridge.py's `current_object` operation, app/fabric/hooks.py
-// read_live_episode (a UserPromptSubmit/BeforeAgent hook), and
-// app/fabric/mcp.py. None of them can observe this file in the same tick, and
-// all of them already respect the episode's `expiresAt`. Nothing in the
-// Electron process reads it at all. `flushCurrentObjectEpisode()` runs on both
-// quit paths so a deferred write cannot be lost at shutdown.
 let pendingEpisodeWrite: { filePath: string; payload: string } | null = null;
 let episodeWriteScheduled = false;
 
@@ -524,7 +460,6 @@ function flushCurrentObjectEpisode(): void {
 }
 
 function queueEpisodeWrite(filePath: string, payload: string): void {
-  // Only the newest state matters; an unflushed earlier write is superseded.
   pendingEpisodeWrite = { filePath, payload };
   if (episodeWriteScheduled) return;
   episodeWriteScheduled = true;
@@ -585,9 +520,6 @@ function startPointerInputStateStream() {
           swallowingLeft: parsed.swallowingLeft === true,
           captureArmed: parsed.captureArmed === true,
         };
-        // 收藏箱要知道「这张图是从哪个应用来的」，但按下 Win+Shift+S 的那一瞬间
-        // 前台是截图工具，我们自己的浮层也会抢前台。所以只记住真正的应用，
-        // 外壳进程一律跳过——采集发生在 700ms 之后，那时这个值仍然是对的。
         if (!isTransientShell(pointerInputState.foregroundApp)) {
           lastStableForegroundApp = pointerInputState.foregroundApp;
           lastStableForegroundWindow = {
@@ -708,10 +640,6 @@ function cancelSessionChild(selectionSessionToken: string | null) {
   activeSessionAgentIds.delete(selectionSessionToken);
   if (!child || child.killed) return;
   if (agentSessionId) requestGracefulAgentCancel(agentSessionId);
-  // The loop checks the durable cancel at the next round boundary and exits
-  // on its own with a Receipt; if it misses the grace window (model call in
-  // flight, hung tool), kill as before — crash repair already handles that
-  // path honestly.
   setTimeout(() => {
     try { if (!child.killed) child.kill(); } catch (_) {}
   }, GRACEFUL_CANCEL_GRACE_MS);
@@ -741,9 +669,6 @@ ipcMain.handle('stage:steer-selection-command', async (event: Electron.IpcMainIn
   const token = String(payload?.selectionSessionToken || '');
   const selectionSession = selectionSessions.get(token);
   if (!token || !selectionSession) return { ok: false, error: 'invalid_request' };
-  // Steer addresses the DURABLE agent session, not the bridge child: the loop
-  // claims next-step at the next round boundary. Without a known session id
-  // (loop_started progress has not arrived yet) there is nothing to steer.
   const agentSessionId = activeSessionAgentIds.get(token) || selectionSession.taskId;
   if (!agentSessionId) return { ok: false, error: 'no_agent_session' };
   try {
@@ -913,10 +838,6 @@ function initializeUpdateManager({ automatic = true } = {}) {
 }
 
 function syncAgentCursorSurfaces() {
-  // 刻意不复用 overlayWindow：ensureFreshGestureOverlay() 每个手势都销毁重建
-  // 它（见上面那段注释），而"手势进行到一半光标消失"比没有光标更糟。Clicky
-  // 把光标层和交互层分成两个窗口，是同一个理由
-  // （OverlayWindow.swift:3184-3189）。
   if (!agentCursorSurfaces) {
     agentCursorSurfaces = new AgentCursorSurfaces({
       rendererFile: path.join(__dirname, 'renderer', 'index.html'),
@@ -926,21 +847,10 @@ function syncAgentCursorSurfaces() {
   agentCursorSurfaces.sync();
 }
 
-// 由 Python 侧的动作前置信号（app/computer_operator/windows.py 的
-// ApproachObserver）驱动：先让光标飞过去，落点之后才按下。
 function sendAgentCursorCommand(payload: unknown): boolean {
   return agentCursorSurfaces ? agentCursorSurfaces.command(payload) : false;
 }
 
-/**
- * Forward a bridge's twin-cursor row to the on-screen cursor surface.
- *
- * The Python driver announces where it is about to move and click through the
- * same @@mp progress channel every bridge already reports on; this is the hop
- * that carries it the last step. Every field arrives as a string — the line
- * parser has no types — so numbers are parsed here and anything unparseable is
- * dropped rather than turned into NaN, which would place a cursor at 0,0.
- */
 function handleAgentCursorProgress(record: any): void {
   if (!record || record.phase !== 'agent_cursor') return;
   const fields = record.fields || {};
@@ -994,8 +904,6 @@ function createOverlayWindow() {
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   if (CAPSULE_CONTENT_PROTECTED) {
-    // The drawing canvas must never enter the frozen frame either. Same
-    // policy as the stage window: only excluded when capture protection is on.
     try {
       overlayWindow.setContentProtection(true);
     } catch (error) {
@@ -1015,32 +923,11 @@ function createOverlayWindow() {
 }
 
 function ensureFreshGestureOverlay() {
-  // Electron (Windows) transparent overlays can stop delivering DOM pointer
-  // events after a hide/show reuse cycle. Production logs show the second
-  // gesture session never receives pointerdown even though gesture-ready
-  // succeeded. Give every gesture session a freshly created window so the
-  // input path starts clean (readiness gating waits for the new renderer).
   if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
   overlayWindow = null;
   createOverlayWindow();
 }
 
-// The capsule used to wait for the whole perception pass (screenshot + UIA +
-// OCR + annotation, measured at 4.9s on a real machine) before it appeared.
-// That is fatal for the interaction we want: you cannot draw, talk, draw again
-// if every draw costs five seconds. Two gates control how early it shows.
-//
-// CAPSULE_CONTENT_PROTECTED asks Windows to exclude the stage window from
-// screen capture (SetWindowDisplayAffinity/WDA_EXCLUDEFROMCAPTURE). When that
-// holds, the capsule can never contaminate the screenshot, so it may appear
-// immediately — before Python has even started. Verify it on real hardware by
-// opening the newest .png under data/runtime/selection-captures: the capsule
-// must not be in the image, and the capsule itself must not render black.
-//
-// If that verification fails, set this to false. The capsule then waits for the
-// CAPSULE_REVEAL_PHASE marker instead — the moment the pixels are frozen and
-// attested, which is the earliest point that is safe without content
-// protection. Falling back costs latency, never correctness.
 const CAPSULE_CONTENT_PROTECTED = true;
 const CAPSULE_REVEAL_PHASE = 'pixels_frozen';
 
@@ -1075,8 +962,6 @@ function createStageWindow() {
   stageWindow.setAlwaysOnTop(true, 'screen-saver');
   stageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   if (CAPSULE_CONTENT_PROTECTED) {
-    // Not a DRM feature here — this is what buys the capsule the right to be on
-    // screen while we screenshot the desktop underneath it.
     try {
       stageWindow.setContentProtection(true);
     } catch (error) {
@@ -1103,13 +988,6 @@ function createStageWindow() {
   return stageWindow;
 }
 
-// The stage window is created full-screen and `movable`/`resizable` are false,
-// so between display changes it only ever moves in one place: the `setBounds`
-// below. `getBounds()` is a native round trip, and it used to be paid 50 times
-// a second by the pointer poll (audit F7) plus once per hit-region/geometry
-// call. Cache it, keyed on the window instance, and invalidate on the only
-// things that can move it: this `setBounds`, a new window, and the
-// display-added/-removed/-metrics-changed handlers.
 let stageBoundsCache: { window: Electron.BrowserWindow; bounds: Electron.Rectangle } | null = null;
 
 function stageBounds(): Electron.Rectangle | null {
@@ -1127,11 +1005,6 @@ function invalidateStageBounds() {
   stageBoundsCache = null;
 }
 
-/**
- * For call sites that have already established the stage window is alive.
- * A destroyed window can only race us between two synchronous statements, so
- * this is unreachable in practice — but it keeps the type honest.
- */
 function liveStageBounds(): Electron.Rectangle {
   return stageBounds() || { x: 0, y: 0, width: 0, height: 0 };
 }
@@ -1183,8 +1056,6 @@ function showStage(payload: any = {}) {
     ...payload,
     selectionVisual: selectionVisualForStage(),
     visualTuning: stageVisualTuningForStage(),
-    // Already validated by the settings store, so the renderer receives a
-    // known-good "r, g, b" and never has to trust a settings file.
     accentRgb: String(fabricSettings.appearance?.accent_rgb || ''),
   };
   const send = () => {
@@ -1227,40 +1098,19 @@ type StageUpdatePayload = {
 };
 
 function updateStage(payload: StageUpdatePayload = {}) {
-  // Every outcome the user sees passes through here, which makes it the one
-  // place that knows how a session actually ended.
   const type = payload?.event?.type;
   if (payload?.selectionSessionToken && (type === 'RESULT' || type === 'ERROR' || type === 'COMPLETE')) {
     sessionTimeline.finish(payload.selectionSessionToken, {
       outcome: type === 'ERROR' ? 'error' : 'result',
-      // Already a written sentence by the time it reaches the stage; error codes
-      // are stopped at stage_contract.
       error: type === 'ERROR' ? String(payload.event?.error?.message || '') : '',
       tier: String(payload.event?.result?.route?.tier || ''),
     });
   }
-  // 结果先上屏，再做记账。
-  //
-  // 下面三件事都是同步的，而且都不便宜：recordConversationTurn 会走
-  // conversation_store.updateTurn → persist()，那是「把整个对话库
-  // JSON.stringify 一遍再写盘」（实测 3MB 库 18ms，13MB 库 85ms）；
-  // autoStashResultImage 会 statSync + nativeImage.createFromPath，
-  // 在主线程上同步解码一张全屏 PNG。它们排在 safeSurfaceSend 前面，
-  // 于是「答案出现」这一帧要等一次整库重写加一次图片解码。
-  //
-  // 顺序反过来是安全的：两者互不依赖，而且 safeSurfaceSend 只是发 IPC，
-  // 渲染进程最早也要等当前这一个 tick 跑完才能收到——那时记账已经做完了。
   safeSurfaceSend('stage', 'stage:update', payload);
   if (type === 'RESULT' || type === 'COMPLETE' || type === 'ERROR') recordConversationTurn(payload, type);
-  // 图相关结果（图转提示词/生图/截屏分析）→ 输入图自动进收藏箱：
-  // 用户要的结果图不该只活在对话里，收藏箱随时能翻回来。
   autoStashResultImage(payload);
-  // 「已受理」不是「已完成」。后台任务这时候才刚起来，卡上要继续动——
-  // 底层早就能查状态了，缺的一直是这边没在看。
   watchTaskFromEvent(payload);
   if (payload.selectionSessionToken && selectionSessions.get(payload.selectionSessionToken)?.stageAttached === false) return;
-  // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点给蓝边光标所在的
-  // overlay——小三角默认不出现，只有回答要「指给你看」时才飞过去。
   const event: { screenPoints?: Array<{ x: number; y: number }> } = payload?.event || {};
   const points = Array.isArray(event.screenPoints) ? event.screenPoints : [];
   if (points.length) {
@@ -1268,11 +1118,6 @@ function updateStage(payload: StageUpdatePayload = {}) {
     const x = Number(p.x);
     const y = Number(p.y);
     if (Number.isFinite(x) && Number.isFinite(y)) {
-      // 回答阶段 overlay 通常已隐藏（划线提交后 hideOverlay）——指向需要
-      // 一个可见的透明层来画三角。没有就临时拉起：穿透、不抢焦点、不拦截。
-      // 必须先等渲染器就绪再 show+send：对一个还在加载的窗口 showInactive()
-      // 只会留下一层永远可见的透明窗（wiggle 检测因此被关掉），overlay:show
-      // 和 overlay:guide-point 也会因为无人订阅而丢掉。
       if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
       const win = overlayWindow;
       if (win && !win.isDestroyed()) {
@@ -1304,8 +1149,6 @@ function updateStage(payload: StageUpdatePayload = {}) {
             });
           }
           sendCursorToOverlay();
-          // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
-          // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
           const scale = (display && display.scaleFactor) || 1;
           win.webContents.send('overlay:guide-point', {
             x: x / scale,
@@ -1319,7 +1162,6 @@ function updateStage(payload: StageUpdatePayload = {}) {
   }
 }
 
-// 结果里带了 taskId 且状态是「已受理」，就开始盯着它，把状态变成卡片补丁。
 function watchTaskFromEvent(payload: StageUpdatePayload = {}) {
   const result = payload?.event?.result;
   if (!result || typeof result !== 'object') return;
@@ -1334,22 +1176,12 @@ function watchTaskFromEvent(payload: StageUpdatePayload = {}) {
 
 let taskWatcherInstance: ReturnType<typeof createTaskWatcher> | null = null;
 
-// 任务卡片只在这三个窗口里存在（onPatch 往 stage / 随行窗 / 工作室各推一份）。
-// 三个都不可见时，一次探针的产出没有任何人能看见——而每一次探针都是一个
-// 全新的 Python 解释器（audit F27：五分钟的任务要起 95 次进程）。
 function taskCardSurfaceVisible(): boolean {
   const visible = (win: Electron.BrowserWindow | null) =>
     Boolean(win && !win.isDestroyed() && win.isVisible());
   return visible(stageWindow) || visible(companionWindow) || visible(dashboardWindow);
 }
 
-/**
- * 窗口重新可见时叫醒观察器。
- *
- * 闸门关闭期间攒下的状态变化必须马上补上：用户打开工作室时看到的卡片不能
- * 停在旧状态上。这是「跳过探针」这个优化不破坏「任务完成一定被看见」那条
- * 不变量的关键——不看的代价最多是 idleDelayMs，前提是回到看得见时立刻补看。
- */
 function kickTaskWatch() {
   try { taskWatcherInstance?.kick(); } catch (_) { /* watching must never break a window show */ }
 }
@@ -1370,8 +1202,6 @@ function taskWatcher() {
     },
     onPatch: ({ cardId, selectionSessionToken, patch }: { cardId: string; selectionSessionToken: string; patch: unknown }) => {
       safeSurfaceSend('stage', 'stage:card-patch', { cardId, selectionSessionToken, patch });
-      // 随行窗和工作室看的是同一次会话，所以它们也要收到——
-      // 「他们俩应该是完全同步的才对」。
       for (const window of [companionWindow, dashboardWindow]) {
         if (window && !window.isDestroyed()) {
           window.webContents.send('stage:card-patch', { cardId, selectionSessionToken, patch });
@@ -1382,9 +1212,6 @@ function taskWatcher() {
   return taskWatcherInstance;
 }
 
-// ---------------------------------------------------------------------------
-// 对话记录
-// ---------------------------------------------------------------------------
 let conversationStore: ReturnType<typeof createConversationStore> | null = null;
 let artifactRuntime: ReturnType<typeof createArtifactRuntime> | null = null;
 
@@ -1392,15 +1219,7 @@ function conversations() {
   if (!conversationStore) {
     conversationStore = createConversationStore({
       baseDir: path.join(app.getPath('userData'), 'history'),
-      // Rewriting the whole store on every mutation put a 18-85ms synchronous
-      // write on the main thread up to three times a second (the stage's live
-      // answer flushes every 300ms). Coalescing moves that off the interactive
-      // path; flushConversations() on the quit paths covers the tail.
       deferPersist: true,
-      // History that silently stops saving is a data-loss bug with no symptom
-      // until the user reopens the app and it is gone. The store reports its
-      // own failures (bounded, so a full disk cannot flood the log) and this is
-      // the only place that knows how to write them down.
       onPersistError: (error: unknown, context: string) => {
         log(`conversation store persist failed context=${context} ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
       },
@@ -1410,10 +1229,6 @@ function conversations() {
   return conversationStore;
 }
 
-/**
- * Write any pending conversation-store changes. Safe before the store exists,
- * and safe to call more than once — both quit paths call it.
- */
 function flushConversations() {
   try {
     conversationStore?.flush();
@@ -1430,9 +1245,6 @@ function artifactCommands() {
       runBridge: (payload: Record<string, unknown>) => runPythonBridgePromise(
         {
           ...payload,
-          // Runtime-only credentials go over this one child-process stdin.
-          // createArtifactRuntime rebuilds its payload field-by-field, so a
-          // renderer cannot inject or select a different Figma connection.
           _figmaRuntimeConnections: figmaRuntime.clientConfigurations(),
         },
         'scripts/artifact_bridge.py',
@@ -1445,9 +1257,6 @@ function artifactCommands() {
 
 const pendingQuestions = new Map();
 
-// stage_contract 给出的三种终态，各自把正文放在不同字段里。
-// 这里必须全部覆盖——只认 result.answer 的话，写回成功（COMPLETE 没有 result）
-// 和交接草稿（正文在 result.prompt）都会被静默丢掉。
 function answerTextFrom(event: {
   type?: string;
   error?: { message?: string };
@@ -1462,12 +1271,6 @@ function answerTextFrom(event: {
   return String(r.answer || r.prompt || r.text || r.detail || '').trim();
 }
 
-// updateStage 是所有结果的必经之路，所以记录也挂在这里——
-// 别的地方再加一处，迟早会漏掉一条。
-// ── Stage↔GUI 实时同步 ─────────────────────────────────────────────
-// 提交的一瞬间 GUI 里就有这条对话（pending 占位），模型输出的每个
-// answer_chunk 流式补进同一条 turn，完成后 recordConversationTurn 只做
-// 收口更新。之前是整轮跑完才一次性入库——小窗和 GUI 两个世界。
 type SelectionLiveProgress = {
   answer: string;
   thinking: string;
@@ -1590,8 +1393,6 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
       ? selectionSessions.get(payload.selectionSessionToken)
       : null;
     const object: Partial<ReturnType<typeof episodeObjectForSession>> = entry ? episodeObjectForSession(entry) : {};
-    // 划线轮次的现场证据随轮存档：截图存档 + 标注图 + 当时读到的内容摘要。
-    // Studio 里几分钟后的追问全靠它接得上那次圈选。
     const evidence = {
       capturePath: String((object as any).source?.path || ''),
       annotatedPath: String((object as any).source?.annotatedPath || ''),
@@ -1644,9 +1445,6 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
       artifacts: Array.isArray(result.actions)
         ? result.actions.filter((a: any) => a?.artifact).map((a: any) => ({ name: a.label || a.artifact, kind: 'file' }))
         : [],
-      // Stage 结果绑定画像默认工作区（agent 实际跑的那个目录）：不给它挂
-      // workspace 的话，sidebar_groups 按项目分组会把它整个过滤掉——
-      // 划线问问题的对话在 GUI 里永远看不到。
       evidence,
       workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
       object: {
@@ -1704,10 +1502,6 @@ function knownProjectRoot(rawRoot: unknown): string | null {
   const match = conversations().listProjects().find((project: { root?: string }) =>
     path.resolve(String(project.root || '')).toLocaleLowerCase() === requested.toLocaleLowerCase());
   if (match) return path.resolve(String(match.root || ''));
-  /* 会话级 worktree 不是「注册过的项目」，但它是一个合法的项目根：切进去
-     之后文件树、git 状态、终端都要在它上面工作，否则面板显示的还是主工作区
-     而 agent 改的是别处——那比没有这个开关更糟。
-     白名单只认 <userData>/worktrees 下面的路径，所以这不会变成任意目录读取。 */
   const managed = path.join(FABRIC_DATA_DIR, 'worktrees') + path.sep;
   if ((requested + path.sep).startsWith(managed) && fs.existsSync(requested)) return requested;
   return null;
@@ -1739,20 +1533,6 @@ function runGitCapture(root: string, args: string[], timeoutMs = 5000): Promise<
   });
 }
 
-/* ---- 会话级 git worktree ----
-   参考图里 composer 上方那个 worktree 勾选框：打开后这一轮的工作目录是一个
-   挂在工作区之外的独立 checkout，agent 的改动落在自己的分支上，主工作区
-   保持干净。
-
-   选址：worktree 建在用户数据目录下（`<userData>/worktrees/<slug>/<repo>`），
-   不建在被打开的项目里。建在项目内需要那个项目刚好忽略了该目录，否则用户
-   的 `git status` 会被我们塞进去的目录污染——一个只读的开关不该改变用户的
-   仓库状态。（本仓库自己有个 `.worktrees/` 且已忽略，但那是本仓库的选择，
-   不能替所有被打开的项目做主。）
-
-   分支：`mp/<slug>`。移除用 `git worktree remove`，它默认拒绝删掉有未提交
-   改动的 worktree——这正是我们要的：宁可让开关弹回去报错，也不静默丢掉
-   用户的改动。 */
 ipcMain.handle('projects:worktree', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
   const root = knownProjectRoot(raw?.projectRoot);
@@ -1766,13 +1546,10 @@ ipcMain.handle('projects:worktree', async (event: Electron.IpcMainInvokeEvent, r
   if (action === 'remove') {
     const target = String(raw?.path || '').trim();
     if (!target) return { ok: false, error: 'missing_worktree_path' };
-    // 只允许删我们托管的那棵子树：渲染层传来的路径不能变成任意目录删除。
     if (!isManagedWorktreePath(FABRIC_DATA_DIR, target)) {
       return { ok: false, error: 'worktree_outside_managed_dir' };
     }
     const resolved = path.resolve(target);
-    // `git worktree remove` 默认拒绝带未提交改动的 worktree——这正是要的：
-    // 宁可让开关弹回去报错，也不静默丢掉用户的改动。
     const failure = await runGitCaptureCapturingError(root, worktreeRemoveArgs(resolved));
     if (failure !== null) return { ok: false, error: failure };
     await runGitCapture(root, ['worktree', 'prune']);
@@ -1785,7 +1562,6 @@ ipcMain.handle('projects:worktree', async (event: Electron.IpcMainInvokeEvent, r
   const branch = `mp/${slug}`;
   if (fs.existsSync(target)) return { ok: true, path: target, branch };
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  // 分支可能已经存在（上一次留下、或用户手动建过）：先带 -b 建，失败就复用。
   let failure = await runGitCaptureCapturingError(root, worktreeAddArgs(target, branch));
   if (failure !== null) {
     failure = await runGitCaptureCapturingError(root, worktreeReuseArgs(target, branch));
@@ -1795,8 +1571,6 @@ ipcMain.handle('projects:worktree', async (event: Electron.IpcMainInvokeEvent, r
   return { ok: true, path: target, branch };
 });
 
-/* runGitCapture 把失败吞成空串——对「读一个状态」是对的，对「做一次改动」不行：
-   用户需要知道 git 为什么拒绝。这个变体成功返回 null，失败返回 git 自己的话。 */
 function runGitCaptureCapturingError(root: string, args: string[], timeoutMs = 20_000): Promise<string | null> {
   return new Promise((resolve) => {
     const child = spawn('git.exe', args, {
@@ -2166,7 +1940,7 @@ async function restoreConversationContext(conversation: any) {
   try { mtimeMs = (await fs.promises.stat(sessionPath)).mtimeMs; } catch { return conversation; }
   if (turn.pendingInput) {
     try {
-      const status = await runPythonBridgePromise({ action: 'status', sessionId }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+      const status = await handleSessionRead({ action: 'status', sessionId }, FABRIC_DATA_DIR);
       if (status.ok && 'pendingInput' in status
         && (!status.pendingInput || status.pendingInput.requestId !== turn.pendingInput.requestId)) {
         const trajectory = (turn.trajectory || []).map((item: any) => item.kind === 'tool' && item.callId === status.lastInputAnswer?.requestId
@@ -2181,8 +1955,8 @@ async function restoreConversationContext(conversation: any) {
   if (typeof turn.modelUsage?.contextTokens === 'number') return conversation;
   let cached = restoredContextUsage.get(sessionId);
   if (!cached || cached.mtimeMs !== mtimeMs) {
-    cached = { mtimeMs, usage: runPythonBridgePromise(
-      { action: 'usage', sessionId }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8_000 },
+    cached = { mtimeMs, usage: handleSessionRead(
+      { action: 'usage', sessionId }, FABRIC_DATA_DIR,
     ).then((result: any) => result?.ok ? result.contextUsage : null) };
     restoredContextUsage.set(sessionId, cached);
   }
@@ -2335,7 +2109,8 @@ async function respondConversation(raw: any = {}, sender?: Electron.WebContents)
   }
   inputResponseRuns.add(conversationId);
   try {
-    const status = await runPythonBridgePromise({ action: 'status', sessionId: conversation.agentSessionId }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+    const status = await handleSessionRead({ action: 'status', sessionId: conversation.agentSessionId }, FABRIC_DATA_DIR);
+    if (!status.ok) throw new Error(String(status.error || 'Session unavailable'));
     const last = conversation.turns[conversation.turns.length - 1];
     const requestId = String(raw.requestId || status.pendingInput?.requestId || '');
     if (requestId && status.answeredInputIds?.includes(requestId)) {
@@ -2375,9 +2150,6 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         .filter(Boolean)
         .map((item: string) => path.resolve(item)))].slice(0, 32)
     : [];
-  // CC toolPermissionDecision: chip grants/denies join the thread memo; a
-  // once-grant rides this request only. A Bash(prefix) rule is kept intact;
-  // stripping its punctuation would persist an inert "Bashpytest" grant.
   let existing = conversationId ? conversations().get(conversationId) : null;
   if (inputResponse && !existing?.turns?.length) return { ok: false, accepted: false, error: 'unknown_conversation' };
   const grantNow = sanitizePermissionRule(raw?.permissionGrant);
@@ -2397,7 +2169,6 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
   }
   const threadGrants = [...new Set([...(Array.isArray(existing?.permissionGrants) ? existing!.permissionGrants as string[] : []), ...(grantNow ? [grantNow] : [])])];
   const threadDenials = [...new Set([...(Array.isArray(existing?.permissionDenials) ? existing!.permissionDenials as string[] : []), ...(denyNow ? [denyNow] : [])])];
-  // Codex thread workspace_roots: an explicit chip pick moves THIS thread;
   // without one, a thread that already has a root keeps it (no global bleed).
   const effectiveWorkspaceRoot = resolveConversationWorkspace(
     workspaceRoot,
@@ -2455,9 +2226,6 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     attachments,
     taskInput,
     ...(inputResponse ? { inputResponse } : {}),
-    // 会话身份必须过桥：Python 侧的 agent session（断点续跑摘要/待办/取消
-    // 请求/pending work 挂靠的那条哈希链 JSONL）按它分文件。不传的话桥端
-    // 只能从空的 selection object 派生，全部普通对话塌缩成同一条 session。
     ...(conversationId ? { conversationId } : {}),
     agentSessionId: effectiveAgentSessionId,
     _figmaRuntimeConnections: figmaRuntime.clientConfigurations().filter(
@@ -2582,7 +2350,6 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         }
         if (turnOffset && record?.fields?.turn) record = { ...record, fields: { ...record.fields, turn: String(Number(record.fields.turn) + turnOffset) } };
         handleAgentCursorProgress(record);
-        // session_ready 广播 durable session id：停止/插话都指向它。
         const sid = sessionIdFromRecord(record);
         const entry = sid ? activeConversations.get(requestId) : null;
         if (sid && entry) entry.agentSessionId = sid;
@@ -2683,7 +2450,6 @@ ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, 
   const plan = planConversationStop({ requestId, agentSessionId: entry?.agentSessionId });
   if (plan.action !== 'cancel') return { ok: false, error: plan.reason };
   requestGracefulAgentCancel(plan.sessionId);
-  // 优雅路径失败兑底：与 Stage 同款宽限后强杀，crash repair 会诚实结算。
   setTimeout(() => {
     try {
       if (activeConversations.get(requestId) === entry && entry?.child && !entry.child.killed) {
@@ -2790,11 +2556,6 @@ ipcMain.handle('conversations:rename', (event: Electron.IpcMainInvokeEvent, raw:
   } catch (_) { return { ok: false, error: 'store_failed' }; }
 });
 
-/* 输入框联想词：回合结束后问一次「用户下一步最可能说什么」。
-   这是一次只读的一次性请求——不改会话、不落盘、不开 agent。它跑在后台，
-   用户已经在打字时到达的建议没有价值，所以预算按「一句话」给（见
-   app/agent_runtime/next_prompt.py 的 max_tokens 说明），并且任何失败都退化成
-   空串：没有建议就是没有建议，绝不把报错画进输入框。 */
 ipcMain.handle('conversations:suggest', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   const turns = bridgeHistoryTurns(raw?.turns);
@@ -2806,8 +2567,6 @@ ipcMain.handle('conversations:suggest', (event: Electron.IpcMainInvokeEvent, raw
     modelRuntime: activeModelRuntimeConfig(),
   };
   return new Promise((resolve) => {
-    // 桥的 onComplete 在成功、超时、输出超限上都送达——没有额外的错误通道。
-    // 只有 ok:true 的返回值才算建议；其余一律退化成空串。
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
       timeoutMs: 45_000,
       onComplete: (parsed: any) => {
@@ -2893,8 +2652,7 @@ ipcMain.handle('conversations:recovery', async (event: Electron.IpcMainInvokeEve
     }
     let cached = conversationRecoveryQueries.get(sessionId);
     if (!cached || cached.mtimeMs !== mtimeMs) {
-      cached = { mtimeMs, result: runPythonBridgePromise({ action: 'status', sessionId },
-        'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 }) };
+      cached = { mtimeMs, result: handleSessionRead({ action: 'status', sessionId }, FABRIC_DATA_DIR) };
       conversationRecoveryQueries.set(sessionId, cached);
     }
     return await cached.result;
@@ -3010,9 +2768,6 @@ function hideStage() {
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) stageWindow.hide();
 }
 
-// The stage window is click-through by default; the renderer asks for real
-// mouse capture only while an interactive surface (text capsule, result card,
-// chips) is on screen.
 function sanitizeStageHitRegions(rawRegions: any[]) {
   if (!stageWindow || stageWindow.isDestroyed() || !Array.isArray(rawRegions)) return [];
   const bounds = liveStageBounds();
@@ -3074,8 +2829,6 @@ function setStageMouseCapture(enabled: boolean, requestFocus = false, rawRegions
   }
 }
 
-// Render-safe delivery: the stage receives only the contract projection of a
-// bridge payload (no prompts, no raw parameters, no screenshots).
 function deliverStageBridgeResult(selectionSessionToken: string | null, parsed: any) {
   if (!selectionSessionToken || selectionSessions.get(selectionSessionToken)?.stageAttached !== false) {
     lastStageResult = { token: selectionSessionToken || null, parsed: safeClone(parsed) };
@@ -3086,22 +2839,6 @@ function deliverStageBridgeResult(selectionSessionToken: string | null, parsed: 
   });
 }
 
-// Last gate before a failure reaches the bubble. Callers may pass a written
-// sentence or a bridge code; only sentences get through.
-// Narrow a snapshot to the strokes the user kept in the composer.
-//
-// An empty or absent list means "everything", because that is what a session
-// with no chip edits looks like. A list that would remove every stroke is
-// ignored: submitting a gesture with nothing selected would make the perception
-// work meaningless, and the user removing the last chip means they want to redraw.
-// Narrow a snapshot to the element the user clicked on.
-//
-// A pick lights the element up, so the command has to act on that element and
-// nothing else. Without this the highlight is a promise the request does not
-// keep: the box glows and the answer is about whatever was selected before.
-//
-// The strokes go with it. They described a different region, and keeping both
-// would ask the perception layer to reconcile two claims about what "this" is.
 function withPickedElement(snapshot: any, picked: any) {
   const rect = picked && picked.rect;
   if (!snapshot || !rect) return snapshot;
@@ -3129,17 +2866,13 @@ function dashboardMaterial(settings = fabricSettings) {
   return settings?.appearance?.material === 'solid' ? 'none' : 'mica';
 }
 
-// 系统按钮画在我们自己的底色上，所以必须跟「应用的主题」走，不是跟系统。
-// 系统深色 + 应用浅色时跟系统走，右上角就会出现一条突兀的黑条。
 function appIsDark() {
   const theme = fabricSettings?.appearance?.theme || 'light';
   if (theme === 'dark') return true;
   if (theme === 'light') return false;
-  return nativeTheme.shouldUseDarkColors;      // 只有「跟随系统」时才问系统
+  return nativeTheme.shouldUseDarkColors;
 }
 
-// 底色留全透明——页面自己的底透上来就行。只换符号的颜色去对比它。
-// 给 overlay 涂实色会在右上角糊出一块和页面对不上的方块。
 function titleBarColors(symbol: string | null = null) {
   return {
     color: '#00000000',
@@ -3177,7 +2910,6 @@ function createDashboardWindow(initialView = 'chat') {
     minHeight: 700,
     title: 'Magic Pointer',
     titleBarStyle: 'hidden',
-    // 系统按钮画在我们的暖底上：底色必须给实色，否则 Windows 会用默认灰，看不见。
     titleBarOverlay: process.platform === 'darwin' ? { height: 44 } : titleBarColors(),
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
     vibrancy: process.platform === 'darwin' ? 'sidebar' : undefined,
@@ -3200,8 +2932,6 @@ function createDashboardWindow(initialView = 'chat') {
       webSecurity: true,
     },
   });
-  // 主窗口 = 工作室（对话 / 收藏箱 / 时间线 / 产物 / 设置）。
-  // 旧的 dashboard.html 仍在磁盘上，未删除，只是不再是主界面。
   dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'), {
     query: { view: initialView },
   });
@@ -3230,10 +2960,6 @@ function createDashboardWindow(initialView = 'chat') {
   return dashboardWindow;
 }
 
-// ---------------------------------------------------------------------------
-// 收藏箱：剪贴板里出现位图就落盘，并把本地路径写回剪贴板。
-// 「一起进来的」按 2 分钟窗口 + 同来源成簇（见 stash_store.js）。
-// ---------------------------------------------------------------------------
 let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
 
 function stashBaseDir() {
@@ -3250,15 +2976,6 @@ function initializeStashRuntime() {
     log,
     pythonExecutable: PYTHON_EXECUTABLE,
     settings: () => fabricSettings || {},
-    // 落盘时顺手记下「你截的是哪个窗口的哪个元素」——这是 OCR 拿不到的。
-    //
-    // 有活动选区会话时能拿到元素名和选中文本，那是最强的证据。但用户在微信里
-    // 截图、在终端里复制的时候根本没有选区会话——那才是主场景。只认会话的话，
-    // app 永远是空，于是所有东西都归成「素材」、挤进同一簇，整条归类和成簇的
-    // 证据链在最常见的路径上是空转的。
-    //
-    // 退一步用常驻指针流里的前台进程名（已经在内存里，零成本），再退一步留空。
-    // 绝不猜。
     focusProbe: async () => {
       const fallback = () => (
         lastStableForegroundApp ? { app: lastStableForegroundApp } : {}
@@ -3284,8 +3001,6 @@ function initializeStashRuntime() {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('stash:entry', entry);
       }
-      // 主动提议：截图/文本入库事件喂给规则引擎（Vida 主动层）。
-      // 规则触发只记日志——提案 UI 待 proactive_runtime 完整接线后接上。
       feedProactiveEvent({
         kind: entry?.media === 'image' ? 'shot' : 'clip',
         app: entry?.app || '',
@@ -3305,9 +3020,6 @@ function reconfigureStashRuntime(settings = fabricSettings) {
   }
 }
 
-// ── 主动提议（Vida 主动层触发判断）───────────────────────────────
-// 事件进规则引擎（proactive_rules.ts 纯函数），触发时查 once_store
-// （一生一次），通过则记日志并暂存待 UI 提案。零模型调用。
 let proactiveRuleState: ReturnType<typeof evaluateRule>['state'] | null = null;
 let proactiveOnceStore: ReturnType<typeof createProactiveOnceStore> | null = null;
 
@@ -3337,16 +3049,11 @@ function proactiveStore() {
   return proactiveOnceStore;
 }
 
-// 图相关结果（图转提示词/生图/截屏分析）→ 输入图自动进收藏箱。
-// 用户要的结果图不该只活在对话里，收藏箱随时能翻回来。失败静默
-// （收藏是副作用，不是主路径）。
 function autoStashResultImage(payload: any) {
   try {
     const token = payload?.selectionSessionToken;
     const entry = token ? selectionSessions.get(token) : null;
     if (!entry) return;
-    // 图相关 = 用户划的是图片/屏幕区域（image / screen_region），
-    // 不是文本选区。图转提示词/生图/截屏分析都落在这两类上。
     const sourceKind = String(entry?.snapshot?.source_kind || '');
     if (!/image|screen_region/.test(sourceKind)) return;
     const object = episodeObjectForSession(entry);
@@ -3373,13 +3080,9 @@ function feedProactiveEvent(event: any) {
   if (!store.shouldShow(triggerId)) return;
   store.markShown(triggerId);
   log(`proactive trigger rule=burst_screenshots once=${triggerId}`);
-  // 提案 UI 落点：后续 proactive_runtime 在这里弹非焦点提案卡。
 }
 
 ipcMain.handle('stash:list', (event: Electron.IpcMainInvokeEvent) => {
-  // The stash index carries local file paths and selection text — only the
-  // dashboard/companion windows may read it (any compromised renderer must
-  // not walk the user's stash).
   if (!event.sender || (
     event.sender !== dashboardWindow?.webContents
     && event.sender !== companionWindow?.webContents
@@ -3504,11 +3207,7 @@ ipcMain.handle('stash:remove', (event: Electron.IpcMainInvokeEvent, id: unknown)
   return initializeStashRuntime().remove(id);
 });
 
-// 悬停收藏图片 1 秒后调用：本地文件 + 视觉模型 → 3-4 句简介。
-// 输入是用户自己收藏的本地文件，不是截屏上传，不走隐私开关。
 ipcMain.handle('stash:describe', async (event: Electron.IpcMainInvokeEvent, imagePath: string) => {
-  // 只允许主界面（dashboard）窗口调用，且路径必须落在 stash 目录里——
-  // 否则任意渲染进程都能让模型读任意本地文件（信息泄漏）。
   if (!event.sender || event.sender !== dashboardWindow?.webContents) {
     return { ok: false, error: 'forbidden_sender' };
   }
@@ -3574,7 +3273,6 @@ function createCompanionWindow() {
 
 let companionPinned = true;
 
-// 随行窗贴到光标所在屏幕的右侧，和舞台共用同一个会话。
 function showCompanion(payload = {}, options: { activate?: boolean } = {}) {
   const win = createCompanionWindow();
   const cursor = screen.getCursorScreenPoint();
@@ -3760,12 +3458,8 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
   stopDictation('overlay');
   setStageMouseCapture(false);
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
-    // Ask the stage to play its dismiss fade; it answers with stage:hidden.
     stageWindow.webContents.send('stage:hide');
   }
-  // 无论 hideObserver 与否，overlay 必须释放鼠标拦截——否则划线被取消后
-  // overlay 仍吞鼠标，用户点不到下面的应用（cancelSelectionGesture 的
-  // hideSurface:false 路径不释放 overlay 输入）。
   if (overlayOwnsPointerInput && overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
     overlayOwnsPointerInput = false;
@@ -3990,10 +3684,6 @@ function sendVoiceRuntimeStatus(status: Record<string, unknown> = {}) {
   });
   if (previousRuntimeState !== nextRuntimeState) invalidateRuntimeState('voice_worker_changed');
   safeSurfaceSend('dashboard', 'dashboard:voice-residency-status', status);
-  // Safety net for users with a stored/custom idle-unload value: after the
-  // worker drops the model for idle, re-warm so the next voice ball does not
-  // pay a 4-11s cold model load. The default config never idle-unloads (0),
-  // so this path only fires for legacy/non-zero settings.
   if (
     status.state === 'unloaded'
     && status.errorCode === 'idle_timeout'
@@ -4100,10 +3790,6 @@ function stopDictation(surface: string | null, { graceful = false }: { graceful?
   return stopLegacyDictation({ surface, graceful, cancel: !graceful });
 }
 
-// ── Hermes drive 回放：圈选落地后把“我看到了什么”画在屏幕上 ──
-// 结构化读取拿到的元素（语义句柄）以框+标签回放：错峰浮现 → 驻留 1s
-// → 淡出 600ms。自绘应用没有句柄就静默跳过，不造假框。overlay 是
-// click-through 的，回放期间不拦任何输入。
 let overlayGhostTimer: NodeJS.Timeout | null = null;
 let overlayGhostShownByUs = false;
 
@@ -4132,7 +3818,6 @@ function replayElementGhosts(attachedSession: any, display: Electron.Display): v
     overlayGhostTimer = null;
     if (!overlayWindow || overlayWindow.isDestroyed()) return;
     overlayWindow.webContents.send('overlay:element-ghosts', { ghosts: [] });
-    // 只收自己拉起的窗：手势/拨片还在用 overlay 时绝不替别人藏。
     if (overlayGhostShownByUs && !overlayOwnsPointerInput && !hasActiveSelectionCapture()) {
       overlayWindow.hide();
     }
@@ -4140,7 +3825,6 @@ function replayElementGhosts(attachedSession: any, display: Electron.Display): v
   }, total);
 }
 
-// overlay 当前覆盖的屏幕 index（避免高频轮询反复 setBounds）。
 let overlayBoundDisplayId: number | null = null;
 
 function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
@@ -4148,9 +3832,6 @@ function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
   const display = screen.getDisplayNearestPoint(pos);
   const desired = display.bounds;
   const current = overlayWindow.getBounds();
-  // 只有光标跨屏（overlay 要换屏覆盖）才 setBounds。高频轮询下反复
-  // setBounds 会让 Windows 每次重设光标区域——光标在 CSS 光标和原生
-  // 光标之间闪的根源（与光标格式无关，之前误判为 SVG 问题）。
   const moved = Math.abs(current.x - desired.x) > 1
     || Math.abs(current.y - desired.y) > 1
     || Math.abs(current.width - desired.width) > 1
@@ -4193,9 +3874,6 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
   selectionGestureArmTimer = null;
   selectionGestureExpiryTimer = null;
   selectionGestureArm = null;
-  // Dismiss/replace/expire while armed must also cancel the capture epoch so
-  // the worker stops capturing; a commit already in flight is marked cancelled
-  // and never opens a session.
   if (captureCommitCoordinator) {
     captureCommitCoordinator.cancel().catch((error: any) => {
       log(`frame capture epoch cancel failed: ${error?.message || error}`);
@@ -4221,9 +3899,6 @@ function getFrameCaptureWorkerClient() {
   return frameCaptureWorkerClient;
 }
 
-// 常驻 UIA 宿主（Phase C，评审 2026-08-13 优先级第一）：探针进程只启动
-// 一次，之后每个感知/守卫读请求都走 named pipe，不再付每请求 ~570ms 的
-// 进程冷启动税。空闲时它零扫描零 UIA 活动（event-driven 契约）。
 let uiaResidentHostProcess: ReturnType<typeof spawn> | null = null;
 const UIA_RESIDENT_HOST_PIPE = process.env.MAGIC_POINTER_UIA_HOST_PIPE || 'MagicPointerUIAHost';
 
@@ -4231,8 +3906,6 @@ function ensureResidentUiaHost(): void {
   if (uiaResidentHostProcess) return;
   const exe = path.join(DEVELOPMENT_RUNTIME_DIR, 'uia_resident_host.exe');
   if (!fs.existsSync(exe)) {
-    // Python 侧首次使用时会用本机 csc 现场编译并自行拉起；
-    // 这里缺文件只意味着还没编译过，不算故障。
     log('resident UIA host exe not compiled yet; first probe will compile it');
     return;
   }
@@ -4306,9 +3979,6 @@ function armSelectionGesture(reason = 'wiggle') {
       foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
     },
   };
-  // Ring capture starts before the drawing overlay accepts pointerdown: the
-  // worker buffers frames during the arm grace period, so pointerup can commit
-  // the latest clean frame without waiting for a fresh grab.
   getCaptureCommitCoordinator().arm({
     epochId: token,
     displayId: String(display.id || 'display-1'),
@@ -4337,8 +4007,6 @@ function armSelectionGesture(reason = 'wiggle') {
     });
     sendPointerInputCommand(`capture-next:${timeoutMs}:${runtime.chainGapMs}`);
   }
-  // Warm the hidden capsule renderer during the arm grace period. By the time
-  // the user releases a stroke it can paint immediately without startup jank.
   createStageWindow();
   armTemporaryDismissShortcut();
 
@@ -4355,12 +4023,8 @@ function armSelectionGesture(reason = 'wiggle') {
     const show = () => {
       if (!selectionGestureArm || selectionGestureArm.token !== token) return;
       win.setBounds(arm.displayBounds);
-      // 本屏首次轮询会重新对齐一次，之后不再 setBounds（避免光标闪）
       overlayBoundDisplayId = null;
       if (typeof win.setFocusable === 'function') win.setFocusable(false);
-      // Standby: click-through so user can interact with app below.
-      // The renderer will request pointer ownership via gesture-ready after
-      // it has reset its internal state — only then do we intercept mouse.
       win.setIgnoreMouseEvents(true, { forward: true });
       overlayOwnsPointerInput = false;
       win.showInactive();
@@ -4387,8 +4051,6 @@ function armSelectionGesture(reason = 'wiggle') {
     stageReadiness.whenReady(() => overlayReadiness.whenReady(show));
   };
 
-  // Capture the next pointerdown immediately. The renderer honors readyAt for
-  // visual grace, but an early press-and-hold is retained instead of lost.
   log(`selection gesture armed reason=${reason} token=${token}`);
   reveal();
   selectionGestureExpiryTimer = setTimeout(() => {
@@ -4415,16 +4077,10 @@ function completeSelectionGesture(payload: any) {
     cancelSelectionGesture('stale');
     return false;
   }
-  // Duplicate callbacks must not start a second session while the commit is
-  // in flight.
   if (arm.committing) {
     cancelSelectionGesture('stale');
     return false;
   }
-  // A compromised overlay renderer must not feed unbounded point lists into
-  // the main process (per-point display lookup + a giant gesture object
-  // serialized onto the worker's stdin) — cap at the same budget as the
-  // overlay-done path (electron audit P2).
   const boundedGesture = boundGestureInput(payload?.points, payload?.strokes, {
     maxPoints: MAX_OVERLAY_CAPTURE_POINTS,
     maxStrokes: MAX_OVERLAY_CAPTURE_STROKES,
@@ -4434,17 +4090,7 @@ function completeSelectionGesture(payload: any) {
     cancelSelectionGesture(summary.reason || 'invalid');
     return false;
   }
-  // Per-point display lookup: each point's physical coordinate is computed
   // against the display that contains it, not a single global scale factor.
-  // Formula: X_phys = Screen_Physical_Origin + (Local_Logical_X × sf_display)
-  // This prevents nonlinear origin shift when displays have different scale
-  // factors (e.g. primary 100%, secondary 150%).
-  //
-  // The renderer's points are LOCAL to the overlay window, which covers one
-  // display. Feed screen coordinates to getDisplayNearestPoint: without the
-  // window offset, points drawn on a secondary display (bounds.x/y ≠ 0) are
-  // looked up against the primary display and the whole selection shifts by
-  // the display origin.
   const gestureFrame = (overlayWindow && !overlayWindow.isDestroyed())
     ? overlayWindow.getBounds()
     : arm.displayBounds;
@@ -4463,12 +4109,6 @@ function completeSelectionGesture(payload: any) {
     };
   };
   const physicalPoints = summary.points.map((point: { x: number; y: number; t?: number }) => ({ ...toPhysical(point), t: point.t }));
-  // Per-stroke geometry travels with its stroke. It used to be dropped here,
-  // so only the summary-level array survived — and the Python normalizer
-  // rebuilds each stroke from `points` alone, which meant the polygon Electron
-  // drew for a circle never reached the OCR path at all. OCR then fell back to
-  // the bounding box, which is why a slightly loose circle pulled in the lines
-  // next to it.
   const physicalStrokes = summary.strokes.map((stroke: {
     points: Array<{ x: number; y: number; t?: number }>;
     geometry?: unknown;
@@ -4492,21 +4132,7 @@ function completeSelectionGesture(payload: any) {
       ? toPhysical(summary.semanticPoint)
       : undefined,
     releasePoint: toPhysical(summary.releasePoint),
-    // Multi-stroke sessions anchor the capsule at the FIRST stroke so it never
-    // jumps while the user keeps circling; single strokes keep the release
-    // point as the anchor.
     anchorPoint: summary.anchorPoint ? toPhysical(summary.anchorPoint) : toPhysical(summary.releasePoint),
-    // Stroke region geometry: polygon ring for circles, bandwidth corridor for
-    // lines and freeforms. Used by grounding to rank targets by region coverage
-    // instead of by a single point.
-    //
-    // Converted to physical like every sibling above it. It used to be sent
-    // raw in `dip_window` while this same payload declared
-    // `coordinateSpace: 'physical_screen_pixels'` — the one field in the object
-    // that did not match the object's own coordinate space. Anything that read
-    // `geometry` and trusted the declared space placed the polygon at the wrong
-    // offset on any scaled display, and on multi-monitor it picked the wrong
-    // display's scale entirely.
     geometry: toPhysicalGeometry(summary.geometry, toPhysical),
     direction: summary.direction || undefined,
     displayBounds: { ...armDisplay.bounds },
@@ -4514,15 +4140,9 @@ function completeSelectionGesture(payload: any) {
     source: { ...arm.source },
   };
   const reason = arm.reason;
-  // pointerup freezes the frame first: the coordinator commits the latest
-  // buffered frame, releases the overlay, and only then is the session opened.
-  // The old fixed 34ms compositor gap (which let a later screen slip into the
-  // capture) is gone.
   arm.committing = true;
   getCaptureCommitCoordinator().complete(gesture).then((lease: any) => {
     if (lease === null) {
-      // A newer arm replaced this epoch while the commit was in flight; the
-      // coordinator discarded the stale result. Never touch the new gesture.
       log('frame commit discarded: a newer gesture replaced this epoch');
       return;
     }
@@ -4624,36 +4244,12 @@ function startMouseShakePolling() {
   mousePollTimer = setInterval(() => {
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
-    // 滚动量只在 wiggle 判定那里读一次，但必须在 tick 开头就清零——
-    // 中段的 early return（临时表面可见、overlay 可见）会跳过读取，
-    // 不清零的话整段手势期间的滚动会攒成一笔，表面消失后误触一次唤醒。
     const scrollDelta = pointerInputState.scrollDelta;
     pointerInputState.scrollDelta = 0;
     if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) sendCursorToOverlay(pos);
     if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
-      // The bounds are cached: this used to be a native getBounds() per 20 ms
-      // tick (audit F7). The window is full-screen, movable/resizable false,
-      // and only ever moved by placeStageOnDisplay, which invalidates.
-      //
-      // The send itself stays unconditional on purpose. Dropping "unchanged"
-      // samples looks free but is not: the renderer's `t` is the *timestamp*
-      // of the sample, and VoiceTriggerPolicy.hover advances its dwell clock
-      // only on `tick` events (electron/voice_trigger_policy.ts:103-108). A
-      // stationary hover produces identical x/y/buttons and nothing else, so
-      // a position-equality test would freeze hover-to-talk. Button edges are
-      // the same story: handleVoicePointerInput latches previousPointerButtons
-      // on every sample, so a dropped transition is dropped for good.
       const bounds = stageBounds();
       if (bounds) {
-        // The renderer needs the stage's PHYSICAL screen origin, and it cannot
-        // derive it: every coordinate it is handed here is DIP (Electron's
-        // screen module works in DIP), while the capture-proof rects it maps
-        // are physical pixels straight off the frozen frame. Subtracting a DIP
-        // origin from a physical rect is only correct at 100% scale on a
-        // display whose virtual-screen origin is 0 — everywhere else the proof
-        // bands and [POINT] arrows land at the wrong offset, by exactly the
-        // scale factor. main has both the bounds and the display, so it does
-        // the conversion once, here.
         const stageDisplay = screen.getDisplayMatching(bounds);
         const stageScale = Number(stageDisplay?.scaleFactor) > 0
           ? Number(stageDisplay.scaleFactor)
@@ -4662,11 +4258,8 @@ function startMouseShakePolling() {
           t: now,
           x: pos.x - bounds.x,
           y: pos.y - bounds.y,
-          // Pick mode asks the target app's automation tree about a point, and
-          // that tree speaks screen coordinates, not ours.
           screenX: pos.x,
           screenY: pos.y,
-          // Physical origin of the stage window, for physical->CSS mapping.
           stageOriginX: Math.round(bounds.x * stageScale),
           stageOriginY: Math.round(bounds.y * stageScale),
           buttons: Number(pointerInputState.buttons || 0),
@@ -4676,11 +4269,6 @@ function startMouseShakePolling() {
     const temporarySurfaceVisible = hasVisibleTemporarySurface()
       || Boolean(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
     const currentButtons = Number(pointerInputState.buttons || 0);
-    // Cursor flicker is a state machine oscillating, and we do not yet know
-    // which state. This prints only on change, so a 20ms loop stays readable and
-    // the transition that flips can be read straight out of electron.log.
-    // Arm with MAGIC_POINTER_POINTER_TRACE=1; it is off by default and changes
-    // nothing but the log.
     if (process.env.MAGIC_POINTER_POINTER_TRACE === '1') {
       const overlayVisible = Boolean(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
       const stageVisible = Boolean(stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible());
@@ -4729,7 +4317,6 @@ function startMouseShakePolling() {
       return;
     }
     if (!pointerPolicy.detectWiggle) return;
-    // An active stage session owns the pointer; no re-triggering underneath it.
     if (hasVisibleTemporarySurface()) return;
     if (!overlayWindow || overlayWindow.isDestroyed() || overlayWindow.isVisible()) return;
     const decision = wiggleDetector.push({
@@ -4770,9 +4357,6 @@ function stopMouseShakePolling() {
 function applyConfiguredWakeState() {
   const policy = currentPointerPollingPolicy();
   mouseActivationDetector.reset(pointerInputState.buttons);
-  // 暂停/恢复唤醒会停掉轮询再重启，期间 buttons 基线会过期——
-  // 否则恢复后第一次右键（取消临时表面那条判定）会把很久之前的按键
-  // 当成「上一帧」，错过一次本应触发的取消。
   temporarySurfaceButtons = Number(pointerInputState.buttons || 0);
   if (policy.shouldPoll) {
     startPointerInputStateStream();
@@ -4841,13 +4425,6 @@ function registerConfigurableHotkeys() {
   return results;
 }
 
-// 目标窗口的几何和显示名：渲染层只能画，不能读/写（不给句柄/pid）。
-// 目标窗口在**舞台窗口自己的坐标系**里是哪一块。
-//
-// 快照给的 bbox 是物理屏幕像素的 [left, top, right, bottom]；渲染层用的是舞台
-// 窗口左上角为原点的 DIP。中间隔着两次换算（缩放、以及舞台落在哪个显示器上），
-// 少做一次，在 200% 缩放的机器上框就会飞到屏幕外——所以这里走和选区矩形完全
-// 同一对函数，不自己乘除。
 function stageWindowRect(sourceWindow: any, stageBounds: { x: number; y: number; width: number; height: number }) {
   const raw = sourceWindow && Array.isArray(sourceWindow.bbox) && sourceWindow.bbox.length === 4
     ? sourceWindow.bbox
@@ -4896,15 +4473,7 @@ function stageSessionPayload(entry: any) {
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
     voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
     groundingReady: Boolean(entry?.snapshot),
-    // 选中内容有多少字——只有这个数字过去，内容本身不过去。渲染层需要它是因为
-    // 拉伸手势量到的是屏幕上的折行，而引擎认的是字数；没有这个数，两边就得各自
-    // 猜对方说的「行」是什么意思，而它们猜的从来不一样。
     selectionChars: String(entry?.snapshot?.context?.content || '').trim().length,
-    // 目标窗口的矩形和名字。「要送出去」的那一路回答框贴在这个窗口右侧外沿，
-    // 而不是挂在选区旁边——那样会压住你要参照的上文。
-    //
-    // 只给几何和一个显示用的名字。渲染层拿不到句柄、进程 id 或任何能用来瞄准
-    // 一次读写的东西：它能画在哪儿，不等于它能读哪儿或写哪儿。
     targetWindowRect: stageWindowRect(
       entry?.snapshot?.source_window,
       (entry?.panelGeometry || panelGeometryForSession(entry))?.stageBounds,
@@ -5029,17 +4598,6 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
 
   const liveCursor = screen.getCursorScreenPoint();
   const releasePoint = gesture?.anchorPoint || gesture?.releasePoint || liveCursor;
-  // completeSelectionGesture emits physical pixels; the stage window and
-  // display APIs work in DIPs, so convert once before anchoring. Using a
-  // physical point as DIP on scaled displays pushed the capsule past the
-  // viewport edge and clamped it into the bottom-right corner.  For
-  // multi-stroke sessions the anchor is the FIRST stroke so the capsule
-  // appears next to the first selection and never jumps while chaining.
-  // The fallback used to hand the raw physical point back as DIP, which is the
-  // very bug the comment above says was fixed — so on any scaled display, and
-  // only when screenToDipPoint is unavailable, the capsule went back to being
-  // clamped into the bottom-right corner. There is always a correct DIP point
-  // available: the live cursor is already in DIP.
   const releasePointDip = (gesture?.anchorPoint || gesture?.releasePoint)
     && typeof screen.screenToDipPoint === 'function'
     ? screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })
@@ -5057,19 +4615,12 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
   activeSelectionSessionToken = entry.token;
   const initialInputMode = inputModeForReason(reason);
   if (initialInputMode === 'voice') beginVoiceFocusGuard(entry.token);
-  // Normal target capture is intentionally invisible. The old observer aura
-  // repainted a full-display canvas at 30 FPS while grounding ran, producing
-  // startup jank and stale compositor artifacts on high-DPI displays.
   hideOverlay();
   let stageBounds = display.bounds;
   if (gesture) {
-    // Secure the physical screen before showing any stage surface. Otherwise
-    // the voice capsule becomes part of the screenshot and UIA point probes
-    // hit our overlay instead of the user's application.
     placeStageOnDisplay(display);
     stageBounds = liveStageBounds();
   } else {
-    // Shortcut/native-selection paths retain immediate targeting.
     placeStageOnDisplay(display);
     stageBounds = liveStageBounds();
     showStage({
@@ -5090,13 +4641,8 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
     armTemporaryDismissShortcut();
   }
   log(`selection session capture start reason=${reason} token=${entry.token}`);
-  // The clock starts at activation, not at the first bridge: what a person wants
-  // to know is how long from gesture to answer.
   sessionTimeline.begin(entry.token, { reason: String(reason || '') });
 
-  // Optimistic capsule. The bubble is a promise that we heard the gesture, and
-  // that promise is worth nothing four seconds later. It opens with
-  // groundingReady=false and is filled in when the snapshot lands.
   const revealCapsule = (via: string) => {
     if (!gesture) return;
     if (entry.capsuleRevealed) return;
@@ -5153,18 +4699,12 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
       timelineToken: entry.token,
       onProgress: (record: any) => {
         handleAgentCursorProgress(record);
-        // Without content protection this marker is the earliest safe reveal:
-        // the pixels are captured and attested, so nothing we draw from here on
-        // can contaminate them.
         if (record?.phase === CAPSULE_REVEAL_PHASE) revealCapsule(CAPSULE_REVEAL_PHASE);
       },
       onComplete: (parsed: any) => {
         if (activeSessionChildren.get(entry.token) === child) activeSessionChildren.delete(entry.token);
         const current = selectionSessions.get(entry.token);
         if (!current || activeSelectionSessionToken !== entry.token) return;
-        // Once the capsule is open, every failure has to be spoken into it.
-        // Returning silently would leave the user staring at a bubble that
-        // never resolves — the one outcome worse than a slow bubble.
         const failOpenCapsule = (message: unknown) => {
           if (!entry.capsuleRevealed) return false;
           deliverStageError(entry.token, message);
@@ -5217,12 +4757,6 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
             },
           };
           if (entry.capsuleRevealed) {
-            // Backfill only. Replaying OPEN_CAPSULE here would re-anchor the
-            // bubble and replay its entrance animation on a capsule the user is
-            // already typing into — that is the "capsule jumps around" bug.
-            // No eligibility gate: the gesture path never had one, and the
-            // frozen snapshot stays valid no matter what the user switches to
-            // afterwards.
             updateStage(groundedPayload);
             return;
           }
@@ -5248,7 +4782,6 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
           return;
         }
         if (!attached.captureEligibility?.commandReady) {
-          // Honest failure: the capsule never opens over an unusable selection.
           deliverStageError(entry.token, attached.captureEligibility?.message || '当前选区不可用，请重新选择。');
           return;
         }
@@ -5271,18 +4804,12 @@ if (gotLock) app.whenReady().then(() => {
   ensureResidentUiaHost();
   for (const eventName of ['display-added', 'display-removed', 'display-metrics-changed']) {
     screen.on(eventName, () => {
-      // The stage window is positioned from display bounds, so a display
-      // change is exactly when the cached geometry stops being true.
       invalidateStageBounds();
       invalidateRuntimeState('display_configuration_changed');
-      // 光标表面同样是按屏幕矩形定位的：插拔显示器必须重建。
       syncAgentCursorSurfaces();
     });
   }
   syncAgentCursorSurfaces();
-  // 独立于 wiggle 轮询：双生鼠标要在整个桌面会话里跟着指针，而不是只在手势
-  // 唤醒时有。指针没动时闸门会拦掉 IPC，所以空闲成本只有一次
-  // getCursorScreenPoint()。
   agentCursorSurfaces?.startSampling();
   if (process.platform === 'win32') app.setAppUserModelId('com.magicpointer.desktop');
   fabricSettingsStore = new ElectronSettingsStore(path.join(FABRIC_DATA_DIR, 'fabric-settings.json'));
@@ -5293,8 +4820,6 @@ if (gotLock) app.whenReady().then(() => {
     fabricSettings = defaultSettings();
     log(`settings load failed closed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
   }
-  // Keep legacy installs usable while making the Runtime and settings UI
-  // converge on the DSH-style profile contract.
   migrateLegacyModelProfile();
   voiceRuntime = new VoiceResidentRuntime({
     startLegacy: startLegacyDictation,
@@ -5306,15 +4831,6 @@ if (gotLock) app.whenReady().then(() => {
   if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
   const requiredPaths = [
     path.join(ROOT, 'scripts', 'fabric_bridge.py'),
-    // 渲染层打包后落在 build/electron/renderer/ 下（electron-builder 的 files
-    // 字段收的是 build/electron 整棵子树），不是 ROOT/electron/renderer ——
-    // 写错会让安装版每次启动都判定未完成引导。
-    //
-    // 这里原本写的是 `files: build/electron/**`。别写回去：那几个字符里的
-    // `/*` 会在 `//` 注释里开一个块注释，而块注释的配对是全局的——本文件后面
-    // 只要再出现一处 `/* … */`，正则就会把它当成结束符，一次性吃掉四万字符的
-    // 源码。静态契约测试（tests 下带 _static_test 的那些会先剥注释再匹配）
-    // 届时会报一堆看不出原因的失败。
     path.join(ROOT, 'build', 'electron', 'renderer', 'stage.html'),
     ...(PYTHON_RUNTIME.required === true ? [PYTHON_EXECUTABLE] : []),
   ];
@@ -5325,11 +4841,6 @@ if (gotLock) app.whenReady().then(() => {
   });
   onboardingRequired = !onboardingReadiness.ready;
   initializeContextTrackers();
-  // OCR starts only after explicit selection/task demand. Gateway checks are
-  // user-triggered; an idle desktop must not load models or spawn polling bridges.
-  // 收藏箱要在应用就绪时就开始收，而不是等用户打开工作室。
-  // 挂在 `stash:list` 上等于说「你不来看，我就不收」——而用户在微信里截图的
-  // 那一刻，界面本来就不该开着。
   setTimeout(() => {
     try {
       initializeStashRuntime();
@@ -5372,19 +4883,6 @@ if (gotLock) app.whenReady().then(() => {
     }
     return;
   }
-  // 这两扇全屏透明窗刻意不在这里建。
-  //
-  // 它们在被用上之前没有任何用途：armSelectionGesture() 第一步就调
-  // ensureFreshGestureOverlay() 把 overlay 销毁重建（main.ts:1022），并且自己
-  // 调 createStageWindow() 在宽限期里预热 capsule；冷启动的唤醒则先经过
-  // queueActivationUntilSurfacesReady()，那里同样两扇都建（main.ts:3644）。
-  // 所以在 whenReady 里建出来的第一份，第一次手势就被丢掉。
-  //
-  // 代价不是抽象的：index.html 在模块末尾无条件 resize()（现已随本批改为
-  // 按需分配），按 innerWidth×innerHeight×dpr 分配一份 2D 画布加一份 WebGL2
-  // 画布，按显示分辨率折合每扇窗口约 77MB GPU 后备存储——而空载时这份显存只
-  // 用来托着一个空画布。实测同机：三扇隐藏的全屏透明窗 GPU 进程 106MB，应用
-  // 启动后 267MB，差额 161MB 与这两扇窗口里预分配的画布吻合。
   createTray();
   registerConfigurableHotkeys();
   const deliveryHotkeyOk = globalShortcut.register('Control+Alt+Enter', () => {
@@ -5551,7 +5049,7 @@ if (gotLock) app.whenReady().then(() => {
         const renderedState = await dashboardWindow.webContents.executeJavaScript(`({
           view: document.getElementById('shell')?.dataset.view || 'missing',
           viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
-          settingsRect: (() => { const rect = document.querySelector('.dshw-settings-panel')?.getBoundingClientRect(); return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null; })(),
+          settingsRect: (() => { const rect = document.querySelector('.mpw-settings-panel')?.getBoundingClientRect(); return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null; })(),
           show: typeof show,
           dashboardApi: Boolean(window.magicPointerDashboard),
           studioShell: Boolean(globalThis.StudioShell),
@@ -5608,18 +5106,12 @@ app.on('will-quit', () => {
   try { tray?.destroy(); } catch (_) {}
   tray = null;
   log('app will quit');
-  // Last thing in the quit path, after every other handler has had its say:
-  // the log, the event log and the conversation store are all written on a
-  // delay now, so whatever is still queued lives only in memory and would go
-  // with the process. Flush them here, in this order (the store flush may log).
   flushConversations();
   flushCurrentObjectEpisode();
   flushLog();
   observability.flushEvents();
 });
 app.on('before-quit', () => { isQuitting = true; });
-// will-quit does not run for every exit path (a crash, or a hard process.exit
-// from a dependency). This is the last synchronous hook Node guarantees.
 process.on('exit', () => {
   flushConversations();
   flushCurrentObjectEpisode();
@@ -5628,7 +5120,6 @@ process.on('exit', () => {
 });
 
 ipcMain.on('agent:cursor', (event: Electron.IpcMainEvent, payload: any) => {
-  // 只有 overlay 面可以驱动双生光标，它不是一条通用广播通道。
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   sendAgentCursorCommand(payload);
 });
@@ -5660,10 +5151,6 @@ ipcMain.on('overlay:gesture-ready', (event: Electron.IpcMainEvent, payload: any)
     log('gesture-ready SKIP: overlayWindow missing/destroyed');
     return;
   }
-  // The renderer has reset its pointer state — safe to intercept mouse now.
-  // Force a full input-state refresh: toggling ignore off twice and raising
-  // the window prevents the transparent-overlay compositor from keeping a
-  // stale click-through state after a reuse cycle.
   overlayWindow.setIgnoreMouseEvents(false);
   overlayOwnsPointerInput = true;
   if (typeof overlayWindow.moveTop === 'function') overlayWindow.moveTop();
@@ -5685,13 +5172,10 @@ ipcMain.on('overlay:hide', (event: Electron.IpcMainEvent) => {
 });
 ipcMain.on('overlay:guide-finished', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
-  // Guidance is disposable. Do not dismiss the answer stage, and do not hide
-  // a window that has since been repurposed for an active selection gesture.
   if (selectionGestureArm || overlayOwnsPointerInput) return;
   hideOverlay();
 });
 ipcMain.on('stage:show', (event: Electron.IpcMainEvent) => {
-  // Renderer re-asserts visibility once it has content to paint.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   if (!activeSelectionSessionToken || selectionSessions.get(activeSelectionSessionToken)?.stageAttached === false) return;
   if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.isVisible()) stageWindow.showInactive();
@@ -5714,13 +5198,11 @@ ipcMain.on('stage:state', (event: Electron.IpcMainEvent, payload: any) => {
   }
 });
 ipcMain.on('stage:hidden', (event: Electron.IpcMainEvent) => {
-  // Renderer finished its dismiss fade; the window can actually hide now.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   setStageMouseCapture(false);
   hideStage();
 });
 ipcMain.on('stage:dismiss', (event: Electron.IpcMainEvent) => {
-  // Dismiss the temporary surface; its running task remains owned by the GUI.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
 });
@@ -5898,8 +5380,6 @@ ipcMain.on('dictation:start', (event: Electron.IpcMainEvent, payload: any) => {
     return;
   }
   if (!selectionSession.snapshot) {
-    // Bounded wait for grounding instead of a silent drop: a manual voice
-    // press right after releasing the stroke must never do nothing.
     const deadline = Date.now() + 3000;
     const attempt = () => {
       const current = selectionSessions.get(selectionToken);
@@ -5979,7 +5459,7 @@ function startStageDictation({ surface, selectionSession, selectionToken }: {
   }
 }
 function resultTargetWindow(target: string | null | undefined) {
-  if (target === 'dashboard' || target === 'calendar-dashboard' || target === 'fabric-dashboard') return dashboardWindow;
+  if (target === 'dashboard' || target === 'fabric-dashboard') return dashboardWindow;
   if (target === 'stage') return stageWindow;
   return overlayWindow;
 }
@@ -5998,9 +5478,7 @@ function sendBridgeResult(target: string | null, parsed: any) {
     deliverStageBridgeResult(parsed?.selectionSessionToken || null, parsed);
     return;
   }
-  const channel = target === 'calendar-dashboard'
-    ? 'dashboard:calendar-state'
-    : target === 'fabric-dashboard'
+  const channel = target === 'fabric-dashboard'
       ? 'dashboard:fabric-state'
     : target === 'dashboard'
       ? 'dashboard:state'
@@ -6013,24 +5491,11 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
   const py = PYTHON_EXECUTABLE;
   const defaultTimeoutMs = scriptPath.includes('selection_snapshot_bridge')
     ? 15_000
-    // The stage bubble is on screen while selection_bridge runs, so it gets an
-    // interactive deadline. Its model call is bounded well under this and
-    // always has a grounded fallback; anything past this is a hang, and a hang
-    // must fail visibly rather than spin for two minutes.
-    //
-    // Selection tasks are the desktop task runtime, not a short request /
-    // response probe.  The runner resets this deadline on every stdout or
-    // stderr chunk, so fifteen minutes measures silence rather than task
-    // lifetime.  A long Office workflow can legitimately spend several
-    // minutes inside one native operation; killing it at 60s turns a healthy
-    // task into a false bridge_timeout and loses the recovery transcript.
     : scriptPath.includes('selection_bridge')
       ? 15 * 60_000
       : scriptPath.includes('action_bridge')
         ? 45_000
-        : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
-          ? 20_000
-          : 120_000;
+        : 120_000;
   const onProgress = (record: any) => {
     log(`bridge phase script=${scriptPath} phase=${record.phase} ms=${record.ms}`);
     if (options.timelineToken) {
@@ -6090,9 +5555,6 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
     maxStderrBytes: Math.max(4096, Number(options.maxStderrBytes) || 256 * 1024),
     signal: options.signal || null,
     logger: log,
-    // Phase timings arrive on stderr while the bridge is still running. They
-    // are what turns "it took 30 seconds" into "which step took 30 seconds",
-    // and they are what lets the capsule appear before the work is finished.
     onProgress,
     onComplete,
   });
@@ -6151,10 +5613,6 @@ ipcMain.handle('learning-candidates:request', async (event: Electron.IpcMainInvo
   }
 });
 
-// --- Model gateway health -------------------------------------------------
-// Knowing the gateway is refusing (402 balance, 401 key) before a command runs
-// is the difference between "this app is broken" and "your endpoint is out of
-// credit". Python owns the verdict; this keeps a copy for the surfaces.
 let modelHealth = {
   state: 'unknown',
   healthy: true,
@@ -6189,7 +5647,6 @@ async function refreshModelHealth({ probe = false } = {}) {
       broadcastModelHealth();
     }
   } catch (error) {
-    // A failed health probe is not itself a gateway verdict; say unknown.
     log(`model health probe failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
   }
   return modelHealth;
@@ -6247,10 +5704,6 @@ async function probeRuntimeState() {
   return parsed.snapshot;
 }
 
-/* 账户配额。和 models:catalog 不同，这里直连 provider 自己的接口，不走
-   Python 桥——它是一次普通的 GET，没有需要重用 harness 的理由。
-   结果按 profile 缓存 60 秒：这张卡是「我点开看一眼」，不是仪表盘，
-   每次点开都打一次 API 会把这个端点变成热点。换模型/换配置时清掉。 */
 const QUOTA_CACHE_TTL_MS = 60_000;
 const quotaCache = new Map<string, { at: number; report: any }>();
 
@@ -6314,12 +5767,7 @@ async function getStudioModelCatalog(refresh = false) {
         if (runtime?.models?.length) return configuredModelCatalog(runtime);
         const key = runtime?.profileId || 'legacy';
         try {
-          const parsed = await runPythonBridgePromise(
-            { operation: 'model.catalog', modelRuntime: runtime }, 'scripts/fabric_bridge.py',
-            { target: 'fabric-dashboard', timeoutMs: 12000 },
-          );
-          const result = parsed?.catalog;
-          if (!result) throw new Error('model_catalog_missing');
+          const result = await listModels(resolveModelConfig(runtime, ROOT, FABRIC_DATA_DIR), net.fetch.bind(net));
           modelCatalogErrors.set(key, result.error || '');
           const models = (result.groups || []).flatMap((group: any) => group.models || []);
           if (result.source === 'gateway') {
@@ -6335,15 +5783,11 @@ async function getStudioModelCatalog(refresh = false) {
     }
     await modelCatalogRefresh;
   }
-  // Read the current selection after discovery settles; it may have changed
-  // while a directory request was in flight. Startup uses this local path only.
   return collectModelCatalog(fabricSettings, credentialStore, async (runtime: any) => configuredModelCatalog(runtime));
 }
 
 function activeModelRuntimeConfig() {
   const runtime = resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
-  // Legacy secret-file installs still resolve credentials/model in Python.
-  // Metadata alone must not replace that configuration, but must reach the loop.
   if (!runtime) return legacyModelCatalog.length ? { models: legacyModelCatalog } : null;
   const discovered = runtime && discoveredModelCatalogs.get(runtime.profileId);
   if (runtime && !runtime.models.length && discovered
@@ -6475,11 +5919,6 @@ ipcMain.on('overlay:done', (event: Electron.IpcMainEvent, payload: any) => {
     capturePad: 54,
   };
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
-  // Runtime-issue capture results render on the stage (the overlay no longer
-  // hosts result surfaces). Recovery here is event-driven off overlay:done
-  // itself, not off bridge completion: hide the overlay immediately so it can
-  // never sit black and input-blocking for the whole bridge run (up to the
-  // 120s timeout). The bridge completion then opens the stage.
   placeStageOnDisplay(display);
   hideOverlay();
   runPythonBridge(enriched, 'scripts/electron_bridge.py', 'stage', {
@@ -6500,17 +5939,12 @@ ipcMain.on('overlay:gesture-start', (event: Electron.IpcMainEvent, payload: any)
   markSelectionGestureDrawing(payload?.token);
 });
 
-// A stroke was committed but the user keeps circling (multi-stroke chain):
-// keep the arm alive so the session does not expire between strokes.
 ipcMain.on('overlay:gesture-stroke', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   const arm = selectionGestureArm;
   if (!arm || String(payload?.token || '') !== arm.token) return;
   const index = Number(payload?.index);
   armTemporaryGestureSubmitShortcut(arm.token);
-  // Renderer owns the rolling inactivity timer. Keep the main-process lease
-  // slightly longer so its legacy per-stroke timeout cannot cancel the chain
-  // before the renderer's configurable auto-submit event arrives.
   markSelectionGestureDrawing(arm.token, {
     timeoutMs: arm.runtime.chainGapMs + 1000,
     reason: 'chain_timeout',
@@ -6519,13 +5953,6 @@ ipcMain.on('overlay:gesture-stroke', (event: Electron.IpcMainEvent, payload: any
 });
 
 
-
-
-// The capsule opens before grounding finishes, so a fast typist can press Enter
-// while the snapshot is still being read. That submit waits for perception —
-// bounded by whether the bridge is still working, not by a fixed deadline. A 6s
-// deadline used to fire 0.8s before a 13.6s first-run read succeeded, telling
-// the user their selection failed when it had not. See submit_gating_policy.ts.
 const SUBMIT_GROUNDING_POLL_MS = 60;
 
 ipcMain.on('stage:submit-selection-command', (event: Electron.IpcMainEvent, payload: any) => {
@@ -6544,7 +5971,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   });
   if (gate.decision === SUBMIT_WAIT) {
     if (gate.notice && !noticeShown) {
-      // Waiting silently and failing look the same from outside. Say which.
       updateStage({
         selectionSessionToken: selectionSessionToken || null,
         event: { type: 'NOTICE', notice: { message: gate.notice } },
@@ -6631,10 +6057,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   cancelSessionChild(selectionSessionToken);
   const requestId = selectionSessions.startRequest(selectionSessionToken);
   if (!requestId) {
-    // Refusing is right — the previous answer is still in flight and starting
-    // a second request would overwrite it. Returning silently is not: the user
-    // just watched their submission cancel the running one and then nothing
-    // happened at all. Every other refusal on this path says why.
     deliverStageError(
       selectionSessionToken,
       '上一轮还在跑，这次没有发出。等它结束，或先按停止。',
@@ -6642,9 +6064,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     return;
   }
   const effectiveCommand = String(payload?.command || '');
-  // A chip the user removed must actually leave the request. Dropping it only
-  // from the display would make the chip a decoration that lies about what was
-  // sent — the one thing worse than not having chips at all.
   const snapshotForRequest = withPickedElement(
     withKeptStrokes(session.snapshot, payload?.keptStrokeIndexes),
     payload?.pickedElement,
@@ -6664,9 +6083,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     targetPoint: safeClone(session.snapshot?.target_point || null),
     targetPointSpace: session.snapshot?.target_point_space || null,
     replyStyle: String(payload?.replyStyle || 'normal').trim().slice(0, 20),
-    // 'auto' lets the Python router decide. Hardcoding 'agent_prompt' here (as
-    // d9f92b1 did) turned every bubble command into a codex handoff draft and
-    // made the whole normal routing chain unreachable from the stage.
     requestMode: payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto',
     workspaceRoot: ROOT,
     modelRuntime: activeModelRuntimeConfig(),
@@ -6674,8 +6090,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
       (connection: { taskId: string }) => connection.taskId === session.taskId,
     ),
   };
-  // 用户问的那句话只在这一刻存在：stage 事件流里不带它。
-  // 不在这里记下来，工作室永远只能显示答案、没有问题。
   pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
   beginStageLiveTurn(selectionSessionToken, payload);
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
@@ -6683,14 +6097,8 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   activeSessionAgentIds.set(selectionSessionToken, session.taskId);
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
     timelineToken: selectionSessionToken,
-    // 桥在跑的时候就在报它走到哪一步了。这些阶段一直存在，只是从来没有送到
-    // 界面上——于是用户看到的是一个跳动的秒数，跟一个卡死的进程分不出来。
-    // 现在每一步都变成正在等的那张卡上的一行。
     onProgress: (record: any) => {
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
-      // Behind the same guard as every other row: a late turn that has already
-      // been superseded must not move the on-screen cursor to where a
-      // cancelled action was going to click.
       handleAgentCursorProgress(record);
       if (record.phase === 'loop_started' && typeof record.fields?.session === 'string' && record.fields.session && record.fields.session !== '-') {
         activeSessionAgentIds.set(selectionSessionToken, record.fields.session);
@@ -6734,8 +6142,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
           || parsed?.intentKind === 'context_prompt_delivery'
         ) {
           log(`trusted grounded prompt delivery kind=${parsed.intentKind} proposal=${autoProposal.id}`);
-          // Hide our surfaces so the delivery lands in the target app, then
-          // bring the stage back with the honest receipt.
           dismissTemporarySurfaces({ invalidateSession: false, hideObserver: true });
           setTimeout(() => {
             executeActionForTarget({
@@ -6756,8 +6162,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
           }, 80);
           return;
         }
-        // Stage stays in processing (shimmer) while the trusted internal
-        // action runs; the result event lands when it truly finishes.
         log(`trusted internal auto-execute type=${autoProposal.action_type} proposal=${autoProposal.id}`);
         executeActionForTarget({
           actionToken: autoProposal.action_token,
@@ -6784,14 +6188,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   if (child) activeSessionChildren.set(selectionSessionToken, child);
 }
 
-// Pick mode: the stage asks what element is under a point so it can outline the
-// whole thing. Geometry only — no screenshot, no OCR, no content.
-//
-// TODO(perf): this spawns Python per pick (~1.2s, of which ~300ms is interpreter
-// startup and the rest is the UIA probe process). That is tolerable on click and
-// far too slow for hover. Make it resident the way the OCR worker is, then hover
-// highlighting becomes possible. Recorded rather than fixed now: click-rate is
-// the interaction the feature was asked for.
 ipcMain.handle('stage:pick-element', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: 'unauthorized_stage_sender' };
@@ -6878,7 +6274,6 @@ ipcMain.handle('stage:dispatch-agent-prompt', async (event: Electron.IpcMainInvo
   }
 });
 
-// Context actions open the reviewed draft in the dashboard; they never write.
 ipcMain.on('stage:context-action', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const id = String(payload?.id || '');
@@ -6888,9 +6283,7 @@ ipcMain.on('stage:context-action', (event: Electron.IpcMainEvent, payload: any) 
     return;
   }
   const parsed = lastStageResult.parsed || {};
-  if (id === 'open-calendar-draft' && parsed.calendarDraft) {
-    showDashboard({ view: 'calendar', calendarDraft: safeClone(parsed.calendarDraft) }, { activate: true });
-  } else if (id === 'open-route-draft' && parsed.routeDraft) {
+  if (id === 'open-route-draft' && parsed.routeDraft) {
     showDashboard({ view: 'route', routeDraft: safeClone(parsed.routeDraft) }, { activate: true });
   } else {
     log(`stage:context-action unknown id=${id}`);
@@ -6900,8 +6293,6 @@ ipcMain.on('stage:context-action', (event: Electron.IpcMainEvent, payload: any) 
 function executeActionForTarget(payload: any, target: string, options: any = {}) {
   const token = payload?.actionToken || payload?.action_token;
   const selectionSessionToken = payload?.selectionSessionToken || null;
-  // Runtime-issue results carry no selection session (token null); a stale
-  // provided token is still rejected.
   const isSelectionSurface = target === 'stage';
   if (isSelectionSurface && selectionSessionToken && !selectionSessions.get(selectionSessionToken)) {
     log(`${target}:execute-action rejected expired selection session`);
@@ -6943,11 +6334,6 @@ ipcMain.on('stage:execute-action', (event: Electron.IpcMainEvent, payload: any) 
   if (isSurfaceSender(event, 'stage', resultTargetWindow)) executeActionForTarget(payload, 'stage');
 });
 
-// "填入" carries the answer the user is looking at back into the app they were
-// working in. The renderer supplies only the text; the target window, pid, title
-// and point come from the frozen selection session, so the write can never be
-// aimed somewhere the user did not point. Python decides whether the write is
-// possible and verifiable, and falls back to the clipboard when it is not.
 ipcMain.on('stage:insert-result-text', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const selectionSessionToken = payload?.selectionSessionToken || null;
@@ -6957,8 +6343,6 @@ ipcMain.on('stage:insert-result-text', (event: Electron.IpcMainEvent, payload: a
     deliverStageError(selectionSessionToken, '当前 THIS 已过期，请重新激活 Magic Pointer。');
     return;
   }
-  // 渲染层只送它正在显示的文字，但也得有个上限：preload 不截断这条路，
-  // 一个失控/被攻破的渲染进程不能往桥里灌无界字符串。
   const text = String(payload?.text || '').slice(0, 200000);
   if (!text.trim()) {
     deliverStageError(selectionSessionToken, '没有可填入的文字。');
@@ -6968,8 +6352,6 @@ ipcMain.on('stage:insert-result-text', (event: Electron.IpcMainEvent, payload: a
   log(`stage:insert-result-text token=${selectionSessionToken} chars=${text.length}`);
   runPythonBridge({
     text,
-    // 主进程提供最后一个稳定外部窗口作为提示；渲染层不能指定写入目标。
-    // 原生 writer 在同一个进程里按焦点、鼠标、稳定前台、实时前台、原目标解析。
     targetResolution: 'adaptive',
     currentTargetWindow: safeClone(lastStableForegroundWindow),
     targetWindow: safeClone(snapshot.source_window || {}),
@@ -6988,14 +6370,6 @@ ipcMain.on('stage:insert-result-text', (event: Electron.IpcMainEvent, payload: a
   });
 });
 
-// 就地展开回答里的一段。
-//
-// 和上面那条写回不同，这条**不动任何外部世界**：不写别人的窗口、不碰剪贴板、
-// 不产生动作提案。它把一段字送去变长，再把变长的字送回来，界面自己换掉那一段。
-// 所以它是 invoke 不是 send——调用方要等一个返回值，而不是等一条新的舞台事件。
-//
-// 它也因此不开新的一轮：selectionSessions 的 request 计数不动，pendingQuestions
-// 不动，conversation_store 不动。用户看到的是同一张卡上那一段字长长了。
 ipcMain.handle('stage:expand-passage', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: '这个请求不是从舞台发来的。' };
@@ -7007,30 +6381,11 @@ ipcMain.handle('stage:expand-passage', async (event: Electron.IpcMainInvokeEvent
   const passage = String(payload?.passage || '');
   if (!passage.trim()) return { ok: false, error: '没有选中任何文字。' };
   log(`stage:expand-passage token=${selectionSessionToken} chars=${passage.length}`);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: unknown) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const child = runPythonBridge({
-      passage,
-      context: String(payload?.context || ''),
-      modelRuntime: activeModelRuntimeConfig(),
-    }, 'scripts/expand_passage_bridge.py', 'stage', {
-      timeoutMs: 60_000,
-      onComplete: (parsed: any) => {
-        log(`stage:expand-passage outcome=${parsed?.ok === true ? 'ok' : (parsed?.error || 'unknown')}`);
-        finish(parsed && typeof parsed === 'object'
-          ? parsed
-          : { ok: false, error: '展开没有返回内容。' });
-      },
-    });
-    if (!child) finish({ ok: false, error: '舞台不在，没有展开。' });
-    // 桥自己有超时会走 onComplete；这条只兜住「进程根本没起来也没报错」。
-    setTimeout(() => finish({ ok: false, error: '展开超时，那一段保持原样。' }), 62_000);
-  });
+  const result = await expandPassage(passage, String(payload?.context || ''),
+    resolveModelConfig(activeModelRuntimeConfig(), ROOT, FABRIC_DATA_DIR),
+    { fetch: net.fetch.bind(net), healthFile: path.join(FABRIC_DATA_DIR, 'model-health.json') });
+  log(`stage:expand-passage outcome=${result.ok ? 'ok' : result.error} backend=${result.usedBackend} ms=${result.latencyMs}`);
+  return result;
 });
 
 function isDashboardSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
@@ -7082,50 +6437,6 @@ ipcMain.on('onboarding:cancel', (event: Electron.IpcMainEvent) => {
   isQuitting = true;
   app.quit();
 });
-
-function queueDashboardOperation(operation: string, payload = {}) {
-  const requestId = `dashboard-${++dashboardRequestSerial}`;
-  dashboardOperationQueue = dashboardOperationQueue
-    .catch(() => undefined)
-    .then(() => new Promise((resolve) => {
-      if (!dashboardWindow || dashboardWindow.isDestroyed()) {
-        resolve();
-        return;
-      }
-      runPythonBridge({
-        operation,
-        requestId,
-        ...payload,
-      }, 'scripts/shopping_list_bridge.py', 'dashboard', {
-        onComplete: (parsed: any) => {
-          sendBridgeResult('dashboard', parsed);
-          resolve();
-        },
-      });
-    }));
-}
-
-function queueCalendarOperation(operation: string, payload = {}) {
-  const requestId = `calendar-${++dashboardRequestSerial}`;
-  dashboardOperationQueue = dashboardOperationQueue
-    .catch(() => undefined)
-    .then(() => new Promise((resolve) => {
-      if (!dashboardWindow || dashboardWindow.isDestroyed()) {
-        resolve();
-        return;
-      }
-      runPythonBridge({
-        operation,
-        requestId,
-        ...payload,
-      }, 'scripts/calendar_bridge.py', 'calendar-dashboard', {
-        onComplete: (parsed: any) => {
-          sendBridgeResult('calendar-dashboard', parsed);
-          resolve();
-        },
-      });
-    }));
-}
 
 ipcMain.on('companion:hide', (event: Electron.IpcMainEvent) => {
   if (!isCompanionSender(event)) return;
@@ -7184,8 +6495,6 @@ ipcMain.handle('dashboard:settings:get', async (event: Electron.IpcMainInvokeEve
   if (!fabricSettings) {
     return { ok: false, error: 'settings_not_loaded' };
   }
-  // 设置面板回填真实值（不是界面里写死的 v:）。凭据类字段不在 fabricSettings
-  // 里，模型档案的 credentialRef 也只是引用，不需要二次脱敏。
   return {
     ok: true,
     settings: fabricSettings,
@@ -7328,9 +6637,6 @@ async function selectRuntimeModel(raw: unknown, profileId?: unknown): Promise<{ 
     return { ok: false, error: '模型名无效。' };
   }
   try {
-    // Conversations send the resolved model profile on every request. Once a
-    // profile is active, writing the legacy secrets/model.txt file would make
-    // the menu claim success while the bridge keeps using profile.model.
     const selectedSettings = selectActiveProfileModel(fabricSettings, model, profileId);
     if (selectedSettings) {
       const saved = await saveFabricSettingsPatch({ models: selectedSettings.models });
@@ -7342,8 +6648,6 @@ async function selectRuntimeModel(raw: unknown, profileId?: unknown): Promise<{ 
     if (process.env.MAGIC_POINTER_MODEL) {
       return { ok: false, error: '环境变量 MAGIC_POINTER_MODEL 覆盖模型文件，请先移除该覆盖。' };
     }
-    // Same precedence as ai_client.read_local_secret / models_catalog.select_model.
-    // A one-line local preference must not cold-start Fabric and its desktop stack.
     const secretsDir = fs.existsSync(path.join(ROOT, 'secrets'))
       ? path.join(ROOT, 'secrets') : path.join(FABRIC_DATA_DIR, 'secrets');
     fs.mkdirSync(secretsDir, { recursive: true });
@@ -7603,50 +6907,6 @@ ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: a
       }
       sendBridgeResult('fabric-dashboard', { ...parsed, fabricOperation: operation });
     },
-  });
-});
-ipcMain.on('dashboard:request-state', (event: Electron.IpcMainEvent) => {
-  if (isDashboardSender(event)) queueDashboardOperation('list');
-});
-ipcMain.on('dashboard:set-checked', (event: Electron.IpcMainEvent, payload: any) => {
-  if (!isDashboardSender(event)) return;
-  queueDashboardOperation('set_checked', {
-    itemId: payload?.itemId,
-    checked: payload?.checked,
-    expectedUpdatedAt: payload?.expectedUpdatedAt,
-  });
-});
-ipcMain.on('dashboard:undo-add', (event: Electron.IpcMainEvent, payload: any) => {
-  if (!isDashboardSender(event)) return;
-  queueDashboardOperation('undo_add', {
-    itemId: payload?.itemId,
-    receiptId: payload?.receiptId,
-    expectedUpdatedAt: payload?.expectedUpdatedAt,
-  });
-});
-ipcMain.on('dashboard:calendar-request-state', (event: Electron.IpcMainEvent) => {
-  if (isDashboardSender(event)) queueCalendarOperation('list');
-});
-ipcMain.on('dashboard:calendar-preview', (event: Electron.IpcMainEvent, payload: any) => {
-  if (!isDashboardSender(event)) return;
-  queueCalendarOperation('preview', { event: payload?.event });
-});
-ipcMain.on('dashboard:calendar-create', (event: Electron.IpcMainEvent, payload: any) => {
-  if (!isDashboardSender(event)) return;
-  queueCalendarOperation('create', {
-    event: payload?.event,
-    idempotencyKey: payload?.idempotencyKey,
-    source: payload?.source,
-    allowConflict: payload?.allowConflict === true,
-    confirmed: payload?.confirmed === true,
-  });
-});
-ipcMain.on('dashboard:calendar-undo-create', (event: Electron.IpcMainEvent, payload: any) => {
-  if (!isDashboardSender(event)) return;
-  queueCalendarOperation('undo_create', {
-    eventId: payload?.eventId,
-    receiptId: payload?.receiptId,
-    expectedUpdatedAt: payload?.expectedUpdatedAt,
   });
 });
 ipcMain.on('dashboard:route-open', async (event: Electron.IpcMainEvent, payload: any) => {

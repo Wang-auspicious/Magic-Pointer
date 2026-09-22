@@ -20,11 +20,6 @@ JsonDict = dict[str, Any]
 _CHROMIUM_CLASS = "Chrome_WidgetWin_1"
 _MAGIC_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer"}
 _DEFAULT_ENDPOINTS = tuple(f"http://127.0.0.1:{port}" for port in (9222, 9223, 9224, 9333, 9515))
-# How long to trust "no browser is listening for DevTools". Measured 2026-08-04:
-# walking five dead endpoints costs 2.1s, and it was paid per Chromium window
-# and again per gesture sample — the largest single slice of perception latency
-# on a machine where nobody runs a debug port. A browser started with debugging
-# on becomes visible within this window.
 NO_ENDPOINT_COOLDOWN_S = 30.0
 _NETWORK_ERROR = re.compile(r"(?i)(?:net::ERR_|failed to load resource|networkerror|http error|status (?:4|5)\d\d)")
 _SELECTION_MAX_TEXT_CHARS = 4000
@@ -816,7 +811,6 @@ def _timestamp(value: object) -> str:
 
 
 def _runtime_evaluate_value(evaluated: dict[str, Any]) -> dict[str, Any] | None:
-    """Unwrap Runtime.evaluate's RemoteObject without mistaking its metadata for the value."""
     remote = evaluated.get("result")
     if not isinstance(remote, dict):
         return None
@@ -825,9 +819,6 @@ def _runtime_evaluate_value(evaluated: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class ChromeDevToolsProbe:
-    # Shared across instances: whether any CDP endpoint answered is a property
-    # of the machine, not of one adapter object, and the adapter is rebuilt per
-    # read.
     _no_endpoint_until: float = 0.0
 
     def __init__(
@@ -854,17 +845,9 @@ class ChromeDevToolsProbe:
 
     @staticmethod
     def _port_is_open(endpoint: str, timeout_s: float = 0.04) -> bool:
-        """Is anything listening at all? A closed local port answers instantly.
-
-        Without this, five unreachable endpoints cost five HTTP timeouts —
-        measured at 2.1s total on 2026-08-04, paid on every Chromium window and
-        again at every gesture sample. Almost nobody runs a browser with a
-        remote-debugging port open, so that was the common case, not the rare
-        one.
-        """
         match = re.search(r"://([^:/]+):(\d+)", str(endpoint or ""))
         if match is None:
-            return True  # Not a host:port we can pre-check; let HTTP decide.
+            return True
         host, port = match.group(1), int(match.group(2))
         try:
             with socket.create_connection((host, port), timeout=timeout_s):
@@ -873,9 +856,6 @@ class ChromeDevToolsProbe:
             return False
 
     def _inventory(self) -> tuple[list[str], list[tuple[str, dict[str, Any]]]]:
-        # When nothing was listening a moment ago, nothing is listening now.
-        # Re-probing on every read turned "no browser debugging" into the single
-        # largest slice of perception latency.
         now = time.monotonic()
         if now < ChromeDevToolsProbe._no_endpoint_until:
             return [], []
@@ -901,10 +881,6 @@ class ChromeDevToolsProbe:
                 and target.get("type") == "page"
                 and str(target.get("webSocketDebuggerUrl") or "").startswith("ws")
             )
-        # Remember a completely dead inventory so the next read skips the walk
-        # entirely. A browser that starts with debugging on becomes visible
-        # within the cooldown, which is the right trade against paying for the
-        # discovery on every single perception.
         ChromeDevToolsProbe._no_endpoint_until = (
             0.0 if reachable else time.monotonic() + NO_ENDPOINT_COOLDOWN_S
         )
@@ -1043,10 +1019,6 @@ class ChromeDevToolsProbe:
                     raise RuntimeError(str((message.get("params") or {}).get("exceptionDetails") or "runtime_exception")[:300])
 
         try:
-            # A region is not merely text geometry.  The useful answer to
-            # "why did this fail?" often lives in the browser's network/log
-            # evidence, so collect the same bounded diagnostic context as the
-            # point probe instead of throwing it away on the region path.
             call("Network.enable")
             call("Log.enable")
             deadline = time.monotonic() + (self.event_drain_ms / 1000)
@@ -1189,9 +1161,6 @@ class ChromeDevToolsProbe:
                     continue
                 if isinstance(message, dict):
                     collect(message)
-            # The drain above left a 50ms socket timeout in place; the awaited
-            # Runtime.evaluate below needs the real budget (mirror of
-            # _evaluate_region, which restores it before its evaluate).
             socket.settimeout(self.timeout_ms / 1000)
             argument = {
                 "point": {"x": int(target_point["x"]), "y": int(target_point["y"])},
@@ -1246,12 +1215,6 @@ class ChromeDevToolsProbe:
 
 
 class ChromeDevToolsDocumentClient:
-    """Bound, read-only CDP access to one page target's whole DOM.
-
-    URL and title are deliberately not selection keys: multiple tabs commonly
-    share both. ``browser_instance_id`` is the endpoint captured with the
-    source and ``target_id`` is the exact CDP page target.
-    """
 
     def __init__(
         self,

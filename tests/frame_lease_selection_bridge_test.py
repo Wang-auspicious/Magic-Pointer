@@ -15,8 +15,6 @@ FROZEN_BBOX = [0, 0, 320, 200]
 
 
 class _SlowAdapter:
-    """Structured read that takes long enough that a late recapture would be
-    visibly wrong (it would see the AFTER screen, not the frozen one)."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -138,26 +136,18 @@ def test_bridge_consumes_the_frozen_frame_without_recapture(tmp_path: Path) -> N
 
     snapshot = result["selectionSnapshot"]
     assert result["ok"] is True
-    # The committed artifact is the sole visual evidence.
     assert snapshot["capture_path"] == str(frozen_path.resolve())
-    # 标注是在**冻结的那张图**上画的，不是又抓了一次屏幕：它和原图同目录、同尺寸，
-    # 笔迹真的落上去了。模型拿到的整屏图如果没有笔迹，它就只能自己在 320×200 里
-    # 找「用户圈的是哪」。
     annotated_path = Path(str(snapshot["annotated_path"]))
     assert annotated_path.is_file()
     assert annotated_path.parent == frozen_path.parent
     with Image.open(frozen_path) as original, Image.open(annotated_path) as marked:
         assert marked.size == original.size
         assert marked.convert("RGB").tobytes() != original.convert("RGB").tobytes()
-    # Full-surface bounds come from the lease, not from a fresh grab.
     assert snapshot["capture_bbox"] == FROZEN_BBOX
     assert snapshot["frame_lease"]["frameLeaseId"] == "frame-1"
-    # The fake late capture was never consulted.
     assert late_calls == []
-    # Pixels are attested frozen before the structured read starts.
     marks = [name for name, _ms in clock._marks]
     assert marks.index("pixels_frozen") < marks.index("structured_read")
-    # Backend stays honestly gdi-fallback instead of being relabeled.
     assert snapshot["capture_attestation"]["backend"] == "gdi-fallback"
     assert snapshot["capture_attestation"]["status"] == "frame_lease"
     assert snapshot["capture_attestation"]["binding_status"] == "verified"
@@ -169,7 +159,6 @@ def test_bridge_consumes_the_frozen_frame_without_recapture(tmp_path: Path) -> N
         "title": "Demo",
     }
     assert snapshot["capture_attestation"]["surface_bounds_px"] == FROZEN_BBOX
-    # Gesture selection bbox stays separate from the full-surface bbox.
     assert snapshot["selection_bbox"] == [100, 60, 120, 80]
     assert snapshot["capture_bbox"] != snapshot["selection_bbox"]
     assert snapshot["source_kind"] == "screen_region"
@@ -229,9 +218,6 @@ def test_invalid_lease_fails_closed_without_recapture(tmp_path: Path) -> None:
 
 
 def test_gesture_without_lease_fails_closed_without_recapture(tmp_path: Path) -> None:
-    """A completed-gesture snapshot without a FrameLease must not grab the
-    live screen: post-gesture pixels are not the frozen evidence (bridge
-    audit P1)."""
     late_calls, late_capture = _fake_late_capture([Image.new("RGB", (320, 200), "red")])
     result = capture_snapshot(
         [{"title": "Demo", "hwnd": 42, "supported": True}],

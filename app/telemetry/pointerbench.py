@@ -1,13 +1,3 @@
-"""PointerBench: three-way task comparison base (harness gap review L13).
-
-A fixed set of real tasks (browser/Office/WeChat/PDF/terminal), each run by
-Magic Pointer, a pure-screenshot CUA, and a human baseline. This module owns
-the task/run schema, JSON persistence, and honest report generation: a
-backend with no runs is reported as not collected, never as zero performance.
-
-This module is pure Python with no UI, OCR, or platform dependencies; its
-only I/O is the JSON runs file.
-"""
 
 from __future__ import annotations
 
@@ -30,19 +20,18 @@ _REQUIRED_RUN_KEYS = frozenset(
 
 
 class BenchError(Exception):
-    """Base error for PointerBench misuse and persistence failures."""
+    pass
 
 
 class BenchDuplicateError(BenchError):
-    """The (task_id, backend) pair was already recorded."""
+    pass
 
 
 class BenchUnknownTaskError(BenchError):
-    """The run references a task that is not registered."""
+    pass
 
 
 class BackendTag(enum.StrEnum):
-    """The three PointerBench groups."""
 
     MAGIC_POINTER = "magic_pointer"
     SCREEN_CUA = "screen_cua"
@@ -51,7 +40,6 @@ class BackendTag(enum.StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class BenchTask:
-    """One real task; ``difficulty`` is one of easy/medium/hard."""
 
     task_id: str
     app: str
@@ -71,12 +59,6 @@ class BenchTask:
 
 @dataclass(frozen=True, slots=True)
 class BenchRun:
-    """One backend's execution of one task.
-
-    Validation invariants:
-    - ``e2e_latency_ms``/``tokens`` are ``None`` or non-negative.
-    - ``reference_accuracy`` is ``None`` or within 0..1.
-    """
 
     task_id: str
     backend: BackendTag
@@ -98,11 +80,6 @@ class BenchRun:
 
 @dataclass(frozen=True, slots=True)
 class BackendStats:
-    """Per-backend report row.
-
-    ``None`` fields mean "no data" (no runs at all, or no run carrying that
-    measurement), which is distinct from a zero.
-    """
 
     backend: BackendTag
     runs: int
@@ -116,7 +93,6 @@ class BackendStats:
 
 @dataclass(frozen=True, slots=True)
 class BenchReport:
-    """Three-way comparison table plus honest missing-group annotation."""
 
     task_total: int
     stats: tuple[BackendStats, ...]
@@ -124,7 +100,6 @@ class BenchReport:
 
 
 class PointerBench:
-    """Task registry + run recorder + report generator."""
 
     def __init__(self, tasks: Sequence[BenchTask]) -> None:
         self._tasks: dict[str, BenchTask] = {t.task_id: t for t in tasks}
@@ -132,7 +107,6 @@ class PointerBench:
         self._lock = threading.Lock()
 
     def record_run(self, run: BenchRun) -> None:
-        """Record a run; unknown task or duplicate (task_id, backend) rejected."""
         if run.task_id not in self._tasks:
             raise BenchUnknownTaskError(f"task {run.task_id!r} is not registered")
         with self._lock:
@@ -142,7 +116,6 @@ class PointerBench:
             self._runs[key] = run
 
     def save_runs(self, path: str | Path) -> None:
-        """Write all recorded runs as a versioned JSON file."""
         with self._lock:
             runs = list(self._runs.values())
         payload = {
@@ -153,11 +126,6 @@ class PointerBench:
         Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     def load_runs(self, path: str | Path) -> list[BenchRun]:
-        """Adopt runs from a JSON file, replacing the current run store.
-
-        The file must match the runs schema; malformed files, unknown tasks,
-        and duplicate (task_id, backend) pairs raise :class:`BenchError`.
-        """
         try:
             raw = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -186,7 +154,6 @@ class PointerBench:
         return runs
 
     def generate_report(self) -> BenchReport:
-        """Build per-backend stats; backends with zero runs go to missing."""
         with self._lock:
             runs = list(self._runs.values())
         stats = [_stats_for(backend, [r for r in runs if r.backend is backend]) for backend in BackendTag]
@@ -195,7 +162,6 @@ class PointerBench:
 
 
 def _stats_for(backend: BackendTag, runs: list[Any]) -> BackendStats:
-    """Aggregate one backend's runs; ``None`` marks absent data, not zero."""
     if not runs:
         return BackendStats(
             backend=backend,
@@ -222,7 +188,6 @@ def _stats_for(backend: BackendTag, runs: list[Any]) -> BackendStats:
 
 
 def _percentile(values: Sequence[float], p: float) -> float:
-    """Linear-interpolated percentile; requires a non-empty sequence."""
     ordered = sorted(values)
     if not ordered:
         raise ValueError("cannot compute percentile of empty sequence")
@@ -246,7 +211,6 @@ def _run_to_dict(run: BenchRun) -> dict[str, Any]:
 
 
 def _run_from_dict(d: Mapping[str, Any]) -> BenchRun:
-    """Reconstruct a run with strict schema validation (load)."""
     if not isinstance(d, dict):
         raise TypeError(f"run is {type(d).__name__}, expected dict")
     missing = _REQUIRED_RUN_KEYS - d.keys()

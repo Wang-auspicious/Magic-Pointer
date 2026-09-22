@@ -1,4 +1,3 @@
-"""Tool exposure is a real loop contract, not just a registry inventory."""
 from __future__ import annotations
 
 import asyncio

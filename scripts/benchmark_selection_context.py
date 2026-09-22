@@ -1,8 +1,3 @@
-"""Replay the captured three-material incident through the actual provider.
-
-Run explicitly; this is not part of offline CI. The historical frame and OCR
-are fixtures, while source readers, model requests and Runtime are production.
-"""
 
 import json
 import os

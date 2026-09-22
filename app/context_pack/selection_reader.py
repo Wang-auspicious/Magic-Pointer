@@ -1,4 +1,3 @@
-"""Reader for evidence already frozen by the pointer selection pipeline."""
 
 from __future__ import annotations
 
@@ -125,8 +124,6 @@ class FrozenSelectionReader:
         if not str(query).strip():
             raise ValueError("query must be non-empty")
         bounded = max(1, int(limit))
-        # The frozen hit occupies a slot only on the first page. Advancing the
-        # disk cursor and then slicing a merged page used to silently drop hits.
         text = material.text if not cursor and str(query).casefold() in material.text.casefold() else ""
         live = self._result(
             source,

@@ -1,4 +1,3 @@
-"""Real Electron acceptance for first-run initialization and cheap relaunch."""
 
 from __future__ import annotations
 

@@ -1,4 +1,3 @@
-"""Plugin-scoped registry for optional computer operator providers."""
 
 from __future__ import annotations
 
@@ -52,7 +51,6 @@ class ComputerOperatorRegistry:
 
 
 class _OwnedBackend:
-    """Every provider call owns plugin work until it returns."""
 
     def __init__(self, backend: ComputerOperatorBackend, context: Any) -> None:
         self._backend = backend

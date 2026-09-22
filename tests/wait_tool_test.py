@@ -1,8 +1,3 @@
-"""B4 Wait 工具：等条件成立（窗口/元素/文件/进程），带超时轮询。
-
-三家（CC/Hermes/Pi）都没有的能力：桌面 agent 刚需。点开菜单→等菜单渲染
-→点菜单项，现在靠模型连发 Observe 烧轮次；Wait 把它变成一次确定性等待。
-"""
 
 from __future__ import annotations
 

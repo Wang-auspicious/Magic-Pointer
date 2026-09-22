@@ -1,4 +1,3 @@
-"""Model-facing tools for task-scoped source discovery and reading."""
 
 from __future__ import annotations
 
@@ -43,7 +42,6 @@ def _tool_failure(message: str) -> ActionFailure:
 
 
 def _reference_label(ordinal: int) -> str:
-    """Use the same A..Z, AA.. sequence as the desktop task source contract."""
     label = ""
     while ordinal:
         ordinal, digit = divmod(ordinal - 1, 26)
@@ -121,7 +119,6 @@ def register_context_tools(
         source = read_source(str(source_id))
         parsed_locator = FragmentLocator.from_dict(locator) if locator else None
         if source.identity.get("absolutePath") and parsed_locator is not None and parsed_locator.kind == "visual-region":
-            # A desktop/Explorer icon locates the file, not a page inside it.
             parsed_locator = None
         reader = readers.for_source(source)
         from .document_reader import DocumentReader
@@ -381,8 +378,6 @@ def register_context_tools(
         effect=Effect.READ,
         is_concurrency_safe=True,
         used_backend="task_source.reader",
-        # Chat readers can navigate the bound public UI to obtain history.
-        # They must not share the scheduler's parallel lane with desktop input.
         is_concurrency_safe_for=lambda args: read_source(str(args.get("source_id") or "")).kind != "chat",
         access_for=lambda args: AccessRequest(
             action="read", source_ids=(read_source(str(args.get("source_id") or "")).source_id,),

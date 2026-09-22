@@ -1,9 +1,3 @@
-"""Event-sourced agent session contract, adapted from DSH (MIT).
-
-These are behavioral invariants, not coverage padding: every model-visible
-message must come from the durable surface and raw history must survive
-compaction, resume, repair, and fork.
-"""
 
 from __future__ import annotations
 
@@ -127,7 +121,7 @@ def test_independent_session_handles_cannot_fork_the_hash_chain(tmp_path: Path) 
             barrier.wait()
             for index in range(20):
                 session.append("audit/test", {"writer": label, "index": index})
-        except BaseException as exc:  # surfaced on the main test thread below
+        except BaseException as exc:
             errors.append(exc)
 
     threads = [
@@ -370,9 +364,6 @@ def test_resume_repairs_interrupted_tool_calls_by_side_effect_uncertainty(tmp_pa
     assert "TOOL_OUTCOME_UNKNOWN" in (repaired_after.derive_messages()[-1].content or "")
     assert repaired_after.open_turn is None
 
-    # A prepared-but-never-dispatched call is recorded as not_started. The text
-    # the model reads has to say the same thing, or it will refuse to retry a
-    # call the durable record says is safe to replay.
     never_dispatched = store.create("never-dispatched")
     never_dispatched.start_turn()
     never_dispatched.append_message(_message(Role.USER, "发"))
@@ -391,13 +382,6 @@ def test_resume_repairs_interrupted_tool_calls_by_side_effect_uncertainty(tmp_pa
 
 
 def test_repair_tells_the_model_what_each_interrupted_effect_allows(tmp_path: Path) -> None:
-    """The recovery policy has to reach the model, not just the projection.
-
-    An interrupted read is safe to redo, an interrupted reversible write must be
-    verified first, and an interrupted external send must never be replayed
-    blindly. Handing all three the same sentence throws that distinction away at
-    exactly the moment it decides what happens next.
-    """
     store = FileSessionStore(tmp_path)
     session = store.create("repair-guidance")
     session.start_turn()
@@ -694,7 +678,6 @@ def test_answer_to_clarification_resumes_the_exact_logged_surface(tmp_path: Path
 
 
 def _count_full_loads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Count full-log loads so O(n) reloads per append are observable."""
     from app.agent_runtime import session as session_module
 
     calls = {"full": 0}
@@ -711,10 +694,6 @@ def _count_full_loads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 def test_append_does_not_reload_the_whole_log_per_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A long job appends thousands of events; re-reading and re-verifying the
-    whole hash chain on every append is O(n^2) IO that grows with the very
-    history the session exists to protect. Unchanged files must cost one
-    stat, and external growth must be adopted incrementally."""
     calls = _count_full_loads(monkeypatch)
     store = FileSessionStore(tmp_path)
     store.create("longrun")
@@ -745,8 +724,6 @@ def test_incremental_refresh_falls_back_when_the_tail_is_corrupt(tmp_path: Path)
     session = store.resume("shared")
     other = store.resume("shared")
     other.append("audit/test", {"writer": "other"})
-    # Simulate a crash mid-append: a partial line grows the file beyond our
-    # known size but is not valid JSON.
     with session.path.open("ab") as handle:
         handle.write(b'{"formatVersion":1,"seq":') 
     session.append("audit/test", {"writer": "after-crash"})
@@ -767,12 +744,10 @@ def test_cancel_request_is_durable_scoped_and_single_shot(tmp_path: Path) -> Non
 
     check = cancel_interrupt_check(session)
     assert check() is True
-    # Consumed: the same turn does not cancel twice.
     assert check() is False
     turn = session.open_turn
     session.end_turn(turn, reason="user_interrupt")
 
-    # A later turn must not inherit the old request.
     session.start_turn()
     assert session.pending_cancel_request(session.open_turn) is False
     assert check() is False

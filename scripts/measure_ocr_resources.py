@@ -1,4 +1,3 @@
-"""One real OCR engine, with process memory/thread/CPU evidence; no screen capture."""
 from __future__ import annotations
 
 import json

@@ -384,10 +384,6 @@ class LocalVoiceWorkerTests(unittest.TestCase):
         self.assertEqual(response[0]["code"], "microphone_active")
 
     def test_push_mode_does_not_stop_after_the_removed_poll_buffer_limit(self):
-        # The old poll-mode path buffered at most MAX_MICROPHONE_EVENTS=64
-        # events and force-stopped the session when the buffer overflowed.
-        # Push mode removed both the buffer and the cap; emitting well past the
-        # old limit must not set the cooperative stop flag or drop any event.
         old_poll_buffer_limit = 64
         push_event_count = old_poll_buffer_limit + 1
         runner_done = threading.Event()
@@ -535,10 +531,6 @@ if __name__ == "__main__":
     unittest.main()
 
     def test_microphone_start_cannot_overlap_inflight_wav_transcription(self):
-        # Regression: _transcribe_wav must hold _microphone_lock across the
-        # whole model call. If it released the lock between the "microphone
-        # idle" check and the inference, a concurrent start_microphone could
-        # hand the same Whisper model to two inference callers at once.
         transcribe_entered = threading.Event()
         allow_transcribe = threading.Event()
         runner_started = threading.Event()

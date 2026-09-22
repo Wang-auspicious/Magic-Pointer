@@ -98,12 +98,6 @@ class AppAdapter(ABC):
 def format_adapter_context(ctx: AdapterReadContext | None) -> str:
     if ctx is None:
         return ""
-    # No hedging instruction here, deliberately. This used to tell the model that
-    # OCR text was "an approximate visual observation, not native app truth", and
-    # the model dutifully opened every answer by apologising for its own
-    # perception stack. The user asked what the sentence on screen means; how we
-    # came to read it is our problem, and it is recorded in the receipt and the
-    # diagnostics page where someone debugging can find it.
     lines = [
         "Native app adapter context v1:",
         "Answer the user's question about this content directly. Do not describe how this text was obtained, "
@@ -112,8 +106,6 @@ def format_adapter_context(ctx: AdapterReadContext | None) -> str:
     ]
     if ctx.window:
         lines.append(f"window_title={ctx.window.get('title')!r}, class={ctx.window.get('class_name')!r}, hwnd={ctx.window.get('hwnd')!r}")
-    # A read error only matters to the answer when it left us with nothing. With
-    # content in hand it is a detail of a path that ended up working.
     if ctx.error and not str(ctx.content or "").strip():
         lines.append(f"read_error={ctx.error!r}")
     if ctx.artifacts:

@@ -1,4 +1,3 @@
-"""Harness looks once when structured evidence missed the mark."""
 
 from __future__ import annotations
 
@@ -179,12 +178,10 @@ def test_each_unread_material_gets_vision_even_when_another_material_was_read():
     assert len(facts) == 2
     assert all(any(anchor in fact for fact in facts) for anchor in calls)
     assert peak == 1, "Look has a shared per-run quota and is not concurrency-safe"
-    # 读到的那一笔不该再花一次视觉。
     assert all("A" not in fact.split("（")[0] for fact in facts)
 
 
 def test_two_unread_strokes_in_one_window_are_asked_once():
-    """多笔落在同一个窗口是常态。每一笔各问一次，问的是同一张窗口图。"""
     snapshot = _snapshot(covers=True)
     snapshot["selection_materials"] = [
         _material(0, covered=False, window=[1130, 188, 2626, 1960]),
@@ -199,12 +196,10 @@ def test_two_unread_strokes_in_one_window_are_asked_once():
     )
     assert calls == ["bbox:1130,188,2626,1960"]
     fact = next(item.value for item in artifact.facts if item.kind == "look_once")
-    # 一次调用要能说清它替哪几笔看了：图上标的字母和这里的字母是同一套。
     assert "A, B" in fact
 
 
 def test_a_stroke_without_a_window_still_gets_a_bounded_look():
-    """笔画落在桌面上时没有归属窗口，退回这一笔自己的选区，而不是什么都不看。"""
     snapshot = _snapshot(covers=True)
     snapshot["selection_materials"] = [
         _material(0, covered=False, window=None, selection=[358, 1310, 91, 90]),

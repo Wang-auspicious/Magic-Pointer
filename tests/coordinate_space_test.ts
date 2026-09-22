@@ -42,8 +42,6 @@ const mixedDpiScreen = {
   },
 };
 
-// The gesture UI's circle verdict must survive the bridge; reclassifying its
-// almost-closed raw stroke later turns a region into a narrow text underline.
 const ring = [{ x: 10, y: 10 }, { x: 180, y: 10 }, { x: 180, y: 160 }, { x: 10, y: 160 }, { x: 10, y: 10 }];
 for (const coordinateSpace of ['electron_dip', 'physical_screen_pixels']) {
   const physical = coordinateSpace === 'physical_screen_pixels';
@@ -131,8 +129,6 @@ const pointerOnly = normalizeGroundingGeometry({
 assert.strictEqual(pointerOnly.state, 'pointer_only');
 assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, height: 16 });
 
-// Physical display bounds are capture coordinates: origin and size round
-// separately so a DIP width is never treated as a physical width.
 {
   assert.deepStrictEqual(
     physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 }),
@@ -169,9 +165,6 @@ assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, heig
   );
 }
 
-// C-084: a gesture that cannot become a physical trace must say why. It used to
-// return a bare `null`, which is indistinguishable from "the user did not
-// gesture", so the circle the user just drew vanished with nothing said.
 {
   const { normalizeCoordinateSpace, physicalGestureTraceResult } = require('../electron/coordinate_space');
 
@@ -196,9 +189,6 @@ assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, heig
     { ok: false, reason: 'gesture_unconvertible', trace: null },
   );
 
-  // A corrupt release point used to be relocated to (0, 0) — the top-left of
-  // the primary monitor — because `NaN || 0` is 0. Fall back to the last real
-  // point instead of moving the capsule across the desk.
   const doubled = { dipToScreenPoint: (p: { x: number; y: number }) => ({ x: p.x * 2, y: p.y * 2 }) };
   const corruptRelease = physicalGestureTraceResult(doubled, {
     coordinateSpace: 'physical_screen_pixels',
@@ -208,7 +198,6 @@ assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, heig
   assert.strictEqual(corruptRelease.ok, true);
   assert.deepStrictEqual(corruptRelease.trace.releasePoint, { x: 30, y: 40 });
 
-  // A release point of exactly 0 is a real coordinate and must survive.
   const zeroRelease = physicalGestureTraceResult(doubled, {
     coordinateSpace: 'physical_screen_pixels',
     points: [{ x: 0, y: 0 }, { x: 4, y: 4 }],

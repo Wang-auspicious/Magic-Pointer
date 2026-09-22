@@ -45,7 +45,6 @@ def resolve_structured_perception(
     mark_bbox: tuple[int, int, int, int] | None = None,
     **kwargs: Any,
 ) -> StructuredPerceptionResult:
-    """Structured-only entry point: every claiming adapter becomes a provider."""
     request = PerceptionRequest(
         window=dict(window),
         command=command,

@@ -16,10 +16,6 @@ observability.bump('unit.counter');
 observability.bump('unit.counter', 4);
 
 const { eventLogPath } = observability.paths();
-// writeEvent() is buffered now (it was statSync + appendFileSync per event,
-// measured 0.38ms on the main thread). `install()` flushes session.start so
-// the file exists immediately; anything queued after that needs an explicit
-// flush — the quit paths and the fatal handler call flushEvents().
 assert.ok(fs.existsSync(eventLogPath), 'install() must create events.jsonl without waiting for a timer');
 observability.flushEvents();
 const lines = fs.readFileSync(eventLogPath, 'utf8').trim().split('\n');

@@ -1,21 +1,3 @@
-/*
- * Headless startup smoke test.
- *
- * Runs the real Electron main process, renders the Studio, captures a PNG and
- * exits. This is the only check in the repo that executes `electron/main.ts`
- * end to end — every other test either exercises a pure module or a fake at a
- * boundary, which is exactly how a NameError shipped through a green suite
- * earlier in this engagement.
- *
- * It proves: the app starts, the main process's buffered logger flushes on
- * quit, preload wiring loads, the renderer reaches a painted frame, and the
- * Studio shell + settings model are present. It does NOT prove anything about
- * the overlay, the stage, the gesture path or the twin cursor, all of which
- * need a real interaction.
- *
- * Usage:  node tools/smoke_studio_headless.js
- * Exits non-zero if no frame is produced or the render state is incomplete.
- */
 'use strict';
 
 const { spawnSync } = require('node:child_process');

@@ -9,7 +9,6 @@ SOURCE = SourceRef("source:chat", "task-chat", "chat", "Chat",
 
 
 class ViewportBackend:
-    """Like SurfaceChatHistoryBackend, one viewport may exceed the requested limit."""
     def __init__(self):
         self.calls = []
 

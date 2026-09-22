@@ -14,13 +14,6 @@ class TaskContextResult:
 
 
 class TaskContextStore:
-    """Lightweight current-task context, separate from persistent object history.
-
-    ObjectStore keeps the full local log. TaskContextStore decides which recent
-    objects are part of the *current task* and therefore allowed into model
-    context. This prevents yesterday's screenshots from polluting today's short
-    task while still allowing a previous task to be restored explicitly.
-    """
 
     def __init__(self, root: Path, idle_timeout_minutes: int = 30) -> None:
         self.root = root

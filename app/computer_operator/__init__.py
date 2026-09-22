@@ -1,4 +1,3 @@
-"""Scoped computer operator seam for optional GUI-control providers."""
 
 from .agent import (
     UiTarsActionModel,

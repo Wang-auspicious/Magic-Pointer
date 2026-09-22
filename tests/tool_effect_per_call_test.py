@@ -1,9 +1,3 @@
-"""工具效果按调用分级（CC Tool 契约：isDestructive(input) 的 MP 版）。
-
-CC 的效果分级是**按调用**的：同一工具不同入参可以有不同后果。MP 的
-``ToolSpec.effect`` 是静态档；本批加 ``effect_for``（按入参解析），权限门、
-guardrail 分类、验证门全部改走解析后的效果。
-"""
 
 from __future__ import annotations
 
@@ -54,13 +48,12 @@ def test_effect_for_overrides_static_per_call() -> None:
 
 def test_effect_for_falls_back_to_static() -> None:
     registry, spec = make_registry(effect_for=lambda args: Effect.READ, static=Effect.REVERSIBLE_WRITE)
-    assert spec_effect(spec, {}) is Effect.READ  # 显式回落值优先
+    assert spec_effect(spec, {}) is Effect.READ
     registry2, spec2 = make_registry(effect_for=None, static=Effect.REVERSIBLE_WRITE)
     assert spec_effect(spec2, {"delete": True}) is Effect.REVERSIBLE_WRITE
 
 
 def test_invalid_effect_for_return_falls_back_to_static() -> None:
-    # effect_for 返回非 Effect（实现 bug）→ 回落静态档，不炸权限链
     registry, spec = make_registry(effect_for=lambda args: "bogus", static=Effect.READ)
     assert spec_effect(spec, {}) is Effect.READ
     def raising(args: dict) -> Effect:
@@ -80,7 +73,6 @@ def test_registration_rejects_non_callable_effect_for() -> None:
 
 
 def test_permission_gate_uses_per_call_effect() -> None:
-    """静态 READ、按参 DESTRUCTIVE 的调用必须被默认 allowed_effects 拒绝。"""
     import asyncio
     import importlib.util as ilu
 

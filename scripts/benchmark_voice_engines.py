@@ -1,15 +1,3 @@
-"""Benchmark Whisper vs SenseVoice on the same recordings.
-
-Loads each engine once, transcribes the same WAV files through each engine,
-and reports character error rate (CER), optional intent accuracy (via the
-production RecipeRouter), model load time, and per-utterance latency.
-
-Usage:
-  python scripts/benchmark_voice_engines.py --wav-dir data/runtime/voice-bench       --references references.json [--engines whisper,sense_voice] [--output report.json]
-
-``references.json`` shape:
-  {"clip.wav": {"text": "????", "intent": "text.ocr_copy"}}
-"""
 
 from __future__ import annotations
 
@@ -206,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             language=args.language,
             output=args.output,
         )
-    except Exception as exc:  # pragma: no cover - CLI error path
+    except Exception as exc:
         print(f"benchmark_failed:{type(exc).__name__}:{exc}", flush=True)
         return 1
     return 0

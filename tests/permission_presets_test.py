@@ -1,10 +1,3 @@
-"""DSH 权限预设表：sandbox × approval 双旋钮 + 预设 + custom 派生态。
-
-对照 deepseek-harness packages/interaction/permission-presets：预设是
-(sandbox/mode, approval/policy) 的捆绑；custom 是派生的展示态，永远不是
-切换目标；danger-full-access 带显式确认门标记。MP 的 loop 消费的是效果表
-（app.agent_runtime.permission_modes），预设层把它映射过去，执行语义不变。
-"""
 
 from __future__ import annotations
 
@@ -23,11 +16,7 @@ from app.agent_runtime.permission_presets import (
 )
 
 
-def test_preset_table_matches_dsh_defaults() -> None:
-    # DSH 默认表：workspace-write（工作区写 + 问）与 danger-full-access
-    # （全访问 + 从不问）。MP 追加 read-only（只读 + 问）作为最窄档，
-    # 以及 auto（工作区写 + 从不问）——参考里的 Mode 菜单第一档。
-    # 顺序即菜单顺序：Auto / Manual / Accept edits / Plan / Bypass permissions。
+def test_preset_table_matches_permission_defaults() -> None:
     assert list(PRESETS) == [
         "auto",
         "plan",
@@ -37,8 +26,6 @@ def test_preset_table_matches_dsh_defaults() -> None:
     ]
     assert PRESETS["auto"].sandbox == "workspace-write"
     assert PRESETS["auto"].approval == "never"
-    # auto 落在效果表的 ACCEPT_REVERSIBLE —— 这个档位此前没有任何预设绑定，
-    # 而它和 workspace-write 的区别正是「可逆写不再逐次发问」。
     assert mode_for_preset("auto") == PermissionMode.ACCEPT_REVERSIBLE
     assert mode_for_preset("workspace-write") == PermissionMode.DEFAULT
     assert PRESETS["workspace-write"].sandbox == "workspace-write"
@@ -84,7 +71,6 @@ def test_select_payload_shape() -> None:
 
 
 def test_custom_is_display_only() -> None:
-    # custom 只在折叠态不匹配任何预设时出现，且不可作为切换目标解析。
     select = preset_select(CUSTOM_PRESET)
     assert select["currentValue"] == CUSTOM_PRESET
     values = [option["value"] for option in select["options"]]

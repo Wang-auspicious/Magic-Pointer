@@ -1,13 +1,3 @@
-﻿"""Multi-turn messages-protocol backend for the agent loop (batch 4 wiring).
-
-``AiClientMessagesBackend`` is the real production ModelBackend: it sends the
-loop's full message history as a native messages array (chat-completions or
-Anthropic-style messages protocol) instead of flattening everything into one
-user_prompt. Assistant tool calls and their results keep the provider-native
-ids and roles across turns.
-
-Tests use a stubbed httpx client; nothing real is called.
-"""
 
 from __future__ import annotations
 
@@ -86,7 +76,6 @@ class FakeResponse:
 
 
 class FakeClient:
-    """Stubbed httpx.Client factory capturing every post call."""
 
     def __init__(self, calls: list) -> None:
         self._calls = calls

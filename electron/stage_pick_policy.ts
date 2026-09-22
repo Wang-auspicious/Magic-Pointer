@@ -1,20 +1,5 @@
 'use strict';
 
-// Pick mode: point at something, see the whole thing light up.
-//
-// Everywhere's X-post effect — hover a post, its entire card outlines — is the
-// interaction being copied here (idea only; that project is BSL, none of its
-// code is). The difference from drawing a line is granularity, and both are
-// worth having:
-//
-//   pick   = the whole element under the cursor (a post, a cell, a card)
-//   stroke = exactly what the line crossed (these three words, that one row)
-//
-// The stage already owns element rectangles (the UIA probe returns them) and the
-// sweep-band highlight. What was missing was the entry point and the rule for
-// which rectangle to trust, which is what this decides.
-//
-// Pure: rectangles and a pointer position in, one highlight target out.
 
 (() => {
 type UnknownRecord = Record<string, unknown>;
@@ -33,17 +18,10 @@ interface PickTarget {
   rect: Omit<Rectangle, 'label'>;
 }
 
-// A box this close to the window's own size is "the window", not a thing inside
-// it. Highlighting the whole window teaches the user nothing about what got
-// picked.
 const WINDOW_COVERAGE_LIMIT = 0.92;
 
-// Smaller than this and there is nothing to aim at — a 4px spacer is not a pick
-// target, and outlining it looks like a rendering bug.
 const MIN_PICK_EDGE_PX = 10;
 
-// How far outside a rectangle the pointer may sit and still count as over it.
-// Hit-testing on the exact border makes the highlight flicker along edges.
 const HIT_TOLERANCE_PX = 2;
 
 function recordOf(value: unknown): UnknownRecord | null {
@@ -79,20 +57,6 @@ function coversWindow(rect: Rectangle, windowRect: unknown): boolean {
   return area(rect) / area(windowRect) >= WINDOW_COVERAGE_LIMIT;
 }
 
-/**
- * Which rectangle should light up for a pointer at (x, y)?
- *
- * The smallest candidate that still contains the point: nesting is the norm
- * (a link inside a paragraph inside a post), and the tightest box is the thing
- * the user is actually pointing at.
- *
- * @param {object} input
- * @param {Array<{x:number,y:number,width:number,height:number,label?:string}>} input.rectangles
- * @param {number} input.x
- * @param {number} input.y
- * @param {{x:number,y:number,width:number,height:number}} [input.windowRect]
- * @returns {{rect: object, label: string, reason: string}|null}
- */
 function pickTarget(input: unknown): PickTarget | null {
   const candidate = recordOf(input);
   const x = Number(candidate?.x);
@@ -116,9 +80,6 @@ function pickTarget(input: unknown): PickTarget | null {
   };
 }
 
-// Has the highlight target actually changed? Repainting an unchanged rectangle
-// restarts its animation, which reads as flicker while the user moves within one
-// element — the single most noticeable way to get this effect wrong.
 function isSameTarget(
   a: PickTarget | null | undefined,
   b: PickTarget | null | undefined,

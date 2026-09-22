@@ -1,11 +1,3 @@
-"""SurfaceAdapter resolution protocol (design §8).
-
-A resolver turns the window + gesture point into an ordered graph of raw
-objects. Every object carries its evidence source; nothing here claims a
-structured guarantee it does not have. ``text`` may be empty for a
-pixel-only object — the caller merges OCR/vision evidence on top and the
-object stays the anchor for that evidence.
-"""
 
 from __future__ import annotations
 
@@ -67,7 +59,6 @@ class ResolveResult:
 
 @runtime_checkable
 class SurfaceResolver(Protocol):
-    """One application family's surface semantics."""
 
     def matches(self, window: dict[str, Any]) -> bool: ...
 

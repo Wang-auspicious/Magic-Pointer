@@ -1,11 +1,3 @@
-"""Tests for action preconditions (harness gap review L4, task B1).
-
-Covers: the four concrete precondition assertions (ResolvedExact,
-TargetFocused, ContentUnchanged, NoModalSince), their fail-closed semantics
-when context fields are None (insufficient information means fail, except
-NoModalSince with t0=None which is disabled), check_all sequential execution,
-and consistency with errors.py's is_retryable determination.
-"""
 
 from __future__ import annotations
 

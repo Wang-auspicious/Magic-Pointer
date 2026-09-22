@@ -1,8 +1,3 @@
-﻿"""Reusable, platform-neutral schemas for pointer grounding.
-
-This module intentionally contains only pure Python data structures and JSON
-helpers. It does not call UI automation, Electron, or OS-specific APIs.
-"""
 
 from __future__ import annotations
 
@@ -54,7 +49,6 @@ def bbox_from_json(value: Iterable[Any] | None) -> BoundingBox | None:
 
 @dataclass(frozen=True)
 class PointerSelection:
-    """A raw user pointer selection before it is resolved to an object."""
 
     id: str
     point: Point
@@ -96,7 +90,6 @@ class PointerSelection:
 
 @dataclass(frozen=True)
 class GroundedObject:
-    """A screen object grounded from a pointer selection or detector result."""
 
     id: str
     kind: str

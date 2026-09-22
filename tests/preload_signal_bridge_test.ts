@@ -1,17 +1,5 @@
 'use strict';
 
-// The signal channels (`*:hide`) carry no payload. Their callbacks must be
-// invoked with *no arguments at all*.
-//
-// This is not cosmetic. `ipcRenderer.on(channel, callback)` hands the listener an
-// IpcRendererEvent whose `sender` is ipcRenderer itself. These callbacks are
-// supplied by the renderer through `contextBridge.exposeInMainWorld`, so
-// forwarding that event asks contextBridge to proxy an ipc handle into the
-// isolated world. Every current caller happens to take zero parameters, which is
-// exactly why a regression here would go unnoticed until it mattered.
-//
-// Behavioural, not textual: the bridge is loaded against a stub electron and the
-// registered listeners are fired for real.
 
 const assert = require('assert');
 const Module = require('module');
@@ -50,8 +38,6 @@ try {
   Module._load = originalLoad;
 }
 
-// A stand-in for the IpcRendererEvent the main process delivers. If any of this
-// reaches a callback, the bridge is leaking.
 const fakeEvent = { sender: { __ipcHandle: true }, ports: [], senderId: 7 };
 
 function fire(channel: string, ...args: unknown[]) {
@@ -86,8 +72,6 @@ for (const [surface, channel] of signalSurfaces) {
   );
 }
 
-// The payload channels are the contrast case: exactly one argument, the payload,
-// and never the event that carried it.
 const overlay = exposed.get('magicPointer');
 if (!overlay) throw new Error('magicPointer was never exposed on the main world');
 const payloadSeen: unknown[][] = [];

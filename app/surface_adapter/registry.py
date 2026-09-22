@@ -1,10 +1,3 @@
-"""SurfaceAdapter registry: the only entry core code calls (design §8).
-
-Adapters register themselves (built-ins) or load from manifests; the
-registry asks each adapter ``matches`` on the target window and returns
-the first claiming adapter's resolution. No app-specific logic lives
-outside the adapter modules — core code sees the protocol only.
-"""
 
 from __future__ import annotations
 
@@ -42,7 +35,6 @@ class SurfaceAdapterRegistry:
         target_point: dict[str, int] | None,
         target_region: dict[str, int] | None = None,
     ) -> ResolveResult | None:
-        """First claiming adapter wins; None when nobody claims the window."""
         for adapter in self._adapters:
             try:
                 claimed = bool(adapter.matches(window))
@@ -53,14 +45,11 @@ class SurfaceAdapterRegistry:
             try:
                 return adapter.resolve(window, target_point, target_region)
             except Exception:
-                # An adapter failure is one perception attempt failing, never
-                # the chain dying: the caller records the miss and moves on.
                 return None
         return None
 
 
 class _ScopedSurfaceAdapterRegistry:
-    """Context-bound adapter registry view with exact unload."""
 
     def __init__(self, registry: SurfaceAdapterRegistry, context: Any) -> None:
         self._registry = registry
@@ -80,7 +69,6 @@ class _ScopedSurfaceAdapterRegistry:
 
 
 class _OwnedSurfaceAdapter:
-    """Keep plugin resources alive for every adapter callback."""
 
     def __init__(self, adapter: SurfaceResolver, context: Any) -> None:
         self._adapter = adapter
@@ -107,7 +95,6 @@ _default_registry: SurfaceAdapterRegistry | None = None
 
 
 def get_surface_registry() -> SurfaceAdapterRegistry:
-    """Process-wide registry; built-in adapters register on first use."""
     global _default_registry
     if _default_registry is None:
         _default_registry = SurfaceAdapterRegistry()

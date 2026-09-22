@@ -1,4 +1,3 @@
-"""Harness extension tests: hooks (CC PreToolUse/PostToolUse), ask/todo tools."""
 
 from __future__ import annotations
 
@@ -132,7 +131,6 @@ class TestHooks:
 
 class TestPromptSections:
     def test_effort_section_uses_balanced_default(self) -> None:
-        """Missing/unknown effort is still a truthful High reasoning policy."""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
@@ -145,7 +143,6 @@ class TestPromptSections:
         assert "# Language" in text
 
     def test_effort_section_changes_reasoning_policy_not_reply_tone(self) -> None:
-        """Extra and Max increase work depth without becoming prose styles."""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
@@ -161,7 +158,6 @@ class TestPromptSections:
         assert "deepest available analysis" in max_text.casefold()
 
     def test_unknown_effort_falls_back_to_high(self) -> None:
-        """An unregistered value must not crash or silently disable effort."""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
@@ -172,9 +168,6 @@ class TestPromptSections:
         assert "balanced" in text.casefold()
 
     def test_identity_claims_screen_selection_only_when_evidence_exists(self) -> None:
-        """普通文本对话不得谎称用户圈选了屏幕对象——那是 Stage 流才会
-        用的身份，写进普通对话会让模型去全桌面找并不存在的选区对象
-        （真机事故："回复你好" 跑了 17 轮桌面工具空转）。"""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
@@ -188,8 +181,6 @@ class TestPromptSections:
         assert "没有屏幕选区对象" in plain
 
     def test_frozen_frame_rule_skipped_without_selection_evidence(self) -> None:
-        """look/read_around 的冻结帧规则只在有圈选证据时注入；普通对话
-        没有 visual_anchor，写这些只会诱导模型去 "look" 并不存在的屏幕。"""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
@@ -315,9 +306,6 @@ class TestAskTodoTools:
 
 class TestVoiceSection:
     def test_voice_section_gives_the_model_a_persona(self) -> None:
-        """「回话生硬」的提示词层根因：全部规则都是操作纪律（禁令/工具
-        纪律），没有一条教模型怎么说话。Voice section 是静态人格层：
-        先结论后有细节、不写套话、语气跟用户走、给下一步建议。"""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
@@ -328,8 +316,6 @@ class TestVoiceSection:
         assert "# Voice" in text
         assert "结论" in text
         assert "套话" in text
-        # 与无选区身份约束一致：人格层不得重新引入「圈选」身份。
         assert "圈选" not in text
-        # 静态 section：不随 ctx 变化，保住 system prompt 前缀缓存。
         again = builder.build({"language": "英文", "has_selection": False}).text
         assert "# Voice" in again

@@ -1,11 +1,3 @@
-"""Task-scoped durable action broker.
-
-The broker is the recovery boundary above ``SafeActionExecutor``.  The
-executor performs the write and returns a precise undo proposal; this module
-persists that proposal and rebuilds the in-memory compensation after a bridge
-or Runtime process restarts.  The journal is an append-only local JSONL file,
-so an incomplete or corrupted tail cannot erase earlier recovery records.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +28,6 @@ def _lock_for(path: Path) -> threading.RLock:
 
 
 class ActionBroker:
-    """Durable, task-scoped facade for execution and verified undo."""
 
     def __init__(
         self,

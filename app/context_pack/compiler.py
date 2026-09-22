@@ -10,9 +10,6 @@ JsonDict = dict[str, Any]
 MAX_PROMPT_CHARS = 60_000
 DETAIL_BUDGET_CHARS = 18_000
 
-# Keep this wording aligned with the fabric agent path
-# (app/fabric/executors.py AgentHandoffExecutor) so every delivery surface
-# announces the same privacy boundary when screenshot upload is disabled.
 PRIVACY_BOUNDARY_NOTICE = (
     "Privacy boundary: Magic Pointer withheld screen/image attachments because "
     "Dashboard screenshot upload is disabled. Work only from the textual and structured context."

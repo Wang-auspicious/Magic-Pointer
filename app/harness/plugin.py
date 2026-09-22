@@ -1,21 +1,3 @@
-"""Harness plugin protocol, directory discovery and mounting (plan T2).
-
-The DSH plugin shape rewritten in Python: a plugin is a module (or a
-module + ``plugin.json`` metadata) exposing ``name`` / ``inject`` /
-optional ``scopes`` / ``config_schema`` + ``default_config`` /
-``apply(ctx, config)``.
-Mounting is dependency-driven through :meth:`Context.inject`, so load order
-is expressed by service requirements, not call order.
-
-Isolation promise: a broken plugin (import error, name mismatch, schema
-violation, raising ``apply``) is recorded as one row warning/error and
-never takes the tree down; a manifest without code is rejected with a
-warning because Magic Pointer rows always mount behaviour.
-
-Config validation uses a minimal JSON Schema object subset (the same
-primitive-type matcher the tool registry applies); the kernel stays
-stdlib-only and does not import ``app.agent_runtime``.
-"""
 
 from __future__ import annotations
 
@@ -42,7 +24,6 @@ _WINDOWS_REPARSE_POINT = 0x0400
 
 
 class PluginActivationError(Exception):
-    """A plugin row failed during activation; carries the row id."""
 
     def __init__(self, row_id: str, message: str, cause: BaseException | None = None) -> None:
         super().__init__(f"plugin {row_id!r}: {message}")
@@ -52,7 +33,6 @@ class PluginActivationError(Exception):
 
 @dataclass(frozen=True)
 class PluginSpec:
-    """One discovered plugin: identity, declared deps, config shape, code."""
 
     name: str
     inject: tuple[str, ...] = ()
@@ -65,7 +45,6 @@ class PluginSpec:
 
 
 class MountResult:
-    """Outcome of mounting one row: honest status, never silent."""
 
     def __init__(
         self,
@@ -124,13 +103,6 @@ def _matches_json_schema_type(value: Any, type_name: Any) -> bool | None:
 
 
 def validate_config(schema: dict[str, Any] | None, config: dict[str, Any]) -> list[str]:
-    """Validate ``config`` against a minimal JSON Schema object subset.
-
-    Returns human-readable errors; empty list = valid. A ``None`` schema
-    skips validation. Unknown property keys are tolerated (patch-friendly);
-    declared properties must match their primitive type and every
-    ``required`` key must be present.
-    """
     if schema is None:
         return []
     if not isinstance(config, dict):
@@ -158,20 +130,12 @@ def validate_config(schema: dict[str, Any] | None, config: dict[str, Any]) -> li
 
 
 def _merged(defaults: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
-    """Shallow-overlay row config on defaults (scalars replaced whole)."""
     merged = dict(defaults or {})
     merged.update(row or {})
     return merged
 
 
 def _activation_config(value: Any, active: set[int] | None = None) -> Any:
-    """Clone config containers while preserving opaque runtime services.
-
-    Plugin rows may legitimately carry callables or adapter objects, so a
-    blanket ``deepcopy`` is unsafe.  JSON-like containers are detached for
-    every activation; opaque leaves keep identity.  Cyclic configuration is
-    rejected instead of handing a mutable graph across plugin lifetimes.
-    """
     if not isinstance(value, (dict, list, tuple)):
         return value
     active = set() if active is None else active
@@ -194,14 +158,6 @@ def mount_plugins(
     specs: list[PluginSpec],
     configs: dict[str, dict[str, Any]],
 ) -> list[MountResult]:
-    """Mount every spec onto ``ctx``; one row per result, never raising.
-
-    Rows with missing dependencies stay pending on ``ctx.inject`` (status
-    ``waiting``); rows whose deps are present activate immediately, so an
-    activation error is attributed to its row. ``configs`` maps plugin id
-    to a config overlay merged over the plugin's defaults and validated
-    against its schema before the plugin ever runs.
-    """
     results: list[MountResult] = []
     for spec in specs:
         if spec.apply is None:
@@ -260,7 +216,6 @@ def _wrapped(
     return activate
 
 
-# ---------------------------------------------------------------- discovery
 
 
 def _valid_plugin_name(name: str) -> bool:
@@ -268,12 +223,6 @@ def _valid_plugin_name(name: str) -> bool:
 
 
 def _is_reparse_path(path: Path) -> bool:
-    """Return true for symlinks and Windows junction/reparse entries.
-
-    ``Path.is_dir``/``is_file`` and ``stat`` follow these entries.  Discovery
-    must inspect the directory entry itself before any plugin-controlled path
-    is opened or imported.
-    """
     try:
         info = path.lstat()
     except OSError:
@@ -284,7 +233,6 @@ def _is_reparse_path(path: Path) -> bool:
 
 
 def _resolves_within(root: Path, candidate: Path) -> bool:
-    """Fail closed unless an existing candidate resolves below ``root``."""
     try:
         resolved_root = root.resolve(strict=True)
         resolved_candidate = candidate.resolve(strict=True)
@@ -295,7 +243,6 @@ def _resolves_within(root: Path, candidate: Path) -> bool:
 
 
 def _load_plugin_module(path: Path) -> tuple[Any, str]:
-    """Import one plugin.py as a fresh module; returns (module, error)."""
     module_name = f"mp_plugin_{path.parent.name}"
     try:
         spec = importlib.util.spec_from_file_location(module_name, path)
@@ -310,7 +257,7 @@ def _load_plugin_module(path: Path) -> tuple[Any, str]:
 
 def _read_manifest(path: Path) -> tuple[dict[str, Any], str]:
     if not path.is_file():
-        return {}, ""  # manifest is optional; absence is not an error
+        return {}, ""
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -322,13 +269,6 @@ def _read_manifest(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def discover_plugin_dir(path: Path) -> tuple[list[PluginSpec], list[str]]:
-    """Discover ``<path>/<name>/plugin.py`` rows; bad rows become warnings.
-
-    Each entry must be a directory named after the plugin. ``plugin.json``
-    (optional) carries display metadata; behaviour lives in ``plugin.py``.
-    A manifest without code, a name mismatch, or an import failure yields a
-    warning and is skipped — one broken plugin never disables the rest.
-    """
     if not path.is_dir():
         return [], []
     specs: list[PluginSpec] = []
@@ -396,8 +336,6 @@ def discover_plugin_dir(path: Path) -> tuple[list[PluginSpec], list[str]]:
             continue
         raw_scopes = getattr(module, "scopes", None)
         if raw_scopes is None:
-            # Backward compatibility for the first SurfaceAdapter plugin
-            # shape documented before explicit runtime scopes existed.
             scopes = ("surface",) if "surface_adapters" in inject else ("agent",)
         else:
             if isinstance(raw_scopes, str) or not isinstance(raw_scopes, (list, tuple)):

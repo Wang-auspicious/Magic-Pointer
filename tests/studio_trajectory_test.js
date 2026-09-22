@@ -1,9 +1,9 @@
 'use strict';
 
 const assert = require('node:assert');
-const DshTrajectory = require('../electron/renderer/dsh_trajectory');
+const ChatTrajectory = require('../electron/renderer/chat_trajectory');
 
-const rows = DshTrajectory.project([{
+const rows = ChatTrajectory.project([{
   at: 1000,
   question: '检查文件',
   answer: '已完成。',
@@ -36,28 +36,28 @@ assert.strictEqual(rows[3].latencyMs, 400);
 assert.strictEqual(rows[3].index, 4, 'trajectory record indexes retain event order');
 assert.strictEqual(rows[3].recordId, 'tool\u0000call\u0000call-1', 'tool records retain stable call identity');
 
-const node = DshTrajectory.render(rows);
+const node = ChatTrajectory.render(rows);
 const markup = node.outerHTML;
-assert(markup.includes('dsh-trajectory-toolbar'), 'trajectory includes the DSH toolbar shell');
-assert(markup.includes('dsh-trajectory-timeline'), 'trajectory includes the DSH timeline overview');
-assert(markup.includes('dsh-trajectory-table'), 'trajectory uses the current DSH two-column ledger');
-assert(markup.includes('data-role-kind="user"'), 'ledger exposes the DSH USER event tag');
-assert(markup.includes('data-role-kind="message"'), 'ledger exposes the DSH ASSISTANT event tag');
-assert(markup.includes('data-role-kind="tool"'), 'ledger exposes the DSH TOOL event tag');
+assert(markup.includes('mp-chat-trajectory-toolbar'), 'trajectory includes the toolbar shell');
+assert(markup.includes('mp-chat-trajectory-timeline'), 'trajectory includes the timeline overview');
+assert(markup.includes('mp-chat-trajectory-table'), 'trajectory uses the current two-column ledger');
+assert(markup.includes('data-role-kind="user"'), 'ledger exposes the USER event tag');
+assert(markup.includes('data-role-kind="message"'), 'ledger exposes the ASSISTANT event tag');
+assert(markup.includes('data-role-kind="tool"'), 'ledger exposes the TOOL event tag');
 assert(markup.includes('data-role-kind="request"'), 'ledger exposes prompt-cache request diagnostics');
 assert(markup.includes('Prompt cache: on'), 'trajectory visibly reports prompt cache request state');
 
-const legacyRequestRows = DshTrajectory.project([{
+const legacyRequestRows = ChatTrajectory.project([{
   trajectory: [{ seq: 1, kind: 'request-header', turn: 1, usedBackend: 'legacy-gateway' }],
 }]);
 assert.strictEqual(legacyRequestRows.length, 1);
 assert(legacyRequestRows[0].text.includes('Prompt cache: not recorded'),
   'legacy request headers without the field must not be rewritten as cache off');
-assert(markup.includes('dsh-trajectory-result-request'),
-  'tool request name and payload must stay in DSH resultRequest so the result remains on the same 30px row');
-assert(markup.includes('Duration'), 'trajectory toolbar carries the DSH duration mode');
+assert(markup.includes('mp-chat-trajectory-result-request'),
+  'tool request name and payload must stay in resultRequest so the result remains on the same 30px row');
+assert(markup.includes('Duration'), 'trajectory toolbar carries the duration mode');
 assert(markup.includes('data-actual-duration="true"'), 'trajectory opens in the reference Duration view');
-assert(markup.includes('data-trajectory-action="duration" aria-pressed="true"'), 'Duration toggle paints its DSH selected capsule');
+assert(markup.includes('data-trajectory-action="duration" aria-pressed="true"'), 'Duration toggle paints its selected capsule');
 assert(markup.includes('Input'), 'trajectory timeline carries the input lane');
 assert(markup.includes('Model'), 'trajectory timeline carries the model lane');
 assert(markup.includes('Tools'), 'trajectory timeline carries the tools lane');

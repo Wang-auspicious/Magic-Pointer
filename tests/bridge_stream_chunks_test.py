@@ -1,13 +1,3 @@
-"""Streaming answer deltas on the ``@@mp`` progress channel.
-
-The bug this covers: ``electron/main.ts`` has always reacted to
-``phase=answer_chunk`` by calling ``appendStageLiveAnswer``, and
-``conversation_bridge`` has always emitted it — but ``selection_bridge``, which
-drives the primary circle-and-point surface, never did. The result was that the
-same model turn streamed text into the Studio view and appeared all at once on
-the selection view. These tests pin the shared buffer and the wiring on both
-bridges so the two cannot silently diverge again.
-"""
 
 import base64
 import io
@@ -18,7 +8,6 @@ from scripts.bridge_progress import PhaseClock, StreamChunkBuffer
 
 
 def _chunks(stream: io.StringIO) -> list[str]:
-    """Decoded ``answer_chunk`` payloads, in order."""
     out = []
     for line in stream.getvalue().splitlines():
         fields = {}
@@ -48,9 +37,6 @@ class TestStreamChunkBuffer:
         assert _chunks(stream) == ["你好"]
 
     def test_first_delta_is_never_withheld(self) -> None:
-        # The first token must paint immediately — time-to-first-token is what
-        # the user feels, and a throttle window in front of it is pure added
-        # latency. Only the deltas after it are coalesced.
         stream = io.StringIO()
         buffer = StreamChunkBuffer(_clock(stream), "answer_chunk", interval_s=60.0)
         buffer.append("first")
@@ -65,7 +51,6 @@ class TestStreamChunkBuffer:
         assert _chunks(stream) == ["one"]
 
     def test_append_throttles_after_the_first(self) -> None:
-        # One row per token would flood the stderr line protocol.
         stream = io.StringIO()
         buffer = StreamChunkBuffer(_clock(stream), "answer_chunk", interval_s=60.0)
         buffer.append("a")
@@ -88,7 +73,6 @@ class TestStreamChunkBuffer:
         assert _chunks(stream) == []
 
     def test_none_clock_accumulates_nothing(self) -> None:
-        # A bridge run without progress reporting must not hold text forever.
         buffer = StreamChunkBuffer(None, "answer_chunk", interval_s=0.0)
         buffer.append("dropped")
         buffer.flush()
@@ -107,8 +91,6 @@ class TestStreamChunkBuffer:
         assert _chunks(stream) == ["中文 🎯 ünïcödé"]
 
     def test_blob_contains_no_whitespace(self) -> None:
-        # mark_blob promises a whitespace-free token; a base64 payload
-        # containing a space would break the line parser.
         stream = io.StringIO()
         buffer = StreamChunkBuffer(_clock(stream), "answer_chunk", interval_s=0.0)
         buffer.append("a b c\nd\te")
@@ -122,12 +104,11 @@ class TestStreamChunkBuffer:
                 raise RuntimeError("stderr closed")
 
         buffer = StreamChunkBuffer(Exploding(), "answer_chunk", interval_s=0.0)
-        buffer.append("text")  # must not raise
+        buffer.append("text")
         assert buffer._pending == []
 
 
 class TestBothBridgesPublishStreamingAnswer:
-    """Both bridges use the same directly testable event projection."""
 
     @pytest.mark.parametrize(
         "bridge_name",

@@ -1,14 +1,3 @@
-"""Generate the 20 replay fixture traces (review Q8: by behaviour contract x
-failure mode, not by app breadth).
-
-Each fixture is schema-valid (DesktopTrace v1), synthetic but structurally
-honest: a frozen frame placeholder, UIA tree text, pointer trace and a
-ground_truth block carrying the behaviour contract id and the expectation.
-Half the fixtures are failure paths on purpose — the harness's value
-proposition is *predictable failure*.
-
-Usage: python scripts/generate_replay_fixtures.py [--out data/replay_traces/fixtures]
-"""
 
 from __future__ import annotations
 
@@ -29,7 +18,6 @@ from app.replay.trace_schema import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "data" / "replay_traces" / "fixtures"
 
-# A minimal 1x1 transparent PNG (valid PNG bytes, no PIL dependency).
 PNG_1PX = bytes([
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
     0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
@@ -48,7 +36,6 @@ DOC_TEXT = (
 )
 
 FIXTURES: list[dict] = [
-    # -- happy paths --------------------------------------------------------
     {
         "id": "notepad-document-fallback",
         "command": "这个文件里读到了啥。概况总结。",
@@ -119,7 +106,6 @@ FIXTURES: list[dict] = [
         "uia": "对象一：价格 100\n对象二：价格 120",
         "expected": {"answer_contains": "对比"},
     },
-    # -- failure paths ------------------------------------------------------
     {
         "id": "blacklist-app",
         "command": "读这个",

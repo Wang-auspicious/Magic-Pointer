@@ -1,6 +1,5 @@
 'use strict';
 
-// 侧栏分组纯函数：今天/昨天/近 7 天/更早，新→旧，搜索本地过滤。
 
 const assert = require('assert');
 const { groupConversations, filterConversations } = require('../electron/renderer/sidebar_groups');
@@ -35,7 +34,6 @@ assert.deepStrictEqual(filtered.map(i => i.id), ['a']);
 assert.deepStrictEqual(filterConversations(rows, '').length, 5, '空关键词不过滤');
 assert.deepStrictEqual(filterConversations(rows, '浏览器').map(i => i.id), ['c'], '副标题也能命中');
 
-// ---- Codex WorkspaceBrowser：会话按线程工作区分组（文件夹名做组头） ----
 const { groupByWorkspace } = require('../electron/renderer/sidebar_groups');
 const wsRows = [
   { id: 'w1', title: 'alpha 里的一问', updatedAt: at(0), workspaceRoot: 'C:/repos/alpha' },
@@ -60,7 +58,6 @@ assert.deepStrictEqual(
 );
 assert.strictEqual(wsGroups.at(-1).key, '__local__');
 assert.deepStrictEqual(groupByWorkspace([]), [], '空列表不出空组');
-// 单工作区也要出组头——侧栏「工作区」区必须说真话。
 assert.strictEqual(groupByWorkspace([{ id: 's1', title: 'x', updatedAt: NOW, workspaceRoot: 'D:/only' }]).length, 1);
 
 console.log('sidebar groups test ok');

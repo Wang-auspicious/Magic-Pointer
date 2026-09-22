@@ -1,18 +1,3 @@
-"""``Win32InputDriver`` motion wiring.
-
-Why this file exists, stated plainly: the first version of the animated-motion
-fix called ``glide_points()`` inside ``Win32InputDriver._glide`` without
-importing it. Every test in ``tests/computer_motion_test.py`` passed, because
-those test the pure policy module; every test in
-``tests/windows_computer_operator_test.py`` passed, because those inject a
-*fake* driver and never execute ``Win32InputDriver`` at all. The real driver
-raised ``NameError`` on every HOVER and DRAG, and nothing caught it.
-
-The gap was that no test instantiated the real driver. These do — with
-``_position`` stubbed, so no test moves the user's actual pointer.
-
-Only run on Windows; the driver refuses to construct elsewhere.
-"""
 
 from __future__ import annotations
 
@@ -28,7 +13,6 @@ from app.computer_operator.windows import Win32InputDriver  # noqa: E402
 
 
 class RecordingDriver(Win32InputDriver):
-    """A real driver whose only side effect is remembered, not performed."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -53,8 +37,6 @@ def driver() -> RecordingDriver:
 
 class TestMove:
     def test_move_does_not_raise(self, driver: RecordingDriver) -> None:
-        # The regression: this raised NameError because glide_points was not
-        # imported into windows.py.
         driver.move((700, 500), duration_ms=0)
 
     def test_move_interpolates_rather_than_teleporting(self, driver: RecordingDriver) -> None:
@@ -63,10 +45,6 @@ class TestMove:
         assert driver.positions[-1] == (700, 500), 'a move must finish exactly on target'
 
     def test_move_with_no_duration_still_animates(self, driver: RecordingDriver) -> None:
-        # duration_ms=0 means "derive one from distance", not "teleport" —
-        # the UI-TARS intent compiler zeroes the duration for every non-WAIT
-        # action, so treating 0 as a teleport would restore the original bug
-        # for every agent-issued move.
         driver.move((900, 600), duration_ms=0)
         assert len(driver.positions) > 2
 
@@ -92,7 +70,6 @@ class TestDrag:
 
     def test_drag_holds_the_button_for_the_whole_glide(self, driver: RecordingDriver) -> None:
         driver.drag((10, 10), (200, 200), duration_ms=200)
-        # 0x0002 down, 0x0004 up, in that order, and nothing else.
         assert driver.mouse[0] == 0x0002
         assert driver.mouse[-1] == 0x0004
 
@@ -128,8 +105,6 @@ class TestScroll:
 
 
 def test_motion_constants_are_the_documented_ones() -> None:
-    # Pinned because the ledger quotes these, and because a silent change to
-    # the floor is a silent change to how the product feels.
     assert motion.FLIGHT_MIN_MS == 600
     assert motion.FLIGHT_MAX_MS == 1400
     assert motion.FLIGHT_MS_PER_PIXEL == pytest.approx(1.25)
@@ -138,12 +113,6 @@ def test_motion_constants_are_the_documented_ones() -> None:
 
 
 def test_driver_module_imports_everything_it_calls() -> None:
-    """A tripwire for the exact class of bug that got through.
-
-    The driver is not covered by the fake-driver tests, so a name used but not
-    imported only surfaces at runtime. Checking the module's namespace costs
-    nothing and fails at test time instead of on the user's desktop.
-    """
     import app.computer_operator.windows as windows_module
 
     source = open(windows_module.__file__, encoding='utf-8').read()
@@ -155,7 +124,6 @@ def test_driver_module_imports_everything_it_calls() -> None:
 
 
 def test_time_module_is_not_unused_in_selection_bridge() -> None:
-    """The reverse check on the same mistake: a leftover import."""
     source = open(
         os.path.join(os.path.dirname(__file__), '..', 'scripts', 'selection_bridge.py'),
         encoding='utf-8',

@@ -1,25 +1,3 @@
-"""Screen memory: "what was that paper I was reading this morning".
-
-The useful question is never "show me everything I have seen". It is one
-specific thing, half-remembered, with a rough time attached. So this stores the
-minimum that answers that question and nothing more:
-
-    when, which app, which window, and a short excerpt of what was read
-
-Deliberately **not** screenshots. A rolling capture of the screen is a different
-product with a different consent conversation, and it is not needed to answer
-"what was that paper called" — the title and a few words are.
-
-Three properties this has to keep, in order of how badly they fail:
-
-  **Off means off.** Disabled in settings, nothing is written. Not written and
-  filtered on read; not written at all.
-  **Sensitive apps never enter.** The same rules that gate captures gate this.
-  A password manager's window title is exactly the kind of thing that must not
-  end up in a searchable local log.
-  **Bounded and forgettable.** By count and by age, pruned on write, and
-  clearable in one call — because a memory nobody can empty is a liability.
-"""
 
 from __future__ import annotations
 
@@ -108,13 +86,6 @@ class ScreenMemory:
         self.enabled = enabled is True
 
     def _lock(self) -> threading.RLock:
-        """Return the process-wide lock for this store.
-
-        Screen memory is updated by more than one task in the desktop
-        process.  The operation is a read/modify/write transaction, so a
-        per-instance lock is insufficient: two ``ScreenMemory`` instances
-        pointing at the same file would otherwise lose one another's rows.
-        """
         key = str(self.path.resolve()).casefold()
         with self._path_locks_guard:
             lock = self._path_locks.get(key)
@@ -172,7 +143,6 @@ class ScreenMemory:
         sensitive: bool = False,
         now: float | None = None,
     ) -> MemoryEntry | None:
-        """Remember one thing that was on screen. None when nothing was stored."""
         if not self.enabled or sensitive:
             return None
         text = str(excerpt or "").strip()[:MAX_EXCERPT_CHARS]
@@ -194,9 +164,6 @@ class ScreenMemory:
         )
         with self._lock():
             entries = self._load()
-            # Re-reading the same thing updates when you saw it rather than
-            # adding a row; otherwise one long session buries every other
-            # memory.  Keep the load and replace in the same transaction.
             entries = [
                 item for item in entries
                 if not (
@@ -223,7 +190,6 @@ class ScreenMemory:
         limit: int = 20,
         now: float | None = None,
     ) -> list[MemoryEntry]:
-        """Find it again. Substring over title and excerpt, optionally in a window of time."""
         moment = time.time() if now is None else now
         entries = self._prune(self._load(), moment)
         if since is not None:

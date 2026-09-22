@@ -136,9 +136,6 @@ function resolveActiveModelRuntimeConfig(
   };
 }
 
-/** Promote the pre-profile secrets files into the same profile contract used
- * by the Runtime. This is intentionally pure; the caller owns credential
- * migration and persistence. */
 function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): UnknownRecord {
   const currentModels = settings?.models && typeof settings.models === 'object' ? settings.models : {};
   const profiles = Array.isArray(currentModels.profiles) ? currentModels.profiles : [];
@@ -164,15 +161,6 @@ function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): U
   return { ...settings, models: { ...currentModels, schemaVersion: 1, defaultProfileId: LEGACY_PROFILE_ID, profiles: [profile] } };
 }
 
-/**
- * Return a settings copy with the active profile pointed at a selected model.
- *
- * The composer model menu is backed by the gateway catalog, while requests
- * carry the resolved profile as ``modelRuntime``. Updating only the legacy
- * secrets/model.txt file therefore has no effect whenever a profile is
- * active. Keep this transformation pure so the IPC handler can persist it
- * through the normal settings validation path.
- */
 function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown, requestedProfileId?: unknown): UnknownRecord | null {
   const name = String(model || '').trim();
   if (!name) return null;
@@ -189,9 +177,6 @@ function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown
       ? {
           ...item,
           model: name,
-          // An explicit probe is bound to the previous model. Keeping it
-          // after a switch would make capability resolution trust stale
-          // vision/audio/tool results until another probe happens.
           ...(String(item?.model || '').trim() !== name
             && String(item?.resolved?.source || '').trim().toLowerCase() === 'explicit_probe'
             ? {
@@ -217,8 +202,6 @@ function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown
   };
 }
 
-/** Each profile owns its protocol, credentials and model metadata. A failure
- * in one compatible endpoint must leave the other catalogs usable. */
 async function collectModelCatalog(
   settings: UnknownRecord | null,
   credentialStore: CredentialReader | null,

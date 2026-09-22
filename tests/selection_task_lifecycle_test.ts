@@ -4,7 +4,6 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { SelectionSessionStore } from '../electron/selection_session';
 
-// Exercise the actual main-process handlers without starting Electron or a model.
 const source = fs.readFileSync('electron/main.ts', 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
 function handlers(names: string[], globals: Record<string, unknown>) {

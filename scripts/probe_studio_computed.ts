@@ -1,10 +1,3 @@
-// Headless CSS-parity probe: load the BUILT studio renderer, dump computed
-// styles for stable surfaces in both themes into one JSON file.
-//
-//   npx electron build/scripts/probe_studio_computed.js data/runtime/css-parity/<phase>.json
-//
-// Used to prove the four-generation stylesheet consolidation is
-// computed-style-identical: run once before the swap (baseline) and once after.
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
@@ -18,30 +11,30 @@ app.disableHardwareAcceleration();
 
 const SELECTORS = [
   'body',
-  '.dshw-frame',
+  '.mpw-frame',
   '.mp-window-titlebar',
-  '.dshw-sidebar',
-  '.dshw-new-session',
-  '.dshw-workspace-browser',
-  '.dshw-foot',
+  '.mpw-sidebar',
+  '.mpw-new-session',
+  '.mpw-workspace-browser',
+  '.mpw-foot',
   '.mp-theme-toggle',
-  '.dshw-center-col',
+  '.mpw-center-col',
   '#workspace-header',
   '.workspace-eyebrow',
-  '.dshw-conversation',
-  '.dshw-header',
-  '.dshw-title-row',
+  '.mpw-conversation',
+  '.mpw-header',
+  '.mpw-title-row',
   '#stream',
-  '.dshw-composer-seat',
-  '.dshw-input-form',
-  '.dshw-card',
-  '.dshw-input',
-  '.dshw-row',
-  '.dshw-tools',
-  '.dshw-add',
-  '.dshw-primary',
-  '.dshw-perm',
-  '.dshw-stats',
+  '.mpw-composer-seat',
+  '.mpw-input-form',
+  '.mpw-card',
+  '.mpw-input',
+  '.mpw-row',
+  '.mpw-tools',
+  '.mpw-add',
+  '.mpw-primary',
+  '.mpw-perm',
+  '.mpw-stats',
   '#view-design',
   '.mp-design-intro',
   '.mp-design-bento',
@@ -51,9 +44,9 @@ const SELECTORS = [
   '.mp-design-card-arrow',
   '#view-stash',
   '.page-toolbar',
-  '#view-settings .dshw-settings-panel',
-  '.dshw-settings-nav',
-  '.dshw-settings-content',
+  '#view-settings .mpw-settings-panel',
+  '.mpw-settings-nav',
+  '.mpw-settings-content',
   '#project-inspector',
   '.mp-inspector-tabs',
   '.mp-inspector-filter',

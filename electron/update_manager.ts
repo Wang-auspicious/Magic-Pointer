@@ -231,8 +231,6 @@ function createUpdateManager({
       >
     )[channel];
     if (!selected) throw new Error('update_channel_unsupported');
-    // electron-updater intentionally enables allowDowngrade when its channel
-    // setter is used. Explicitly reset it for every supported channel.
     updater.channel = selected.updaterChannel;
     updater.allowPrerelease = selected.allowPrerelease;
     updater.allowDowngrade = false;

@@ -1,13 +1,5 @@
 'use strict';
 
-// Attributes Magic Pointer's startup memory to windows, not to "the app".
-//
-// The launch commits ~773MB in about three seconds, and on a machine with
-// little slack Windows evicts that much from everything else, which is the
-// stall. A single total says nothing about what to change; this records which
-// window and which process type holds the bytes, and when they arrive.
-//
-//   electron scripts/probe_window_memory.cjs [--studio] [--real-profile]
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -33,8 +25,6 @@ if (!useRealProfile) {
 }
 const openStudio = process.argv.includes('--studio');
 
-// Electron swallows a throw inside this file before stderr is attached, so
-// leave a trail on disk instead of guessing at a silent exit.
 const bootLog = path.join(out, 'boot.log');
 const boot = (message) => fs.appendFileSync(bootLog, `${new Date().toISOString()} ${message}\n`);
 
@@ -45,9 +35,6 @@ const production = new Module(MAIN_PATH, module);
 production.filename = MAIN_PATH;
 production.paths = Module._nodeModulePaths(path.dirname(MAIN_PATH));
 boot('module created');
-// The ablation step needs to reach the window handles main.js keeps in module
-// scope, so it can close them one at a time and see what the GPU process
-// actually gives back.
 const extension = `
 module.exports.openStudio = () => showDashboard({}, { activate: false });
 module.exports.createSurfaces = () => { createOverlayWindow(); createStageWindow(); };
@@ -86,8 +73,6 @@ function windowRows() {
 const samples = [];
 const marks = [];
 
-// One row per ablation step: what the windows and the GPU process look like
-// once the step has settled.
 function writeSteps() {
   const rows = marks.map((m) => {
     const after = samples.filter((s) => s.atMs >= m.atMs + 2000);
@@ -119,7 +104,6 @@ app.whenReady().then(() => {
       type: p.type,
       wsMb: Math.round(p.memory.workingSetSize / 1024),
       privateMb: Math.round(p.memory.privateBytes / 1024),
-      // Which window owns this process, when it is a renderer.
       window: byPid.get(p.pid) ? `${byPid.get(p.pid).url} (${byPid.get(p.pid).title})` : '',
     }));
     samples.push({
@@ -132,9 +116,6 @@ app.whenReady().then(() => {
 
   if (openStudio) setTimeout(() => { try { production.exports.openStudio(); } catch (e) { samples.push({ atMs: -1, error: String(e) }); } }, 6000);
 
-  // The windows are now created on demand by the gesture path. This calls the
-  // same two creators that path calls, so the cost of the first gesture can be
-  // measured instead of assumed. Both windows stay hidden: nothing is shown.
   if (process.argv.includes('--create-surfaces')) {
     setTimeout(() => {
       try { production.exports.createSurfaces(); } catch (e) { samples.push({ atMs: -1, createError: String(e) }); }
@@ -142,8 +123,6 @@ app.whenReady().then(() => {
     }, 8000);
   }
 
-  // Ablation: close one window at a time and let the metrics settle, so the
-  // GPU process can be charged to a specific window instead of to "windows".
   if (process.argv.includes('--ablate')) {
     const steps = [
       { at: 6000, label: 'baseline' },
@@ -155,8 +134,6 @@ app.whenReady().then(() => {
       setTimeout(() => {
         try { if (step.run) step.run(); } catch (e) { samples.push({ atMs: -1, ablateError: String(e) }); }
         marks.push({ atMs: Math.round(performance.now() - started), label: step.label });
-        // Closing the last window trips main.js's window-all-closed handler and
-        // quits the app, so the final write never runs. Persist each step.
         setTimeout(() => writeSteps(), 2600);
       }, step.at);
     }
@@ -165,7 +142,6 @@ app.whenReady().then(() => {
   setTimeout(async () => {
     clearInterval(metrics);
     const peak = samples.reduce((best, s) => (s.totalWsMb > (best?.totalWsMb ?? -1) ? s : best), null);
-    // Peak per process, so a process that grew and then settled still shows.
     const peaks = new Map();
     for (const s of samples) {
       for (const p of s.processes || []) {
@@ -173,9 +149,6 @@ app.whenReady().then(() => {
         if (!peaks.has(key) || peaks.get(key).wsMb < p.wsMb) peaks.set(key, p);
       }
     }
-    // A GPU process holding hundreds of MB of private bytes usually means
-    // Chromium fell back to software rendering; the feature status is what
-    // says so rather than the size alone.
     let gpu = null;
     try {
       gpu = {
@@ -194,8 +167,6 @@ app.whenReady().then(() => {
       peakProcesses: (peak?.processes ?? []).slice().sort((a, b) => b.wsMb - a.wsMb),
       processPeaks: [...peaks.values()].sort((a, b) => b.wsMb - a.wsMb),
       marks,
-      // GPU process size after each window closes is the attribution: the drop
-      // when a window goes is what that window's surface was holding.
       gpuAfterMarks: marks.map((m) => {
         const after = samples.filter((s) => s.atMs >= m.atMs + 2500);
         const last = after[after.length - 1] || samples[samples.length - 1];

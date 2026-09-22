@@ -1,11 +1,3 @@
-"""Python side of the FrameLease v1 contract.
-
-Mirrors ``electron/frame_lease.ts`` field-for-field so a lease produced by the
-resident capture worker is accepted by Electron and a lease forwarded by
-Electron is consumed by the selection bridge without reinterpretation. The
-validators must stay in lock-step: same required fields, same accepted sources,
-same geometry rules, same fail-fast message style.
-"""
 
 from __future__ import annotations
 
@@ -39,7 +31,7 @@ REQUIRED_FIELDS = (
 
 
 class FrameLeaseError(ValueError):
-    """A FrameLease that fails validation. Callers fail closed, never recapture."""
+    pass
 
 
 def _blank(value: Any) -> bool:
@@ -114,11 +106,6 @@ def _artifact(value: Any) -> dict[str, Any]:
 
 
 def normalize_frame_lease(value: Any) -> dict[str, Any]:
-    """Validate and copy a raw FrameLease payload.
-
-    Returns a brand-new dictionary; the input is never mutated. Raises
-    ``FrameLeaseError`` with the offending field named in the message.
-    """
     if not isinstance(value, dict):
         raise FrameLeaseError("frameLease must be an object")
     if value.get("schemaVersion") != 1:

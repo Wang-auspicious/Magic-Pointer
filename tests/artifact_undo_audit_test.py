@@ -1,4 +1,3 @@
-"""Durable inverse recovery uses the recorded write and refuses changed targets."""
 from app.agent_runtime.session import FileSessionStore
 from app.context_pack.source_store import register_source
 from app.context_pack.source_scope import ScopeGrant, grant_source_scope

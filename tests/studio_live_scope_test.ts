@@ -13,7 +13,7 @@ let callback!: (payload: any) => void;
 const context: any = {
   pendingConversation: { requestId: 'new-request', body: { replaceChildren() {} }, renderer: {}, transcript: {} },
   Data: { onConversationProgress: (value: typeof callback) => { callback = value; } },
-  DshChat: { createLiveTurn: (_: unknown, scope: string) => { scopes.push(scope); return { scope }; } },
+  ChatView: { createLiveTurn: (_: unknown, scope: string) => { scopes.push(scope); return { scope }; } },
   renderConversationProgress: (record: unknown) => received.push(record),
 };
 vm.runInNewContext(ts.transpileModule(statement.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);

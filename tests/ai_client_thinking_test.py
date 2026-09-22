@@ -1,31 +1,3 @@
-"""The thinking-disabled contract in chat-completions mode, and its escape hatch.
-
-History, because the contract reversed itself between two gateways:
-
-- 2026-08-07, deepseek-v4-flash on OpenCode Go: HTTP 200, finish=length,
-  content="", 1199 reasoning tokens. The whole ``max_tokens`` budget went to
-  thinking. Fix at the time: send ``thinking: {"type": "disabled"}`` on
-  chat-completions payloads too, the same contract the messages branch had.
-- 2026-09-16, mimo-v2.5 on the same host: that very parameter *produces* the
-  failure it was added to prevent. Measured on the live endpoint, same prompt,
-  one variable changed:
-
-      with    thinking:disabled -> 53.0s, finish=length, completion=1200,
-                                   content=None
-      without thinking          -> 31.0s, finish=stop,   completion=103,
-                                   content='地基探针正常'
-
-So the parameter is a per-gateway guess, not a contract. It stays as the
-default because it is still right for the gateway that needed it, but a
-gateway that answers *emptily* now gets the same stripped retry that a gateway
-which answers *400* already got. An HTTP 200 with no visible answer is
-evidence that an optional request field was not understood, and the one
-retry is far cheaper than returning "AI 调用失败" to a user.
-
-The regression nail for the 08-07 incident lived in this file until
-``463f7a3`` ("harness reconstruction batch") deleted it as a "stale/duplicate
-test file" while leaving the code it guarded in place.
-"""
 from __future__ import annotations
 
 from app import model_health
@@ -74,7 +46,6 @@ def _answer_body(text: str) -> dict:
 
 
 def _install_gateway(monkeypatch, tmp_path, respond) -> list[dict]:
-    """Point ai_client at a fake gateway; return the list of payloads sent."""
     calls: list[dict] = []
 
     class Client:
@@ -127,8 +98,6 @@ def test_stripping_removes_every_optional_reasoning_control() -> None:
     assert stripped is not None
     assert "thinking" not in stripped
     assert "reasoning_effort" not in stripped
-    # max_tokens is not an optional control: dropping it would hand the
-    # gateway its own default ceiling instead of the caller's latency budget.
     assert stripped["max_tokens"] == 120
 
 
@@ -149,12 +118,6 @@ def test_empty_answer_evidence_handles_missing_usage() -> None:
 def test_empty_200_retries_once_without_the_optional_controls(
     monkeypatch, tmp_path
 ) -> None:
-    """The measured mimo-v2.5 failure: 200 + empty, cured by stripping.
-
-    This is the behaviour the 4xx branch already had. A gateway that rejects
-    an unknown field loudly and one that accepts it and then answers nothing
-    are the same problem, and only the loud one was being handled.
-    """
 
     def respond(payload: dict) -> _Response:
         if "thinking" in payload or "reasoning_effort" in payload:
@@ -175,11 +138,6 @@ def test_empty_200_retries_once_without_the_optional_controls(
 def test_empty_200_still_fails_honestly_when_stripping_does_not_help(
     monkeypatch, tmp_path
 ) -> None:
-    """A gateway that is simply out of budget must not be retried forever.
-
-    One stripped retry, then the honest failure with the diagnostics that make
-    the next fix obvious — the 08-07 contract, preserved.
-    """
 
     def respond(_payload: dict) -> _Response:
         return _Response(200, _empty_length_body())
@@ -197,7 +155,6 @@ def test_empty_200_still_fails_honestly_when_stripping_does_not_help(
 def test_non_empty_answer_never_pays_for_a_second_request(
     monkeypatch, tmp_path
 ) -> None:
-    """The happy path must stay one round trip; the gateway is the slow part."""
 
     def respond(_payload: dict) -> _Response:
         return _Response(200, _answer_body("一次就够"))

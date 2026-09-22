@@ -129,16 +129,14 @@ Node 测试、五套 TypeScript strict 检查、ESLint、Python 全量 pytest �
 
 ## 文档
 
-- [`docs/STATUS.md`](docs/STATUS.md)：当前真实状态、逐批验证记录与诚实边界；
-- [`docs/design/MAGIC_POINTER_HARNESS_20260811.md`](docs/design/MAGIC_POINTER_HARNESS_20260811.md)：产品定位与架构正典；
-- [`docs/2026-08-29-MP-FULL-MODULE-MAP.md`](docs/2026-08-29-MP-FULL-MODULE-MAP.md)：全模块地图；
-- [`docs/ROADMAP.md`](docs/ROADMAP.md)、[`docs/PRODUCT.md`](docs/PRODUCT.md)、[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)；
-- [`docs/AGENT_INTEGRATION.md`](docs/AGENT_INTEGRATION.md)：把任务提示投递到外部客户端的可选通道；
+- [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)：安装、模型配置、桌面指向与工作台使用；
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)：源码结构、开发、验证和构建；
+- [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md)：当前平台、应用验收和交付边界；
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)：第三方组件与许可证。
 
 ## 平台状态
 
-- Windows：捕获、感知、动作、语音、安装包主链完整可用；
+- Windows：主要开发和验证平台；具体应用支持和验收范围见已知限制；
 - macOS：Electron 与共享层源码就绪，Accessibility、Screen Recording、签名与公证尚未实机验证；
 - Linux：Runtime 与工具层为纯 Python 与 Node 实现，系统级指针宿主尚未实现。
 

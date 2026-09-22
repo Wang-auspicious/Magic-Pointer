@@ -1,10 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 
-// Collect a diagnostics bundle from the local Magic Pointer runtime.
-// Usage: node scripts/collect-diagnostics.js [--out path/to/bundle.zip]
-// Writes a zip if `archiver` is available; otherwise falls back to a
-// timestamped directory copy so the tool always produces something usable.
 
 const fs = require('fs');
 const path = require('path');

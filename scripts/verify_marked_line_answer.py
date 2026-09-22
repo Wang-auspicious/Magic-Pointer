@@ -1,11 +1,3 @@
-"""End-to-end: underline a line in a live window, ask a question, print the answer.
-
-The unit tests prove the gate opens. This proves the user gets the sentence. It
-runs the same two bridges the app runs, in the same order, with the same payload
-shape, against a real window on this machine.
-
-    python scripts/verify_marked_line_answer.py --title-contains "Windows PowerShell" --command "这是什么"
-"""
 
 from __future__ import annotations
 
@@ -58,15 +50,9 @@ def main() -> int:
         return 2
     target = matches[args.index]
     hwnd = int(target.get("hwnd") or 0)
-    # Windows only grants foreground to a process it believes the user just
-    # touched, so nudge ALT first. Without this the harness silently captures
-    # whatever window is already on top and the run proves nothing.
     user32 = ctypes.windll.user32
     user32.keybd_event(0x12, 0, 0, 0)
     time.sleep(0.05)
-    # A minimized window lives at sentinel coordinates around -32000. Restore
-    # only in that state; otherwise SW_SHOW preserves maximized/normal bounds.
-    # Bounds are refreshed below in either case before the mark is calculated.
     user32.ShowWindow(hwnd, 9 if user32.IsIconic(hwnd) else 5)
     user32.SetForegroundWindow(hwnd)
     user32.BringWindowToTop(hwnd)

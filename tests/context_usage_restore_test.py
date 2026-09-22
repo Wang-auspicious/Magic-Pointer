@@ -27,5 +27,5 @@ def test_usage_restores_last_request_from_durable_log_without_writing(tmp_path, 
     assert usage["systemTokensEstimate"] > 0
     assert usage["toolSchemaTokensEstimate"] > 0
     assert usage["messageTokensEstimate"] > 0
-    assert "inputTokens" not in usage  # Never replace the separate billing totals.
+    assert "inputTokens" not in usage
     assert session.path.read_bytes() == before

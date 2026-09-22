@@ -1,9 +1,3 @@
-"""UIA tree and native actions behind the Kimi 13 tools.
-
-The registry already has click/set_value. Production still returned an empty
-tree and refused every UIA pattern. These tests pin the bridge that turns a
-raw accessibility dump into indexed elements and honest pattern results.
-"""
 
 from __future__ import annotations
 

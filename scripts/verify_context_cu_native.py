@@ -1,8 +1,3 @@
-"""Explicit Windows UIA acceptance on a temporary native Edit control.
-
-No fake UIA tree, no model, no physical input, and no user's document changed.
-The temporary window is shown without activating it and closed in finally.
-"""
 
 import json
 import sys
@@ -26,9 +21,6 @@ class NoPhysicalInput:
 
 
 def main():
-    # Match MP's native capture/probe bridges before creating the fixture window.
-    # Changing process DPI awareness after CreateWindow resizes our own window
-    # at 200% scaling and correctly invalidates the preceding observation.
     enable_dpi_awareness()
     ready = threading.Event()
     state = {}

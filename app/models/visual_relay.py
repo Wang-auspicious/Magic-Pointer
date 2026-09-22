@@ -100,7 +100,6 @@ def _structured_text(relay: dict[str, Any]) -> str:
 
 
 class VisualRelayPlanner:
-    """Build direct-visual or complete structured relay payloads from one frozen target."""
 
     def plan(
         self,
@@ -161,8 +160,6 @@ class VisualRelayPlanner:
             "profileId": profile.id,
         }
         visual_paths = _visual_paths(target)
-        # 只有一个模型，就没有「这个模型能不能看图」这一问：能不能由策略回答
-        # （`capture.allow_upload` 是隐私开关），不由能力表回答。
         if capture.allow_upload and visual_paths:
             relay = {
                 **base,
@@ -176,9 +173,6 @@ class VisualRelayPlanner:
                 )),
             }
             return {"ok": True, "state": "planned", "relay": relay}
-        # 到这一步只剩一个原因：策略没放行这张图（`allow_upload` 是隐私开关，
-        # 或者是那条路径不在白名单上）。以前这里还会说「这个模型可能没有视觉能
-        # 力」——那个区分已经取消，剩下的理由必须是真的理由。
         relay = {
             **base,
             "mode": "structured_text",

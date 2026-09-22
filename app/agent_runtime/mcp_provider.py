@@ -1,4 +1,3 @@
-"""Lazy MCP servers as ordinary model-visible Agent tools."""
 
 from __future__ import annotations
 
@@ -25,7 +24,6 @@ Clock = Callable[[], float]
 
 
 class McpToolProvider:
-    """Connect only after ``mcp_search`` and retain connections until unload."""
 
     def __init__(
         self,
@@ -129,7 +127,7 @@ class McpToolProvider:
                         registered = self._register_remote_tool(client, tool)
                         if registered is not None:
                             registered_names.append(registered)
-                except Exception as exc:  # third-party process boundary
+                except Exception as exc:
                     self._clients.pop(config.name, None)
                     registry = self._registry
                     if registry is not None:
@@ -188,10 +186,6 @@ class McpToolProvider:
             used_backend=f"mcp:{tool.server}",
             timeout_ms=max(1000, int(self.timeout * 1000)),
             resource_keys=(f"mcp:{tool.server}",),
-            # mcp_search returns matching names through the loop's
-            # ``extra_names`` channel. Keeping every discovered sibling out
-            # of the default surface prevents one search from exploding the
-            # next prompt and preserves the stable tool-cache prefix.
             deferred=True,
         )
         try:
@@ -202,12 +196,6 @@ class McpToolProvider:
         return name
 
     def _configured_effect(self, tool: McpTool) -> Effect:
-        """Only user-owned config may lower a remote tool's permission class.
-
-        MCP annotations are untrusted hints, not authorization.  An
-        unclassified remote tool therefore remains EXTERNAL_SEND even when
-        its server advertises ``readOnlyHint=true``.
-        """
         config = self._configs_by_name.get(tool.server)
         raw = config.tool_effects.get(tool.name) if config is not None else None
         if raw:

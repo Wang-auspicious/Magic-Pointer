@@ -45,16 +45,9 @@ def clean_replacement_text(answer: str) -> str:
     fence = re.search(r"```(?:\w+)?\s*([\s\S]*?)```", text)
     if fence:
         text = fence.group(1).strip()
-    # The model is instructed to return only replacement text. These very small
-    # label removals handle common slip-ups without trying to parse a full answer.
     for prefix in ("Replacement:", "Rewritten:", "\u6539\u5199\u5982\u4e0b\uff1a", "\u6539\u5199\u5982\u4e0b:", "\u66ff\u6362\u6587\u672c\uff1a", "\u66ff\u6362\u6587\u672c:"):
         if text.startswith(prefix):
             text = text[len(prefix):].strip()
-    # A whole opening line that only announces the answer. This text gets pasted
-    # into the user's document or input box, so "\u597d\u7684\uff0c\u4ee5\u4e0b\u662f\u6539\u5199\u540e\u7684\u5185\u5bb9\uff1a" would
-    # be pasted along with it. Only ever the FIRST line, only when it ends in a
-    # colon, and only when real content follows \u2014 a first line that IS the answer
-    # must survive untouched.
     lines = text.split("\n", 1)
     if len(lines) == 2:
         head, rest = lines[0].strip(), lines[1].strip()

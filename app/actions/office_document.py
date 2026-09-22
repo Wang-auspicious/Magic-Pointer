@@ -1,4 +1,3 @@
-"""Structured Word and Excel file edits with exact pre-read and reopen checks."""
 
 from __future__ import annotations
 

@@ -15,7 +15,6 @@ from scripts.frame_capture_worker import FrameCaptureService, initialize_capture
 
 
 class FakeCaptureBackend:
-    """Deterministic backend: returns one solid color per call, never the desktop."""
 
     source = "test"
 
@@ -34,7 +33,6 @@ class FakeCaptureBackend:
 
 
 class GatedCaptureBackend:
-    """Blocks inside capture until released, simulating a slow grab."""
 
     source = "test"
 
@@ -183,8 +181,6 @@ def test_commit_persists_exactly_one_immutable_artifact(tmp_path: Path) -> None:
     assert lease["schemaVersion"] == 1
     assert lease["captureLatencyMs"] >= 0
     assert Image.open(artifacts[0]).getpixel((0, 0)) == (0, 128, 0)
-    # The committed frame is immutable: the ring is detached and a later capture
-    # is refused instead of appending to the same epoch.
     assert worker.capture_once_for_test() is False
     assert list((tmp_path / "frame-leases").glob("*.png")) == artifacts
 
@@ -221,12 +217,6 @@ def test_armed_background_thread_captures_and_stops_on_cancel(tmp_path: Path) ->
 
 
 def test_in_flight_grab_is_not_selected_by_commit(tmp_path: Path) -> None:
-    """A grab still running at commit must never become the frozen frame.
-
-    The frame timestamp is the grab COMPLETION time, so a capture that
-    started before pointerup but finishes after it is excluded. With an
-    otherwise empty ring the commit fails closed (no_frame_buffered).
-    """
     backend = GatedCaptureBackend()
     worker = FrameCaptureService(
         backend=backend,
@@ -243,14 +233,10 @@ def test_in_flight_grab_is_not_selected_by_commit(tmp_path: Path) -> None:
 
     backend.release.set()
     time.sleep(0.05)
-    # The late grab completed after the epoch was stopped: it is dropped,
-    # never appended to any ring.
     assert worker.ring_len_for_test() == 0
 
 
 def test_arm_does_not_wait_for_a_hung_previous_grab(tmp_path: Path) -> None:
-    """Re-arming while the previous capture thread is blocked in a grab must
-    return immediately instead of joining the stuck thread (review P2.3)."""
     backend = GatedCaptureBackend()
     worker = FrameCaptureService(
         backend=backend,
@@ -275,11 +261,6 @@ def test_arm_does_not_wait_for_a_hung_previous_grab(tmp_path: Path) -> None:
 
 
 def test_re_arm_does_not_stack_zombie_capture_threads(tmp_path: Path) -> None:
-    """Bridge-audit P1: each re-arm used to replace the stop event while the
-    old thread kept reading the attribute — the old thread latched onto the
-    NEW unset event and kept grabbing forever, stacking one concurrent
-    ImageGrab loop per re-arm. After the fix the stale thread must exit and
-    the new epoch must see exactly one live capture loop."""
     backend = GatedCaptureBackend()
     worker = FrameCaptureService(
         backend=backend,
@@ -300,9 +281,6 @@ def test_re_arm_does_not_stack_zombie_capture_threads(tmp_path: Path) -> None:
     while first_thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.005)
 
-    # The stale thread bound to the replaced stop event exits; only the
-    # latest armed epoch keeps a live loop. The stale thread's late grab is
-    # epoch-identity guarded and never pollutes the current ring.
     assert not first_thread.is_alive()
     current_thread = worker._thread
     assert current_thread is not None and current_thread.is_alive()
@@ -319,13 +297,6 @@ def test_re_arm_does_not_stack_zombie_capture_threads(tmp_path: Path) -> None:
 
 
 def test_lease_timestamps_are_milliseconds(tmp_path: Path) -> None:
-    """capturedAtMonotonicMs and captureLatencyMs must be milliseconds.
-
-    The worker clock is monotonic seconds; before the fix the raw seconds
-    value was stored under the Ms-named fields (review P2.1). FakeClock
-    advances 100 per call: first capture completion at 1100.0 s, commit at
-    1200.0 s -> 1_100_000 ms and 100_000 ms latency.
-    """
     backend = FakeCaptureBackend(colors=[(0, 128, 0)])
     worker = _make_service(tmp_path, backend)
     worker.handle({"id": "1", "method": "arm", "params": _arm_params()})
@@ -385,9 +356,6 @@ def test_real_subprocess_protocol_without_desktop_capture(tmp_path: Path) -> Non
         assert armed["id"] == "arm-1"
         assert armed["result"]["epochId"] == "epoch-1"
 
-        # A commit consumes its epoch even when the first frame is not ready.
-        # Scheduling/cold image initialization is outside this protocol test's
-        # contract: retry a NEW armed epoch instead of committing a stopped one.
         deadline = time.monotonic() + 5.0
         committed = None
         while time.monotonic() < deadline:

@@ -1,10 +1,3 @@
-"""Explicit local knowledge catalog backed by the Stash index.
-
-The catalog is intentionally a bounded linear scan. Stash is capped by the
-user-facing collection and the original artifact remains authoritative; an
-FTS database would add a second source of truth before we have measured a
-need for one.
-"""
 
 from __future__ import annotations
 

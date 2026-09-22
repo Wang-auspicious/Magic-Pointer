@@ -1,4 +1,3 @@
-"""Frozen-frame OCR as a provider: same recognition, arbitrated by fusion."""
 
 from __future__ import annotations
 
@@ -146,7 +145,6 @@ def test_no_ocr_text_is_still_confirmed_empty(tmp_path: Path) -> None:
 def test_block_geometry_is_reported_in_screen_pixels_not_artifact_pixels(
     tmp_path: Path,
 ) -> None:
-    """A cropped artifact reads local coordinates; the stage draws screen ones."""
     reader = _reader([
         {"text": "被划中的一行", "rect": [40, 62, 320, 20], "conf": 0.95},
     ])
@@ -164,7 +162,6 @@ def test_block_geometry_is_reported_in_screen_pixels_not_artifact_pixels(
 
 
 def test_without_a_frozen_artifact_the_recogniser_is_never_reached(tmp_path: Path) -> None:
-    """No frozen pixels means no read — never a live grab of the screen now."""
     reader = _reader([{"text": "live screen", "rect": [200, 502, 320, 20]}])
     provider = FrozenFrameOcrProvider(reader=reader)
 
@@ -179,7 +176,6 @@ def test_without_a_frozen_artifact_the_recogniser_is_never_reached(tmp_path: Pat
 
 
 def test_canonical_circle_selects_interior_through_worker_and_provider(tmp_path: Path) -> None:
-    """A loose circle accepted by the gesture UI must not become an open line."""
     from scripts.ocr_resident_worker import _select_boxes
     from scripts.selection_snapshot_bridge import _normalized_gesture
 

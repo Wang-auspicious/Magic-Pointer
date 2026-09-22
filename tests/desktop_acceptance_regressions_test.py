@@ -1,4 +1,3 @@
-"""Regressions from the installed 1.0.50 desktop acceptance session."""
 
 import io
 import json

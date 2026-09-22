@@ -1,18 +1,5 @@
 'use strict';
 
-// C-080 — one coordinate-space discriminant, spelled one way, defined once.
-//
-// Before this, the same concept had four spellings in this tree:
-//   'physical-screen-pixels'  electron/interaction_episode.ts:327,556
-//   'physical_screen_pixels'  electron/coordinate_space.ts, the Python side
-//   'logical_dips'            electron/gesture_capture.ts:160,213,219
-//   'electron_dip'            electron/main.ts:3053
-// A value written by one producer was not recognised by a validator that
-// checked another, and the rejection was silent.
-//
-// The definition now lives in electron/coordinate_space.ts (COORDINATE_SPACES).
-// This file fails if a second spelling appears in the pipeline, and fails if the
-// canonical value stops matching what the cross-language consumers require.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -29,7 +16,6 @@ const {
   summarizeGesture,
 } = require('../electron/gesture_capture');
 
-// --- the definition itself -------------------------------------------------
 
 assert.deepStrictEqual(
   Object.keys(COORDINATE_SPACES).sort(),
@@ -40,11 +26,7 @@ assert.strictEqual(COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS, 'physical_screen_pi
 assert.strictEqual(COORDINATE_SPACES.DIP_WINDOW, 'dip_window');
 assert(Object.isFrozen(COORDINATE_SPACES), 'the enum is a constant, not a mutable table');
 
-// --- reading a legacy value ------------------------------------------------
 
-// The hyphenated spelling was persisted in locator values by older builds. It
-// still resolves, so an old locator is not rejected outright, but it is never
-// written again.
 assert.strictEqual(
   normalizeCoordinateSpace('physical-screen-pixels'),
   COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
@@ -64,7 +46,6 @@ assert.strictEqual(normalizeCoordinateSpace(undefined), null);
 assert.strictEqual(normalizeCoordinateSpace(7), null);
 assert.strictEqual(isPhysicalScreenPixels('nonsense'), false, 'unknown spaces fail closed');
 
-// --- producers -------------------------------------------------------------
 
 assert.strictEqual(
   GEOMETRY_COORDINATE_SPACE,
@@ -89,11 +70,7 @@ assert.strictEqual(
   );
 }
 
-// --- the canonical value is the one the other languages require ------------
 
-// If COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS is ever re-spelled, every one of
-// these has to change with it. They cannot import the enum, so the test is the
-// only thing holding the two sides together.
 const PYTHON_AND_CONSUMER_GUARDS = [
   'app/grounding/evidence_binding.py',
   'app/actions/draft_delivery.py',
@@ -114,11 +91,7 @@ for (const relative of PYTHON_AND_CONSUMER_GUARDS) {
   );
 }
 
-// --- no second spelling in the gesture / locator pipeline ------------------
 
-// electron/renderer is excluded: those files are loaded as classic scripts and
-// hold no discriminants. electron/main.ts:3053's 'electron_dip' names a DIP
-// payload rather than a physical one, and is migrated separately.
 const PIPELINE_FILES = [
   'electron/coordinate_space.ts',
   'electron/gesture_capture.ts',
@@ -135,8 +108,6 @@ for (const relative of PIPELINE_FILES) {
   const source = fs.readFileSync(absolute, 'utf8');
   for (const retired of RETIRED_SPELLINGS) {
     if (relative === 'electron/coordinate_space.ts') {
-      // The definitions file is the one place allowed to name a retired
-      // spelling, because it is what reads them back. Exactly once per alias.
       assert.strictEqual(
         source.split(retired).length - 1,
         1,
@@ -165,12 +136,7 @@ assert(
   'the visual-region locator must take its discriminant from the one enum',
 );
 
-// --- C-082: the stroke verdict travels with the region --------------------
 
-// pixel_ocr.py:71 re-decides closure with a hardcoded 26 *physical* pixels,
-// which is a different answer at every display scale. The verdict published
-// here is the one consumers are meant to use, and its thresholds are ratios so
-// they mean the same thing on a 100% and a 200% monitor.
 {
   const circle = summarizeGesture([
     { x: 200, y: 160, t: 0 },

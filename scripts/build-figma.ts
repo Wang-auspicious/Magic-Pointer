@@ -46,12 +46,12 @@ const uiBuild = await build({
 const uiJavaScript = uiBuild.outputFiles[0]?.text;
 if (!uiJavaScript) throw new Error('Figma UI bundle was empty');
 const uiTemplate = readFileSync(path.join(sourceRoot, 'ui.html'), 'utf8');
-if (!uiTemplate.includes('<!-- FIGMA_UI_SCRIPT -->')) {
+if (!uiTemplate.includes('<script src="ui.js"></script>')) {
   throw new Error('Figma UI template is missing its script marker');
 }
 writeFileSync(
   path.join(outputRoot, 'ui.html'),
-  uiTemplate.replace('<!-- FIGMA_UI_SCRIPT -->', `<script>${uiJavaScript}</script>`),
+  uiTemplate.replace('<script src="ui.js"></script>', `<script>${uiJavaScript}</script>`),
   'utf8',
 );
 

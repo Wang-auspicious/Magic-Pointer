@@ -1,13 +1,3 @@
-/* ============================================================
-   .mcard — 卡片
-   ------------------------------------------------------------
-   划完线得到的东西是一张卡。三个界面共用这一份样式，差别只在
-   [data-density]：胶囊窄、随行窗中、工作室宽。不是三份各写一遍——
-   上一版就是三份，于是同一次问答在三个界面上长得不一样。
-
-   形来自 Vida 那张提案卡（眉毛行 → 标题 → 一句人话 → 渲染式预览
-   → 动作），质感和配色来自 Oreo 暖。令牌全部来自 oreo.css。
-   ============================================================ */
 
 .mcard {
   position: relative;
@@ -21,8 +11,6 @@
 .mcard[data-density="capsule"] { padding: 13px 14px; gap: 9px; border-radius: 15px; }
 .mcard[data-density="companion"] { padding: 14px 15px; gap: 10px; }
 
-/* 运行中的卡自己会呼吸：一层极淡的暖色底在下面缓慢起伏。
-   不是转圈，也不是骨架屏闪烁——是「它还在」。 */
 .mcard[data-state="running"]::before {
   content: ''; position: absolute; inset: 0;
   border-radius: inherit; pointer-events: none;
@@ -35,7 +23,6 @@
   box-shadow: var(--shadow-card), inset 0 0 0 1px var(--terracotta-bg);
 }
 
-/* ---- 眉毛行 ---- */
 .mcard-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .mcard-eyebrow {
   display: inline-flex; align-items: center; gap: 5px;
@@ -62,10 +49,6 @@
 }
 .mcard-origin:active { transform: scale(.97); }
 
-/* ---- 运行进度 = 证据流（PromptRescue 逐帧复刻，Vida §5.3）----
-   ✓ 行是黑色无衬线的动作；「从这个动作里读到什么」是它下面独立的
-   → 等宽灰行。没有百分比条、没有不定量条、没有转圈——逐行长出来的
-   证据本身就是进度，百分比条从结构到样式都不存在了。 */
 .mcard-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .mcard-steps li {
   position: relative;
@@ -84,8 +67,6 @@
   transform-origin: top;
   animation: mstep-link-in 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
-/* 单行入场照视频逐帧复刻：淡入 + 上浮 + 雾化（blur→clear，实测 350-400ms），
-   缓动全套统一 §6.3 实测减速曲线。 */
 @keyframes mstep-in {
   from { opacity: 0; transform: translateY(8px); filter: blur(4px); }
   to { opacity: 1; transform: translateY(0); filter: blur(0); }
@@ -127,8 +108,6 @@
   to { opacity: 1; transform: scaleY(1); }
 }
 
-/* 准备阶段折叠组与终态过程折叠组：一行带头，展开才见全表。
-   summary 的默认三角摘掉，行高跟芯片一致。 */
 .mcard-steps-plumbing > summary,
 .mcard-process-folded > summary {
   display: flex; align-items: center; gap: 6px;
@@ -149,8 +128,6 @@
 .mcard-steps-plumbing:not([open]) > summary::before,
 .mcard-process-folded:not([open]) > summary::before { transform: rotate(-90deg); }
 
-/* 证据流末尾一行安静的等宽小字：在做什么 + 真实秒数。进度不再靠它表达，
-   但一个两分钟的卡死和一个两秒的等待仍要分得出来（秒数必须走）。 */
 .mcard-nowline {
   display: flex; align-items: baseline; gap: 8px;
   font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4);
@@ -160,7 +137,6 @@
   font-style: normal; font-variant-numeric: tabular-nums;
 }
 
-/* ---- 正文 ---- */
 .mcard-prose { display: grid; gap: 9px; font-size: 14px; line-height: 1.62; }
 .mcard-prose p { margin: 0; }
 .mcard[data-density="capsule"] .mcard-prose { font-size: 13.5px; line-height: 1.58; }
@@ -174,7 +150,6 @@
   stroke: currentColor; fill: none; stroke-width: 1.7;
 }
 
-/* ---- 事实行 ---- */
 .mcard-facts {
   display: grid; gap: 1px; overflow: hidden;
   border-radius: var(--r-tile); background: var(--hairline);
@@ -190,7 +165,6 @@
 .mfact-value.is-green { color: var(--green); }
 .mfact-value.is-amber { color: var(--amber); }
 
-/* ---- 数据卡：一个大数字压住整张卡 ---- */
 .mcard-metric { display: grid; gap: 8px; }
 .mmetric-head { display: flex; align-items: baseline; gap: 10px; }
 .mmetric-value {
@@ -224,11 +198,8 @@
 .mfoot b { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mfoot small { font-size: 11px; color: var(--ink-3); }
 
-/* ---- 图：等待时先占好位，图落下来时卡不会跳一下 ---- */
 .mcard-image {
   position: relative; overflow: hidden;
-  /* 比例照原图，但不让一张 3:1 的长图把整张卡撑到半屏高。
-     超过就裁——object-fit: cover 已经在做这件事。 */
   max-height: 320px;
   border-radius: var(--r-tile);
   background: var(--card-sunk);
@@ -245,9 +216,6 @@
 }
 .mcard-image .mimg { animation: mimg-in .5s var(--ease-out) both; }
 @keyframes mimg-in { from { opacity: 0; transform: scale(1.012); } }
-/* 出图时的占位。不是一块灰底加一个小图标——那看起来像加载失败。
-   两层：底下一团暖色的光在缓慢游走（像素正在成形），上面一道扫光掠过。
-   参考图里那些卡的质感都来自这个：光在动，不是形状在闪。 */
 .mimg-skeleton {
   position: absolute; inset: 0; overflow: hidden;
   display: grid; place-items: center;
@@ -283,9 +251,6 @@
 .mcard-image:has(.mimg-flip:active) .mimg { opacity: 0; }
 .mimg-caption { margin: 0; font-size: 12.5px; color: var(--ink-2); }
 
-/* ---- 正文里的图 ----------------------------------------------------------
-   `![](…)` 出现在一段回答中间时渲染成的那张。和 .mcard-image 不同：它没有
-   已知比例，也不该被裁——它是这段话的一部分，不是这张卡的主角。 */
 .mmd-img {
   display: block;
   max-width: 100%;
@@ -305,15 +270,6 @@
   font-size: 12px;
 }
 
-/* ---- 工具自己渲染的一块界面（MCP Apps）----------------------------------
-   一次问答的结果可以是别人家的一块能点的界面——网易云的播放条、一张地图、
-   一块 canvas——而不只是我们画的一张卡。
-
-   两条不是样式的规矩，样式必须把它们说出来：
-   1. 它必须被**框起来并写清是哪个 server**。用户任何时候都要能分清「它说的」
-      和「我们说的」，所以这块有自己的边、自己的抬头、右上角一枚常驻的角标。
-   2. iframe 里没有 allow-same-origin（在 card_render.js 里），所以它拿不到我们
-      的 DOM 和 preload 桥。渲染别人的 UI ≠ 把渲染进程交出去。 */
 .mcard-slot {
   display: grid;
   gap: 0;
@@ -346,13 +302,11 @@
   border: 0;
   background: #fff;
 }
-/* 拿不到能安全渲染的内容就说清楚，绝不静默留白。 */
 .mslot-blocked {
   margin: 0; padding: 14px;
   color: var(--ink-3); font-size: 12.5px; line-height: 1.6;
 }
 
-/* ---- 提案：预览长得像结果，不像一条命令 ---- */
 .mcard-proposal { display: grid; gap: 11px; }
 .mprop-summary { margin: 0; font-size: 13.5px; line-height: 1.6; }
 .mprev { padding: 13px; border-radius: var(--r-tile); background: var(--card-sunk); }
@@ -383,7 +337,6 @@
 }
 .mprop-warn svg { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; }
 
-/* ---- 写回预览 ---- */
 .mcard-diff { border-radius: var(--r-tile); background: var(--card-sunk); overflow: hidden; }
 .mcard-diff pre {
   margin: 0; padding: 12px 13px;
@@ -398,7 +351,6 @@
   color: var(--green); background: var(--green-bg);
 }
 
-/* ---- 对比表 ---- */
 .mcard-table { border-radius: var(--r-tile); overflow: hidden; background: var(--card-sunk); }
 .mcard-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .mcard-table th {
@@ -412,17 +364,6 @@
 }
 .mcard-table tr:last-child td { box-shadow: none; }
 
-/* ---- 日程 ---- */
-.mcard-cal {
-  display: grid; gap: 7px; padding: 12px 13px;
-  border-radius: var(--r-tile); background: var(--card-sunk);
-}
-.mcal-title { font-size: 14px; font-weight: 600; }
-.mcal-row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
-.mcal-row svg { width: 13px; height: 13px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; }
-.mcal-row.is-warn { color: var(--amber); }
-
-/* ---- 提示词草稿 ---- */
 .mprompt-text {
   width: 100%; padding: 11px 12px; resize: vertical;
   border: 0; border-radius: var(--r-tile);
@@ -432,7 +373,6 @@
 }
 .mprompt-text:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--indigo); }
 
-/* ---- 动作 ---- */
 .mcard-acts { display: flex; align-items: center; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .mcard-acts .btn { font-size: 12.5px; }
 

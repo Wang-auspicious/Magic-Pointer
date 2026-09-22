@@ -1,11 +1,3 @@
-"""本机 skill 发现：deepseek-harness skill-filesystem 的 MP 等价物。
-
-根与排序对照 DSH：项目级（``<project>/.dsh/skills``、``<project>/.agents/skills``）
-先于用户级（``~/.dsh/skills``、``~/.agents/skills``），同名取第一个（项目覆盖
-用户）。SKILL.md 需要 YAML frontmatter 的 ``name``（kebab-case）与
-``description``；``user-invocable: false`` 只藏出人类目录，正文仍可显式加载。
-解析失败的目录跳过并记原因，不让一个坏 skill 毁掉整次扫描。
-"""
 
 from __future__ import annotations
 
@@ -33,7 +25,6 @@ def skill_roots(
     *,
     include_project: bool = True,
 ) -> list[_Root]:
-    """DSH 同款发现根，按优先级排序（项目先于用户）。"""
     from pathlib import Path as _Path
 
     home = _Path(user_home) if user_home is not None else _Path.home()
@@ -52,7 +43,6 @@ def skill_roots(
 
 
 class SkillCatalog:
-    """扫描 DSH 兼容根并解析 SKILL.md。"""
 
     def __init__(
         self,
@@ -68,7 +58,6 @@ class SkillCatalog:
             user_home,
             include_project=include_project,
         )
-        # name → (root, path)：第一个根胜出（项目覆盖用户）。惰性扫描。
         self._resolved: dict[str, tuple[_Root, Path]] | None = None
         self._errors: list[str] = []
 
@@ -101,7 +90,6 @@ class SkillCatalog:
         self._resolved = resolved
         return resolved
 
-    # -- 解析 -------------------------------------------------------------
 
     def _parse(self, path: Path) -> tuple[str, dict] | None:
         try:
@@ -132,13 +120,11 @@ class SkillCatalog:
             record["userInvocable"] = False
         return name, record
 
-    # -- 对外 -------------------------------------------------------------
 
     def list_skills(self, user_only: bool = True) -> list[dict]:
-        """目录条目（按名字排序）。``user_only=False`` 连 user-invocable:false 也带出。"""
         rows: list[dict] = []
         for name, (root, path) in sorted(self._scan().items()):
-            record = self._parse(path)  # 重读保持简单：目录不大，正确优先
+            record = self._parse(path)
             if record is None:
                 continue
             _, data = record
@@ -161,7 +147,6 @@ class SkillCatalog:
         return rows
 
     def load_skill_body(self, name: str) -> str | None:
-        """加载并剥掉 frontmatter 的正文；未知名字返回 None。"""
         resolved = self._scan().get(str(name or "").strip())
         if resolved is None:
             return None

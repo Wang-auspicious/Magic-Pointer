@@ -260,11 +260,9 @@ class MagicPointerMcpServer:
         return f"{plan_id}:{integrity_token}"
 
     def issue_recipe_confirmation(self, plan: dict[str, Any]) -> str:
-        """Mint a token from the trusted desktop channel; this is not an MCP tool."""
         return self._issue_confirmation("execute_recipe", self._recipe_confirmation_subject(plan))
 
     def issue_task_reconfirmation(self, task_id: str) -> str:
-        """Mint a target-reconfirmation token from the trusted desktop channel."""
         subject = str(task_id or "")
         if not subject:
             raise ValueError("taskId is required")

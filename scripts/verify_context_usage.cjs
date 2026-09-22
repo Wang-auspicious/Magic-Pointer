@@ -1,5 +1,4 @@
 'use strict';
-// Runs the real main process, preload, IPC and saved conversation. No fixture UI.
 const { app, BrowserWindow, screen } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -21,7 +20,6 @@ const Module=require('node:module');
 const production=new Module(mainPath,module);
 production.filename=mainPath;
 production.paths=Module._nodeModulePaths(path.dirname(mainPath));
-// Expose only the existing window opener to the probe; IPC and render code run unchanged.
 production._compile(fs.readFileSync(mainPath,'utf8')+'\nmodule.exports.openUsageStudio=()=>{onboardingWindow?.hide();showDashboard({view:"chat"},{activate:true});};',mainPath);
 const run = async () => {
   production.exports.openUsageStudio();
@@ -80,8 +78,6 @@ const run = async () => {
   await click('#composer-usage-popover .mp-usage-head');
   state=await measure();
   assert.equal(state.mainHidden,false); assert.equal(state.detailHidden,false);
-  // Native input crosses an empty portion of this visible Studio window.
-  // The helper records OS cursor visibility and restores the starting position.
   cursorEvents.length=0;
   const bounds=win.getContentBounds();
   const start=screen.dipToScreenPoint({x:bounds.x+Math.round(bounds.width*.4),y:bounds.y+90});
@@ -93,7 +89,6 @@ const run = async () => {
     child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);
     child.on('error',reject);child.on('close',code=>code===0?resolve(JSON.parse(stdout)):reject(new Error(stderr)));
   });
-  // Recreate the previous always-visible decoration to observe its OS effect.
   const display=screen.getDisplayMatching(bounds);
   const oldDecoration=new BrowserWindow({ ...display.bounds,height:display.bounds.height-2,
     frame:false,transparent:true,backgroundColor:'#00000000',focusable:false,skipTaskbar:true,

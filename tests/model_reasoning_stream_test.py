@@ -1,11 +1,3 @@
-"""思考流（reasoning/CoT）端到端契约。
-
-用户裁决：思考流一定要有。模型 API 返回的 reasoning（DeepSeek/Moonshot 的
-``reasoning_content``、Anthropic 的 thinking 块、OpenRouter 的 ``reasoning``）
-此前被 model_client 静默丢弃（只读 delta.content/delta.tool_calls），用户在
-GUI 上看不到任何思考过程。本文件钉死：解析 → loop 事件 → 桥 sink → 
-trajectory/进度行的每一跳，谁断了谁红。
-"""
 
 from __future__ import annotations
 
@@ -34,7 +26,6 @@ from app.agent_runtime.model_client import (  # noqa: E402
 from app.agent_runtime.types import AgentMessage, Role  # noqa: E402
 
 
-# ---- 解析层：chat-completions SSE ----------------------------------------
 
 
 def _chat_lines(*deltas: dict, finish: str = "stop") -> list[str]:
@@ -69,12 +60,10 @@ def test_chat_sse_reasoning_content_becomes_reasoning_delta_before_text() -> Non
     assert [event.text for event in reasoning] == ["先想", "清楚再答"]
     assert "".join(event.text for event in reasoning) == "先想清楚再答"
     assert len(text) == 1 and text[0].text == "答案"
-    # 思考在正文之前（事件序 = 模型输出序）。
     assert kinds.index(ReasoningDelta) < kinds.index(MessageDelta)
 
 
 def test_chat_sse_reasoning_field_variant_also_parsed() -> None:
-    """OpenRouter 等网关把 reasoning 放在 delta.reasoning 而非 reasoning_content。"""
     events = list(_parse_sse(_chat_lines({"reasoning": " thunk"}, {"content": "ok"})))
     reasoning = [e for e in events if isinstance(e, ReasoningDelta)]
     assert len(reasoning) == 1 and reasoning[0].text == " thunk"
@@ -85,7 +74,6 @@ def test_chat_sse_without_reasoning_has_no_reasoning_delta() -> None:
     assert not [e for e in events if isinstance(e, ReasoningDelta)]
 
 
-# ---- 解析层：Anthropic messages SSE --------------------------------------
 
 
 def test_messages_sse_thinking_blocks_become_reasoning_delta() -> None:
@@ -123,7 +111,6 @@ def test_messages_sse_thinking_blocks_become_reasoning_delta() -> None:
     assert len(text) == 1 and text[0].text == "结论"
 
 
-# ---- 非流式后端：reasoning 一样要浮出来 ----------------------------------
 
 
 class FakeResponse:
@@ -207,7 +194,6 @@ def test_nonstreaming_messages_thinking_block_surfaces(_no_circuit, monkeypatch)
     assert len(text) == 1 and text[0].text == "答"
 
 
-# ---- 客户端与 loop 层 -----------------------------------------------------
 
 
 def _user_msg(content: str) -> AgentMessage:
@@ -332,7 +318,6 @@ def test_stream_backend_terminal_cleanup_failure_does_not_poison_health(
 
 
 def test_agent_loop_yields_reasoning_chunk_events() -> None:
-    """loop 把 ReasoningDelta 转成 ReasoningChunk 往 UI 送（与 ModelChunk 同权）。"""
 
     class FakeBackend:
         used_backend = "fake"
@@ -371,11 +356,6 @@ def test_agent_loop_yields_reasoning_chunk_events() -> None:
 
 
 def test_agent_loop_exposes_first_model_delta_before_backend_finishes() -> None:
-    """真正的流式必须在后端产出后续 delta 前把首段交给消费者。
-
-    只断言最终收到了 a/b/c 仍会让「先攒完整 list、再一次性重放」的假流式
-    混过去；逐个 ``__anext__`` 才能钉死首字延迟的真实边界。
-    """
     produced: list[str] = []
 
     class FakeBackend:
@@ -414,7 +394,6 @@ def test_agent_loop_exposes_first_model_delta_before_backend_finishes() -> None:
     assert produced == ["a"], "后端的 b/c 不该在消费者看到首段前就被读完"
 
 
-# ---- 桥 sink 层：trajectory + 进度行 -------------------------------------
 
 
 class _FakeClock:
@@ -445,12 +424,10 @@ def test_conversation_sink_routes_reasoning_into_record_and_progress_line() -> N
     sink(SimpleNamespace(kind="model_chunk", text="答案"))
     sink(SimpleNamespace(kind="turn_finished", state=SimpleNamespace(value="done")))
 
-    # 1) trajectory 的 message record 带 reasoning（正式渲染用）。
     message_records = [r for r in sink.trajectory if r.get("kind") == "message"]
     assert message_records, sink.trajectory
     assert message_records[0].get("reasoning") == "第一步思考，第二步"
 
-    # 2) reasoning_chunk 进度行（边想边画用），base64 与 answer_chunk 同款。
     reasoning_blobs = [b for phase, b in clock.blobs if phase == "reasoning_chunk"]
     assert reasoning_blobs, clock.blobs
     decoded = "".join(

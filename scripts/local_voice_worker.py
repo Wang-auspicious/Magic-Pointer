@@ -1,11 +1,5 @@
 from __future__ import annotations
 
-"""UI-free, JSONL local Whisper worker.
-
-This process intentionally has no model download path.  Its default loader is
-``local_voice_bridge.load_model``, which only accepts a model already present in
-the local Whisper cache.
-"""
 
 import argparse
 import ctypes
@@ -57,7 +51,6 @@ def resident_microphone_runner(
     publish: Callable[[dict[str, Any]], None],
     stop_event: Event,
 ) -> None:
-    """Run the real local microphone/VAD path against the resident model."""
     del request_id
     run_microphone_with_model(
         model=model,
@@ -70,9 +63,6 @@ def resident_microphone_runner(
 
 
 def _enable_crash_traceback() -> None:
-    """Dump a native stack to stderr on hard crashes (segfaults in sherpa/
-    torch/sounddevice are the prime suspects for the -1 worker exits).
-    The Electron client forwards stderr into the crash report."""
     import faulthandler
 
     faulthandler.enable()
@@ -85,7 +75,6 @@ def _configure_stdio() -> None:
 
 
 def _process_memory_bytes() -> int:
-    """Return the current working set without introducing a psutil dependency."""
     if os.name == "nt":
         from ctypes import wintypes
 
@@ -129,14 +118,6 @@ def _process_memory_bytes() -> int:
 
 
 class _ModelRWLock:
-    """Reader-writer lock guarding the in-memory Whisper model.
-
-    Multiple concurrent transcriptions share a read lock.  ``unload()``
-    acquires the write lock, which blocks until every in-flight
-    ``model.transcribe()`` call has returned — preventing the segfault
-    that occurs when a C++ inference thread is still running after
-    ``self._model = None`` + ``gc.collect()``.
-    """
 
     def __init__(self) -> None:
         self._readers = 0
@@ -163,7 +144,6 @@ class _ModelRWLock:
 
 
 class LocalVoiceWorker:
-    """Owns at most one in-memory local Whisper model and no request data."""
 
     def __init__(
         self,
@@ -207,9 +187,6 @@ class LocalVoiceWorker:
         self._memory_limit_bytes = self._validate_limit(memory_limit_mb, "memory_limit_mb")
         self._idle_unload_ms = self._validate_limit(idle_unload_ms, "idle_unload_ms")
         if self._idle_unload_ms == 0:
-            # 0 = keep the model resident; never idle-unload it. A cold
-            # reload costs 4-11s of user-visible wait, so the default desktop
-            # config pins the model in memory for the whole app session.
             self._idle_unload_ms = None
         self._memory_probe = memory_probe
         self._clock = clock
@@ -252,7 +229,6 @@ class LocalVoiceWorker:
             self._last_used = self._clock()
 
     def _switch_to_whisper_fallback(self) -> None:
-        """Drop SenseVoice and rebind every bridge callable to Whisper."""
         bundle = whisper_bundle(self.model_name)
         self._bundle = bundle
         self._model_loader = bundle.loader
@@ -262,11 +238,6 @@ class LocalVoiceWorker:
         self._microphone_runner = bundle.microphone_runner
 
     def _maybe_fallback_after_load_failure(self) -> bool:
-        """Return True when the worker switched from SenseVoice to Whisper.
-
-        A single flaky load (e.g. one corrupted download) must not punish the
-        default engine; two consecutive failures are treated as unavailable.
-        """
         if self._bundle.engine != SENSE_VOICE:
             return False
         self._engine_failures += 1
@@ -290,8 +261,6 @@ class LocalVoiceWorker:
                     if torch is not None and torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 except Exception:
-                    # CUDA is optional; an unavailable cleanup hook must not keep the
-                    # resident model alive or turn an otherwise valid unload into an error.
                     pass
         finally:
             self._model_access.release_write()
@@ -314,11 +283,10 @@ class LocalVoiceWorker:
         *,
         interval_seconds: float = 0.1,
     ) -> None:
-        """Unload at the real deadline even when stdin remains silent."""
         if self._idle_watch_thread is not None and self._idle_watch_thread.is_alive():
             return
         if self._idle_unload_ms is None:
-            return  # resident mode: no deadline, no watchdog thread needed
+            return
         if not callable(event_sink) or interval_seconds <= 0:
             raise ValueError("event_sink and a positive interval_seconds are required")
         self._idle_watch_stop.clear()
@@ -373,9 +341,6 @@ class LocalVoiceWorker:
             payload = {"error": "Microphone runner emitted an unsupported event type.", "code": "microphone_runner_protocol"}
         if kind in {"partial", "final"}:
             transcript = payload.get("transcript")
-            # SenseVoice emits an empty partial once VAD first sees activity.
-            # It is a non-terminal lifecycle signal, not malformed text and
-            # must not stop the microphone session before speech is decoded.
             if kind == "partial" and transcript == "":
                 return
             if not isinstance(transcript, str) or not transcript or len(transcript) > MAX_COMMAND_BYTES:
@@ -399,8 +364,6 @@ class LocalVoiceWorker:
             if kind in {"final", "error"} and stop_event is not None:
                 stop_event.set()
             sink = self._event_sink
-        # Pipe writes may block under backpressure. Never hold the microphone
-        # state lock while delivering a pushed event.
         if sink is not None:
             try:
                 sink(event)
@@ -699,7 +662,6 @@ class LocalVoiceWorker:
 
 
 def _discard_line_remainder(input_stream: TextIO) -> None:
-    """Discard bounded chunks until the current JSONL record terminates."""
     while True:
         remainder = input_stream.readline(MAX_COMMAND_BYTES + 1)
         if not remainder or remainder.endswith(("\n", "\r")):
@@ -707,7 +669,6 @@ def _discard_line_remainder(input_stream: TextIO) -> None:
 
 
 def serve(worker: LocalVoiceWorker, input_stream: TextIO, output_stream: TextIO) -> int:
-    """Process one bounded JSON object per line until EOF or shutdown."""
     output_lock = Lock()
 
     def emit(response: dict[str, Any]) -> None:

@@ -36,12 +36,10 @@ files:
   - scripts/artifact_bridge.py
   - scripts/agent_worker.py
   - scripts/bridge_progress.py
-  - scripts/calendar_bridge.py
   - scripts/conversation_bridge.py
   - scripts/deliver_text_bridge.py
   - scripts/electron_bridge.py
   - scripts/element_probe_bridge.py
-  - scripts/expand_passage_bridge.py
   - scripts/fabric_bridge.py
   - scripts/frame_capture_worker.py
   - scripts/frame_lease.py
@@ -59,7 +57,6 @@ files:
   - scripts/learning_review_bridge.py
   - scripts/sense_voice_bridge.py
   - scripts/sense_voice_setup.py
-  - scripts/shopping_list_bridge.py
   - scripts/smoke_fabric.py
   - scripts/stash_describe_bridge.py
   - scripts/start_windows_dictation.ps1
@@ -74,7 +71,6 @@ files:
   - data/recipes/**
   - data/surface_adapters/**
   - data/plugins/**
-  - data/objects/**
   - data/README.md
   - requirements.txt
   - package.json

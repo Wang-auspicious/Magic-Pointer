@@ -1,19 +1,3 @@
-"""Perception provider protocol and the bridges onto existing readers.
-
-A provider is one evidence source bound to one already-frozen interaction. It
-answers with a :class:`ProviderResult`; the broker times it, normalises it into
-a :class:`PerceptionObservation`, and fusion — never the provider, never the
-caller's control flow — decides which observation represents the user's mark.
-
-Two rules make this a seam rather than a rename:
-
-- A provider that needs pixels reads the *frozen* artifact carried by the
-  request. There is no path here to the live screen, so a slow provider cannot
-  certify a post-gesture frame as the moment the user pointed at something.
-- A provider never suppresses another provider. Explorer grounding, a surface
-  adapter and a UIA probe all produce observations; the arbitration that used
-  to live in bridge if/else chains is now one ranking over typed evidence.
-"""
 
 from __future__ import annotations
 
@@ -35,10 +19,6 @@ from app.grounding.marked_read import structured_read_covers_mark
 TIER_STRUCTURED = "structured"
 TIER_PIXEL = "pixel"
 
-# Structured text is exact; recognised pixels are an approximation of it. The
-# order is a cost/precision preference between equally mark-covering sources,
-# not a claim that structured evidence is always right — a structured read that
-# misses the mark loses to pixels that hit it.
 TIER_ORDER = (TIER_STRUCTURED, TIER_PIXEL)
 
 DEFAULT_PRIORITIES = {
@@ -83,14 +63,8 @@ _MEANINGFUL_ARTIFACT_KEYS = frozenset({
     "value",
 })
 
-# A coverage verdict that means "this is the surface the mark sits on, not the
-# thing that was marked". Both are the same mistake wearing different clothes:
-# geometry that swallows the window, and content that is the app's own name.
 _CONTAINER_COVERAGE_REASONS = frozenset({"container_not_selection", "identity_only"})
 
-# Artifacts that name the object a read is about. See
-# ``context_is_explicitly_bound``: these are what let a geometry-less read
-# still answer about the mark.
 _BINDING_ARTIFACT_KEYS = frozenset({
     "address",
     "cell",
@@ -104,8 +78,6 @@ _BINDING_ARTIFACT_KEYS = frozenset({
     "rows",
 })
 
-# UIA result kinds that are a selection or an element by construction, so the
-# read is about one object even when it reports no rectangles.
 _BOUND_RESULT_KINDS = frozenset({
     "document_text",
     "point_element",
@@ -115,12 +87,6 @@ _BOUND_RESULT_KINDS = frozenset({
 
 
 def perception_layer(source: Any, context: AdapterReadContext | None = None) -> str:
-    """Name the evidence layer a reader belongs to.
-
-    Explicit `perception_layer` wins. Otherwise the layer is inferred from the
-    reader's own identifiers, so a new adapter does not need a core edit to be
-    classified.
-    """
     explicit = str(getattr(source, "perception_layer", "") or "").strip().casefold()
     if explicit:
         return explicit[:40]
@@ -188,7 +154,6 @@ def status_for_error(error: str) -> EvidenceStatus:
 
 @dataclass(frozen=True, slots=True)
 class PerceptionRequest:
-    """One bound interaction, shared verbatim by every provider in the plan."""
 
     window: dict[str, Any]
     command: str = ""
@@ -203,14 +168,6 @@ class PerceptionRequest:
 
     @property
     def has_frozen_pixels(self) -> bool:
-        """Are there historical pixels to read, as opposed to a live screen?
-
-        The artifact is what makes a pixel read honest. The FrameLease is the
-        attestation that binds those pixels to the gesture, and a gesture
-        capture without one is already refused before a snapshot exists — so
-        requiring it again here would only remove pixel reading from pointer
-        captures, which have no gesture and therefore no lease.
-        """
         return bool(self.frozen_artifact_path)
 
     def container_like_texts(self) -> tuple[str, ...]:
@@ -228,7 +185,6 @@ class PerceptionRequest:
 
 @dataclass(frozen=True, slots=True)
 class ProviderDescriptor:
-    """What a provider is, before it is asked anything."""
 
     id: str
     layer: str
@@ -246,7 +202,6 @@ class ProviderDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class ProviderResult:
-    """A provider's answer. `status=None` means "read it off the context"."""
 
     context: AdapterReadContext | None = None
     status: EvidenceStatus | None = None
@@ -255,18 +210,10 @@ class ProviderResult:
     limitations: tuple[str, ...] = ()
     grounding: dict[str, Any] | None = None
     provider_trace: dict[str, Any] | None = None
-    # Screen-pixel xywh of what this provider says the mark selected. Kept as a
-    # list because it is handed straight to the snapshot JSON and compared
-    # against snapshot fields by callers.
     selection_bbox: list[int] | None = None
-    # A composite provider only learns its real layer by reading: the gesture
-    # strategy may end up on UIA, COM or the DOM depending on the window.
     layer: str | None = None
 
 
-# "This provider does not apply to this window" is the default answer for every
-# provider that specialises in a surface family. Recording it would bury the
-# real evidence under one line per unrelated specialist, so the broker drops it.
 NOT_APPLICABLE = "not_applicable"
 
 
@@ -279,7 +226,6 @@ class PerceptionProvider(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PerceptionObservation:
-    """One provider's result, kept independently of the fused verdict."""
 
     index: int
     provider_id: str
@@ -300,11 +246,6 @@ class PerceptionObservation:
     reason: str
     source: EvidenceSource
     frame_lease_id: str | None
-    # Whether this provider read anything at all. Stored rather than derived
-    # from `context`, because an observation recorded by another process
-    # arrives without its payload and must still be able to say "I read the
-    # marked line" — otherwise the second stage would re-run the pixel tier on
-    # evidence it already has.
     has_content: bool = False
     grounding: dict[str, Any] | None = None
     provider_trace: dict[str, Any] | None = None
@@ -319,20 +260,16 @@ class PerceptionObservation:
 
     @property
     def selectable(self) -> bool:
-        """Usable *and* still carrying its payload in this process."""
         return self.usable and self.context is not None
 
     @property
     def marked_content(self) -> bool:
-        """Usable and not disqualified as the surface rather than the mark."""
         return self.usable and self.covers_mark is not False
 
     @property
     def content(self) -> str:
         return str(getattr(self.context, "content", "") or "")
 
-    # `adapter` stays in the trace for continuity with the diagnostics page and
-    # the audit log, which have been keyed on it since before providers existed.
     def to_trace_dict(self) -> dict[str, Any]:
         return {
             "index": self.index,
@@ -356,13 +293,6 @@ class PerceptionObservation:
 
     @classmethod
     def from_trace_dict(cls, value: Mapping[str, Any]) -> PerceptionObservation:
-        """Rebuild an observation recorded by another process.
-
-        The context is deliberately absent: the snapshot carries one selected
-        context, not every provider's payload. A rehydrated observation can
-        still lose, corroborate or explain a fallback, which is what the second
-        stage needs from it.
-        """
         status = str(value.get("status") or EvidenceStatus.ERROR.value)
         layer = str(value.get("layer") or "native_app")
         return cls(
@@ -413,7 +343,6 @@ class PerceptionObservation:
 
 
 def context_rectangles(context: Any, *, limit: int = 32) -> list[list[int]]:
-    """The element rectangles a reader reported, normalised to screen xywh."""
     artifacts = dict(getattr(context, "artifacts", {}) or {})
     raw_rectangles = artifacts.get("selection_rectangles") or artifacts.get("rectangles") or []
     fmt = str(artifacts.get("selection_rectangles_format") or "xywh")
@@ -435,13 +364,6 @@ def context_rectangles(context: Any, *, limit: int = 32) -> list[list[int]]:
 
 
 def context_is_explicitly_bound(context: AdapterReadContext | None) -> bool:
-    """Did this read name a thing, or did it just return text?
-
-    A path, a cell, a range, a DOM node, a local file — those say which object
-    the read is about, and a read carrying one has answered about the mark
-    without needing geometry. Everything else is a paragraph, and a paragraph
-    cannot prove it is the marked line rather than the whole document.
-    """
     artifacts = dict(getattr(context, "artifacts", {}) or {})
     for key in _BINDING_ARTIFACT_KEYS:
         if artifacts.get(key) not in (None, "", [], {}, ()):
@@ -454,8 +376,6 @@ def _coverage(
     context: AdapterReadContext,
     request: PerceptionRequest,
 ) -> tuple[bool | None, str]:
-    # Judged even without a mark: a read that returned the app's own name is the
-    # surface rather than the content, and that is knowable without geometry.
     coverage = structured_read_covers_mark(
         content=str(context.content or ""),
         window=request.window,
@@ -480,7 +400,6 @@ def observation_from_result(
     index: int,
     latency_ms: float,
 ) -> PerceptionObservation:
-    """Normalise one provider answer into typed evidence."""
     context = result.context
     layer = (
         str(result.layer or "").strip().casefold()
@@ -514,15 +433,11 @@ def observation_from_result(
             note=error or None,
         )
         evidence = apply_container_heuristic(evidence, request.container_like_texts())
-        # 只读回一枚字形（`*`、`>`、一段框线）的一次读，和只读回容器名一样，
-        # 是「没有回答这个 mark」。它走同一条降级路径，于是像素层仍然会被
-        # 派上去，而它自己也不会在融合里压过还能再试一次的来源。
         glyph_only = is_glyph_only(context.content)
         container_hint = bool(evidence.container_hint) or glyph_only or (
             coverage_reason in _CONTAINER_COVERAGE_REASONS
         )
         if container_hint and evidence.status is EvidenceStatus.OK:
-            # Container identity is evidence about the surface, not the mark.
             evidence = Evidence(
                 value=evidence.value,
                 status=EvidenceStatus.DEGRADED,
@@ -616,7 +531,6 @@ def synthetic_observation(
     reason: str,
     latency_ms: float = 0.0,
 ) -> PerceptionObservation:
-    """An observation for something that never got to read: deadline, no lease."""
     layer = descriptor.layer or perception_layer(descriptor)
     return PerceptionObservation(
         index=index,
@@ -647,14 +561,6 @@ def observations_from_trace(
     selected_context: AdapterReadContext | None = None,
     request: PerceptionRequest | None = None,
 ) -> tuple[PerceptionObservation, ...]:
-    """Rebuild another process's observations, restoring the one payload we have.
-
-    A snapshot carries every observation's metadata but only the winning
-    provider's content. Handing that content back to its own observation is what
-    lets the answer stage add the pixel tier and re-run the same fusion, instead
-    of re-deciding the question from a single boolean and overwriting whatever
-    the first stage had read.
-    """
     selected_id = str(trace.get("selectedProviderId") or "")
     restored: list[PerceptionObservation] = []
     for index, raw in enumerate(list(trace.get("observations") or [])):
@@ -667,9 +573,6 @@ def observations_from_trace(
             item = replace(item, context=selected_context, has_content=True)
         restored.append(item)
     if selected_context is not None and not any(item.selectable for item in restored):
-        # Either the trace predates providers or its winner did not survive the
-        # hop. The context in hand is still evidence and still has to be able to
-        # win against the pixel tier.
         layer = str(trace.get("selectedLayer") or "").strip().casefold()
         descriptor = ProviderDescriptor(
             id=str(
@@ -693,7 +596,6 @@ def observations_from_trace(
 
 
 class AdapterProvider:
-    """Bridge an `app.adapters` reader into the provider protocol."""
 
     def __init__(self, adapter: Any, *, tier: str = TIER_STRUCTURED) -> None:
         self.adapter = adapter
@@ -728,13 +630,6 @@ class AdapterProvider:
 
 
 class CallableProvider:
-    """Bridge a bound reader function into the provider protocol.
-
-    Used for readers that live at the bridge boundary (Explorer grounding, the
-    surface-adapter registry, the gesture structured strategy, frozen-frame
-    OCR). They keep their tuned internals; what they lose is the ability to
-    short-circuit each other.
-    """
 
     def __init__(
         self,

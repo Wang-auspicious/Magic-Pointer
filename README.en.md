@@ -1,11 +1,14 @@
-# Magic Pointer Open MVP
+# Magic Pointer
 
-An open-source Magic Pointer-style desktop AI pointer assistant.
+Magic Pointer is a desktop agent with its own runtime. Point at desktop content
+to provide task context, or work in Studio with files, tools and durable conversations.
 
-MVP0 focuses on the first usable loop:
+The desktop workflow is:
 
 ```text
-global hotkey -> screen region selection -> multimodal AI understanding -> floating result -> object log
+pointer gesture -> frozen evidence -> task context -> agent runtime -> verified result
 ```
 
-中文说明见 README.md。
+Windows is the primary development platform. See the [main README](README.md),
+[usage guide](docs/USER_GUIDE.md), [development guide](docs/DEVELOPMENT.md) and
+[known limitations](docs/KNOWN_LIMITATIONS.md) for setup and supported behavior.

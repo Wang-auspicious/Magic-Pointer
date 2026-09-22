@@ -1,18 +1,3 @@
-"""Resident UIA host client (Phase C; review priority #1).
-
-The per-request probe pays a ~570ms process cold start + COM rebuild per
-read. The resident host (`uia_resident_host.exe`, compiled from the same
-probe source with ``RESIDENT_HOST`` defined) serves the identical result
-contract over a named pipe. This client is the funnel:
-
-- line protocol: ``id|ping`` or ``id|hwnd[|x|y|region|x|y|w|h]``;
-- circuit breaker: N consecutive transport failures open the circuit for
-  a cooldown (callers then fall back to the per-request probe process);
-- every method is pure-connect logic; the OS pipe I/O is injected so
-  tests run against a fake transport, no named pipe required.
-
-Pure Python, stdlib + ctypes only.
-"""
 
 from __future__ import annotations
 
@@ -35,7 +20,6 @@ _INVALID_HANDLE_VALUE = -1
 
 
 def _open_pipe_handle(name: str, timeout_s: float) -> int:
-    """Open the ``\\\\.\\pipe\\<name>`` path with a wall-clock wait; -1 on failure."""
     kernel32 = ctypes.windll.kernel32
     path = "\\\\.\\pipe\\" + name
     deadline = time.monotonic() + timeout_s
@@ -43,7 +27,7 @@ def _open_pipe_handle(name: str, timeout_s: float) -> int:
         handle = kernel32.CreateFileW(
             path,
             _GENERIC_READ | _GENERIC_WRITE,
-            0,  # no sharing: exclusive client
+            0,
             None,
             _OPEN_EXISTING,
             0,
@@ -71,12 +55,6 @@ def _write_pipe(handle: int, line: str) -> bool:
 
 
 def _read_pipe(handle: int, timeout_s: float, max_bytes: int = 1024 * 1024) -> str | None:
-    """Read one line; None on timeout/EOF/error/oversize.
-
-    The deadline is enforced on every iteration — a host that dribbles bytes
-    forever (without ever emitting a newline) must not hang the perception
-    chain, and the buffer must not grow without bound (perception-audit P1).
-    """
     kernel32 = ctypes.windll.kernel32
     deadline = time.monotonic() + timeout_s
     buffer = bytearray()
@@ -112,7 +90,6 @@ def build_request_line(
     target_point: dict[str, int] | None = None,
     target_region: dict[str, int] | None = None,
 ) -> str:
-    """The host's one-line request protocol."""
     parts = [str(int(hwnd))]
     if isinstance(target_region, dict):
         try:
@@ -137,12 +114,6 @@ def build_request_line(
 
 
 def parse_response(line: str, expected_id: str | None = None) -> dict[str, Any] | None:
-    """Parse a host response line into the probe-shaped dict; None if junk.
-
-    When ``expected_id`` is given, the response must echo it — a squatted or
-    confused pipe must not answer a request with another request's payload
-    (perception-audit P2).
-    """
     if not line or not line.strip().startswith("{"):
         return None
     try:
@@ -160,7 +131,6 @@ def parse_response(line: str, expected_id: str | None = None) -> dict[str, Any] 
 
 
 class UiaHostClient:
-    """Circuit-breakered named-pipe client for the resident UIA host."""
 
     def __init__(
         self,
@@ -182,7 +152,6 @@ class UiaHostClient:
         self._open_until = 0.0
         self._next_id = 1
 
-    # -- circuit -----------------------------------------------------------
 
     def available(self) -> bool:
         return time.monotonic() >= self._open_until
@@ -196,10 +165,8 @@ class UiaHostClient:
     def _record_success(self) -> None:
         self._consecutive_failures = 0
 
-    # -- requests ----------------------------------------------------------
 
     def ping(self) -> bool:
-        """One transport round trip; True means the host is alive."""
         if not self.available():
             return False
         request_id = self._next_id
@@ -222,8 +189,6 @@ class UiaHostClient:
         target_point: dict[str, int] | None = None,
         target_region: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
-        """One probe over the resident host; None = transport-level failure
-        (the caller falls back to the per-request probe process)."""
         if not self.available():
             return None
         request_id = self._next_id
@@ -240,7 +205,6 @@ class UiaHostClient:
         self._record_success()
         return data
 
-    # -- transport (injectable) --------------------------------------------
 
     def _exchange(self, line: str) -> str | None:
         handle = _open_pipe_handle(self.pipe_name, self.connect_timeout_s)

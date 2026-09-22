@@ -1,4 +1,3 @@
-"""Isolated Hermes-style session review that can only create candidates."""
 
 from __future__ import annotations
 
@@ -12,13 +11,6 @@ __all__ = ["SessionLearningReviewer"]
 
 
 class SessionLearningReviewer:
-    """Translate a completed session digest into bounded pending changes.
-
-    The callback is deliberately not an Agent tool loop. It receives plain
-    JSON and can return only structured proposals. The store independently
-    revalidates kind, target, current content, and size before recording any
-    candidate; no proposal can write a file.
-    """
 
     def __init__(
         self,

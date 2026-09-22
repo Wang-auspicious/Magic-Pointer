@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Magic Pointer Stage</title>
     <link rel="stylesheet" href="oreo_tokens.css" />
-    <link rel="stylesheet" href="claude_tokens.css" />
-    <link rel="stylesheet" href="claude_chat.css" />
+    <link rel="stylesheet" href="theme_tokens.css" />
+    <link rel="stylesheet" href="chat_styles.css" />
     <link rel="stylesheet" href="decision_card.css" />
     <link rel="stylesheet" href="stage.css" />
     <link rel="stylesheet" href="cards.css" />
@@ -19,9 +19,6 @@
       <div id="targeting-outline" class="targeting-outline" hidden></div>
       <div id="capture-proof" class="capture-proof" aria-hidden="true" hidden></div>
       <div id="screen-points" class="screen-points" aria-hidden="true" hidden></div>
-      <!-- §4.3: two handles above and below the selection. Pull apart for more
-           text, push together for less. Same policy as the answer card's edge,
-           so a given drag distance means the same thing in both places. -->
       <div id="selection-stretch" class="selection-stretch" hidden>
         <div class="selection-stretch-handle" data-edge="top" data-no-drag="1"></div>
         <div class="selection-stretch-handle" data-edge="bottom" data-no-drag="1"></div>
@@ -33,9 +30,6 @@
           <span class="stage-brand" aria-hidden="true">MP</span>
           <span class="composer-context-label">已锁定当前对象</span>
           <span id="capsule-count" class="capsule-count" hidden></span>
-          <!-- One chip per stroke, in the order they were drawn. This is what makes
-               the selection visible before submitting: you can see you picked two
-               things, and drop one, without redrawing everything. -->
           <span id="capsule-refs" class="capsule-refs" role="list" aria-label="已选中的对象" hidden></span>
         </div>
         <div class="composer-input-row">
@@ -66,8 +60,6 @@
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
       <div id="stage-notice" class="stage-notice" role="status" hidden><span id="stage-notice-text"></span></div>
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
-        <!-- 眉毛行就是抓手。Vida 那张卡顶上没有一条灰色小横杠，只有「这张卡
-             讲的是什么」和右边一排细描边图标；整条头就是可以拖的地方。 -->
         <header class="thread-head" data-drag-handle="1">
           <div class="thread-head-row">
             <b id="thread-title" class="thread-title"></b>
@@ -91,27 +83,15 @@
             <div id="stage-decision" data-no-drag="1" hidden></div>
           </div>
         </div>
-        <!-- 这里以前是一条绿色的「已完成这项任务」。答案出现、追问框回来，
-             本身就是完成信号；再给一件看得见的事发一张奖状，只是把面板撑高。 -->
-        <!-- 需要写回原应用时，点头动作就是完成卡的决策底栏。待写文本缓存到
-             同一会话的输入值，结果态不再旁挂第二个可见胶囊。 -->
         <div id="capsule-consent" class="capsule-consent" role="group" aria-label="要不要写出去" hidden>
           <span id="consent-target" class="consent-target"></span>
           <button type="button" id="consent-reject" class="thread-btn" data-no-drag="1">拒绝</button>
           <button type="button" id="consent-approve" class="thread-btn is-solid" data-no-drag="1">同意</button>
         </div>
-        <!-- 在回答里选中一段话，这个按钮就贴着选区冒出来：点一下把那一段就地
-             展开。它不是第二轮对话——第一轮的那段字被换掉而已，所以轮次不变。 -->
         <button type="button" id="passage-expand" class="passage-expand" data-no-drag="1" hidden
                 aria-label="把选中的这段展开讲">
           <svg aria-hidden="true"><use href="#ic-expand" /></svg><span>展开讲讲</span>
         </button>
-        <!-- 答案底边那条「往下拖=更详细」的把手已经撤掉了。它和上面那个按钮
-             是同一件事的两个做法，但行为不一样——它会开新的一轮，而且它说的
-             「行」是折行后的视觉行，跟引擎数的换行符不是一回事，于是「扩写到
-             6 行」在一段没有换行的中文回答上必定被判成「四倍以上只能靠编造」。
-             一件事只留一个做法。 -->
-        <!-- 普通结果的底栏是一条追问条；需要写回时由上面的决策底栏暂时接管。 -->
         <footer class="thread-bar" data-drag-handle="1">
           <button type="button" id="thread-retry" class="thread-icon" data-no-drag="1"
                   aria-label="重问一次" title="重问一次">
@@ -137,7 +117,6 @@
       </div>
     </main>
 
-    <!-- Structured result card skeletons (inert templates, cloned by stage.js). -->
     <template id="tpl-thread-turn">
       <article class="thread-turn" data-status="pending">
         <p class="turn-ask"></p>
@@ -148,15 +127,6 @@
       <div class="turn-wait" aria-label="正在处理">
         <i></i><i></i><i></i>
         <span class="turn-elapsed"></span>
-      </div>
-    </template>
-    <template id="tpl-calendar-draft">
-      <div class="result-card card-calendar">
-        <p class="card-title"></p>
-        <p class="card-row card-time"></p>
-        <p class="card-row card-location"></p>
-        <p class="card-row card-conflict" hidden></p>
-        <p class="card-status" data-status="draft"></p>
       </div>
     </template>
     <template id="tpl-table-compare">
@@ -188,9 +158,6 @@
       </div>
     </template>
 
-    <!-- 图标精灵。舞台以前不加载它，于是卡片里每一个 <use href="#ic-…"> 都指向
-         一个不存在的 symbol——眉毛行的图标、步骤行的勾、警告的感叹号全都是空的。
-         和工作室/随行窗共用同一份，三个界面的图标才可能长一样。 -->
     <script src="icons.js"></script>
     <script src="../answer_shape_policy.js"></script>
     <script src="../stage_state.js"></script>
@@ -208,11 +175,11 @@
     <script src="../voice_trigger_policy.js"></script>
     <script src="../cards.js"></script>
     <script src="card_render.js"></script>
-    <script src="dsh_icons.js"></script>
-    <script src="dsh_markdown.js"></script>
-    <script src="claude_marks.js"></script>
-    <script src="dsh_highlight.js"></script>
-    <script src="dsh_chat.js"></script>
+    <script src="chat_icons.js"></script>
+    <script src="chat_markdown.js"></script>
+    <script src="activity_marks.js"></script>
+    <script src="chat_highlight.js"></script>
+    <script src="chat_view.js"></script>
     <script src="decision_card.js"></script>
     <script src="stage.js"></script>
   </body>

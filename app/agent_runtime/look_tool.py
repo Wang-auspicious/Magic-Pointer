@@ -1,14 +1,3 @@
-"""Perception as a tool: the model-visible ``look`` escape hatch.
-
-Implements harness-gap-review L2 (docs/harness-gap-review-20260812.md): vision
-is an explicit, model-callable tool instead of an implicit cascade fallback.
-The crop box is decided by the anchor (``bbox:l,t,r,b`` or ``element:<id>``
-resolved through an injected resolver), never the full screen, and every result
-is an :class:`Evidence` with honest status, latency and backend attribution.
-
-The vision model itself is an injected :class:`VisionBackend` (Protocol); this
-module performs no network or screen I/O and is fully testable with fakes.
-"""
 
 from __future__ import annotations
 
@@ -26,35 +15,21 @@ from app.evidence.contract import (
 
 DEFAULT_PROMPT = "Describe the contents of this image region."
 class VisionUnavailable(Exception):
-    """The vision backend cannot serve requests at all (no model, no service)."""
+    pass
 
 
 class VisionTimeout(Exception):
-    """The vision backend did not answer within the deadline."""
+    pass
 
 
 @runtime_checkable
 class VisionBackend(Protocol):
-    """Injected vision model contract.
-
-    ``describe`` receives the already-cropped region bytes, the prompt and the
-    deadline in ms, and returns ``{"text", "latency_ms", "backend"}``. It may
-    raise :class:`VisionUnavailable` (-> Evidence unsupported),
-    :class:`VisionTimeout` (-> Evidence timeout) or any other exception
-    (-> Evidence error).
-    """
 
     def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int) -> dict[str, Any]:
         ...
 
 
 def _box_bytes(box: tuple[int, int, int, int]) -> bytes:
-    """Deterministic crop encoding for the harness phase.
-
-    Real screen-region capture is a later phase; until then the crop bytes are
-    derived from the box so the contract (backend receives exactly the box the
-    anchor decided) is testable end to end.
-    """
     return b"crop:%d,%d,%d,%d" % box
 
 
@@ -70,14 +45,6 @@ def _normalize_box(box: Sequence[int]) -> tuple[int, int, int, int]:
 
 
 class LookTool:
-    """Model-callable vision: crop by anchor, honest Evidence out.
-
-    ``look`` never guesses: a missing box with an anchor that cannot be
-    resolved, or a box outside the configured size bounds, fails as
-    ``Evidence(error)`` before any backend request. With ``backend=None`` the
-    honest path is ``Evidence(unsupported, note='vision_not_configured')``
-    without a single backend call.
-    """
 
     def __init__(
         self,
@@ -100,7 +67,6 @@ class LookTool:
         self._captured_at = str(captured_at or "gesture time")
         self._resolver = resolver
 
-    # -- look ----------------------------------------------------------------
 
     def look(
         self,
@@ -109,25 +75,12 @@ class LookTool:
         prompt: str | None = None,
         resolver: Callable[[str], Sequence[int] | None] | None = None,
     ) -> Evidence:
-        """Describe the region the anchor decides; never the full screen.
-
-        The explicit ``box_ltrb`` wins when given; otherwise the box comes from
-        the anchor (``bbox:l,t,r,b`` parsed directly, ``element:<id>`` through
-        the injected resolver). A box that cannot be produced or is outside
-        ``[min_box_side, max_box_side]`` fails as error before any backend
-        call — no guessing, no upscale-to-fullscreen.
-        """
         if self._backend is None:
             return failed_evidence(
                 EvidenceSource.VISION,
                 EvidenceStatus.UNSUPPORTED,
                 "vision_not_configured",
             )
-        # P5: one LookTool instance serves one loop run, so an instance
-        # counter is a per-run quota. Vision calls are seconds and real
-        # money; an unbounded look loop is a resource-governor failure the
-        # design doc explicitly rules out. The receipt is honest
-        # unsupported, never a fake reading.
         if self._max_calls is not None and self._calls_used >= self._max_calls:
             return failed_evidence(
                 EvidenceSource.VISION,
@@ -166,12 +119,6 @@ class LookTool:
 
         image_bytes = self._capture(box)
         if not image_bytes:
-            # Real-machine lesson: an element anchor whose box cannot be
-            # cropped from the frozen frame used to send empty bytes to the
-            # vision backend, which raised and surfaced as a raw
-            # AttributeError. Honest unsupported with a readable reason lets
-            # the model pick another source instead of retrying the same
-            # look.
             return failed_evidence(
                 EvidenceSource.VISION,
                 EvidenceStatus.UNSUPPORTED,
@@ -191,7 +138,7 @@ class LookTool:
             return failed_evidence(
                 EvidenceSource.VISION, EvidenceStatus.TIMEOUT, "vision_timeout"
             )
-        except Exception as exc:  # honest: any other backend failure is an error
+        except Exception as exc:
             return failed_evidence(
                 EvidenceSource.VISION,
                 EvidenceStatus.ERROR,
@@ -205,11 +152,6 @@ class LookTool:
             f"backend={backend_name}; box={box[0]},{box[1]},{box[2]},{box[3]}"
             "; frame=historical"
         )
-        # P1 semantic isolation: ``look`` reads the frozen frame captured at
-        # pointerup, never the live screen. The marker travels inside the
-        # model-visible value so the reading cannot be mistaken for the
-        # current UI state (long tasks must re-observe with Observe
-        # before acting).
         value = f"[historical frozen frame captured at {self._captured_at}]\n{text}"
         return ok_evidence(
             value,
@@ -226,7 +168,6 @@ class LookTool:
         anchor: str,
         resolver: Callable[[str], Sequence[int] | None] | None,
     ) -> tuple[int, int, int, int]:
-        """Turn an anchor into a crop box; raises ValueError with a note."""
         if anchor.startswith("bbox:"):
             parts = anchor[len("bbox:"):].split(",")
             if len(parts) != 4:
@@ -246,7 +187,6 @@ class LookTool:
             return _normalize_box(box)
         raise ValueError("invalid_anchor_format")
 
-    # -- registration ----------------------------------------------------------
 
     def _execute_look(
         self,
@@ -255,17 +195,9 @@ class LookTool:
         prompt: str | None = None,
         scope: object = None,
     ) -> Evidence:
-        """Strict registry-facing adapter: schema field ``box`` maps to the
-        public API parameter ``box_ltrb``; ``scope`` is the loop's
-        cancellation token (accepted, not enforced by the fake backend
-        contract). Unknown kwargs raise TypeError, which the registry wraps
-        as tool_error (no silent drops)."""
         return self.look(anchor, box_ltrb=box, prompt=prompt)
 
     def register(self, registry: ToolRegistry) -> None:
-        """Register ``look`` (read, not concurrency-safe: vision is slow and
-        shares one backend, so no concurrent storm)."""
-        # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
         registry.register_alias("look", "Look")
         registry.register(
             ToolSpec(

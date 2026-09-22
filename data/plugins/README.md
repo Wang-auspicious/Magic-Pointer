@@ -1,8 +1,7 @@
 # Magic Pointer 用户插件目录
 
-> 插件内核批（2026-08-14）：Magic Pointer 向“一切皆插件”转型后的 out-of-tree 插件目录。
-> 金标准参考：deepseek-harness（DSH）的 profile/bundle/patch 组合模型；
-> 本机实现：`app/harness/`（context / plugin / composition / builtin_bundle）。
+此目录用于用户插件。插件通过 `app/harness/` 的服务上下文、依赖声明和配置组合
+接入 Runtime，并与内置能力共享生命周期。
 
 ## 目录结构
 

@@ -10,7 +10,6 @@ Transport = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 class ModelRuntimeClient:
-    """Calls a selected profile with a credential supplied for this request only."""
 
     def __init__(self, *, transport: Transport | None = None) -> None:
         self.transport = transport or self._http_transport
@@ -36,13 +35,6 @@ class ModelRuntimeClient:
 
     @staticmethod
     def _headers(profile: ModelProfile, credential: str | None) -> dict[str, str]:
-        """Use the shared transport header policy for profile probes/tests.
-
-        OpenCode Go requires a stable ``x-opencode-session`` on every request;
-        the shared helper attaches it from the request-scoped model config.
-        Keeping this path on the same helper also prevents local profiles from
-        accidentally receiving an Authorization header.
-        """
         return ai_client._completion_headers(
             credential or "",
             profile.api_mode,

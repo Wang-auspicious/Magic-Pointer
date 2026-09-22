@@ -1,15 +1,3 @@
-"""Per-interaction cost ledger (harness gap review L13).
-
-Every interaction produces one :class:`LedgerEntry`: token spend split into
-text/vision, per-stage latency, the evidence layer that answered, confidence,
-whether the visual escape hatch (look) fired, success, and egress event
-references. Entries persist as versioned JSON; end-to-end latency is derived
-from the started/ended timestamps and open entries (``ended_at_utc is None``)
-never participate in latency statistics.
-
-This module is pure Python with no UI, OCR, or platform dependencies; its
-only I/O is the JSON ledger file.
-"""
 
 from __future__ import annotations
 
@@ -48,23 +36,15 @@ _REQUIRED_ENTRY_KEYS = frozenset(
 
 
 class LedgerError(Exception):
-    """Base error for ledger misuse and persistence failures."""
+    pass
 
 
 class LedgerDuplicateError(LedgerError):
-    """The interaction_id was already recorded."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class LedgerEntry:
-    """One interaction's full cost and outcome bill.
-
-    Validation invariants:
-    - ``interaction_id`` is non-empty.
-    - token counts are non-negative.
-    - ``confidence`` is ``None`` or within 0..1.
-    - ``evidence_layer_hit`` is ``None`` or one of L0..L4.
-    """
 
     interaction_id: str
     started_at_utc: str
@@ -96,7 +76,6 @@ class LedgerEntry:
             )
 
     def to_public_dict(self) -> dict[str, Any]:
-        """Return the bounded GUI/CLI bill without exposing raw session events."""
         return {
             "interactionId": self.interaction_id,
             "startedAtUtc": self.started_at_utc,
@@ -118,12 +97,6 @@ class LedgerEntry:
 
 @dataclass(frozen=True, slots=True)
 class LedgerSummary:
-    """Aggregate view of all recorded interactions.
-
-    ``success_rate`` and ``look_ratio`` are ``None`` when there is nothing to
-    divide; ``latency_p50_ms``/``latency_p95_ms`` are ``None`` when no closed
-    entry has a computable end-to-end latency.
-    """
 
     total_interactions: int
     tokens_text_total: int
@@ -136,7 +109,6 @@ class LedgerSummary:
 
 
 class InteractionLedger:
-    """Thread-safe store of interaction bills with query, summary, JSON I/O."""
 
     def __init__(self) -> None:
         self._entries: dict[str, LedgerEntry] = {}
@@ -144,14 +116,12 @@ class InteractionLedger:
 
     @classmethod
     def from_session(cls, session: Any) -> "InteractionLedger":
-        """Project a ledger from the EventSession log; never writes another file."""
         ledger = cls()
         for entry in project_session(session):
             ledger.record(entry)
         return ledger
 
     def record(self, entry: LedgerEntry) -> None:
-        """Add ``entry``; rejects a duplicate ``interaction_id``."""
         with self._lock:
             if entry.interaction_id in self._entries:
                 raise LedgerDuplicateError(
@@ -160,7 +130,6 @@ class InteractionLedger:
             self._entries[entry.interaction_id] = entry
 
     def get(self, interaction_id: str) -> LedgerEntry:
-        """Return the entry; raises :class:`LedgerError` when unknown."""
         with self._lock:
             try:
                 return self._entries[interaction_id]
@@ -173,11 +142,6 @@ class InteractionLedger:
         succeeded: bool | None = None,
         min_tokens: int | None = None,
     ) -> list[LedgerEntry]:
-        """Return entries in insertion order matching all provided filters.
-
-        ``min_tokens`` compares against the text+vision token total. ``None``
-        filters are ignored.
-        """
         with self._lock:
             entries = list(self._entries.values())
         matched = []
@@ -192,7 +156,6 @@ class InteractionLedger:
         return matched
 
     def summarize(self) -> LedgerSummary:
-        """Aggregate all entries; see :class:`LedgerSummary` for honesty rules."""
         with self._lock:
             entries = list(self._entries.values())
         total = len(entries)
@@ -213,7 +176,6 @@ class InteractionLedger:
         )
 
     def save(self, path: str | Path) -> None:
-        """Write all entries as a versioned JSON file."""
         with self._lock:
             entries = list(self._entries.values())
         payload = {
@@ -224,12 +186,6 @@ class InteractionLedger:
         Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     def load(self, path: str | Path) -> list[LedgerEntry]:
-        """Adopt entries from a JSON ledger file.
-
-        The file must match the ledger schema; any malformed, wrong-version,
-        or invalid entry raises :class:`LedgerError`. Duplicate interaction
-        ids inside the file are rejected.
-        """
         try:
             raw = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -256,11 +212,6 @@ class InteractionLedger:
 
 
 def _e2e_ms(entry: LedgerEntry) -> float | None:
-    """Milliseconds between started and ended timestamps.
-
-    Returns ``None`` for open entries, unparseable timestamps, or a negative
-    interval (the data cannot be trusted; keep it out of the statistics).
-    """
     if entry.ended_at_utc is None:
         return None
     try:
@@ -295,7 +246,6 @@ def _usage_tokens(usage: Mapping[str, Any]) -> tuple[int, int]:
 
 
 def project_session(session: Any) -> tuple[LedgerEntry, ...]:
-    """Derive interaction bills from one verified EventSession event stream."""
     events = tuple(session.events)
     starts = [event for event in events if event.type == "interaction/start"]
     entries: list[LedgerEntry] = []
@@ -403,7 +353,6 @@ def project_session(session: Any) -> tuple[LedgerEntry, ...]:
 
 
 def _percentile(values: Iterable[float], p: float) -> float:
-    """Linear-interpolated percentile; requires a non-empty iterable."""
     ordered = sorted(values)
     if not ordered:
         raise ValueError("cannot compute percentile of empty sequence")
@@ -436,7 +385,6 @@ def _entry_to_dict(entry: LedgerEntry) -> dict[str, Any]:
 
 
 def _entry_from_dict(d: Mapping[str, Any]) -> LedgerEntry:
-    """Reconstruct an entry with strict schema validation (load)."""
     if not isinstance(d, dict):
         raise TypeError(f"entry is {type(d).__name__}, expected dict")
     missing = _REQUIRED_ENTRY_KEYS - d.keys()

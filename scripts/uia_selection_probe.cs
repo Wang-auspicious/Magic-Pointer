@@ -494,7 +494,7 @@ internal static class UiaSelectionProbe
         // sessions and cannot be compared across time):
         //
         //     window         FindAll    TreeWalker
-        //     cc-switch        329ms       372ms
+        //     runtime-switch        329ms       372ms
         //     clash-verge      318ms       316ms
         //     msedge           291ms       302ms
         //

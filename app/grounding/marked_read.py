@@ -1,39 +1,14 @@
-"""Did the structured layer read what the user actually marked?
-
-A non-empty string is not the same thing as an answer. On 2026-08-04 a stroke
-drawn across one line of a PowerShell console produced a UIA read whose content
-was ``C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`` — the
-container's accessible name. Because that string was non-empty, the pipeline
-recorded a successful structured read, switched off the pixel fallback, and told
-the user it could see which window they were pointing at but not what they had
-underlined. The pixels were on disk the whole time; OCR run against that same
-capture afterwards picked the underlined line out of 53 candidate blocks exactly.
-
-This module answers one narrow question so that the two bridges can agree on it:
-given what the structured layer returned, is it plausibly *the marked content*?
-Everything here is pure — no UIA, no files, no IPC — so the rule can be argued
-with in a test rather than on a live desktop.
-"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# An element taller than this fraction of the window is the surface the mark sits
-# on, not the thing that was marked — a chat transcript, a console buffer, a page.
 CONTAINER_WINDOW_HEIGHT_RATIO = 0.5
-# ...and it has to be substantially taller than the mark itself. A paragraph that
-# is a few lines taller than one underline is a perfectly ordinary read.
 CONTAINER_MARK_HEIGHT_RATIO = 6.0
 
 
 @dataclass(frozen=True)
 class MarkCoverage:
-    """Whether the structured read covers the mark, and why not when it does not.
-
-    ``reason`` is carried to the diagnostics page and the perception trace, so it
-    is a stable identifier rather than a sentence.
-    """
 
     covers: bool
     reason: str
@@ -72,7 +47,6 @@ def _window_height(window: dict | None) -> int:
 
 
 def _looks_like_an_executable_path(text: str) -> bool:
-    """A path to the program is the app telling us its own name, not content."""
     compact = text.strip().replace("\\", "/")
     if "\n" in compact or len(compact) > 260 or "/" not in compact:
         return False
@@ -92,14 +66,6 @@ def _is_identity(content: str, window: dict | None) -> bool:
 
 
 def rect_is_container(rect: object, *, window: dict | None = None, mark_bbox: object = None) -> bool:
-    """Is this rectangle the surface the mark sits on rather than the marked thing?
-
-    Shared by the coverage judgement and by gesture grounding, which must not
-    report "you selected this" about a rectangle covering the whole window just
-    because the stroke happened to pass through it. Height is the discriminator:
-    an underline is horizontal by nature, so what separates a line from its
-    container is how many rows it spans.
-    """
     box = _rect(rect)
     mark = _rect(mark_bbox)
     if box is None or mark is None:
@@ -121,22 +87,6 @@ def structured_read_covers_mark(
     mark_bbox: object = None,
     has_explicit_binding: bool | None = None,
 ) -> MarkCoverage:
-    """Judge a structured read against the region the user marked.
-
-    ``element_rects`` and ``mark_bbox`` are ``[x, y, w, h]`` in physical screen
-    pixels. Both are optional: adapters like Word COM and the DOM reader return
-    real text with no geometry, and refusing those would trade one wrong answer
-    for another. Geometry only ever *removes* confidence, never adds it.
-
-    ``has_explicit_binding`` is the other half of that trade, and it is opt-in:
-    a caller that knows whether the read named a *thing* (a path, a cell, a
-    range, a DOM node, a native selection) can say so, and a read that named
-    nothing is then not allowed to claim the mark merely for returning text.
-    Without geometry there is no evidence that the paragraph is the marked line
-    rather than the whole document, and calling that a hit is what switches the
-    pixel tier off. ``None`` keeps the previous behaviour, so callers with no
-    opinion are unaffected.
-    """
     if not str(content or "").strip():
         return MarkCoverage(False, "no_structured_text")
     if _is_identity(str(content), window):
@@ -146,15 +96,11 @@ def structured_read_covers_mark(
     rects = [rect for rect in (_rect(item) for item in list(element_rects or [])) if rect]
     if mark is None or not rects:
         if mark is not None and has_explicit_binding is False:
-            # There is a mark to answer about and nothing here says which part
-            # of it was answered, so this stays context, not a hit.
             return MarkCoverage(False, "unbound_text")
         return MarkCoverage(True, "structured_text")
 
     crossed = [rect for rect in rects if _intersects(rect, mark)]
     if not crossed:
-        # The stroke landed between elements. There is text on this window, but
-        # not the text this line was drawn through.
         return MarkCoverage(False, "mark_crossed_no_element")
 
     tallest = max(crossed, key=lambda rect: rect[3])

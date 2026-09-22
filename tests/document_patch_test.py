@@ -1,4 +1,3 @@
-"""DocumentPatch binds preview, authorization, write and verification."""
 
 from __future__ import annotations
 

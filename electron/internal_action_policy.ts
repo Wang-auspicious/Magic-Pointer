@@ -1,4 +1,3 @@
-const SHOPPING_LIST_TARGET_URI = 'magic-pointer://dashboard/shopping-list/default';
 
 interface FabricPlan {
   risk?: string;
@@ -44,17 +43,6 @@ function canAutoExecuteInternalProposal(
   parsed?: ParsedInternalAction | null,
   proposal?: InternalProposal | null,
 ): boolean {
-  const shoppingListAction = Boolean(
-    ['shopping_list_add', 'shopping_list_add_many'].includes(String(parsed?.intentKind || '')) &&
-    parsed?.autoExecuteProposalId &&
-    parsed.autoExecuteProposalId === proposal?.id &&
-    ['shopping_list_add', 'shopping_list_add_many'].includes(String(proposal?.action_type || '')) &&
-    parsed?.intentKind === proposal?.action_type &&
-    proposal?.confirmation_required === false &&
-    proposal?.target?.object_id === SHOPPING_LIST_TARGET_URI &&
-    proposal?.metadata?.trusted_local_intent === true &&
-    proposal?.metadata?.auto_execute === true,
-  );
   const targetPoint = proposal?.parameters?.target_point;
   const proposalPoint = proposal?.target?.point;
   const targetHwnd = proposal?.parameters?.target_hwnd;
@@ -110,7 +98,7 @@ function canAutoExecuteInternalProposal(
       String(fabricPlan?.provider || '').startsWith('local.')) &&
     /^[a-f0-9]{64}$/i.test(String(fabricPlan?.integrityToken || '')),
   );
-  return shoppingListAction || groundedPromptDelivery || fabricAction;
+  return groundedPromptDelivery || fabricAction;
 }
 
-export { SHOPPING_LIST_TARGET_URI, canAutoExecuteInternalProposal };
+export { canAutoExecuteInternalProposal };

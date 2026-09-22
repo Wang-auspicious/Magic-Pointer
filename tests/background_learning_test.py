@@ -1,4 +1,3 @@
-"""Production background-review launch and structured-output contracts."""
 
 from __future__ import annotations
 
@@ -127,9 +126,6 @@ def test_review_context_redacts_credentials_before_model_handoff(tmp_path: Path)
 
 
 def test_review_context_redacts_json_shaped_credentials(tmp_path: Path) -> None:
-    """Red-team probe: the digest is json.dumps-ed, so ``{"api_key": "..."}``
-    (with quotes between key and separator) used to bypass the assignment
-    regex entirely and leak the value to the background model."""
     import json
 
     from app.self_evolution.worker import _redact_review_text

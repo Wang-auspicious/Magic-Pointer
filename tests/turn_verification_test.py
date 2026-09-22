@@ -1,9 +1,3 @@
-"""turn 端验证门（Hermes verification_stop 的 MP 最小版，纯 policy）。
-
-社区调研 P0："结果不能靠模型一句完成了"。模型执行过写入类操作、又没有
-任何新鲜验证证据（通过的 verify_result 回执）就想以 completed 收尾时，
-第一次拦截并注入一次有界 nudge；第二次放行（防死循环）。纯读回合不拦。
-"""
 
 from __future__ import annotations
 
@@ -30,7 +24,6 @@ def test_write_without_evidence_nudges_once() -> None:
     gate.record_executed(effect=Effect.REVERSIBLE_WRITE, verified=False)
     nudge = should_nudge_before_completion(gate)
     assert nudge is not None and "验证" in nudge
-    # 第二次（nudged 之后）放行，防死循环
     gate.mark_nudged()
     assert should_nudge_before_completion(gate) is None
 
@@ -38,7 +31,7 @@ def test_write_without_evidence_nudges_once() -> None:
 def test_write_with_fresh_verification_passes() -> None:
     gate = VerificationGate()
     gate.record_executed(effect=Effect.REVERSIBLE_WRITE, verified=False)
-    gate.record_executed(effect=Effect.READ, verified=True)  # 后来的验证回执
+    gate.record_executed(effect=Effect.READ, verified=True)
     assert should_nudge_before_completion(gate) is None
 
 
@@ -52,7 +45,7 @@ def test_stronger_effects_also_gate() -> None:
 def test_failed_verification_is_not_evidence() -> None:
     gate = VerificationGate()
     gate.record_executed(effect=Effect.REVERSIBLE_WRITE, verified=False)
-    gate.record_executed(effect=Effect.READ, verified=False)  # 验证失败
+    gate.record_executed(effect=Effect.READ, verified=False)
     assert should_nudge_before_completion(gate) is not None
 
 
@@ -112,7 +105,6 @@ def test_type_text_matched_still_passes_the_gate() -> None:
     assert should_nudge_before_completion(gate) is None
 
 
-# ---- loop 端到端 ------------------------------------------------------------
 
 
 def test_loop_nudges_write_without_verification_then_completes() -> None:
@@ -147,15 +139,11 @@ def test_loop_nudges_write_without_verification_then_completes() -> None:
     ))
 
     backend = mod.ScriptedBackend(
-        # 第一轮：模型执行写入（无验证的写）
         [ToolCallArrived(call=ToolCall(id="c1", name="write_thing", arguments={})),
          TurnDone(usage=None, raw_text=None)],
-        # 第二轮：模型想收工 → 验证门拦截 → 注入 nudge
         [MessageDelta(text="写完了。"), TurnDone(usage=None, raw_text=None)],
-        # 第三轮：模型跑验证工具后收工
         [ToolCallArrived(call=ToolCall(id="c2", name="read_thing", arguments={})),
          TurnDone(usage=None, raw_text=None)],
-        # 第四轮：真收工
         [MessageDelta(text="已写入并读回验证一致。"), TurnDone(usage=None, raw_text=None)],
     )
     params = mod.make_params(
@@ -173,7 +161,6 @@ def test_loop_nudges_write_without_verification_then_completes() -> None:
     terminal = events[-1].terminal
     assert terminal.reason.value == "completed"
     assert "读回验证" in terminal.message
-    # nudge 注入后的那一轮模型请求必须看得见验证门文本
     third_round_text = " ".join(m.content or "" for m in backend.received[2][0])
     assert "验证门" in third_round_text
 
@@ -200,7 +187,7 @@ def test_loop_no_nudge_when_write_has_verify() -> None:
         input_schema=mod.EMPTY_SCHEMA,
         execute=lambda **kw: "written",
         effect=Effect.REVERSIBLE_WRITE,
-        verify_result=lambda value: None,  # 写入自带读回校验
+        verify_result=lambda value: None,
     ))
     backend = mod.ScriptedBackend(
         [ToolCallArrived(call=ToolCall(id="c1", name="write_verified", arguments={})),

@@ -1,12 +1,3 @@
-"""DSH 式权限预设：sandbox 模式 × 审批策略两个旋钮的预设捆绑。
-
-对照 deepseek-harness ``packages/interaction/permission-presets``：预设表把
-(``sandbox/mode``, ``approval/policy``) 两个独立旋钮捆成一个用户可切换的
-档位；``custom`` 是折叠态不匹配任何预设时的派生展示态，永远不是切换目标；
-``danger-full-access`` 带显式确认门。MP 的执行语义仍在
-:mod:`app.agent_runtime.permission_modes` 的效果表里——这一层只做预设↔效果
-档的映射，loop 照旧消费 ``PermissionMode``。
-"""
 
 from __future__ import annotations
 
@@ -40,7 +31,6 @@ CONFIRM_DESCRIPTION = (
 
 @dataclass(frozen=True)
 class PermissionPresetSpec:
-    """一个预设捆绑的 sandbox/approval 旋钮值与展示元数据。"""
 
     sandbox: str
     approval: str
@@ -50,10 +40,6 @@ class PermissionPresetSpec:
 
 
 PRESETS: dict[str, PermissionPresetSpec] = {
-    # Auto：sandbox 仍收在工作区内，但可逆写不再逐次发问——这是 Claude 里
-    # "Claude handles permission decisions" 的那一档，也是效果表里
-    # ACCEPT_REVERSIBLE 一直没被任何预设绑定的原因所在。它和
-    # danger-full-access 的区别正是「还在不在沙箱里」。
     "auto": PermissionPresetSpec(
         sandbox="workspace-write",
         approval="never",
@@ -87,10 +73,6 @@ PRESETS: dict[str, PermissionPresetSpec] = {
     ),
 }
 
-# 预设 → MP 效果表档位。plan 落 PLAN；Runtime 在 ExitPlanMode 批准前阻断写入。
-# read-only 落 SAFE（读直行、其余全问）；
-# workspace-write 落 DEFAULT（可逆写在环内、不可逆问）；danger-full-access
-# 落 BYPASS（购买仍问——那是 MP 自己的红线，不在 DSH 语义内）。
 _PRESET_MODES: dict[str, PermissionMode] = {
     "auto": PermissionMode.ACCEPT_REVERSIBLE,
     "plan": PermissionMode.PLAN,
@@ -101,21 +83,14 @@ _PRESET_MODES: dict[str, PermissionMode] = {
 
 
 def resolve_preset(name: str) -> PermissionPresetSpec:
-    """解析一个预设名；未知名（含 ``custom``）抛 ``KeyError``。"""
     return PRESETS[name]
 
 
 def mode_for_preset(name: str) -> PermissionMode:
-    """预设 → 效果表档位；``custom`` 与未知名不是切换目标。"""
     return _PRESET_MODES[name]
 
 
 def preset_select(current: str) -> dict:
-    """渲染层下拉的完整载荷：预设表全部选项 + 当前值。
-
-    ``current`` 可以是预设名或 ``custom``（后者会把 custom 追加进选项列表，
-    仅作当前态展示）。
-    """
     options = [
         {
             "value": name,

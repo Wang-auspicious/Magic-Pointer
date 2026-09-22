@@ -1,4 +1,3 @@
-"""OCR's native pools share the machine with the interactive desktop."""
 from __future__ import annotations
 
 

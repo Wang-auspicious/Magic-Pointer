@@ -1,11 +1,5 @@
 'use strict';
 
-// 一根条，三个界面
-// ---------------------------------------------------------------------------
-// 上一版工作室、随行窗各写各的 <form class="composer">，同一个产品里两根条
-// 两个样，而且工作室那根根本没绑提交。改成共用 composer.js 之后，唯一会
-// 悄悄失效的方式是「组件在，但页面没把它 link 进来」——就像 6c7e7c6 里那
-// 两个被用了却从来没 require 的模块。这份测试就钉这一条。
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -15,7 +9,6 @@ const R = path.join(__dirname, '..', 'electron', 'renderer');
 const read = (name) => fs.readFileSync(path.join(R, name), 'utf8');
 const composerSource = read('composer.ts');
 
-// --- 组件本身导得出来，接口没被改瘦 ---
 const Composer = require('../electron/renderer/composer.ts');
 assert.strictEqual(typeof Composer.create, 'function');
 assert.strictEqual(typeof Composer.safeThumb, 'function');
@@ -29,8 +22,6 @@ assert.strictEqual(typeof Composer.attachmentSubmissionSnapshot, 'function');
 assert.strictEqual(typeof Composer.pendingReadsThrough, 'function');
 assert.strictEqual(typeof Composer.remainingAttachmentEntries, 'function');
 
-// 运行中仍是同一根可编辑输入条：有字是 steer，留空才是 stop；
-// 空闲态把文本与附件作为同一份 submit payload 交给外层。
 {
   const attachment = { name: 'notes.txt', text: 'context' };
   assert.deepStrictEqual(
@@ -47,7 +38,6 @@ assert.strictEqual(typeof Composer.remainingAttachmentEntries, 'function');
   );
 }
 
-// 回合结束恢复输入焦点，但不能把用户正在另一个输入框里打的字抢走。
 {
   const composerInput = { tagName: 'TEXTAREA' };
   assert.strictEqual(Composer.shouldRestoreFocus({ tagName: 'INPUT' }, composerInput), false);
@@ -66,7 +56,6 @@ assert.match(composerSource, /input\.placeholder = next === 'running' \? '插一
 assert.match(composerSource, /input\.value\.trim\(\) \? '插话' : '停止'/,
   'running submit affordance must distinguish steer from empty stop');
 
-// 图片维持 data URL；这组文本附件走 readAsText，且 200 KiB 是明确硬边界。
 for (const ext of ['txt', 'md', 'log', 'csv', 'json', 'py', 'ts', 'js']) {
   assert.strictEqual(Composer.isTextAttachmentName(`notes.${ext}`), true, `.${ext} 应作为文本附件`);
 }
@@ -89,8 +78,6 @@ assert.match(composerSource, /attachmentEntries = remainingAttachmentEntries\(/,
 assert.match(composerSource, /steerGate\.tryEnter\(\)/,
   'in-flight steer must be guarded before calling the durable inbox');
 
-// 附件提交以点击发送时的 cutoff 为界；晚到附件留给下一稿，成功后只移除
-// 本次 snapshot。pending FileReader 也只等待 cutoff 以内的读取。
 {
   const early = { id: 1, item: { name: 'early.txt', text: 'a' } };
   const late = { id: 2, item: { name: 'late.txt', text: 'b' } };
@@ -104,7 +91,6 @@ assert.match(composerSource, /steerGate\.tryEnter\(\)/,
   );
 }
 
-// 同一时刻只能有一个 steer/stop 在途；release 后才允许重试。
 {
   const gate = Composer.createInFlightGate();
   assert.strictEqual(gate.tryEnter(), true);
@@ -116,25 +102,19 @@ assert.match(composerSource, /steerGate\.tryEnter\(\)/,
   gate.leave();
 }
 
-// 附件缩略图那道闸：和卡片里 safeSrc 同一条规矩。
-// 放行一个 javascript: 就等于让别人在渲染进程里执行脚本。
 assert.strictEqual(Composer.safeThumb('data:image/png;base64,AAA'), 'data:image/png;base64,AAA');
 assert.strictEqual(Composer.safeThumb('C:\\Users\\me\\a.png'), 'file:///C:/Users/me/a.png');
 assert.strictEqual(Composer.safeThumb('javascript:alert(1)'), '');
 assert.strictEqual(Composer.safeThumb('http://evil.example/a.png'), '');
 assert.strictEqual(Composer.safeThumb('data:text/html,<script>'), '');
 
-// 没有语音能力就不画麦克风。可见但点不动的按钮比没有按钮更坏。
 assert.match(composerSource, /const mic = onVoice\s*\?/,
   'Composer 必须按 onVoice 能力条件创建麦克风');
 assert.match(composerSource, /mic\.addEventListener\('click'/,
   '传入 onVoice 后麦克风必须绑定真实点击回调');
 
-// --- 三个界面确实把该 link 的都 link 了 ---
-// Studio 使用固定 Oreo 工作区输入面；Companion 继续复用 composer.js；
-// Stage 使用独立的固定 Stage Composer。
 for (const [page, needs] of Object.entries({
-  'studio.html': ['claude_tokens.css', 'claude_shell.css', 'claude_chat.css', 'card_render.js', 'cards.js', 'live_cards.js'],
+  'studio.html': ['theme_tokens.css', 'studio_layout.css', 'chat_styles.css', 'card_render.js', 'cards.js', 'live_cards.js'],
   'companion.html': ['composer.js', 'composer.css', 'beam.css', 'card_render.js'],
   'stage.html': ['beam.css', 'card_render.js'],
 })) {
@@ -144,21 +124,18 @@ for (const [page, needs] of Object.entries({
   }
 }
 
-// --- 工作室只有一个输入面：稳定行为骨架 + Oreo/Claude 产品外观 ---
 {
   const html = read('studio.html');
   assert.ok(!/hero-composer/.test(html), 'Studio 不得保留第二根营销 Hero 输入条');
-  assert.ok(/<form class="[^"]*dshw-input-form[^"]*"/.test(html), 'Studio 必须只有一张真实输入卡');
-  assert.ok(/class="dshw-primary"/.test(html), '发送键必须是紧凑主动作');
+  assert.ok(/<form class="[^"]*mpw-input-form[^"]*"/.test(html), 'Studio 必须只有一张真实输入卡');
+  assert.ok(/class="mpw-primary"/.test(html), '发送键必须是紧凑主动作');
   assert.ok(!html.includes('composer.js'), 'studio 不该再 link 共用 composer.js');
 }
-// 随行窗没有手写条残留（它走共用 composer.js）
 assert.ok(
   !/<form class="composer"/.test(read('companion.html')) && !/<form class="hero-composer"/.test(read('companion.html')),
   'companion 里还留着手写的输入条',
 );
 
-// 挂载点必须在，否则 mountComposer 静默什么也不做
 assert.ok(read('companion.html').includes('id="cp-composer"'));
 const companionSource = read('companion.ts');
 assert.ok(!/onSubmit:\s*\(\)\s*=>\s*\{\}/.test(companionSource),
@@ -213,17 +190,11 @@ async function verifyAcknowledgedCallbacks() {
 assert.match(companionSource, /if \(!cpAgentSessionId\) return false;/,
   'Companion 在 durable session 就绪前必须明确拒绝而不是 no-op');
 
-// --- 荧光笔不能靠 <mark> 的 UA 底色 ---
-// UA 默认 background-color: mark（刺眼纯黄）+ color: marktext（强制黑字）。
-// 不显式清掉，暖色盘里那支笔一辈子看不见，深色模式下还会黑字压深底。
 const beam = read('beam.css');
 const mhi = beam.slice(beam.indexOf('.mhi {'), beam.indexOf('@keyframes mhi-sweep'));
 assert.ok(/background-color:\s*transparent/.test(mhi), '.mhi 没清掉 <mark> 的 UA 底色');
 assert.ok(/color:\s*inherit/.test(mhi), '.mhi 没清掉 <mark> 的 UA 字色');
 
-// --- 工具界面那一圈必须是真 border ---
-// inset box-shadow 画在自己的背景层上，而 iframe 是不透明替换元素，会整片
-// 盖住它——只剩四个角上两道小刺，别人家的界面就跟我们自己的卡糊成一片了。
 const slot = beam.slice(beam.indexOf('.mcard-slot {'), beam.indexOf('.mslot-top {'));
 assert.ok(/border:\s*1px solid/.test(slot), '.mcard-slot 的框被 iframe 盖掉了');
 assert.ok(!/box-shadow:\s*inset/.test(slot), '.mcard-slot 又用回了 inset 阴影');

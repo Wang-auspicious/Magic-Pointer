@@ -1,10 +1,3 @@
-"""Recoverable candidate mutations for background learning.
-
-Adapted from HermesAgent's background review and learning mutations (MIT),
-with a stricter boundary for Magic Pointer: background work may only propose;
-only an explicit user approval may atomically write user-owned learning,
-skills, or plugin files. Core source is never a legal target.
-"""
 
 from __future__ import annotations
 
@@ -40,7 +33,6 @@ _PROCESS_STORE_LOCKS_GUARD = threading.Lock()
 
 @contextmanager
 def _exclusive_store_lock(path: Path):
-    """Serialize candidate mutations across threads and local processes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(path.resolve())
     with _PROCESS_STORE_LOCKS_GUARD:
@@ -79,11 +71,11 @@ def _serialized_mutation(method):
 
 
 class CandidatePermissionError(PermissionError):
-    """A proposal or decision crossed the user-owned learning boundary."""
+    pass
 
 
 class CandidateConflictError(RuntimeError):
-    """The target changed since review, so the candidate is stale."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +121,6 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 class LearningCandidateStore:
-    """On-disk pending/applied/rejected learning changes with rollback."""
 
     def __init__(self, user_root: Path | str) -> None:
         self.user_root = Path(user_root).resolve()
@@ -174,9 +165,6 @@ class LearningCandidateStore:
             existing = self.get(candidate_id)
             if existing.status == "pending":
                 return existing
-            # A decided candidate is immutable audit history.  A later review
-            # may make the same proposal again, but it receives a fresh id
-            # instead of rewriting rejected/applied/rolled-back evidence.
             while existing_path.exists():
                 candidate_id = hashlib.sha256(
                     f"{identity}\0{uuid.uuid4().hex}".encode()

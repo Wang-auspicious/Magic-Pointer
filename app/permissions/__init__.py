@@ -1,8 +1,3 @@
-"""Perception privacy infrastructure: app blacklist, sensitive redaction,
-offline (no-egress) mode, and the per-app capability matrix (review L10/L14).
-
-Pure Python, stdlib-only. No I/O, no Electron coupling, no UI automation.
-"""
 
 from .app_blacklist import AppBlacklist, BlacklistDecision, BlacklistRule
 from .capability_matrix import (

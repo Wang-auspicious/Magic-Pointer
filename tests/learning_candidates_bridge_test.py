@@ -1,4 +1,3 @@
-"""User-controlled API for reviewing background learning candidates."""
 
 from __future__ import annotations
 

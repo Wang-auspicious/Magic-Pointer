@@ -1,13 +1,3 @@
-"""Thread-safe cancellation infrastructure (harness gap review L8).
-
-The user's pointer leaving or clicking elsewhere must abort every in-flight
-bridge, OCR and model request immediately. :class:`CancellationToken` is the
-unit of cancellation; :class:`CancellationScope` ties a token to a context
-(``with`` block); :class:`CancellationRegistry` tracks all in-flight tokens
-so ``cancel_all_in_flight()`` can tear them down from a single call.
-
-Stdlib ``threading`` only; no third-party dependencies.
-"""
 
 from __future__ import annotations
 
@@ -15,14 +5,10 @@ import threading
 
 
 class CancelledError(RuntimeError):
-    """Raised when a cancelled operation is asked to continue."""
+    pass
 
 
 class CancellationToken:
-    """Thread-safe cancellation flag.
-
-    ``cancel()`` is idempotent; once cancelled the token stays cancelled.
-    """
 
     __slots__ = ("_cancelled", "_lock")
 
@@ -44,12 +30,6 @@ class CancellationToken:
 
 
 class CancellationRegistry:
-    """Tracks in-flight cancellation tokens.
-
-    ``cancel_all()`` cancels every currently registered token but keeps the
-    registry intact so tokens can be re-registered. ``clear()`` empties the
-    registry without cancelling anything. All operations are thread-safe.
-    """
 
     __slots__ = ("_lock", "_tokens")
 
@@ -84,22 +64,14 @@ _registry = CancellationRegistry()
 
 
 def get_registry() -> CancellationRegistry:
-    """Return the module-wide singleton registry."""
     return _registry
 
 
 def cancel_all_in_flight() -> None:
-    """Cancel every token currently registered; keep the registry intact."""
     get_registry().cancel_all()
 
 
 class CancellationScope:
-    """Context manager owning a cancellation token.
-
-    ``__enter__`` creates and registers a fresh token; ``__exit__`` always
-    unregisters it and detaches the scope from its parent. ``cancel_all()``
-    cancels this scope's token and only the scopes currently nested inside it.
-    """
 
     __slots__ = ("_children", "_parent", "_registry", "token")
 

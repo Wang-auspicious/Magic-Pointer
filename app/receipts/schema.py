@@ -1,8 +1,3 @@
-"""Receipt value objects.
-
-A Receipt is the stop proof. The model saying it is done is not enough;
-the loop issues one of these before it yields LoopStopped.
-"""
 
 from __future__ import annotations
 
@@ -20,7 +15,7 @@ class ReceiptStatus(enum.StrEnum):
 
 
 class ReceiptProjectionError(RuntimeError):
-    """The event stream cannot be projected into a Receipt without inventing state."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)

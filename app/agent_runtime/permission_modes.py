@@ -1,12 +1,3 @@
-"""Permission modes (CC permission mode pattern).
-
-CC gates every tool call through a permission mode (default / acceptEdits /
-plan / bypassPermissions) plus per-tool permission rules. The loop already
-enforces ``allowed_effects``; this module adds the mode layer: each mode maps
-an effect class to allow / ask / deny. Durable local writes enter the
-harness-owned approval queue; external effects retain their action-proposal
-contracts. The model can never self-confirm.
-"""
 
 from __future__ import annotations
 
@@ -34,12 +25,6 @@ class PermissionDecision(enum.StrEnum):
     DENY = "deny"
 
 
-# Effect class -> (default, plan, accept_reversible, safe, bypass)
-# DEFAULT: the review-confirmed target — reads direct, machine-verifiable
-# reversible writes in-loop, everything else a proposal (the model can never
-# self-confirm; the confirm card is harness-owned).
-# SAFE: the conservative stepping stone — reads direct, everything else
-# propose/confirm. Used while the guard chain awaits real-machine verification.
 _MODE_TABLE: dict[PermissionMode, dict[Effect, PermissionDecision]] = {
     PermissionMode.DEFAULT: {
         Effect.READ: PermissionDecision.ALLOW,
@@ -102,10 +87,6 @@ class PermissionDecisionResult:
         if self.decision is PermissionDecision.ALLOW:
             return ""
         if self.decision is PermissionDecision.ASK:
-            # Hermes/Codex plan-mode split: grantable local writes may offer
-            # the quick user-grant channel; external sends, destructive and
-            # purchase actions are script-level changes — only a plan
-            # proposal (harness-owned confirm card) can ever run them.
             from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
 
             if self.effect in GRANTABLE_EFFECTS:
@@ -161,7 +142,6 @@ def decide_effect(
     mode: PermissionMode | str,
     effect: Effect,
 ) -> PermissionDecision:
-    """One effect class through one mode (never allows more than the mode)."""
     resolved = PermissionMode(mode)
     table = _MODE_TABLE[resolved]
     return table.get(effect, PermissionDecision.ASK)

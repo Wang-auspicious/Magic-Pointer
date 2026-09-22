@@ -23,11 +23,6 @@ def _profile(*, mode: str = "chat-completions", base_url: str = "https://opencod
 
 
 def test_profile_runtime_uses_the_profile_headers(monkeypatch) -> None:
-    """一个 profile 一条头部路径。选中哪个模型，文字和图像就走哪个。
-
-    这个测试以前叫「text and vision 共用头部」，那时候还有 `probe_vision` 这条
-    单独的 1x1 图像探针；那套文字/视觉两分的代码已经取消。
-    """
     calls: list[tuple[str, str, str]] = []
 
     def headers(api_key: str, api_mode: str, *, base_url: str | None = None):

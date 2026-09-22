@@ -1,10 +1,5 @@
 'use strict';
 
-// 诊断页要能替代"手翻 electron.log"。
-//
-// 2026-08-04 那次排查完全靠肉眼对时间戳，而所有数字其实早就在打点了——只是
-// 只写进了日志文件。这里钉两件事：时间线要准，而且**不能**把用户屏幕上的内容
-// 变成第二份留存。
 
 const assert = require('assert');
 const { MAX_PHASES_PER_SESSION, SessionTimeline } = require('../electron/session_timeline');
@@ -14,7 +9,6 @@ function fakeClock(start = 1000) {
   return { now: () => now, advance: (ms) => { now += ms; } };
 }
 
-// 一次会话的相位按顺序记下，总耗时从激活算到结束（用户关心的是从手势到答案）。
 {
   const clock = fakeClock();
   const timeline = new SessionTimeline({ now: clock.now });
@@ -30,13 +24,11 @@ function fakeClock(start = 1000) {
   assert.strictEqual(session.reason, 'wiggle');
   assert.strictEqual(session.totalMs, 13633);
   assert.strictEqual(session.tier, 'L1');
-  // 这一行就是当时需要一眼看到的东西。
   const read = session.headline.find((item) => item.phase === 'structured_read');
   assert.strictEqual(read.ms, 12873);
   assert.strictEqual(read.label, '读取结构');
 }
 
-// 最新的在最前面——排查的总是刚发生的那次。
 {
   const timeline = new SessionTimeline();
   timeline.begin('old');
@@ -44,7 +36,6 @@ function fakeClock(start = 1000) {
   assert.deepStrictEqual(timeline.snapshot().map((item) => item.id), ['new', 'old']);
 }
 
-// 有界：一个会越长越大的诊断本身就成了问题。
 {
   const timeline = new SessionTimeline({ maxSessions: 3 });
   for (let index = 0; index < 10; index += 1) timeline.begin(`session-${index}`);
@@ -58,14 +49,12 @@ function fakeClock(start = 1000) {
   assert.strictEqual(timeline.snapshot()[0].phases.length, MAX_PHASES_PER_SESSION);
 }
 
-// 未结束的会话总耗时是 null，不是 0——"还在跑"和"零毫秒完成"不是一回事。
 {
   const timeline = new SessionTimeline();
   timeline.begin('running');
   assert.strictEqual(timeline.snapshot()[0].totalMs, null);
 }
 
-// 相同 token 重复 begin 不制造第二条记录。
 {
   const timeline = new SessionTimeline();
   timeline.begin('same', { reason: 'wiggle' });
@@ -74,7 +63,6 @@ function fakeClock(start = 1000) {
   assert.strictEqual(timeline.snapshot()[0].reason, 'wiggle');
 }
 
-// 未知 token 的相位被丢掉，而不是凭空造一条会话。
 {
   const timeline = new SessionTimeline();
   timeline.phase('never-began', { phase: 'total', ms: 100 });
@@ -82,7 +70,6 @@ function fakeClock(start = 1000) {
   assert.deepStrictEqual(timeline.snapshot(), []);
 }
 
-// 最关键的一条：时间线里不能出现屏幕内容。只有时长、脚本名、相位名。
 {
   const timeline = new SessionTimeline();
   timeline.begin('privacy', { reason: 'wiggle' });
@@ -99,7 +86,6 @@ function fakeClock(start = 1000) {
   }
 }
 
-// 失败原因必须是人话，而不是桥的错误码——这页是给人看的。
 {
   const timeline = new SessionTimeline();
   timeline.begin('failed');
@@ -109,7 +95,6 @@ function fakeClock(start = 1000) {
   assert(!/^[a-z]+_[a-z_]+$/.test(session.error), '错误码原样进了诊断页');
 }
 
-// 畸形输入不产生假数据。
 {
   const timeline = new SessionTimeline();
   assert.strictEqual(timeline.begin(''), null);
@@ -123,8 +108,6 @@ function fakeClock(start = 1000) {
 
 console.log('session_timeline_test: all assertions passed');
 
-// --- Wiring ---------------------------------------------------------------
-// The timeline is only worth having if it is actually fed and actually shown.
 {
   const fs = require('fs');
   const path = require('path');
@@ -132,15 +115,11 @@ console.log('session_timeline_test: all assertions passed');
   const main = fs.readFileSync(path.join(root, 'electron', 'main.ts'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
 
-  // Fed: activation opens a session, bridges report phases into it, outcomes close it.
   assert(main.includes("sessionTimeline.begin(entry.token, { reason: String(reason || '') })"), 'sessions never begin');
   assert(main.includes('timelineToken: entry.token'), 'the snapshot bridge does not report phases');
   assert(main.includes('timelineToken: selectionSessionToken'), 'the command bridge does not report phases');
   assert(main.includes('sessionTimeline.finish(payload.selectionSessionToken'), 'sessions never finish');
 
-  // Shown: exposed over IPC. The renderer surface that consumed it was the
-  // legacy dashboard; the diagnostics view has not been rebuilt in the studio
-  // shell yet, so only the main-process half is pinned here.
   assert(main.includes("ipcMain.handle('dashboard:session-timeline'"), 'no IPC handler');
   assert(preload.includes("sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline')"), 'not exposed to the renderer');
 }
