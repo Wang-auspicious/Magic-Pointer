@@ -224,7 +224,7 @@ export function registerCodingTools(registry: ToolRegistry, workspace: string, s
   });
   add('Write', 'Write a workspace text file. Read existing files first. Returns actual byte readback.', schema({ path: string, content: string }, ['path', 'content']), args => space.write(space.resolve(args.path), str(args.content)), 'reversible_write');
   const editSchema = schema({ old_string: string, new_string: string, replace_all: boolean }, ['old_string', 'new_string']);
-  add('Edit', 'Replace unique text in a recently read workspace file. Batch edits are applied together.', schema({ path: string, old_string: string, new_string: string, replace_all: boolean, edits: { type: 'array', items: editSchema } }, ['path']), async args => {
+  add('Edit', 'Replace unique text in a recently read workspace file. Preserves untouched text and the file\'s LF or CRLF line endings; use for precise local edits instead of a shell rewrite. Batch edits are applied together.', schema({ path: string, old_string: string, new_string: string, replace_all: boolean, edits: { type: 'array', items: editSchema } }, ['path']), async args => {
     const file = space.resolve(args.path); await space.requireFresh(file); const original = await readFile(file, 'utf8'), raw = original.replace(/\r\n/g, '\n');
     const edits = Array.isArray(args.edits) ? args.edits.map(asObject) : [args]; const replacements: Replacement[] = [];
     for (const edit of edits) {
@@ -268,7 +268,7 @@ export function registerCodingTools(registry: ToolRegistry, workspace: string, s
     }
     return { matches: hits.slice(skip, skip + limit), nextOffset: hits.length >= skip + limit ? skip + limit : null };
   }, 'read', { timeout_ms: 30000 });
-  add('Bash', 'Run a workspace shell command; use background=true for independent long processes, then BashRead for output.', schema({ command: string, cwd: string, timeout_s: { type: 'number' }, background: boolean }, ['command']), async (args, context) => {
+  add('Bash', 'Run a workspace shell command. On Windows this is cmd.exe syntax, not Unix Bash. Use Read/Edit/Patch for file reads and local edits; use background=true for independent long processes, then BashRead for output.', schema({ command: string, cwd: string, timeout_s: { type: 'number' }, background: boolean }, ['command']), async (args, context) => {
     const command = str(args.command).trim(), cwd = args.cwd && args.cwd !== '.' ? space.resolve(args.cwd) : shellCwd;
     if (!command) throw new Error('command is required');
     if (args.background) return launchBackgroundCommand(command, cwd, session, space.root);

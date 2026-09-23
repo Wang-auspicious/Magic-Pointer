@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -8,6 +8,86 @@ type Fields = Record<string, string>;
 export interface Measurement {
   ok: boolean; error: string; wallMs: number; totalMs: number | null; bootMs: number | null;
   turns: number; ttftMs: number[]; toolMs: number[]; toolNames: string[]; usedBackend: string;
+  answer?: string; hasPendingWork?: boolean; sessionId?: string; cache?: CacheUsage;
+  modelUsage?: Record<string, number>;
+}
+
+export interface BenchmarkExpectation {
+  answerIncludes?: string[];
+  files?: Array<{ path: string; exactText: string }>;
+}
+
+export interface CacheUsage {
+  requests: number; reportedRequests: number; inputTokens: number;
+  cacheReadTokens: number; cacheWriteTokens: number; hitRate: number | null;
+  samples: Array<{ inputTokens: number | null; cacheReadTokens: number | null;
+    cacheWriteTokens: number | null; hitRate: number | null }>;
+}
+
+export async function verifyBenchmarkOutcome(outcome: Measurement, expected: BenchmarkExpectation, workspace: string): Promise<{ passed: boolean; failures: string[] }> {
+  const failures: string[] = [];
+  if (!outcome.ok) failures.push(`runtime_failed:${outcome.error || 'no_completed_answer'}`);
+  if (outcome.hasPendingWork) failures.push('task_still_pending');
+  const answerChecks = expected.answerIncludes || [], fileChecks = expected.files || [];
+  if (!answerChecks.length && !fileChecks.length) failures.push('no_result_conditions');
+  for (const text of answerChecks) if (!String(outcome.answer || '').includes(text)) failures.push(`answer_missing:${text}`);
+  for (const file of fileChecks) {
+    const target = path.resolve(workspace, file.path), relative = path.relative(workspace, target);
+    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+      failures.push(`file_outside_workspace:${file.path}`);
+      continue;
+    }
+    const actual = await readFile(target, 'utf8').catch(() => null);
+    if (actual !== file.exactText) failures.push(`file_mismatch:${file.path}`);
+  }
+  return { passed: failures.length === 0, failures };
+}
+
+function tokenCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+}
+
+export function aggregateCacheUsage(usages: Array<Record<string, unknown>>): CacheUsage {
+  const result: CacheUsage = { requests: usages.length, reportedRequests: 0, inputTokens: 0,
+    cacheReadTokens: 0, cacheWriteTokens: 0, hitRate: null, samples: [] };
+  for (const usage of usages) {
+    const details = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
+      ? usage.prompt_tokens_details as Record<string, unknown>
+      : usage.input_tokens_details && typeof usage.input_tokens_details === 'object'
+        ? usage.input_tokens_details as Record<string, unknown> : {};
+    const read = tokenCount(usage.cache_read_input_tokens) ?? tokenCount(usage.prompt_cache_hit_tokens)
+      ?? tokenCount(usage.cacheReadTokens) ?? tokenCount(details.cached_tokens);
+    const write = tokenCount(usage.cache_creation_input_tokens) ?? tokenCount(usage.cacheWriteTokens)
+      ?? tokenCount(details.cache_write_tokens);
+    const prompt = tokenCount(usage.prompt_tokens);
+    const uncached = tokenCount(usage.input_tokens);
+    const input = prompt ?? (uncached === null ? null : uncached + (tokenCount(usage.cache_read_input_tokens) ?? 0)
+      + (tokenCount(usage.cache_creation_input_tokens) ?? 0));
+    result.samples.push({ inputTokens: input, cacheReadTokens: read, cacheWriteTokens: write,
+      hitRate: read === null || input === null || input === 0 ? null : read / input });
+    if (read === null || input === null || input === 0) continue;
+    result.reportedRequests++;
+    result.inputTokens += input;
+    result.cacheReadTokens += read;
+    result.cacheWriteTokens += write ?? 0;
+  }
+  if (result.inputTokens > 0) result.hitRate = result.cacheReadTokens / result.inputTokens;
+  return result;
+}
+
+async function sessionCacheUsage(userDataDir: string, sessionId: string): Promise<CacheUsage> {
+  const file = path.join(userDataDir, 'agent-sessions', `${sessionId}.jsonl`);
+  const raw = await readFile(file, 'utf8').catch(() => '');
+  const usages: Array<Record<string, unknown>> = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) continue;
+    try {
+      const event = JSON.parse(line) as { type?: string; data?: { usage?: unknown } };
+      if (event.type === 'model/response' && event.data?.usage && typeof event.data.usage === 'object')
+        usages.push(event.data.usage as Record<string, unknown>);
+    } catch { /* an incomplete final line is not a reported model request */ }
+  }
+  return aggregateCacheUsage(usages);
 }
 
 export function phases(stderr: string): Fields[] {
@@ -36,7 +116,7 @@ export function reducePhases(rows: Fields[], outcome: Measurement): void {
   }
 }
 
-export async function runOnce(task: string, options: { root: string; userDataDir: string; preset: string; timeoutMs: number }): Promise<Measurement> {
+export async function runOnce(task: string, options: { root: string; userDataDir: string; preset: string; timeoutMs: number; workspaceRoot?: string }): Promise<Measurement> {
   const worker = path.join(options.root, 'build', 'electron', 'runtime', 'worker.js');
   if (!existsSync(worker)) throw new Error('Compiled worker missing; run npm run build:electron first.');
   const started = performance.now(), sessionId = `measure-runtime-${randomUUID()}`;
@@ -48,18 +128,25 @@ export async function runOnce(task: string, options: { root: string; userDataDir
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', error => { failure = error.message; }); child.stdin.on('error', error => { failure ||= error.message; });
-    child.on('close', code => {
+    child.on('close', async code => {
       clearTimeout(timer);
-      const outcome: Measurement = { ok: false, error: failure, wallMs: performance.now() - started, totalMs: null, bootMs: null, turns: 0, ttftMs: [], toolMs: [], toolNames: [], usedBackend: '' };
+      const outcome: Measurement = { ok: false, error: failure, wallMs: performance.now() - started, totalMs: null, bootMs: null, turns: 0, ttftMs: [], toolMs: [], toolNames: [], usedBackend: '', sessionId };
       try {
         const result = JSON.parse(stdout.trim().split(/\r?\n/).at(-1) || '{}');
         outcome.ok = code === 0 && !failure && result.ok === true && Boolean(String(result.answer || '').trim());
+        outcome.answer = String(result.answer || '');
+        outcome.hasPendingWork = result.hasPendingWork === true;
+        if (typeof result.agentSessionId === 'string' && result.agentSessionId) outcome.sessionId = result.agentSessionId;
+        if (result.modelUsage && typeof result.modelUsage === 'object') outcome.modelUsage = result.modelUsage;
         outcome.usedBackend = String(result.usedBackend || '');
         if (!outcome.ok) outcome.error ||= String(result.error || `No successful answer (exit ${code})`).slice(0, 500);
       } catch (error) { outcome.error ||= `Invalid worker response: ${(error as Error).message}`; }
-      reducePhases(phases(stderr), outcome); resolve(outcome);
+      reducePhases(phases(stderr), outcome);
+      outcome.cache = await sessionCacheUsage(options.userDataDir, outcome.sessionId || sessionId);
+      resolve(outcome);
     });
-    child.stdin.end(JSON.stringify({ root: options.root, question: task, turns: [], object: {}, permissionPreset: options.preset, effort: 'high', conversationId: sessionId, agentSessionId: sessionId }));
+    child.stdin.end(JSON.stringify({ root: options.root, ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+      question: task, turns: [], object: {}, permissionPreset: options.preset, effort: 'high', conversationId: sessionId, agentSessionId: sessionId }));
   });
 }
 
