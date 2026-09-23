@@ -70,7 +70,9 @@ async function main() {
   const config = resolveModelConfig(null, repository, userDataDir);
   const packageVersion = String(JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).version);
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim();
-  const report = { schemaVersion: 1, createdAt: new Date().toISOString(), repository, commit, packageVersion,
+  const worktreeDirty = Boolean(execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'],
+    { cwd: repository, encoding: 'utf8' }).trim());
+  const report = { schemaVersion: 1, createdAt: new Date().toISOString(), repository, commit, worktreeDirty, packageVersion,
     model: { id: config.model, apiMode: config.apiMode,
       providerHost: config.apiMode === 'local' ? 'local' : config.baseUrl ? new URL(config.baseUrl).host : 'api.openai.com' },
     userDataDir, cases: [] as Array<Record<string, unknown>> };
