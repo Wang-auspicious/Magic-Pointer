@@ -16,6 +16,9 @@ async function main() {
   assert.throws(() => parseComputerResponse("Action: click(start_box=__import__('os').system('bad'))"), /literal/);
   assert.deepEqual(parseComputerResponse('Action: click(start_box=(50, 25))', [100, 100])[0].start, [0.5, 0.25]);
   const terminal = extractTerminalEvidence('PS C:\\a> first\nError old\nexit code: 8\nPS C:\\a> second\nError current', 'uia:text'); assert.equal(terminal.command, 'second'); assert.equal(terminal.exitCode, null);
+  const paddedTerminal = extractTerminalEvidence('PS C:\\accept> command --token=private                 \nError current               ', 'uia:terminal_buffer');
+  assert.equal(paddedTerminal.command, 'command --token=[redacted]');
+  assert.equal(paddedTerminal.anchor.text, 'Error current');
   const root = await mkdtemp(join(tmpdir(), 'mp-frame-'));
   let complete: ((value: any) => void) | undefined, count = 0;
   const order: string[] = [];

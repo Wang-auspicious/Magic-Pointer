@@ -62,10 +62,15 @@ const interrupted = projectSubagentTasks([{ trajectory: [
     result: '[subagent id=child-stop status=user_interrupt steps=2]\nStopped',
   },
 ] }], []);
-assert.strictEqual(interrupted.find((task: any) => task.id === 'child-budget')?.status, 'failed',
-  'an exhausted child must never be presented as completed');
-assert.strictEqual(interrupted.find((task: any) => task.id === 'child-stop')?.status, 'stopped',
-  'an interrupted child must retain its stopped state');
+assert.strictEqual(interrupted.find((task: any) => task.id === 'child-budget')?.status, 'budget_exhausted',
+  'an exhausted child must retain its actual terminal reason');
+assert.strictEqual(interrupted.find((task: any) => task.id === 'child-stop')?.status, 'user_interrupt',
+  'an interrupted child must retain its actual terminal reason');
+
+const unsettled = projectSubagentTasks([], ['partial', 'needs_verification', 'stalled', 'provider_unavailable', 'unknown_future_state']
+  .map(status => ({ id: status, parentCallId: status, status })));
+for (const status of ['partial', 'needs_verification', 'stalled', 'provider_unavailable', 'unknown_future_state'])
+  assert.strictEqual(unsettled.find((task: any) => task.id === status)?.status, status);
 
 assert.strictEqual(activeSubagentParentCallId([
   { phase: 'tool_call', fields: { id: 'read-1', name: 'Read' } },
@@ -84,3 +89,9 @@ assert.equal(restored.length, 1);
 assert.equal(restored[0].id, 'persisted-child');
 assert.equal(restored[0].reasoning, 'Checked source');
 assert.equal(restored[0].answer, 'Found the cause');
+
+const crashed = projectSubagentTasks([], [{ id: 'crashed-child', parentCallId: 'crashed-parent', status: 'stopped',
+  resumeRequired: true, answerSaved: false, pendingInput: { requestId: 'original-request', kind: 'permission', question: 'Allow edit?' } }]);
+assert.equal(crashed[0].resumeRequired, true);
+assert.equal(crashed[0].answerSaved, false);
+assert.equal(crashed[0].pendingInput?.requestId, 'original-request');

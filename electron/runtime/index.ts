@@ -6,14 +6,14 @@ import { spawn } from 'node:child_process';
 import { runAgent, registerAgentTools, compactSession, buildSystemPrompt, HookManager, type AgentEvent, type AgentOptions, type PermissionMode } from './agent';
 import { registerCodingTools } from './agent_files';
 import { registerSubagentTools } from './agent_background';
-import { contextWindowFor, registerMemoryTools, registerSkillTools, registerWebTools, directoryPayload, expandSkillCommand, suggestNextPrompt } from './agent_services';
+import { contextWindowFor, registerMemoryTools, registerSkillTools, registerWebTools, registerWaitTool, registerToolResultReader, initialToolNames, directoryPayload, expandSkillCommand, suggestNextPrompt } from './agent_services';
 import { bootPlugins, extensionPaths, loadHarnessPatch, PromptSections, modelPlugins, type RuntimePlugin } from './agent_plugins';
 import { RuntimeActivitySink } from './agent_activity';
 import { EventSession } from './session';
 import { ToolRegistry } from './tools';
 import { resolveModelConfig, streamModel, requestVision } from './model';
 import { prepareTaskContext } from './context_prepare';
-import { configureDesktop, closeDesktop, registerDesktopTools, desktopSession } from './desktop';
+import { configureDesktop, closeDesktop, registerDesktopTools, desktopSession, listWindows, listElements } from './desktop';
 import { registerPerceptionTools, registerLookTool, createSnapshotPerceptionBackend, closeOcr, type PerceptionBackend, type VisionBackend } from './desktop_perception';
 import { registerSelectionQuickTools } from './selection_quick_tools';
 import { readMcpConfigs, registerMcpDiscovery } from './mcp';
@@ -63,7 +63,7 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
   configureDesktop(root);
   let files: ReturnType<typeof registerCodingTools> | undefined;
   const contextTools = new ToolRegistry();
-  const prepared = await prepareTaskContext(session, payload, { root, userDataDir, registry: contextTools });
+  const prepared = await prepareTaskContext(session, { ...payload, workspacePath: workspace || '' }, { root, userDataDir, registry: contextTools });
   const settings = settingsStore(userDataDir).load();
   const extensions = extensionPaths(userDataDir);
   const prompt = new PromptSections();
@@ -75,11 +75,15 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
     windowReadScope: (hwnd: number) => prepared.authorizeAccess({ action: 'read', windowIds: [`w-${hwnd}`] }).allowed };
   const builtins: RuntimePlugin[] = [
     { name: 'harness-tools', apply: ctx => registerAgentTools(ctx.get('tools'), session, onEvent) },
+    { name: 'tool-result-reader', apply: ctx => registerToolResultReader(ctx.get('tools'), session) },
     { name: 'coding-tools', apply: ctx => { if (workspace) files = registerCodingTools(ctx.get('tools'), workspace, session); } },
     { name: 'memory-tools', apply: ctx => registerMemoryTools(ctx.get('tools'), userDataDir, session) },
     { name: 'context-tools', apply: ctx => { const tools = ctx.get<ToolRegistry>('tools'); for (const tool of contextTools.list()) if (!tools.list().some(existing => existing.name === tool.name)) tools.register(tool); } },
     { name: 'skill-writer', apply: ctx => { if (workspace) registerSkillTools(ctx.get('tools'), userDataDir); } },
     { name: 'web-tools', apply: ctx => registerWebTools(ctx.get('tools')) },
+    { name: 'wait-tools', apply: ctx => registerWaitTool(ctx.get('tools'), { workspace,
+      windows: async () => (await listWindows(signal)).filter(window => perceptionOptions.windowReadScope(window.hwnd)),
+      elements: async hwnd => perceptionOptions.windowReadScope(hwnd) ? listElements(hwnd, signal) : [] }) },
     { name: 'desktop-action-tools', apply: ctx => registerDesktopTools(ctx.get('tools'), desktopSession(session.id, Number(payload.object?.hwnd || payload.object?.windowHwnd || 0) || undefined), prepared.authorizeAccess) },
     { name: 'local-action-tools', apply: ctx => registerRecipeTools(ctx.get('tools'), new Fabric(options, config), session) },
     { name: 'selection-quick-tools', apply: ctx => { const snapshot = payload.selectionSnapshot || payload.object?.selectionSnapshot; if (snapshot) registerSelectionQuickTools(ctx.get('tools'), snapshot); } },
@@ -95,6 +99,8 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
     ...modelPlugins(streamModel),
   ];
   const plugins = await bootPlugins({ directory: extensions.plugins, patch: await loadHarnessPatch(extensions.patch), scope: 'agent', builtins, rows: builtins.map(plugin => ({ id: plugin.name, plugin: plugin.name })), core: { tools: registry, session, hooks, prompt, runtime: options } });
+  registry.setInitialTools(initialToolNames({ workspace, taskContext: prepared.taskContext, selectionSnapshot: payload.selectionSnapshot || payload.snapshot || payload.object?.selectionSnapshot,
+    object: payload.object, permissionMode }));
   let accepted: Data | null = null;
   try {
     if (payload.inputResponse) {
@@ -103,7 +109,9 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
       accepted = answered.data; instruction = '';
       options.onProgress?.('user_input_accepted', { b64: Buffer.from(JSON.stringify(accepted)).toString('base64') });
     }
-    const common: AgentOptions = { root, userDataDir, session, registry, instruction, evidence: prepared.evidence, model: request => plugins.context.get<AgentOptions['model']>('model_client')(request), config, workspace, permissionMode, signal, onEvent, hooks,
+    const common: AgentOptions = { root, userDataDir, session, registry, instruction, evidence: prepared.evidence,
+      hasSelection: Boolean(selectionSnapshot.frameLease || selectionSnapshot.frameLeaseId || prepared.taskContext.references?.some((reference: Data) => reference.active && reference.frameLeaseId)),
+      model: request => plugins.context.get<AgentOptions['model']>('model_client')(request), config, workspace, permissionMode, signal, onEvent, hooks,
       allowedTools: payload.permissionGrants || [], deniedTools: payload.permissionDenials || [], onceTools: Array.isArray(payload.permissionGrantOnce) ? payload.permissionGrantOnce.map(String).map((rule: string) => rule.trim()).filter(Boolean) : [], contextTokens,
       maxTokens: config.defaultMaxTokens || 32768, authorizeAccess: prepared.authorizeAccess, metadata: { conversationId: payload.conversationId || '', object: payload.object || {} } };
     common.system = await prompt.build(common);
@@ -132,7 +140,7 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
     const plan = [...session.events].reverse().find(event => event.type === 'plan/updated')?.data || null;
     const result = { ok: successful, answer: terminal.message, error: successful ? undefined : terminal.message, loopTerminated: !successful, loopTerminatedReason: successful ? undefined : terminal.reason,
       usedBackend: terminal.usedBackend, permissionPreset: preset, receipts: [terminal.receipt], events: terminal.results, activities: sink.activities, trajectory: sink.trajectory,
-      modelUsage: terminal.model_usage, timingMs: performance.now() - started, agentSessionId: session.id, hasPendingWork: terminal.reason !== 'completed' || terminal.receipt.status === 'unverified', pluginReport: { rows: plugins.dumpConfig(), warnings: plugins.warnings },
+      modelUsage: terminal.model_usage, timingMs: performance.now() - started, agentSessionId: session.id, hasPendingWork: terminal.reason !== 'completed' || terminal.receipt.status !== 'succeeded', pluginReport: { rows: plugins.dumpConfig(), warnings: plugins.warnings },
       interactionLedger: session.events.filter(event => event.type.startsWith('interaction/') || event.type === 'receipt/issued').map(event => event.data),
       awaitingUserInput: terminal.reason === 'awaiting_user', pendingInput: terminal.pending_input, taskContext: prepared.taskContext, artifacts: prepared.artifacts,
       runtimeTurn: [...session.events].reverse().find(event => event.type === 'turn/end')?.data.turn ?? null, plan,

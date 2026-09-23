@@ -128,3 +128,13 @@ MP 可以在用户继续工作的同时读文件、检索、整理、写草稿�
 - 本项目已交付与未验收的边界：[当前状态](docs/STATUS.md)、[现有 PRD](PRD.md)、[Harness 事实源](docs/design/MAGIC_POINTER_HARNESS_20260811.md)、[长任务历史审计](docs/2026-08-19-LONG_RUN_CAPABILITY_GAP.md)。长任务硬超时与 90 轮上限是历史问题，不能据旧审计再实现一次。
 - 本机精确编辑记录：`data/runtime/harness-evals/precise-edit-repeat-check/report.json`；当前循环、工具、上下文与任务日志实现：`electron/runtime/agent.ts`、`tools.ts`、`agent_services.ts`、`session.ts`。本 PRD 没有运行新的模型或产品测试。
 - 用户约束来自 [Grok 分享对话](https://x.com/i/grok/share/13c91c933dfb4b5fa50f3931d19cf134)。竞品自述参考 [Today](https://today.ai/)、[Vida](https://vida.app/desktop/)、[Grok Bot](https://docs.x.ai/grok-bot/overview)。厂商描述只说明方向，不证明真实成功率；本 PRD 的取舍以 MP 的用户任务和可验收结果为准。
+
+## 2026-09-24 实施记录
+
+上文的 2026-09-23 基线保留作为问题来源。本批在现有 Runtime 中实现工具按任务加载、大结果持久引用与投影计量、逐目标结果回执、跨工具无进展识别、来源可用性恢复、后台纠正与待决定事项恢复、桌面忙碌等待和用户接管，以及保留原始字节的文件局部编辑。原来没有接入生产入口的本地条件等待也已接回，可取消且支持用户明确要求的跨小时等待。
+
+Python→TypeScript 迁移的本批补齐项为终端证据贯通、多结构化来源冲突与互证、OCR 真实失败状态、恢复来源检查、停滞守卫和大结果压缩尾部。已明确删除的演示功能没有恢复，外部客户端仍只作为投递通道。
+
+真实同文件、同模型/Provider 的修复后小样本中，MP 与 Pi 均 3/3 正确，未缓存输入加输出 token 中位数分别 3,272 / 2,765，比值 **1.183**，满足本文 1.25 倍门槛；修复前 MP 2/3 的失败及消耗仍保留。显式转发材料生成草稿、文件关注触发一次草稿、后台同会话纠正恢复、原生终端和隐藏未保存 Excel 读写均已取得实际结果。合成转发材料不代表读取微信/钉钉完整会话，隐藏 Office API 验收不代表物理手势验收。
+
+真实跨小时任务历时 **60 分 19.584 秒**，中途终止并恢复同一会话，纠正后仅改 B、A 不变；全程 7 次模型请求，等待期间没有模型轮询或提前写入。普通自然语言的 Excel 请求也已完成模型读取与精确提案、Artifact 接受/应用、独立 COM 读回。最终结果、安装版同步及已知边界统一见 [实施与验收报告](docs/evals/2026-09-24-personal-agent.md)。版本保持 **1.0.63**；这些结果不能解读为支持任意 Windows 应用、Figma 原生插件或 macOS。

@@ -2137,11 +2137,13 @@
 .mp-subagent-stop:hover { color: var(--mp-text); background: var(--mp-rule); }
 .mp-subagent-stop:disabled { cursor: default; opacity: .55; }
 .mp-subagent-stop-error { margin: 5px 0 0; color: var(--mp-danger); font-size: 12px; line-height: 15px; overflow-wrap: anywhere; }
+.mp-subagent-resume-note { margin: 6px 0 0; color: var(--mp-text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .mp-subagent-body { display: flex; flex-direction: column; gap: 5px; padding: 8px 0 8px; }
 .mp-subagent-list[hidden],
 .mp-subagent-body[hidden],
 .mp-subagent-stop[hidden],
 .mp-subagent-stop-error[hidden] { display: none; }
+.mp-subagent-resume-note[hidden] { display: none; }
 
 .mp-subagent-thinking,
 .mp-subagent-step-evidence { min-width: 0; }

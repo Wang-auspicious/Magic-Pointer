@@ -30,6 +30,8 @@
     elapsedMs?: number;
     turn?: number;
     pendingInput?: Record<string, any>;
+    resumeRequired?: boolean;
+    answerSaved?: boolean;
   }
 
   interface LiveSubagentLike extends Partial<SubagentTask> {
@@ -63,23 +65,26 @@
   }
 
   function normalizedStatus(value: unknown): string {
-    switch (clean(value).toLocaleLowerCase()) {
+    const status = clean(value).toLocaleLowerCase();
+    switch (status) {
       case 'starting':
       case 'running': return 'running';
       case 'awaiting_user': return 'awaiting_user';
       case 'completed': return 'completed';
-      case 'error':
-      case 'failed':
+      case 'needs_verification':
+      case 'partial':
       case 'budget_exhausted':
       case 'provider_unavailable':
       case 'stalled':
-      case 'invariant_failed': return 'failed';
+      case 'invariant_failed':
+      case 'user_interrupt':
+      case 'stop_hook': return status;
+      case 'error':
+      case 'failed': return 'failed';
       case 'stopped':
       case 'cancelled':
-      case 'canceled':
-      case 'user_interrupt':
-      case 'stop_hook': return 'stopped';
-      default: return 'completed';
+      case 'canceled': return 'stopped';
+      default: return status || 'unknown';
     }
   }
 
@@ -142,6 +147,8 @@
       elapsedMs: live.elapsedMs ?? base?.elapsedMs ?? 0,
       turn: live.turn ?? base?.turn ?? 0,
       pendingInput: live.pendingInput,
+      resumeRequired: live.resumeRequired ?? base?.resumeRequired ?? false,
+      answerSaved: live.answerSaved ?? base?.answerSaved ?? false,
     };
   }
 
@@ -174,8 +181,10 @@
       byId.set(merged.id, merged);
       if (merged.parentCallId) byParent.set(merged.parentCallId, merged.id);
     });
-    const rank: Record<string, number> = { awaiting_user: 0, running: 1, failed: 2, stopped: 3, completed: 4 };
-    return [...byId.values()].sort((a, b) => (rank[a.status] ?? 4) - (rank[b.status] ?? 4)
+    const rank: Record<string, number> = { awaiting_user: 0, running: 1, needs_verification: 2, partial: 2,
+      stalled: 3, provider_unavailable: 3, budget_exhausted: 3, invariant_failed: 3, failed: 3,
+      user_interrupt: 4, stop_hook: 4, stopped: 4, completed: 6 };
+    return [...byId.values()].sort((a, b) => (rank[a.status] ?? 5) - (rank[b.status] ?? 5)
       || (b.startedAt || b.completedAt) - (a.startedAt || a.completedAt)
       || a.id.localeCompare(b.id));
   }

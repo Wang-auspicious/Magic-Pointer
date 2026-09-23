@@ -42,7 +42,7 @@ async function main() {
     await save('{"partial":');
     const before = await readFile(file);
     assert.deepEqual(await read(), { ok: true, sessionId: 'session', hasPendingWork: true,
-      lastTurnReason: 'user_interrupt', openTurn: 2, pendingInput: permission,
+      lastTurnReason: 'user_interrupt', lastReceiptStatus: null, openTurn: 2, pendingInput: permission,
       answeredInputIds: [], lastInputAnswer: null, pendingRecovery: [] });
     assert.deepEqual(await readFile(file), before);
     const answer = message('tool', 'allowed', { tool_call_id: 'approval', name: 'AskUser' });

@@ -11,7 +11,7 @@ import { captureSnapshot } from '../electron/runtime/desktop_perception';
 import { SurfaceAdapterRegistry } from '../electron/runtime/desktop_adapters';
 import { runRuntime } from '../electron/runtime/index';
 import { bootPlugins, PluginContext } from '../electron/runtime/agent_plugins';
-import { extensionsInventory } from '../electron/runtime/agent_services';
+import { extensionsInventory, registerToolResultReader } from '../electron/runtime/agent_services';
 import { handleFabric } from '../electron/runtime/fabric_api';
 import { describeDeliveryFailure } from '../electron/runtime/actions_delivery';
 import { runBackgroundAgent, readAgentStatus } from '../electron/runtime/agent_background';
@@ -26,8 +26,9 @@ async function fixture() {
   return { root, workspace, userData, session, registry };
 }
 
-test('large tool results can be read through the workspace Read tool', async () => {
-  const f = await fixture(); let step = 0, file = '';
+test('large tool results remain in the session and can be read by call id', async () => {
+  const f = await fixture(); let step = 0;
+  registerToolResultReader(f.registry, f.session);
   const content = 'retained-start\n' + 'x'.repeat(70000);
   f.registry.register({ name: 'LargeEvidence', description: 'Evidence fixture', effect: 'read',
     input_schema: { type: 'object', properties: {}, required: [] }, execute: () => content });
@@ -36,14 +37,15 @@ test('large tool results can be read through the workspace Read tool', async () 
     model: async request => {
       if (++step === 1) return { text: '', tool_calls: [{ id: 'large', name: 'LargeEvidence', arguments: {} }] };
       if (step === 2) {
-        file = request.messages.at(-1)!.content!.match(/complete result saved at (.*)\. Read the needed range\./)![1];
-        return { text: '', tool_calls: [{ id: 'read', name: 'Read', arguments: { path: file } }] };
+        assert.match(request.messages.at(-1)!.content!, /ToolResult\.read/);
+        return { text: '', tool_calls: [{ id: 'read', name: 'ToolResult.read', arguments: { tool_call_id: 'large', offset: 0, limit: 200 } }] };
       }
       return { text: 'Read back', tool_calls: [] };
     } });
   assert.equal(result.results[1].is_error, false, result.results[1].error_message);
-  assert.equal(await readFile(file, 'utf8'), content);
   assert.match(String(result.results[1].value), /retained-start/);
+  const message = f.session.events.find(event => event.type === 'operation/settled')?.data.message as { content: string };
+  assert.equal(message.content, content);
 });
 
 test('production Runtime honors a disabled user plugin in harness.patch.json', async () => {

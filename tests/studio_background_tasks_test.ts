@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
-const code = ['backgroundTaskView', 'childActive', 'stopSubagentTask'].map(name => {
+const code = ['backgroundTaskView', 'childActive', 'stopSubagentTask', 'subagentStatusLabel'].map(name => {
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(declaration);
   return ts.transpileModule(declaration.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -19,6 +19,12 @@ async function main() {
     Data: { stopSubagent(payload: Record<string, string>) { calls.push(payload); return new Promise(done => { resolve = done; }); } },
   };
   vm.runInNewContext(code, context);
+  assert.equal(context.subagentStatusLabel('partial'), 'Partially complete');
+  assert.equal(context.subagentStatusLabel('needs_verification'), 'Needs verification');
+  assert.equal(context.subagentStatusLabel('stalled'), 'Stalled');
+  assert.equal(context.subagentStatusLabel('user_interrupt'), 'Interrupted');
+  assert.equal(context.subagentStatusLabel('provider_unavailable'), 'Provider unavailable');
+  assert.equal(context.subagentStatusLabel('future_state'), 'Unknown status');
   const first = context.backgroundTaskView();
   first.finishedOpen = true;
   first.cleared.add('finished-child');

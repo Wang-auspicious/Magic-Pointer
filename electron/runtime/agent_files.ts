@@ -13,6 +13,15 @@ const normalize = (value: string) => value.replace(/\r\n/g, '\n').replace(/[â€œâ
 const ignore = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', 'release', 'build', 'dist', '.mp', 'external']);
 const globRegex = (pattern: string) => new RegExp('^' + pattern.replaceAll('\\', '/').split('**').map(part => part.split('*').map(text => text.replace(/[.+^${}()|[\]\\]/g, '\\$&').replaceAll('?', '.')).join('[^/]*')).join('.*') + '$', 'i');
 
+function fileFacts(content: string) {
+  const crlf = (content.match(/\r\n/g) ?? []).length;
+  const lf = (content.match(/(?<!\r)\n/g) ?? []).length;
+  const cr = (content.match(/\r(?!\n)/g) ?? []).length;
+  const styles = [crlf, lf, cr].filter(count => count > 0).length;
+  return { utf8Bytes: Buffer.byteLength(content, 'utf8'), bom: content.startsWith('\ufeff') ? 'present' : 'absent',
+    lineEndings: styles > 1 ? 'mixed' : crlf ? 'CRLF' : lf ? 'LF' : cr ? 'CR' : 'none', crlf, lf, cr };
+}
+
 export class WorkspaceFiles {
   readonly root: string;
   private readVersions = new Map<string, string>();
@@ -44,9 +53,9 @@ export class WorkspaceFiles {
     const handle = await import('node:fs/promises').then(fs => fs.open(path.join(this.checkpointDir, 'manifest.jsonl'), 'a'));
     try { await handle.writeFile(JSON.stringify({ id, path: file, existed: old !== null }) + '\n'); await handle.sync(); } finally { await handle.close(); }
   }
-  async write(file: string, content: string, check = true): Promise<Data> {
+  async write(file: string, content: string, check = true, preserveExactText = false): Promise<Data> {
     if (check) await this.requireFresh(file);
-    const body = path.extname(file).toLowerCase() === '.csv' ? encodeCsv(content) : Buffer.from(content);
+    const body = !preserveExactText && path.extname(file).toLowerCase() === '.csv' ? encodeCsv(content) : Buffer.from(content);
     await this.checkpoint(file); await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, body);
     if (!body.equals(await readFile(file))) throw new Error(`File readback mismatch: ${file}`);
     this.readVersions.set(file, body.toString('utf8'));
@@ -59,8 +68,14 @@ export class WorkspaceFiles {
     const count = steps > 0 ? Math.min(steps, entries.length) : entries.length, selected = entries.slice(-count);
     for (const entry of [...selected].reverse()) {
       const target = this.resolve(entry.path);
-      if (entry.existed) { await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, await readFile(path.join(this.checkpointDir, entry.id + '.bin'))); }
-      else if (await exists(target)) await unlink(target);
+      if (entry.existed) {
+        const backup = await readFile(path.join(this.checkpointDir, entry.id + '.bin'));
+        await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, backup);
+        if (!backup.equals(await readFile(target))) throw new Error(`File restore readback mismatch: ${target}`);
+      } else {
+        if (await exists(target)) await unlink(target);
+        if (await exists(target)) throw new Error(`File deletion readback mismatch: ${target}`);
+      }
       this.readVersions.delete(target);
     }
     await writeFile(manifest, entries.slice(0, entries.length - count).map(entry => JSON.stringify(entry)).join('\n') + '\n');
@@ -129,7 +144,10 @@ function locate(raw: string, needle: string): [number, number][] {
   for (const line of lines) { starts.push(offset); offset += line.length + 1; }
   for (const clean of [(s: string) => s.trimEnd(), (s: string) => s.trim(), (s: string) => normalize(s).replace(/\s+/g, ' ').trim()]) {
     const hits: [number, number][] = [];
-    for (let index = 0; index <= lines.length - wanted.length; index++) if (wanted.every((line, part) => clean(lines[index + part]) === clean(line))) hits.push([starts[index], starts[index + wanted.length - 1] + lines[index + wanted.length - 1].length]);
+    for (let index = 0; index <= lines.length - wanted.length; index++) if (wanted.every((line, part) => clean(lines[index + part]) === clean(line))) {
+      const last = lines[index + wanted.length - 1], end = starts[index + wanted.length - 1] + last.length - Number(last.endsWith('\r'));
+      hits.push([starts[index], end]);
+    }
     if (hits.length) return hits;
   }
   return [];
@@ -214,21 +232,21 @@ export function registerCodingTools(registry: ToolRegistry, workspace: string, s
   const schema = (properties: Data, required: string[] = []): Data => ({ type: 'object', properties, required });
   const string = { type: 'string' }, integer = { type: 'integer' }, boolean = { type: 'boolean' };
   const add = (name: string, description: string, input_schema: Data, execute: ToolSpec['execute'], effect: Effect = 'read', extra: Partial<ToolSpec> = {}) => registry.register({ name, description, input_schema, execute, effect, is_concurrency_safe: effect === 'read', used_backend: 'workspace_fs', ...extra });
-  add('Read', 'Read a workspace text file with line numbers and pagination. Use character offsets for long lines.', schema({ path: string, offset: integer, limit: integer, force: boolean, char_offset: integer, char_limit: integer }, ['path']), async args => {
-    const file = space.resolve(args.path), raw = await space.read(file);
-    if (args.char_offset !== undefined) { const offset = Math.max(0, Number(args.char_offset)), end = Math.min(raw.length, offset + Math.max(1, Math.min(Number(args.char_limit ?? 12000), 50000))); return { path: space.display(file), content: raw.slice(offset, end), charOffset: offset, nextCharOffset: end < raw.length ? end : null, totalChars: raw.length }; }
+  add('Read', 'Read a workspace text file with line numbers, UTF-8 byte count, BOM and actual line-ending style. Use character offsets for long lines.', schema({ path: string, offset: integer, limit: integer, force: boolean, char_offset: integer, char_limit: integer }, ['path']), async args => {
+    const file = space.resolve(args.path), raw = await space.read(file), facts = fileFacts(raw);
+    if (args.char_offset !== undefined) { const offset = Math.max(0, Number(args.char_offset)), end = Math.min(raw.length, offset + Math.max(1, Math.min(Number(args.char_limit ?? 12000), 50000))); return { path: space.display(file), content: raw.slice(offset, end), charOffset: offset, nextCharOffset: end < raw.length ? end : null, totalChars: raw.length, ...facts }; }
     const lines = raw.split(/\r?\n/), offset = Math.max(1, Number(args.offset ?? 1)), limit = Math.max(1, Math.min(2000, Number(args.limit ?? 200)));
     let body = '', end = offset - 1; const max = limit === 200 ? 12000 : 50000;
     for (let index = offset - 1; index < Math.min(lines.length, offset - 1 + limit); index++) { const line = `${index + 1}\t${lines[index]}\n`; if (body.length + line.length > max) { if (!body) body = line.slice(0, max); break; } body += line; end = index + 1; }
-    return `${space.display(file)}\n${body}[showing lines ${offset}-${end} of ${lines.length}${end < lines.length ? '; continue with offset or char_offset' : ''}]`;
+    return `${space.display(file)}\n${body}[showing lines ${offset}-${end} of ${lines.length}${end < lines.length ? '; continue with offset or char_offset' : ''}]\n[file utf8Bytes=${facts.utf8Bytes}; bom=${facts.bom}; lineEndings=${facts.lineEndings}; CRLF=${facts.crlf}; LF=${facts.lf}; CR=${facts.cr}]`;
   });
   add('Write', 'Write a workspace text file. Read existing files first. Returns actual byte readback.', schema({ path: string, content: string }, ['path', 'content']), args => space.write(space.resolve(args.path), str(args.content)), 'reversible_write');
   const editSchema = schema({ old_string: string, new_string: string, replace_all: boolean }, ['old_string', 'new_string']);
-  add('Edit', 'Replace unique text in a recently read workspace file. Preserves untouched text and the file\'s LF or CRLF line endings; use for precise local edits instead of a shell rewrite. Batch edits are applied together.', schema({ path: string, old_string: string, new_string: string, replace_all: boolean, edits: { type: 'array', items: editSchema } }, ['path']), async args => {
-    const file = space.resolve(args.path); await space.requireFresh(file); const original = await readFile(file, 'utf8'), raw = original.replace(/\r\n/g, '\n');
+  add('Edit', 'Replace unique text in a recently read workspace file. Preserves every byte outside matched spans, including mixed line endings and BOM; returns full-file byte readback evidence. Batch edits are applied together.', schema({ path: string, old_string: string, new_string: string, replace_all: boolean, edits: { type: 'array', items: editSchema } }, ['path']), async args => {
+    const file = space.resolve(args.path); await space.requireFresh(file); const original = await readFile(file, 'utf8'), raw = original;
     const edits = Array.isArray(args.edits) ? args.edits.map(asObject) : [args]; const replacements: Replacement[] = [];
     for (const edit of edits) {
-      const old = str(edit.old_string).replace(/\r\n/g, '\n'), next = str(edit.new_string).replace(/\r\n/g, '\n');
+      const old = str(edit.old_string), next = str(edit.new_string);
       if (!old || old === next) throw new Error('old_string must be nonempty and differ from new_string');
       const hits = locate(raw, old);
       if (!hits.length || hits.length > 1 && !edit.replace_all) throw new Error(`Expected unique old_string; found ${hits.length} matches`);
@@ -236,8 +254,11 @@ export function registerCodingTools(registry: ToolRegistry, workspace: string, s
     }
     let output = raw;
     for (const item of replacements.sort((a, b) => b.start - a.start)) output = output.slice(0, item.start) + item.text + output.slice(item.end);
-    if (original.includes('\r\n')) output = output.replaceAll('\n', '\r\n');
-    return space.write(file, output);
+    const persisted = await space.write(file, output, true, true), before = fileFacts(original), after = fileFacts(output);
+    return { ...persisted, message: `Replaced ${replacements.length} exact span(s); read back all ${after.utf8Bytes} bytes`,
+      verification: { matched: true, method: 'exact_edit_full_file_bytes_readback', scope: 'specified_spans_and_untouched_bytes',
+        preservedUntouchedBytes: true, replacements: replacements.length, originalBytes: before.utf8Bytes, finalBytes: after.utf8Bytes,
+        originalLineEndings: before.lineEndings, finalLineEndings: after.lineEndings, originalBom: before.bom, finalBom: after.bom } };
   }, 'reversible_write');
   add('Patch', 'Apply an Add/Delete/Update/Move patch with @@ contexts across workspace files.', schema({ patch: { oneOf: [string, { type: 'array', items: string }] } }, ['patch']), async args => {
     const results: Data[] = []; for (const patch of Array.isArray(args.patch) ? args.patch : [args.patch]) results.push(await applyWorkspacePatch(space, str(patch))); return results.length === 1 ? results[0] : { patches: results };

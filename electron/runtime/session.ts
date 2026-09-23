@@ -150,6 +150,8 @@ export function normalizedInput(value: Data): Data {
       Object.assign(pending, { action: value.action, harnessPermission: true, actionPreview: text(value.actionPreview) });
     }
   }
+  if (value.kind === 'desktop_wait' && value.waitingForDesktop === true && value.notExecuted === true)
+    Object.assign(pending, { kind: 'desktop_wait', waitingForDesktop: true, notExecuted: true });
   if (value.requestId) pending.requestId = text(value.requestId);
   return pending;
 }
@@ -162,11 +164,13 @@ function pendingInput(events: Event[], surface: Message[]): Data | null {
   const reversed = [...surface].reverse();
   for (const message of reversed) {
     if (message.role === 'user' && !message.injected) return null;
-    if (message.role !== 'tool' || !['AskUser', 'AskUserQuestion', 'ask_user_question', 'ExitPlanMode'].includes(message.name ?? '')) continue;
+    if (message.role !== 'tool') continue;
     try {
       const value = object(JSON.parse(message.content ?? ''));
-      if (value.awaitingUserInput !== true) continue;
+      if (value.awaitingUserInput !== true || !['AskUser', 'AskUserQuestion', 'ask_user_question', 'ExitPlanMode'].includes(message.name ?? '') &&
+        !(value.kind === 'desktop_wait' && value.waitingForDesktop === true && value.notExecuted === true)) continue;
       const pending = { ...normalizedInput(value), requestId: message.tool_call_id } as Data;
+      if (pending.kind === 'desktop_wait') pending.tool = message.name;
       if (pending.kind === 'permission') {
         for (const item of reversed) {
           if (item.role === 'user' && !item.injected) break;
@@ -293,11 +297,14 @@ function usage(events: Event[]): Data | null {
   const surface = messages(events.slice(0, request.seq));
   const tokens = (tools: boolean) => estimateTokens(surface.filter(message => (message.role === 'tool') === tools)
     .map(message => (message.content ?? '') + (message.tool_calls?.length ? pythonRepr(message.tool_calls) : '')).join(''));
-  const used = object(response.data.usage);
+  const used = object(response.data.usage), projected = object(request.data.estimatedTokenBreakdown);
+  const hasProjection = typeof request.data.projectedMessageTokensEstimate === 'number' && typeof request.data.projectedToolResultTokensEstimate === 'number';
   return { contextTokens: prompt(used), contextEstimated: 0, lastOutputTokens: Number(used.completion_tokens || used.output_tokens || 0),
-    systemTokensEstimate: estimateTokens(text(object(request.data.header).systemPrompt)),
-    toolSchemaTokensEstimate: array(request.data.tools).length ? estimateTokens(pythonRepr(request.data.tools)) : 0,
-    messageTokensEstimate: tokens(false), toolResultTokensEstimate: tokens(true) };
+    systemTokensEstimate: hasProjection ? Number(projected.system) : estimateTokens(text(object(request.data.header).systemPrompt)),
+    toolSchemaTokensEstimate: hasProjection ? Number(projected.tools) : array(request.data.tools).length ? estimateTokens(pythonRepr(request.data.tools)) : 0,
+    messageTokensEstimate: hasProjection ? Number(request.data.projectedMessageTokensEstimate) : tokens(false),
+    toolResultTokensEstimate: hasProjection ? Number(request.data.projectedToolResultTokensEstimate) : tokens(true),
+    ...(hasProjection ? { estimatedTokenBreakdown: projected } : {}) };
 }
 
 export async function handleSessionRead(payload: Data, userDataDir: string): Promise<Data> {
@@ -330,7 +337,8 @@ export async function handleSessionRead(payload: Data, userDataDir: string): Pro
   const answers = events.filter(event => event.type === 'user_input/answered');
   const last = answers.at(-1)?.data;
   const outstandingInput = pendingInput(events, messages(events)), pendingRecovery = recovery(events);
-  return { ...result, hasPendingWork: openTurn !== null || unfinished.has(lastTurnReason ?? '') || !!outstandingInput || pendingRecovery.length > 0, lastTurnReason, openTurn,
+  const lastReceiptStatus = text([...events].reverse().find(event => event.type === 'receipt/issued')?.data.status) || null;
+  return { ...result, hasPendingWork: openTurn !== null || unfinished.has(lastTurnReason ?? '') || !!outstandingInput || pendingRecovery.length > 0 || ['partial', 'unverified'].includes(lastReceiptStatus ?? ''), lastTurnReason, lastReceiptStatus, openTurn,
     pendingInput: outstandingInput, answeredInputIds: answers.map(event => event.data.requestId),
     lastInputAnswer: last ? { requestId: last.requestId, message: last.message } : null,
     pendingRecovery };
@@ -339,6 +347,31 @@ export async function handleSessionRead(payload: Data, userDataDir: string): Pro
 export const canonicalJson = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
   item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
 const digest = (value: unknown): string => createHash('sha256').update(canonicalJson(value)).digest('hex');
+
+export async function resumeSourceAvailability(events: readonly Pick<SessionEvent, 'type' | 'data'>[]): Promise<Data[]> {
+  return Promise.all(taskSources(events).map(async source => {
+    const absolutePath = text(source.identity.absolutePath);
+    const frozenPath = text(object(object(source.identity.frameLease).localArtifact).path);
+    const pixelAvailable = !!frozenPath && path.isAbsolute(frozenPath) && await stat(frozenPath).then(info => info.isFile(), () => false);
+    const historicalTextAvailable = source.revision.authority === 'historical' &&
+      !!text(source.identity.content ?? source.identity.text ?? object(source.identity.availableContent).text).trim();
+    const historicalEvidenceAvailable = historicalTextAvailable || pixelAvailable;
+    const base = { sourceId: source.sourceId, title: source.title, kind: source.kind, historicalEvidenceAvailable, pixelAvailable };
+    if (absolutePath && path.isAbsolute(absolutePath)) {
+      try {
+        const current = await stat(absolutePath), previous = source.revision;
+        const changed = typeof previous.size === 'number' && previous.size !== current.size ||
+          typeof previous.mtimeMs === 'number' && previous.mtimeMs !== current.mtimeMs;
+        return { ...base, availability: changed ? 'changed' : 'available', reason: changed ? 'disk_revision_changed' : null };
+      } catch (error) {
+        return { ...base, availability: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unavailable',
+          reason: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'disk_path_missing' : 'disk_read_failed' };
+      }
+    }
+    return { ...base, availability: historicalEvidenceAvailable ? 'historical_only' : source.kind === 'capture' ? 'missing' : 'reacquire_required',
+      reason: historicalEvidenceAvailable ? pixelAvailable ? 'frozen_evidence_available' : 'historical_text_only' : source.kind === 'capture' ? 'frozen_evidence_missing' : 'live_identity_must_be_reacquired' };
+  }));
+}
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const localLocks = new Map<string, Promise<unknown>>();
@@ -529,9 +562,23 @@ export class EventSession {
     if (prompt !== system) await this.append('prompt/drift', { message: 'Using the saved session prompt.', savedHash: digest(prompt), currentHash: digest(system), changedSections: null, currentSections: null });
     return prompt;
   }
-  async recordRequest(step: number, system: string, tools: unknown[]): Promise<void> {
-    const surface = this.deriveMessages();
-    await this.append('model/request', { turn: this.openTurn, step, messageCount: surface.length, messagesHash: digest(surface), tools, header: { systemPrompt: system }, systemPromptHash: digest(system), systemPromptSections: null });
+  async recordRequest(step: number, system: string, tools: unknown[], projectedMessages?: AgentMessage[]): Promise<void> {
+    const surface = this.deriveMessages(), projected = projectedMessages ?? surface;
+    const estimatedTokenBreakdown = { system: estimateTokens(system), tools: estimateTokens(JSON.stringify(tools)), taskState: 0, evidence: 0, history: 0 };
+    let projectedMessageTokensEstimate = 0, projectedToolResultTokensEstimate = 0;
+    const readResults = new Set(this.events.filter(event => event.type === 'operation/prepared' && event.data.effect === 'read').map(event => text(event.data.callId)));
+    for (const message of projected) {
+      const content = text(message.content), tokens = estimateTokens(JSON.stringify(message));
+      if (message.role === 'tool') projectedToolResultTokensEstimate += tokens;
+      else projectedMessageTokensEstimate += tokens;
+      if (message.injected && (/Saved unfinished task state|历史摘要是会话数据|\[Task input data/.test(content))) estimatedTokenBreakdown.taskState += tokens;
+      else if (message.injected || message.role === 'tool' && (readResults.has(text(message.tool_call_id)) || /^(?:Context\.|Knowledge\.|ToolResult\.read$|Read$|Glob$|Grep$|Search$|Fetch$|Look$|Observe$|get_app_state$|read_text$)/.test(text(message.name)))) estimatedTokenBreakdown.evidence += tokens;
+      else estimatedTokenBreakdown.history += tokens;
+    }
+    await this.append('model/request', { turn: this.openTurn, step, messageCount: surface.length, messagesHash: digest(surface),
+      projectedMessageCount: projected.length, projectedMessagesHash: digest(projected), estimatedTokenBreakdown,
+      projectedMessageTokensEstimate, projectedToolResultTokensEstimate,
+      tools, header: { systemPrompt: system }, systemPromptHash: digest(system), systemPromptSections: null });
   }
   async enqueue(instruction: string, target = 'next-step', payload?: Data, messageId: string = randomUUID()): Promise<SessionEvent> {
     if (!['next-step', 'next-turn'].includes(target) || !instruction.trim() && !payload) throw new Error('invalid_inbox_input');
@@ -593,7 +640,7 @@ export class EventSession {
     if (!pending || pending.requestId !== requestId) throw new Error('pending_input_mismatch');
     const normalized = normalizeResponse(pending, response);
     return this.append('user_input/answered', { requestId, pendingInput: pending, response: normalized,
-      message: { role: 'tool', tool_call_id: requestId, name: pending.harnessPermission ? pending.tool : pending.kind === 'plan' ? 'ExitPlanMode' : 'AskUser', origin: 'data', content: JSON.stringify({ ...pending, ...normalized, answered: true, awaitingUserInput: false }) } });
+      message: { role: 'tool', tool_call_id: requestId, name: pending.harnessPermission || pending.kind === 'desktop_wait' ? pending.tool : pending.kind === 'plan' ? 'ExitPlanMode' : 'AskUser', origin: 'data', content: JSON.stringify({ ...pending, ...normalized, answered: true, awaitingUserInput: false }) } });
   }
   approvedCalls(): Data[] {
     const started = new Set(this.events.filter(event => event.type === 'operation/prepared').map(event => event.data.callId));
@@ -674,6 +721,7 @@ export async function handleSession(payload: Data, userDataDir: string): Promise
   try {
     const session = await EventSession.open(userDataDir, text(payload.sessionId), false);
     if (action === 'subagent-respond') { const { respondToAgent } = await import('./agent_background.js'); return await respondToAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.requestId), object(payload.response)); }
+    if (action === 'subagent-steer') { const { steerAgent } = await import('./agent_background.js'); return await steerAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.text)); }
     if (action === 'fork') {
       const child = await session.fork(userDataDir, text(payload.childSessionId), payload.throughTurn === undefined ? undefined : Number(payload.throughTurn));
       return { ok: true, sessionId: child.id, taskContext: { taskId: child.id, sources: taskSources(child.events), references: taskReferences(child.events), referenceRevision: referenceRevision(child.events) } };

@@ -109,6 +109,32 @@ export async function bindNamedWindows(
   return bound;
 }
 
+interface BoundedTerminalEvidence {
+  method: string;
+  command: string;
+  exitCodeObserved: boolean;
+  exitCode: number | null;
+  windowText: string;
+}
+
+function boundedTerminalEvidence(context: Json): BoundedTerminalEvidence | null {
+  const terminal = record(record(context.artifacts).terminal_evidence);
+  if (terminal.schemaVersion !== 1) return null;
+  const provenance = record(terminal.provenance);
+  const exitCodeObserved = provenance.exitCodeObserved === true && Number.isInteger(terminal.exitCode);
+  return {
+    method: String(terminal.method ?? '').slice(0, 120),
+    command: String(terminal.command ?? '').slice(0, 1000),
+    exitCodeObserved,
+    exitCode: exitCodeObserved ? Number(terminal.exitCode) : null,
+    windowText: String(record(terminal.window).text ?? '').slice(0, 8000),
+  };
+}
+
+function terminalEvidenceText(terminal: BoundedTerminalEvidence): string {
+  return `Terminal command: ${terminal.command || 'not observed'}\nExit code observed: ${terminal.exitCodeObserved ? terminal.exitCode : 'not observed'}\nError window:\n${terminal.windowText}`;
+}
+
 export function buildInputArtifact(
   payload: Json,
   sources: SourceRef[],
@@ -121,6 +147,7 @@ export function buildInputArtifact(
     gesture = record(snapshot.selection_gesture),
     frameLeaseId = String(lease.frameLeaseId ?? snapshot.frameLeaseId ?? ''),
     content = String(context.content ?? ''),
+    terminal = boundedTerminalEvidence(context),
     observations = array<Json>(trace.observations),
     selected = observations.find((item) => item.adapter === trace.selectedAdapter),
     confidence = Math.max(
@@ -152,6 +179,13 @@ export function buildInputArtifact(
       confidence,
       sources: badges,
     });
+  if (terminal) facts.push({
+    kind: 'terminal_evidence',
+    label: 'Terminal command and error window',
+    value: terminalEvidenceText(terminal),
+    confidence,
+    sources: ['uia'],
+  });
   const gestureKind = Object.keys(gesture).length
     ? gesture.bbox
       ? 'region'
@@ -326,7 +360,8 @@ export async function prepareTaskContext(
           artifacts.source_identity,
       ),
       conversation = record(artifacts.conversationIdentity),
-      content = String(context.content ?? payload.selectedText ?? '');
+      content = String(context.content ?? payload.selectedText ?? ''),
+      terminal = boundedTerminalEvidence(context);
     const sourceIdentity = { ...browser };
     if (typeof sourceIdentity.absolutePath === 'string' && !isAbsolute(sourceIdentity.absolutePath))
       delete sourceIdentity.absolutePath;
@@ -351,7 +386,8 @@ export async function prepareTaskContext(
         hwnd: window.hwnd,
         processName: window.process_name ?? window.processName,
         frameLeaseId,
-        content,
+        content: terminal ? terminalEvidenceText(terminal) : content,
+        ...(terminal ? { terminalEvidence: terminal } : {}),
         locators: artifacts.locators,
         ...(context.app === 'powerpoint' && Array.isArray(artifacts.shapes)
           ? { officeShapes: artifacts.shapes }

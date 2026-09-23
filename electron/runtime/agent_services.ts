@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir, readdir, stat, access } from 'node:fs/promi
 import path from 'node:path';
 import { extensionPaths } from './agent_plugins';
 import os from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ActionFailure, ToolRegistry } from './tools';
 import { asObject, type Data, type ModelRunner, type ModelRequest, type AgentMessage } from './agent';
 import { ScreenMemory } from './context_memory';
@@ -20,9 +21,9 @@ export function contextWindowFor(model: unknown, fallback = 64000): number {
 export function projectContextMessages(messages: AgentMessage[]): AgentMessage[] {
   const seen = new Map<string, string>();
   return messages.map(message => {
-    if (message.role !== 'tool' || message.is_error || !message.tool_call_id || !['Context.read', 'Context.search', 'Read', 'read_file'].includes(message.name ?? '')) return message;
+    if (message.role !== 'tool' || !message.tool_call_id) return message;
     let content = message.content ?? '';
-    if (message.name?.startsWith('Context.')) try {
+    if (!message.is_error && message.name?.startsWith('Context.')) try {
       const data = JSON.parse(content), rows = Array.isArray(data.results) ? data.results : [data];
       for (const row of rows) {
         if (!['ok', 'degraded', 'empty_confirmed'].includes(row.evidenceStatus) || !Array.isArray(row.fragments) || !row.fragments.length) continue;
@@ -38,9 +39,43 @@ export function projectContextMessages(messages: AgentMessage[]): AgentMessage[]
       content = JSON.stringify(data);
     } catch {}
     const key = `${message.name}\n${content}`, previous = seen.get(key);
-    if (content.length >= 512) { if (previous) content = `Read succeeded again; result identical to tool call ${previous}, whose full content is above.`; else seen.set(key, message.tool_call_id); }
+    if (content.length >= 512) {
+      if (previous) content = `Same result as tool call ${previous}. Use ToolResult.read with tool_call_id=${previous} for a needed range.`;
+      else seen.set(key, message.tool_call_id);
+    }
+    if (content.length > 6000 && message.name !== 'ToolResult.read') {
+      const total = content.length;
+      content = `${content.slice(0, 2200)}\n[${total} characters total; middle omitted. Use ToolResult.read with tool_call_id=${message.tool_call_id} and offset/limit for the full local result.]\n${content.slice(-500)}`;
+    }
     return { ...message, content };
   });
+}
+
+export function initialToolNames(context: { workspace?: string; taskContext?: { sources?: unknown[] }; selectionSnapshot?: unknown; object?: Data; permissionMode?: string }): string[] {
+  const names = ['Tools', 'AskUser', 'ToolResult.read'];
+  if (context.workspace) {
+    names.push('Read');
+    if (context.permissionMode !== 'safe' && context.permissionMode !== 'plan') names.push('Write', 'Edit', 'Patch');
+  }
+  if (context.taskContext?.sources?.length) names.push('Context.read', 'Context.search');
+  if (context.selectionSnapshot || context.object?.hwnd || context.object?.windowHwnd) names.push('look', 'read_around', 'get_app_state');
+  if (context.permissionMode === 'plan') names.push('ExitPlanMode');
+  return names;
+}
+
+export function registerToolResultReader(registry: ToolRegistry, session: EventSession): void {
+  registry.register({ name: 'ToolResult.read', description: 'Read a precise character range from a previous tool result in this task by tool_call_id. Full result remains in the local session log.',
+    input_schema: schema({ tool_call_id: string, offset: integer, limit: integer }, ['tool_call_id']),
+    is_concurrency_safe: true, used_backend: 'session_log', execute: args => {
+      const callId = str(args.tool_call_id);
+      const event = [...session.events].reverse().find(item => item.type === 'operation/settled' && asObject(item.data.message).tool_call_id === callId);
+      if (!event) throw new Error(`Unknown tool result: ${callId}`);
+      const message = asObject(event.data.message), content = str(message.content);
+      const offset = Math.max(0, Math.min(content.length, Number(args.offset ?? 0)));
+      const limit = Math.max(1, Math.min(3000, Number(args.limit ?? 3000)));
+      const end = Math.min(content.length, offset + limit);
+      return { toolCallId: callId, name: message.name, content: content.slice(offset, end), charOffset: offset, nextCharOffset: end < content.length ? end : null, totalChars: content.length };
+    } });
 }
 export type Skill = { name: string; description: string; source: string; path: string; modifiedAt: number; userInvocable: boolean; whenToUse?: string };
 
@@ -104,11 +139,12 @@ export async function extensionsInventory(userDataDir: string): Promise<Data> {
 }
 
 export function registerWaitTool(registry: ToolRegistry, probes: { workspace?: string; windows: () => Promise<Data[]>; elements: (hwnd: number) => Promise<Data[]> }): void {
-  registry.register({ name: 'wait', description: 'Wait for a window title, UI element text or file to appear. Returns satisfied=false on timeout.', deferred: true, effect: 'read', used_backend: 'wait_probe', timeout_ms: 130000,
-    input_schema: schema({ window_title: string, element_text: string, file_exists: string, timeout_s: { type: 'number' }, poll_ms: integer }),
+  registry.register({ name: 'wait', description: 'Wait locally for an authorized file, window or UI text, without model polling. Use a timeout appropriate to the requested wait (up to 24 hours). Returns satisfied=false on timeout; user stop cancels the wait.', deferred: true, effect: 'read', used_backend: 'wait_probe', timeout_ms: 86410000,
+    input_schema: schema({ window_title: string, element_text: string, file_exists: string, timeout_s: { type: 'number', minimum: 0, maximum: 86400 }, poll_ms: integer }),
+    access_for: args => ({ action: 'read', paths: args.file_exists ? [path.resolve(probes.workspace ?? process.cwd(), str(args.file_exists))] : [] }),
     execute: async (args, context) => {
       if (![args.window_title, args.element_text, args.file_exists].some(value => str(value).trim())) throw new Error('At least one condition is required');
-      const started = Date.now(), timeout = Math.max(50, Math.min(120000, Number(args.timeout_s ?? 20) * 1000)); let lastError = '', tick = 0;
+      const started = Date.now(), timeout = Math.max(50, Math.min(86400000, Number(args.timeout_s ?? 20) * 1000)); let lastError = '', tick = 0;
       while (true) {
         context.signal.throwIfAborted(); let condition = '';
         try {
@@ -121,7 +157,7 @@ export function registerWaitTool(registry: ToolRegistry, probes: { workspace?: s
           if (args.file_exists && await exists(path.resolve(probes.workspace ?? process.cwd(), str(args.file_exists)))) condition = 'file_exists';
         } catch (error) { lastError = (error as Error).message; }
         if (condition || Date.now() - started >= timeout) return { satisfied: !!condition, condition: condition || (args.element_text ? 'element_text' : args.window_title ? 'window_title' : 'file_exists'), elapsed_s: (Date.now() - started) / 1000, ...(lastError ? { note: lastError } : {}) };
-        await new Promise(resolve => setTimeout(resolve, Math.max(10, Math.min(2000, Number(args.poll_ms ?? 250)))));
+        await delay(Math.max(10, Math.min(2000, Number(args.poll_ms ?? 250))), undefined, { signal: context.signal });
       }
     } });
 }

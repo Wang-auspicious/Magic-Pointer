@@ -5,7 +5,10 @@ const { join } = require('node:path');
 const sharp = require('sharp');
 const { perceiveFrozenFrame, closeOcr } = require('../electron/runtime/desktop_perception');
 const { closeDesktop } = require('../electron/runtime/desktop');
-const { officeSelectionError } = require('../electron/runtime/desktop_adapters');
+const { officeSelectionError, uiaContextFromProbe } = require('../electron/runtime/desktop_adapters');
+const { EventSession } = require('../electron/runtime/session');
+const { ToolRegistry } = require('../electron/runtime/tools');
+const { prepareTaskContext } = require('../electron/runtime/context_prepare');
 
 async function main() {
   const root = await mkdtemp(join(tmpdir(), 'mp-perception-'));
@@ -35,6 +38,100 @@ async function main() {
     });
     assert.equal(fallback.content, 'Visible from OCR');
     assert.equal(fallback.context.adapter, 'pixel-ocr');
+    const terminalText = 'PS C:\\repo> first\nError old\nexit code: 8\nPS C:\\repo> second --token=private\nError current\nexit code: 7';
+    const terminal = await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
+      ...providers,
+      selection: async () => [{ adapter: 'uia', app: 'WindowsTerminal.exe', window, content: terminalText, method: 'uia:terminal_buffer',
+        artifacts: { text: terminalText, result_kind: 'terminal_buffer', terminal_anchor_text: 'Error current' } }],
+      ocr: async () => ({ blocks: [] }),
+    });
+    assert.equal(terminal.context.content, 'Error current');
+    assert.equal(terminal.context.artifacts.terminal_evidence.command, 'second --token=[redacted]');
+    assert.equal(terminal.context.artifacts.terminal_evidence.exitCode, 7);
+    assert.equal(terminal.context.artifacts.text, undefined, 'full terminal buffer must not be copied into model-facing artifacts');
+    assert.equal(terminal.context.artifacts.terminal_buffer_chars, terminalText.length);
+    const terminalSession = await EventSession.open(root, 'terminal-context');
+    const terminalRegistry = new ToolRegistry();
+    const preparedTerminal = await prepareTaskContext(terminalSession, { selectionSnapshot: {
+      ...terminal, snapshot_id: 'terminal-evidence',
+    } }, { root, userDataDir: root, registry: terminalRegistry });
+    const modelEvidence = preparedTerminal.evidence;
+    assert.match(modelEvidence, /second --token=\[redacted\]/);
+    assert.match(modelEvidence, /Error current/);
+    assert.match(modelEvidence, /exit code observed[^\n]*7/i);
+    assert.doesNotMatch(modelEvidence, /private/);
+    const terminalFact = preparedTerminal.inputArtifact.facts.find((fact: { kind: string }) => fact.kind === 'terminal_evidence');
+    assert.ok(terminalFact, 'bounded terminal evidence must enter the model InputArtifact');
+    assert.match(terminalFact.value, /second --token=\[redacted\]/);
+    const terminalSource = preparedTerminal.taskContext.sources.find((source: { sourceId: string }) => source.sourceId === 'source:selection:terminal-evidence');
+    assert.ok(terminalSource);
+    assert.equal(terminalSource.identity.terminalEvidence.exitCodeObserved, true);
+    assert.equal(terminalSource.identity.terminalEvidence.exitCode, 7);
+    const terminalRead = await terminalRegistry.execute({ id: 'read-terminal-evidence', name: 'Context.read',
+      arguments: { source_id: terminalSource.sourceId } });
+    assert.equal(terminalRead.is_error, false, terminalRead.error_message);
+    assert.match(JSON.stringify(terminalRead.value), /second --token=\[redacted\]/);
+    assert.match(JSON.stringify(terminalRead.value), /Error current/);
+    assert.match(JSON.stringify(terminalRead.value), /Exit code observed: 7/);
+    assert.doesNotMatch(JSON.stringify(terminalRead.value), /private/);
+    const hostedTerminal = uiaContextFromProbe(window, {
+      hwnd: 42, root_hwnd: 42, process_id: 81, result_kind: 'terminal_buffer', text: terminalText,
+    });
+    assert.equal(hostedTerminal.content, terminalText, 'terminal UIA can belong to the console host while the HWND stays bound');
+    assert.equal(hostedTerminal.error, null);
+    assert.equal(uiaContextFromProbe(window, { hwnd: 42, root_hwnd: 42, process_id: 81, result_kind: 'selection', text: terminalText }).content, '',
+      'ordinary UIA still requires the process identity to match');
+    assert.equal(uiaContextFromProbe(window, { hwnd: 99, root_hwnd: 42, process_id: 81, result_kind: 'terminal_buffer', text: terminalText }).content, '',
+      'the console exception still requires exact HWND binding');
+    const sources = [
+      { adapter: 'office', app: 'demo.exe', window, content: 'Result 120', method: 'office:com', artifacts: {} },
+      { adapter: 'browser-devtools', app: 'demo.exe', window, content: 'Result 210', method: 'dom:selection', artifacts: {} },
+      { adapter: 'uia', app: 'demo.exe', window, content: 'Result 120', method: 'uia:selection', artifacts: {} },
+    ];
+    const disagreement = await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
+      ...providers, selection: async () => sources, ocr: async () => ({ blocks: [] }),
+    });
+    assert.equal(disagreement.status, 'degraded');
+    assert.deepEqual(disagreement.perception_trace.conflicts.map((item: { providers: string[] }) => item.providers),
+      [['office', 'browser-devtools'], ['browser-devtools', 'uia']]);
+    assert.deepEqual(disagreement.perception_trace.corroborations.map((item: { providers: string[] }) => item.providers),
+      [['office', 'uia']]);
+    assert.equal(disagreement.content, 'Result 120', 'retain bounded structured content while declaring the disagreement');
+    const pixelCorroboration = await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
+      ...providers, selection: async () => sources.slice(0, 2),
+      ocr: async () => ({ blocks: [{ text: 'Result 120', rect: [1, 1, 8, 8] }] }),
+    });
+    assert.equal(pixelCorroboration.status, 'degraded', 'OCR agreement with one source cannot erase another source conflict');
+    assert.deepEqual(pixelCorroboration.perception_trace.corroborations.map((item: { providers: string[] }) => item.providers),
+      [['office', 'ocr']]);
+    assert.deepEqual(pixelCorroboration.perception_trace.conflicts.map((item: { providers: string[] }) => item.providers),
+      [['office', 'browser-devtools'], ['browser-devtools', 'ocr']]);
+    for (const [failure, expected] of [
+      ['ocr_worker_busy', 'busy'], ['ocr_timeout', 'timeout'], ['ocr_engine_failed', 'error'],
+      ['windows_ocr_language_unavailable', 'unsupported'],
+    ]) {
+      const unread = await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
+        ...providers, selection: async () => [], ocr: async () => { throw new Error(failure); },
+      });
+      assert.equal(unread.status, expected, failure);
+      assert.equal(unread.ocr.status, expected, failure);
+      assert.match(unread.ocr.error, new RegExp(failure));
+      assert.equal(unread.perception_trace.attempts.at(-1).status, expected, 'OCR failure remains in the attempt trace');
+    }
+    const widePath = join(root, 'wide.png');
+    await writeFile(widePath, await sharp({ create: { width: 100, height: 100, channels: 3, background: '#ffffff' } }).png().toBuffer());
+    const wideWindow = { ...window, bbox: [1, 1, 99, 99] };
+    const wideFrame = { ...frame, localArtifact: { path: widePath, width: 100, height: 100 },
+      surfaceBoundsPx: [0, 0, 100, 100], targetWindow: { ...frame.targetWindow, bbox: wideWindow.bbox },
+      gesture: { coordinateSpace: 'physical_screen_pixels', strokes: [{ points: [
+        { x: 2, y: 2 }, { x: 4, y: 2 }, { x: 4, y: 4 }, { x: 2, y: 4 }, { x: 2, y: 2 },
+      ] }] } };
+    const outsideMark = await perceiveFrozenFrame(wideFrame, {}, abort.signal, { resolve: async () => [] }, {
+      nativeWindow: async () => wideWindow, selection: async () => [],
+      ocr: async () => ({ blocks: [{ text: 'far outside mark', rect: [80, 80, 12, 12] }] }),
+    });
+    assert.equal(outsideMark.content, '');
+    assert.equal(outsideMark.status, 'empty_confirmed', 'OCR elsewhere on the frame cannot make this marked region ok');
     assert.equal(officeSelectionError('powerpoint', ['No shape selection; returned current slide structure.']), null,
       'reading the current slide without a selected shape is useful document evidence');
     assert.match(officeSelectionError('powerpoint', ['No shape selection; returned current slide structure.', 'COM read failed']), /COM read failed/,

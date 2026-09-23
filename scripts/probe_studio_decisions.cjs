@@ -3,6 +3,7 @@ const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const output = path.resolve('data/runtime/studio-decisions-20260921');
+const buildRoot = path.resolve(process.env.MP_PROBE_BUILD_ROOT || 'build/electron');
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(output, 'profile'));
 app.disableHardwareAcceleration();
@@ -14,7 +15,7 @@ app.whenReady().then(async () => {
     additionalArguments: ['--mp-probe-theme=light', '--mp-probe-state=landing'],
   } });
   try {
-    await win.loadFile(path.resolve('build/electron/renderer/studio.html'));
+    await win.loadFile(path.join(buildRoot, 'renderer', 'studio.html'));
     await win.webContents.executeJavaScript('document.fonts.ready');
     const witness = await win.webContents.executeJavaScript(`(async () => {
       const check = (ok, message) => { if (!ok) throw new Error(message); };
@@ -213,6 +214,26 @@ app.whenReady().then(async () => {
       check(normalSends === 0 && !pendingConversation, 'child approval started another parent turn');
       check(!childRow.querySelector('.mp-decision-card'), 'answered child card remained actionable');
       check(textarea.value === 'Keep my unsent follow-up', 'child approval overwrote the draft');
+      let crashedPending = true, crashedAnswerSaved = false;
+      Data.subagents = async () => ({ ok: true, tasks: [{ id: 'child-background', parentCallId: 'agent-call',
+        description: 'Independent child', status: 'stopped', resumeRequired: true, answerSaved: crashedAnswerSaved,
+        stepCount: 1, steps: [], pendingInput: crashedPending ? { requestId: 'child-crashed-write', kind: 'permission',
+          tool: 'Write', question: 'Allow saved child edit?', actionPreview: 'original saved action' } : null }] });
+      Data.respondSubagent = async payload => { childResponse = payload; crashedPending = false; crashedAnswerSaved = true; return { ok: true, accepted: true, resumeRequired: true }; };
+      await refreshBackgroundAgentTasks(stored.id);
+      const crashedRow = document.querySelector('.mp-subagent-task[data-task-id="child-background"]');
+      check(crashedRow?.closest('[data-task-section="Needs attention"]'), 'crashed approval stayed folded under Finished');
+      check(crashedRow?.querySelector('.mp-decision-card') && crashedRow.textContent.includes('original saved action'), 'crashed child lost the original approval request');
+      check(crashedRow.textContent.includes('答复后仍需恢复任务'), 'crashed approval falsely implies immediate execution');
+      crashedRow.querySelector('[data-decision="once"]').click(); await wait(); await wait();
+      check(childResponse?.requestId === 'child-crashed-write', 'crashed child answer lost its original request ID');
+      check(!crashedRow.querySelector('.mp-decision-card') && crashedRow.textContent.includes('审批答复已保存，后台任务尚未恢复执行'), 'saved answer was shown as executed or still actionable');
+      check(normalSends === 0 && textarea.value === 'Keep my unsent follow-up', 'crashed child answer auto-ran or changed the parent draft');
+      Data.subagents = async () => ({ ok: true, tasks: [{ id: 'child-background', parentCallId: 'agent-call',
+        description: 'Independent child', status: 'partial', stepCount: 1, steps: [], pendingInput: null }] });
+      await refreshBackgroundAgentTasks(stored.id);
+      check(crashedRow.querySelector('.mp-subagent-state').textContent === 'Partially complete'
+        && crashedRow.closest('[data-task-section="Needs attention"]'), 'partial child was displayed as Completed or hidden under Finished');
       let resolveSources;
       const sourcesPromise = new Promise(resolve => { resolveSources = resolve; });
       Data.conversations = async () => sourcesPromise;

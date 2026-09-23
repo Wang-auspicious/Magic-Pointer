@@ -108,6 +108,22 @@ export async function nativeRequest<T = DesktopRecord>(method: string, params: D
   if (process.platform === 'darwin' && method === 'permissions') return JSON.parse(await runProcess(process.env.MAGIC_POINTER_MACOS_HOST || join(desktopRoot, 'native', 'macos', 'magic-pointer-host'), ['--check-permissions'], { signal, timeoutMs: timeoutMs || 5000 })) as T;
   throw new Error(`unsupported_platform:${method}:${process.platform}`);
 }
+export function desktopBusyResult(error: unknown): DesktopRecord | null {
+  if (!(error instanceof Error) || error.message !== 'computer_use_busy') return null;
+  return { awaitingUserInput: true, kind: 'desktop_wait', question: '等你空出桌面后继续任务？', options: ['继续任务', '由我接管'],
+    notExecuted: true, waitingForDesktop: true, usedBackend: 'native_desktop' };
+}
+function interruptedDesktopInput(): Error { const error = new Error('computer_use_interrupted: inspect the current desktop before continuing'); error.name = 'AbortError'; return error; }
+async function desktopInput(params: DesktopRecord, signal?: AbortSignal, allowWait = true): Promise<DesktopRecord> {
+  try { return await nativeRequest('input', params, signal); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'computer_use_interrupted') throw interruptedDesktopInput();
+    const waiting = allowWait ? desktopBusyResult(error) : null;
+    if (waiting) return waiting;
+    if (!allowWait && desktopBusyResult(error)) throw interruptedDesktopInput();
+    throw error;
+  }
+}
 export function closeDesktop(): void { host.close(); selectionHost?.kill(); selectionHost = undefined; }
 export async function listWindows(signal?: AbortSignal): Promise<DesktopWindow[]> { return nativeRequest<DesktopWindow[]>('windows', {}, signal); }
 export async function listElements(hwnd: number, signal?: AbortSignal): Promise<DesktopElement[]> { return nativeRequest<DesktopElement[]>('elements', { hwnd }, signal); }
@@ -239,6 +255,11 @@ export class DesktopActionSession {
     if (!element) throw new ActionFailure('stale_snapshot', 'element ref is stale');
     return element;
   }
+  actionTarget(snapshot: DesktopSnapshot, args: DesktopRecord): DesktopRecord {
+    return { windowHwnd: snapshot.window.hwnd, pid: snapshot.window.pid, stateId: snapshot.state_id,
+      ...(args.ref ? { ref: String(args.ref) } : args.index !== undefined ? { index: Number(args.index) } : {}),
+      ...(Number.isFinite(args.x) && Number.isFinite(args.y) ? { x: Number(args.x), y: Number(args.y) } : {}) };
+  }
   async point(snapshot: DesktopSnapshot, args: DesktopRecord, signal?: AbortSignal): Promise<{ x: number; y: number; element?: DesktopElement }> {
     const element = this.element(snapshot, args);
     if (element && (args.x !== undefined || args.y !== undefined)) throw new Error('pass exactly one of index/ref or x/y coordinates');
@@ -273,11 +294,14 @@ export class DesktopActionSession {
       const snapshot = await this.observe(args, signal, readScope); const { surface, ...publicSnapshot } = snapshot;
       return { ...publicSnapshot, ...(surface ? { image: surface.toString('base64'), mimeType: 'image/png' } : {}), outline: snapshot.elements.slice(0, 80).map(row => ({ ...row, ref: `@e${row.index}` })), usedBackend: 'native_uia' };
     }
-    if (name === 'launch_app') return nativeRequest('launch', { app: args.app }, signal);
+    if (name === 'launch_app') {
+      try { return await nativeRequest('launch', { app: args.app }, signal); }
+      catch (error) { const waiting = desktopBusyResult(error); if (waiting) return waiting; throw error; }
+    }
     if (name === 'turn_ended') return { ok: true };
     if (name === 'activate_window') {
       const snapshot = await this.observe(args, signal);
-      return nativeRequest('input', { action: name, window: snapshot.window }, signal);
+      return desktopInput({ action: name, window: snapshot.window }, signal);
     }
     if (['search_ui', 'inspect_ui', 'expand_ui', 'read_text', 'wait_for'].includes(name)) {
       const prior = this.snapshots.get(String(args.snapshot_id || args.state_id || ''));
@@ -292,24 +316,55 @@ export class DesktopActionSession {
     }
     if (name === 'wait_for') {
       const started = Date.now(), timeout = Math.min(60000, Number(args.timeout_ms || 5000)); let current = snapshot;
-      do { current = await this.observe({ hwnd: snapshot.window.hwnd }, signal, readScope); const matched = matchesCondition(current.elements, args); if (matched) return { matched, state_id: current.state_id, elapsedMs: Date.now() - started, usedBackend: 'native_uia' }; await delay(Math.min(150, Math.max(1, timeout - (Date.now() - started))), signal); } while (Date.now() - started < timeout);
-      return { matched: false, state_id: current.state_id, elapsedMs: Date.now() - started, usedBackend: 'native_uia' };
+      const baselineMatched = matchesCondition(snapshot.elements, args);
+      const observed = (matched: boolean) => ({ matched, state_id: current.state_id, elapsedMs: Date.now() - started, usedBackend: 'native_uia',
+        ...(args.verify_call_id ? { verification: { matched: matched && !baselineMatched, forCallId: String(args.verify_call_id),
+          ...(Number.isInteger(args.verify_action_index) ? { forActionIndex: Number(args.verify_action_index) } : {}),
+          windowHwnd: snapshot.window.hwnd, pid: snapshot.window.pid, stateId: snapshot.state_id, observedStateId: current.state_id,
+          method: 'uia_condition_wait', scope: 'ui_postcondition', status: !matched ? 'timed_out' : baselineMatched ? 'preexisting_condition' : 'checked',
+          condition: { text: args.text, role: args.role, value: args.value } } } : {}) });
+      do { current = await this.observe({ hwnd: snapshot.window.hwnd }, signal, readScope); if (matchesCondition(current.elements, args)) return observed(true); await delay(Math.min(150, Math.max(1, timeout - (Date.now() - started))), signal); } while (Date.now() - started < timeout);
+      return observed(false);
     }
     if (name === 'act_ui') {
-      const results: DesktopRecord[] = []; let current = snapshot;
-      for (const action of args.actions || []) {
+      const results: DesktopRecord[] = [], actionResults: DesktopRecord[] = [], beforeActions: DesktopSnapshot[] = []; let current = snapshot;
+      for (const [index, action] of (args.actions || []).entries()) {
         signal?.throwIfAborted();
-        results.push(await this.call(String(action.action || action.kind), { ...action, snapshot_id: current.snapshot_id }, signal));
+        const kind = String(action.action || action.kind), before = current;
+        const effect = actionEffect(kind, { ...action, snapshot_id: before.snapshot_id }, this);
+        const result = await this.call(kind, { ...action, snapshot_id: current.snapshot_id }, signal);
+        if (result.waitingForDesktop) {
+          if (results.length) throw interruptedDesktopInput();
+          return result;
+        }
+        beforeActions.push(before);
+        results.push(result);
+        const submitted = action.submit === true || result.submitted === true || ['external_send', 'purchase'].includes(effect);
+        const inputVerified = result.verification?.matched === true;
+        actionResults.push({ index, name: kind, effect, actionTarget: result.actionTarget || this.actionTarget(before, action),
+          verification: { matched: inputVerified && !submitted, method: String(result.verification?.method || 'native_action_readback'),
+            scope: submitted ? 'input_only_not_delivery' : String(result.verification?.scope || 'ui_action_readback') },
+          inputVerified, submit: submitted, intent: action.intent || null });
         current = await this.observe({ hwnd: snapshot.window.hwnd, mode: snapshot.mode }, signal);
       }
-      return { state_id: current.state_id, actions: results, verification: args.expect ? { matched: matchesCondition(current.elements, args.expect), status: 'checked' } : { matched: false, status: 'unavailable' }, usedBackend: 'native_desktop' };
+      const expectedIndex = Number.isInteger(args.verify_action_index) ? Number(args.verify_action_index) : actionResults.length === 1 ? 0 : -1;
+      const expected = args.expect && expectedIndex >= 0 && expectedIndex < actionResults.length ? actionResults[expectedIndex] : null;
+      if (expected) {
+        const matched = matchesCondition(current.elements, args.expect), baselineMatched = matchesCondition(beforeActions[expectedIndex].elements, args.expect);
+        expected.postcondition = { matched: matched && !baselineMatched && !expected.submit, method: 'uia_condition_after_action',
+          scope: expected.submit ? 'input_only_not_delivery' : 'ui_postcondition', status: !matched ? 'not_met' : baselineMatched ? 'preexisting_condition' : 'checked',
+          windowHwnd: snapshot.window.hwnd, pid: snapshot.window.pid, stateId: beforeActions[expectedIndex].state_id };
+      }
+      return { state_id: current.state_id, actions: results, actionResults, verification: { matched: false, status: 'per_action_required', scope: 'batch_not_verified' }, usedBackend: 'native_desktop' };
     }
     const element = this.element(snapshot, args);
     if (['set_value', 'perform_secondary_action'].includes(name)) {
       if (!element) throw new Error('element index/ref required'); await this.requireSnapshot(snapshot.snapshot_id, signal, [element.index]);
-      const result = await nativeRequest('uia', { action: name === 'set_value' ? 'value' : args.action || 'invoke', element, value: args.value }, signal);
+      let result: DesktopRecord;
+      try { result = await nativeRequest('uia', { action: name === 'set_value' ? 'value' : args.action || 'invoke', element, value: args.value }, signal); }
+      catch (error) { const waiting = name === 'perform_secondary_action' && args.action === 'focus' ? desktopBusyResult(error) : null; if (waiting) return waiting; throw error; }
       const confirm = name === 'set_value' ? await nativeRequest('uia', { action: 'read_value', element }, signal) : null;
-      return { ...result, verification: { matched: confirm ? String(confirm.value) === String(args.value) : false, status: confirm ? 'checked' : 'unavailable' } };
+      return { ...result, actionTarget: this.actionTarget(snapshot, args), verification: { matched: confirm ? String(confirm.value) === String(args.value) : false, status: confirm ? 'checked' : 'unavailable' } };
     }
     if (name === 'press_key' && /(^|[+\s])(win|meta|super|lwin|rwin)([+\s]|$)/i.test(String(args.keys))) throw new ActionFailure('permission_denied', 'Win/Meta/Super chords are rejected');
     let coordinates: DesktopRecord = {};
@@ -317,20 +372,23 @@ export class DesktopActionSession {
     if (name === 'select_text' && element) { try { return await nativeRequest('uia', { action: 'select', element }, signal); } catch { signal?.throwIfAborted(); } }
     if (name === 'drag') { const target = await this.point(snapshot, { index: args.to_index, x: args.to_x, y: args.to_y }, signal); coordinates.to_x = target.x; coordinates.to_y = target.y; }
     if (name === 'type_text' || name === 'select_text') {
-      if ('x' in coordinates) await nativeRequest('input', { action: 'click', ...coordinates, window: snapshot.window }, signal);
-      if (name === 'select_text') return nativeRequest('input', { action: 'press_key', keys: 'ctrl+a', window: snapshot.window }, signal);
+      let acted = false;
+      if ('x' in coordinates) { const clicked = await desktopInput({ action: 'click', ...coordinates, window: snapshot.window }, signal); if (clicked.waitingForDesktop) return clicked; acted = true; }
+      if (name === 'select_text') return desktopInput({ action: 'press_key', keys: 'ctrl+a', window: snapshot.window }, signal, !acted);
       let previous: DesktopRecord | undefined;
       if (element && !args.clear) try { previous = await nativeRequest('uia', { action: 'read_value', element }, signal); } catch { signal?.throwIfAborted(); }
-      const result = await nativeRequest('input', { ...args, action: name, window: snapshot.window }, signal);
+      const result = await desktopInput({ ...args, action: name, window: snapshot.window }, signal, !acted);
+      if (result.waitingForDesktop) return result;
       let matched = false;
       if (element) try {
         const confirm = await nativeRequest('uia', { action: 'read_value', element }, signal); const actual = String(confirm.value), text = String(args.text || '');
         matched = args.clear ? actual === text : !!previous && Array.from({ length: Math.max(0, actual.length - text.length + 1) }, (_, i) => i).some(i => actual.slice(i, i + text.length) === text && actual.slice(0, i) + actual.slice(i + text.length) === String(previous!.value));
       } catch { signal?.throwIfAborted(); }
-      if (args.submit && matched) await nativeRequest('input', { action: 'press_key', keys: 'enter', window: snapshot.window }, signal);
-      return { ...result, verification: { matched, status: matched ? 'matched' : 'unavailable' }, submitted: !!args.submit && matched, submit_skip_reason: args.submit && !matched ? 'verification_unavailable' : null };
+      if (args.submit && matched) await desktopInput({ action: 'press_key', keys: 'enter', window: snapshot.window }, signal, false);
+      return { ...result, actionTarget: this.actionTarget(snapshot, args), verification: { matched, status: matched ? 'matched' : 'unavailable' }, submitted: !!args.submit && matched, submit_skip_reason: args.submit && !matched ? 'verification_unavailable' : null };
     }
-    return nativeRequest('input', { ...args, ...coordinates, action: name, window: snapshot.window }, signal);
+    const result = await desktopInput({ ...args, ...coordinates, action: name, window: snapshot.window }, signal);
+    return result.waitingForDesktop ? result : { ...result, actionTarget: this.actionTarget(snapshot, args) };
   }
 }
 
@@ -354,18 +412,18 @@ export function registerDesktopTools(registry: ToolRegistry, session = desktopSe
     get_app_state: { window_id: string, pid: integer, app: string, mode: { enum: ['ax', 'text', 'image', 'full'] } },
     find_roots: { text: string, app: string, pid: integer, kind: string }, observe_ui: { root: string, mode: { enum: ['fused', 'visual', 'ax', 'full'] } },
     search_ui: { ...common, text: string, role: string, capability: string }, inspect_ui: common, expand_ui: { ...common, depth: integer }, read_text: common,
-    wait_for: { ...common, text: string, role: string, value: string, timeout_ms: integer },
+    wait_for: { ...common, text: string, role: string, value: string, timeout_ms: integer, verify_call_id: string, verify_action_index: integer },
     click: { ...common, button: { enum: ['left', 'right', 'middle'] }, count: integer }, type_text: { ...common, text: string, clear: boolean, submit: boolean },
     press_key: { ...common, keys: string }, scroll: { ...common, dx: integer, dy: integer }, set_value: { ...common, value: string },
     perform_secondary_action: { ...common, action: { enum: ['invoke', 'toggle', 'expand', 'collapse', 'select', 'focus'] } }, select_text: common,
     drag: { ...common, to_index: integer, to_x: number, to_y: number, duration_ms: integer, path: { type: 'array', items: { type: 'object', properties: { x: number, y: number } } } },
-    act_ui: { ...common, actions: { type: 'array', minItems: 1, items: { type: 'object' } }, expect: { type: 'object' } }, turn_ended: {},
+    act_ui: { ...common, actions: { type: 'array', minItems: 1, items: { type: 'object' } }, expect: { type: 'object' }, verify_action_index: integer }, turn_ended: {},
   };
   for (const [name, properties] of Object.entries(schemas)) {
     const effect = actionEffect(name, {});
     const targetAction = ['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name);
     if (['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name)) properties.intent = { type: 'string', enum: ['input', 'send', 'submit', 'delete', 'run', 'purchase'] };
-    registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop. Use observed state_id and element ref; coordinates need a full image observation. Actions revalidate the target and return honest verification.`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args, session),
+    registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop. Use observed state_id and element ref; coordinates need a full image observation. Actions revalidate the target and return honest verification.${name === 'wait_for' ? ' To verify a prior UI action, pass its tool call ID as verify_call_id with the same pre-action state_id and an explicit text, role or value condition. This verifies a new UI condition, never external delivery.' : name === 'act_ui' ? ' Each action returns separate verification. For a final expect with multiple actions, set verify_action_index to the action it checks.' : ''}`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args, session),
       access_for: targetAction ? args => { const snapshot = session.snapshots.get(String(args.snapshot_id || args.state_id || '')); return { action: 'patch', windowIds: [snapshot?.window.hwnd ? `w-${snapshot.window.hwnd}` : 'unbound-live-surface'] }; } : undefined,
       is_concurrency_safe: effect === 'read', resource_keys: effect === 'read' ? [] : ['desktop:input'], used_backend: 'native_desktop', timeout_ms: 65000, deferred: !['list_apps', 'get_app_state'].includes(name), execute: (args, context) => session.call(name, args, context.signal, readScope) } as ToolSpec);
   }

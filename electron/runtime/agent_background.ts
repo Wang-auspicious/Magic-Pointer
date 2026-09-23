@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
+import { open, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { asObject, runAgent, registerAgentTools, HookManager, type AgentOptions, type AgentEvent, type Data, type PermissionMode } from './agent';
 import { bootPlugins, extensionPaths, loadHarnessPatch, PromptSections, modelPlugins } from './agent_plugins';
@@ -8,6 +8,7 @@ import { registerCodingTools } from './agent_files';
 import { EventSession } from './session';
 import { ToolRegistry } from './tools';
 import { streamModel } from './model';
+import { initialToolNames, registerToolResultReader } from './agent_services';
 
 const active = new Set(['starting', 'running', 'awaiting_user']);
 const str = (value: unknown) => String(value ?? '');
@@ -18,7 +19,14 @@ const filename = (userDataDir: string, id: string, suffix = '.agent.json') => {
 };
 async function persist(file: string, value: Data): Promise<void> {
   const temp = `${file}.${process.pid}.pending`;
-  await writeFile(temp, JSON.stringify(value), 'utf8'); await rename(temp, file);
+  await writeFile(temp, JSON.stringify(value), 'utf8');
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(temp, file); return; }
+    catch (error) {
+      if (!['EPERM', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '') || attempt >= 5) throw error;
+      await pause(20 * (attempt + 1));
+    }
+  }
 }
 export async function readAgentStatus(userDataDir: string, id: string): Promise<Data | null> {
   let value: Data;
@@ -26,7 +34,11 @@ export async function readAgentStatus(userDataDir: string, id: string): Promise<
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
   if (active.has(str(value.status)) && value.pid) {
     try { process.kill(Number(value.pid), 0); }
-    catch { return { ...value, status: 'stopped', phase: 'stopped', pendingInput: null, summary: 'Worker exited. Resume this Agent to continue from its journal.' }; }
+    catch {
+      const child = await EventSession.open(userDataDir, id, false);
+      return { ...value, status: 'stopped', phase: 'stopped', pendingInput: child.pendingInput(), resumeRequired: true,
+        summary: 'Worker exited. Resume this Agent to continue from its journal.' };
+    }
   }
   return value;
 }
@@ -42,18 +54,29 @@ async function ownedChild(userDataDir: string, parentId: string, childId: string
 }
 export async function respondToAgent(userDataDir: string, parentId: string, childId: string, requestId: string, response: Data): Promise<Data> {
   const child = await ownedChild(userDataDir, parentId, childId), status = await readAgentStatus(userDataDir, childId);
-  if (!status || !active.has(str(status.status))) throw new Error('subagent_not_running');
   const previous = child.events.find(event => event.type === 'user_input/answered' && event.data.requestId === requestId);
+  const resumeRequired = status?.status === 'stopped';
+  if (!status || !active.has(str(status.status)) && !(resumeRequired && (previous || child.pendingInput()?.requestId === requestId))) throw new Error('subagent_not_running');
   if (previous) {
     if (JSON.stringify(previous.data.response) !== JSON.stringify(response)) throw new Error('input_already_answered_differently');
   } else await child.answer(requestId, response);
-  return { ok: true, accepted: true, sessionId: childId };
+  return { ok: true, accepted: true, sessionId: childId, ...(resumeRequired ? { resumeRequired: true } : {}) };
 }
 export async function stopAgent(userDataDir: string, parentId: string, childId: string): Promise<Data> {
   const child = await ownedChild(userDataDir, parentId, childId), status = await readAgentStatus(userDataDir, childId);
   if (!status || !active.has(str(status.status))) throw new Error('subagent_not_running');
-  await writeFile(filename(userDataDir, childId, '.agent.stop'), 'stop'); await child.requestCancel('User stopped this subagent');
+  await writeFile(filename(userDataDir, childId, '.agent.stop'), 'stop');
+  if (status.status === 'awaiting_user') await child.cancelPermissions();
+  await child.requestCancel('User stopped this subagent');
   return { ok: true, sessionId: childId };
+}
+export async function steerAgent(userDataDir: string, parentId: string, childId: string, instruction: string): Promise<Data> {
+  const child = await ownedChild(userDataDir, parentId, childId), status = await readAgentStatus(userDataDir, childId);
+  if (!status || !active.has(str(status.status))) throw new Error('subagent_not_running');
+  if (!instruction.trim() || instruction.length > 12000 || child.pendingInbox('next-step').length >= 100) throw new Error('invalid_subagent_steer');
+  const event = await child.enqueue(instruction, 'next-step');
+  await child.cancelPermissions();
+  return { ok: true, accepted: true, sessionId: childId, messageId: event.data.messageId };
 }
 
 export interface BackgroundPayload {
@@ -68,9 +91,13 @@ async function launch(payload: BackgroundPayload): Promise<Data> {
   const meta: Data = { id: payload.sessionId, parentSessionId: payload.parentId, parentCallId: payload.parentCallId,
     description: payload.instruction || previous?.description || '', readonly: payload.readonly, status: 'starting', phase: 'starting', background: true,
     stepCount: 0, steps: [], currentTool: '', startedAt: Date.now() };
-  const worker = spawn(process.execPath, [path.join(__dirname, 'agent_worker.js'), 'agent'], { detached: true, windowsHide: true,
-    stdio: ['pipe', 'ignore', 'ignore'], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
-  await new Promise<void>((resolve, reject) => { worker.once('spawn', resolve); worker.once('error', reject); });
+  const errorLog = await open(filename(payload.userDataDir, payload.sessionId, '.agent.stderr.log'), 'a');
+  let worker: ReturnType<typeof spawn>;
+  try {
+    worker = spawn(process.execPath, [path.join(__dirname, 'agent_worker.js'), 'agent'], { detached: true, windowsHide: true,
+      stdio: ['pipe', 'ignore', errorLog.fd], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    await new Promise<void>((resolve, reject) => { worker.once('spawn', resolve); worker.once('error', reject); });
+  } finally { await errorLog.close(); }
   meta.pid = worker.pid;
   await persist(filename(payload.userDataDir, payload.sessionId), meta);
   worker.stdin!.end(JSON.stringify(payload)); worker.unref();
@@ -112,6 +139,9 @@ export function registerSubagentTools(registry: ToolRegistry, options: Pick<Agen
   registry.register({ name: 'AgentStatus', description: 'Read actual progress, outputs and pending approvals for independently running child Agents.',
     input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: [] }, effect: 'read', is_concurrency_safe: true,
     execute: async args => { const children = await listAgents(userDataDir, parent); return args.id ? children.find(child => child.id === args.id) ?? { error: 'unknown_subagent' } : { tasks: children }; }, used_backend: 'subagent_session' });
+  registry.register({ name: 'AgentSteer', description: 'Correct a running child Agent. The instruction enters its durable next-step inbox before its next write.',
+    input_schema: { type: 'object', properties: { id: { type: 'string' }, instruction: { type: 'string' } }, required: ['id', 'instruction'] }, effect: 'read', is_concurrency_safe: true,
+    execute: args => steerAgent(userDataDir, parent.id, str(args.id), str(args.instruction)), used_backend: 'subagent_session' });
   registry.register({ name: 'AgentStop', description: 'Stop an independent child Agent and preserve completed work and resumable history.',
     input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] }, effect: 'read', is_concurrency_safe: true,
     execute: args => stopAgent(userDataDir, parent.id, str(args.id)), used_backend: 'subagent_session' });
@@ -142,11 +172,13 @@ export async function runBackgroundAgent(payload: BackgroundPayload): Promise<vo
         const registry = new ToolRegistry(), hooks = new HookManager(), prompt = new PromptSections(), paths = extensionPaths(userDataDir);
         const builtins = [...modelPlugins(streamModel),
           { name: 'coding-tools', apply: (ctx: import('./agent_plugins').PluginContext) => { registerCodingTools(ctx.get('tools'), payload.workspace, session); } },
+          { name: 'tool-result-reader', apply: (ctx: import('./agent_plugins').PluginContext) => registerToolResultReader(ctx.get('tools'), session) },
           { name: 'harness-tools', apply: (ctx: import('./agent_plugins').PluginContext) => registerAgentTools(ctx.get('tools'), session) }];
         const plugins = await bootPlugins({ directory: paths.plugins, patch: await loadHarnessPatch(paths.patch), builtins, rows: builtins.map(plugin => ({ id: plugin.name, plugin: plugin.name })), core: { tools: registry, hooks, prompt, session, runtime: payload } });
         try {
           for (const name of ['AskUser', 'EnterPlanMode', 'ExitPlanMode']) registry.unregister(name);
           if (payload.readonly) for (const name of ['Write', 'Edit', 'Patch', 'Rewind', 'Bash']) registry.unregister(name);
+          registry.setInitialTools(initialToolNames({ workspace: payload.workspace, permissionMode: payload.permissionMode }));
           const common: AgentOptions = { ...payload, session, registry, hooks, model: request => plugins.context.get<AgentOptions['model']>('model_client')(request), instruction, signal: controller.signal, onEvent,
           allowedEffects: payload.readonly ? ['read'] : ['read', 'reversible_write', 'local_irreversible'],
           system: 'You are a Magic Pointer coding subagent. Complete the assigned task independently in the workspace. Read before editing, verify actual results, and return a concise factual report with paths and remaining limitations. Never claim work or checks you did not perform.' };
@@ -154,15 +186,28 @@ export async function runBackgroundAgent(payload: BackgroundPayload): Promise<vo
           result = await runAgent(common);
         } finally { await registry.close(); await plugins.close(); }
       } finally { clearInterval(poll); }
-      publish({ status: result.reason, phase: result.reason, summary: result.message, pendingInput: result.pending_input, completedAt: Date.now() }); await pendingWrite;
+      const receiptStatus = str(result.receipt.status);
+      const status = result.reason === 'completed' && receiptStatus === 'unverified' ? 'needs_verification'
+        : result.reason === 'completed' && receiptStatus === 'partial' ? 'partial' : result.reason;
+      const summary = status === result.reason ? result.message : `${result.message}\nTask remains ${status}; inspect the saved receipt before continuing.`;
+      publish({ status, phase: status, summary, receiptStatus, pendingInput: result.pending_input, completedAt: Date.now() }); await pendingWrite;
       if (result.reason !== 'awaiting_user') {
-        await parent.append('subagent/finished', { childSessionId: sessionId, status: result.reason, summary: result.message });
-        await parent.enqueue(`[Agent ${sessionId} ${result.reason}]\n${result.message}`, 'next-step', undefined, `agent-result-${sessionId}-${session.events.length}`); break;
+        await parent.append('subagent/finished', { childSessionId: sessionId, status, receiptStatus, summary });
+        await parent.enqueue(`[Agent ${sessionId} ${status}]\n${summary}`, 'next-step', undefined, `agent-result-${sessionId}-${session.events.length}`); break;
       }
       await parent.enqueue(`[Agent ${sessionId} awaiting user approval] ${result.pending_input?.question ?? ''}`, 'next-step', undefined, `agent-approval-${sessionId}-${result.pending_input?.requestId}`);
       while (true) {
-        if (await readFile(filename(userDataDir, sessionId, '.agent.stop')).then(() => true).catch(() => false)) { publish({ status: 'user_interrupt', phase: 'user_interrupt', pendingInput: null }); return; }
-        await pause(300); await session.refresh(); if (!session.pendingInput()) break;
+        if (await readFile(filename(userDataDir, sessionId, '.agent.stop')).then(() => true).catch(() => false)) {
+          const summary = 'User stopped this Agent while it was waiting for input.';
+          await session.cancelPermissions();
+          publish({ status: 'user_interrupt', phase: 'user_interrupt', summary, pendingInput: null, completedAt: Date.now() });
+          await pendingWrite;
+          await parent.append('subagent/finished', { childSessionId: sessionId, status: 'user_interrupt', summary });
+          await parent.enqueue(`[Agent ${sessionId} user_interrupt]\n${summary}`, 'next-step', undefined, `agent-result-${sessionId}-${session.events.length}`);
+          return;
+        }
+        await pause(300); await session.refresh();
+        if (!session.pendingInput() && !await readFile(filename(userDataDir, sessionId, '.agent.stop')).then(() => true).catch(() => false)) break;
       }
       instruction = ''; publish({ status: 'running', phase: 'thinking', pendingInput: null });
     }

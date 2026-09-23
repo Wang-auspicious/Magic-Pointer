@@ -281,13 +281,20 @@ $result | ConvertTo-Json -Depth 8 -Compress`, signal);
   return explorerContextFromEvidence(window, data, elements, request);
 }
 
+export function uiaContextFromProbe(window: DesktopRecord, data: DesktopRecord): AdapterContext {
+  const sameHwnd = Number(data.hwnd) === Number(window.hwnd) && Number(data.root_hwnd) === Number(window.hwnd);
+  // Console text is exposed by the hosting process, whose UIA PID can differ from the bound window PID.
+  const sameProcess = !window.pid || Number(data.process_id) === Number(window.pid) || data.result_kind === 'terminal_buffer';
+  const matches = sameHwnd && sameProcess;
+  return { adapter: 'uia', app: String(window.process_name || ''), window, content: matches ? String(data.text || '') : '', method: `uia:${data.result_kind || 'selection'}`, artifacts: data, error: matches ? data.error || null : 'uia_window_identity_mismatch' };
+}
+
 export async function resolveSelection(window: DesktopRecord, request: DesktopRecord = {}, signal?: AbortSignal): Promise<AdapterContext[]> {
   const readers: Promise<AdapterContext>[] = [(async () => {
     const probe = () => probeSelection(Number(window.hwnd), { point: request.point, region: request.region, signal });
     let data = await probe();
     if (/chrome_widget|mozilla/i.test(window.class_name || '') && !data.text && !data.document_count) { await delay(data.error ? 450 : 60, signal); data = await probe(); }
-    const matches = Number(data.hwnd) === Number(window.hwnd) && Number(data.root_hwnd) === Number(window.hwnd) && (!window.pid || Number(data.process_id) === Number(window.pid));
-    return { adapter: 'uia', app: String(window.process_name || ''), window, content: matches ? String(data.text || '') : '', method: `uia:${data.result_kind || 'selection'}`, artifacts: data, error: matches ? data.error || null : 'uia_window_identity_mismatch' };
+    return uiaContextFromProbe(window, data);
   })()];
   if (officeApp(window)) readers.push(readOffice(window, { region: request.region, signal }));
   if (/chrome_widget|mozilla/i.test(window.class_name || '')) readers.push(readBrowserSelection(window, request, signal));

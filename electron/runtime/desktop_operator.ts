@@ -118,12 +118,12 @@ export async function runComputerTask(task: string, grant: SurfaceGrant, model: 
 
 export function extractTerminalEvidence(text: string, method: string, anchorText = ''): DesktopRecord {
   const clean = text.replace(new RegExp(String.fromCharCode(27) + '\\[[0-?]*[ -/]*[@-~]', 'g'), '').replace(/\r\n?/g, '\n').replace(/(--?(?:api[-_]?key|token|secret|password|passwd|authorization|credential))(=|\s+)("[^"]*"|'[^']*'|\S+)/gi, '$1$2[redacted]').replace(/\b([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL))=\S+/gi, '$1=[redacted]');
-  const lines = clean.split('\n'); let anchor = -1;
+  const lines = clean.split('\n').map(line => line.trimEnd()); let anchor = -1;
   for (let index = 0; index < lines.length; index++) if (anchorText ? lines[index].includes(anchorText) : /error|exception|traceback|fatal|failed|panic/i.test(lines[index])) anchor = index;
   if (anchor < 0) anchor = Math.max(0, lines.length - 1);
   const commandPattern = /^(?:\s*PS\s+[^>]+>|\s*[A-Z]:\\[^>]*>|\s*(?:\S+@\S+.*?)?[$#])\s*(.*)$/i;
   let command = '', commandLine = 0, nextPrompt = lines.length;
-  for (let index = anchor; index >= 0; index--) { const match = commandPattern.exec(lines[index]); if (match) { command = match[1]; commandLine = index; break; } }
+  for (let index = anchor; index >= 0; index--) { const match = commandPattern.exec(lines[index]); if (match) { command = match[1].trim(); commandLine = index; break; } }
   for (let index = anchor + 1; index < lines.length; index++) if (commandPattern.test(lines[index])) { nextPrompt = index; break; }
   const begin = Math.max(commandLine, anchor - 8), end = Math.min(nextPrompt, anchor + 13), block = lines.slice(commandLine, nextPrompt).join('\n');
   const code = /(?:process\s+exited\s+with\s+(?:exit\s+)?code|command\s+failed\s+with\s+exit\s+code|^\s*exit\s+code)\s*[:=]?\s*(-?\d+)/im.exec(block);

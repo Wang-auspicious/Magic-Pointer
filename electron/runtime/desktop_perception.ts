@@ -9,6 +9,7 @@ import { ActionFailure, type ToolRegistry } from './tools';
 import { requestVision, type ModelConfig } from './model';
 import { bootSurfacePlugins } from './agent_plugins';
 import { wordSelectionForRewrite, cleanWordReplacement, makeWordReplaceSelectionProposal } from './office_selection_proposal';
+import { extractTerminalEvidence } from './desktop_operator';
 
 export type EvidenceStatus = 'ok' | 'degraded' | 'empty_confirmed' | 'busy' | 'timeout' | 'unsupported' | 'denied' | 'error';
 export interface Evidence { value: string | null; status: EvidenceStatus; confidence: number; source: string; latency_ms?: number; captured_at_utc?: string; container_hint?: boolean; note?: string }
@@ -155,6 +156,13 @@ export function structuredCoverage(context: AdapterContext, mark?: Rect): { cove
   return { covers: true, reason: 'structured_text' };
 }
 
+function ocrFailureStatus(error: string): EvidenceStatus {
+  if (/\bbusy\b|worker_busy/i.test(error)) return 'busy';
+  if (/timeout|timed.out/i.test(error)) return 'timeout';
+  if (/unavailable|unsupported|not.supported/i.test(error)) return 'unsupported';
+  return 'error';
+}
+
 export async function perceiveFrozenFrame(frame: FrozenFrame, request: DesktopRecord = {}, signal?: AbortSignal, adapters = surfaceAdapters, providers: PerceptionProviders = {}): Promise<DesktopRecord> {
   const started = performance.now(); const bytes = await readFile(frame.localArtifact.path); const metadata = await sharp(bytes).metadata();
   if (metadata.width !== frame.localArtifact.width || metadata.height !== frame.localArtifact.height) throw new Error('artifact_dimension_mismatch');
@@ -184,6 +192,15 @@ export async function perceiveFrozenFrame(frame: FrozenFrame, request: DesktopRe
   signal?.throwIfAborted();
   const contexts = results[0].status === 'fulfilled' ? results[0].value as AdapterContext[] : [];
   for (const context of contexts) {
+    if (context.adapter === 'uia' && context.artifacts.result_kind === 'terminal_buffer' && !context.error && context.content) {
+      const rawText = context.content;
+      const terminal = extractTerminalEvidence(rawText, context.method, String(context.artifacts.terminal_anchor_text || ''));
+      const artifacts = { ...context.artifacts };
+      delete artifacts.text;
+      delete artifacts.terminal_anchor_text;
+      context.artifacts = { ...artifacts, terminal_evidence: terminal, terminal_buffer_chars: rawText.length };
+      context.content = String(terminal.anchor?.text || terminal.window?.text || '');
+    }
     if (context.adapter === 'uia' && context.artifacts.document_location && context.artifacts.page_rect) {
       const recovery = await (await import('./desktop_sources.js')).recoverPdfSelection(context.artifacts, frame).catch((error: unknown) => ({ ok: false, error: String(error) })) as DesktopRecord;
       context.artifacts.pdf_recovery = recovery;
@@ -192,17 +209,31 @@ export async function perceiveFrozenFrame(frame: FrozenFrame, request: DesktopRe
   }
   const observations = contexts.map(context => ({ context, ...structuredCoverage(context, mark), status: context.error ? context.content ? 'degraded' : 'error' : context.content ? 'ok' : 'empty_confirmed', priority: context.adapter === 'office' ? 0 : context.adapter === 'browser-devtools' ? 1 : 2 }));
   const best = observations.filter(item => item.covers && item.context.content).sort((a, b) => a.priority - b.priority)[0];
-  const skipOcr = !!best && best.status === 'ok' && best.reason === 'structured_text' && !completedOcr;
+  const comparable = observations.filter(item => item.covers && item.context.content && item.status !== 'error');
+  const conflicts: DesktopRecord[] = [], corroborations: DesktopRecord[] = [];
+  for (let left = 0; left < comparable.length; left++) for (let right = left + 1; right < comparable.length; right++) {
+    const providers = [comparable[left].context.adapter, comparable[right].context.adapter];
+    if (textsAgree(comparable[left].context.content, comparable[right].context.content)) corroborations.push({ kind: 'content_agreement', providers, layers: providers });
+    else conflicts.push({ kind: 'content_disagreement', providers, reason: 'content_disagreement' });
+  }
+  const skipOcr = !!best && best.status === 'ok' && best.reason === 'structured_text' && !conflicts.length && !completedOcr;
   if (skipOcr) ocrController.abort(new Error('structured_context_covered'));
   const ocrResult = skipOcr ? { status: 'fulfilled', value: { blocks: [], usedBackend: 'skipped', status: 'skipped' } } as PromiseFulfilledResult<DesktopRecord> : await ocrPromise;
   signal?.removeEventListener('abort', abortOcr);
   signal?.throwIfAborted();
-  const ocr = ocrResult.status === 'fulfilled' ? ocrResult.value : { blocks: [], error: String(ocrResult.reason), usedBackend: 'windows-ocr' };
+  const ocr = ocrResult.status === 'fulfilled'
+    ? { ...ocrResult.value, status: skipOcr ? 'skipped' : ocrResult.value.blocks?.length ? 'ok' : 'empty_confirmed' }
+    : { blocks: [], error: String(ocrResult.reason), usedBackend: 'windows-ocr', status: ocrFailureStatus(String(ocrResult.reason)) };
   const surfaces = results[1].status === 'fulfilled' ? results[1].value : [];
   const selected = selectOcrBlocks(ocr.blocks || [], gesture);
   const pixelText = ocrText(selected.selected);
-  const conflicts = best && pixelText && !textsAgree(best.context.content, pixelText) ? [{ providers: [best.context.adapter, 'ocr'], reason: 'content_disagreement' }] : [];
-  const context: AdapterContext = best && !conflicts.length ? best.context : { adapter: 'pixel-ocr', app: window.process_name, window, content: pixelText, method: 'ocr:windows', artifacts: { blocks: selected.selected, all_blocks: ocr.blocks } };
+  for (const item of comparable) if (pixelText) {
+    const providers = [item.context.adapter, 'ocr'];
+    if (textsAgree(item.context.content, pixelText)) corroborations.push({ kind: 'content_agreement', providers, layers: providers });
+    else conflicts.push({ kind: 'content_disagreement', providers, reason: 'content_disagreement' });
+  }
+  const pixelDisagreesWithBest = !!best && pixelText && !textsAgree(best.context.content, pixelText);
+  const context: AdapterContext = best && !pixelDisagreesWithBest ? best.context : { adapter: 'pixel-ocr', app: window.process_name, window, content: pixelText, method: 'ocr:windows', artifacts: { blocks: selected.selected, all_blocks: ocr.blocks } };
   const conversation = surfaces.find(surface => surface.conversationIdentity)?.conversationIdentity;
   if (conversation) context.artifacts.conversationIdentity = conversation;
   if (request.workspaceRoot) context.artifacts.componentLink = await (await import('./desktop_sources.js')).resolveComponentSource(request.workspaceRoot, contexts.find(item => item.adapter === 'browser-devtools')?.artifacts.browser_context || null, surfaces.flatMap(surface => surface.objects || []));
@@ -214,13 +245,15 @@ export async function perceiveFrozenFrame(frame: FrozenFrame, request: DesktopRe
       ? [{ app: item.context.app, document, document_saved: typeof artifacts.document_saved === 'boolean' ? artifacts.document_saved : null, hwnd: window.hwnd, pid: window.pid, process_name: window.process_name }]
       : [];
   }) : [];
+  const status = conflicts.length || best?.status === 'degraded' ? 'degraded' : content ? 'ok'
+    : ocr.status === 'ok' ? 'empty_confirmed' : ocr.status === 'skipped' ? 'unsupported' : ocr.status;
   return { frameLeaseId: frame.frameLeaseId, context, content, source_window: window, capture_path: frame.localArtifact.path, capture_bbox: frame.surfaceBoundsPx, frame_lease: frame, selection_gesture: gesture, evidence_binding: { status: 'verified', target: frame.targetWindow, surface_bounds_px: frame.surfaceBoundsPx, capture_kind: frame.source === 'wgc-window' ? 'window' : /display/.test(frame.source || '') ? 'display' : 'fallback' },
     structured_covers_mark: !!best, structured_gap_reason: best ? '' : observations.find(item => !item.covers)?.reason || 'structured_context_unavailable', selection_bbox: mark ? xywhToLtrb(mark) : frame.surfaceBoundsPx,
     selection_segments: selected.segments.map(blocks => ({ text: ocrText(blocks), rectangles: blocks.map(block => block.rect) })), visual_elements: groupVisualElements(ocr.blocks || [], frame.surfaceBoundsPx),
     surface_objects: surfaces.flatMap(surface => surface.objects || []), surface_adapters: surfaces, office_document_sources: officeDocumentSources,
     structured_contexts: publishedObservations.map(item => item.context),
-    ocr, conflicts, status: conflicts.length ? 'degraded' : content ? 'ok' : 'unsupported',
-    perception_trace: { schemaVersion: 1, selectedLayer: context.adapter === 'pixel-ocr' ? 'pixel' : context.adapter, selectedAdapter: context.adapter, selectedMethod: context.method, pixelFallbackUsed: context.adapter === 'pixel-ocr', attempts: observations.map(item => ({ adapter: item.context.adapter, status: item.status, reason: item.reason, coversMark: item.covers })), observations: publishedObservations.map(item => ({ ...item.context, layer: item.context.adapter, status: item.status, coversMark: item.covers, confidence: item.status === 'ok' ? 0.8 : 0.4 })), conflicts, liveIdentityMatched: sameWindow },
+    ocr, conflicts, status,
+    perception_trace: { schemaVersion: 1, selectedLayer: context.adapter === 'pixel-ocr' ? 'pixel' : context.adapter, selectedAdapter: context.adapter, selectedMethod: context.method, pixelFallbackUsed: context.adapter === 'pixel-ocr', attempts: [...observations.map(item => ({ adapter: item.context.adapter, status: item.status, reason: item.reason, coversMark: item.covers })), { adapter: 'pixel-ocr', status: ocr.status, reason: ocr.error || ocr.status }], observations: publishedObservations.map(item => ({ ...item.context, layer: item.context.adapter, status: item.status, coversMark: item.covers, confidence: item.status === 'ok' ? 0.8 : 0.4 })), conflicts, corroborations, ocrStatus: ocr.status, liveIdentityMatched: sameWindow },
     captured_at: frame.capturedAtUtc, latencyMs: performance.now() - started, usedBackend: context.method };
 }
 

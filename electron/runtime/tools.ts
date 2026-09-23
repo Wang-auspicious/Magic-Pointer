@@ -135,6 +135,7 @@ export class ToolRegistry {
   private readonly tools = new Map<string, ToolSpec>();
   private readonly aliases = new Map<string, string>();
   private readonly loaded = new Set<string>();
+  private initialTools: Set<string> | null = null;
   private readonly endListeners = new Set<() => void | Promise<void>>();
 
   onSessionEnd(listener: () => void | Promise<void>): () => void { this.endListeners.add(listener); return () => { this.endListeners.delete(listener); }; }
@@ -173,13 +174,17 @@ export class ToolRegistry {
     return spec;
   }
   list(): ToolSpec[] { return [...this.tools.values()]; }
+  setInitialTools(names: Iterable<string>): void {
+    this.initialTools = new Set([...names].map(name => this.aliases.get(name) ?? name).filter(name => this.tools.has(name)));
+  }
   schemas() {
-    return this.list().filter(spec => !spec.deferred || this.loaded.has(spec.name)).map(spec => ({
+    return this.list().filter(spec => this.loaded.has(spec.name) || (this.initialTools ? this.initialTools.has(spec.name) : !spec.deferred)).map(spec => ({
       name: spec.name, description: spec.description, parameters: spec.input_schema, ...(spec.examples?.length ? { examples: spec.examples } : {}),
     }));
   }
   directory(): string {
-    return this.list().filter(spec => spec.deferred).map(spec => `${spec.name}: ${spec.description.trim().split(/\n|。|(?<=\.)\s/)[0]!.slice(0, 120)}`).join('\n');
+    return this.list().filter(spec => !this.loaded.has(spec.name) && (this.initialTools ? !this.initialTools.has(spec.name) : spec.deferred))
+      .map(spec => spec.name).join(', ');
   }
   search(keyword: string, limit = 8): ToolSpec[] {
     const query = keyword.trim().toLowerCase();

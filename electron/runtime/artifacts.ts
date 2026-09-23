@@ -451,7 +451,17 @@ export async function applyDocumentPatch(
 }
 export function registerArtifactTools(registry: ToolRegistry, session: ContextSessionLike): void {
   const string = { type: 'string' },
-    schema = (properties: Json, required: string[]) => ({ type: 'object', properties, required });
+    schema = (properties: Json, required: string[]) => ({ type: 'object', properties, required }),
+    patchOperationSchema = { type: 'object', properties: {
+      operationId: { type: 'string', minLength: 1, description: 'Unique ID for this proposed edit, e.g. change-b7-1.' },
+      operation: { type: 'string', enum: [...operations], description: 'Exact operation type; use set_cell_values for Excel cells.' },
+      sourceId: { type: 'string', minLength: 1, description: 'Copy sourceId from the bound target reference.' },
+      referenceId: { type: 'string', minLength: 1, description: 'Copy referenceId from the active target reference.' },
+      locator: { type: 'object', properties: { kind: string, value: { type: 'object', additionalProperties: true } },
+        required: ['kind', 'value'], description: 'Copy the active target reference locator exactly.' },
+      before: { description: 'Observed current value. For set_cell_values, a two-dimensional array matching the cell range.' },
+      after: { description: 'Requested replacement in the same shape as before.' },
+    }, required: ['operationId', 'operation', 'sourceId', 'referenceId', 'locator', 'before', 'after'], additionalProperties: true };
   registry.register({
     name: 'Artifact.create',
     description:
@@ -513,11 +523,12 @@ export function registerArtifactTools(registry: ToolRegistry, session: ContextSe
   registry.register({
     name: 'Document.propose_patch',
     description:
-      'Propose exact before/after edits to current task target references as an editable document patch. Applying requires acceptance of its revision. For PowerPoint set_shape_text, read the selected source for officeShapes styleSpans. When edited text crosses mixed styles, before and after must each include text and complete styleSpans with zero-based UTF-16 start/length and bold, italic, underline, fontName, fontSize, colorRgb. Map emphasis to the new words; if its destination is unclear, ask the user before applying.',
+      'Propose exact before/after edits to active target references after Context.read. Each operation requires operationId, operation, sourceId, referenceId, locator, before and after; action, kind and targetReference are not substitutes. Copy sourceId/referenceId/locator from the bound target reference. For a single Excel B7 value 5→8, use {"summary":"Change B7 only","operations":[{"operationId":"change-b7-1","operation":"set_cell_values","sourceId":"<bound sourceId>","referenceId":"<target referenceId>","locator":{"kind":"cell-range","value":{"sheet":"Sheet1","range":"B7"}},"before":[[5]],"after":[[8]]}]}; replace the IDs and locator with the actual binding. Applying requires acceptance of the proposal revision. For PowerPoint set_shape_text, read the selected source for officeShapes styleSpans. When edited text crosses mixed styles, before and after must each include text and complete styleSpans with zero-based UTF-16 start/length and bold, italic, underline, fontName, fontSize, colorRgb. Map emphasis to the new words; if its destination is unclear, ask the user before applying.',
     input_schema: schema(
       {
         summary: string,
-        operations: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        operations: { type: 'array', minItems: 1, items: patchOperationSchema,
+          description: 'One operation per exact target; before must equal the current readback and after the requested state.' },
       },
       ['summary', 'operations'],
     ),
