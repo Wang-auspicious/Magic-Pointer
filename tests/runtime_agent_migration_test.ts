@@ -42,6 +42,22 @@ test('permission suspension survives reopening and executes the exact approved a
   assert.equal(executions, 1);
 });
 
+test('a legacy history Recipe asks for this exact approval before reading', async () => {
+  const context = await fixture('legacy-history-recipe');
+  const registry = new ToolRegistry();
+  let reads = 0;
+  registry.register({ name: 'Recipe', description: 'Fixture legacy history plan',
+    input_schema: { type: 'object', properties: { operation: { type: 'string' }, plan: { type: 'object', additionalProperties: true } }, required: ['operation', 'plan'] },
+    effect_for: () => 'read', execute: () => { reads++; return { entries: ['private-history'] }; } });
+  const args = { operation: 'execute', plan: { recipeId: 'memory.recall', provider: 'local.memory', risk: 'read', requiresConfirmation: false } };
+  const result = await runAgent({ ...context, registry, permissionMode: 'bypass', allowedTools: ['Recipe'],
+    instruction: 'Read past screen history', model: async () => reply([call('old-plan', 'Recipe', args)]) });
+  assert.equal(result.reason, 'awaiting_user');
+  assert.equal(result.pending_input?.tool, 'Recipe');
+  assert.deepEqual(result.pending_input?.options, ['仅这一次允许', '拒绝']);
+  assert.equal(reads, 0);
+});
+
 test('interrupted writes remain blocked until a later read and explicit recovery confirmation', async () => {
   const context = await fixture('recovery');
   await context.session.append('turn/start', { turn: 1 });

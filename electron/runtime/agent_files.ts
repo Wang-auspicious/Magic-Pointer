@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdir, readdir, stat, unlink, access } from 'node:fs/promises';
 import path from 'node:path';
+import createIgnore, { type Ignore } from 'ignore';
 import { ToolRegistry, type ToolSpec, type Effect } from './tools';
 import { EventSession } from './session';
 import { asObject, type Data } from './agent';
@@ -68,11 +69,36 @@ export class WorkspaceFiles {
   async *walk(base: string, signal: AbortSignal): AsyncGenerator<string> {
     signal.throwIfAborted();
     if ((await stat(base)).isFile()) { yield base; return; }
-    for (const item of await readdir(base, { withFileTypes: true })) {
-      signal.throwIfAborted(); if (ignore.has(item.name) || item.isSymbolicLink()) continue;
-      const file = path.join(base, item.name);
-      if (item.isDirectory()) yield* this.walk(file, signal); else if (item.isFile()) yield file;
+    const rules: { directory: string; matcher: Ignore }[] = [];
+    const addRules = async (directory: string) => {
+      const matcher = createIgnore();
+      for (const name of ['.gitignore', '.ignore', ...(directory === this.root ? ['.git/info/exclude'] : [])]) {
+        try { matcher.add(await readFile(path.join(directory, name), 'utf8')); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      }
+      return { directory, matcher };
+    };
+    for (let directory = this.root; directory !== base;) {
+      rules.push(await addRules(directory));
+      const next = path.relative(directory, base).split(path.sep)[0];
+      if (!next || next === '..') break;
+      directory = path.join(directory, next);
     }
+    const visit = async function* (directory: string, parents: typeof rules): AsyncGenerator<string> {
+      const local = [...parents, await addRules(directory)];
+      for (const item of await readdir(directory, { withFileTypes: true })) {
+        signal.throwIfAborted(); if (ignore.has(item.name) || item.isSymbolicLink()) continue;
+        const file = path.join(directory, item.name);
+        let excluded = false;
+        for (const rule of local) {
+          const match = rule.matcher.test(path.relative(rule.directory, file).replaceAll('\\', '/') + (item.isDirectory() ? '/' : ''));
+          if (match.ignored) excluded = true; else if (match.unignored) excluded = false;
+        }
+        if (excluded) continue;
+        if (item.isDirectory()) yield* visit(file, local); else if (item.isFile()) yield file;
+      }
+    };
+    yield* visit(base, rules);
   }
 }
 
@@ -126,7 +152,8 @@ export async function applyWorkspacePatch(space: WorkspaceFiles, patch: string):
       while (index < lines.length && lines[index].startsWith('+')) added.push(lines[index++].slice(1));
       planned.set(target, added.join('\n') + '\n'); continue;
     }
-    let raw = (await current(target)).replace(/\r\n/g, '\n'), move: string | undefined, cursor = 0;
+    const original = await current(target);
+    let raw = original.replace(/\r\n/g, '\n'), move: string | undefined, cursor = 0;
     if (lines[index]?.startsWith('*** Move to: ')) move = space.resolve(lines[index++].slice(13));
     while (index < lines.length && (!lines[index].startsWith('*** ') || lines[index] === '*** End of File')) {
       let hint = '';
@@ -149,6 +176,7 @@ export async function applyWorkspacePatch(space: WorkspaceFiles, patch: string):
       const [start, end] = hits[0], replacementText = replacement.join('\n');
       raw = raw.slice(0, start) + replacementText + raw.slice(end); cursor = start + replacementText.length;
     }
+    if (original.includes('\r\n')) raw = raw.replaceAll('\n', '\r\n');
     if (move) { if (await exists(move)) throw new Error(`Move target exists: ${move}`); planned.set(target, null); planned.set(move, raw); }
     else planned.set(target, raw);
   }

@@ -4,6 +4,19 @@ const assert = require('assert');
 
 const { PHYSICAL_SPACE, isPhysicalGeometry, toPhysicalGeometry } = require('../electron/geometry_space');
 
+const { overlayPointToScreenDip, mapOverlayPointToPhysical } = require('../electron/geometry_space');
+
+{
+  const overlay = { x: 1180, y: 0 };
+  const physical = (point: { x: number; y: number }) => point.x < 1200
+    ? { x: point.x * 2, y: point.y * 2 }
+    : { x: 2400 + point.x - 1200, y: point.y };
+  assert.deepStrictEqual(overlayPointToScreenDip({ x: 40, y: 30 }, overlay), { x: 1220, y: 30 });
+  assert.deepStrictEqual(mapOverlayPointToPhysical({ x: 40, y: 30 }, overlay, physical), { x: 2420, y: 30 },
+    'a 100% display beside a 200% display starts at its real physical origin');
+  assert.deepStrictEqual(mapOverlayPointToPhysical({ x: 10, y: 30 }, overlay, physical), { x: 2380, y: 60 });
+}
+
 
 const toPhysical = (p: { x: number; y: number }) => ({ x: (p.x + 100) * 2, y: (p.y + 50) * 2 });
 

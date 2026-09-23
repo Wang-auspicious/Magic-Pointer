@@ -434,6 +434,25 @@ export async function handleAction(payload: Json, options: ActionOptions): Promi
     reviewSessionFinished,
   };
 }
+export function describeDeliveryFailure(error: unknown): { reasonCode: string; message: string; writeAttempted: boolean } {
+  const text = String(error || '').toLowerCase();
+  const rules: [string, string, string, boolean][] = [
+    ['not an editable input surface', 'not_an_input_surface', '你划的位置不是可输入的框，所以没有写入。', false],
+    ['already contains a different draft', 'input_already_has_text', '输入框里已有其他内容，没有覆盖它。', false],
+    ['password', 'password_input', '目标是密码框，没有写入。', false],
+    ['input surface is disabled', 'input_disabled', '输入框当前不可编辑。', false],
+    ['foreground', 'window_not_foreground', '目标窗口没有处于前台，没有写入。', false],
+    ['terminal', 'terminal_target', '目标是终端窗口，没有直接输入。', false],
+    ['could not be verified', 'write_not_verifiable', '已尝试填入，但无法读回核对，请查看目标输入框。', true],
+    ['verification failed', 'write_not_verifiable', '已尝试填入，但读回结果不匹配，请查看目标输入框。', true],
+    ['character-count verification', 'write_not_verifiable', '已尝试填入，但字数核对失败，请查看目标输入框。', true],
+    ['did not verify the write', 'write_not_verifiable', '写入没有通过核对，请查看目标输入框。', true],
+  ];
+  const match = rules.find(([needle]) => text.includes(needle));
+  return match ? { reasonCode: match[1], message: match[2], writeAttempted: match[3] }
+    : { reasonCode: 'write_refused', message: '没能确认已写进这个应用。', writeAttempted: false };
+}
+
 export async function handleDelivery(payload: Json, options: ActionOptions): Promise<Json> {
   const text = String(payload.text ?? '');
   if (!text.trim() || text.length > 20000)
@@ -444,12 +463,9 @@ export async function handleDelivery(payload: Json, options: ActionOptions): Pro
         ? '没有可填入的文字。'
         : `这段文字有 ${text.length} 字，超过一次填入的上限 20000 字。`,
     };
-  let attempted = false,
-    reason = 'missing_target_identity',
-    detail = '';
+  let verdict = { reasonCode: 'missing_target_identity', message: '没有可信的目标窗口或坐标，所以没往任何地方写。', writeAttempted: false }, detail = '';
   try {
     const proposal = makePromptDeliveryProposal(text, payload);
-    attempted = true;
     const result = await new ActionBroker('delivery', options).execute(proposal, true);
     if (result.status === 'succeeded')
       return {
@@ -464,12 +480,13 @@ export async function handleDelivery(payload: Json, options: ActionOptions): Pro
           writeAttempted: true,
         },
       };
-    reason = 'write_unverified';
     detail = String(result.error);
+    verdict = describeDeliveryFailure(result.error);
   } catch (error) {
     detail = String(error);
+    if (!/target window identity is missing|target coordinate space is not trusted/i.test(detail)) verdict = describeDeliveryFailure(error);
   }
-  const message = `${attempted ? '目标输入框未确认写入成功。' : '没有可信的目标窗口或坐标，所以没往任何地方写。'}结果已复制，把光标点进输入框按 Ctrl+V 就行。`;
+  const message = `${verdict.message}结果已复制，把光标点进输入框按 Ctrl+V 就行。`;
   try {
     await copyText(text, options.signal);
     return {
@@ -477,19 +494,20 @@ export async function handleDelivery(payload: Json, options: ActionOptions): Pro
       prompt: '填入',
       answer: message,
       detail,
-      delivery: { kind: 'clipboard', reasonCode: reason, message, writeAttempted: attempted },
+      delivery: { kind: 'clipboard', reasonCode: verdict.reasonCode, message, writeAttempted: verdict.writeAttempted },
     };
   } catch (error) {
+    const failedMessage = `${verdict.message}剪贴板也未确认写入。`;
     return {
       ok: false,
       prompt: '填入',
-      answer: '目标输入框和剪贴板均未确认写入成功。',
+      answer: failedMessage,
       detail: `${detail}; ${error}`,
       delivery: {
         kind: 'failed',
-        reasonCode: reason,
-        message: '目标输入框和剪贴板均未确认写入成功。',
-        writeAttempted: attempted,
+        reasonCode: verdict.reasonCode,
+        message: failedMessage,
+        writeAttempted: verdict.writeAttempted,
       },
     };
   }

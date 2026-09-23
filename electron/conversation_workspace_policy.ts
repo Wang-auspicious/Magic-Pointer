@@ -9,7 +9,7 @@ export interface WorkspaceCapabilityState {
 export interface AttachmentDialogOptions {
   title: string;
   defaultPath?: string;
-  properties: Array<'openFile' | 'multiSelections'>;
+  properties: Array<'openFile' | 'openDirectory' | 'multiSelections'>;
 }
 
 export function resolveConversationWorkspace(
@@ -38,11 +38,11 @@ export function workspaceCapabilityState(root: unknown): WorkspaceCapabilityStat
   };
 }
 
-export function attachmentDialogOptions(projectRoot: unknown): AttachmentDialogOptions {
+export function attachmentDialogOptions(projectRoot: unknown, kind: 'files' | 'folder' = 'files'): AttachmentDialogOptions {
   const root = String(projectRoot ?? '').trim();
   return {
-    title: '添加任务材料',
+    title: kind === 'folder' ? '添加材料文件夹' : '添加任务材料',
     ...(root ? { defaultPath: root } : {}),
-    properties: ['openFile', 'multiSelections'],
+    properties: kind === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections'],
   };
 }

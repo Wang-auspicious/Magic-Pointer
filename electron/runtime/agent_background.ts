@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { asObject, runAgent, registerAgentTools, type AgentOptions, type AgentEvent, type Data, type PermissionMode } from './agent';
+import { asObject, runAgent, registerAgentTools, HookManager, type AgentOptions, type AgentEvent, type Data, type PermissionMode } from './agent';
+import { bootPlugins, extensionPaths, loadHarnessPatch, PromptSections, modelPlugins } from './agent_plugins';
 import { registerCodingTools } from './agent_files';
 import { EventSession } from './session';
 import { ToolRegistry } from './tools';
@@ -138,12 +139,20 @@ export async function runBackgroundAgent(payload: BackgroundPayload): Promise<vo
       const poll = setInterval(() => { readFile(filename(userDataDir, sessionId, '.agent.stop')).then(() => controller.abort(new Error('Subagent stopped'))).catch(() => {}); }, 300);
       let result;
       try {
-        const registry = new ToolRegistry(); registerCodingTools(registry, payload.workspace, session); registerAgentTools(registry, session);
-        for (const name of ['AskUser', 'EnterPlanMode', 'ExitPlanMode']) registry.unregister(name);
-        if (payload.readonly) for (const name of ['Write', 'Edit', 'Patch', 'Rewind', 'Bash']) registry.unregister(name);
-        result = await runAgent({ ...payload, session, registry, model: streamModel, instruction, signal: controller.signal, onEvent,
+        const registry = new ToolRegistry(), hooks = new HookManager(), prompt = new PromptSections(), paths = extensionPaths(userDataDir);
+        const builtins = [...modelPlugins(streamModel),
+          { name: 'coding-tools', apply: (ctx: import('./agent_plugins').PluginContext) => { registerCodingTools(ctx.get('tools'), payload.workspace, session); } },
+          { name: 'harness-tools', apply: (ctx: import('./agent_plugins').PluginContext) => registerAgentTools(ctx.get('tools'), session) }];
+        const plugins = await bootPlugins({ directory: paths.plugins, patch: await loadHarnessPatch(paths.patch), builtins, rows: builtins.map(plugin => ({ id: plugin.name, plugin: plugin.name })), core: { tools: registry, hooks, prompt, session, runtime: payload } });
+        try {
+          for (const name of ['AskUser', 'EnterPlanMode', 'ExitPlanMode']) registry.unregister(name);
+          if (payload.readonly) for (const name of ['Write', 'Edit', 'Patch', 'Rewind', 'Bash']) registry.unregister(name);
+          const common: AgentOptions = { ...payload, session, registry, hooks, model: request => plugins.context.get<AgentOptions['model']>('model_client')(request), instruction, signal: controller.signal, onEvent,
           allowedEffects: payload.readonly ? ['read'] : ['read', 'reversible_write', 'local_irreversible'],
-          system: 'You are a Magic Pointer coding subagent. Complete the assigned task independently in the workspace. Read before editing, verify actual results, and return a concise factual report with paths and remaining limitations. Never claim work or checks you did not perform.' });
+          system: 'You are a Magic Pointer coding subagent. Complete the assigned task independently in the workspace. Read before editing, verify actual results, and return a concise factual report with paths and remaining limitations. Never claim work or checks you did not perform.' };
+          common.system += '\n\n' + await prompt.build(common);
+          result = await runAgent(common);
+        } finally { await registry.close(); await plugins.close(); }
       } finally { clearInterval(poll); }
       publish({ status: result.reason, phase: result.reason, summary: result.message, pendingInput: result.pending_input, completedAt: Date.now() }); await pendingWrite;
       if (result.reason !== 'awaiting_user') {
@@ -157,6 +166,12 @@ export async function runBackgroundAgent(payload: BackgroundPayload): Promise<vo
       }
       instruction = ''; publish({ status: 'running', phase: 'thinking', pendingInput: null });
     }
-  } catch (error) { publish({ status: 'failed', phase: 'failed', summary: (error as Error).message, completedAt: Date.now() }); }
+  } catch (error) {
+    const summary = error instanceof Error ? error.message : String(error);
+    publish({ status: 'failed', phase: 'failed', summary, pendingInput: null, completedAt: Date.now() });
+    await pendingWrite;
+    await parent.append('subagent/finished', { childSessionId: sessionId, status: 'failed', summary });
+    await parent.enqueue(`[Agent ${sessionId} failed]\n${summary}`, 'next-step');
+  }
   finally { await pendingWrite; }
 }

@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { captureSurface, closeDesktop, configureDesktop, desktopDataRoot, nativeRequest, type DesktopRecord, type Rect } from './desktop';
+import { captureSurface, closeDesktop, configureDesktop, desktopDataRoot, nativeRequest, type DesktopRecord, type DesktopWindow, type Rect } from './desktop';
 
 export interface BufferedCapture { bytes: Buffer; width: number; height: number; source: string; capturedAtUtc: string; capturedAtMonotonicMs: number }
 export class FrameCaptureService {
@@ -11,7 +11,8 @@ export class FrameCaptureService {
   private frames: BufferedCapture[] = [];
   private timer?: NodeJS.Timeout;
   private generation = 0;
-  constructor(readonly outputRoot: string, readonly intervalMs = 33, readonly capture = captureSurface) {}
+  private windowAtArm?: Promise<DesktopWindow | null>;
+  constructor(readonly outputRoot: string, readonly intervalMs = 33, readonly capture = captureSurface, readonly resolveWindow = (hwnd: number) => nativeRequest<DesktopWindow>('window', { hwnd }, undefined, 1000)) {}
   arm(params: DesktopRecord): void {
     const bounds = params.surfaceBoundsPx;
     if (!params.epochId || !params.displayId || !Array.isArray(bounds) || bounds.length !== 4 || !bounds.every(Number.isFinite) || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) throw new Error('invalid_arm');
@@ -24,23 +25,31 @@ export class FrameCaptureService {
         if (generation !== this.generation || !this.epoch) return;
         this.frames.push({ ...frame, capturedAtMonotonicMs: performance.now() });
         if (this.frames.length > 8) this.frames.shift();
+        if (!this.windowAtArm && Number(this.epoch.targetWindow?.hwnd) > 0) this.windowAtArm = this.resolveWindow(Number(this.epoch.targetWindow.hwnd)).catch(() => null);
       } catch (error) { process.stderr.write(`capture: ${error instanceof Error ? error.message : String(error)}\n`); }
       if (generation === this.generation && this.epoch) this.timer = setTimeout(() => { void next(); }, this.intervalMs);
     };
     void next();
   }
-  cancel(epochId?: string): void { if (epochId && this.epoch?.epochId !== epochId) return; this.generation++; if (this.timer) clearTimeout(this.timer); this.timer = undefined; this.frames = []; this.epoch = undefined; }
+  cancel(epochId?: string): void { if (epochId && this.epoch?.epochId !== epochId) return; this.generation++; if (this.timer) clearTimeout(this.timer); this.timer = undefined; this.frames = []; this.epoch = undefined; this.windowAtArm = undefined; }
   async commit(params: DesktopRecord): Promise<DesktopRecord> {
     const committedAt = performance.now(); const epoch = this.epoch;
     if (!epoch) throw new Error('epoch_not_armed');
     if (params.epochId !== epoch.epochId) throw new Error('epoch_mismatch');
     const frame = this.frames.filter(value => value.capturedAtMonotonicMs <= committedAt).at(-1);
+    const windowAtArm = this.windowAtArm;
     this.cancel();
     if (!frame) throw new Error('no_frame_buffered');
+    const resolved = await windowAtArm;
+    const targetWindow = epoch.targetWindow;
+    const sameTarget = resolved && Number(resolved.hwnd) === Number(targetWindow?.hwnd) && Number(resolved.pid) === Number(targetWindow?.processId);
+    const window = sameTarget && Array.isArray(resolved.bbox) && resolved.bbox.length === 4 && resolved.bbox.every(Number.isFinite)
+      ? { ...targetWindow, bbox: resolved.bbox, processStartTime: resolved.processStartTime, title: resolved.title || targetWindow.title }
+      : targetWindow;
     const directory = join(this.outputRoot, 'frame-leases'); await mkdir(directory, { recursive: true });
     const id = `frame-${randomUUID()}`; const path = join(directory, `${id}.png`); await writeFile(path, frame.bytes, { flag: 'wx' });
     return { schemaVersion: 1, frameLeaseId: id, epochId: epoch.epochId, capturedAtMonotonicMs: frame.capturedAtMonotonicMs, capturedAtUtc: frame.capturedAtUtc, source: frame.source,
-      targetWindow: epoch.targetWindow, surfaceBoundsPx: epoch.surfaceBoundsPx, displayId: epoch.displayId, scaleFactor: epoch.scaleFactor || 1,
+      targetWindow: window, surfaceBoundsPx: epoch.surfaceBoundsPx, displayId: epoch.displayId, scaleFactor: epoch.scaleFactor || 1,
       gesture: params.gesture || {}, localArtifact: { path, mimeType: 'image/png', width: frame.width, height: frame.height }, contentHash: `sha256:${createHash('sha256').update(frame.bytes).digest('hex')}`,
       overlayExcluded: epoch.overlayExcluded === true && process.platform === 'win32', captureLatencyMs: Math.max(0, committedAt - frame.capturedAtMonotonicMs) };
   }

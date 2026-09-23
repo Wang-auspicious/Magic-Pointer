@@ -1,6 +1,6 @@
 # Third-party notices
 
-## Runtime document and image dependencies
+## Runtime dependencies
 
 The TypeScript Runtime uses the packages below. Their upstream license files
 remain distributed with the production dependencies in `node_modules`.
@@ -11,6 +11,7 @@ remain distributed with the production dependencies in `node_modules`.
 | docx | 9.7.1 | MIT | https://github.com/dolanmiu/docx |
 | exceljs | 4.4.0 | MIT | https://github.com/exceljs/exceljs |
 | fast-xml-parser | 5.11.1 | MIT | https://github.com/NaturalIntelligence/fast-xml-parser |
+| ignore | 5.3.2 | MIT | https://github.com/kaelzhang/node-ignore |
 | pdf-lib | 1.17.1 | MIT | https://github.com/Hopding/pdf-lib |
 | pdfjs-dist | 6.3.289 | Apache-2.0 | https://github.com/mozilla/pdf.js |
 | pptxgenjs | 4.0.1 | MIT | https://github.com/gitbrent/PptxGenJS |

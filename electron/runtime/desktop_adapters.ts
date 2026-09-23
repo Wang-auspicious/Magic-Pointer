@@ -1,11 +1,16 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { BROWSER_DOM_PROBE_SCRIPT, BROWSER_DOM_REGION_PROBE_SCRIPT, BROWSER_DOCUMENT_READ_SCRIPT, EXCEL_REGION_SCRIPT, EXCEL_SELECTION_SCRIPT, POWERPOINT_NATIVE_WINDOW_SCRIPT, POWERPOINT_SELECTION_SCRIPT } from './desktop_scripts';
-import { runPowerShellJson, probeSelection, listElements, nativeRequest, delay, type DesktopRecord } from './desktop';
+import { POWERPOINT_TEXT_STYLE_SCRIPT } from './powerpoint_text_styles';
+import { runPowerShellJson, probeSelection, listElements, listWindows, nativeRequest, delay, type DesktopRecord, type DesktopWindow } from './desktop';
 
 export interface AdapterContext extends DesktopRecord { adapter: string; app: string; content: string; method: string; window: DesktopRecord; artifacts: DesktopRecord; error?: string | null }
 export interface SurfaceAdapter { id: string; matches(window: DesktopRecord): boolean; resolve(window: DesktopRecord, request?: DesktopRecord, signal?: AbortSignal): Promise<DesktopRecord> }
+export function officeSelectionError(app: string, messages: string[] = []): string | null {
+  return messages.filter(message => app !== 'powerpoint' || message !== 'No shape selection; returned current slide structure.')
+    .join('; ') || null;
+}
 export class SurfaceAdapterRegistry {
   private adapters = new Map<string, SurfaceAdapter>();
   register(adapter: SurfaceAdapter): () => void { if (this.adapters.has(adapter.id)) throw new Error(`duplicate surface adapter:${adapter.id}`); this.adapters.set(adapter.id, adapter); return () => { if (this.adapters.get(adapter.id) === adapter) this.adapters.delete(adapter.id); }; }
@@ -29,7 +34,17 @@ export async function readOffice(window: DesktopRecord, options: { region?: Desk
     let script = (options.region ? EXCEL_REGION_SCRIPT : EXCEL_SELECTION_SCRIPT).replaceAll('__TARGET_HWND__', String(hwnd));
     for (const [key, token] of Object.entries({ x: 'region_x', y: 'region_y', width: 'region_w', height: 'region_h' })) script = script.replaceAll(`{${token}}`, String(Math.round(Number(options.region?.[key] || 0))));
     data = await runPowerShellJson(script, options.signal);
-  } else if (app === 'powerpoint') data = await runPowerShellJson(POWERPOINT_SELECTION_SCRIPT.replace('__TARGET_HWND__', String(hwnd)).replace('__NATIVE_WINDOW__', POWERPOINT_NATIVE_WINDOW_SCRIPT), options.signal);
+  } else if (app === 'powerpoint') {
+    const script = POWERPOINT_SELECTION_SCRIPT
+      .replace('__TARGET_HWND__', String(hwnd))
+      .replace('__NATIVE_WINDOW__', POWERPOINT_NATIVE_WINDOW_SCRIPT)
+      .replace('function Read-Shape([object]$shape, [object]$parentShapeId) {',
+        `${POWERPOINT_TEXT_STYLE_SCRIPT}\nfunction Read-Shape([object]$shape, [object]$parentShapeId) {`)
+      .replace('    text=$text\n    parent_shape_id=$parentShapeId',
+        '    text=$text\n    styleSpans=@(if($text){Read-MpTextStyles $shape.TextFrame.TextRange})\n    parent_shape_id=$parentShapeId');
+    if (!script.includes('styleSpans=@(')) throw new Error('powerpoint_style_probe_unavailable');
+    data = await runPowerShellJson(script, options.signal);
+  }
   else {
     const progId = /wps (office|writer)/i.test(window.title || '') ? 'KWPS.Application' : 'Word.Application';
     data = await runPowerShellJson(`$app=[Runtime.InteropServices.Marshal]::GetActiveObject('${progId}')
@@ -46,7 +61,7 @@ $sel=$win.Selection
   if (app === 'word') locators = [{ kind: 'text', value: { story: 'selection', start: data.selection_start, end: data.selection_end } }];
   if (app === 'excel') { content = (data.rows || []).map((row: DesktopRecord[]) => row.map(cell => cell.formula || cell.text || cell.value || '').join('\t')).join('\n'); locators = [{ kind: 'cell-range', value: { workbook: path, sheet: data.worksheet, range: data.address } }]; }
   if (app === 'powerpoint') { content = (data.shapes || []).map((shape: DesktopRecord) => shape.text || shape.name).join('\n'); locators = (data.shapes || []).map((shape: DesktopRecord) => ({ kind: 'slide-shape', value: { slideId: data.slide_id, shapeId: shape.shape_id, parentShapeId: shape.parent_shape_id } })); }
-  return { adapter: 'office', app, content, method: data.method || `com:${app}.selection`, window, label: path || app, artifacts: { ...data, document: path, document_saved: data.document_saved ?? data.workbook_saved ?? data.presentation_saved, source_identity: { absolutePath: path, hwnd, host }, locators, ...(app === 'word' ? { selection_text_sha256: createHash('sha256').update(content).digest('hex'), selection_text_chars: content.length } : {}) }, error: (data.messages || []).join('; ') || null };
+  return { adapter: 'office', app, content, method: data.method || `com:${app}.selection`, window, label: path || app, artifacts: { ...data, document: path, document_saved: data.document_saved ?? data.workbook_saved ?? data.presentation_saved, source_identity: { ...(isAbsolute(path) ? { absolutePath: path } : { documentName: path }), hwnd, host }, locators, ...(app === 'word' ? { selection_text_sha256: createHash('sha256').update(content).digest('hex'), selection_text_chars: content.length } : {}) }, error: officeSelectionError(app, data.messages || []) };
 }
 
 export class FigmaClient {
@@ -125,48 +140,137 @@ export async function readBrowser(request: DesktopRecord, signal?: AbortSignal):
 export async function readBrowserSelection(window: DesktopRecord, request: DesktopRecord = {}, signal?: AbortSignal): Promise<AdapterContext> {
   const endpoints = request.endpoint ? [request.endpoint] : String(process.env.MAGIC_POINTER_CDP_ENDPOINTS || 'http://127.0.0.1:9222,http://127.0.0.1:9223,http://127.0.0.1:9224,http://127.0.0.1:9333').split(',');
   const errors: string[] = [];
+  const resolved: DesktopRecord[] = [];
+  const browserPid = async (version: DesktopRecord): Promise<number> => {
+    if (!version.webSocketDebuggerUrl) return 0;
+    const timeout = signal ? AbortSignal.any([signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500);
+    const connection = new CdpConnection(String(version.webSocketDebuggerUrl), timeout);
+    try {
+      const info = await connection.request('SystemInfo.getProcessInfo', {});
+      const browsers = (info.processInfo || []).filter((item: DesktopRecord) => item.type === 'browser');
+      const pid = browsers.length === 1 ? Number(browsers[0].id) : 0;
+      return Number.isSafeInteger(pid) && pid > 0 ? pid : 0;
+    } catch { signal?.throwIfAborted(); return 0; }
+    finally { connection.close(); }
+  };
+  const samePhysicalWindow = (result: DesktopRecord): boolean => {
+    const browser = result.browserWindow || {}, bounds = window.bbox || [];
+    const values = [browser.screenX, browser.screenY, browser.outerWidth, browser.outerHeight, ...bounds].map(Number);
+    if (Number(browser.devicePixelRatio) !== 1 || values.length !== 8 || !values.every(Number.isFinite)) return false;
+    const [x, y, width, height, left, top, right, bottom] = values;
+    return width > 0 && height > 0 && [x - left, y - top, x + width - right, y + height - bottom]
+      .every(offset => Math.abs(offset) <= 8);
+  };
   for (const endpoint of endpoints) {
     try {
       const timeout = signal ? AbortSignal.any([signal, AbortSignal.timeout(600)]) : AbortSignal.timeout(600);
       const pages = await (await fetch(`${endpoint}/json/list`, { signal: timeout })).json() as DesktopRecord[];
       const version = await (await fetch(`${endpoint}/json/version`, { signal: timeout })).json() as DesktopRecord;
       const candidates = pages.filter(row => row.type === 'page' && (!request.targetId || row.id === request.targetId));
-      const resolved: DesktopRecord[] = [];
       for (const page of candidates) {
         const input = { point: request.point, region: request.region, outerBBox: window.bbox, sampleStep: 48 };
-        const result = await evaluateBrowser(endpoint, page.id, `(${request.region ? BROWSER_DOM_REGION_PROBE_SCRIPT : BROWSER_DOM_PROBE_SCRIPT})(${JSON.stringify(input)})`, signal);
-        if (!result || result.state === 'unavailable' || result.coordinates?.hitTestVerified === false) continue;
+        const probe = request.region ? BROWSER_DOM_REGION_PROBE_SCRIPT : BROWSER_DOM_PROBE_SCRIPT;
+        const result = await evaluateBrowser(endpoint, page.id, `(() => {
+          const visibilityState = document.visibilityState;
+          if (visibilityState !== 'visible') return { state: 'background_tab', page: { visibilityState } };
+          const result = (${probe})(${JSON.stringify(input)});
+          return { ...result, page: { ...(result.page || {}), visibilityState }, browserWindow: {
+            screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
+            outerHeight: window.outerHeight, devicePixelRatio: window.devicePixelRatio,
+          } };
+        })()`, signal);
+        if (!result || result.state !== 'resolved' || result.page?.visibilityState !== 'visible' || result.coordinates?.hitTestVerified === false) continue;
         if (!request.targetId && result.page?.title && !String(window.title).includes(result.page.title)) continue;
-        resolved.push({ result, page });
+        resolved.push({ result, page, endpoint, version });
       }
-      if (resolved.length !== 1) { errors.push(resolved.length ? 'browser_target_ambiguous' : 'browser_target_unmatched'); continue; }
-      const { result, page } = resolved[0]; const epoch = result.page?.documentEpoch || result.documentEpoch;
-      const browserContext = { ...result, provenance: { ...result.provenance, endpoint, browserInstanceId: endpoint, browserProcessIdentity: version.webSocketDebuggerUrl, targetId: page.id, documentEpoch: epoch, structural: true } };
-      const content = result.content || result.selection?.text || result.node?.text || (result.elements || []).map((row: DesktopRecord) => row.text).join('\n');
-      return { adapter: 'browser-devtools', app: 'browser', window, content: String(content || ''), method: 'cdp:dom', artifacts: { browser_context: browserContext, region_elements: result.elements || [] } };
     } catch (error) { signal?.throwIfAborted(); errors.push(error instanceof Error ? error.message : String(error)); }
   }
-  throw new Error(errors.join('; ') || 'browser_devtools_unavailable');
+  if (!resolved.length) throw new Error(errors.join('; ') || 'browser_target_unmatched');
+  const endpointVersions = [...new Map(resolved.map(item => [String(item.endpoint), item.version])).entries()];
+  const [nativeWindows, endpointPids] = await Promise.all([
+    listWindows(signal).catch(error => { signal?.throwIfAborted(); errors.push(String(error)); return []; }),
+    Promise.all(endpointVersions.map(async ([endpoint, version]) => [endpoint, await browserPid(version)] as const)),
+  ]);
+  const pids = new Map(endpointPids), targetPid = Number(window.pid ?? window.processId);
+  const peers = nativeWindows.filter(item => Number(item.pid) === targetPid);
+  const target = peers.find(item => Number(item.hwnd) === Number(window.hwnd));
+  const sameBounds = (a: DesktopRecord, b: DesktopRecord): boolean =>
+    Array.isArray(a.bbox) && Array.isArray(b.bbox) && a.bbox.length === 4 && b.bbox.length === 4 &&
+    a.bbox.every((value: number, index: number) => Math.abs(value - Number(b.bbox[index])) <= 8);
+  const uniqueWindow = target && peers.filter(item => sameBounds(item, target)).length === 1;
+  const bound = target && Number.isSafeInteger(targetPid) && targetPid > 0
+    ? resolved.filter(item => pids.get(String(item.endpoint)) === targetPid &&
+      (peers.length === 1 || uniqueWindow && samePhysicalWindow(item.result)))
+    : [];
+  if (bound.length !== 1) throw new Error('browser_target_ambiguous');
+  const { result, page, endpoint, version } = bound[0]; const epoch = result.page?.documentEpoch || result.documentEpoch;
+  const browserContext = { ...result, provenance: { ...result.provenance, endpoint, browserInstanceId: endpoint, browserProcessIdentity: version.webSocketDebuggerUrl, targetId: page.id, documentEpoch: epoch, structural: true } };
+  const content = result.content || result.selection?.text || result.node?.text || (result.elements || []).map((row: DesktopRecord) => row.text).join('\n');
+  return { adapter: 'browser-devtools', app: 'browser', window, content: String(content || ''), method: 'cdp:dom', artifacts: { browser_context: browserContext, region_elements: result.elements || [] } };
 }
 
 export function conversationIdentity(adapterId: string, window: DesktopRecord, data: DesktopRecord = {}): DesktopRecord {
-  const hwnd = Number(window.hwnd || 0); const native = window.nativeConversationId || window.conversation_id || data.native_conversation_id || null;
-  const account = window.accountKey || window.account_id || data.account_key || null; const surface = data.conversation_surface_id || data.automation_id || null;
+  const hwnd = Number(window.hwnd || 0); const native = data.native_conversation_id || window.nativeConversationId || window.conversation_id || null;
+  const account = data.account_key || window.accountKey || window.account_id || null; const surface = data.conversation_surface_id || data.automation_id || null;
   return { adapterId, conversationKey: native ? account ? `${account}:${native}` : native : `${adapterId}:window:${hwnd}:surface:${surface || 'root'}`, keyProvenance: native ? 'native' : 'window-surface', nativeConversationId: native, accountKey: account, windowHwnd: hwnd, processId: window.pid || window.processId || null, surfaceRuntimeId: surface, title: data.conversation_title || window.title || null, type: data.conversation_type || window.conversation_type || null };
 }
 export async function readChat(window: DesktopRecord, adapter = 'wechat', signal?: AbortSignal): Promise<DesktopRecord> {
-  const data = await probeSelection(Number(window.hwnd), { signal }); const identity = conversationIdentity(adapter, window, data);
-  const rows: DesktopRecord[] = (data.region_elements || []).filter((row: DesktopRecord) => String(row.text || '').trim()).sort((a: DesktopRecord, b: DesktopRecord) => Number(a.rect?.[1] || 0) - Number(b.rect?.[1] || 0) || Number(a.rect?.[0] || 0) - Number(b.rect?.[0] || 0));
+  const liveWindow = await nativeRequest<DesktopWindow>('window', { hwnd: Number(window.hwnd) }, signal);
+  const [left, top, right, bottom] = liveWindow.bbox;
+  const data = await probeSelection(liveWindow.hwnd, { region: { x: left, y: top, width: right - left, height: bottom - top }, signal });
+  const boundWindowMatches = Number(window.hwnd) === liveWindow.hwnd && liveWindow.pid > 0 && Number(window.pid || window.processId) === liveWindow.pid &&
+    !!window.title && String(window.title) === liveWindow.title;
+  const identity = conversationIdentity(adapter, boundWindowMatches ? {
+    ...liveWindow, nativeConversationId: window.nativeConversationId, accountKey: window.accountKey,
+  } : liveWindow, data);
+  const liveNativeId = String(data.native_conversation_id || '').trim();
+  const historyIdentityVerified = !!liveNativeId && (!window.nativeConversationId || boundWindowMatches && String(window.nativeConversationId) === liveNativeId);
+  if (identity.nativeConversationId && !liveNativeId) identity.keyProvenance = 'bound-native-unverified';
+  const visibleRows: DesktopRecord[] = (data.region_elements || []).filter((row: DesktopRecord) => String(row.text || '').trim());
+  const rows = visibleRows.filter(row => row.native_message_id || row.speaker && row.time)
+    .sort((a, b) => Number(a.rect?.[1] || 0) - Number(b.rect?.[1] || 0) || Number(a.rect?.[0] || 0) - Number(b.rect?.[0] || 0));
+  const unresolvedRows = visibleRows.filter(row => !row.native_message_id && !(row.speaker && row.time));
   const messages = rows.map((row, index) => ({ id: `${adapter}-visible-message-${index}`, kind: 'chat_message', label: '可见消息', text: row.text, rect_xywh: row.rect, order_index: index + 1, confidence: row.native_message_id && row.speaker && row.time ? 0.9 : 0.6, evidence: 'uia:region_element', fields: { conversationIdentity: identity, visibleObjectId: row.automation_id || null, idProvenance: row.automation_id ? 'uia-automation' : 'visible-order', nativeMessageId: row.native_message_id || null, speaker: row.speaker || null, time: row.time || null, replyTo: row.reply_to || null, attachments: row.attachments || [], attachment: row.attachments?.length === 1 ? row.attachments[0] : null, requiresVisualObservation: !row.native_message_id || !row.speaker || !row.time, missingSemantics: ['speaker', 'time', 'native_message_id'].filter(key => !row[key]) } }));
   const objects: DesktopRecord[] = [{ id: `${adapter}-conversation-surface`, kind: 'conversation', label: '当前会话', text: identity.title || '', order_index: 0, fields: { conversationIdentity: identity }, confidence: identity.nativeConversationId ? 0.9 : 0.7 }, ...messages];
-  if (!messages.length) objects.push({ id: `${adapter}-container`, kind: data.text ? 'message_list' : 'screen_region', text: data.text || '', rect_xywh: data.element_rectangle || null, fields: { conversationIdentity: identity, requiresVisualObservation: true, originalResolution: 'unresolved' } });
-  return { adapter, conversationIdentity: identity, objects, messages, complete: false, limitations: ['visible-viewport-only', ...(!identity.nativeConversationId ? ['conversation-native-identity-unavailable'] : []), ...(!messages.length ? ['message-semantics-not-exposed'] : [])], usedBackend: 'uia_surface_adapter' };
+  if (unresolvedRows.length || !messages.length) objects.push({ id: `${adapter}-container`, kind: 'screen_region', text: unresolvedRows.map(row => row.text).join('\n') || data.text || '', rect_xywh: data.element_rectangle || null, fields: { conversationIdentity: identity, requiresVisualObservation: true, originalResolution: 'unresolved' } });
+  return { adapter, conversationIdentity: identity, objects, messages, complete: false,
+    nextCursor: historyIdentityVerified && messages.length ? `older:${Number(/^older:(\d+)$/.exec(String(window.cursor || ''))?.[1] || 0) + 1}` : null,
+    pagePosition: window.cursor ? 'before' : 'initial',
+    limitations: [...(!historyIdentityVerified ? ['visible-viewport-only', liveNativeId ? 'bound-chat-window-changed' : 'conversation-native-identity-unavailable'] : []), ...(unresolvedRows.length || !messages.length ? ['message-semantics-not-exposed'] : [])],
+    usedBackend: 'uia_surface_adapter' };
 }
 
-export async function readExplorer(window: DesktopRecord, signal?: AbortSignal): Promise<AdapterContext> {
+export function explorerContextFromEvidence(window: DesktopRecord, data: DesktopRecord, elements: DesktopRecord[], request: DesktopRecord = {}): AdapterContext {
+  const nativePaths = Array.isArray(data.selected_paths) ? data.selected_paths.map(String) : [];
+  const items = elements.length ? elements.filter(row => ['listitem', 'dataitem'].includes(row.role)).map(row => {
+    const matches = (data.items || []).filter((item: DesktopRecord) => item.name === row.name || String(item.name).replace(/\.[^.]+$/, '') === row.name);
+    const path = matches.length === 1 && existsSync(matches[0].path) ? String(matches[0].path) : null;
+    return { name: row.name, path, bbox: row.rect, selected: !!path && nativePaths.includes(path), source: 'shell-com+uia' };
+  }) : (data.items || []).map((row: DesktopRecord) => ({ name: row.name, path: row.path && existsSync(row.path) ? String(row.path) : null, bbox: row.bbox, selected: nativePaths.includes(row.path), source: 'shell:desktop-folder-view' }));
+  const region = request.region;
+  const mark = region && [region.x, region.y, region.x + region.width, region.y + region.height].every(Number.isFinite)
+    ? [region.x, region.y, region.x + region.width, region.y + region.height]
+    : request.point && [request.point.x, request.point.y].every(Number.isFinite)
+      ? [request.point.x, request.point.y, request.point.x + 1, request.point.y + 1]
+      : null;
+  const strokeMarks = (request.gesture?.strokes || []).flatMap((stroke: DesktopRecord) => {
+    const points = (stroke.points || []).filter((point: DesktopRecord) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (!points.length) return [];
+    const xs = points.map((point: DesktopRecord) => point.x), ys = points.map((point: DesktopRecord) => point.y);
+    return [[Math.min(...xs), Math.min(...ys), Math.max(...xs) + 1, Math.max(...ys) + 1]];
+  });
+  const marks = strokeMarks.length ? strokeMarks : mark ? [mark] : [];
+  const hits = marks.length ? items.filter((item: DesktopRecord) => item.path && Array.isArray(item.bbox) && item.bbox.length === 4 && marks.some((rect: number[]) => item.bbox[0] < rect[2] && item.bbox[2] > rect[0] && item.bbox[1] < rect[3] && item.bbox[3] > rect[1])) : nativePaths.flatMap(path => items.find((item: DesktopRecord) => item.path === path) || (data.items || []).find((item: DesktopRecord) => item.path === path && existsSync(path)) || []);
+  const seen = new Set<string>();
+  const selectedItems = hits.filter((item: DesktopRecord) => !seen.has(item.path) && seen.add(item.path));
+  const selectedPaths = selectedItems.map((item: DesktopRecord) => item.path);
+  return { adapter: 'explorer', app: 'explorer', window, content: selectedPaths.length ? selectedPaths.join('\n') : marks.length ? '' : items.map((item: DesktopRecord) => item.path || item.name).join('\n'), method: elements.length ? 'shell:folder-items' : 'shell:desktop-folder-view', artifacts: { ...data, items, selected_paths: selectedPaths, selected_items: selectedItems, selected_item: selectedItems.length === 1 ? selectedItems[0] : null } };
+}
+
+export async function readExplorer(window: DesktopRecord, request: DesktopRecord = {}, signal?: AbortSignal): Promise<AdapterContext> {
   const hwnd = Number(window.hwnd); if (!Number.isSafeInteger(hwnd)) throw new Error('missing_hwnd');
   if (/^(Progman|WorkerW)$/.test(window.class_name || '')) {
-    try { const desktop = await nativeRequest('desktop_items', {}, signal); if (desktop.items?.length) return { adapter: 'explorer', app: 'explorer', window, content: desktop.items.map((row: DesktopRecord) => row.path).join('\n'), method: 'shell:desktop-folder-view', artifacts: { items: desktop.items, selected_paths: [], folder_path: null } }; } catch { signal?.throwIfAborted(); }
+    try { const desktop = await nativeRequest('desktop_items', {}, signal); if (desktop.items?.length) return explorerContextFromEvidence(window, { items: desktop.items, selected_paths: [], folder_path: null }, [], request); } catch { signal?.throwIfAborted(); }
   }
   const data = await runPowerShellJson(`$shell=New-Object -ComObject Shell.Application
 $result=@{folder_path=$null;selected_paths=@();items=@()}
@@ -174,11 +278,7 @@ foreach($win in @($shell.Windows())){if([int64]$win.HWND -eq ${hwnd}){$result.fo
 if(-not $result.folder_path -and '${String(window.class_name || '').replaceAll("'", "''")}' -match '^(Progman|WorkerW)$'){$result.folder_path=[Environment]::GetFolderPath('Desktop');foreach($folder in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('CommonDesktopDirectory'))){foreach($item in @(Get-ChildItem -LiteralPath $folder -ErrorAction SilentlyContinue)){$result.items+=@{name=$item.Name;path=$item.FullName}}}}
 $result | ConvertTo-Json -Depth 8 -Compress`, signal);
   const elements = await listElements(hwnd, signal);
-  const items = elements.filter(row => ['listitem', 'dataitem'].includes(row.role)).map(row => {
-    const matches = (data.items || []).filter((item: DesktopRecord) => item.name === row.name || String(item.name).replace(/\.[^.]+$/, '') === row.name);
-    return { name: row.name, path: matches.length === 1 && existsSync(matches[0].path) ? matches[0].path : null, bbox: row.rect, selected: matches.length === 1 && data.selected_paths.includes(matches[0].path), source: 'shell-com+uia' };
-  });
-  return { adapter: 'explorer', app: 'explorer', window, content: items.map(row => row.path || row.name).join('\n'), method: 'shell:folder-items', artifacts: { ...data, items } };
+  return explorerContextFromEvidence(window, data, elements, request);
 }
 
 export async function resolveSelection(window: DesktopRecord, request: DesktopRecord = {}, signal?: AbortSignal): Promise<AdapterContext[]> {
@@ -191,20 +291,21 @@ export async function resolveSelection(window: DesktopRecord, request: DesktopRe
   })()];
   if (officeApp(window)) readers.push(readOffice(window, { region: request.region, signal }));
   if (/chrome_widget|mozilla/i.test(window.class_name || '')) readers.push(readBrowserSelection(window, request, signal));
-  if (/^(CabinetWClass|ExploreWClass|Progman|WorkerW)$/i.test(window.class_name || '')) readers.push(readExplorer(window, signal));
+  if (/^(CabinetWClass|ExploreWClass|Progman|WorkerW)$/i.test(window.class_name || '')) readers.push(readExplorer(window, request, signal));
   const results = await Promise.allSettled(readers);
   signal?.throwIfAborted();
   return results.map((result, index) => result.status === 'fulfilled' ? result.value : { adapter: `provider-${index}`, app: '', window, content: '', method: 'unavailable', artifacts: {}, error: String(result.reason) });
 }
 
-export const surfaceAdapters = new SurfaceAdapterRegistry();
-surfaceAdapters.register({ id: 'figma', matches: window => /figma/i.test(`${window.process_name || ''} ${window.title || ''} ${window.class_name || ''}`), resolve: async (_window, request = {}, signal) => {
+export const builtinSurfaceAdapters: SurfaceAdapter[] = [{ id: 'figma', matches: window => /figma/i.test(`${window.process_name || ''} ${window.title || ''} ${window.class_name || ''}`), resolve: async (_window, request = {}, signal) => {
   const connection = request.figmaConnection;
   if (!connection) return { adapter: 'figma', objects: [], complete: false, limitations: ['figma-current-document-connection-required'], usedBackend: 'figma-plugin-unavailable' };
   const client = new FigmaClient(connection), result = await client.request('read_selection', {}, signal);
   return { adapter: 'figma', objects: (result.nodes || []).map((node: DesktopRecord) => ({ id: node.id, kind: 'figma_node', text: typeof node.characters === 'string' ? `${node.name}: ${node.characters}` : node.name || node.type, fields: node })), complete: true, usedBackend: 'figma-plugin-loopback', documentSessionId: connection.documentSessionId };
-} });
-for (const [id, pattern] of [['wechat', /wechat|weixin|微信/i], ['dingtalk', /dingtalk|钉钉/i]] as const) surfaceAdapters.register({ id, matches: window => pattern.test(`${window.process_name || ''} ${window.title || ''} ${window.class_name || ''}`), resolve: (window, _request, signal) => readChat(window, id, signal) });
+} }];
+for (const [id, pattern] of [['wechat', /wechat|weixin|微信/i], ['dingtalk', /dingtalk|钉钉/i]] as const) builtinSurfaceAdapters.push({ id, matches: window => pattern.test(`${window.process_name || ''} ${window.title || ''} ${window.class_name || ''}`), resolve: (window, _request, signal) => readChat(window, id, signal) });
+export const surfaceAdapters = new SurfaceAdapterRegistry();
+for (const adapter of builtinSurfaceAdapters) surfaceAdapters.register(adapter);
 
 export function locateChatFiles(name: string, roots: string[], limit = 20): DesktopRecord[] {
   if (!name || /[\\/]/.test(name)) throw new Error('file_name_required');

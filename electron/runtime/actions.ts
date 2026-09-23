@@ -11,11 +11,14 @@ import {
   PDFArray,
   PDFDict,
   PDFNumber,
+  PDFRawStream,
+  PDFStream,
 } from 'pdf-lib';
 import PptxGenJS from 'pptxgenjs';
 import ExcelJS from 'exceljs';
 import sharp from 'sharp';
 import { POWERPOINT_NATIVE_WINDOW_SCRIPT } from './desktop_scripts';
+import { POWERPOINT_TEXT_STYLE_SCRIPT } from './powerpoint_text_styles';
 import { FigmaClient } from './desktop_adapters';
 import { array, record, sourceRef, insidePath, type Json, type SourceRef } from './context';
 import {
@@ -70,6 +73,35 @@ const textState = (value: unknown): string => {
 };
 const wrapText = (operation: PatchOperation, text: string): unknown =>
   typeof operation.before === 'string' ? text : { text };
+const shapeStyleFields = [
+  'bold', 'italic', 'underline', 'fontName', 'fontSize', 'colorRgb',
+] as const;
+function hasShapeStyleSpans(value: unknown): boolean {
+  return Object.prototype.hasOwnProperty.call(record(value), 'styleSpans');
+}
+function validateShapeTextState(value: unknown): void {
+  const state = record(value), text = textState(value), spans = state.styleSpans;
+  if (!Array.isArray(spans)) throw new Error('PowerPoint text styleSpans must be an array');
+  let offset = 0;
+  let previous: Json | null = null;
+  for (const raw of spans) {
+    const span = record(raw);
+    if (
+      Object.keys(span).sort().join(',') !==
+        ['start', 'length', ...shapeStyleFields].sort().join(',') ||
+      !Number.isInteger(span.start) || span.start !== offset ||
+      !Number.isInteger(span.length) || Number(span.length) <= 0 ||
+      !['bold', 'italic', 'underline'].every((key) => typeof span[key] === 'boolean') ||
+      typeof span.fontName !== 'string' || !span.fontName ||
+      typeof span.fontSize !== 'number' || !Number.isFinite(span.fontSize) || span.fontSize <= 0 ||
+      !Number.isInteger(span.colorRgb) || Number(span.colorRgb) < 0 || Number(span.colorRgb) > 0xffffff ||
+      (previous !== null && shapeStyleFields.every((key) => previous![key] === span[key]))
+    ) throw new Error('Invalid or unmerged PowerPoint text styleSpans');
+    offset += Number(span.length);
+    previous = span;
+  }
+  if (offset !== text.length) throw new Error('PowerPoint text styleSpans must cover TextRange.Text');
+}
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -122,13 +154,16 @@ function wordParagraph(
     tree = zipXml(zip, part),
     body = xmlFind(tree, 'w:body')[0];
   let paragraphs: XmlNode[];
-  if (operation.locator.kind === 'table') {
-    const table = xmlFind(tree, 'w:tbl')[Number(locator.tableIndex)],
-      row = xmlFind(table ? xmlChildren(table) : [], 'w:tr')[Number(locator.rowIndex)],
+  if (operation.locator.kind === 'table-cell' || operation.locator.kind === 'table') {
+    const bodyItems = body ? xmlChildren(body).filter((node) => ['w:p', 'w:tbl'].includes(xmlName(node))) : [],
+      table = bodyItems.filter((node) => xmlName(node) === 'w:tbl')[Number(locator.tableIndex)],
+      row = xmlChildren(table ?? {}).filter((node) => xmlName(node) === 'w:tr')[Number(locator.rowIndex)],
       cell = xmlChildren(row ?? {}).filter((node) => xmlName(node) === 'w:tc')[
         Number(locator.columnIndex)
       ];
-    paragraphs = xmlFind(cell ? xmlChildren(cell) : [], 'w:p');
+    if (!table || bodyItems[Number(locator.bodyIndex)] !== table || !cell)
+      throw new Error('Word table cell no longer exists at the bound location');
+    paragraphs = xmlChildren(cell).filter((node) => xmlName(node) === 'w:p');
   } else
     paragraphs = body
       ? xmlChildren(body).filter((node) => xmlName(node) === 'w:p')
@@ -230,6 +265,20 @@ foreach ($candidate in @($application.Windows)) {
 if ($null -eq $window) { throw "bound_word_document_not_found" }
 $document=$window.Document
 `;
+const wordTargetRange = String.raw`
+$story=[string]$p.story
+if(-not $story -or $story -eq 'body'){
+ $range=$document.Range([int]$p.start,[int]$p.end)
+} elseif($story -eq 'header' -or $story -eq 'footer'){
+ $section=$document.Sections.Item([int]$p.sectionIndex+1)
+ if($story -eq 'header'){$part=$section.Headers.Item([int]$p.variantIndex)}
+ else {$part=$section.Footers.Item([int]$p.variantIndex)}
+ $paragraph=$part.Range.Paragraphs.Item([int]$p.paragraphIndex+1)
+ $range=$paragraph.Range.Duplicate
+ if([int]$p.start -lt [int]$range.Start -or [int]$p.end -gt [int]$range.End){throw 'live_word_range_changed'}
+ $range.SetRange([int]$p.start,[int]$p.end)
+} else {throw 'unsupported_word_story'}
+`;
 const excelBind = String.raw`
 $window=$null; $workbook=$null
 foreach ($book in @($application.Workbooks)) {
@@ -275,7 +324,8 @@ export class DocumentOperationBackend implements OperationBackend {
   }
   private source(operation: PatchOperation): SourceRef {
     const source = this.sources.get(operation.sourceId);
-    if (!source || !source.capabilities.includes('patch'))
+    if (!source || !(source.capabilities.includes('patch') ||
+      operation.operation === 'move_file' && source.capabilities.includes('move_file')))
       throw new Error('Document source does not allow patch');
     return source;
   }
@@ -378,6 +428,54 @@ export class DocumentOperationBackend implements OperationBackend {
         .filter((value) => typeof value === 'string' || typeof value === 'number');
       if (expectedTables.some((value) => !actual.includes(String(value))))
         return { ...state, conflict: 'output_content_mismatch' };
+      if (state.format === 'docx') {
+        const wanted = array<Json>(content.tables).flatMap((table, tableIndex) =>
+          array<unknown[]>(table.rows).map((row, rowIndex) => ({
+            tableIndex,
+            rowIndex,
+            cells: row.map((value) => String(value ?? '')),
+          })),
+        );
+        const observed = parsed.units
+          .filter((unit) => unit.locator.kind === 'table')
+          .map((unit) => ({
+            tableIndex: unit.metadata.tableIndex,
+            rowIndex: unit.metadata.rowIndex,
+            cells: unit.metadata.cells,
+          }));
+        if (!isDeepStrictEqual(observed, wanted))
+          return { ...state, conflict: 'output_table_mismatch' };
+      }
+      if (state.format === 'pptx') {
+        const wanted: { slideIndex: number; tableRowIndex: number; cells: string[] }[] = [];
+        let slideIndex = 0;
+        for (const slide of array<Json>(content.slides)) {
+          slideIndex++;
+          for (const table of array<Json>(slide.tables)) {
+            const rows = array<unknown[]>(table.rows);
+            for (let offset = 0; offset < rows.length; offset += 10) {
+              rows.slice(offset, offset + 10).forEach((row, tableRowIndex) =>
+                wanted.push({
+                  slideIndex,
+                  tableRowIndex,
+                  cells: row.map((value) => String(value ?? '').replace(/\s+/g, ' ').trim()),
+                }),
+              );
+              slideIndex++;
+            }
+          }
+          slideIndex += array(slide.images).length;
+        }
+        const observed = parsed.units
+          .filter((unit) => unit.metadata.contentKind === 'table')
+          .map((unit) => ({
+            slideIndex: unit.metadata.slideIndex,
+            tableRowIndex: unit.metadata.tableRowIndex,
+            cells: unit.metadata.cells,
+          }));
+        if (!isDeepStrictEqual(observed, wanted))
+          return { ...state, conflict: 'output_table_mismatch' };
+      }
       return operation.after;
     }
     if (operation.operation === 'move_file') {
@@ -390,7 +488,8 @@ export class DocumentOperationBackend implements OperationBackend {
     if (operation.operation === 'add_pdf_annotation') return this.pdf(source, operation, false);
     if (operation.operation.startsWith('set_shape_'))
       return this.powerpoint(source, operation, false);
-    const path = sourcePath(source),
+    const path = source.identity.hwnd && (source.identity.documentPath || source.identity.workbookPath)
+        ? String(source.identity.documentPath ?? source.identity.workbookPath) : sourcePath(source),
       hwnd = Number(source.identity.hwnd),
       locator = operation.locator.value;
     if (hwnd > 0 && operation.operation === 'replace_text') {
@@ -402,10 +501,13 @@ export class DocumentOperationBackend implements OperationBackend {
       const end = this.changed.has(operation.operationId)
           ? start + after.length
           : Number(locator.end),
+        target = { path, hwnd, story: locator.story ?? 'body', start, end,
+          sectionIndex: locator.sectionIndex, variantIndex: locator.variantIndex,
+          paragraphIndex: locator.paragraphIndex },
         data = await officeCom(
           'Word',
-          '$result.value=[string]$document.Range([int]$p.start,[int]$p.end).Text; $result.ok=$true',
-          { path, hwnd, start, end },
+          `${wordTargetRange}\n$result.value=[string]$range.Text; $result.ok=$true`,
+          target,
           this.signal,
         );
       if (!data.ok)
@@ -418,8 +520,8 @@ export class DocumentOperationBackend implements OperationBackend {
       ) {
         const fresh = await officeCom(
           'Word',
-          '$result.value=[string]$document.Range([int]$p.start,[int]$p.end).Text; $result.ok=$true',
-          { path, hwnd, start, end: start + after.length },
+          `${wordTargetRange}\n$result.value=[string]$range.Text; $result.ok=$true`,
+          { ...target, end: start + after.length },
           this.signal,
         );
         if (fresh.ok && fresh.value === after) return wrapText(operation, after);
@@ -463,8 +565,12 @@ export class DocumentOperationBackend implements OperationBackend {
     if (operation.operation === 'move_file') {
       const oldPath = resolve(String(record(operation.before).path)),
         newPath = resolve(String(record(operation.after).path)),
-        root = String(operation.locator.value.root ?? source.identity.absolutePath ?? '');
-      if (!root || !insidePath(oldPath, root) || !insidePath(newPath, root))
+        sourcePath = String(source.identity.absolutePath ?? source.identity.path ?? '');
+      if (!sourcePath) throw new Error('Move source path missing');
+      const root = source.identity.moveRoot
+        ? String(source.identity.moveRoot)
+        : (await stat(sourcePath).catch(() => null))?.isDirectory() ? sourcePath : dirname(sourcePath);
+      if (!insidePath(oldPath, root) || !insidePath(newPath, root))
         throw new Error('Move outside source scope');
       if (await exists(newPath)) throw new Error('Move destination already exists');
       await mkdir(dirname(newPath), { recursive: true });
@@ -479,7 +585,8 @@ export class DocumentOperationBackend implements OperationBackend {
       await this.powerpoint(source, operation, true);
       return;
     }
-    const path = sourcePath(source),
+    const path = source.identity.hwnd && (source.identity.documentPath || source.identity.workbookPath)
+        ? String(source.identity.documentPath ?? source.identity.workbookPath) : sourcePath(source),
       hwnd = Number(source.identity.hwnd),
       locator = operation.locator.value;
     if (hwnd > 0 && operation.operation === 'replace_text') {
@@ -487,13 +594,19 @@ export class DocumentOperationBackend implements OperationBackend {
         start = Number(locator.start),
         data = await officeCom(
           'Word',
-          String.raw`$range=$document.Range([int]$p.start,[int]$p.end)
+          `${wordTargetRange}\n` + String.raw`
 if (-not [string]::Equals([string]$range.Text,[string]$p.expected,[StringComparison]::Ordinal)) {throw 'base_mismatch'}
-$document.Range([int]$p.changeStart,[int]$p.changeEnd).Text=[string]$p.replacement
+$change=$range.Duplicate
+$change.SetRange([int]$p.changeStart,[int]$p.changeEnd)
+$change.Text=[string]$p.replacement
 $result.ok=$true;$result.wrote=$true`,
           {
             path,
             hwnd,
+            story: locator.story ?? 'body',
+            sectionIndex: locator.sectionIndex,
+            variantIndex: locator.variantIndex,
+            paragraphIndex: locator.paragraphIndex,
             start,
             end: locator.end,
             expected: textState(operation.before),
@@ -524,7 +637,17 @@ $result.ok=$true;$result.wrote=$true`,
           String.raw`
 $result.ok=$false
 if (($rows | ConvertTo-Json -Depth 16 -Compress) -cne ($p.expected | ConvertTo-Json -Depth 16 -Compress)) { throw 'base_mismatch' }
-for ($r=1;$r -le [int]$range.Rows.Count;$r++) { for ($c=1;$c -le [int]$range.Columns.Count;$c++) { $next=$p.after[$r-1][$c-1]; if ($next -is [string] -and $next.StartsWith('=')) {$range.Cells.Item($r,$c).Formula=$next} else {$range.Cells.Item($r,$c).Value2=$next}; $result.wrote=$true } }
+for ($r=1;$r -le [int]$range.Rows.Count;$r++) {
+ for ($c=1;$c -le [int]$range.Columns.Count;$c++) {
+  $next=$p.after[$r-1][$c-1]
+  $cell=$range.Cells.Item($r,$c)
+  if ($next -is [string]) {
+   if ($next.StartsWith('=')) { $cell.Formula=[string]$next }
+   else { $cell.Value2=[string]$next }
+  } else { $cell.Value2=$next }
+  $result.wrote=$true
+ }
+}
 $result.ok=$true`,
         {
           path,
@@ -555,9 +678,10 @@ $result.ok=$true`,
     write: boolean,
   ): Promise<unknown> {
     const locator = operation.locator.value,
-      path = sourcePath(source),
+      path = source.identity.host === 'powerpoint' && source.revision.authority === 'live'
+        ? String(source.identity.presentationPath ?? '') : sourcePath(source),
       hwnd = Number(source.identity.hwnd);
-    if (!(hwnd > 0) || !Number.isInteger(locator.slideId) || !Number.isInteger(locator.shapeId))
+    if (!path || !(hwnd > 0) || !Number.isInteger(locator.slideId) || !Number.isInteger(locator.shapeId))
       throw new Error('PowerPoint requires native window, slideId and shapeId');
     const before = record(operation.before),
       after = record(operation.after);
@@ -580,10 +704,20 @@ $result.ok=$true`,
             (['width', 'height'].includes(key) && item <= 0)
           )
             throw new Error('Invalid shape geometry');
-    const change =
-      operation.operation === 'set_shape_text'
-        ? minimalTextChange(textState(operation.before), textState(operation.after))
-        : null;
+    const styled = operation.operation === 'set_shape_text' && hasShapeStyleSpans(operation.before);
+    if (operation.operation === 'set_shape_text') {
+      if (hasShapeStyleSpans(operation.before) !== hasShapeStyleSpans(operation.after))
+        throw new Error('PowerPoint text before/after styleSpans must match');
+      if ((typeof operation.before === 'string') !== (typeof operation.after === 'string'))
+        throw new Error('PowerPoint text before/after shape must match');
+      if (styled) {
+        validateShapeTextState(operation.before);
+        validateShapeTextState(operation.after);
+      }
+    }
+    const change = operation.operation === 'set_shape_text'
+      ? minimalTextChange(textState(operation.before), textState(operation.after))
+      : null;
     const payload = {
       path,
       hwnd,
@@ -594,13 +728,31 @@ $result.ok=$true`,
       operation: operation.operation,
       write,
       change,
+      styled,
     };
     const script = String.raw`
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PAYLOAD__'))|ConvertFrom-Json
 __NATIVE__
+${POWERPOINT_TEXT_STYLE_SCRIPT}
 function Find-Shape($shapes,$id) { for($i=1;$i -le $shapes.Count;$i++) { $shape=$shapes.Item($i); if($shape.Id -eq $id){return $shape}; if($shape.Type -eq 6){$nested=Find-Shape $shape.GroupItems $id;if($null -ne $nested){return $nested}} }; return $null }
+function Same-MpFont($a,$b) {
+ return ([bool]$a.bold -eq [bool]$b.bold -and [bool]$a.italic -eq [bool]$b.italic -and
+  [bool]$a.underline -eq [bool]$b.underline -and
+  [string]::Equals([string]$a.fontName,[string]$b.fontName,[StringComparison]::Ordinal) -and
+  [double]$a.fontSize -eq [double]$b.fontSize -and [int64]$a.colorRgb -eq [int64]$b.colorRgb)
+}
+function Same-MpTextStyles($actual,$expected) {
+ $left=@($actual);$right=@($expected)
+ if($left.Count -ne $right.Count){return $false}
+ for($i=0;$i -lt $left.Count;$i++){
+  $a=$left[$i];$b=$right[$i]
+  if([int]$a.start -ne [int]$b.start -or [int]$a.length -ne [int]$b.length -or
+     -not (Same-MpFont $a $b)){return $false}
+ }
+ return $true
+}
 $result=[ordered]@{ok=$false;wrote=$false;value=$null;error=$null}
 try {
  $window=[MpPowerPointWindow]::FromHandle([int64]$p.hwnd)
@@ -608,20 +760,52 @@ try {
  if($null -eq $presentation -or -not [string]::Equals([string]$presentation.FullName,[string]$p.path,[StringComparison]::OrdinalIgnoreCase)){throw 'bound_presentation_not_found'}
  $slide=$presentation.Slides.FindBySlideID([int]$p.slideId);$shape=Find-Shape $slide.Shapes ([int]$p.shapeId)
  if($null -eq $shape){throw 'bound_shape_not_found'}
- if($p.operation -eq 'set_shape_text') { $value=[string]$shape.TextFrame.TextRange.Text; if($p.before -isnot [string]){$value=@{text=$value}} }
+  if($p.operation -eq 'set_shape_text') {
+   $range=$shape.TextFrame.TextRange
+   $value=[string]$range.Text
+   if($p.styled){$value=[ordered]@{text=$value;styleSpans=@(Read-MpTextStyles $range)}}
+   elseif($p.before -isnot [string]){$value=@{text=$value}}
+  }
  elseif($p.operation -eq 'set_shape_geometry') {$value=[ordered]@{};foreach($prop in $p.after.PSObject.Properties){$value[$prop.Name]=[double]$shape.($prop.Name)}}
  else {$value=[ordered]@{};foreach($prop in $p.after.PSObject.Properties){$native=if($prop.Name -eq 'fillRgb'){$shape.Fill}else{$shape.Line};$value[$prop.Name]=$(if([int]$native.Visible -eq -1){[int64]$native.ForeColor.RGB}else{$null})}}
  if($p.write){
   if([int]$shape.Locked -eq -1){throw 'shape_locked'}
-  foreach($prop in $p.before.PSObject.Properties){if($p.before -isnot [string] -and $prop.Name -notin @('Length')){if($value.($prop.Name) -cne $prop.Value){throw 'base_mismatch'}}}
-  if($p.operation -eq 'set_shape_text'){
-   $expected=if($p.before -is [string]){$p.before}else{$p.before.text}
-   $range=$shape.TextFrame.TextRange;if(-not [string]::Equals([string]$range.Text,[string]$expected,[StringComparison]::Ordinal)){throw 'base_mismatch'}
-   if([int]$p.change.length -eq 0){if([int]$p.change.start -ge $range.Length){$range.InsertAfter([string]$p.change.replacement)|Out-Null}else{$range.Characters(([int]$p.change.start+1),1).InsertBefore([string]$p.change.replacement)|Out-Null}}
-   else{$range.Characters(([int]$p.change.start+1),[int]$p.change.length).Text=[string]$p.change.replacement}
-  }elseif($p.operation -eq 'set_shape_geometry'){foreach($prop in $p.after.PSObject.Properties){$shape.($prop.Name)=[double]$prop.Value}}
-  else{foreach($prop in $p.after.PSObject.Properties){$native=if($prop.Name -eq 'fillRgb'){$shape.Fill}else{$shape.Line};if($null -eq $prop.Value){$native.Visible=0}else{$native.ForeColor.RGB=[int64]$prop.Value;$native.Visible=-1}}}
-  $result.wrote=$true
+   if($p.operation -ne 'set_shape_text') {foreach($prop in $p.before.PSObject.Properties){if($p.before -isnot [string] -and $prop.Name -notin @('Length')){if($value.($prop.Name) -cne $prop.Value){throw 'base_mismatch'}}}}
+   if($p.operation -eq 'set_shape_text'){
+    $expected=if($p.before -is [string]){$p.before}else{$p.before.text}
+    $range=$shape.TextFrame.TextRange;if(-not [string]::Equals([string]$range.Text,[string]$expected,[StringComparison]::Ordinal)){throw 'base_mismatch'}
+    $styles=@(Read-MpTextStyles $range)
+    if($p.styled -and -not (Same-MpTextStyles $styles $p.before.styleSpans)){throw 'base_mismatch'}
+    $start=[int]$p.change.start;$removed=[int]$p.change.length;$replacement=[string]$p.change.replacement
+    if(-not $p.styled){
+     $affected=0
+     foreach($span in $styles){if([int]$span.start -lt ($start+$removed) -and ([int]$span.start+[int]$span.length) -gt $start){$affected++}}
+     if($affected -gt 1 -or ($removed -eq 0 -and $replacement.Length -gt 0 -and $start -gt 0 -and $start -lt [int]$range.Length -and @($styles | Where-Object {[int]$_.start -eq $start}).Count -gt 0)){throw 'style_mapping_required'}
+    }
+    if($removed -gt 0){$range.Characters(($start+1),$removed).Text=$replacement;$result.wrote=$true}
+    elseif($replacement.Length -gt 0){if($start -ge [int]$range.Length){$range.InsertAfter($replacement)|Out-Null}else{$range.Characters(($start+1),1).InsertBefore($replacement)|Out-Null};$result.wrote=$true}
+    if($p.styled){
+     $range=$shape.TextFrame.TextRange
+     if(-not [string]::Equals([string]$range.Text,[string]$p.after.text,[StringComparison]::Ordinal)){throw 'text_write_readback_mismatch'}
+     $currentStyles=@(Read-MpTextStyles $range)
+     foreach($span in $p.after.styleSpans){
+      foreach($current in $currentStyles){
+       $left=[Math]::Max([int]$span.start,[int]$current.start)
+       $right=[Math]::Min(([int]$span.start+[int]$span.length),([int]$current.start+[int]$current.length))
+       if($right -le $left -or (Same-MpFont $current $span)){continue}
+       $font=$range.Characters(($left+1),($right-$left)).Font
+       $result.wrote=$true
+       $font.Name=[string]$span.fontName;$font.Size=[double]$span.fontSize
+       $font.Color.RGB=[int64]$span.colorRgb
+       $font.Bold=$(if([bool]$span.bold){-1}else{0})
+       $font.Italic=$(if([bool]$span.italic){-1}else{0})
+       $font.Underline=$(if([bool]$span.underline){-1}else{0})
+      }
+     }
+    }
+   }elseif($p.operation -eq 'set_shape_geometry'){foreach($prop in $p.after.PSObject.Properties){$shape.($prop.Name)=[double]$prop.Value}}
+   else{foreach($prop in $p.after.PSObject.Properties){$native=if($prop.Name -eq 'fillRgb'){$shape.Fill}else{$shape.Line};if($null -eq $prop.Value){$native.Visible=0}else{$native.ForeColor.RGB=[int64]$prop.Value;$native.Visible=-1}}}
+   if($p.operation -ne 'set_shape_text'){$result.wrote=$true}
  }
  $result.value=$value;$result.ok=$true
 }catch{$result.error=[string]$_.Exception.Message}
@@ -630,7 +814,8 @@ $result|ConvertTo-Json -Depth 20 -Compress
       .replace('__PAYLOAD__', Buffer.from(JSON.stringify(payload)).toString('base64'))
       .replace('__NATIVE__', POWERPOINT_NATIVE_WINDOW_SCRIPT);
     const result = await runPowerShellJson(script, this.signal, 15000);
-    if (!result.ok) throw new Error(String(result.error));
+    if (!result.ok)
+      throw Object.assign(new Error(String(result.error)), { wrote: result.wrote === true });
     return result.value;
   }
   private async figma(
@@ -767,6 +952,26 @@ $result|ConvertTo-Json -Depth 20 -Compress
           : subtype === '/Text'
             ? 'text-note'
             : 'visual-overlay';
+      if (observed.kind === 'visual-overlay') {
+        const appearance = found.lookupMaybe(PDFName.of('AP'), PDFDict)
+          ?.lookupMaybe(PDFName.of('N'), PDFStream) as PDFRawStream | undefined;
+        const appearanceContent = appearance
+          ?.getContentsString() ?? '';
+        const color = (operator: 'rg' | 'RG'): number[] | null => {
+          const match = new RegExp(`([0-9.]+) ([0-9.]+) ([0-9.]+) ${operator}\\b`).exec(appearanceContent);
+          return match ? match.slice(1, 4).map(Number) : null;
+        };
+        const fill = color('rg'),
+          stroke = color('RG'),
+          savedFill = found.lookupMaybe(PDFName.of('C'), PDFArray),
+          catalogFill = savedFill?.size() === 3
+            ? [0, 1, 2].map((index) => savedFill.lookup(index, PDFNumber).asNumber())
+            : null;
+        if ('fillColor' in after) observed.fillColor = fill;
+        if ('strokeColor' in after) observed.strokeColor = stroke;
+        if (!fill || !stroke || !isDeepStrictEqual(fill, catalogFill))
+          observed.conflict = 'annotation_appearance_changed';
+      }
       const rect = array<number>(locator.rectPt),
         height = page.getHeight(),
         width = page.getWidth(),
@@ -845,6 +1050,42 @@ $result|ConvertTo-Json -Depth 20 -Compress
             : after.kind === 'text-note'
               ? 'Text'
               : 'FreeText';
+      let appearanceRef;
+      let fillColor = [1, 1, 1];
+      if (after.kind === 'visual-overlay') {
+        const rgb = (value: unknown, fallback: number[]): number[] => {
+          if (value === undefined || value === null) return fallback;
+          if (!Array.isArray(value) || value.length !== 3 ||
+              value.some((channel) => typeof channel !== 'number' ||
+                !Number.isFinite(channel) || channel < 0 || channel > 1))
+            throw new Error('PDF annotation color must be three numbers from 0 to 1');
+          return value;
+        };
+        fillColor = rgb(after.fillColor, [1, 1, 1]);
+        const strokeColor = rgb(after.strokeColor, [0.8, 0.2, 0.2]),
+          fontSize = Number(after.fontSize ?? 10),
+          width = pdfRect[2]! - pdfRect[0]!,
+          height = pdfRect[3]! - pdfRect[1]!;
+        if (!Number.isFinite(fontSize) || fontSize <= 0)
+          throw new Error('PDF annotation font size must be positive');
+        const escaped = (value: string) => value.replace(/[&<>"']/g, (character) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
+        })[character]!);
+        const scale = 2;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(width * scale)}" height="${Math.ceil(height * scale)}">${String(after.text ?? '').split(/\r?\n/).map((line, index) =>
+          `<text x="${4 * scale}" y="${(4 + fontSize * (index + 1) * 1.2) * scale}" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize * scale}" fill="black">${escaped(line)}</text>`,
+        ).join('')}</svg>`;
+        const image = await document.embedPng(await sharp(Buffer.from(svg)).png().toBuffer());
+        const appearance = document.context.stream(
+          `q\n${fillColor.join(' ')} rg\n0 0 ${width} ${height} re f\n${strokeColor.join(' ')} RG\n1 w\n0.5 0.5 ${Math.max(0, width - 1)} ${Math.max(0, height - 1)} re S\nq\n${width} 0 0 ${height} 0 0 cm\n/Im0 Do\nQ\nQ\n`,
+          {
+            Type: 'XObject', Subtype: 'Form', FormType: 1,
+            BBox: [0, 0, width, height],
+            Resources: { XObject: { Im0: image.ref } },
+          },
+        );
+        appearanceRef = document.context.register(appearance);
+      }
       const annotation = document.context.obj({
         Type: 'Annot',
         Subtype: subtype,
@@ -853,7 +1094,7 @@ $result|ConvertTo-Json -Depth 20 -Compress
         Subj: PDFHexString.fromText(id),
         Contents: PDFHexString.fromText(String(after.text ?? '')),
         F: 4,
-        C: after.kind === 'highlight' ? [1, 1, 0] : [0.8, 0.2, 0.2],
+        C: after.kind === 'highlight' ? [1, 1, 0] : after.kind === 'visual-overlay' ? fillColor : [0.8, 0.2, 0.2],
         ...(after.kind === 'highlight'
           ? {
               QuadPoints: [
@@ -869,7 +1110,10 @@ $result|ConvertTo-Json -Depth 20 -Compress
             }
           : {}),
         ...(after.kind === 'visual-overlay'
-          ? { DA: PDFString.of(`/Helv ${Number(after.fontSize ?? 10)} Tf 0 g`) }
+          ? {
+              DA: PDFString.of(`/Helv ${Number(after.fontSize ?? 10)} Tf 0 g`),
+              AP: { N: appearanceRef },
+            }
           : {}),
       });
       annots.push(document.context.register(annotation));

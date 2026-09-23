@@ -1,8 +1,11 @@
 import { readFile, writeFile, mkdir, readdir, stat, access } from 'node:fs/promises';
 import path from 'node:path';
+import { extensionPaths } from './agent_plugins';
 import os from 'node:os';
-import { ToolRegistry } from './tools';
+import { ActionFailure, ToolRegistry } from './tools';
 import { asObject, type Data, type ModelRunner, type ModelRequest, type AgentMessage } from './agent';
+import { ScreenMemory } from './context_memory';
+import { EventSession, exactApprovedToolCall } from './session';
 
 const str = (value: unknown) => String(value ?? '');
 const exists = async (file: string) => { try { await access(file); return true; } catch { return false; } };
@@ -83,15 +86,15 @@ export async function directoryPayload(workspace?: string, userDataDir?: string)
 }
 
 export async function extensionsInventory(userDataDir: string): Promise<Data> {
-  const directory = process.env.MAGIC_POINTER_PLUGIN_DIR || path.join(userDataDir, 'data', 'plugins'), items: Data[] = [];
+  const paths = extensionPaths(userDataDir), directory = paths.plugins, items: Data[] = [];
   for (const entry of await list(directory)) {
     if (!entry.isDirectory()) continue;
-    const folder = path.join(directory, entry.name), manifest = path.join(folder, 'plugin.json'), code = path.join(folder, 'plugin.js');
+    const folder = path.join(directory, entry.name), manifest = path.join(folder, 'plugin.json');
     const row: Data = { id: entry.name, name: entry.name, description: '', path: folder, status: 'configured' };
-    try { const metadata = asObject(JSON.parse(await readFile(manifest, 'utf8'))); row.description = str(metadata.description); if (!await exists(code)) throw new Error('Plugin code is missing: plugin.js'); }
+    try { const metadata = asObject(JSON.parse(await readFile(manifest, 'utf8'))); row.description = str(metadata.description); const main = str(metadata.main || 'plugin.js'); if (!await exists(path.resolve(folder, main))) throw new Error(`Plugin code is missing: ${main}`); }
     catch (error) { row.status = 'invalid'; row.error = (error as Error).message; } items.push(row);
   }
-  const file = process.env.MAGIC_POINTER_MCP_CONFIG || path.join(userDataDir, 'data', 'mcp.json'), mcp: Data = { path: file, exists: await exists(file), servers: [] };
+  const file = paths.mcp, mcp: Data = { path: file, exists: await exists(file), servers: [] };
   if (mcp.exists) {
     try { const raw = asObject(JSON.parse(await readFile(file, 'utf8'))); if (!raw.mcpServers) throw new Error('MCP configuration must contain mcpServers');
       mcp.servers = Object.entries(asObject(raw.mcpServers)).map(([name, value]) => { const fields = asObject(value), enabled = fields.disabled !== true && fields.enabled !== false, valid = typeof fields.command === 'string'; return { name, transport: fields.command ? 'stdio' : fields.url ? 'http' : 'unknown', enabled, status: !valid ? 'invalid' : enabled ? 'configured' : 'disabled', ...(!valid ? { error: 'Only stdio MCP servers are supported.' } : {}) }; });
@@ -180,10 +183,14 @@ export function registerWebTools(registry: ToolRegistry): void {
   registry.alias('web_search', 'Search'); registry.alias('web_fetch', 'Fetch');
 }
 
-export function registerMemoryTools(registry: ToolRegistry, userDataDir: string, allowSkills = false): void {
-  registry.register({ name: 'Recall', description: 'Search durable session history, including events before compaction. Read individual matching events with pagination.', deferred: true, is_concurrency_safe: true, used_backend: 'session_history',
-    input_schema: schema({ query: string, max_results: integer, session_id: string, event_seq: integer, offset: integer, max_chars: integer }),
-    execute: async args => {
+export function registerMemoryTools(registry: ToolRegistry, userDataDir: string, session: EventSession, allowSkills = false): void {
+  const screenMemory = new ScreenMemory(path.join(userDataDir, 'screen-memory.json'));
+  registry.register({ name: 'Recall', description: 'Search durable session history and retained screen evidence. Read individual matching session events with pagination.', deferred: true, is_concurrency_safe: true, used_backend: 'local_memory',
+    input_schema: schema({ query: string, max_results: integer, session_id: string, event_seq: integer, offset: integer, max_chars: integer, since: { type: 'number' }, until: { type: 'number' }, limit: integer }),
+    execute: async (args, context) => {
+      if (args.session_id !== session.id && !exactApprovedToolCall(session.events, 'Recall', args, context.tool_call_id)) {
+        throw new ActionFailure('permission_denied', 'Reading history outside this task requires approval for this exact Recall request.');
+      }
       const directory = path.join(userDataDir, 'agent-sessions');
       if (args.session_id) {
         if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(str(args.session_id))) throw new Error('invalid_session_id');
@@ -205,10 +212,17 @@ export function registerMemoryTools(registry: ToolRegistry, userDataDir: string,
         }
         if (hits.length >= limit) break;
       }
-      return { matches: hits };
+      return { matches: hits, screenEvidence: await screenMemory.recall(query, {
+        since: args.since === undefined ? undefined : Number(args.since),
+        until: args.until === undefined ? undefined : Number(args.until),
+        limit: Math.min(30, Math.max(1, Number(args.limit ?? limit))),
+      }) };
     } });
   registry.alias('search_history', 'Recall');
-  if (allowSkills) {
+  if (allowSkills) registerSkillTools(registry, userDataDir);
+}
+
+export function registerSkillTools(registry: ToolRegistry, userDataDir: string): void {
     registry.register({ name: 'SaveSkill', description: 'Save a reusable procedure as a skill after user authorization. Do not archive one-off transcripts.', deferred: true, effect: 'reversible_write', used_backend: 'skill_store',
       input_schema: schema({ name: string, content: string, overwrite: { type: 'boolean' } }, ['name', 'content']), execute: async args => {
         const name = str(args.name), body = str(args.content).trim();
@@ -216,7 +230,6 @@ export function registerMemoryTools(registry: ToolRegistry, userDataDir: string,
         const target = path.join(userDataDir, 'skills', name, 'SKILL.md'); if (!args.overwrite && await exists(target)) throw new Error('Skill exists; use overwrite=true to replace');
         await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, body + '\n', 'utf8'); return { name, path: target };
       } }); registry.alias('save_skill', 'SaveSkill');
-  }
 }
 
 export async function suggestNextPrompt(model: ModelRunner, request: Omit<ModelRequest, 'messages' | 'tools' | 'system'>, history: string): Promise<string> {

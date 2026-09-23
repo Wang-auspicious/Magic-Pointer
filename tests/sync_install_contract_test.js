@@ -39,4 +39,13 @@ assert.match(
   'robocopy failure exit codes must fail the sync instead of being accepted as a successful install',
 );
 
+const stopIndex = script.indexOf('Stop-Process -Force');
+const copyIndex = script.indexOf('robocopy.exe');
+assert.ok(stopIndex >= 0 && copyIndex > stopIndex, 'sync must stop the installed app before copying');
+const beforeCopy = script.slice(stopIndex, copyIndex);
+assert.match(beforeCopy, /while\s*\(Get-Process\s+["']Magic Pointer["']/,
+  'sync must wait for the installed app to exit before copying its executable');
+assert.match(beforeCopy, /if\s*\(\(Get-Date\)\s*-ge\s*\$stopDeadline\)\s*\{\s*throw/,
+  'sync must fail after a bounded wait instead of copying over a running executable');
+
 console.log('sync install contract test ok');

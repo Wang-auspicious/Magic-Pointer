@@ -35,7 +35,8 @@ async function main() {
       figmaRuntime: { clientConfigurations: () => [] }, notifyConversationChanged() {},
       handleAgentCursorProgress() {}, conversationFailureMessage: (value: any) => value.error || 'failed',
       setTimeout: () => 1, clearTimeout() {},
-      handleSessionRead: async () => ({ ok: true, pendingInput: accepted ? null : { requestId: 'ask-1' }, answeredInputIds: accepted ? ['ask-1'] : [] }),
+      handleSessionRead: async () => ({ ok: true, openTurn: accepted ? null : 1,
+        pendingInput: accepted ? null : { requestId: 'ask-1' }, answeredInputIds: accepted ? ['ask-1'] : [] }),
       runRuntimeBridge: (payload: any, _file: any, _target: any, cb: any) => { calls++; bridgePayload = payload; callbacks = cb; return {}; },
     };
     vm.runInNewContext(code, context);

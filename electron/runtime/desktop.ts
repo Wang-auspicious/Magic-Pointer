@@ -5,6 +5,7 @@ import { resolve, join, dirname, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { ActionFailure, type ToolRegistry, type ToolSpec, type Effect } from './tools';
+import type { AccessRequest } from './context';
 import { chooseUiTarget } from './desktop_selector';
 
 export type DesktopRecord = Record<string, any>;
@@ -157,26 +158,58 @@ export async function probeSelection(hwnd: number, target: { point?: { x: number
 
 function fingerprint(element: DesktopElement): unknown { return [element.runtime_id, element.role, element.name, element.rect, element.patterns, element.value]; }
 function identity(window: DesktopWindow): unknown { return [window.hwnd, window.pid, window.bbox, window.processStartTime]; }
-function actionEffect(name: string, args: DesktopRecord): Effect {
+type WindowReadScope = (hwnd: number) => { allowed: boolean; reason: string };
+function requireWindowRead(hwnd: number, scope?: WindowReadScope): void {
+  const access = scope?.(hwnd);
+  if (access && !access.allowed) throw new ActionFailure('permission_denied', access.reason);
+}
+const effectRank: Effect[] = ['read', 'reversible_write', 'local_irreversible', 'external_send', 'destructive', 'purchase'];
+function strongerEffect(left: Effect, right: Effect): Effect { return effectRank.indexOf(left) >= effectRank.indexOf(right) ? left : right; }
+function actionEffect(name: string, args: DesktopRecord, session?: DesktopActionSession): Effect {
   if (['list_apps', 'get_app_state', 'find_roots', 'observe_ui', 'search_ui', 'inspect_ui', 'expand_ui', 'read_text', 'wait_for', 'turn_ended'].includes(name)) return 'read';
-  if (name === 'type_text' && args.submit) return 'external_send';
-  if (name === 'act_ui') return (args.actions || []).some((action: DesktopRecord) => action.submit) ? 'external_send' : 'local_irreversible';
-  return 'local_irreversible';
+  const declared = ({ send: 'external_send', submit: 'external_send', delete: 'destructive', run: 'local_irreversible', purchase: 'purchase' } as Record<string, Effect>)[String(args.intent || '')] || 'local_irreversible';
+  if (name === 'act_ui') {
+    const actions = Array.isArray(args.actions) ? args.actions : [];
+    return actions.reduce((effect: Effect, action: DesktopRecord) => {
+      const kind = String(action.action || action.kind || '');
+      const mapped = ({ click: 'click', press: 'click', keypress: 'press_key', typeText: 'type_text' } as Record<string, string>)[kind] || kind;
+      return strongerEffect(effect, actionEffect(mapped, { ...action, snapshot_id: args.snapshot_id || args.state_id }, session));
+    }, declared);
+  }
+  let observed: Effect = 'local_irreversible';
+  if (name === 'type_text' && args.submit) observed = 'external_send';
+  if (name === 'press_key') {
+    const keys = String(args.keys || '').toLowerCase().split(/[+\s]+/).filter(Boolean);
+    if (keys.some(key => ['delete', 'del'].includes(key))) observed = 'destructive';
+    else if (keys.some(key => ['enter', 'return'].includes(key)) && !keys.includes('shift')) observed = 'external_send';
+  }
+  if (['click', 'perform_secondary_action'].includes(name)) {
+    const snapshot = session?.snapshots.get(String(args.snapshot_id || args.state_id || ''));
+    const index = args.index ?? (String(args.ref || '').startsWith('@e') ? Number(String(args.ref).slice(2)) : undefined);
+    const candidates = snapshot?.elements.filter(element => index !== undefined ? element.index === Number(index)
+      : Number.isFinite(args.x) && Number.isFinite(args.y) && element.rect[0] <= args.x && args.x < element.rect[2] && element.rect[1] <= args.y && args.y < element.rect[3]) || [];
+    const labels = candidates.map(element => String(element.name || '')).join(' ').toLowerCase();
+    if (['delete', 'remove', '删除', '永久移除', '清空'].some(word => labels.includes(word))) observed = 'destructive';
+    else if (['send', 'submit', '发送', '提交', '发布'].some(word => labels.includes(word))) observed = 'external_send';
+  }
+  return strongerEffect(declared, observed);
 }
 
 export class DesktopActionSession {
   readonly snapshots = new Map<string, DesktopSnapshot>();
   readonly roots = new Map<string, number>();
+  readonly observation = { windows: listWindows, elements: listElements };
   constructor(readonly sessionId: string = randomUUID(), readonly originWindowHwnd?: number) {}
   rootRef(hwnd: number): string { for (const [ref, value] of this.roots) if (value === hwnd) return ref; const ref = `@r${this.roots.size + 1}`; this.roots.set(ref, hwnd); return ref; }
-  async observe(args: DesktopRecord = {}, signal?: AbortSignal): Promise<DesktopSnapshot> {
-    const windows = (await listWindows(signal)).filter(row => !/^Magic Pointer(?: |$)/i.test(row.title));
+  async observe(args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope): Promise<DesktopSnapshot> {
+    const windows = (await this.observation.windows(signal)).filter(row => !/^Magic Pointer(?: |$)/i.test(row.title));
     const id = args.hwnd || (args.root ? this.roots.get(args.root) : undefined) || Number(String(args.window_id || '').replace(/^w-/, ''));
     const candidates = windows.filter(window => !id || window.hwnd === Number(id)).filter(window => args.pid === undefined || window.pid === Number(args.pid)).filter(window => !args.app || `${window.process_name} ${window.title}`.toLowerCase().includes(String(args.app).toLowerCase()));
     const window = candidates.find(row => !id && row.hwnd === this.originWindowHwnd) || candidates.find(row => row.focused) || candidates[0];
     if (!window) throw new ActionFailure('tool_error', 'window not found');
+    requireWindowRead(window.hwnd, readScope);
     const mode = String(args.mode || 'ax'); if (mode === 'all') throw new Error("mode 'all' is illegal");
-    const elements = ['image', 'visual'].includes(mode) ? [] : await listElements(window.hwnd, signal);
+    const elements = ['image', 'visual'].includes(mode) ? [] : await this.observation.elements(window.hwnd, signal);
     const snapshot_id = randomUUID();
     const snapshot: DesktopSnapshot = { snapshot_id, state_id: snapshot_id, window, windows: [window], elements, root_ref: this.rootRef(window.hwnd), mode };
     if (['full', 'image', 'visual'].includes(mode)) snapshot.surface = (await captureSurface(window.bbox, signal)).bytes;
@@ -227,16 +260,17 @@ export class DesktopActionSession {
     if (x < l || x >= r || y < t || y >= b) throw new ActionFailure('stale_snapshot', 'point outside target window');
     return { x, y, element };
   }
-  async call(name: string, args: DesktopRecord = {}, signal?: AbortSignal): Promise<DesktopRecord> {
+  async call(name: string, args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope): Promise<DesktopRecord> {
     signal?.throwIfAborted();
-    if (name === 'list_apps') return { apps: await listWindows(signal), usedBackend: 'win32_windows' };
+    const discoverable = (window: DesktopWindow) => readScope?.(window.hwnd).allowed === false ? { ...window, title: '' } : window;
+    if (name === 'list_apps') return { apps: (await this.observation.windows(signal)).map(discoverable), usedBackend: 'win32_windows' };
     if (name === 'find_roots') {
-      const windows = await listWindows(signal);
+      const windows = (await this.observation.windows(signal)).map(discoverable);
       const roots = windows.filter(row => (!args.text || `${row.title} ${row.process_name}`.toLowerCase().includes(String(args.text).toLowerCase())) && (!args.pid || row.pid === Number(args.pid)) && (!args.app || String(row.process_name).toLowerCase().includes(String(args.app).toLowerCase()))).map(row => ({ ...row, root_ref: this.rootRef(row.hwnd), window_id: `w-${row.hwnd}`, kind: 'window' }));
       return { roots: roots.slice(0, 32), total: roots.length, usedBackend: 'win32_windows' };
     }
     if (name === 'get_app_state' || name === 'observe_ui') {
-      const snapshot = await this.observe(args, signal); const { surface, ...publicSnapshot } = snapshot;
+      const snapshot = await this.observe(args, signal, readScope); const { surface, ...publicSnapshot } = snapshot;
       return { ...publicSnapshot, ...(surface ? { image: surface.toString('base64'), mimeType: 'image/png' } : {}), outline: snapshot.elements.slice(0, 80).map(row => ({ ...row, ref: `@e${row.index}` })), usedBackend: 'native_uia' };
     }
     if (name === 'launch_app') return nativeRequest('launch', { app: args.app }, signal);
@@ -244,6 +278,10 @@ export class DesktopActionSession {
     if (name === 'activate_window') {
       const snapshot = await this.observe(args, signal);
       return nativeRequest('input', { action: name, window: snapshot.window }, signal);
+    }
+    if (['search_ui', 'inspect_ui', 'expand_ui', 'read_text', 'wait_for'].includes(name)) {
+      const prior = this.snapshots.get(String(args.snapshot_id || args.state_id || ''));
+      if (prior) requireWindowRead(prior.window.hwnd, readScope);
     }
     const snapshot = await this.requireSnapshot(args.snapshot_id || args.state_id, signal);
     if (['search_ui', 'inspect_ui', 'expand_ui', 'read_text'].includes(name)) {
@@ -254,7 +292,7 @@ export class DesktopActionSession {
     }
     if (name === 'wait_for') {
       const started = Date.now(), timeout = Math.min(60000, Number(args.timeout_ms || 5000)); let current = snapshot;
-      do { current = await this.observe({ hwnd: snapshot.window.hwnd }, signal); const matched = matchesCondition(current.elements, args); if (matched) return { matched, state_id: current.state_id, elapsedMs: Date.now() - started, usedBackend: 'native_uia' }; await delay(Math.min(150, Math.max(1, timeout - (Date.now() - started))), signal); } while (Date.now() - started < timeout);
+      do { current = await this.observe({ hwnd: snapshot.window.hwnd }, signal, readScope); const matched = matchesCondition(current.elements, args); if (matched) return { matched, state_id: current.state_id, elapsedMs: Date.now() - started, usedBackend: 'native_uia' }; await delay(Math.min(150, Math.max(1, timeout - (Date.now() - started))), signal); } while (Date.now() - started < timeout);
       return { matched: false, state_id: current.state_id, elapsedMs: Date.now() - started, usedBackend: 'native_uia' };
     }
     if (name === 'act_ui') {
@@ -306,8 +344,9 @@ export function desktopSession(sessionId = 'default', originWindowHwnd?: number)
 export async function observeDesktop(args: DesktopRecord = {}, signal?: AbortSignal): Promise<DesktopRecord> { return desktopSession(args.sessionId).call('get_app_state', args, signal); }
 export async function executeDesktopAction(name: string, args: DesktopRecord, signal?: AbortSignal): Promise<DesktopRecord> { return desktopSession(args.sessionId).call(name, args, signal); }
 
-export function registerDesktopTools(registry: ToolRegistry, session = desktopSession()): void {
-  registry.register({ name: 'choose_ui_target', description: 'Resolve a target within an observed state. Unique exact labels are local; configured Jev uses a 900 ms deadline. Returns a reference or ambiguity and never acts.', input_schema: { type: 'object', properties: { state_id: { type: 'string' }, target: { type: 'string' }, candidate_refs: { type: 'array', items: { type: 'string' } } }, required: ['state_id', 'target'], additionalProperties: false }, effect: 'read', deferred: true, is_concurrency_safe: true, execute: async (args: DesktopRecord, context) => { const snapshot = await session.requireSnapshot(args.state_id, context.signal); const rows = snapshot.elements.map(row => ({ ...row, ref: `@e${row.index}` })).filter(row => !args.candidate_refs || args.candidate_refs.includes(row.ref)); return chooseUiTarget(args.target, rows, snapshot.state_id, context.signal); } });
+export function registerDesktopTools(registry: ToolRegistry, session = desktopSession(), authorizeAccess?: (request: AccessRequest) => { allowed: boolean; reason: string }): void {
+  const readScope: WindowReadScope | undefined = authorizeAccess ? hwnd => authorizeAccess({ action: 'read', windowIds: [`w-${hwnd}`] }) : undefined;
+  registry.register({ name: 'choose_ui_target', description: 'Resolve a target within an observed state. Unique exact labels are local; configured Jev uses a 900 ms deadline. Returns a reference or ambiguity and never acts.', input_schema: { type: 'object', properties: { state_id: { type: 'string' }, target: { type: 'string' }, candidate_refs: { type: 'array', items: { type: 'string' } } }, required: ['state_id', 'target'], additionalProperties: false }, effect: 'read', deferred: true, is_concurrency_safe: true, execute: async (args: DesktopRecord, context) => { const prior = session.snapshots.get(String(args.state_id || '')); if (prior) requireWindowRead(prior.window.hwnd, readScope); const snapshot = await session.requireSnapshot(args.state_id, context.signal); const rows = snapshot.elements.map(row => ({ ...row, ref: `@e${row.index}` })).filter(row => !args.candidate_refs || args.candidate_refs.includes(row.ref)); return chooseUiTarget(args.target, rows, snapshot.state_id, context.signal); } });
   const string = { type: 'string' }, number = { type: 'number' }, integer = { type: 'integer' }, boolean = { type: 'boolean' };
   const common = { snapshot_id: string, state_id: string, index: integer, ref: string, x: number, y: number };
   const schemas: Record<string, DesktopRecord> = {
@@ -324,6 +363,10 @@ export function registerDesktopTools(registry: ToolRegistry, session = desktopSe
   };
   for (const [name, properties] of Object.entries(schemas)) {
     const effect = actionEffect(name, {});
-    registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop. Use observed state_id and element ref; coordinates need a full image observation. Actions revalidate the target and return honest verification.`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args), is_concurrency_safe: effect === 'read', resource_keys: effect === 'read' ? [] : ['desktop:input'], used_backend: 'native_desktop', timeout_ms: 65000, deferred: !['list_apps', 'get_app_state'].includes(name), execute: (args, context) => session.call(name, args, context.signal) } as ToolSpec);
+    const targetAction = ['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name);
+    if (['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name)) properties.intent = { type: 'string', enum: ['input', 'send', 'submit', 'delete', 'run', 'purchase'] };
+    registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop. Use observed state_id and element ref; coordinates need a full image observation. Actions revalidate the target and return honest verification.`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args, session),
+      access_for: targetAction ? args => { const snapshot = session.snapshots.get(String(args.snapshot_id || args.state_id || '')); return { action: 'patch', windowIds: [snapshot?.window.hwnd ? `w-${snapshot.window.hwnd}` : 'unbound-live-surface'] }; } : undefined,
+      is_concurrency_safe: effect === 'read', resource_keys: effect === 'read' ? [] : ['desktop:input'], used_backend: 'native_desktop', timeout_ms: 65000, deferred: !['list_apps', 'get_app_state'].includes(name), execute: (args, context) => session.call(name, args, context.signal, readScope) } as ToolSpec);
   }
 }

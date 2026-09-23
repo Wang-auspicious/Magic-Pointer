@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
 
 contextBridge.exposeInMainWorld('magicPointerStage', {
   respondInput: (payload: unknown) => ipcRenderer.invoke('stage:respond-input', payload),
+  listHistorySources: () => ipcRenderer.invoke('stage:history-sources'),
   onConversationProgress: (callback: PayloadCallback) => onPayload('conversations:progress', callback),
   openArtifact: (payload: unknown) => ipcRenderer.invoke('stage:open-artifact', payload),
   ready: () => ipcRenderer.send('stage:renderer-ready'),
@@ -207,8 +208,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     open: () => ipcRenderer.invoke('projects:open'),
-    pickFiles: (projectRoot: unknown) => ipcRenderer.invoke('projects:pick-files', {
+    pickFiles: (projectRoot: unknown, kind: unknown = 'files') => ipcRenderer.invoke('projects:pick-files', {
       projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      kind: kind === 'folder' ? 'folder' : 'files',
     }),
     tree: (projectRoot: unknown, relativePath: unknown = '') => ipcRenderer.invoke('projects:tree', {
       projectRoot: String(projectRoot || '').trim().slice(0, 500),

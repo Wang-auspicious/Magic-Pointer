@@ -13,9 +13,11 @@ import { listWindows, runPowerShellJson } from './desktop';
 import { planOverlay, recognizeText } from './desktop_perception';
 import { runComputerTask, surfaceGrantFromLeases } from './desktop_operator';
 import { ExternalTasks, dispatchExternal } from './external';
-import { ToolRegistry, type Effect } from './tools';
+import { ActionFailure, ToolRegistry, type Effect } from './tools';
 import { SkillCandidateStore } from './context_skill_candidates';
 import { RuntimeWorkspaceResolver } from './context_workspace';
+import { authorizeAccess, scopeFromEvents, type TaskSourceScope } from './context';
+import type { EventSession } from './session';
 import type { RuntimeOptions } from './index';
 
 type Data = Record<string, any>;
@@ -40,6 +42,10 @@ function permission(settings: Data, recipe: Data, parameters: Data, objects: Dat
   return scoped?.decision || rules.recipe_overrides?.[recipe.id] || rules[recipe.risk === 'read' ? 'default_read' : recipe.risk === 'local_write' ? 'default_write' : recipe.risk === 'external_send' ? 'default_send' : `default_${recipe.risk}`] || (recipe.risk === 'read' ? 'allow' : 'confirm');
 }
 
+export const readsHistory = (recipe: Data) => ['memory.recall', 'clipboard.history'].includes(String(recipe.id || recipe.recipeId)) || ['local.memory', 'clipboard.history'].includes(String(recipe.provider));
+const restoresClipboard = (recipe: Data, parameters: Data) =>
+  (recipe.id === 'clipboard.history' || recipe.recipeId === 'clipboard.history' || recipe.provider === 'clipboard.history') && !!parameters.digest;
+
 export class Fabric {
   readonly settings: Data;
   constructor(readonly options: RuntimeOptions, readonly modelRuntime?: Data) { this.settings = settingsStore(options.userDataDir).load(); }
@@ -61,10 +67,12 @@ export class Fabric {
     const capture = buildCapturePolicy(engine, objects, attachments) as Data;
     if (capture.deniedObjectIds.length) throw new Error('capture_policy_denied');
     const lease = await createTargetLease(objects, { selectionSessionId: parameters.selectionSessionId, ttlSeconds: parameters.targetLeaseTtlSeconds });
-    const capabilities = await this.search(command, objects, id), decision = permission(this.settings, recipe, parameters, objects);
+    const risk = restoresClipboard(recipe, parameters) ? 'local_write' : recipe.risk;
+    const capabilities = await this.search(command, objects, id), requestedDecision = permission(this.settings, { ...recipe, risk }, parameters, objects);
+    const decision = readsHistory(recipe) && requestedDecision === 'allow' ? 'confirm' : requestedDecision;
     const binding = await new RuntimeWorkspaceResolver().resolve(objects, parameters.cwd || this.options.root);
     Object.assign(parameters, { objects, targetLease: lease, capturePolicy: capture, permissionDecision: { decision }, contextPacket: buildContextPacket({ command, recipeId: id, objects, cwd: binding.cwd, workspace: { cwd: binding.cwd, repoRoot: binding.repoRoot, bindingState: binding.state, bindingRelation: binding.relation }, processBinding: binding, targetLease: lease, captureDecisions: capture.decisions, capabilities, attachments }) });
-    const planId = randomUUID(), plan = { id: planId, recipeId: id, command, risk: recipe.risk, provider: decision === 'deny' ? 'denied' : recipe.provider,
+    const planId = randomUUID(), plan = { id: planId, recipeId: id, command, risk, provider: decision === 'deny' ? 'denied' : recipe.provider,
       objectIds: objects.map((object, index) => object.id || `object-${index + 1}`), parameters, preview: { title: recipe.title, description: recipe.description, provider: recipe.provider, permission: decision, objectCount: objects.length },
       requiresConfirmation: decision === 'confirm' || decision === 'ask' || capture.requiresExplicitConfirmation, idempotencyKey: parameters.idempotencyKey || planId, integrityToken: randomUUID() };
     await writeAtomic(path.join(this.options.userDataDir, 'plans', `${planId}.json`), plan);
@@ -80,12 +88,13 @@ export class Fabric {
   async execute(plan: Data, confirmed = false): Promise<Data> {
     const file = path.join(this.options.userDataDir, 'plans', `${safeId(plan.id)}.json`), saved = await readJson(file);
     if (!isDeepStrictEqual(saved, JSON.parse(JSON.stringify(plan)))) throw new Error('plan_changed');
+    if (restoresClipboard(plan, plan.parameters || {}) && plan.risk !== 'local_write') throw new Error('plan_risk_mismatch');
     const receiptFile = path.join(this.options.userDataDir, 'receipts', `${safeId(plan.idempotencyKey)}.json`);
     return withFileLock(receiptFile + '.execution', async () => {
-      const previous = await readJson(receiptFile, null); if (previous) return previous;
       const receipt: Data = { id: randomUUID(), planId: plan.id, recipeId: plan.recipeId, status: 'failed', provider: plan.provider, output: {}, verified: false, verification: {}, undo: null, error: null };
-      if (plan.requiresConfirmation && !confirmed) return { ...receipt, status: 'confirmation_required', error: 'confirmation_required' };
+      if ((plan.requiresConfirmation || readsHistory(plan) && plan.provider !== 'denied') && !confirmed) return { ...receipt, status: 'confirmation_required', error: 'confirmation_required' };
       if (plan.provider === 'denied') return { ...receipt, status: 'denied', error: 'permission_denied' };
+      const previous = await readJson(receiptFile, null); if (previous) return previous;
       try {
         const lease = plan.parameters.targetLease, check = await validateTargetLease(lease, lease.requiresLiveValidation ? await listWindows(this.options.signal) : []);
         if (!check.valid) throw new Error(check.reason);
@@ -109,7 +118,7 @@ export class Fabric {
       if (!text) { const image = objects[0]?.source?.capturePath || objects[0]?.source?.imagePath || objects[0]?.source?.path; if (image) text = (await recognizeText(image, { signal })).text; }
       if (!text) throw new Error('selected_text_is_empty');
       if (plan.recipeId === 'text.ocr_clean') text = /去掉空格|remove spaces|号码空格/.test(plan.command) ? text.replace(/\s+/g, '') : text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-      await clipboard(text, signal); return { text, verificationMethod: 'clipboard_readback' };
+      await copyToClipboard(text, signal); return { text, verificationMethod: 'clipboard_readback' };
     }
     if (provider === 'artifact.table') {
       const tables = objects.map(object => parseTable(content(object))).filter(rows => rows.length); if (!tables.length) throw new Error('no_structured_table_content');
@@ -142,7 +151,7 @@ export class Fabric {
     if (provider === 'local.memory') return { entries: await new ScreenMemory(path.join(this.options.userDataDir, 'screen-memory.json'), true).recall(params.query || plan.command, params), verificationMethod: 'read_only' };
     if (provider === 'clipboard.history') {
       const history = await readJson(path.join(this.options.userDataDir, 'clipboard-history.json'), { entries: [] });
-      if (params.digest) { const item = history.entries.find((entry: Data) => entry.digest === params.digest); if (!item) throw new Error('clipboard_entry_expired'); await clipboard(item.text, signal); return { text: item.text, restored: true }; }
+      if (params.digest) { const item = history.entries.find((entry: Data) => entry.digest === params.digest); if (!item) throw new Error('clipboard_entry_expired'); await copyToClipboard(item.text, signal); return { text: item.text, restored: true }; }
       return { entries: history.entries.filter((entry: Data) => !params.query || String(entry.text).includes(params.query)).map((entry: Data) => ({ ...entry, excerpt: String(entry.text).slice(0, 200), text: undefined })), verificationMethod: 'read_only' };
     }
     if (provider === 'local.task') {
@@ -171,7 +180,7 @@ export class Fabric {
   }
 }
 
-async function clipboard(text: string, signal?: AbortSignal): Promise<void> {
+export async function copyToClipboard(text: string, signal?: AbortSignal): Promise<void> {
   const encoded = Buffer.from(text, 'utf8').toString('base64');
   const result = await runPowerShellJson(`Add-Type -AssemblyName System.Windows.Forms\n$text=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))\n[Windows.Forms.Clipboard]::SetText($text)\n@{verified=([Windows.Forms.Clipboard]::GetText() -ceq $text)}|ConvertTo-Json -Compress`, signal);
   if (!result.verified) throw new Error('clipboard_readback_mismatch');
@@ -183,8 +192,73 @@ function parseTable(text: string): string[][] {
   if (cell || row.length) { row.push(cell); rows.push(row); } return rows;
 }
 
-export function registerRecipeTools(registry: ToolRegistry, fabric: Fabric): void {
+function requireRecipeScope(args: Data, scope: TaskSourceScope): void {
+  if (args.operation === 'catalog') return;
+  const parameters: Data = args.operation === 'execute' ? (args.plan as Data)?.parameters || {} : args.parameters || {};
+  const objects: Data[] = args.operation === 'execute' ? parameters.objects || [] : args.objects || [];
+  const paths: string[] = [];
+  const windowIds: string[] = [];
+  for (const object of objects) {
+    const source = object.source || {};
+    const sourceId = String(object.sourceId || source.sourceId || '');
+    if (sourceId) {
+      const decision = authorizeAccess(scope, { action: 'read', sourceIds: [sourceId] });
+      if (!decision.allowed) throw new ActionFailure('permission_denied', decision.reason);
+    }
+    for (const value of [object.path, source.path, source.imagePath, source.screenshotPath, source.capturePath, source.annotatedPath, source.frameLease?.localArtifact?.path])
+      if (typeof value === 'string' && value) paths.push(value);
+    const hwnd = Number(source.hwnd || source.windowHwnd);
+    if (Number.isInteger(hwnd) && hwnd > 0) windowIds.push(`w-${hwnd}`);
+  }
+  for (const value of [...(Array.isArray(parameters.attachments) ? parameters.attachments : []), parameters.cwd, parameters.frameLease?.localArtifact?.path])
+    if (typeof value === 'string' && value) paths.push(value);
+  if (windowIds.length) {
+    const decision = authorizeAccess(scope, { action: 'read', windowIds });
+    if (!decision.allowed) throw new ActionFailure('permission_denied', decision.reason);
+  }
+  const samePath = (left: string, right: string) => {
+    const a = path.resolve(left), b = path.resolve(right);
+    return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  };
+  for (const candidate of paths) {
+    if (authorizeAccess(scope, { action: 'read', paths: [candidate] }).allowed) continue;
+    const pointed = scope.sources.some(source => {
+      const identity = source.identity as Data;
+      const sourcePaths = [identity.absolutePath, identity.path, identity.frameLease?.localArtifact?.path];
+      return sourcePaths.some(value => typeof value === 'string' && samePath(candidate, value)) &&
+        authorizeAccess(scope, { action: 'read', sourceIds: [source.sourceId] }).allowed;
+    });
+    if (!pointed) throw new ActionFailure('permission_denied', `path_not_granted:${candidate}`);
+  }
+}
+
+function approvedRecipeExecution(session: EventSession, args: Data, callId: string): boolean {
+  if (!callId.startsWith('approval-')) return false;
+  const requestId = callId.slice('approval-'.length);
+  const answer = session.events.find(event => event.type === 'user_input/answered' && event.data.requestId === requestId);
+  if (!answer) return false;
+  const pending = answer.data.pendingInput as Data, response = answer.data.response as Data;
+  if (pending?.kind !== 'permission' || pending.harnessPermission !== true || pending.tool !== 'Recipe' ||
+    pending.action?.tool !== 'Recipe' || !['once', 'grant'].includes(String(response?.decision)) ||
+    !isDeepStrictEqual(pending.action.arguments, args)) return false;
+  if (session.events.some(event => event.type === 'permission/cancelled' && (event.data.requestIds as string[] || []).includes(requestId))) return false;
+  const prepared = session.events.filter(event => event.type === 'operation/prepared' && event.data.callId === callId);
+  if (prepared.length !== 1 || prepared[0]!.data.name !== 'Recipe' || !isDeepStrictEqual(prepared[0]!.data.arguments, args)) return false;
+  return !session.events.some(event => event.type === 'operation/settled' && event.data.operationId === prepared[0]!.data.operationId);
+}
+
+export function registerRecipeTools(registry: ToolRegistry, fabric: Fabric, session: EventSession): void {
   registry.register({ name: 'Recipe', description: 'Inspect explicit built-in workflows and execute a reviewed plan. Natural tasks run on this Agent; external delivery is only for an explicitly requested client.', input_schema: { type: 'object', properties: { operation: { type: 'string', enum: ['catalog', 'plan', 'execute'] }, recipeId: { type: 'string' }, command: { type: 'string' }, objects: { type: 'array', items: { type: 'object', additionalProperties: true } }, parameters: { type: 'object', additionalProperties: true }, plan: { type: 'object', additionalProperties: true } }, required: ['operation'] },
-    effect_for: args => args.operation === 'execute' ? ((args.plan as Data)?.risk === 'external_send' ? 'external_send' : (args.plan as Data)?.risk === 'read' ? 'read' : 'reversible_write') as Effect : 'read', deferred: true,
-    execute: args => args.operation === 'catalog' ? fabric.catalog() : args.operation === 'plan' ? fabric.plan(args) : fabric.execute(args.plan as Data, true) });
+    effect_for: args => {
+      if (args.operation !== 'execute') return 'read';
+      const plan = args.plan as Data, risk = String(plan?.risk || '');
+      if (['external_send', 'destructive', 'purchase'].includes(risk)) return risk as Effect;
+      if (plan?.requiresConfirmation) return risk === 'read' ? 'read' : 'local_irreversible';
+      return risk === 'read' ? 'read' : 'reversible_write';
+    }, deferred: true,
+    execute: (args, context) => {
+      requireRecipeScope(args, scopeFromEvents(session.events, session.id));
+      return args.operation === 'catalog' ? fabric.catalog() : args.operation === 'plan' ? fabric.plan(args)
+        : fabric.execute(args.plan as Data, approvedRecipeExecution(session, args, context.tool_call_id));
+    } });
 }

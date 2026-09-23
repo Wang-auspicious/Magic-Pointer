@@ -6,8 +6,13 @@ import os from 'node:os';
 import { streamModel, modelPayload, requestVision, resolveModelConfig, type ModelConfig } from '../electron/runtime/model';
 import { handleModels } from '../electron/runtime/model_admin';
 import { MagicPointerMcpServer, buildHookResponse } from '../electron/runtime/connectors';
-import { Fabric } from '../electron/runtime/fabric';
+import { Fabric, registerRecipeTools } from '../electron/runtime/fabric';
+import { handleFabric } from '../electron/runtime/fabric_api';
+import { Workflows } from '../electron/runtime/workflow';
+import { runAgent } from '../electron/runtime/agent';
 import { ToolRegistry } from '../electron/runtime/tools';
+import { ensureFolderReadScope, fileSource, registerSource, updateContext } from '../electron/runtime/context';
+import { EventSession } from '../electron/runtime/session';
 import { registerMcpDiscovery } from '../electron/runtime/mcp';
 import { ReviewSessionStore } from '../electron/runtime/review';
 import { recordSnapshot, loadTrace, tracePayload } from '../electron/runtime/replay';
@@ -99,6 +104,128 @@ test('MCP confirmation, immutable plans and idempotent file artifacts work throu
   assert.deepEqual(await fabric.execute(plan, true), result);
   await assert.rejects(fabric.execute({ ...plan, command: 'changed' }, true), /plan_changed/);
   const hook = await buildHookResponse('claude', { hook_event_name: 'UserPromptSubmit', prompt: 'this table' }, options); assert.deepEqual(hook, {});
+});
+
+test('Fabric history reads need per-plan approval and clipboard restore is a write', async () => {
+  const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'mp-history-scope-'));
+  const options = { root, userDataDir }, fabric = new Fabric(options), server = await MagicPointerMcpServer.open(options);
+  await writeFile(path.join(userDataDir, 'screen-memory.json'), JSON.stringify({ entries: [{
+    at: Date.now() / 1000, excerpt: 'Earlier private screen text', windowTitle: 'Private window',
+    sourceId: 'old-screen', locator: { kind: 'text', value: {} },
+  }] }));
+  await writeFile(path.join(userDataDir, 'clipboard-history.json'), JSON.stringify({ entries: [{
+    digest: 'old-copy', text: 'Earlier private copied text', at: Date.now() / 1000, app: 'Editor',
+  }] }));
+
+  const memory = (await fabric.plan({ recipeId: 'memory.recall', command: 'Earlier private', objects: [] })).plan;
+  assert.equal(memory.requiresConfirmation, true);
+  assert.equal((await server.call('execute_recipe', { plan: memory })).status, 'confirmation_required');
+  const memoryToken = server.issueConfirmation('execute_recipe', `${memory.id}:${memory.integrityToken}`);
+  assert.equal((await server.call('execute_recipe', { plan: memory, confirmationToken: memoryToken })).output.entries[0].excerpt, 'Earlier private screen text');
+  const legacyMemory = { ...memory, requiresConfirmation: false };
+  await writeFile(path.join(userDataDir, 'plans', `${memory.id}.json`), JSON.stringify(legacyMemory));
+  assert.equal((await server.call('execute_recipe', { plan: legacyMemory })).status, 'confirmation_required');
+  const legacyTask = await new Workflows(userDataDir).create(legacyMemory);
+  const legacyPending = await handleFabric({ operation: 'workflow.execute', taskId: legacyTask.taskId }, options);
+  assert.equal(legacyPending.state, 'confirmation_required');
+  assert.equal(legacyPending.workflowTask.approvalState, 'pending');
+  await handleFabric({ operation: 'workflow.approve', taskId: legacyTask.taskId, confirmed: true }, options);
+  assert.equal((await handleFabric({ operation: 'workflow.execute', taskId: legacyTask.taskId }, options)).receipt.output.entries[0].excerpt, 'Earlier private screen text');
+  const oldResult = await handleFabric({ operation: 'workflow.execute', taskId: legacyTask.taskId }, options);
+  assert.equal(oldResult.reused, true);
+  assert.doesNotMatch(JSON.stringify(oldResult), /Earlier private screen text/);
+
+  const clipboard = (await fabric.plan({ recipeId: 'clipboard.history', command: 'copied text', objects: [] })).plan;
+  assert.equal(clipboard.requiresConfirmation, true);
+  assert.equal((await server.call('execute_recipe', { plan: clipboard })).status, 'confirmation_required');
+  const workflow = await handleFabric({ operation: 'plan', recipeId: 'clipboard.history', command: 'copied text', objects: [] }, options);
+  assert.equal((await handleFabric({ operation: 'workflow.execute', taskId: workflow.workflowTask.taskId }, options)).state, 'confirmation_required');
+  await handleFabric({ operation: 'workflow.approve', taskId: workflow.workflowTask.taskId, confirmed: true }, options);
+  assert.equal((await handleFabric({ operation: 'workflow.execute', taskId: workflow.workflowTask.taskId }, options)).receipt.output.entries[0].excerpt, 'Earlier private copied text');
+
+  const restore = (await fabric.plan({ recipeId: 'clipboard.history', command: 'restore copied text', objects: [], parameters: { digest: 'old-copy' } })).plan;
+  assert.equal(restore.risk, 'local_write');
+  assert.equal(restore.parameters.permissionDecision.decision, 'confirm');
+  assert.equal((await server.call('execute_recipe', { plan: restore })).status, 'confirmation_required');
+  const legacyRestore = { ...restore, risk: 'read', requiresConfirmation: false };
+  await writeFile(path.join(userDataDir, 'plans', `${restore.id}.json`), JSON.stringify(legacyRestore));
+  await assert.rejects(fabric.execute(legacyRestore, true), /plan_risk_mismatch/);
+});
+
+test('Agent Recipe respects task material scope at plan and execution, and keeps plan confirmation', async () => {
+  const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'mp-recipe-scope-'));
+  const materialDir = path.join(userDataDir, 'materials');
+  await mkdir(materialDir);
+  const selectedPath = path.join(userDataDir, 'selected.png');
+  const privatePath = path.join(userDataDir, 'private.png');
+  const folderPath = path.join(materialDir, 'page.png');
+  await Promise.all([selectedPath, privatePath, folderPath].map(file => writeFile(file, 'image fixture')));
+  const session = await EventSession.open(userDataDir, 'recipe-scope');
+  await registerSource(session, fileSource(session.id, selectedPath));
+  await ensureFolderReadScope(session, materialDir);
+  const registry = new ToolRegistry();
+  registerRecipeTools(registry, new Fabric({ root, userDataDir }), session);
+  const plan = async (id: string, imagePath: string) => registry.execute({ id, name: 'Recipe', arguments: {
+    operation: 'plan', recipeId: 'text.ocr_copy', command: 'OCR this image',
+    objects: [{ id, kind: 'image', source: { path: imagePath } }],
+  } });
+  const privatePlan = await plan('private', privatePath);
+  assert.equal(privatePlan.failure_type, 'permission_denied');
+  const privateAttachment = await registry.execute({ id: 'private-attachment', name: 'Recipe', arguments: {
+    operation: 'plan', recipeId: 'image.to_prompt', command: 'Describe this image',
+    objects: [{ id: 'image', kind: 'image', content: 'image' }], parameters: { attachments: [privatePath] },
+  } });
+  assert.equal(privateAttachment.failure_type, 'permission_denied');
+  const selectedPlan = await plan('selected', selectedPath);
+  assert.equal(selectedPlan.is_error, false, selectedPlan.error_message);
+  const folderPlan = await plan('folder', folderPath);
+  assert.equal(folderPlan.is_error, false, folderPlan.error_message);
+  await updateContext(session, { scopeRevocations: ['workspace-materials'] });
+  const revokedExecution = await registry.execute({ id: 'revoked', name: 'Recipe', arguments: { operation: 'execute', plan: (folderPlan.value as any).plan } });
+  assert.equal(revokedExecution.failure_type, 'permission_denied');
+  const unconfirmedExecution = await registry.execute({ id: 'unconfirmed', name: 'Recipe', arguments: { operation: 'execute', plan: (selectedPlan.value as any).plan } });
+  assert.equal((unconfirmedExecution.value as any).status, 'confirmation_required');
+  const tablePlan = (await registry.execute({ id: 'table-plan', name: 'Recipe', arguments: {
+    operation: 'plan', recipeId: 'table.to_spreadsheet', command: 'Export the selected table',
+    objects: [{ id: 'table', kind: 'table', content: 'name,value\na,1' }],
+  } })).value as { plan: Record<string, unknown> };
+  const otherPlan = (await registry.execute({ id: 'other-plan', name: 'Recipe', arguments: {
+    operation: 'plan', recipeId: 'table.to_spreadsheet', command: 'Export another table',
+    objects: [{ id: 'other', kind: 'table', content: 'name,value\nb,2' }],
+  } })).value as { plan: Record<string, unknown> };
+  const approvedArgs = { operation: 'execute', plan: tablePlan.plan };
+  assert.equal(tablePlan.plan.requiresConfirmation, true);
+  assert.equal(registry.effect('Recipe', approvedArgs), 'local_irreversible');
+  assert.equal(registry.effect('Recipe', { operation: 'execute', plan: { risk: 'read', requiresConfirmation: true } }), 'read');
+  const requestId = 'recipe-approval';
+  await session.append('permission/requested', { requestId, pendingInput: {
+    requestId, kind: 'permission', tool: 'Recipe', question: 'Allow Recipe?', options: ['仅这一次允许', '本会话总是允许 Recipe', '拒绝'],
+    harnessPermission: true, action: { tool: 'Recipe', arguments: approvedArgs },
+  } });
+  await session.answer(requestId, { decision: 'grant' });
+  const mismatched = await registry.execute({ id: `approval-${requestId}`, name: 'Recipe', arguments: { operation: 'execute', plan: otherPlan.plan } });
+  assert.equal((mismatched.value as any).status, 'confirmation_required');
+  await session.append('operation/prepared', { operationId: 'recipe-approved', callId: `approval-${requestId}`, name: 'Recipe', arguments: approvedArgs, effect: 'local_irreversible', dispatched: true });
+  const approved = await registry.execute({ id: `approval-${requestId}`, name: 'Recipe', arguments: approvedArgs });
+  assert.equal((approved.value as any).status, 'succeeded');
+  assert.match(await readFile((approved.value as any).output.artifact, 'utf8'), /"a","1"/);
+  await session.append('operation/settled', { operationId: 'recipe-approved', outcome: 'succeeded', message: {
+    role: 'tool', tool_call_id: `approval-${requestId}`, name: 'Recipe', content: JSON.stringify(approved.value), origin: 'data',
+  } });
+  const staleRequestId = 'recipe-stale';
+  const staleArgs = { operation: 'execute', plan: otherPlan.plan };
+  await session.append('permission/requested', { requestId: staleRequestId, pendingInput: {
+    requestId: staleRequestId, kind: 'permission', tool: 'Recipe', question: 'Allow Recipe?', options: ['仅这一次允许', '本会话总是允许 Recipe', '拒绝'],
+    harnessPermission: true, action: { tool: 'Recipe', arguments: staleArgs },
+  } });
+  await session.answer(staleRequestId, { decision: 'once' });
+  await session.append('permission/cancelled', { requestIds: [staleRequestId] });
+  const stale = await registry.execute({ id: `approval-${staleRequestId}`, name: 'Recipe', arguments: staleArgs });
+  assert.equal((stale.value as any).status, 'confirmation_required');
+  const waiting = await runAgent({ root, userDataDir, session, registry, instruction: 'Export another table', emergencyFuse: 2,
+    model: async () => ({ text: '', tool_calls: [{ id: 'another-execution', name: 'Recipe', arguments: staleArgs }] }) });
+  assert.equal(waiting.reason, 'awaiting_user');
+  assert.equal(session.pendingInput()?.requestId, 'another-execution');
 });
 
 test('MCP lazy discovery invokes an actual JSONL server and keeps colliding tool names distinct', async () => {

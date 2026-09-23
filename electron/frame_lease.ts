@@ -8,6 +8,8 @@ interface WindowIdentity {
   processId: number;
   processName: string;
   title: string;
+  bbox?: [number, number, number, number];
+  processStartTime?: string;
 }
 
 interface FrameArtifactRef {
@@ -112,17 +114,19 @@ function validateWindowIdentity(value: unknown): WindowIdentity {
   const processId = requireFiniteNonNegative(record.processId, 'targetWindow.processId');
   const processName = requireNonEmptyString(record.processName, 'targetWindow.processName');
   const title = typeof record.title === 'string' ? record.title : '';
-  return { hwnd, processId, processName, title };
+  const bbox = record.bbox === undefined ? undefined : validateSurfaceBounds(record.bbox, 'targetWindow.bbox');
+  const processStartTime = typeof record.processStartTime === 'string' && record.processStartTime ? record.processStartTime : undefined;
+  return { hwnd, processId, processName, title, ...(bbox ? { bbox } : {}), ...(processStartTime ? { processStartTime } : {}) };
 }
 
-function validateSurfaceBounds(value: unknown): [number, number, number, number] {
+function validateSurfaceBounds(value: unknown, field = 'surfaceBoundsPx'): [number, number, number, number] {
   if (!Array.isArray(value) || value.length !== 4) {
-    fail('surfaceBoundsPx must be [left, top, right, bottom]');
+    fail(`${field} must be [left, top, right, bottom]`);
   }
   const numbers = value.map((entry) => Number(entry));
-  if (!numbers.every(Number.isFinite)) fail('surfaceBoundsPx must contain finite numbers');
+  if (!numbers.every(Number.isFinite)) fail(`${field} must contain finite numbers`);
   const [left, top, right, bottom] = numbers as [number, number, number, number];
-  if (right - left <= 0 || bottom - top <= 0) fail('surfaceBoundsPx must have positive area');
+  if (right - left <= 0 || bottom - top <= 0) fail(`${field} must have positive area`);
   return [left, top, right, bottom];
 }
 

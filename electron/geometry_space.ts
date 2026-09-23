@@ -7,6 +7,15 @@ type PointMapper = (point: Point) => Point;
 
 const PHYSICAL_SPACE = 'physical_screen_pixels';
 
+function overlayPointToScreenDip(point: Point, overlay: Point): Point {
+  return { x: point.x + overlay.x, y: point.y + overlay.y };
+}
+
+function mapOverlayPointToPhysical(point: Point, overlay: Point, dipToScreenPoint: PointMapper): Point {
+  const physical = dipToScreenPoint(overlayPointToScreenDip(point, overlay));
+  return { x: Math.round(physical.x), y: Math.round(physical.y) };
+}
+
 function asPoint(value: unknown): Point | null {
   const record = value as UnknownRecord | null;
   if (!record || typeof record !== 'object') return null;
@@ -82,4 +91,5 @@ function isPhysicalGeometry(geometry: unknown): boolean {
   return String(source.coordinateSpace || '') === PHYSICAL_SPACE;
 }
 
-module.exports = { PHYSICAL_SPACE, isPhysicalGeometry, toPhysicalGeometry };
+module.exports = { PHYSICAL_SPACE, isPhysicalGeometry, toPhysicalGeometry,
+  overlayPointToScreenDip, mapOverlayPointToPhysical };

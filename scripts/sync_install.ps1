@@ -39,7 +39,13 @@ $installedDir = "$env:LOCALAPPDATA\Programs\Magic Pointer"
 Write-Host "== sync install ($unpackedDir -> $installedDir) =="
 Get-Process "Magic Pointer" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep 1
+$stopDeadline = (Get-Date).AddSeconds(20)
+while (Get-Process "Magic Pointer" -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -ge $stopDeadline) { throw 'Magic Pointer did not exit before sync install' }
+    Start-Sleep -Milliseconds 250
+}
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'migrate_workspace.ps1') -InstalledRoot $installedDir -UserDataDir "$env:LOCALAPPDATA\Magic Pointer"
+if ($LASTEXITCODE -ne 0) { throw 'Workspace migration failed' }
 & robocopy.exe $unpackedDir $installedDir /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
 $copyExitCode = $LASTEXITCODE
 if ($copyExitCode -ge 8) { throw "robocopy sync failed with exit code $copyExitCode" }

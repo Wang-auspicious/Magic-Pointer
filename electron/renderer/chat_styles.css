@@ -14,6 +14,10 @@
   line-height: 20px;
 }
 
+.mp-chat-stream-live .mp-chat-markdown {
+  white-space: normal;
+}
+
 .mpw-scrollbody {
   position: relative;
   display: flex;

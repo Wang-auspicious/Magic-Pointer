@@ -39,6 +39,15 @@ app.whenReady().then(async () => {
       check(paints <= 4, '100 chunks caused ' + paints + ' paints');
       check(host.querySelector('.mp-chat-think-body').textContent === 'Inspect sources. '.repeat(100), 'batched text lost chunks');
       event('model_response', {});
+      event('model_request', { turn: '2' });
+      event('answer_chunk', { b64: btoa('Here is **strong') });
+      const fence = String.fromCharCode(96).repeat(3);
+      event('answer_chunk', { b64: btoa(' text**.\\n\\n' + fence + 'ts\\nconst x = 1;\\n' + fence) });
+      await wait(230);
+      check(host.querySelector('.mp-chat-stream-live strong')?.textContent === 'strong text',
+        'streaming emphasis is still literal Markdown');
+      check(host.querySelector('.mp-chat-stream-live .mp-chat-code pre code')?.textContent === 'const x = 1;',
+        'streaming code block appears only after completion');
       const todos = [{ content: 'Inspect task sources', status: 'in_progress' }, { content: 'Verify the delivered result', status: 'pending' }];
       event('tool_call', { id: 'plan-probe', name: 'Todo', args: JSON.stringify({ todos }) });
       event('tool_result', { id: 'plan-probe', name: 'Todo', args: JSON.stringify({ todos }), result: JSON.stringify({ plan: todos }), state: 'ok' });

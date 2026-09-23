@@ -43,9 +43,9 @@ function pendingInputFromBridge(value: unknown): UnknownRecord | null {
 function modelUsageFromBridge(value: unknown): UnknownRecord | null {
   const raw = recordOf(value);
   const usage: UnknownRecord = {};
-  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'turnsReported', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']) {
+  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'contextTokens', 'turnsReported', 'cacheReadTokens', 'cacheWriteTokens', 'lastCacheReadTokens', 'lastOutputTokens', 'reasoningTokens', 'estimatedCostUsd', 'pricedRequests']) {
     const count = Number(raw[key]);
-    if (Number.isFinite(count) && count >= 0) usage[key] = Math.floor(count);
+    if (Number.isFinite(count) && count >= 0) usage[key] = key === 'estimatedCostUsd' ? count : Math.floor(count);
   }
   return Object.keys(usage).length ? usage : null;
 }
@@ -345,7 +345,7 @@ function stageEventFromBridge(value: unknown) {
   const parsed = recordOf(value);
   const runtime: UnknownRecord = {};
   for (const key of [
-    'answer', 'agentSessionId', 'hasPendingWork', 'thinking', 'trajectory',
+    'answer', 'agentSessionId', 'runtimeTurn', 'hasPendingWork', 'thinking', 'trajectory',
     'activities', 'events', 'receipts', 'usedBackend', 'timingMs', 'taskContext',
   ]) {
     if (parsed[key] !== undefined) runtime[key] = parsed[key];

@@ -93,6 +93,7 @@ declare global {
     pendingInput?: {
       plan?: string;
       actionPreview?: string;
+      action?: { tool?: string; arguments?: Record<string, unknown> };
       requestId?: string;
       question?: string;
       options?: string[];
@@ -107,7 +108,9 @@ declare global {
   interface MagicPointerInputResponse {
     conversationId: string;
     requestId: string;
-    response: { decision?: 'once' | 'grant' | 'deny'; answers?: Record<string, string | string[]> };
+    response: { decision?: 'once' | 'grant' | 'deny'; actionArguments?: {
+      from_ms: number; to_ms: number; conversation_ids: string[]; limit?: number;
+    }; answers?: Record<string, string | string[]> };
     requestToken?: string;
     permissionPreset?: string;
     effort?: string;
@@ -503,7 +506,7 @@ declare global {
     projects?: {
       list(): Promise<MagicPointerProject[]>;
       open(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
-      pickFiles(projectRoot: string): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
+      pickFiles(projectRoot: string, kind?: 'files' | 'folder'): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
       tree(projectRoot: string, relativePath?: string): Promise<{ ok?: boolean; entries?: Array<{ name: string; path: string; kind: 'directory' | 'file' }>; error?: string }>;
       readFile(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; text?: string; truncated?: boolean; error?: string }>;
       openPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
@@ -676,7 +679,7 @@ declare global {
     isLive(): boolean;
     projects(): Promise<MagicPointerProject[]>;
     openProject(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
-    pickProjectFiles(projectRoot: string): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
+    pickProjectFiles(projectRoot: string, kind?: 'files' | 'folder'): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
     projectTree(projectRoot: string, relativePath?: string): Promise<{ ok?: boolean; entries?: Array<{ name: string; path: string; kind: 'directory' | 'file' }>; error?: string }>;
     readProjectFile(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; text?: string; truncated?: boolean; error?: string }>;
     openProjectPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
@@ -853,6 +856,7 @@ declare global {
 
   interface MagicPointerStageApi {
     respondInput?(payload: Omit<MagicPointerInputResponse, 'conversationId'> & { selectionSessionToken: string }): Promise<Record<string, any>>;
+    listHistorySources?(): Promise<Array<{ id: string; title?: string }>>;
     onConversationProgress?(callback: (payload: { requestId: string; conversationId?: string; turnIndex?: number; record: any }) => void): (() => void) | void;
     openArtifact?(payload: { selectionSessionToken: string; artifactId: string }): Promise<Record<string, any>>;
     ready(): void;
@@ -917,10 +921,10 @@ const Data: MagicPointerDataApi = {
     return projects.open();
   },
 
-  async pickProjectFiles(projectRoot: string): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }> {
+  async pickProjectFiles(projectRoot: string, kind: 'files' | 'folder' = 'files'): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }> {
     const projects = bridge()?.projects;
     if (!hasBridge() || !projects?.pickFiles) return { ok: false, error: '附件通道不可用。' };
-    return projects.pickFiles(projectRoot);
+    return projects.pickFiles(projectRoot, kind);
   },
 
   async projectTree(projectRoot: string, relativePath = '') {

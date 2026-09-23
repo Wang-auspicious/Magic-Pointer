@@ -170,11 +170,12 @@ export class KnowledgeCatalog {
       }))
       .sort((a, b) => b.addedAtMs - a.addedAtMs);
   }
-  async search(query = '', category?: string, limit = 20): Promise<Json[]> {
+  async search(query = '', category?: string, limit = 20, include?: (entry: Json) => boolean): Promise<Json[]> {
     const needle = query.toLowerCase();
     return (await this.entries())
       .filter(
         (entry) =>
+          (!include || include(entry)) &&
           (!category || String(entry.userCategory).toLowerCase() === category.toLowerCase()) &&
           (!needle ||
             [entry.title, entry.summary, entry.userCategory, entry.originalArtifactPath].some(
@@ -183,14 +184,18 @@ export class KnowledgeCatalog {
       )
       .slice(0, Math.max(0, Math.min(limit, 100)));
   }
-  async resolve(id: string, taskId: string): Promise<Json & { source: SourceRef }> {
+  async resolve(id: string, taskId: string, allowedPaths: string[]): Promise<Json & { source: SourceRef }> {
     const entry = (await this.entries()).find((entry) => entry.entryId === id);
     if (!entry) throw new Error('Unknown knowledge entry');
     const original = String(entry.originalArtifactPath),
       retained = String(entry.retainedArtifactPath),
-      originalExists = await fileExists(original),
-      retainedExists = await fileExists(retained),
-      path = originalExists ? original : retained || original,
+      allowed = new Set(allowedPaths.map((path) => resolve(path))),
+      originalAllowed = !!original && allowed.has(resolve(original)),
+      retainedAllowed = !!retained && allowed.has(resolve(retained));
+    if (!originalAllowed && !retainedAllowed) throw new Error('Knowledge entry is outside task scope');
+    const originalExists = originalAllowed && await fileExists(original),
+      retainedExists = retainedAllowed && await fileExists(retained),
+      path = originalExists ? original : retainedExists ? retained : originalAllowed ? original : retained,
       evidenceState = originalExists
         ? 'original'
         : retainedExists
@@ -207,6 +212,7 @@ export class KnowledgeCatalog {
     };
     source.revision = { sourceTimeMs: entry.sourceTimeMs, addedAtMs: entry.addedAtMs };
     source.capabilities = ['read', 'search'];
+    source.origin = 'task-discovered';
     return {
       entry,
       source,

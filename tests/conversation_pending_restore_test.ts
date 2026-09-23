@@ -23,6 +23,9 @@ async function main() {
   }] };
   const restored = await (context as any).restoreConversationContext(conversation);
   assert.equal(restored.turns[0].pendingInput.requestId, 'real-ask', 'legacy pending cards recover the real tool call id');
+  const interruptedBeforeCard = { ...conversation, turns: [{ outcome: '可恢复', modelUsage: { contextTokens: 20 }, trajectory: [] }] };
+  const recoveredCard = await (context as any).restoreConversationContext(interruptedBeforeCard);
+  assert.equal(recoveredCard.turns[0].pendingInput?.requestId, 'real-ask', 'a durable pending input must reappear even if the conversation store crashed before saving its card');
   pending = null;
   const consumed = await (context as any).restoreConversationContext(conversation);
   assert.equal(consumed.turns[0].pendingInput, undefined, 'a durable answer accepted before desktop crash cannot reappear');

@@ -3,12 +3,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { EventSession, canonicalJson, estimateTokens, normalizedInput } from './session';
-import { scheduleToolCalls, ToolRegistry, type ToolCall, type ToolResult, type Effect } from './tools';
+import { scheduleToolCalls, ToolRegistry, type ToolCall, type ToolResult, type ToolSpec, type Effect } from './tools';
 import type { ModelConfig } from './model';
 import type { AccessRequest } from './context';
 import { taskSources, taskReferences, scopeFromEvents } from './context';
 import { projectArtifacts } from './artifacts';
-import { contextWindowFor, projectContextMessages, relevantSkills } from './agent_services';
+import { contextWindowFor, estimateCostUsd, projectContextMessages, relevantSkills } from './agent_services';
 
 export type Data = Record<string, unknown>;
 export interface AgentMessage {
@@ -20,7 +20,7 @@ export interface ModelRequest {
   root: string; userDataDir?: string; config?: ModelConfig; system: string; messages: AgentMessage[]; tools: Data[];
   signal?: AbortSignal; sessionId?: string; maxTokens?: number; timeoutMs?: number; onEvent?: (event: ModelEvent) => void;
 }
-export interface ModelReply { text: string; tool_calls: ToolCall[]; provider_items?: Data[]; usage?: Record<string, number>; stop_reason?: string; usedBackend?: string }
+export interface ModelReply { text: string; tool_calls: ToolCall[]; provider_items?: Data[]; usage?: Data; stop_reason?: string; usedBackend?: string }
 export type ModelRunner = (request: ModelRequest) => Promise<ModelReply>;
 export type PermissionMode = 'default' | 'plan' | 'accept_reversible' | 'safe' | 'bypass';
 export type AgentEvent = { kind: string; [key: string]: unknown };
@@ -31,7 +31,7 @@ export interface AgentResult {
 export interface AgentOptions {
   root: string; userDataDir: string; session: EventSession; registry: ToolRegistry; model: ModelRunner;
   instruction?: string; evidence?: string; system?: string; workspace?: string; config?: ModelConfig; signal?: AbortSignal;
-  permissionMode?: PermissionMode; allowedEffects?: Effect[]; allowedTools?: string[]; deniedTools?: string[];
+  permissionMode?: PermissionMode; allowedEffects?: Effect[]; allowedTools?: string[]; deniedTools?: string[]; onceTools?: string[];
   contextTokens?: number; maxTokens?: number; emergencyFuse?: number; timeoutMs?: number; maxParallel?: number;
   hooks?: HookManager; onEvent?: (event: AgentEvent) => void; authorizeAccess?: (access: AccessRequest) => { allowed: boolean; reason: string } | void | Promise<{ allowed: boolean; reason: string } | void>;
   onSessionEnd?: () => void | Promise<void>; metadata?: Data;
@@ -40,6 +40,43 @@ export const asObject = (value: unknown): Data => value !== null && typeof value
 const str = (value: unknown) => String(value ?? '');
 const values = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const outputText = (value: unknown): string => typeof value === 'string' ? value : JSON.stringify(value ?? null);
+
+function usageCount(data: Data, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value));
+  }
+  return undefined;
+}
+
+function mergeModelUsage(total: Record<string, number>, raw: unknown): boolean {
+  const data = asObject(raw), prompt = usageCount(data, 'prompt_tokens', 'promptTokens');
+  const uncached = usageCount(data, 'input_tokens', 'inputTokens');
+  const cacheRead = usageCount(data, 'cache_read_input_tokens', 'prompt_cache_hit_tokens', 'cacheReadTokens')
+    ?? usageCount(asObject(data.prompt_tokens_details), 'cached_tokens')
+    ?? usageCount(asObject(data.input_tokens_details), 'cached_tokens');
+  const cacheWrite = usageCount(data, 'cache_creation_input_tokens', 'cacheWriteTokens')
+    ?? usageCount(asObject(data.prompt_tokens_details), 'cache_write_tokens');
+  const input = prompt ?? (uncached === undefined ? undefined : uncached
+    + (usageCount(data, 'cache_read_input_tokens') ?? 0)
+    + (usageCount(data, 'cache_creation_input_tokens') ?? 0));
+  const output = usageCount(data, 'output_tokens', 'completion_tokens', 'outputTokens');
+  const reportedTotal = usageCount(data, 'total_tokens', 'totalTokens');
+  const requestTotal = reportedTotal ?? (input === undefined && output === undefined ? undefined : (input ?? 0) + (output ?? 0));
+  for (const [key, value] of [['inputTokens', input], ['outputTokens', output], ['totalTokens', requestTotal],
+    ['cacheReadTokens', cacheRead], ['cacheWriteTokens', cacheWrite]] as const) {
+    if (value !== undefined) total[key] = (total[key] ?? 0) + value;
+  }
+  for (const [key, value] of [['contextTokens', input], ['lastOutputTokens', output],
+    ['lastCacheReadTokens', cacheRead], ['lastCacheWriteTokens', cacheWrite]] as const) {
+    delete total[key];
+    if (value !== undefined) total[key] = value;
+  }
+  if (input !== undefined) total.contextEstimated = 0;
+  if (input === undefined && output === undefined && requestTotal === undefined) return false;
+  total.turnsReported = (total.turnsReported ?? 0) + 1;
+  return true;
+}
 
 export type ToolHook = (payload: Data) => Data | void | Promise<Data | void>;
 export class HookManager {
@@ -79,11 +116,24 @@ function matchesRule(rule: string, call: ToolCall): boolean {
   return !!prefix && !/[|&;<>`]|\$\(|[\r\n]/.test(command) && (command === prefix || command.startsWith(prefix) && /\s/.test(command[prefix.length] ?? ''));
 }
 
-function permissionFor(options: AgentOptions, call: ToolCall): string {
+function historyRecipeCall(call: ToolCall): boolean {
+  if (call.name !== 'Recipe' || asObject(call.arguments).operation !== 'execute') return false;
+  const plan = asObject(asObject(call.arguments).plan);
+  return ['memory.recall', 'clipboard.history'].includes(str(plan.recipeId)) ||
+    ['local.memory', 'clipboard.history'].includes(str(plan.provider));
+}
+
+function permissionFor(options: AgentOptions, call: ToolCall, claimedOnce: Set<string>): string {
   const effect = options.registry.effect(call.name, asObject(call.arguments));
   const mode = options.session.permissionMode(options.permissionMode ?? 'default');
   if (mode === 'plan' && effect !== 'read') return 'deny';
   if (options.allowedEffects && !options.allowedEffects.includes(effect)) return 'deny';
+  const historyRead = call.name === 'DailyWrap.read' || call.name === 'Recall' && asObject(call.arguments).session_id !== options.session.id || historyRecipeCall(call);
+  if (historyRead) {
+    if (options.deniedTools?.some(rule => matchesRule(rule, call))) return 'deny';
+    return options.session.approvedCalls().some(approved => approved.id === call.id && approved.name === call.name &&
+      isDeepStrictEqual(approved.arguments, call.arguments)) ? 'allow' : 'ask';
+  }
   const allowed = new Set(options.allowedTools ?? []), denied = new Set(options.deniedTools ?? []);
   for (const event of options.session.events) {
     if (event.type !== 'user_input/answered') continue;
@@ -95,13 +145,67 @@ function permissionFor(options: AgentOptions, call: ToolCall): string {
     if (pending.harnessPermission && call.id === `approval-${event.data.requestId}` && response.decision !== 'deny' && isDeepStrictEqual(asObject(pending.action).arguments, call.arguments)) return 'allow';
   }
   if ([...denied].some(rule => matchesRule(rule, call))) return 'deny';
-  if (['reversible_write', 'local_irreversible'].includes(effect) && [...allowed].some(rule => matchesRule(rule, call))) return 'allow';
+  if (call.name === 'Recipe' && asObject(call.arguments).operation === 'execute' && asObject(asObject(call.arguments).plan).requiresConfirmation === true) return 'ask';
+  if (['reversible_write', 'local_irreversible'].includes(effect)) {
+    if ([...allowed].some(rule => matchesRule(rule, call))) return 'allow';
+    const once = options.onceTools?.find(rule => !claimedOnce.has(rule) && matchesRule(rule, call));
+    if (once) { claimedOnce.add(once); return 'allow'; }
+  }
   return decidePermission(mode, effect);
 }
 
 function blocked(call: ToolCall, message: string, failure: ToolResult['failure_type'] = 'permission_denied', value: unknown = message, backend = 'runtime_permissions'): ToolResult {
   return { tool_call_id: call.id, tool_name: call.name, arguments: asObject(call.arguments), value, is_error: true,
     failure_type: failure, error_message: message, used_backend: backend, latency_ms: 0, outcome_known: true };
+}
+
+type RecoveryScope = { family: string; kind: string; targets: string[] };
+function scopeIds(value: unknown): string[] {
+  return [...new Set((Array.isArray(value) ? value : [value]).map(item => typeof item === 'string' || typeof item === 'number' ? String(item).trim() : '').filter(Boolean))].sort();
+}
+function externalRecoveryScope(spec: ToolSpec, args: Data): RecoveryScope {
+  const family = spec.used_backend === 'native_desktop' ? 'desktop' : spec.name;
+  let access: Data = {};
+  try { access = asObject(spec.access_for?.(args)); } catch {}
+  const parameters = asObject(args.parameters), plan = asObject(args.plan), planParameters = asObject(plan.parameters);
+  const rows = [access, args, parameters, planParameters];
+  const named = (keys: string[]): string[] => {
+    for (const row of rows) for (const key of keys) { const ids = scopeIds(row[key]); if (ids.length) return ids; }
+    return [];
+  };
+  const recipients = named(['recipients', 'recipient', 'receiver', 'to']);
+  if (recipients.length) return { family, kind: 'recipient', targets: recipients };
+  const conversations = named(['conversationId', 'conversation_id', 'threadId', 'thread_id', 'channelId', 'channel_id', 'chatId', 'chat_id', 'roomId', 'room_id']);
+  if (conversations.length) return { family, kind: 'conversation', targets: conversations };
+  const explicit = named(['targetId', 'target_id', 'destinationId', 'destination_id']);
+  if (explicit.length) return { family, kind: 'target', targets: explicit };
+  const lease = asObject(planParameters.targetLease ?? parameters.targetLease ?? args.targetLease);
+  const windows = (values(lease.windows).length ? values(lease.windows) : lease.window ? [lease.window] : []).map(asObject);
+  const leased = windows.map(window => {
+    const hwnd = str(window.hwnd).trim(), pid = str(window.processId ?? window.pid).trim();
+    return hwnd && pid ? `${hwnd}:${pid}:${str(window.processStartTime).trim()}` : '';
+  }).filter(Boolean).sort();
+  if (leased.length) return { family, kind: 'window', targets: leased };
+  const windowIds = scopeIds(access.windowIds).filter(id => id !== 'unbound-live-surface');
+  if (windowIds.length) return { family, kind: 'window', targets: windowIds };
+  const directWindow = named(['windowId', 'window_id', 'hwnd']);
+  if (directWindow.length) return { family, kind: 'window', targets: directWindow };
+  return { family, kind: 'unknown', targets: [] };
+}
+
+function recoveryRetryBlocked(registry: ToolRegistry, spec: ToolSpec, args: Data, effect: Effect, pending: Data): boolean {
+  let previousSpec: ToolSpec | undefined;
+  try { previousSpec = registry.get(str(pending.tool)); } catch {}
+  const sameTool = (previousSpec?.name ?? str(pending.tool)) === spec.name;
+  if (sameTool && isDeepStrictEqual(pending.arguments, args)) return true;
+  if (effect !== 'external_send' || pending.effect !== 'external_send') return false;
+  const current = externalRecoveryScope(spec, args), saved = asObject(pending.recoveryScope);
+  const previous: RecoveryScope = typeof saved.family === 'string' && typeof saved.kind === 'string' && Array.isArray(saved.targets)
+    ? { family: saved.family, kind: saved.kind, targets: scopeIds(saved.targets) }
+    : previousSpec ? externalRecoveryScope(previousSpec, asObject(pending.arguments)) : { family: str(pending.tool), kind: 'unknown', targets: [] };
+  if (previous.family !== current.family) return false;
+  if (previous.kind === 'unknown' || current.kind === 'unknown' || previous.kind !== current.kind) return true;
+  return previous.targets.some(target => current.targets.includes(target));
 }
 
 export async function buildSystemPrompt(options: Pick<AgentOptions, 'workspace' | 'userDataDir' | 'evidence' | 'permissionMode'>): Promise<string> {
@@ -157,9 +261,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
   const started = performance.now(), session = options.session, registry = options.registry;
   const controller = new AbortController(), signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   const emit = (event: AgentEvent) => { try { options.onEvent?.(event); } catch {} };
-  const results: ToolResult[] = [], usage: Record<string, number> = {}, guard = new Map<string, { output: string; count: number }>();
+  const results: ToolResult[] = [], usage: Record<string, number> = {}, guard = new Map<string, { output: string; count: number }>(), claimedOnce = new Set<string>();
   let turns = 0, wrote = false, verified = false, nudged = false, reason = 'invariant_failed', answer = '', pending: Data | null = null, backend = 'magic_pointer.typescript';
   let lastProgress = Date.now(), empty = 0, truncations = 0, compactFailures = 0, lastCompactSize = 0, polling = false;
+  let outputTokens = options.maxTokens ?? options.config?.defaultMaxTokens ?? 32768, tokenEscalations = 0;
   const timeout = options.timeoutMs ?? 120000;
   let interval: ReturnType<typeof setInterval> | undefined;
   await session.startTurn();
@@ -181,7 +286,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     if (options.instruction?.trim()) { await session.cancelPermissions(); await session.appendMessage({ role: 'user', content: options.instruction.trim(), origin: 'instruction' }); }
     if (options.evidence?.trim()) await session.appendMessage({ role: 'user', content: `<<<MAGIC_POINTER_EVIDENCE>>>\n${options.evidence}\n<<<MAGIC_POINTER_EVIDENCE>>>`, origin: 'data', injected: true });
     const skills = options.instruction ? await relevantSkills(options.instruction, options.userDataDir) : '';
-    const system = await session.freezePrompt(options.system ?? (await buildSystemPrompt(options)) + (skills ? '\n\n' + skills : ''));
+    const system = await session.freezePrompt((options.system ?? await buildSystemPrompt(options)) + (skills ? '\n\n' + skills : ''));
     for (const event of session.events) if (event.type === 'operation/settled' && event.data.outcome === 'succeeded') {
       const message = asObject(event.data.message); const spec = registry.list().find(item => item.name === message.name);
       if (spec?.discovers_tools) { try { const data = JSON.parse(str(message.content)); registry.discover({ names: values(data.tools).map(item => str(asObject(item).name)).filter(Boolean) }); } catch {} }
@@ -206,9 +311,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       if (approved.length) reply = { text: '', tool_calls: approved.map(call => ({ id: str(call.id), name: str(call.name), arguments: call.arguments })) };
       else {
         await session.recordRequest(turns, requestSystem, schemas);
+        const requestStartedAt = Date.now();
         try {
           reply = await options.model({ root: options.root, userDataDir: options.userDataDir, config: options.config, system: requestSystem, messages: projectContextMessages(session.deriveMessages()), tools: schemas,
-            signal, sessionId: session.id, maxTokens: options.maxTokens, timeoutMs: timeout, onEvent: event => {
+            signal, sessionId: session.id, maxTokens: outputTokens, timeoutMs: timeout, onEvent: event => {
               if (event.type === 'text_delta') emit({ kind: 'model_chunk', text: event.text ?? '' });
               if (event.type === 'thinking_delta') emit({ kind: 'reasoning_chunk', text: event.text ?? '' });
               if (event.type === 'tool_delta') emit({ kind: 'tool_delta', ...event });
@@ -220,8 +326,18 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           await session.append('model/response', { turn: session.openTurn, step: turns, outcome: reason, usage: {}, outputTextChars: 0, toolCallCount: 0 }); break;
         }
         backend = reply.usedBackend ?? backend;
-        for (const [key, value] of Object.entries(reply.usage ?? {})) if (Number.isFinite(value)) usage[key] = (usage[key] ?? 0) + value;
+        const reported = mergeModelUsage(usage, reply.usage);
+        if (reported && reply.usedBackend?.startsWith('magic_pointer.') && options.config?.baseUrl) {
+          let host = '';
+          try { host = new URL(options.config.baseUrl).hostname; } catch {}
+          const cost = estimateCostUsd(usage, options.config.model, host, requestStartedAt);
+          if (cost !== null) {
+            usage.estimatedCostUsd = (usage.estimatedCostUsd ?? 0) + cost;
+            usage.pricedRequests = (usage.pricedRequests ?? 0) + 1;
+          }
+        }
         await session.append('model/response', { turn: session.openTurn, step: turns, outcome: reply.stop_reason ?? 'completed', usage: reply.usage ?? {}, outputTextChars: reply.text.length, toolCallCount: reply.tool_calls.length });
+        if (reported) emit({ kind: 'model_usage', usage: { ...usage } });
         if (reply.stop_reason === 'context_overflow' || reply.stop_reason?.startsWith('backend_error')) {
           if (/context|maximum.*tokens/i.test(reply.stop_reason) && compactFailures < 3 && await compactSession(options, requestSystem, signal, true).catch(() => false)) { compactFailures++; continue; }
           reason = 'provider_unavailable'; answer = reply.stop_reason; break;
@@ -239,6 +355,8 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       if (reply.stop_reason === 'max_output_tokens') {
         for (const call of calls) await session.appendMessage({ role: 'tool', tool_call_id: call.id, name: call.name, content: 'Not executed: model output was truncated.', is_error: true, origin: 'data' });
         if (++truncations > 3) { reason = 'invariant_failed'; answer = 'Repeated model output truncation.'; break; }
+        const raised = Math.min(64000, Math.max(16384, outputTokens * 4));
+        if (tokenEscalations < 2 && raised > outputTokens) { outputTokens = raised; tokenEscalations++; }
         await session.appendMessage({ role: 'user', content: 'Output token limit hit. Resume directly in smaller pieces; do not repeat completed work.', origin: 'instruction', injected: true }); continue;
       }
       if (!calls.length) {
@@ -260,12 +378,13 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           if (effect !== 'read') {
             await session.refresh();
             if (session.pendingInbox('next-step').length) return blocked(call, 'Not executed: new user input must be applied first.', 'steer_pending');
-            if (session.pendingRecovery().some(item => registry.list().some(candidate => candidate.name === str(item.tool)) && registry.get(str(item.tool)).name === spec.name && isDeepStrictEqual(item.arguments, args))) return blocked(call, 'RECOVERY_RETRY_BLOCKED: verify the unknown outcome and obtain explicit confirmation before repeating this operation.');
+            if (session.pendingRecovery().some(item => recoveryRetryBlocked(registry, spec, args, effect, item))) return blocked(call, 'RECOVERY_RETRY_BLOCKED: verify the unknown outcome and obtain explicit confirmation before repeating this operation.');
           }
-          const decision = permissionFor(options, call);
+          const decision = permissionFor(options, call, claimedOnce);
           if (decision === 'deny') return blocked(call, `Tool ${spec.name} is denied in the current permission mode.`);
           if (decision === 'ask') {
-            const request = { kind: 'permission', tool: spec.name, question: `Allow ${spec.name}?`, options: ['仅这一次允许', `本会话总是允许 ${spec.name}`, '拒绝'],
+            const exactHistoryRead = spec.name === 'DailyWrap.read' || spec.name === 'Recall' && args.session_id !== session.id || historyRecipeCall(call);
+            const request = { kind: 'permission', tool: spec.name, question: `Allow ${spec.name}?`, options: exactHistoryRead ? ['仅这一次允许', '拒绝'] : ['仅这一次允许', `本会话总是允许 ${spec.name}`, '拒绝'],
               awaitingUserInput: true, harnessPermission: true, requestId: call.id, action: { tool: spec.name, arguments: args }, actionPreview: canonicalJson(args).slice(0, 16000) };
             await session.append('permission/requested', { requestId: call.id, pendingInput: request }); pending ??= request;
             return blocked(call, 'Waiting for user permission.', 'permission_denied', request, 'permission_request');
@@ -277,7 +396,9 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         if (event.type === 'started') {
           const operationId = randomUUID(); operationIds.set(event.call.id, operationId);
           let effect: Effect = 'destructive'; try { effect = registry.effect(event.call.name, asObject(event.call.arguments)); } catch {}
-          await session.append('operation/prepared', { operationId, turn: session.openTurn, step: turns, callId: event.call.id, name: event.call.name, arguments: asObject(event.call.arguments), effect, dispatched: event.dispatched });
+          const recoveryScope = effect === 'external_send' ? externalRecoveryScope(registry.get(event.call.name), asObject(event.call.arguments)) : undefined;
+          await session.append('operation/prepared', { operationId, turn: session.openTurn, step: turns, callId: event.call.id, name: event.call.name, arguments: asObject(event.call.arguments), effect, dispatched: event.dispatched,
+            ...(recoveryScope ? { recoveryScope } : {}) });
           emit({ kind: 'tool_call_started', name: event.call.name, id: event.call.id, arguments: event.call.arguments }); continue;
         }
         const result = event.result, call = event.call;
@@ -296,9 +417,14 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         if (count >= 2) emit({ kind: 'tool_warning', name: call.name, message: 'Identical evidence or action repeated; use existing results or change approach.' });
         if (count >= 4 && !['Observe', 'get_app_state', 'Wait', 'AgentStatus'].includes(call.name)) stalled = true;
         if (body.length > 64000) {
-          const file = path.join(options.userDataDir, 'tool-results', session.id, `${call.id.replace(/[^A-Za-z0-9._-]/g, '_')}.txt`);
-          await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, body, 'utf8');
-          body = body.slice(0, 3000) + `\n[Output ${body.length} characters; complete result saved at ${file}. Read the needed range.]`;
+          let saved = '';
+          if (options.workspace && registry.list().some(spec => spec.name === 'Read')) {
+            const file = path.join(options.workspace, '.mp', 'tool-results', session.id, `${call.id.replace(/[^A-Za-z0-9._-]/g, '_')}.txt`);
+            try { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, body, 'utf8'); saved = file; }
+            catch (error) { emit({ kind: 'tool_warning', name: call.name, message: `Could not persist full output: ${(error as Error).message}` }); }
+          }
+          body = saved ? body.slice(0, 3000) + `\n[Output ${body.length} characters; complete result saved at ${saved}. Read the needed range.]`
+            : body.slice(0, 32000) + `\n[${body.length - 64000} characters omitted; use a narrower tool request.]\n` + body.slice(-32000);
         }
         await session.append('operation/settled', { operationId: operationIds.get(call.id), turn: session.openTurn, outcome: !event.dispatched ? 'not_started' : !result.outcome_known ? 'unknown' : result.is_error ? 'failed' : 'succeeded', failureType: result.failure_type, usedBackend: result.used_backend, latencyMs: result.latency_ms,
           message: { role: 'tool', content: body, tool_call_id: call.id, name: call.name, is_error: result.is_error, origin: 'data' } }, 'append');
@@ -318,9 +444,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     for (const result of cleanup) if (result.status === 'rejected') emit({ kind: 'cleanup_error', error: String(result.reason) });
   }
   const artifactIds = session.events.filter(event => event.type === 'artifact/generated').map(event => event.data.artifactId);
-  const receipt: Data = { receiptId: randomUUID(), status: reason === 'completed' ? wrote && !verified ? 'unverified' : 'succeeded' : reason === 'user_interrupt' ? 'interrupted' : reason === 'awaiting_user' ? 'partial' : 'failed',
-    effect: wrote ? 'reversible_write' : 'read', verificationMethod: reason === 'completed' ? wrote ? verified ? 'write_verified' : 'unverified_write' : artifactIds.length ? 'artifact_recorded' : 'response_completed' : reason,
-    usedBackend: backend, artifactIds, wrote, verified, failureType: reason === 'completed' ? null : reason, memoryEligible: false };
+  const recoveryPending = session.pendingRecovery().length > 0;
+  const receipt: Data = { receiptId: randomUUID(), status: reason === 'completed' ? recoveryPending || wrote && !verified ? 'unverified' : 'succeeded' : reason === 'user_interrupt' ? 'interrupted' : reason === 'awaiting_user' ? 'partial' : 'failed',
+    effect: wrote ? 'reversible_write' : 'read', verificationMethod: reason === 'completed' ? recoveryPending ? 'pending_recovery' : wrote ? verified ? 'write_verified' : 'unverified_write' : artifactIds.length ? 'artifact_recorded' : 'response_completed' : reason,
+    usedBackend: backend, artifactIds, wrote, verified, failureType: reason === 'completed' ? recoveryPending ? 'pending_recovery' : null : reason, memoryEligible: false };
   try { await session.append('receipt/issued', receipt); } finally { await session.endTurn(reason, answer.slice(0, 2000)); }
   const result: AgentResult = { reason, message: answer, turns, results, pending_input: pending, model_usage: usage, sessionId: session.id, usedBackend: backend, timingMs: performance.now() - started, receipt };
   emit({ kind: 'loop_stopped', terminal: result }); return result;

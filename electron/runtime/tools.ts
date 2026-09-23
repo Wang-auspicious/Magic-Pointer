@@ -61,7 +61,7 @@ const namePattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const effects = new Set<Effect>(['read', 'reversible_write', 'local_irreversible', 'external_send', 'destructive', 'purchase']);
 const cancelled = (error: unknown) => error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name);
 
-function validate(value: unknown, schema: JsonSchema, root = schema, path = 'input', depth = 0): string[] {
+export function validate(value: unknown, schema: JsonSchema, root = schema, path = 'input', depth = 0): string[] {
   const errors: string[] = [];
   const fail = (message: string) => { errors.push(`${path}: ${message}`); };
   if (depth > 32) return [`${path}: maximum nesting depth exceeded`];
@@ -159,6 +159,7 @@ export class ToolRegistry {
   unregister(name: string, expected?: ToolSpec): boolean {
     if (!this.tools.has(name) || expected && this.tools.get(name) !== expected) return false;
     this.loaded.delete(name);
+    for (const [alias, canonical] of this.aliases) if (canonical === name) this.aliases.delete(alias);
     return this.tools.delete(name);
   }
   alias(alias: string, canonical: string): void {

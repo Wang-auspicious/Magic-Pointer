@@ -91,7 +91,7 @@ internal static class DesktopHost
     static object Elements(long hwnd,int limit) {
         var root=AutomationElement.FromHandle(new IntPtr(hwnd));var queue=new Queue<Tuple<AutomationElement,int,int>>();queue.Enqueue(Tuple.Create(root,0,0));var rows=new List<object>();var watch=Stopwatch.StartNew();
         while(queue.Count>0&&rows.Count<limit&&watch.ElapsedMilliseconds<4000){var entry=queue.Dequeue();try{int index=rows.Count+1;rows.Add(Element(entry.Item1,hwnd,index,entry.Item2,entry.Item3));
-            if(entry.Item3<40){var children=entry.Item1.FindAll(TreeScope.Children,Condition.TrueCondition);for(int i=0;i<children.Count&&queue.Count<limit*2;i++)queue.Enqueue(Tuple.Create(children[i],index,entry.Item3+1));}}catch(ElementNotAvailableException){}}
+            if(entry.Item3<40){var children=entry.Item1.FindAll(TreeScope.Children,Condition.TrueCondition);for(int i=0;i<children.Count&&queue.Count<limit*2;i++)queue.Enqueue(Tuple.Create(children[i],index,entry.Item3+1));}}catch(ElementNotAvailableException){}catch(NullReferenceException){}}
         return rows;
     }
     static AutomationElement FindElement(IDictionary<string,object> row){long hwnd=Convert.ToInt64(Get(row,"hwnd",0));var root=AutomationElement.FromHandle(new IntPtr(hwnd));var expected=Arr(Get(row,"runtime_id")).Select(Convert.ToInt32).ToArray();

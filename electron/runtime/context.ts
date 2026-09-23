@@ -125,7 +125,7 @@ export function sourceRef(value: unknown): SourceRef {
     throw new Error('Unsupported source origin');
   if (
     !Array.isArray(data.capabilities) ||
-    data.capabilities.some((x) => !['read', 'search', 'follow', 'patch'].includes(String(x)))
+    data.capabilities.some((x) => !['read', 'search', 'follow', 'patch', 'move_file'].includes(String(x)))
   )
     throw new Error('Invalid source capabilities');
   return structuredClone(data) as unknown as SourceRef;
@@ -286,7 +286,10 @@ export function authorizeAccess(
     const seen = new Set<string>();
     while (!allowed && request.action === 'read' && source && !seen.has(source.sourceId)) {
       seen.add(source.sourceId);
-      allowed = ['user-attached', 'user-pointed'].includes(source.origin);
+      const sourcePath = String(source.identity.absolutePath ?? source.identity.path ?? '');
+      allowed = ['user-attached', 'user-pointed'].includes(source.origin) ||
+        (['file', 'document'].includes(source.kind) && !!sourcePath &&
+          active.some((grant) => grant.folderRoots.some((root) => insidePath(sourcePath, root))));
       source = sources.get(source.parentSourceId ?? '');
     }
     if (!allowed) return { allowed: false, reason: `source_not_granted:${id}` };
@@ -367,6 +370,42 @@ export function emptyRead(
 }
 export class FrozenSelectionReader implements SourceReader {
   constructor(private fallback?: SourceReader) {}
+  private async readSaved(source: SourceRef, options: ReadOptions): Promise<ReadResult> {
+    if (!this.fallback) return emptyRead(source, 'frozen.selection', 'saved-document-unavailable');
+    const absolutePath = String(source.identity.absolutePath ?? source.identity.path ?? '');
+    if (!absolutePath) return emptyRead(source, 'frozen.selection', 'saved-document-path-unavailable');
+    const diskRevision = { authority: 'disk' };
+    const saved = await this.fallback.read({
+      ...source,
+      identity: { ...source.identity, hwnd: undefined },
+      revision: diskRevision,
+    }, options);
+    const historicalSelectionTextUnavailable = !String(
+      source.identity.text ?? source.identity.content ?? record(source.identity.availableContent).text ?? '',
+    ).trim();
+    return {
+      ...saved,
+      coverage: historicalSelectionTextUnavailable
+        ? {
+            ...saved.coverage,
+            complete: false,
+            missingReason: [
+              saved.coverage.missingReason,
+              'historical-selection-text-unavailable; saved-document-may-differ-from-unsaved-application',
+            ].filter(Boolean).join(';'),
+          }
+        : saved.coverage,
+      evidenceStatus: historicalSelectionTextUnavailable ? 'degraded' : saved.evidenceStatus,
+      structure: {
+        ...saved.structure,
+        readFrom: 'disk',
+        absolutePath: resolve(absolutePath),
+        sourceRevision: diskRevision,
+        historicalSelectionRevision: source.revision,
+        historicalSelectionTextUnavailable,
+      },
+    };
+  }
   async read(source: SourceRef, options: ReadOptions = {}): Promise<ReadResult> {
     const identity = source.identity,
       content = String(
@@ -377,20 +416,24 @@ export class FrozenSelectionReader implements SourceReader {
       value: { frameLeaseId: identity.frameLeaseId, bbox: identity.bbox },
     };
     const locator = options.locator ?? frozenLocator;
+    const hasSavedDocument =
+      !!this.fallback && !!String(identity.absolutePath ?? identity.path ?? '').trim();
     if (options.cursor || (options.locator && !isDeepStrictEqual(options.locator, frozenLocator))) {
       if (this.fallback)
-        return this.fallback.read(source, {
+        return this.readSaved(source, {
           ...options,
           cursor: options.cursor === 'frozen-selection:remainder' ? undefined : options.cursor,
         });
       return emptyRead(source, 'frozen.selection', 'requested-content-not-in-frozen-selection');
     }
-    if (!content.trim())
+    if (!content.trim()) {
+      if (hasSavedDocument) return this.readSaved(source, options);
       return emptyRead(
         source,
         'frozen.selection',
         'Frozen selection has no structured text; use Look on the retained frame',
       );
+    }
     const fragments =
       options.query && !content.toLowerCase().includes(options.query.toLowerCase())
         ? []
@@ -402,7 +445,11 @@ export class FrozenSelectionReader implements SourceReader {
               metadata: {
                 historical: true,
                 capturedAt: identity.capturedAt,
-                frameLeaseId: identity.frameLeaseId,
+                 frameLeaseId: identity.frameLeaseId,
+                 sourceRevision: source.revision,
+                 ...(Array.isArray(identity.officeShapes)
+                   ? { officeShapes: identity.officeShapes }
+                   : {}),
               },
               citations: [{ sourceId: source.sourceId, locator }],
             },
@@ -413,16 +460,18 @@ export class FrozenSelectionReader implements SourceReader {
       coverage: {
         extent: 'selection',
         readRanges: fragments.map((f) => f.locator),
-        totalUnits: 1,
-        complete: true,
-        nextCursor: null,
-        missingReason: null,
+        totalUnits: hasSavedDocument ? null : 1,
+        complete: !hasSavedDocument,
+        nextCursor: hasSavedDocument ? 'frozen-selection:remainder' : null,
+        missingReason: hasSavedDocument
+          ? 'saved-document-not-read; unsaved-application-content-may-differ'
+          : null,
       },
       evidenceStatus: fragments.length ? 'ok' : 'empty_confirmed',
       usedBackend: 'frozen.selection',
       latencyMs: 0,
     };
-    if (options.query && this.fallback) {
+    if (options.query && hasSavedDocument) {
       if (fragments.length >= (options.limit ?? 20))
         return {
           ...result,
@@ -433,7 +482,7 @@ export class FrozenSelectionReader implements SourceReader {
             missingReason: 'disk-search-pending',
           },
         };
-      const disk = await this.fallback.read(source, {
+      const disk = await this.readSaved(source, {
         ...options,
         limit: Math.max(1, (options.limit ?? 20) - fragments.length),
       });
@@ -483,6 +532,26 @@ export function registerContextTools(
     if (!decision.allowed) throw new ActionFailure('permission_denied', decision.reason);
     return source;
   };
+  const chatKeys = (sources: SourceRef[]) => {
+    const chats = sources.filter(source => source.kind === 'chat');
+    if (!chats.length) return [];
+    const windowId = (source: SourceRef) => Number(record(source.identity.conversationIdentity).windowHwnd ?? record(source.identity.window).hwnd);
+    const unbound = taskSources(session.events).some(source => source.kind === 'chat' && !(windowId(source) > 0));
+    return [...new Set([...(unbound ? ['chat:unbound'] : []), ...chats.flatMap(source => {
+      const identity = record(source.identity.conversationIdentity);
+      const conversation = String(identity.nativeConversationId ?? identity.conversationKey ?? '');
+      return [...(windowId(source) > 0 ? [`chat:window:${windowId(source)}`] : []), ...(conversation ? [`chat:conversation:${identity.adapterId ?? ''}:${conversation}`] : [])];
+    })])];
+  };
+  const searchSources = (args: Json) => {
+    const ids = array<string>(args.source_ids);
+    const one = String(args.source_id ?? '').trim();
+    const explicit = ids.length ? ids : one ? [one] : null;
+    const candidates = explicit
+      ? explicit.map(id => allowed(String(id)))
+      : taskSources(session.events).filter(source => authorizeAccess(scopeFromEvents(session.events, session.id), { action: 'read', sourceIds: [source.sourceId] }).allowed);
+    return [...new Map(candidates.map(source => [source.sourceId, source])).values()];
+  };
   registry.register({
     name: 'Context.list',
     description: 'List the task sources, references and current reference revision.',
@@ -494,28 +563,55 @@ export function registerContextTools(
       referenceRevision: referenceRevision(session.events),
     }),
   });
-  for (const name of ['Context.read', 'Context.search'])
+  for (const name of ['Context.read', 'Context.search']) {
+    const search = name === 'Context.search';
     registry.register({
       name,
-      description: name.endsWith('search')
+      description: search
         ? 'Search all authorized document content, with continuation and source locators.'
         : 'Read a task source or precise fragment. Continue using the returned cursor.',
       input_schema: schema(
         {
           source_id: string,
+          ...(search ? { source_ids: { type: 'array', items: string } } : {}),
           locator: object,
           cursor: string,
-          limit: { type: 'integer', minimum: 1, maximum: 1000 },
-          ...(name.endsWith('search') ? { query: string } : {}),
+          limit: { type: 'integer', minimum: 1, maximum: search ? 100 : 1000 },
+          ...(search ? { query: string } : {}),
         },
-        name.endsWith('search') ? ['source_id', 'query'] : ['source_id'],
+        search ? ['query'] : ['source_id'],
       ),
       is_concurrency_safe: true,
+      resource_keys: (args) => chatKeys(search ? searchSources(args) : [resolveSource(session.events, String(args.source_id))]),
       access_for: (args) => ({
         action: 'read',
-        sourceIds: [resolveSource(session.events, String(args.source_id)).sourceId],
+        sourceIds: search ? searchSources(args).map(source => source.sourceId) : [resolveSource(session.events, String(args.source_id)).sourceId],
       }),
       execute: async (args, context) => {
+        if (search) {
+          const sources = searchSources(args);
+          const limit = Math.max(1, Math.min(100, Number(args.limit ?? 20)));
+          const included = sources.slice(0, limit);
+          if (args.cursor && included.length !== 1) throw new Error('Search continuation requires one source_id');
+          const base = Math.floor(limit / Math.max(1, included.length)), extra = limit % Math.max(1, included.length);
+          const results: (ReadResult & { source: SourceRef })[] = [];
+          for (const [index, source] of included.entries()) {
+            const result = await readers.get(source).read(source, { cursor: args.cursor as string | undefined, limit: base + (index < extra ? 1 : 0), query: String(args.query), signal: context.signal });
+            if (result.sourceId !== source.sourceId) throw new Error('Reader returned a different source');
+            if (result.evidenceStatus === 'ok' || result.evidenceStatus === 'degraded' && result.fragments.length)
+              for (const fragment of result.fragments) observed.set(`${source.sourceId}:${JSON.stringify(fragment.locator)}`, fragment);
+            results.push({ ...result, source });
+          }
+          const remainingSourceIds = sources.slice(limit).map(source => source.sourceId);
+          const statuses = results.map(result => result.evidenceStatus);
+          const evidenceStatus = remainingSourceIds.length ? 'degraded'
+            : !statuses.length ? 'unavailable'
+            : statuses.every(status => status === 'empty_confirmed') ? 'empty_confirmed'
+            : statuses.every(status => status === 'unsupported') ? 'unsupported'
+            : statuses.every(status => status === 'ok') ? 'ok'
+            : 'degraded';
+          return { query: String(args.query), results, remainingSourceIds, evidenceStatus };
+        }
         const source = allowed(String(args.source_id));
         const result = await readers.get(source).read(source, {
           locator: args.locator as FragmentLocator | undefined,
@@ -533,6 +629,7 @@ export function registerContextTools(
         return result;
       },
     });
+  }
   registry.register({
     name: 'Context.follow',
     description: 'Register traceable child sources from an observed attachment or directory entry.',

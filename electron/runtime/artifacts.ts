@@ -513,7 +513,7 @@ export function registerArtifactTools(registry: ToolRegistry, session: ContextSe
   registry.register({
     name: 'Document.propose_patch',
     description:
-      'Propose exact before/after edits to current task target references as an editable document patch. Applying requires acceptance of its revision.',
+      'Propose exact before/after edits to current task target references as an editable document patch. Applying requires acceptance of its revision. For PowerPoint set_shape_text, read the selected source for officeShapes styleSpans. When edited text crosses mixed styles, before and after must each include text and complete styleSpans with zero-based UTF-16 start/length and bold, italic, underline, fontName, fontSize, colorRgb. Map emphasis to the new words; if its destination is unclear, ask the user before applying.',
     input_schema: schema(
       {
         summary: string,
@@ -729,7 +729,8 @@ export async function handleArtifact(payload: Json, userDataDir: string): Promis
           if (
             !sources.some(
               (source) =>
-                source.sourceId === operation.sourceId && source.capabilities.includes('patch'),
+                source.sourceId === operation.sourceId && (source.capabilities.includes('patch') ||
+                  operation.operation === 'move_file' && source.capabilities.includes('move_file')),
             )
           )
             throw new Error('Patch source not granted');
@@ -826,6 +827,38 @@ export async function handleArtifact(payload: Json, userDataDir: string): Promis
       receipt,
       ...(action === 'undo' ? { forwardReceiptId: previous?.data.receiptId } : {}),
     });
+    const bySource = new Map(taskSources(session.events).map((source) => [source.sourceId, source]));
+    const rebound = new Map<string, import('./context').SourceRef>();
+    const samePath = (left: string, right: string) => {
+      const a = resolve(left), b = resolve(right);
+      return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+    };
+    for (const operation of patch.operations) {
+      if (operation.operation !== 'move_file' || !result.succeededOperationIds.includes(operation.operationId)) continue;
+      const source = bySource.get(operation.sourceId), beforePath = String(record(operation.before).path ?? ''), afterPath = String(record(operation.after).path ?? '');
+      const currentPath = String(source?.identity.absolutePath ?? source?.identity.path ?? '');
+      if (!source || !beforePath || !afterPath || !currentPath || !samePath(currentPath, beforePath)) continue;
+      const nextPath = resolve(afterPath);
+      const next = { ...source, title: basename(nextPath), identity: {
+        ...source.identity, absolutePath: nextPath,
+        ...(source.identity.path ? { path: nextPath } : {}),
+        moveRoot: source.identity.moveRoot || dirname(resolve(currentPath)),
+      } };
+      bySource.set(operation.sourceId, next);
+      rebound.set(operation.sourceId, next);
+    }
+    if (rebound.size) {
+      const sources = await Promise.all([...rebound.values()].map(async (source) => {
+        const path = String(source.identity.absolutePath ?? source.identity.path),
+          info = await stat(path);
+        return { ...source, revision: {
+          mtimeMs: info.mtimeMs,
+          size: info.isDirectory() ? null : info.size,
+          authority: 'disk',
+        } };
+      }));
+      await updateContext(session, { sources });
+    }
     const registry = new ArtifactRegistry(userDataDir),
       registered: Json[] = [];
     for (const operation of patch.operations.filter((operation) =>
@@ -837,7 +870,7 @@ export async function handleArtifact(payload: Json, userDataDir: string): Promis
           : operation.operation === 'add_pdf_annotation'
             ? after.outputPath
             : null;
-      if (typeof path === 'string')
+      if (typeof path === 'string' && (await stat(path).catch(() => null))?.isFile())
         registered.push(
           await registry.register(
             path,

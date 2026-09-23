@@ -40,7 +40,7 @@ const {
 } = require('./model_runtime_config');
 const { probeQuota } = require('./quota_probe');
 const { createBufferedLog } = require('./append_log');
-const { toPhysicalGeometry } = require('./geometry_space');
+const { toPhysicalGeometry, overlayPointToScreenDip, mapOverlayPointToPhysical } = require('./geometry_space');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const {
@@ -106,7 +106,6 @@ const { createArtifactRuntime } = require('./artifact_runtime');
 const { FigmaRuntimeController } = require('./figma_runtime');
 const { createContextTrackerRuntime, createMaterialTracker, buildContextTrackerConversationRequest } = require('./context_trackers');
 let contextTrackerRuntime: ReturnType<typeof createContextTrackerRuntime> | null = null;
-const { profileWorkspaceRoot } = require('./profile_workspace');
 const { conversationFailureMessage } = require('./conversation_error');
 const { listProjectDirectory, projectPath, readProjectText } = require('./project_inspector');
 const { parseGitEnvironment, sourceLinksFromConversation } = require('./project_environment');
@@ -1224,7 +1223,6 @@ function beginStageLiveTurn(token: string, payload: any): void {
       outcome: '进行中',
       agentSessionId: entry?.taskId,
       hasPendingWork: true,
-      workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
       object: {
         app: object.app || '',
         windowTitle: object.windowTitle || '',
@@ -1321,14 +1319,16 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
     const conversation = live
       ? (() => {
           const eventResult = (payload?.event?.result || {}) as any;
+          const verificationPending = Array.isArray(eventResult.receipts)
+            && eventResult.receipts.some((receipt: any) => receipt?.status === 'unverified');
           const updated = store.updateTurn({
             conversationId: live.conversationId,
             turnIndex: live.turnIndex,
             answer,
-            outcome: type === 'ERROR' ? '失败' : eventResult?.pendingInput ? '等待输入' : eventResult?.loopTerminated ? '失败' : '已完成',
+            outcome: type === 'ERROR' ? '失败' : eventResult?.pendingInput ? '等待输入' : eventResult?.loopTerminated ? '失败' : verificationPending ? '待核对' : '已完成',
             agentSessionId: eventResult.agentSessionId || live.progress.agentSessionId,
             runtimeTurn: eventResult.runtimeTurn,
-            hasPendingWork: eventResult.hasPendingWork === true || Boolean(eventResult.pendingInput),
+            hasPendingWork: eventResult.hasPendingWork === true || Boolean(eventResult.pendingInput) || verificationPending,
             taskContext: eventResult.taskContext,
             pendingInput: eventResult.pendingInput || null,
             artifacts: Array.isArray(eventResult?.actions)
@@ -1361,7 +1361,6 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
         ? result.actions.filter((a: any) => a?.artifact).map((a: any) => ({ name: a.label || a.artifact, kind: 'file' }))
         : [],
       evidence,
-      workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
       object: {
         app: object.app || '',
         windowTitle: object.windowTitle || '',
@@ -1406,7 +1405,7 @@ ipcMain.handle('projects:pick-files', async (event: Electron.IpcMainInvokeEvent,
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
   const projectRoot = String(raw?.projectRoot || '').trim();
   const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
-  const picked = await dialog.showOpenDialog(parent, attachmentDialogOptions(projectRoot));
+  const picked = await dialog.showOpenDialog(parent, attachmentDialogOptions(projectRoot, raw?.kind === 'folder' ? 'folder' : 'files'));
   if (picked.canceled || !picked.filePaths?.length) return { ok: false, canceled: true };
   return { ok: true, paths: picked.filePaths };
 });
@@ -1853,11 +1852,13 @@ async function restoreConversationContext(conversation: any) {
   const sessionPath = path.join(FABRIC_DATA_DIR, 'agent-sessions', `${sessionId}.jsonl`);
   let mtimeMs: number;
   try { mtimeMs = (await fs.promises.stat(sessionPath)).mtimeMs; } catch { return conversation; }
-  if (turn.pendingInput) {
+  if (turn.pendingInput || turn.outcome === '可恢复' || turn.outcome === '等待输入') {
     try {
       const status = await handleSessionRead({ action: 'status', sessionId }, FABRIC_DATA_DIR);
       if (status.ok && 'pendingInput' in status
-        && (!status.pendingInput || status.pendingInput.requestId !== turn.pendingInput.requestId)) {
+        && (status.pendingInput
+          ? status.pendingInput.requestId !== turn.pendingInput?.requestId
+          : Boolean(turn.pendingInput))) {
         const trajectory = (turn.trajectory || []).map((item: any) => item.kind === 'tool' && item.callId === status.lastInputAnswer?.requestId
           ? { ...item, result: status.lastInputAnswer.message.content, state: 'done', isError: false } : item);
         conversations().updateTurn({ conversationId: conversation.id, pendingInput: status.pendingInput || null, trajectory });
@@ -2004,6 +2005,11 @@ ipcMain.handle('stage:respond-input', async (event: Electron.IpcMainInvokeEvent,
   return respondConversation({ ...raw, conversationId: conversation.id }, event.sender);
 });
 
+ipcMain.handle('stage:history-sources', (event: Electron.IpcMainInvokeEvent) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, error: 'unauthorized_renderer' };
+  return conversations().list().map((item: { id: string; title: string }) => ({ id: item.id, title: item.title }));
+});
+
 ipcMain.handle('stage:open-artifact', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, error: 'unauthorized_renderer' };
   const conversation = conversationForSelection(String(raw.selectionSessionToken || ''));
@@ -2039,7 +2045,7 @@ async function respondConversation(raw: any = {}, sender?: Electron.WebContents)
       return { ...last, ok: !last.failed, accepted: true, alreadyAccepted: true, active: false,
         conversationId, turnIndex: conversation.turns.length - 1 };
     }
-    if (!requestId || status.pendingInput?.requestId !== requestId || status.openTurn != null) {
+    if (!requestId || status.pendingInput?.requestId !== requestId) {
       return { ok: false, accepted: false, error: 'pending_input_mismatch' };
     }
     return await sendConversation({ ...raw, question: '', requestId: raw.requestToken,
@@ -2146,7 +2152,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     _figmaRuntimeConnections: figmaRuntime.clientConfigurations().filter(
       (connection: { taskId: string }) => connection.taskId === effectiveAgentSessionId,
     ),
-    ...(effectiveWorkspaceRoot ? { workspaceRoot: effectiveWorkspaceRoot } : {}),
+    workspaceRoot: effectiveWorkspaceRoot || '',
     ...(threadGrants.length ? { permissionGrants: threadGrants } : {}),
     ...(threadDenials.length ? { permissionDenials: threadDenials } : {}),
     ...(onceNow ? { permissionGrantOnce: [onceNow] } : {}),
@@ -2221,6 +2227,8 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
       const failed = parsed?.ok !== true || !String(parsed?.answer || '').trim();
       const terminated = parsed?.loopTerminated === true || Boolean(parsed?.loopTerminatedReason);
       const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
+      const verificationPending = Array.isArray(parsed?.receipts)
+        && parsed.receipts.some((receipt: any) => receipt?.status === 'unverified');
       const error = failed ? conversationFailureMessage(parsed) : '';
       const settled = {
         ...parsed,
@@ -2229,8 +2237,8 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         turnIndex,
         ...(inputResponse ? { accepted: inputAccepted } : {}),
         agentSessionId: parsed?.agentSessionId || progress.agentSessionId,
-        hasPendingWork: typeof parsed?.hasPendingWork === 'boolean'
-          ? parsed.hasPendingWork : failed || terminated || Boolean(parsed?.pendingInput),
+        hasPendingWork: verificationPending || (typeof parsed?.hasPendingWork === 'boolean'
+          ? parsed.hasPendingWork : failed || terminated || Boolean(parsed?.pendingInput)),
         answer: String(parsed?.answer || progress.answer || previousTurn?.answer || ''),
         thinking: String(parsed?.thinking || progress.thinking || previousTurn?.thinking || ''),
         trajectory: Array.isArray(parsed?.trajectory) ? continuationTrajectory(parsed.trajectory) : progress.trajectory,
@@ -2238,7 +2246,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
       };
       conversations().updateTurn({
         ...settled, turnIndex,
-        outcome: stopped ? '已停止' : failed || terminated ? '失败' : parsed?.pendingInput ? '等待输入' : '已完成',
+        outcome: stopped ? '已停止' : failed || terminated ? '失败' : parsed?.pendingInput ? '等待输入' : verificationPending ? '待核对' : '已完成',
         failed: failed || terminated,
         error: error || (terminated ? String(parsed?.loopTerminatedReason || '') : ''),
         pendingInput: parsed?.pendingInput || null,
@@ -3811,20 +3819,14 @@ function completeSelectionGesture(payload: any) {
   const gestureFrame = (overlayWindow && !overlayWindow.isDestroyed())
     ? overlayWindow.getBounds()
     : arm.displayBounds;
-  const toPhysical = (point: { x: number; y: number }) => {
-    const px = Number(point.x) + gestureFrame.x;
-    const py = Number(point.y) + gestureFrame.y;
-    const pointDisplay = screen.getDisplayNearestPoint({ x: px, y: py });
-    const pointSf = pointDisplay.scaleFactor || 1;
-    const physicalOriginX = pointDisplay.bounds.x * pointSf;
-    const physicalOriginY = pointDisplay.bounds.y * pointSf;
-    const localX = px - pointDisplay.bounds.x;
-    const localY = py - pointDisplay.bounds.y;
-    return {
-      x: Math.round(physicalOriginX + localX * pointSf),
-      y: Math.round(physicalOriginY + localY * pointSf),
-    };
-  };
+  const toPhysical = (point: { x: number; y: number }) =>
+    mapOverlayPointToPhysical(point, gestureFrame, (dip: { x: number; y: number }) => {
+      const converted = physicalScreenPoint(screen, dip);
+      if (converted) return converted;
+      const display = screen.getDisplayNearestPoint(dip);
+      const scaleFactor = display.scaleFactor || 1;
+      return { x: dip.x * scaleFactor, y: dip.y * scaleFactor };
+    });
   const physicalPoints = summary.points.map((point: { x: number; y: number; t?: number }) => ({ ...toPhysical(point), t: point.t }));
   const physicalStrokes = summary.strokes.map((stroke: {
     points: Array<{ x: number; y: number; t?: number }>;
@@ -3836,7 +3838,7 @@ function completeSelectionGesture(payload: any) {
   const allPhysical = physicalStrokes.length
     ? physicalStrokes.flatMap((s: { points: Array<{ x: number; y: number; t?: number }> }) => s.points)
     : physicalPoints;
-  const armDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const armDisplay = screen.getDisplayNearestPoint(overlayPointToScreenDip(summary.releasePoint, gestureFrame));
   const scaleFactor = armDisplay.scaleFactor || 1;
   const gesture = {
     schemaVersion: 2,
@@ -5426,7 +5428,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     targetPointSpace: session.snapshot?.target_point_space || null,
     replyStyle: String(payload?.replyStyle || 'normal').trim().slice(0, 20),
     requestMode: payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto',
-    workspaceRoot: ROOT,
+    workspaceRoot: '',
     modelRuntime: activeModelRuntimeConfig(),
     _figmaRuntimeConnections: figmaRuntime.clientConfigurations().filter(
       (connection: { taskId: string }) => connection.taskId === session.taskId,

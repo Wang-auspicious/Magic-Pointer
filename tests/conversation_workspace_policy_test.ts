@@ -27,5 +27,9 @@ assert.deepStrictEqual(attachmentDialogOptions(' C:/repo '), {
   defaultPath: 'C:/repo',
   properties: ['openFile', 'multiSelections'],
 });
+assert.deepStrictEqual(attachmentDialogOptions('', 'folder'), {
+  title: '添加材料文件夹',
+  properties: ['openDirectory'],
+}, 'adding a folder as task material must not silently switch the coding project');
 
 console.log('conversation workspace policy test ok');

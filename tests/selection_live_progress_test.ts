@@ -27,7 +27,12 @@ const handlers = vm.runInNewContext(`${code}\n({${names.join(',')}})`, {
   pendingQuestions: new Map([['selection-1', 'What is this sidebar?']]),
   selectionSessions: { get: () => session }, conversations: () => store,
   episodeObjectForSession: () => ({ app: 'Codex', source: { path: 'frozen.png' } }),
-  ROOT: baseDir, profileWorkspaceRoot: () => baseDir, log() {},
+  ROOT: baseDir, FABRIC_DATA_DIR: baseDir,
+  profileWorkspaceRoot: (userDataDir: string) => {
+    assert.equal(userDataDir, baseDir);
+    return baseDir;
+  },
+  log() {},
   dashboardWindow: { isDestroyed: () => false, webContents: { send: (channel: string, payload: any) => sends.push({ channel, payload }) } },
   companionWindow: null,
   safeSurfaceSend: (_surface: string, channel: string, payload: any) => sends.push({ channel, payload }),
@@ -80,6 +85,15 @@ assert.equal(sends.filter((item) => item.channel === 'conversations:turn').at(-1
 assert.equal(handlers.answerTextFrom({ type: 'ERROR', error: { message: 'Provider unavailable' },
   result: { answer: '已识别侧栏，但读取详细状态失败。' } }), '已识别侧栏，但读取详细状态失败。');
 console.log('selection shared progress and durable completion test ok');
+
+handlers.beginStageLiveTurn('selection-1', { command: 'Change the selected document' });
+const unverified = liveTurns.get('selection-1');
+handlers.recordConversationTurn({ selectionSessionToken: 'selection-1', event: {
+  type: 'RESULT', result: { answer: 'Write attempted; verification unavailable.',
+    receipts: [{ status: 'unverified', wrote: true, verified: false }], hasPendingWork: true },
+} }, 'RESULT');
+assert.equal(store.get(unverified.conversationId).turns[unverified.turnIndex].outcome, '待核对');
+assert.equal(store.get(unverified.conversationId).hasPendingWork, true);
 
 handlers.beginStageLiveTurn('selection-1', { command: 'Summarize selected files' });
 const stalled = liveTurns.get('selection-1');

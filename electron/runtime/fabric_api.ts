@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { Fabric } from './fabric';
 import { Workflows } from './workflow';
 import { settingsStore, mergeSettings, handleModels, resolveCapabilities } from './model_admin';
@@ -9,7 +9,7 @@ import { listWindows } from './desktop';
 import { reconfirmTargetLease } from './context_policy';
 import { ExternalTasks, discoverProviders, discoverExternalSessions, locateExecutable } from './external';
 import { handleAgentContexts, dispatchAgentPrompt } from './context_handoff';
-import { directoryPayload, listSkills } from './agent_services';
+import { directoryPayload, listSkills, extensionsInventory } from './agent_services';
 import { readJson } from './learning';
 import { handleSkillCandidates } from './context_skill_candidates';
 import type { RuntimeOptions } from './index';
@@ -42,8 +42,8 @@ export async function handleFabric(payload: Data, options: RuntimeOptions): Prom
     return { ok: true, snapshot: { readiness: { state: blocked ? 'degraded' : 'ready', blockedCapabilityCount: blocked, source: 'bounded_local_probe' }, workers: { agents }, models: { items: await Promise.all(settings.models.profiles.map(async (profile: Data) => ({ ...profile, resolved: await resolveCapabilities(profile, root) }))), defaultProfileId: settings.models.defaultProfileId }, permissions: payload.runtimeEvidence?.permissions || {}, capabilities, repairs: [], diagnostics: { platform: process.platform, networkRequests: 0, spawnedProcesses: 0, probeKind: 'filesystem_presence_only', usedBackend: 'typescript' }, settings, recipes } };
   }
   if (operation === 'extensions.inventory') {
-    const skills = await listSkills(payload.workspaceRoot, userDataDir), directory = path.join(userDataDir, 'data', 'plugins'), plugins = await readdir(directory).catch(() => []);
-    return { ok: true, plugins: plugins.map(name => ({ name, path: path.join(directory, name) })), skills: skills.skills, warnings: skills.errors, mcp: (await readJson(path.join(userDataDir, 'data', 'mcp.json'), { mcpServers: {} })).mcpServers };
+    const skills = await listSkills(payload.workspaceRoot, userDataDir);
+    return { ...await extensionsInventory(userDataDir), skills: skills.skills, warnings: skills.errors };
   }
   if (operation === 'capabilities.search') return { ok: true, capabilities: await fabric.search(payload.command || '', payload.objects || [], payload.selectedRecipeId || '', payload.limit || 6) };
   if (operation === 'current_object') { const episode = await readJson(path.join(userDataDir, 'current-object.json'), null); return episode ? { ok: true, episode } : { ok: false, error: 'no_frozen_object' }; }

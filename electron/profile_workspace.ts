@@ -4,9 +4,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-function profileWorkspaceRoot(appRoot: string): string {
+function profileWorkspaceRoot(userDataDir: string): string {
   try {
-    const stateFile = path.join(String(appRoot || ''), 'data', 'runtime', 'workspace.txt');
+    const stateFile = path.join(String(userDataDir || ''), 'workspace.txt');
     const raw = fs.readFileSync(stateFile, 'utf-8').trim();
     if (raw && fs.existsSync(raw) && fs.statSync(raw).isDirectory()) return raw;
   } catch (_) {

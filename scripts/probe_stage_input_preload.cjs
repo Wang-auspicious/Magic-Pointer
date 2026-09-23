@@ -14,6 +14,7 @@ window.magicPointerStage = {
     calls.push(payload);
     return new Promise((resolve, reject) => pending.push({ resolve, reject }));
   },
+  listHistorySources: async () => [{ id: 'selected-task', title: 'Selected task' }, { id: 'other-task', title: 'Other task' }],
   openArtifact: async payload => { calls.push({ openArtifact: payload }); return { ok: true }; },
 };
 window.__stageProbe = {

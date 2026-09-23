@@ -113,6 +113,13 @@ async function main() {
       assert.equal(persisted.turns[0].trajectory.length, 1);
       assert.ok(persisted.turns[0].answer, 'provider failure retains actual streamed text');
     }
+    const unverifiedRequest = send({ question: 'Update the document', requestId: 'unverified-write' }, sender);
+    callbacks.onComplete({ ok: true, answer: 'The document was changed, but readback failed.',
+      receipts: [{ status: 'unverified', wrote: true, verified: false }], hasPendingWork: true });
+    const unverified = await unverifiedRequest;
+    const unverifiedTask = store.get(unverified.conversationId);
+    assert.equal(unverifiedTask.turns[0].outcome, '待核对', 'a written result without readback must not be presented as complete');
+    assert.equal(unverifiedTask.hasPendingWork, true);
     const stoppedRequest = send({ question: 'Slow provider', requestId: 'forced-stop' });
     const stopResult = await stopped({}, { requestId: 'forced-stop' });
     assert.equal(stopResult.ok, true);

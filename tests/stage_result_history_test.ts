@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 const { stageEventFromBridge } = require('../electron/stage_contract');
 
 const metadata = {
-  agentSessionId: 'agent-selection-1', usedBackend: 'configured-model', timingMs: 913,
+  agentSessionId: 'agent-selection-1', runtimeTurn: 7, usedBackend: 'configured-model', timingMs: 913,
   thinking: 'Inspect the selected sidebar.',
   trajectory: [{ kind: 'tool', name: 'Look', result: 'Environment' }],
   activities: [{ kind: 'tool', name: 'Look', state: 'done' }],
   receipts: [{ status: 'succeeded' }],
   events: [{ type: 'tool_result', name: 'Look' }],
-  modelUsage: { inputTokens: 300, outputTokens: 40, cacheReadTokens: 100, cacheWriteTokens: 25, reasoningTokens: 10 },
+  modelUsage: { inputTokens: 300, outputTokens: 40, totalTokens: 340, contextTokens: 300,
+    cacheReadTokens: 100, cacheWriteTokens: 25, lastCacheReadTokens: 100, lastOutputTokens: 40,
+    reasoningTokens: 10, estimatedCostUsd: 0.00013, pricedRequests: 1 },
 };
 for (const terminal of [
   { ok: true, answer: 'This is the Environment sidebar.' },

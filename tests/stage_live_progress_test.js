@@ -64,10 +64,15 @@ const structuredEnd = source.indexOf('  function bindCardActions(', structuredSt
 let finalScope;
 const structuredContext = {
   ChatView: { assistantTurnNode: (_turn, scope) => { finalScope = scope; return []; }, bindDelegation() {} },
+  document: { createElement: (tag) => ({ tag, dataset: {}, className: '', textContent: '' }) },
 };
 vm.runInNewContext(ts.transpileModule(source.slice(structuredStart, structuredEnd), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText, structuredContext);
 structuredContext.renderStructured({ replaceChildren() {}, dataset: {} }, failedResult, liveScope);
 assert.equal(finalScope, liveScope, 'Stage must pass the scope through the production settled renderer');
+const shown = [];
+structuredContext.renderStructured({ replaceChildren() {}, appendChild: (node) => shown.push(node), dataset: {} },
+  { answer: 'The write was attempted.', receipts: [{ status: 'unverified', wrote: true, verified: false }] }, liveScope);
+assert.equal(shown.at(-1)?.textContent, '已尝试写入，尚未核对', 'Stage must explain an unverified write beside the answer');
 console.log('Stage shared live progress tests ok');

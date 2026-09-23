@@ -6,6 +6,101 @@ import sharp from 'sharp';
 import type { DesktopRecord, Rect } from './desktop';
 import { rectIntersection, type FrozenFrame } from './desktop_perception';
 
+type Color = [number, number, number];
+
+function visibleHighlightRectangles(image: { data: Buffer; width: number; height: number; channels: number }, origin: Rect, rectangles: Rect[], page: Rect): Rect[] {
+  const pixel = (x: number, y: number): Color | null => {
+    const px = Math.floor(x - origin[0]), py = Math.floor(y - origin[1]);
+    if (px < 0 || py < 0 || px >= image.width || py >= image.height) return null;
+    const at = (py * image.width + px) * image.channels;
+    return [image.data[at], image.data[at + 1], image.data[at + 2]];
+  };
+  const candidates: { area: number; color: Color }[] = [];
+  for (const [x, y, width, height] of rectangles) {
+    const left = Math.max(0, Math.floor(x - origin[0])), top = Math.max(0, Math.floor(y - origin[1]));
+    const right = Math.min(image.width, Math.ceil(x + width - origin[0])), bottom = Math.min(image.height, Math.ceil(y + height - origin[1]));
+    const area = Math.max(0, right - left) * Math.max(0, bottom - top);
+    if (!area) continue;
+    const counts = new Map<string, number>(), step = Math.max(1, Math.floor(area / 12000));
+    let sampled = 0;
+    for (let index = 0; index < area; index += step) {
+      const px = left + index % (right - left), py = top + Math.floor(index / (right - left));
+      const at = (py * image.width + px) * image.channels;
+      const key = [image.data[at], image.data[at + 1], image.data[at + 2]].map(value => Math.floor(value / 8) * 8).join(',');
+      counts.set(key, (counts.get(key) || 0) + 1); sampled++;
+    }
+    const dominant = [...counts].sort((a, b) => b[1] - a[1])[0];
+    if (!dominant || dominant[1] < Math.max(8, sampled * 0.18)) continue;
+    const color = dominant[0].split(',').map(Number) as Color;
+    if (Math.max(...color) >= 248 && Math.min(...color) >= 240) continue;
+    candidates.push({ area: width * height, color });
+  }
+  if (!candidates.length) return [];
+  const color = candidates.sort((a, b) => b.area - a.area)[0].color;
+  const matches = (sample: Color | null) => !!sample && sample.every((value, index) => Math.abs(value - color[index]) <= 24);
+  const left = Math.floor(Math.min(...rectangles.map(row => row[0]))), right = Math.ceil(Math.max(...rectangles.map(row => row[0] + row[2])));
+  const top = Math.floor(Math.min(...rectangles.map(row => row[1]))), bottom = Math.ceil(Math.max(...rectangles.map(row => row[1] + row[3])));
+  const sampleStep = Math.max(1, Math.floor((right - left) / 240));
+  const rowCoverage = (y: number) => { let hits = 0, total = 0; for (let x = left; x < right; x += sampleStep) { total++; if (matches(pixel(x, y))) hits++; } return hits / Math.max(1, total); };
+  if (Math.max(...[2, 3, 4, 5, 6].flatMap(offset => [rowCoverage(top - offset), rowCoverage(bottom + offset)])) >= 0.20) return [];
+  const columnCoverage = (x: number, row: Rect) => {
+    const rowTop = Math.max(Math.floor(row[1]), origin[1]), rowBottom = Math.min(Math.ceil(row[1] + row[3]), origin[3]);
+    const inset = Math.max(2, Math.min(6, Math.floor((rowBottom - rowTop) / 10)));
+    const start = rowTop + inset < rowBottom - inset ? rowTop + inset : rowTop;
+    const end = rowTop + inset < rowBottom - inset ? rowBottom - inset : rowBottom;
+    let hits = 0; for (let y = start; y < end; y++) if (matches(pixel(x, y))) hits++;
+    return hits / Math.max(1, end - start);
+  };
+  const visual: Rect[] = [];
+  for (const row of rectangles) {
+    const runs: [number, number][] = []; let start = -1, last = -1, gap = 0;
+    for (let x = Math.floor(page[0]); x < Math.ceil(page[0] + page[2]); x++) {
+      if (columnCoverage(x, row) >= 0.20) { if (start < 0) start = x; last = x; gap = 0; }
+      else if (start >= 0 && ++gap > 2) { runs.push([start, last + 1]); start = -1; last = -1; gap = 0; }
+    }
+    if (start >= 0) runs.push([start, last + 1]);
+    const overlapping = runs.map(([runLeft, runRight]) => ({ left: runLeft, right: runRight, overlap: Math.max(0, Math.min(row[0] + row[2], runRight) - Math.max(row[0], runLeft)) }))
+      .filter(run => run.overlap >= Math.max(2, Math.min(row[2], run.right - run.left) * 0.25))
+      .sort((a, b) => b.overlap - a.overlap || (b.right - b.left) - (a.right - a.left));
+    if (overlapping.length) visual.push([overlapping[0].left, row[1], overlapping[0].right - overlapping[0].left, row[3]]);
+  }
+  return visual;
+}
+
+function pdfSelectionAgrees(uiaText: string, recoveredText: string): boolean {
+  const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const left = [...normalize(uiaText)], right = [...normalize(recoveredText)];
+  if (!left.length || !right.length) return false;
+  if (left.join('') === right.join('')) return true;
+  const states: { length: number; link: number; next: Map<string, number> }[] = [{ length: 0, link: -1, next: new Map() }];
+  let last = 0;
+  for (const char of left) {
+    const current = states.length; states.push({ length: states[last].length + 1, link: 0, next: new Map() });
+    let parent = last;
+    while (parent >= 0 && !states[parent].next.has(char)) { states[parent].next.set(char, current); parent = states[parent].link; }
+    if (parent < 0) states[current].link = 0;
+    else {
+      const next = states[parent].next.get(char)!;
+      if (states[parent].length + 1 === states[next].length) states[current].link = next;
+      else {
+        const clone = states.length; states.push({ length: states[parent].length + 1, link: states[next].link, next: new Map(states[next].next) });
+        while (parent >= 0 && states[parent].next.get(char) === next) { states[parent].next.set(char, clone); parent = states[parent].link; }
+        states[next].link = clone; states[current].link = clone;
+      }
+    }
+    last = current;
+  }
+  let state = 0, length = 0, longest = 0;
+  for (const char of right) {
+    while (state && !states[state].next.has(char)) { state = states[state].link; length = states[state].length; }
+    const next = states[state].next.get(char);
+    if (next === undefined) { state = 0; length = 0; }
+    else { state = next; length++; longest = Math.max(longest, length); }
+  }
+  const maximum = Math.max(left.length, right.length);
+  return longest >= 8 && longest / maximum >= 0.85 && left.length + right.length - 2 * longest <= Math.max(4, Math.ceil(maximum * 0.10));
+}
+
 export async function recoverPdfSelection(data: DesktopRecord, frame: FrozenFrame): Promise<DesktopRecord> {
   const location = String(data.document_location || '');
   let path: string; try { path = location.startsWith('file:') ? fileURLToPath(location) : resolve(location); } catch { return { ok: false, error: 'pdf_location_invalid' }; }
@@ -18,19 +113,8 @@ export async function recoverPdfSelection(data: DesktopRecord, frame: FrozenFram
     const page = await document.getPage(pageNumber); if (page.rotate % 360 !== 0) return { ok: false, error: 'pdf_rotated_selection_unsupported' };
     const viewport = page.getViewport({ scale: 1 }); const sx = pageRect[2] / viewport.width, sy = pageRect[3] / viewport.height;
     if (!(sx > 0 && sy > 0) || Math.abs(sx - sy) > Math.max(sx, sy) * 0.04) return { ok: false, error: 'pdf_scale_inconsistent' };
-    const image = await sharp(frame.localArtifact.path).removeAlpha().raw().toBuffer({ resolveWithObject: true }); const origin = frame.surfaceBoundsPx;
-    const pixel = (x: number, y: number) => { const px = Math.round(x - origin[0]), py = Math.round(y - origin[1]); if (px < 0 || py < 0 || px >= image.info.width || py >= image.info.height) return undefined; const offset = (py * image.info.width + px) * image.info.channels; return [image.data[offset], image.data[offset + 1], image.data[offset + 2]]; };
-    const highlighted = (x: number, y: number) => { const c = pixel(x, y); return !!c && c[2] > c[0] + 12 && c[2] > c[1] + 3 && c[2] > 100; };
-    const visual: Rect[] = [];
-    for (const row of data.rectangles as Rect[]) {
-      const y = row[1] + row[3] * 0.65; const leftLimit = Math.max(pageRect[0], origin[0]), rightLimit = Math.min(pageRect[0] + pageRect[2], origin[2]);
-      let first = -1, last = -1;
-      for (let x = Math.max(leftLimit, row[0]); x < Math.min(rightLimit, row[0] + row[2]); x++) if (highlighted(x, y)) { if (first < 0) first = x; last = x; }
-      if (first < 0) continue;
-      let gap = 0; for (let x = first - 1; x >= leftLimit; x--) { if (highlighted(x, y)) { first = x; gap = 0; } else if (++gap > 3) break; }
-      gap = 0; for (let x = last + 1; x < rightLimit; x++) { if (highlighted(x, y)) { last = x; gap = 0; } else if (++gap > 3) break; }
-      visual.push([first, row[1], last - first + 1, row[3]]);
-    }
+    const image = await sharp(frame.localArtifact.path).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const visual = visibleHighlightRectangles({ data: image.data, width: image.info.width, height: image.info.height, channels: image.info.channels }, frame.surfaceBoundsPx, data.rectangles as Rect[], pageRect);
     if (!visual.length) return { ok: false, error: 'pdf_visible_highlight_unmeasurable' };
     const content = await page.getTextContent(), operators = await page.getOperatorList(); const selected: string[] = []; const context: string[] = [];
     const glyphs: { text: string; width: number }[] = [];
@@ -57,8 +141,8 @@ export async function recoverPdfSelection(data: DesktopRecord, frame: FrozenFram
       const value = chars.filter((_, i) => { const step = measured ? width * advances[i] / total : width / Math.max(1, chars.length), center = x + offset + step / 2; offset += step; return hits.some(rect => center >= rect[0] && center <= rect[0] + rect[2]); }).join('');
       if (value) selected.push(value + (raw.hasEOL ? '\n' : ' '));
     }
-    const text = selected.join('').trim(); const normalized = (value: string) => value.replace(/\s+/g, '').toLowerCase(); const original = normalized(String(data.text || ''));
-    if (!text || original && !normalized(text).includes(original) && !original.includes(normalized(text))) return { ok: false, error: 'pdf_selection_uia_disagreement' };
+    const text = selected.join('').trim();
+    if (!pdfSelectionAgrees(String(data.text || ''), text)) return { ok: false, error: 'pdf_selection_uia_disagreement' };
     return { ok: true, text, context: context.join('').trim(), rectangles: visual, document_path: path, page_number: pageNumber, uia_matching_core: data.text || '', dropped_uia_rectangle_count: data.rectangles.length - visual.length, usedBackend: 'pdfjs+frozen-highlight', characterGeometry: estimated ? 'pdf-glyph-widths-with-proportional-fallback' : 'pdf-glyph-widths', limitations: estimated ? ['some-partial-text-run-character-boundaries-are-estimated'] : [] };
   } finally { await loading.destroy(); }
 }

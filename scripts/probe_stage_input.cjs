@@ -79,6 +79,20 @@ app.whenReady().then(async () => {
     await evaluate('new Promise(resolve => setTimeout(resolve, 30))');
     await click('[data-artifact-id="draft-one"]');
     check(await evaluate('__stageProbe.calls.at(-1).openArtifact?.artifactId === "draft-one" && __stageProbe.calls.at(-1).openArtifact?.selectionSessionToken === "selection-new"'), 'artifact click did not open the real session artifact API');
+    await evaluate(`__showRequest('selection-wrap', { requestId: 'daily-scope', kind: 'permission', harnessPermission: true, tool: 'DailyWrap.read',
+      question: 'Allow DailyWrap.read?', options: ['仅这一次允许', '拒绝'],
+      action: { tool: 'DailyWrap.read', arguments: { from_ms: 1789228800000, to_ms: 1789315200000,
+        conversation_ids: [], limit: 12 } } });`);
+    await evaluate('new Promise(resolve => setTimeout(resolve, 50))');
+    check(await evaluate('document.querySelector("#stage-decision [data-decision=once]")?.disabled === true'),
+      'DailyWrap approved the model history scope before the user selected sources');
+    await click('#stage-decision [data-history-source-mode="selected"]');
+    await click('#stage-decision [data-history-source-id="selected-task"]');
+    await click('#stage-decision [data-decision="once"]');
+    sent = await evaluate('__stageProbe.calls.at(-1)');
+    check(sent?.response?.actionArguments?.conversation_ids?.join(',') === 'selected-task'
+      && sent?.response?.actionArguments?.limit === 12,
+    'Stage DailyWrap did not send the selected history source and fixed result limit');
     check(await evaluate('__stageProbe.calls.every(call => !call.unexpectedPrompt)'), 'a response went through submitSelectionCommand');
     const witness = { failures, calls: await evaluate('__stageProbe.calls'), turns: await evaluate('document.querySelectorAll(".thread-turn").length') };
     fs.writeFileSync(path.join(output, 'witness.json'), JSON.stringify(witness, null, 2));

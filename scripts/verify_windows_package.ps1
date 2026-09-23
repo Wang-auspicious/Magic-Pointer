@@ -33,7 +33,7 @@ function Invoke-CapturedNative([string]$FilePath, [string[]]$Arguments) {
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    $output = @(& $FilePath @Arguments 2>&1)
+    $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
     $nativeExitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference
@@ -53,7 +53,7 @@ try {
   $resourcesApp = Join-Path $appRoot 'resources\app'
   $requiredFiles = @(
     'build\electron\main.js',
-    'build\electron\renderer\dashboard.html',
+    'build\electron\renderer\studio.html',
     'build\electron\renderer\onboarding.html',
     'build\electron\renderer\onboarding.css',
     'build\electron\renderer\onboarding.js',

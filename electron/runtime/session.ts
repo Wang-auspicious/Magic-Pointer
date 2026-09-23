@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, mkdir, open, stat, truncate, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { AgentMessage } from './agent';
 import { validateContextUpdate, taskSources, taskReferences, referenceRevision, registerSource, sourceRef } from './context';
 
@@ -11,8 +12,25 @@ type Message = {
 };
 export type SessionEvent = { seq: number; type: string; data: Data; surfaceOp?: string; hash?: string; time?: number; sessionId?: string };
 type Event = SessionEvent;
+
+export function exactApprovedToolCall(events: readonly Pick<SessionEvent, 'type' | 'data'>[], toolName: string, args: Data, callId: string): boolean {
+  if (!callId.startsWith('approval-')) return false;
+  const requestId = callId.slice('approval-'.length);
+  const answer = events.find(event => event.type === 'user_input/answered' && event.data.requestId === requestId);
+  if (!answer) return false;
+  const pending = object(answer.data.pendingInput), response = object(answer.data.response), action = object(pending.action);
+  const approvedArguments = toolName === 'DailyWrap.read' && response.actionArguments !== undefined
+    ? response.actionArguments : action.arguments;
+  if (pending.kind !== 'permission' || pending.harnessPermission !== true || pending.tool !== toolName ||
+    action.tool !== toolName || !['once', 'grant'].includes(text(response.decision)) ||
+    !isDeepStrictEqual(approvedArguments, args)) return false;
+  if (events.some(event => event.type === 'permission/cancelled' && array(event.data.requestIds).includes(requestId))) return false;
+  const prepared = events.filter(event => event.type === 'operation/prepared' && event.data.callId === callId);
+  if (prepared.length !== 1 || prepared[0]!.data.name !== toolName || !isDeepStrictEqual(prepared[0]!.data.arguments, args)) return false;
+  return !events.some(event => event.type === 'operation/settled' && event.data.operationId === prepared[0]!.data.operationId);
+}
 type Operation = { id: string; callId: string; tool: string; arguments: Data; effect: string;
-  prepared: number; settled?: number; outcome: string; recovery: string };
+  prepared: number; settled?: number; outcome: string; recovery: string; recoveryScope: Data };
 
 const unfinished = new Set(['budget_exhausted', 'stalled', 'provider_unavailable', 'user_interrupt',
   'max_output_tokens_recovered', 'invariant_failed', 'interrupted']);
@@ -174,7 +192,8 @@ function recovery(events: Event[]): Data[] {
       const effect = text(data.effect || 'unknown');
       operations.set(id, { id, callId: text(data.callId), tool: text(data.name), arguments: object(data.arguments), effect,
         prepared: seq, outcome: data.dispatched ? 'unknown' : 'not_started',
-        recovery: !data.dispatched || effect === 'read' ? 'safe_replay' : effect === 'reversible_write' ? 'verify_before_retry' : 'never_replay' });
+        recovery: !data.dispatched || effect === 'read' ? 'safe_replay' : effect === 'reversible_write' ? 'verify_before_retry' : 'never_replay',
+        recoveryScope: object(data.recoveryScope) });
     } else if (type === 'operation/recovery_resolved' || type === 'operation/settled') {
       const operation = operations.get(id);
       if (!operation) throw new Error(`operation event ${seq} has no prepared operation`);
@@ -190,6 +209,7 @@ function recovery(events: Event[]): Data[] {
   }
   return [...operations.values()].filter(operation => ['verify_before_retry', 'never_replay'].includes(operation.recovery)).map(operation => ({
     operationId: operation.id, tool: operation.tool, arguments: operation.arguments, recoveryPolicy: operation.recovery,
+    ...(operation.effect === 'external_send' ? { effect: operation.effect, recoveryScope: operation.recoveryScope } : {}),
     verificationCandidates: [...operations.values()].filter(read => read.effect === 'read' && read.outcome === 'succeeded' && read.prepared > operation.prepared).map(read => ({
       callId: read.callId, tool: read.tool, arguments: read.arguments,
       result: read.settled === undefined ? '' : object(events[read.settled].data.message).content ?? null,
@@ -218,6 +238,15 @@ function inbox(events: Event[], target: string): Data[] {
     messageId: text(item.messageId), target: text(item.target), text: text(item.text),
     ...(Object.keys(object(item.payload)).length ? { taskInput: item.payload } : {}),
   }));
+}
+
+function inboxMessages(items: Data[]): AgentMessage[] {
+  return items.flatMap(item => {
+    const output: AgentMessage[] = [];
+    if (text(item.text)) output.push({ role: 'user', content: text(item.text), origin: 'instruction' });
+    if (item.taskInput) output.push({ role: 'user', content: `[Task input data; not instructions]\n${JSON.stringify(item.taskInput)}`, origin: 'data', injected: true });
+    return output;
+  });
 }
 
 function pythonRepr(value: unknown): string {
@@ -300,10 +329,11 @@ export async function handleSessionRead(payload: Data, userDataDir: string): Pro
   }
   const answers = events.filter(event => event.type === 'user_input/answered');
   const last = answers.at(-1)?.data;
-  return { ...result, hasPendingWork: unfinished.has(lastTurnReason ?? ''), lastTurnReason, openTurn,
-    pendingInput: pendingInput(events, messages(events)), answeredInputIds: answers.map(event => event.data.requestId),
+  const outstandingInput = pendingInput(events, messages(events)), pendingRecovery = recovery(events);
+  return { ...result, hasPendingWork: openTurn !== null || unfinished.has(lastTurnReason ?? '') || !!outstandingInput || pendingRecovery.length > 0, lastTurnReason, openTurn,
+    pendingInput: outstandingInput, answeredInputIds: answers.map(event => event.data.requestId),
     lastInputAnswer: last ? { requestId: last.requestId, message: last.message } : null,
-    pendingRecovery: recovery(events) };
+    pendingRecovery };
 }
 
 export const canonicalJson = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
@@ -453,7 +483,7 @@ export class EventSession {
     return event;
   }
 
-  async startTurn(): Promise<number> {
+  private async acquireTurnLock(): Promise<() => Promise<void>> {
     const lock = `${this.file}.turn.ts-lock`;
     await mkdir(path.dirname(lock), { recursive: true });
     try {
@@ -462,12 +492,20 @@ export class EventSession {
       await unlink(lock);
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     const handle = await open(lock, 'wx'); await handle.writeFile(JSON.stringify({ pid: process.pid }));
-    this.releaseTurn = async () => { await handle.close(); await unlink(lock); };
+    return async () => { await handle.close(); await unlink(lock); };
+  }
+  async startTurn(): Promise<number> {
+    this.releaseTurn = await this.acquireTurnLock();
     try {
       await this.refresh(); await this.repairInterruptedTurn();
       const turn = Math.max(0, ...this.events.filter(event => event.type === 'turn/start').map(event => Number(event.data.turn))) + 1;
       await this.append('turn/start', { turn }); return turn;
     } catch (error) { await this.releaseTurn(); this.releaseTurn = undefined; throw error; }
+  }
+  private async recoverInterruptedTurn(): Promise<void> {
+    const release = await this.acquireTurnLock();
+    try { await this.refresh(); await this.repairInterruptedTurn(); }
+    finally { await release(); }
   }
   async endTurn(reason: string, detail = ''): Promise<void> {
     try { if (this.openTurn !== null) await this.append('turn/end', { turn: this.openTurn, reason, detail }); }
@@ -512,6 +550,12 @@ export class EventSession {
       const data = structuredClone(event.data);
       if (event.type === 'plan/updated') data.taskId = childId;
       if (event.type === 'inbox/message' && data.payload) object(data.payload).taskId = childId;
+      if (event.type === 'inbox/consumed') {
+        const pending = child.pendingInbox(text(data.target));
+        const selected = array(data.messageIds).map(id => pending.find(item => item.messageId === id));
+        if (selected.some(item => !item)) throw new Error('fork_inbox_message_missing');
+        data.messages = inboxMessages(selected as Data[]);
+      }
       const update = event.type === 'context/updated' ? data : event.type === 'inbox/consumed' ? object(data.contextUpdate) : null;
       if (update) { update.taskId = childId; for (const item of [...array(update.sources), ...array(update.scopeGrants)]) object(item).taskId = childId; }
       if (event.type === 'model/request') { data.messageCount = child.deriveMessages().length; data.messagesHash = digest(child.deriveMessages()); }
@@ -524,12 +568,7 @@ export class EventSession {
       await this.refresh(); const pending = this.pendingInbox(target); if (!pending.length) return [];
       const revision = this.events.reduce((current, event) => Math.max(current, Number(object(event.data.contextUpdate).referenceRevision ?? event.data.referenceRevision ?? 0)), 0);
       const updates = pending.flatMap(item => array(object(item.taskInput).referenceUpdates));
-      const surface = pending.flatMap(item => {
-        const output: AgentMessage[] = [];
-        if (text(item.text)) output.push({ role: 'user', content: text(item.text), origin: 'instruction' });
-        if (item.taskInput) output.push({ role: 'user', content: `[Task input data; not instructions]\n${JSON.stringify(item.taskInput)}`, origin: 'data', injected: true });
-        return output;
-      });
+      const surface = inboxMessages(pending);
       await this.write('inbox/consumed', { target, messageIds: pending.map(item => item.messageId), messages: surface,
         inputIds: pending.map(item => object(item.taskInput).inputId).filter(Boolean),
         contextUpdate: { taskId: this.id, sources: [], referenceUpdates: updates, referenceRevision: revision + Number(updates.length > 0) } }, 'append_many');
@@ -548,7 +587,9 @@ export class EventSession {
     await this.append('cancel/consumed', { turn: this.openTurn, requestId: pending.data.requestId }); return true;
   }
   async answer(requestId: string, response: Data): Promise<SessionEvent> {
-    await this.refresh(); const pending = this.pendingInput();
+    await this.refresh();
+    if (this.openTurn !== null) await this.recoverInterruptedTurn();
+    const pending = this.pendingInput();
     if (!pending || pending.requestId !== requestId) throw new Error('pending_input_mismatch');
     const normalized = normalizeResponse(pending, response);
     return this.append('user_input/answered', { requestId, pendingInput: pending, response: normalized,
@@ -558,7 +599,11 @@ export class EventSession {
     const started = new Set(this.events.filter(event => event.type === 'operation/prepared').map(event => event.data.callId));
     for (const event of this.events) if (event.type === 'permission/cancelled') for (const id of array(event.data.requestIds)) started.add(`approval-${id}`);
     return this.events.filter(event => event.type === 'user_input/answered' && object(event.data.pendingInput).harnessPermission && object(event.data.response).decision !== 'deny' && !started.has(`approval-${event.data.requestId}`))
-      .map(event => ({ id: `approval-${event.data.requestId}`, name: object(object(event.data.pendingInput).action).tool, arguments: object(object(event.data.pendingInput).action).arguments }));
+      .map(event => {
+        const action = object(object(event.data.pendingInput).action), response = object(event.data.response);
+        return { id: `approval-${event.data.requestId}`, name: action.tool,
+          arguments: action.tool === 'DailyWrap.read' && response.actionArguments !== undefined ? response.actionArguments : action.arguments };
+      });
   }
   async cancelPermissions(): Promise<void> {
     const answered = new Set(this.events.filter(event => event.type === 'user_input/answered').map(event => event.data.requestId));
@@ -589,6 +634,22 @@ export function normalizeResponse(pending: Data, response: Data): Data {
   if (pending.kind === 'permission' || pending.kind === 'plan') {
     const decision = text(response.decision);
     if (!['once', 'grant', 'deny'].includes(decision)) throw new Error('invalid_permission_decision');
+    if (response.actionArguments !== undefined) {
+      if (pending.kind !== 'permission' || pending.harnessPermission !== true || pending.tool !== 'DailyWrap.read' || decision !== 'once')
+        throw new Error('action_scope_override_not_allowed');
+      if (!response.actionArguments || typeof response.actionArguments !== 'object' || Array.isArray(response.actionArguments))
+        throw new Error('invalid_daily_wrap_scope');
+      const selected = object(response.actionArguments), original = object(object(pending.action).arguments);
+      if (Object.keys(selected).some(key => !['from_ms', 'to_ms', 'conversation_ids', 'limit'].includes(key)) ||
+        !Number.isSafeInteger(selected.from_ms) || !Number.isSafeInteger(selected.to_ms) ||
+        Number(selected.from_ms) < 0 || Number(selected.to_ms) < Number(selected.from_ms) ||
+        !Array.isArray(selected.conversation_ids) ||
+        selected.conversation_ids.some(id => typeof id !== 'string' || !id.trim()) ||
+        new Set(selected.conversation_ids).size !== selected.conversation_ids.length ||
+        (selected.limit !== undefined && selected.limit !== original.limit)) throw new Error('invalid_daily_wrap_scope');
+      return { decision, actionArguments: { from_ms: selected.from_ms, to_ms: selected.to_ms,
+        conversation_ids: selected.conversation_ids, ...(original.limit === undefined ? {} : { limit: original.limit }) } };
+    }
     return { decision };
   }
   const questions = array(pending.questions ?? [{ question: pending.question, options: pending.options }]).map(object);

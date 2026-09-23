@@ -1068,6 +1068,11 @@ body {
   color: var(--stage-electric-blue);
 }
 
+.stage-verification-note {
+  color: var(--stage-cold-white-dim);
+  font-size: 12px;
+}
+
 .card-diff {
   color: var(--stage-cold-white);
   white-space: pre-wrap;

@@ -12,11 +12,18 @@ declare global {
     prefix?: string;
     plan?: string;
     actionPreview?: string;
+    action?: { tool?: string; arguments?: Record<string, unknown> };
     question?: string;
+    options?: string[];
     questions?: MagicPointerDecisionQuestion[];
     presentation?: 'inline' | 'dock';
+    historySources?: Array<{ id: string; title?: string }>;
+    historySourcesError?: string;
+    retryHistorySources?: () => void;
   }
-  type MagicPointerDecisionResponse = { decision: 'once' | 'grant' | 'deny' }
+  type MagicPointerDecisionResponse = { decision: 'once' | 'grant' | 'deny'; actionArguments?: {
+    from_ms: number; to_ms: number; conversation_ids: string[]; limit?: number;
+  } }
     | { answers: Record<string, string | string[]> };
   var DecisionCard: {
     render(host: HTMLElement, request: MagicPointerDecisionRequest,
@@ -33,6 +40,15 @@ declare global {
     custom: string[];
     other: boolean[];
     skipped: boolean[];
+    dailyWrap?: {
+      fromText: string;
+      toText: string;
+      fromMs: number;
+      toMs: number;
+      sourceMode: 'all' | 'selected' | null;
+      selectedIds: string[];
+      search: string;
+    };
   }
   interface View {
     request: MagicPointerDecisionRequest;
@@ -49,6 +65,214 @@ declare global {
     if (text !== undefined) node.textContent = text;
     return node;
   };
+  const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const words = (value: unknown): string => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+  const localTime = (value: unknown, scale = 1): string => {
+    const time = Number(value) * scale;
+    return Number.isFinite(time) ? new Date(time).toLocaleString() : words(value);
+  };
+  const dateTimeInput = (value: unknown): string => {
+    const time = Number(value);
+    if (!Number.isFinite(time)) return '';
+    const date = new Date(time);
+    return Number.isNaN(date.getTime()) ? ''
+      : new Date(time - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+  };
+  const dailyWrapRequest = (request: MagicPointerDecisionRequest): boolean => request.kind === 'permission'
+    && request.tool === 'DailyWrap.read' && request.action?.tool === request.tool;
+  function dailyWrapArguments(request: MagicPointerDecisionRequest, draft: Draft): {
+    from_ms: number; to_ms: number; conversation_ids: string[]; limit?: number;
+  } | null {
+    const selection = draft.dailyWrap;
+    const sources = request.historySources;
+    if (!selection || !sources || request.historySourcesError || !Number.isFinite(selection.fromMs)
+      || !Number.isFinite(selection.toMs) || selection.toMs <= selection.fromMs || !selection.sourceMode) return null;
+    const available = new Set(sources.map(source => source.id));
+    const conversationIds = selection.sourceMode === 'all' ? []
+      : selection.selectedIds.filter(id => available.has(id));
+    if (selection.sourceMode === 'selected' && !conversationIds.length) return null;
+    const result: { from_ms: number; to_ms: number; conversation_ids: string[]; limit?: number } = {
+      from_ms: selection.fromMs, to_ms: selection.toMs, conversation_ids: conversationIds,
+    };
+    const limit = request.action?.arguments?.limit;
+    if (typeof limit === 'number' && Number.isFinite(limit)) result.limit = limit;
+    return result;
+  }
+  function dailyWrapScope(request: MagicPointerDecisionRequest, draft: Draft, allow: HTMLButtonElement, busy: boolean): HTMLElement {
+    const scope = element('section', 'mp-decision-scope mp-decision-dailywrap');
+    scope.setAttribute('aria-label', 'Choose DailyWrap time and saved tasks');
+    scope.append(element('div', 'mp-decision-scope-title', 'Choose the time and saved tasks to include'));
+    const selection = draft.dailyWrap!;
+    const range = element('div', 'mp-decision-dailywrap-range');
+    const rangeError = element('p', 'mp-decision-error');
+    rangeError.setAttribute('role', 'alert');
+    const sourceHint = element('p', 'mp-decision-hint');
+    const timeField = (label: string, value: string, marker: string, update: (value: string) => void) => {
+      const field = element('label', 'mp-decision-dailywrap-field');
+      field.append(element('span', '', label));
+      const input = element('input', 'mp-decision-dailywrap-time');
+      input.type = 'datetime-local'; input.step = '1'; input.value = value;
+      input.disabled = busy;
+      input.setAttribute(marker, '');
+      input.addEventListener('input', () => update(input.value));
+      field.append(input);
+      return field;
+    };
+    const refreshApproval = () => {
+      const validRange = Number.isFinite(selection.fromMs) && Number.isFinite(selection.toMs)
+        && selection.toMs > selection.fromMs;
+      rangeError.textContent = validRange ? '' : 'Choose a valid time range with To after From.';
+      rangeError.hidden = validRange;
+      const available = new Set(request.historySources?.map(source => source.id) || []);
+      sourceHint.textContent = !selection.sourceMode ? 'Choose the source set before allowing this read.'
+        : selection.sourceMode === 'selected' && !selection.selectedIds.some(id => available.has(id))
+          ? 'Select at least one saved task.' : '';
+      sourceHint.hidden = !sourceHint.textContent;
+      allow.disabled = busy || !dailyWrapArguments(request, draft);
+    };
+    range.append(timeField('From', selection.fromText, 'data-dailywrap-from', value => {
+      selection.fromText = value; selection.fromMs = value ? new Date(value).getTime() : NaN; refreshApproval();
+    }), timeField('To', selection.toText, 'data-dailywrap-to', value => {
+      selection.toText = value; selection.toMs = value ? new Date(value).getTime() : NaN; refreshApproval();
+    }));
+    scope.append(range, rangeError);
+    const maxRecords = Math.max(0, Math.min(500, Number(request.action?.arguments?.limit ?? 200)));
+    scope.append(element('p', 'mp-decision-hint', `Read up to ${maxRecords} records.`));
+    const sources = request.historySources;
+    if (!sources) {
+      const status = element('p', request.historySourcesError ? 'mp-decision-error' : 'mp-decision-hint',
+        request.historySourcesError || 'Loading saved tasks…');
+      if (request.historySourcesError) {
+        status.setAttribute('role', 'alert');
+        if (request.retryHistorySources) {
+          const retry = element('button', 'mp-decision-button', 'Retry loading tasks');
+          retry.type = 'button'; retry.disabled = busy; retry.addEventListener('click', request.retryHistorySources);
+          scope.append(status, retry);
+        } else scope.append(status);
+      } else scope.append(status);
+      allow.disabled = true;
+      return scope;
+    }
+    const sourceGroup = element('div', 'mp-decision-dailywrap-sources');
+    sourceGroup.setAttribute('role', 'group');
+    sourceGroup.setAttribute('aria-label', 'Saved task sources');
+    const mode = (label: string, value: 'all' | 'selected', marker: string) => {
+      const row = element('label', 'mp-decision-dailywrap-mode');
+      const radio = element('input', '');
+      radio.type = 'radio'; radio.name = `dailywrap-source-${request.key}`; radio.value = value;
+      radio.checked = selection.sourceMode === value; radio.disabled = busy; radio.setAttribute(marker, '');
+      radio.setAttribute('data-history-source-mode', value);
+      radio.addEventListener('change', () => { selection.sourceMode = value; refreshApproval(); });
+      row.append(radio, element('span', '', label));
+      return { row, radio };
+    };
+    const all = mode(`All saved tasks (${sources.length})`, 'all', 'data-dailywrap-source-all');
+    const chosen = mode('Choose saved tasks', 'selected', 'data-dailywrap-source-selected');
+    sourceGroup.append(element('div', 'mp-decision-scope-title', 'Sources'), all.row, chosen.row);
+    const search = element('input', 'mp-decision-dailywrap-search');
+    search.type = 'search'; search.placeholder = 'Find a saved task'; search.value = selection.search; search.disabled = busy;
+    search.setAttribute('aria-label', 'Find a saved task');
+    const list = element('div', 'mp-decision-dailywrap-list');
+    const selectedCount = element('span', 'mp-decision-hint', '');
+    const count = () => {
+      const available = new Set(sources.map(source => source.id));
+      selectedCount.textContent = `${selection.selectedIds.filter(id => available.has(id)).length} selected`;
+    };
+    const filter = () => {
+      const query = selection.search.trim().toLocaleLowerCase();
+      for (const row of Array.from(list.children) as HTMLElement[]) {
+        row.hidden = Boolean(query && !row.textContent?.toLocaleLowerCase().includes(query));
+      }
+    };
+    search.addEventListener('input', () => { selection.search = search.value; filter(); });
+    for (const source of sources) {
+      const row = element('label', 'mp-decision-dailywrap-source');
+      const check = element('input', '');
+      check.type = 'checkbox'; check.checked = selection.selectedIds.includes(source.id); check.disabled = busy;
+      check.setAttribute('data-dailywrap-source-id', source.id);
+      check.setAttribute('data-history-source-id', source.id);
+      check.addEventListener('change', () => {
+        selection.selectedIds = check.checked ? [...new Set([...selection.selectedIds, source.id])]
+          : selection.selectedIds.filter(id => id !== source.id);
+        selection.sourceMode = 'selected'; chosen.radio.checked = true; all.radio.checked = false;
+        count(); refreshApproval();
+      });
+      const name = element('span', 'mp-decision-dailywrap-source-name', source.title || source.id);
+      const id = element('span', 'mp-decision-dailywrap-source-id', source.id);
+      row.append(check, name, id); list.append(row);
+    }
+    if (!sources.length) list.append(element('p', 'mp-decision-hint', 'No saved tasks are available.'));
+    filter(); count();
+    sourceGroup.append(search, list, selectedCount);
+    scope.append(sourceGroup, sourceHint);
+    refreshApproval();
+    return scope;
+  }
+  function historyScope(request: MagicPointerDecisionRequest): HTMLElement | null {
+    const action = request.action;
+    if (!action || action.tool !== request.tool || !action.arguments) return null;
+    const args = record(action.arguments);
+    const rows: Array<[string, string]> = [];
+    const add = (label: string, value: unknown) => { const text = words(value); if (text) rows.push([label, text]); };
+    if (request.tool === 'Recall') {
+      if (args.session_id) {
+        add('Source', `saved task ${words(args.session_id)}`);
+        add('Event', args.event_seq);
+        add('Text offset', args.offset ?? 0);
+        add('Characters', args.max_chars ?? 4000);
+      } else {
+        add('Source', 'all saved tasks and recent screen evidence');
+        add('Search', args.query);
+        add('Task matches', args.max_results ?? 8);
+        add('Screen matches', args.limit ?? args.max_results ?? 8);
+        if (args.since !== undefined) add('Screen from', localTime(args.since, 1000));
+        if (args.until !== undefined) add('Screen to', localTime(args.until, 1000));
+      }
+    } else if (request.tool === 'DailyWrap.read') {
+      add('Source', 'saved task records');
+      add('From', localTime(args.from_ms));
+      add('To', localTime(args.to_ms));
+      const conversations = Array.isArray(args.conversation_ids) ? args.conversation_ids.map(words).filter(Boolean) : [];
+      add('Conversations', conversations.length ? conversations.join(', ') : 'all conversations');
+      add('Maximum records', args.limit ?? 200);
+    } else if (request.tool === 'Recipe' && args.operation === 'execute') {
+      const plan = record(args.plan), parameters = record(plan.parameters);
+      const recipe = words(plan.recipeId), provider = words(plan.provider);
+      if (!['memory.recall', 'clipboard.history'].includes(recipe) && !['local.memory', 'clipboard.history'].includes(provider)) return null;
+      add('Recipe', recipe || provider);
+      if (recipe === 'clipboard.history' || provider === 'clipboard.history') {
+        add('Action', parameters.digest ? 'restore one saved clipboard entry' : 'search saved clipboard history');
+        add('Clipboard entry', parameters.digest);
+        add('Search', parameters.query);
+      } else {
+        add('Action', 'search recent screen memory');
+        add('Search', parameters.query || plan.command);
+        if (parameters.since !== undefined) add('From', localTime(parameters.since, 1000));
+        if (parameters.until !== undefined) add('To', localTime(parameters.until, 1000));
+        add('Maximum matches', parameters.limit ?? 20);
+      }
+      const objectIds = Array.isArray(plan.objectIds) ? plan.objectIds.map(words).filter(Boolean) : [];
+      if (objectIds.length) add('Selected objects', objectIds.join(', '));
+      if (Array.isArray(parameters.objects)) for (const item of parameters.objects) {
+        const object = record(item), source = record(object.source);
+        const identity = words(object.id || object.objectId || object.kind) || 'selected object';
+        const location = words(source.path || source.absolutePath || source.documentUrl || source.url || source.title || source.windowTitle || source.sourceId);
+        const app = words(source.app);
+        add('Object source', [identity, app, location].filter(Boolean).join(' · '));
+      }
+      if (Array.isArray(parameters.attachments)) for (const attachment of parameters.attachments) add('Attachment', attachment);
+    } else return null;
+    const scope = element('section', 'mp-decision-scope');
+    scope.setAttribute('aria-label', 'Scope of this approval');
+    scope.append(element('div', 'mp-decision-scope-title', 'This approval covers'));
+    const list = element('dl', 'mp-decision-scope-list');
+    for (const [label, value] of rows) {
+      list.append(element('dt', 'mp-decision-scope-label', label), element('dd', 'mp-decision-scope-value', value));
+    }
+    scope.append(list);
+    return scope;
+  }
   function paint(host: HTMLElement, view: View): void {
     const { request, draft } = view;
     const card = element('section', 'mp-decision-card');
@@ -85,16 +309,26 @@ declare global {
         element('span', 'mp-decision-caption', 'Permission needed'));
       const question = element('p', 'mp-decision-question', request.question || `Allow ${request.tool || 'this action'}?`);
       card.append(head, question);
-      if (request.actionPreview || request.prefix) card.append(element('pre', 'mp-decision-command', request.actionPreview || request.prefix));
       const actions = element('div', 'mp-decision-actions');
-      const deny = button('Deny', () => submit({ decision: 'deny' }));
+      const labels = request.options || [];
+      const deny = button(labels.at(-1) || 'Deny', () => submit({ decision: 'deny' }));
       deny.dataset.decision = 'deny';
       const allow = element('div', 'mp-decision-allow');
-      const session = button('Allow for this session', () => submit({ decision: 'grant' }));
-      session.dataset.decision = 'grant';
-      const once = button('Allow once', () => submit({ decision: 'once' }), 'is-primary');
+      if (!labels.length || labels.length > 2) {
+        const session = button(labels[1] || 'Allow for this session', () => submit({ decision: 'grant' }));
+        session.dataset.decision = 'grant'; allow.append(session);
+      }
+      const once = button(labels[0] || 'Allow once', () => {
+        const actionArguments = dailyWrapRequest(request) ? dailyWrapArguments(request, draft) : null;
+        if (dailyWrapRequest(request)) {
+          if (actionArguments) submit({ decision: 'once', actionArguments });
+        } else submit({ decision: 'once' });
+      }, 'is-primary');
       once.dataset.decision = 'once';
-      allow.append(session, once); actions.append(deny, allow); card.append(actions);
+      const scope = dailyWrapRequest(request) ? dailyWrapScope(request, draft, once, view.busy) : historyScope(request);
+      if (scope) card.append(scope);
+      else if (request.actionPreview || request.prefix) card.append(element('pre', 'mp-decision-command', request.actionPreview || request.prefix));
+      allow.append(once); actions.append(deny, allow); card.append(actions);
     } else {
       const questions = request.questions || [];
       const current = questions[draft.page];
@@ -227,9 +461,23 @@ declare global {
   globalThis.DecisionCard = {
     render(host, request, submit) {
       const existing = views.get(host);
-      if (existing?.request.key === request.key) { existing.submit = submit; host.hidden = false; return; }
+      if (existing?.request.key === request.key) {
+        const changedSources = existing.request.historySources !== request.historySources
+          || existing.request.historySourcesError !== request.historySourcesError;
+        existing.request = request; existing.submit = submit; host.hidden = false;
+        if (changedSources) paint(host, existing);
+        return;
+      }
       const questions = request.questions || [];
-      const draft = drafts.get(request.key) || { page: 0, selected: questions.map(() => []), custom: questions.map(() => ''), other: questions.map(() => false), skipped: questions.map(() => false) };
+      const draft: Draft = drafts.get(request.key) || { page: 0, selected: questions.map(() => []), custom: questions.map(() => ''), other: questions.map(() => false), skipped: questions.map(() => false) };
+      if (dailyWrapRequest(request) && !draft.dailyWrap) {
+        const args = record(request.action?.arguments);
+        draft.dailyWrap = {
+          fromText: dateTimeInput(args.from_ms), toText: dateTimeInput(args.to_ms),
+          fromMs: Number(args.from_ms), toMs: Number(args.to_ms), sourceMode: null,
+          selectedIds: Array.isArray(args.conversation_ids) ? [...new Set(args.conversation_ids.map(words).filter(Boolean))] : [], search: '',
+        };
+      }
       drafts.set(request.key, draft);
       const view = { request, submit, draft, busy: false, error: '' };
       views.set(host, view); paint(host, view);

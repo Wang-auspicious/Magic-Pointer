@@ -2,8 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ToolRegistry, type ToolSpec } from './tools';
-import { HookManager, asObject, type Data, type ToolHook } from './agent';
+import { ToolRegistry, validate, type ToolSpec, type JsonSchema } from './tools';
+import { HookManager, asObject, type Data, type ToolHook, type AgentOptions, type ModelRunner } from './agent';
 
 type Disposer = () => void | Promise<void>;
 type Listener = (payload: unknown, next?: () => Promise<unknown>) => unknown | Promise<unknown>;
@@ -18,7 +18,22 @@ export class PluginContext {
   private closing = false;
   private work = new Set<Promise<unknown>>();
   constructor(readonly parent?: PluginContext) { parent?.children.add(this); }
-  get<T = unknown>(key: string): T { if (this.services.has(key)) return this.services.get(key) as T; if (this.parent) return this.parent.get<T>(key); throw new Error(`Missing service: ${key}`); }
+  private serviceViews = new Map<string, { value: object; view: object }>();
+  private resolve<T>(key: string): T { if (this.services.has(key)) return this.services.get(key) as T; if (this.parent) return this.parent.resolve<T>(key); throw new Error(`Missing service: ${key}`); }
+  get<T = unknown>(key: string): T {
+    const value = this.resolve<T>(key);
+    if (!value || typeof value !== 'object' || !['tools', 'hooks', 'prompt', 'surface_adapters'].includes(key)) return value;
+    const cached = this.serviceViews.get(key); if (cached?.value === value) return cached.view as T;
+    const view = new Proxy(value, { get: (target, property) => {
+      if (key === 'tools' && property === 'register') return (spec: ToolSpec) => this.registerTool(spec);
+      const member = Reflect.get(target, property);
+      if (typeof member !== 'function') return member;
+      if (key === 'hooks' && property === 'add' || key === 'prompt' && property === 'add' || key === 'surface_adapters' && property === 'register' || key === 'tools' && property === 'onSessionEnd')
+        return (...args: unknown[]) => this.effect(member.apply(target, args));
+      return member.bind(target);
+    } });
+    this.serviceViews.set(key, { value, view }); return view as T;
+  }
   has(key: string): boolean { return this.services.has(key) || !!this.parent?.has(key); }
   keys(): string[] { return [...new Set([...(this.parent?.keys() ?? []), ...this.services.keys()])]; }
   async provide(key: string, value: unknown): Promise<void> { if (this.closing) throw new Error('Context is closing'); if (this.services.has(key)) throw new Error(`Duplicate service ${key}`); this.services.set(key, value); await this.refresh(); }
@@ -73,9 +88,10 @@ export class PluginContext {
       let result: unknown; for (const listener of listeners) result = await listener(payload); return event.mode === 'serial' ? result : undefined;
     });
   }
-  registerTool(spec: ToolSpec): void {
-    const registry = this.get<ToolRegistry>('tools'); const owned = { ...spec, execute: (args: Data, context: Parameters<ToolSpec['execute']>[1]) => this.run(() => spec.execute(args, context)) };
+  registerTool(spec: ToolSpec): ToolSpec {
+    const registry = this.resolve<ToolRegistry>('tools'); const owned = { ...spec, execute: (args: Data, context: Parameters<ToolSpec['execute']>[1]) => this.run(() => spec.execute(args, context)) };
     registry.register(owned); this.effect(() => { registry.unregister(owned.name, owned); });
+    return owned;
   }
   registerHook(phase: 'pre' | 'post' | 'stop', hook: ToolHook): void { this.effect(this.get<HookManager>('hooks').add(phase, payload => this.run(() => hook(payload)))); }
   async unload(): Promise<void> {
@@ -88,9 +104,36 @@ export class PluginContext {
   }
 }
 
-export interface RuntimePlugin { name: string; inject?: string[]; scopes?: string[]; defaults?: Data; apply(context: PluginContext, config: Data): void | Promise<void> }
+export class PromptSections {
+  private sections = new Map<string, { id: string; order?: number; render: (options: AgentOptions) => string | Promise<string> }>();
+  add(section: { id: string; order?: number; render: (options: AgentOptions) => string | Promise<string> }): Disposer {
+    if (this.sections.has(section.id)) throw new Error(`Duplicate prompt section: ${section.id}`);
+    this.sections.set(section.id, section); return () => { if (this.sections.get(section.id) === section) this.sections.delete(section.id); };
+  }
+  async build(options: AgentOptions): Promise<string> {
+    const sections = [...this.sections.values()].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+    return (await Promise.all(sections.map(section => section.render(options)))).filter(Boolean).join('\n\n');
+  }
+}
+
+export interface RuntimePlugin { name: string; inject?: string[]; scopes?: string[]; defaults?: Data; config_schema?: JsonSchema; apply(context: PluginContext, config: Data): void | Promise<void> }
 export interface PluginRow { id: string; plugin: string; config?: Data; disabled?: boolean }
+export function extensionPaths(userDataDir: string) {
+  return {
+    plugins: process.env.MAGIC_POINTER_PLUGIN_DIR || path.join(userDataDir, 'data', 'plugins'),
+    mcp: process.env.MAGIC_POINTER_MCP_CONFIG || path.join(userDataDir, 'data', 'mcp.json'),
+    patch: process.env.MAGIC_POINTER_HARNESS_CONFIG || path.join(userDataDir, 'data', 'harness.patch.json'),
+  };
+}
+export async function loadHarnessPatch(file: string): Promise<Record<string, Partial<PluginRow>>> {
+  try {
+    const document = asObject(JSON.parse(await readFile(file, 'utf8')));
+    if (document.schemaVersion !== 1 || !document.patch || Array.isArray(document.patch) || typeof document.patch !== 'object') throw new Error(`Invalid harness configuration: ${file}`);
+    return document.patch as Record<string, Partial<PluginRow>>;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
+}
 const merge = (base: Data, patch: Data): Data => Object.fromEntries([...new Set([...Object.keys(base), ...Object.keys(patch)])].map(key => [key, key in patch ? Object.keys(asObject(base[key])).length && Object.keys(asObject(patch[key])).length ? merge(asObject(base[key]), asObject(patch[key])) : patch[key] : base[key]]));
+const pluginScopes = (plugin: RuntimePlugin) => plugin.scopes ?? (plugin.inject?.includes('surface_adapters') ? ['surface'] : ['agent']);
 export async function bootPlugins(options: { context?: PluginContext; directory: string; scope?: string; core?: Record<string, unknown>; builtins?: RuntimePlugin[]; rows?: PluginRow[]; patch?: Record<string, Partial<PluginRow>> }) {
   const context = options.context ?? new PluginContext(), specs = new Map<string, RuntimePlugin>((options.builtins ?? []).map(plugin => [plugin.name, plugin]));
   for (const [key, value] of Object.entries(options.core ?? {})) await context.provide(key, value);
@@ -104,7 +147,7 @@ export async function bootPlugins(options: { context?: PluginContext; directory:
       if (!plugin.name || typeof plugin.apply !== 'function') throw new Error('Plugin needs name and apply');
       if (specs.has(plugin.name)) throw new Error(`Duplicate plugin ${plugin.name}`);
       specs.set(plugin.name, plugin);
-      if (!plugin.scopes || plugin.scopes.includes(options.scope ?? 'agent')) rows.push({ id: `user:${plugin.name}`, plugin: plugin.name });
+      if (pluginScopes(plugin).includes(options.scope ?? 'agent')) rows.push({ id: `user:${plugin.name}`, plugin: plugin.name });
     } catch (error) { warnings.push(`${entry.name}: ${(error as Error).message}`); }
   }
   const byId = new Map<string, PluginRow>();
@@ -115,11 +158,27 @@ export async function bootPlugins(options: { context?: PluginContext; directory:
     const report: Data = { id: row.id, plugin: row.plugin, config: row.config ?? {}, status: row.disabled ? 'disabled' : 'waiting', error: '', missingDeps: [] }; reports.push(report);
     if (row.disabled) continue;
     const spec = specs.get(row.plugin); if (!spec) { report.status = 'error'; report.error = 'Unknown plugin'; continue; }
+    if (!pluginScopes(spec).includes(options.scope ?? 'agent')) { report.status = 'out_of_scope'; continue; }
+    const config = structuredClone(merge(spec.defaults ?? {}, row.config ?? {})); report.config = config;
+    const errors = spec.config_schema ? validate(config, spec.config_schema) : [];
+    if (errors.length) { report.status = 'error'; report.error = errors.join('; '); continue; }
     const scope = context.scope(); scopes.set(row.id, scope);
-    const injection = await scope.inject(spec.inject ?? [], child => spec.apply(child, structuredClone(merge(spec.defaults ?? {}, row.config ?? {}))));
+    const injection = await scope.inject(spec.inject ?? [], child => spec.apply(child, structuredClone(config)));
     Object.defineProperties(report, { status: { enumerable: true, get: () => injection.state }, error: { enumerable: true, get: () => injection.error ?? '' }, missingDeps: { enumerable: true, get: () => injection.deps.filter(dep => !scope.has(dep)) } });
   }
   return { context, warnings, rows: reports, dumpConfig: () => reports.map(row => ({ ...row })), unmount: async (id: string) => { const scope = scopes.get(id); if (!scope) return false; await scope.unload(); scopes.delete(id); return true; }, close: () => context.unload() };
+}
+
+export function modelPlugins(model: ModelRunner): RuntimePlugin[] {
+  return [
+    { name: 'llm-provider', apply: ctx => ctx.provideUp('llm', model) },
+    { name: 'model-client', inject: ['llm'], apply: ctx => ctx.provideUp('model_client', ctx.get('llm')) },
+  ];
+}
+
+export async function bootSurfacePlugins(userDataDir: string, adapters: unknown, builtins: RuntimePlugin[] = []) {
+  const paths = extensionPaths(userDataDir);
+  return bootPlugins({ directory: paths.plugins, scope: 'surface', patch: await loadHarnessPatch(paths.patch), builtins, rows: builtins.map(plugin => ({ id: plugin.name, plugin: plugin.name })), core: { surface_adapters: adapters } });
 }
 
 export class HarnessRuntimeHost {

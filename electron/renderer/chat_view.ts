@@ -1366,7 +1366,6 @@ const ChatView = (() => {
     const rows = new Map<string, { node: HTMLElement; record: string }>();
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
-    let answerText = '';
     let thinkingText = '';
     const traceNodes = new Map<string, { node: HTMLElement; signature: string }>();
     let traceStatus: HTMLElement | null = null;
@@ -1376,6 +1375,34 @@ const ChatView = (() => {
         node.appendChild(document.createTextNode(next.slice(previous.length)));
         if (node.childNodes.length > 32) node.textContent = next;
       } else node.textContent = next;
+    };
+    const updateLiveMarkdown = (node: HTMLElement, text: string) => {
+      const next = markdownRenderer.render(text) as HTMLElement;
+      const current = node.querySelector<HTMLElement>('.mp-chat-markdown');
+      if (!current) {
+        node.replaceChildren(next);
+        return;
+      }
+      const blocks = Array.from(next.childNodes);
+      blocks.forEach((block, index) => {
+        const existing = current.childNodes[index];
+        if (!existing) current.appendChild(block);
+        else {
+          const existingMarkup = (existing as Element).outerHTML ?? existing.textContent;
+          const nextMarkup = (block as Element).outerHTML ?? block.textContent;
+          if (existing.nodeType !== block.nodeType || existingMarkup !== nextMarkup) {
+            current.insertBefore(block, existing);
+            existing.remove();
+          }
+        }
+      });
+      while (current.childNodes.length > blocks.length) current.childNodes[current.childNodes.length - 1]?.remove();
+    };
+    const liveMarkdownNode = (text: string) => {
+      const node = document.createElement('div');
+      node.className = 'mp-chat-stream-live';
+      updateLiveMarkdown(node, text);
+      return node;
     };
     return {
       update(snapshot: LiveTurnSnapshot) {
@@ -1390,9 +1417,11 @@ const ChatView = (() => {
               traceNodes.set(key, entry);
             } else if (entry.signature !== signature) {
               if (key.startsWith('message:') || key.startsWith('reasoning:')) {
-                const target = key.startsWith('reasoning:') ? entry.node.querySelector<HTMLElement>('.mp-chat-think-body')! : entry.node;
-                appendText(target, target.textContent || '', String(value));
-                if (key.startsWith('reasoning:')) entry.node.querySelector('.mp-chat-summary')!.textContent = latestLine(String(value));
+                if (key.startsWith('reasoning:')) {
+                  const target = entry.node.querySelector<HTMLElement>('.mp-chat-think-body')!;
+                  appendText(target, target.textContent || '', String(value));
+                  entry.node.querySelector('.mp-chat-summary')!.textContent = latestLine(String(value));
+                } else updateLiveMarkdown(entry.node, String(value));
               } else {
                 const replacement = make() as HTMLElement;
                 entry.node.replaceChildren(...Array.from(replacement.childNodes));
@@ -1447,7 +1476,7 @@ const ChatView = (() => {
                 render(`reasoning:${key}`, String(record.reasoning), () => thinkNode(String(record.reasoning), running, thinkId));
                 updateThinkingState(traceNodes.get(`reasoning:${key}`)!.node, String(record.reasoning), running);
               }
-              if (record.text) render(`message:${key}`, String(record.text), () => h('div', { class: 'mp-chat-stream-live' }, String(record.text)));
+              if (record.text) render(`message:${key}`, String(record.text), () => liveMarkdownNode(String(record.text)));
             } else if (record.kind === 'notice') {
               flush();
               render(`notice:${index}`, record, () => noticeNode(String(record.text || '')));
@@ -1516,12 +1545,10 @@ const ChatView = (() => {
         const nextAnswer = String(snapshot.answer || '');
         if (nextAnswer) {
           if (!answer) {
-            answer = document.createElement('div');
-            answer.className = 'mp-chat-stream-live';
+            answer = liveMarkdownNode('');
             answer.setAttribute('aria-live', 'polite');
           }
-          appendText(answer, answerText, nextAnswer);
-          answerText = nextAnswer;
+          updateLiveMarkdown(answer, nextAnswer);
           desired.push(answer);
         }
         for (const child of Array.from(host.children)) {

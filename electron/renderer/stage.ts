@@ -1374,6 +1374,12 @@
         container.appendChild(footer);
         bindCardActions(container, payload);
       }
+      if (Array.isArray(payload?.receipts) && payload.receipts.some((receipt: any) => receipt?.status === 'unverified')) {
+        const note = document.createElement('p');
+        note.className = 'stage-verification-note';
+        note.textContent = '已尝试写入，尚未核对';
+        container.appendChild(note);
+      }
       ChatView.bindDelegation(container);
       return;
     }
@@ -1510,6 +1516,7 @@
     threadTitle.title = surfaceTitle;
     const failed = turns[turns.length - 1]?.status === 'failed';
     const awaiting = turns[turns.length - 1]?.status === 'awaiting';
+    const verificationPending = turns[turns.length - 1]?.result?.receipts?.some((receipt: any) => receipt?.status === 'unverified') === true;
     threadEyebrow.hidden = true;
     threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
     threadClose.setAttribute('aria-label', '关闭');
@@ -1521,6 +1528,8 @@
         ? '需要你补充'
         : failed
           ? '这次没完成'
+          : verificationPending
+            ? '待核对'
           : '已完成';
     const settled = !pending && turns.some((turn) => turn.status === 'done');
     threadCopy.disabled = !settled;
@@ -1543,6 +1552,21 @@
     turnId: number; sessionToken: string; requestId: string; requestToken: string;
     original: any; accepted: boolean; transcript: ReturnType<typeof ConversationControl.createTranscript>;
   } | null = null;
+  let stageHistorySources: { key: string; sources?: Array<{ id: string; title?: string }>; error?: string } | null = null;
+
+  async function loadStageHistorySources(key: string) {
+    try {
+      if (!api?.listHistorySources) throw new Error('无法读取已保存任务。');
+      const sources = await api.listHistorySources();
+      if (!Array.isArray(sources)) throw new Error('无法读取已保存任务。');
+      if (stageHistorySources?.key !== key) return;
+      stageHistorySources = { key, sources };
+    } catch (error) {
+      if (stageHistorySources?.key !== key) return;
+      stageHistorySources = { key, error: error instanceof Error ? error.message : String(error) };
+    }
+    renderStageDecision();
+  }
 
   function currentStageInput(request: NonNullable<typeof pendingStageInput>): boolean {
     return pendingStageInput === request && session.token === request.sessionToken
@@ -1559,8 +1583,24 @@
     if (!input || !session.token || ['hidden', 'dismissing'].includes(state.name)) {
       DecisionCard.clear(stageDecision); return;
     }
+    const key = `stage:${session.token}:${input.requestId}`;
+    const dailyWrap = input.kind === 'permission' && input.tool === 'DailyWrap.read'
+      && input.action?.tool === 'DailyWrap.read';
+    if (dailyWrap && stageHistorySources?.key !== key) {
+      stageHistorySources = { key };
+      void loadStageHistorySources(key);
+    }
     DecisionCard.render(stageDecision, {
-      ...input, key: `stage:${session.token}:${input.requestId}`,
+      ...input, key,
+      ...(dailyWrap ? {
+        historySources: stageHistorySources?.sources,
+        historySourcesError: stageHistorySources?.error,
+        retryHistorySources: () => {
+          stageHistorySources = { key };
+          renderStageDecision();
+          void loadStageHistorySources(key);
+        },
+      } : {}),
       questions: input.questions || (input.kind !== 'permission' ? [{
         question: input.question || '需要你的决定',
         options: (input.options || []).map((label: string) => ({ label })),

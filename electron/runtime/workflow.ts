@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { readJson, writeAtomic } from './learning';
 import { withFileLock } from './session';
-import { Fabric } from './fabric';
+import { Fabric, readsHistory } from './fabric';
 
 type Data = Record<string, any>;
 export class Workflows {
@@ -29,10 +29,19 @@ export class Workflows {
       if (task.approvalState === 'pending' || task.executionState === 'running') return { task, reused: false, claimed: false };
       task.executionState = 'running'; task.claimId = randomUUID(); task.claimPid = process.pid; task.lastSurface = surface; task.updatedAt = new Date().toISOString(); await writeAtomic(this.file(id), task); return { task, claimed: true, reused: false };
     });
-    if (!claim.claimed) return claim.reused ? { ...mapReceipt(claim.task.plan, claim.task.receipt), workflowTask: this.public(claim.task, true), reused: true, workflowReused: true } : { ok: true, state: claim.task.approvalState === 'pending' ? 'confirmation_required' : 'accepted', workflowTask: this.public(claim.task), reason: claim.task.approvalState === 'pending' ? 'approval_required' : 'execution_running' };
+    if (!claim.claimed) {
+      if (claim.reused && readsHistory(claim.task.plan)) {
+        const status = String(claim.task.receipt?.status || 'failed');
+        return { ok: ['succeeded', 'accepted'].includes(status), state: status === 'succeeded' ? 'completed' : status,
+          workflowTask: this.public(claim.task, true), reused: true, workflowReused: true,
+          historyResultWithheld: true, message: 'Earlier history results are not replayed. Start a new request to read history again.' };
+      }
+      return claim.reused ? { ...mapReceipt(claim.task.plan, claim.task.receipt), workflowTask: this.public(claim.task, true), reused: true, workflowReused: true }
+        : { ok: true, state: claim.task.approvalState === 'pending' ? 'confirmation_required' : 'accepted', workflowTask: this.public(claim.task), reason: claim.task.approvalState === 'pending' ? 'approval_required' : 'execution_running' };
+    }
     let receipt: Data;
-    try { receipt = await fabric.execute(claim.task.plan, true); } catch (error) { receipt = { id: randomUUID(), planId: claim.task.plan.id, recipeId: claim.task.recipeId, status: 'failed', verified: false, output: {}, error: String(error) }; }
-    const completed = await withFileLock(this.file(id) + '.mutation', async () => { const task = await this.get(id); if (task.claimId !== claim.task.claimId) throw new Error('workflow_claim_changed'); task.executionState = 'terminal'; task.receipt = receipt; task.updatedAt = new Date().toISOString(); await writeAtomic(this.file(id), task); return task; });
+    try { receipt = await fabric.execute(claim.task.plan, claim.task.approvalState === 'approved'); } catch (error) { receipt = { id: randomUUID(), planId: claim.task.plan.id, recipeId: claim.task.recipeId, status: 'failed', verified: false, output: {}, error: String(error) }; }
+    const completed = await withFileLock(this.file(id) + '.mutation', async () => { const task = await this.get(id); if (task.claimId !== claim.task.claimId) throw new Error('workflow_claim_changed'); task.executionState = receipt.status === 'confirmation_required' ? 'idle' : 'terminal'; if (receipt.status === 'confirmation_required') task.approvalState = 'pending'; task.receipt = receipt; task.updatedAt = new Date().toISOString(); await writeAtomic(this.file(id), task); return task; });
     return { ...mapReceipt(completed.plan, receipt), workflowTask: this.public(completed), reused: false, workflowReused: false };
   }
 }

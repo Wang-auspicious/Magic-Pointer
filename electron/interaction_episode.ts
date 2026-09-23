@@ -503,7 +503,10 @@ class InteractionEpisodeStore {
     const taskId = String(options?.taskId || '').trim();
     if (!taskId) throw new Error('bindCommandTarget requires an authoritative taskId');
     let episode = this.ensureActive(now);
-    if (episode.taskId && episode.taskId !== taskId) episode = this.start(now);
+    if (episode.taskId && episode.taskId !== taskId) {
+      episode.taskContext = TaskSources.emptyTaskContext(taskId);
+      episode.taskInput = null;
+    }
     episode.taskId = taskId;
     const taskContext: UnknownRecord = episode.taskContext || TaskSources.emptyTaskContext(taskId);
     episode.taskContext = taskContext;

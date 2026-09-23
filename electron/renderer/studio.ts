@@ -2292,6 +2292,7 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
       tool: String(pending.tool),
       prefix: String(pending.prefix || '').trim() || undefined,
       actionPreview: pending.actionPreview,
+      action: pending.action,
       question: String(pending.question || '').trim() || undefined,
       options: options.length ? options : undefined,
     };
@@ -3322,8 +3323,8 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   closeWindowMenu();
   if (command === 'new-chat') { setProductMode('walker'); startNewChat(); return; }
   if (command === 'open-project') { await openProjectFromPicker(); return; }
-  if (command === 'add-files') {
-    const picked = await Data.pickProjectFiles(activeProjectRoot);
+  if (command === 'add-files' || command === 'add-folder') {
+    const picked = await Data.pickProjectFiles(activeProjectRoot, command === 'add-folder' ? 'folder' : 'files');
     if (picked?.ok && Array.isArray(picked.paths)) {
       composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
       renderComposerAttachments();
@@ -5698,26 +5699,57 @@ function renderPlanCard() {
   });
 }
 
-let pendingPermissionAsk: { requestId?: string; tool: string; prefix?: string; actionPreview?: string; question?: string; options?: string[] } | null = null;
+let pendingPermissionAsk: { requestId?: string; tool: string; prefix?: string; actionPreview?: string; action?: { tool?: string; arguments?: Record<string, unknown> }; question?: string; options?: string[] } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
 let pendingAskInput: NonNullable<MagicPointerTurn['pendingInput']> | null = null;
 const pendingInputHost = document.getElementById('composer-permission-ask');
+let pendingDailyWrapSources: {
+  key: string;
+  sources?: Array<{ id: string; title?: string }>;
+  error?: string;
+} | null = null;
+
+function loadDailyWrapSources(key: string) {
+  const state: NonNullable<typeof pendingDailyWrapSources> = { key };
+  pendingDailyWrapSources = state;
+  void Data.conversations().then(list => {
+    if (pendingDailyWrapSources !== state) return;
+    state.sources = list.map(conversation => ({ id: conversation.id, title: conversation.title }));
+    renderPermissionAsk();
+  }).catch(error => {
+    if (pendingDailyWrapSources !== state) return;
+    state.error = `Could not load saved tasks: ${error instanceof Error ? error.message : String(error)}`;
+    renderPermissionAsk();
+  });
+}
 
 function renderPermissionAsk() {
   const host = document.getElementById('composer-permission-ask') || pendingInputHost;
   if (!host) return;
   const input = pendingPermissionAsk || pendingAskInput;
-  if (!input) { DecisionCard.clear(host); return; }
+  if (!input) { pendingDailyWrapSources = null; DecisionCard.clear(host); return; }
   const conversationId = activeConversationId || '';
   const requestId = input.requestId || '';
+  const key = `${conversationId}:${requestId}`;
+  const isDailyWrap = pendingPermissionAsk?.tool === 'DailyWrap.read'
+    && pendingPermissionAsk.action?.tool === 'DailyWrap.read';
+  if (isDailyWrap) {
+    if (pendingDailyWrapSources?.key !== key) loadDailyWrapSources(key);
+  } else pendingDailyWrapSources = null;
   const stream = document.getElementById('stream');
   const follow = stream && stream.scrollHeight - stream.scrollTop - stream.clientHeight < 120;
   if (stream && host.parentElement !== stream) stream.append(host);
   host.dataset.mode = pendingPermissionAsk ? 'permission' : 'ask';
   DecisionCard.render(host, {
-    ...input, key: `${conversationId}:${requestId}`,
+    ...input, key,
     presentation: 'inline',
     kind: pendingPermissionAsk ? 'permission' : pendingAskInput?.kind || 'ask',
+    historySources: isDailyWrap ? pendingDailyWrapSources?.sources : undefined,
+    historySourcesError: isDailyWrap ? pendingDailyWrapSources?.error : undefined,
+    retryHistorySources: isDailyWrap ? () => {
+      if (pendingDailyWrapSources?.key !== key) return;
+      pendingDailyWrapSources = null; renderPermissionAsk();
+    } : undefined,
     questions: pendingAskInput?.questions || (pendingAskInput ? [{
       question: pendingAskInput.question || '需要你的决定',
       options: (pendingAskInput.options || []).map(label => ({ label })),
@@ -6203,7 +6235,7 @@ function openAttachMenu() {
   const action = (run: () => void) => () => { closeAnchoredPopover('composer-attach-menu', 'composer-add'); run(); };
   const entries = [
     { id: 'files', label: 'Add files or photos', icon: 'attach-file', key: 'Ctrl+U', run: () => { void executeWindowMenuCommand('add-files'); } },
-    { id: 'folder', label: 'Add folder', icon: 'folder', run: () => { void openProjectFromPicker(); } },
+    { id: 'folder', label: 'Add folder', icon: 'folder', run: () => { void executeWindowMenuCommand('add-folder'); } },
     { id: 'slash', label: 'Slash commands', icon: 'attach-skills', run: () => { void openSlashMenu(); } },
     { id: 'connectors', label: 'Add connectors', icon: 'attach-connector', run: () => openSettingsPage('connectors') },
     { id: 'plugins', label: 'Add plugins', icon: 'attach-plugins', run: () => openSettingsPage('plugins') },

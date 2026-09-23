@@ -32,7 +32,7 @@ export async function dispatchRuntime(kind: string, payload: Data, options: Runt
       const captured = payload.selectionSnapshot ? { selectionSnapshot: payload.selectionSnapshot } : await captureSnapshot(payload, options.signal);
       return handleContext(payload, { ...options, capture: captured.selectionSnapshot });
     }
-    return handleSelection(payload, { signal: options.signal, runRuntime: next => runRuntime(next, options) });
+    return handleSelection(payload, { root: options.root, userDataDir: options.userDataDir, signal: options.signal, runRuntime: next => runRuntime(next, options) });
   }
   if (kind === 'action') return handleAction(payload, { ...options, executeRecipe: async proposal => ({ fabric_receipt: await new Fabric(options).execute(proposal.parameters?.plan || proposal.metadata?.plan, true) }) });
   if (kind === 'deliver_text') return handleDelivery(payload, options);

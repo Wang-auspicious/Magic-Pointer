@@ -25,6 +25,7 @@ app.whenReady().then(async () => {
         pendingInput: { requestId: 'ask-permission', kind: 'permission', tool: 'Bash', prefix: 'npm test', actionPreview: 'npm test && npm run build', question: 'Allow running the project tests?', options: ['Allow once', 'Always allow', 'Deny'] } }] };
       let stored = structuredClone(original);
       Data.conversation = async id => id === stored.id ? structuredClone(stored) : null;
+      Data.conversations = async () => [{ id: 'selected-conversation', title: 'Selected task' }, { id: 'other-conversation', title: 'Other task' }];
       Data.recovery = async () => ({ ok: true, pendingRecovery: [] });
       let normalSends = 0;
       Data.sendConversation = async () => { normalSends++; return { ok: false, error: 'approval used normal send' }; };
@@ -73,6 +74,56 @@ app.whenReady().then(async () => {
       resolveResponse({ ok: true, accepted: true, conversationId: stored.id }); await wait(); await wait();
       check(host.hidden, 'accepted approval card stayed visible');
       check(stored.turns.length === 1, 'approval added another task turn');
+      const showHistoryApproval = async (requestId, tool, args) => {
+        stored.turns[0].pendingInput = { requestId, kind: 'permission', tool, question: 'Allow ' + tool + '?',
+          options: ['仅这一次允许', '拒绝'], action: { tool, arguments: args }, actionPreview: '{truncated' };
+        await openConversation(stored.id);
+        if (tool === 'DailyWrap.read') await wait();
+        check(!host.querySelector('[data-decision="grant"]'), tool + ' history approval offered session-wide access');
+        check(host.querySelector('[data-decision="once"]')?.textContent === '仅这一次允许', tool + ' lost the exact one-time choice');
+      };
+      await showHistoryApproval('recall-scope', 'Recall', { query: 'launch readiness', max_results: 3 });
+      check(host.textContent.includes('launch readiness') && host.textContent.includes('all saved tasks')
+        && !host.textContent.includes('{truncated'), 'Recall approval did not explain its cross-task search scope');
+      await showHistoryApproval('recall-event', 'Recall', { session_id: 'saved-session', event_seq: 19, offset: 100 });
+      check(host.textContent.includes('saved-session') && host.textContent.includes('19')
+        && !host.textContent.includes('all saved tasks'), 'Recall event approval did not identify the exact saved task and event');
+      await showHistoryApproval('daily-scope', 'DailyWrap.read', { from_ms: 1789228800000, to_ms: 1789315200000,
+        conversation_ids: ['selected-conversation'], limit: 12 });
+      check(host.textContent.includes('Selected task')
+        && host.querySelector('[data-dailywrap-source-id="selected-conversation"]')?.checked
+        && new Date(host.querySelector('[data-dailywrap-from]').value).getTime() === 1789228800000,
+      'DailyWrap approval hid the proposed saved task or time window');
+      await showHistoryApproval('daily-zero', 'DailyWrap.read', { from_ms: 1789228800000, to_ms: 1789315200000,
+        conversation_ids: [], limit: 0 });
+      check(host.textContent.includes('Read up to 0 records.'), 'DailyWrap approval overstated a zero-record limit');
+      await showHistoryApproval('daily-all', 'DailyWrap.read', { from_ms: 1789228800000, to_ms: 1789315200000,
+        conversation_ids: [] });
+      check(!!host.querySelector('[data-history-source-mode="all"]')
+        && host.querySelector('[data-decision="once"]').disabled,
+      'empty DailyWrap source proposal silently approved all saved tasks');
+      await showHistoryApproval('recipe-memory', 'Recipe', { operation: 'execute', plan: {
+        recipeId: 'memory.recall', provider: 'local.memory', command: 'old notes', objectIds: ['selected-note'],
+        parameters: { query: 'project Orion', limit: 5, objects: [{ id: 'selected-note', source: { app: 'browser', title: 'Orion notes' } }],
+          contextPacket: { otherMaterial: 'unselected private material' } },
+      } });
+      check(host.textContent.includes('project Orion') && host.textContent.includes('selected-note')
+        && host.textContent.includes('Orion notes') && !host.textContent.includes('{truncated')
+        && !host.textContent.includes('unselected private material'),
+      'Recipe memory approval hid the query or selected source');
+      await showHistoryApproval('recipe-clipboard-search', 'Recipe', { operation: 'execute', plan: {
+        recipeId: 'clipboard.history', provider: 'clipboard.history', command: 'find clip', objectIds: [],
+        parameters: { query: 'invoice', objects: [] },
+      } });
+      check(host.textContent.includes('search saved clipboard history') && host.textContent.includes('invoice'),
+        'Recipe clipboard history approval hid its query');
+      await showHistoryApproval('recipe-restore', 'Recipe', { operation: 'execute', plan: {
+        recipeId: 'clipboard.history', provider: 'clipboard.history', command: 'restore saved clip', objectIds: ['selected-object'],
+        parameters: { digest: 'selected-digest', objects: [{ id: 'selected-object', source: { title: 'Selected document' } }] },
+      } });
+      check(host.textContent.includes('restore') && host.textContent.includes('selected-digest')
+        && host.textContent.includes('Selected document') && !host.textContent.includes('{truncated'),
+      'Recipe approval did not explain the clipboard restore target and selected source');
       stored.turns[0].pendingInput = { requestId: 'ask-format', questions: [
         { header: 'Format', question: 'Which format?', options: [{ label: 'Report', description: 'A document to share', preview: '<button>Example</button>\\n  outline' }, { label: 'Slides', description: 'A presentation' }] },
         { header: 'Include', question: 'What should it include?', multiSelect: true, options: [{ label: 'Charts' }, { label: 'Sources' }] },
@@ -162,6 +213,33 @@ app.whenReady().then(async () => {
       check(normalSends === 0 && !pendingConversation, 'child approval started another parent turn');
       check(!childRow.querySelector('.mp-decision-card'), 'answered child card remained actionable');
       check(textarea.value === 'Keep my unsent follow-up', 'child approval overwrote the draft');
+      let resolveSources;
+      const sourcesPromise = new Promise(resolve => { resolveSources = resolve; });
+      Data.conversations = async () => sourcesPromise;
+      await showHistoryApproval('daily-user-scope', 'DailyWrap.read', { from_ms: 1789228800000, to_ms: 1789315200000,
+        conversation_ids: ['selected-conversation', 'selected-conversation'], limit: 12 });
+      check(host.querySelector('[data-decision="once"]').disabled, 'DailyWrap approved before saved tasks loaded');
+      resolveSources([{ id: 'selected-conversation', title: 'Selected task' }, { id: 'other-conversation', title: 'Other task' }]);
+      await wait();
+      check(!!host.querySelector('[data-dailywrap-from]') && !!host.querySelector('[data-dailywrap-to]'), 'DailyWrap has no editable time range');
+      check(host.querySelector('.mp-decision-dailywrap-sources .mp-decision-hint')?.textContent === '1 selected',
+        'duplicate proposed task IDs remain duplicated in the user selection');
+      check(host.querySelector('[data-decision="once"]').disabled, 'DailyWrap accepted a model-selected source without user choice');
+      host.querySelector('[data-dailywrap-source-selected]').click();
+      const fromInput = host.querySelector('[data-dailywrap-from]');
+      const selectedFrom = 1789232400000;
+      const localDate = new Date(selectedFrom - new Date(selectedFrom).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      fromInput.value = localDate;
+      fromInput.dispatchEvent(new Event('input', { bubbles: true }));
+      host.querySelector('[data-dailywrap-source-id="other-conversation"]').click();
+      host.querySelector('[data-decision="once"]').click(); await wait();
+      const dailyResponse = responses.at(-1);
+      check(dailyResponse?.requestId === 'daily-user-scope' && dailyResponse.response?.decision === 'once'
+        && dailyResponse.response.actionArguments?.from_ms === selectedFrom
+        && dailyResponse.response.actionArguments?.to_ms === 1789315200000
+        && dailyResponse.response.actionArguments?.limit === 12
+        && JSON.stringify(dailyResponse.response.actionArguments?.conversation_ids?.sort()) === JSON.stringify(['other-conversation', 'selected-conversation']),
+      'DailyWrap did not submit the user-selected time and saved task set');
       return { normalSends, responses: responses.length, sameTurn: stored.turns.length === 1, permissionAndQuestions: true, durablePlan: true, backgroundApproval: true };
     })()`);
     fs.writeFileSync(path.join(output, 'witness.json'), JSON.stringify(witness, null, 2));
