@@ -14,7 +14,7 @@ import { ToolRegistry } from './tools';
 import { resolveModelConfig, streamModel, requestVision } from './model';
 import { prepareTaskContext } from './context_prepare';
 import { configureDesktop, closeDesktop, registerDesktopTools, desktopSession, listWindows, listElements } from './desktop';
-import { registerPerceptionTools, registerLookTool, createSnapshotPerceptionBackend, closeOcr, type PerceptionBackend, type VisionBackend } from './desktop_perception';
+import { registerPerceptionTools, registerLookTool, createSnapshotPerceptionBackend, closeOcr, agentModelVision, isAgentModelVision, type PerceptionBackend, type VisionBackend } from './desktop_perception';
 import { registerSelectionQuickTools } from './selection_quick_tools';
 import { readMcpConfigs, registerMcpDiscovery } from './mcp';
 import { settingsStore } from './model_admin';
@@ -69,7 +69,7 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
   const prompt = new PromptSections();
   const selectionSnapshot = payload.selectionSnapshot || payload.object?.selectionSnapshot || {};
   const perception = createSnapshotPerceptionBackend(selectionSnapshot);
-  const vision: VisionBackend = (images, prompt, signal) => requestVision(config, { images, prompt, signal, timeoutMs: 30000 });
+  const vision: VisionBackend = agentModelVision((images, prompt, signal) => requestVision(config, { images, prompt, signal, timeoutMs: 30000 }));
   const perceptionOptions = { snapshot: selectionSnapshot, uploadScreenshots: settings.privacy.upload_screenshots !== false,
     sources: (id: string) => prepared.taskContext.sources?.find((source: Data) => source.sourceId === id),
     windowReadScope: (hwnd: number) => prepared.authorizeAccess({ action: 'read', windowIds: [`w-${hwnd}`] }).allowed };
@@ -90,7 +90,8 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
     { name: 'perception-provider', apply: ctx => ctx.provideUp('perception', perception) },
     { name: 'vision-provider', apply: ctx => ctx.provideUp('vision', vision) },
     { name: 'perception-tools', inject: ['tools', 'perception'], apply: ctx => registerPerceptionTools(ctx.get('tools'), { ...perceptionOptions, backend: ctx.get<PerceptionBackend>('perception'),
-      vision: (images, prompt, signal) => ctx.has('vision') ? ctx.get<VisionBackend>('vision')(images, prompt, signal) : Promise.resolve({ text: '', usedBackend: 'vision_unavailable' }) }) },
+      vision: ctx.has('vision') && isAgentModelVision(ctx.get('vision')) ? ctx.get<VisionBackend>('vision')
+        : (images, prompt, signal) => ctx.has('vision') ? ctx.get<VisionBackend>('vision')(images, prompt, signal) : Promise.resolve({ text: '', usedBackend: 'vision_unavailable' }) }) },
     { name: 'look-tool', inject: ['tools', 'vision'], apply: ctx => registerLookTool(ctx.get('tools'), { ...perceptionOptions, vision: ctx.get<VisionBackend>('vision') }) },
     { name: 'mcp-provider', defaults: { config_path: extensions.mcp }, apply: (ctx, cfg) => { ctx.effect(registerMcpDiscovery(ctx.get('tools'), readMcpConfigs(String(cfg.config_path)))); } },
     { name: 'system-prompt', apply: ctx => { ctx.get<PromptSections>('prompt').add({ id: 'default', order: 0, render: buildSystemPrompt }); } },

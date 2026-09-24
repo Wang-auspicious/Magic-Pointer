@@ -404,6 +404,10 @@ export async function captureSnapshot(payload: DesktopRecord, signal?: AbortSign
 }
 
 export type VisionBackend = (images: { dataUrl?: string; path?: string; label?: string }[], prompt: string, signal?: AbortSignal) => Promise<DesktopRecord>;
+const AGENT_MODEL_VISION = Symbol.for('magic-pointer.vision.agent-model');
+/** Marks a vision backend that is the agent's own model: asking it to describe an image the agent could see itself only loses detail. */
+export function agentModelVision(backend: VisionBackend): VisionBackend { return Object.assign(backend, { [AGENT_MODEL_VISION]: true }); }
+export function isAgentModelVision(backend: unknown): boolean { return typeof backend === 'function' && (backend as unknown as Record<symbol, unknown>)[AGENT_MODEL_VISION] === true; }
 export interface PerceptionBackend {
   read_around(anchor: string, radius: number, signal?: AbortSignal): Evidence | Promise<Evidence>;
   dump_subtree(anchor: string, depth: number, signal?: AbortSignal): Evidence | Promise<Evidence>;
@@ -457,6 +461,9 @@ export function registerPerceptionTools(registry: ToolRegistry, options: Percept
     else if (identity.absolutePath) { const current = await readOffice(window, { signal: context.signal }); if (resolve(current.artifacts.source_identity.absolutePath).toLowerCase() !== resolve(identity.absolutePath).toLowerCase()) throw new ActionFailure('stale_snapshot', 'document changed'); }
     else if (source.kind !== 'capture') throw new ActionFailure('stale_snapshot', 'source identity unavailable');
     const [elements, capture] = await Promise.all([listElements(window.hwnd, context.signal), captureSurface(window.bbox, context.signal)]);
+    if (isAgentModelVision(vision) && options.uploadScreenshots !== false)
+      return { sourceId: source.sourceId || source.source_id, observedAt: capture.capturedAtUtc, stateVersion: randomUUID(), window, elements, coverage: { extent: 'viewport', complete: false }, usedBackend: `${capture.source}+pixels`, evidenceStatus: 'ok',
+        image: capture.bytes.toString('base64'), mimeType: 'image/png', imageLabel: `Current surface of ${window.title || window.process_name} at ${capture.capturedAtUtc}` };
     const result = vision && options.uploadScreenshots !== false ? await vision([{ dataUrl: `data:image/png;base64,${capture.bytes.toString('base64')}`, label: 'CURRENT SURFACE' }], String(args.question || 'Describe the current surface.'), context.signal) : { text: '', usedBackend: 'vision_unavailable' };
     return { sourceId: source.sourceId || source.source_id, observedAt: capture.capturedAtUtc, stateVersion: randomUUID(), window, elements, text: result.text, coverage: { extent: 'viewport', complete: false }, usedBackend: `${capture.source}+${result.usedBackend}`, evidenceStatus: result.text ? 'ok' : 'degraded' };
   } });
@@ -477,6 +484,9 @@ export function registerLookTool(registry: ToolRegistry, options: PerceptionTool
     const intersect = rectIntersection(box!, frame.surfaceBoundsPx); if (!intersect) return evidence(null, 'error', 'vision', 0, { note: 'box_out_of_bounds' });
     const region = { left: Math.round(intersect[0] - frame.surfaceBoundsPx[0]), top: Math.round(intersect[1] - frame.surfaceBoundsPx[1]), width: Math.round(intersect[2] - intersect[0]), height: Math.round(intersect[3] - intersect[1]) };
     const bytes = await sharp(frame.localArtifact.path).extract(region).png().toBuffer(); lookCalls++;
+    if (isAgentModelVision(vision))
+      return { ...frozenEvidence(snapshot, `Detail image attached (${region.width}x${region.height}px of the frozen frame); read it directly.`), source: 'pixels', usedBackend: 'frozen_frame_pixels',
+        image: bytes.toString('base64'), mimeType: 'image/png', imageLabel: `Historical frozen frame detail captured at ${frame.capturedAtUtc}; not the current screen` };
     const result = await vision([{ dataUrl: `data:image/png;base64,${bytes.toString('base64')}`, label: 'Selected historical detail' }, { path: frame.localArtifact.path, label: `FROZEN_FRAME_CONTEXT same historical frame captured at ${frame.capturedAtUtc}; context only` }], String(args.prompt || args.question || 'Describe the selected image region.'), context.signal);
     return { ...frozenEvidence(snapshot, String(result.text || '')), source: 'vision', usedBackend: result.usedBackend, latency_ms: result.latencyMs };
   } });
