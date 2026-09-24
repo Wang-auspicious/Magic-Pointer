@@ -12,7 +12,7 @@ export type DesktopRecord = Record<string, any>;
 export type Rect = [number, number, number, number];
 export interface DesktopWindow extends DesktopRecord { hwnd: number; pid: number; bbox: Rect; title: string; processStartTime?: string }
 export interface DesktopElement extends DesktopRecord { index: number; hwnd: number; name: string; role: string; rect: Rect; runtime_id: number[]; patterns: string[] }
-export interface DesktopSnapshot { snapshot_id: string; state_id: string; window: DesktopWindow; windows: DesktopWindow[]; elements: DesktopElement[]; root_ref: string; mode: string; surface?: Buffer; markedImage?: Buffer; imageScale?: number; marks?: ObservationMark[] }
+export interface DesktopSnapshot { snapshot_id: string; state_id: string; window: DesktopWindow; windows: DesktopWindow[]; elements: ElementList; root_ref: string; mode: string; surface?: Buffer; markedImage?: Buffer; imageScale?: number; marks?: ObservationMark[] }
 export interface ObservationMark { ref: string; role: string; name: string; imageRect: Rect }
 type SurfaceCapture = (bounds: Rect, signal?: AbortSignal, hwnd?: number) => Promise<{ bytes: Buffer; width: number; height: number; source: string; capturedAtUtc: string }>;
 
@@ -166,7 +166,16 @@ async function desktopInput(params: DesktopRecord, signal?: AbortSignal, allowWa
 }
 export function closeDesktop(): void { host.close(); selectionHost?.kill(); selectionHost = undefined; }
 export async function listWindows(signal?: AbortSignal): Promise<DesktopWindow[]> { return nativeRequest<DesktopWindow[]>('windows', {}, signal); }
-export async function listElements(hwnd: number, signal?: AbortSignal): Promise<DesktopElement[]> { return nativeRequest<DesktopElement[]>('elements', { hwnd }, signal); }
+/** The whole UIA tree of a window; `truncated` says the walk stopped early (row limit, deadline on a hung target, or a mid-walk error) so a missing element is not read as absent. */
+export type ElementList = DesktopElement[] & { truncated?: 'limit' | 'deadline' | 'error' };
+export async function listElements(hwnd: number, signal?: AbortSignal, limit?: number): Promise<ElementList> {
+  const result = await nativeRequest<{ elements: DesktopElement[]; truncated?: ElementList['truncated'] | null }>('elements', { hwnd, ...(limit ? { limit } : {}) }, signal);
+  const elements: ElementList = result.elements;
+  if (result.truncated) elements.truncated = result.truncated;
+  return elements;
+}
+/** One observed element as it is now, found by runtime id; a vanished element rejects with `stale_element`. */
+export async function readElement(element: DesktopElement, signal?: AbortSignal): Promise<DesktopElement> { return nativeRequest<DesktopElement>('element', { element }, signal); }
 export async function captureSurface(bounds: Rect, signal?: AbortSignal, hwnd?: number): Promise<{ bytes: Buffer; width: number; height: number; source: string; capturedAtUtc: string }> {
   const result = await nativeRequest('capture', { bounds, ...(hwnd ? { hwnd } : {}) }, signal);
   return { bytes: Buffer.from(result.png, 'base64'), width: result.width, height: result.height, source: result.source, capturedAtUtc: result.capturedAtUtc };
@@ -254,7 +263,7 @@ function actionEffect(name: string, args: DesktopRecord, session?: DesktopAction
 export class DesktopActionSession {
   readonly snapshots = new Map<string, DesktopSnapshot>();
   readonly roots = new Map<string, number>();
-  readonly observation = { windows: listWindows, elements: listElements };
+  readonly observation = { windows: listWindows, elements: listElements, element: readElement };
   constructor(readonly sessionId: string = randomUUID(), readonly originWindowHwnd?: number) {}
   rootRef(hwnd: number): string { for (const [ref, value] of this.roots) if (value === hwnd) return ref; const ref = `@r${this.roots.size + 1}`; this.roots.set(ref, hwnd); return ref; }
   toScreen(snapshot: DesktopSnapshot, args: DesktopRecord, keys: [string, string] = ['x', 'y']): { x: number; y: number } {
@@ -295,9 +304,9 @@ export class DesktopActionSession {
     const live = await nativeRequest<DesktopWindow>('window', { hwnd: snapshot.window.hwnd }, signal);
     if (!isDeepStrictEqual(identity(live), identity(snapshot.window))) throw new ActionFailure('stale_snapshot', 'window moved, resized, or changed process; call Observe again');
     if (indexes.length) {
-      const elements = await listElements(live.hwnd, signal);
       for (const index of indexes) {
-        const original = snapshot.elements.find(row => row.index === index), current = elements.find(row => row.index === index);
+        const original = snapshot.elements.find(row => row.index === index);
+        const current = original && await this.observation.element(original, signal).catch((error: Error) => { if (/stale_element|element_lookup_timeout|uia_deadline/.test(error.message)) return undefined; throw error; });
         if (!original || !current || !isDeepStrictEqual(fingerprint(original), fingerprint(current))) throw new ActionFailure('stale_snapshot', `element ${index} changed; call Observe again`);
       }
     }
@@ -350,7 +359,8 @@ export class DesktopActionSession {
       const image = markedImage ? { image: markedImage.toString('base64'), mimeType: 'image/png', imageLabel: `${snapshot.window.title || snapshot.window.process_name} (state ${snapshot.state_id}); boxes are labelled with element refs`,
         imageSpace: { scale: snapshot.imageScale, origin: snapshot.window.bbox.slice(0, 2), hint: "click by ref when a box covers the target; otherwise pass the image x/y with coordinate_space:'image'" } } : {};
       const outline = snapshot.elements.slice(0, 120).map(row => ({ ref: `@e${row.index}`, role: row.role, name: row.name, ...(row.value ? { value: String(row.value).slice(0, 200) } : {}), rect: row.rect, ...(row.focused ? { focused: true } : {}), ...(row.enabled === false ? { enabled: false } : {}), ...(row.parent_index ? { parent: `@e${row.parent_index}` } : {}) }));
-      return { ...publicSnapshot, elements: undefined, elementCount: snapshot.elements.length, ...image, outline, usedBackend: markedImage ? 'native_uia+pixels' : 'native_uia' };
+      const truncated = snapshot.elements.truncated ? { elementsTruncated: `UIA walk stopped early (${snapshot.elements.truncated}); an element missing from this state may still exist: use the image or observe again` } : {};
+      return { ...publicSnapshot, elements: undefined, elementCount: snapshot.elements.length, ...truncated, ...image, outline, usedBackend: markedImage ? 'native_uia+pixels' : 'native_uia' };
     }
     if (name === 'launch_app') {
       try { return await nativeRequest('launch', { app: args.app }, signal); }

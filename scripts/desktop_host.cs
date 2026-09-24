@@ -116,17 +116,29 @@ internal static class DesktopHost
         try{bool denied;bool elevated=TokenElevated(process,out denied);return elevated||denied;}finally{CloseHandle(process);}
     }
 
-    static string PatternName(AutomationPattern p) { return p.ProgrammaticName.Replace("PatternIdentifiers.Pattern","").Replace("Identifiers.Pattern",""); }
     static string RuntimeKey(int[] id){return String.Join(".",id);}
     // Elements seen in the latest tree walk, keyed by runtime id; actions resolve through here instead of re-walking the whole subtree.
     static readonly Dictionary<string,AutomationElement> ElementCache=new Dictionary<string,AutomationElement>();
-    static Dictionary<string,object> Element(AutomationElement e,long hwnd,int index,int parent,int depth) {
-        var c=e.Current; var r=c.BoundingRectangle; var runtime=e.GetRuntimeId(); ElementCache[RuntimeKey(runtime)]=e;
+    // One cross-process call per parent: children arrive with every property the row needs, instead of ~15 live round trips per element.
+    // Each cached pattern flag costs the provider a lookup per element (~0.4ms on WPF), so only patterns the runtime reads are fetched; actions still probe live.
+    static readonly Tuple<AutomationProperty,string>[] PatternFlags={
+        Tuple.Create(AutomationElement.IsInvokePatternAvailableProperty,"Invoke"),Tuple.Create(AutomationElement.IsValuePatternAvailableProperty,"Value"),
+        Tuple.Create(AutomationElement.IsTogglePatternAvailableProperty,"Toggle"),Tuple.Create(AutomationElement.IsSelectionItemPatternAvailableProperty,"SelectionItem"),
+        Tuple.Create(AutomationElement.IsExpandCollapsePatternAvailableProperty,"ExpandCollapse"),Tuple.Create(AutomationElement.IsRangeValuePatternAvailableProperty,"RangeValue"),
+        Tuple.Create(AutomationElement.IsScrollPatternAvailableProperty,"Scroll"),Tuple.Create(AutomationElement.IsTextPatternAvailableProperty,"Text")};
+    static CacheRequest TreeCache(){var request=new CacheRequest();
+        foreach(var property in new[]{AutomationElement.RuntimeIdProperty,AutomationElement.NameProperty,AutomationElement.ControlTypeProperty,AutomationElement.AutomationIdProperty,AutomationElement.BoundingRectangleProperty,
+            AutomationElement.IsEnabledProperty,AutomationElement.IsPasswordProperty,AutomationElement.IsOffscreenProperty,AutomationElement.HasKeyboardFocusProperty,ValuePattern.ValueProperty})request.Add(property);
+        foreach(var flag in PatternFlags)request.Add(flag.Item1);return request;}
+    static T Cached<T>(AutomationElement e,AutomationProperty property,T fallback){var value=e.GetCachedPropertyValue(property,true);return value is T?(T)value:fallback;}
+    static Dictionary<string,object> Element(AutomationElement e,long hwnd,int index,int parent,int depth,out int[] runtime) {
+        var r=Cached(e,AutomationElement.BoundingRectangleProperty,System.Windows.Rect.Empty);runtime=Cached(e,AutomationElement.RuntimeIdProperty,new int[0]);bool password=Cached(e,AutomationElement.IsPasswordProperty,false);
+        var patterns=PatternFlags.Where(flag=>Cached(e,flag.Item1,false)).Select(flag=>flag.Item2).ToArray();var role=Cached<ControlType>(e,AutomationElement.ControlTypeProperty,null);
         var row=new Dictionary<string,object>{{"index",index},{"parent_index",parent},{"depth",depth},{"hwnd",hwnd},{"runtime_id",runtime},
-            {"role",c.ControlType.ProgrammaticName.Replace("ControlType.","").ToLowerInvariant()},{"name",c.Name},{"automation_id",c.AutomationId},{"rect",r.IsEmpty?new[]{0,0,0,0}:new[]{(int)r.Left,(int)r.Top,(int)r.Right,(int)r.Bottom}},
-            {"patterns",e.GetSupportedPatterns().Select(PatternName).ToArray()},{"enabled",c.IsEnabled},{"password",c.IsPassword},{"offscreen",c.IsOffscreen},{"focused",c.HasKeyboardFocus}};
-        object p;if(!c.IsPassword&&e.TryGetCurrentPattern(ValuePattern.Pattern,out p))row["value"]=((ValuePattern)p).Current.Value;
-        if(!c.IsPassword&&e.TryGetCurrentPattern(TextPattern.Pattern,out p))row["text"]=((TextPattern)p).DocumentRange.GetText(8192);
+            {"role",role==null?"":role.ProgrammaticName.Replace("ControlType.","").ToLowerInvariant()},{"name",Cached(e,AutomationElement.NameProperty,"")},{"automation_id",Cached(e,AutomationElement.AutomationIdProperty,"")},{"rect",r.IsEmpty?new[]{0,0,0,0}:new[]{(int)r.Left,(int)r.Top,(int)r.Right,(int)r.Bottom}},
+            {"patterns",patterns},{"enabled",Cached(e,AutomationElement.IsEnabledProperty,false)},{"password",password},{"offscreen",Cached(e,AutomationElement.IsOffscreenProperty,false)},{"focused",Cached(e,AutomationElement.HasKeyboardFocusProperty,false)}};
+        if(!password&&patterns.Contains("Value"))row["value"]=Cached(e,ValuePattern.ValueProperty,"");
+        object p;if(!password&&patterns.Contains("Text")&&e.TryGetCurrentPattern(TextPattern.Pattern,out p))row["text"]=((TextPattern)p).DocumentRange.GetText(8192);
         return row;
     }
     // Menus, dropdowns and owned popups are separate top-level windows of the same process; they belong to the observed surface.
@@ -137,16 +149,43 @@ internal static class DesktopHost
             if(owner==hwnd||cls=="#32768"||cls.IndexOf("popup",StringComparison.OrdinalIgnoreCase)>=0||cls.IndexOf("dropdown",StringComparison.OrdinalIgnoreCase)>=0)roots.Insert(0,other);}catch{}return true;},IntPtr.Zero);
         return roots;
     }
-    static object Elements(long hwnd,int limit) {
-        ElementCache.Clear();var rows=new List<object>();var watch=Stopwatch.StartNew();
-        foreach(var rootHwnd in SurfaceRoots(new IntPtr(hwnd))){
-            AutomationElement root;try{root=AutomationElement.FromHandle(rootHwnd);}catch{continue;}
-            var queue=new Queue<Tuple<AutomationElement,int,int>>();queue.Enqueue(Tuple.Create(root,0,0));long owner=rootHwnd.ToInt64();
-            while(queue.Count>0&&rows.Count<limit&&watch.ElapsedMilliseconds<4000){var entry=queue.Dequeue();try{int index=rows.Count+1;rows.Add(Element(entry.Item1,owner,index,entry.Item2,entry.Item3));
-                if(entry.Item3<40){var children=entry.Item1.FindAll(TreeScope.Children,Condition.TrueCondition);for(int i=0;i<children.Count&&queue.Count<limit*2;i++)queue.Enqueue(Tuple.Create(children[i],index,entry.Item3+1));}}catch(ElementNotAvailableException){}catch(NullReferenceException){}}
-        }
-        return rows;
+    const int TreeWalkDeadlineMs=4000;
+    // A named text/button already carries its visible content, and images have none; asking each for children is a round trip per node
+    // (most of a web page) for nothing. Unnamed ones still descend: inline code spans and icon buttons keep their text in children.
+    static bool Leaf(Dictionary<string,object> row){var role=(string)row["role"];return role=="image"||(role=="text"||role=="button")&&!String.IsNullOrWhiteSpace((string)row["name"]);}
+    // Runs on its own MTA thread so a target whose UI thread hangs costs one deadline, not the whole host: the rows read so far are still returned.
+    sealed class TreeWalk {
+        public readonly List<object> Rows=new List<object>();public readonly Dictionary<string,AutomationElement> Found=new Dictionary<string,AutomationElement>();
+        public string Truncated;public bool Abandoned;public Exception Failure;readonly long hwnd;readonly int limit;
+        public TreeWalk(long hwnd,int limit){this.hwnd=hwnd;this.limit=limit;}
+        public void Run(){try{var request=TreeCache();using(request.Activate()){
+            foreach(var rootHwnd in SurfaceRoots(new IntPtr(hwnd))){
+                AutomationElement root;try{root=AutomationElement.FromHandle(rootHwnd).GetUpdatedCache(request);}catch(ElementNotAvailableException){continue;}
+                var queue=new Queue<Tuple<AutomationElement,int,int>>();queue.Enqueue(Tuple.Create(root,0,0));long owner=rootHwnd.ToInt64();
+                while(queue.Count>0){var entry=queue.Dequeue();int index;
+                    lock(this){if(Abandoned)return;if(Rows.Count>=limit){Truncated="limit";return;}index=Rows.Count+1;}
+                    try{int[] runtime;var row=Element(entry.Item1,owner,index,entry.Item2,entry.Item3,out runtime);
+                        lock(this){if(Abandoned)return;Rows.Add(row);Found[RuntimeKey(runtime)]=entry.Item1;}
+                        if(entry.Item3<40&&!Leaf(row)){var children=entry.Item1.FindAll(TreeScope.Children,Condition.TrueCondition);for(int i=0;i<children.Count;i++)queue.Enqueue(Tuple.Create(children[i],index,entry.Item3+1));}}
+                    catch(ElementNotAvailableException){}}
+            }}}catch(Exception e){lock(this)Failure=e;}}
     }
+    static object Elements(long hwnd,int limit) {
+        var walk=new TreeWalk(hwnd,limit);var watch=Stopwatch.StartNew();var thread=new Thread(walk.Run){IsBackground=true};thread.SetApartmentState(ApartmentState.MTA);thread.Start();
+        bool finished=false;try{while(!(finished=thread.Join(25))&&watch.ElapsedMilliseconds<TreeWalkDeadlineMs)CheckCancellation();}
+        finally{lock(walk){walk.Abandoned=!finished;}}
+        lock(walk){if(walk.Failure!=null&&walk.Rows.Count==0)throw walk.Failure;
+            ElementCache.Clear();foreach(var pair in walk.Found)ElementCache[pair.Key]=pair.Value;
+            return new{elements=walk.Rows.ToArray(),truncated=!finished?"deadline":walk.Failure!=null?"error":walk.Truncated,elapsedMs=watch.ElapsedMilliseconds,usedBackend="uia_cache_request"};}
+    }
+    // Same isolation for a single-element read: a hung target fails this request, not the host.
+    static T OnUiaThread<T>(Func<T> work,int deadlineMs){T result=default(T);Exception failure=null;
+        var thread=new Thread(()=>{try{result=work();}catch(Exception e){failure=e;}}){IsBackground=true};thread.SetApartmentState(ApartmentState.MTA);thread.Start();var watch=Stopwatch.StartNew();
+        while(!thread.Join(25)){CheckCancellation();if(watch.ElapsedMilliseconds>=deadlineMs)throw new Exception("uia_deadline");}
+        if(failure!=null)throw failure;return result;}
+    // The observed row as it is now, found by runtime id; lets an action check its one target instead of re-walking the whole tree.
+    static object ReadElement(IDictionary<string,object> row){return OnUiaThread(()=>{var e=FindElement(row).GetUpdatedCache(TreeCache());int[] runtime;
+        return Element(e,Convert.ToInt64(Get(row,"hwnd",0)),Num(row,"index"),Num(row,"parent_index"),Num(row,"depth"),out runtime);},3500);}
     static AutomationElement FindElement(IDictionary<string,object> row){long hwnd=Convert.ToInt64(Get(row,"hwnd",0));var expected=Arr(Get(row,"runtime_id")).Select(Convert.ToInt32).ToArray();
         if(expected.Length==0)throw new Exception("missing_runtime_id");
         AutomationElement cached;if(ElementCache.TryGetValue(RuntimeKey(expected),out cached)){try{if(cached.GetRuntimeId().SequenceEqual(expected))return cached;}catch(ElementNotAvailableException){}}
@@ -252,7 +291,7 @@ internal static class DesktopHost
     static object ImageOperation(IDictionary<string,object> a){using(var image=Image.FromFile(Str(a,"path"))){var region=Arr(Get(a,"rect")).Select(Convert.ToInt32).ToArray();var r=region.Length==4?new Rectangle(region[0],region[1],region[2],region[3]):new Rectangle(0,0,image.Width,image.Height);r.Intersect(new Rectangle(0,0,image.Width,image.Height));if(r.Width<1||r.Height<1)throw new Exception("empty_image_region");
         using(var output=new Bitmap(r.Width,r.Height)){using(var graphics=Graphics.FromImage(output)){graphics.DrawImage(image,new Rectangle(0,0,r.Width,r.Height),r,GraphicsUnit.Pixel);foreach(var raw in Arr(Get(a,"strokes"))){var points=Arr(raw).Select(v=>Obj(v)).Select(v=>new PointF(Num(v,"x")-r.X,Num(v,"y")-r.Y)).ToArray();if(points.Length>1)using(var pen=new Pen(Color.FromArgb(230,60,140,255),3))graphics.DrawLines(pen,points);}}
             string target=Str(a,"output");if(target!=""){Directory.CreateDirectory(Path.GetDirectoryName(target));output.Save(target,ImageFormat.Png);}using(var stream=new MemoryStream()){output.Save(stream,ImageFormat.Png);return new{path=target,png=Convert.ToBase64String(stream.ToArray()),width=output.Width,height=output.Height,usedBackend="native_image"};}}}}
-    static object Dispatch(string method,Dictionary<string,object> a){if(method=="release_input")return ReleaseInput();if(method=="ping")return new{ok=true};if(method=="resolve_keys")return KeyNames(Str(a,"keys")).SelectMany(KeyCodes).Distinct().Select(k=>(int)k).ToArray();if(method=="input_idle")return new{idleMs=(long)RawIdleMs(),userIdleMs=(long)UserIdleMs(),usedBackend="win32_last_input"};if(method=="windows")return Windows();if(method=="window")return Window(new IntPtr(Convert.ToInt64(Get(a,"hwnd",0))));if(method=="elements")return Elements(Convert.ToInt64(Get(a,"hwnd",0)),Num(a,"limit",400));if(method=="uia")return Uia(a);if(method=="input")return Act(a);if(method=="capture")return Capture(a);if(method=="image")return ImageOperation(a);if(method=="cursor"){Point p;GetCursorPos(out p);return new{x=p.x,y=p.y,hwnd=RootAt(p.x,p.y).ToInt64(),foreground=GetForegroundWindow().ToInt64()};}if(method=="launch")return WithInputOwnership(()=>{var child=Process.Start(new ProcessStartInfo(Str(a,"app")){UseShellExecute=true});return new{ok=child!=null,pid=child==null?0:child.Id,usedBackend="shell_execute"};});throw new Exception("unknown_method:"+method);}
+    static object Dispatch(string method,Dictionary<string,object> a){if(method=="release_input")return ReleaseInput();if(method=="ping")return new{ok=true};if(method=="resolve_keys")return KeyNames(Str(a,"keys")).SelectMany(KeyCodes).Distinct().Select(k=>(int)k).ToArray();if(method=="input_idle")return new{idleMs=(long)RawIdleMs(),userIdleMs=(long)UserIdleMs(),usedBackend="win32_last_input"};if(method=="windows")return Windows();if(method=="window")return Window(new IntPtr(Convert.ToInt64(Get(a,"hwnd",0))));if(method=="elements")return Elements(Convert.ToInt64(Get(a,"hwnd",0)),Num(a,"limit",3000));if(method=="element")return ReadElement(Obj(Get(a,"element")));if(method=="uia")return Uia(a);if(method=="input")return Act(a);if(method=="capture")return Capture(a);if(method=="image")return ImageOperation(a);if(method=="cursor"){Point p;GetCursorPos(out p);return new{x=p.x,y=p.y,hwnd=RootAt(p.x,p.y).ToInt64(),foreground=GetForegroundWindow().ToInt64()};}if(method=="launch")return WithInputOwnership(()=>{var child=Process.Start(new ProcessStartInfo(Str(a,"app")){UseShellExecute=true});return new{ok=child!=null,pid=child==null?0:child.Id,usedBackend="shell_execute"};});throw new Exception("unknown_method:"+method);}
     [STAThread] public static int Main(){try{SetProcessDpiAwarenessContext(new IntPtr(-4));}catch{SetProcessDPIAware();}Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);string line;
         while((line=Console.ReadLine())!=null){object id=null;try{var request=Json.Deserialize<Dictionary<string,object>>(line);id=Get(request,"id");var args=Obj(Get(request,"params"));CancelPath=Str(args,"cancelPath");CheckCancellation();var result=Str(request,"method")=="desktop_items"?ShellItems():Dispatch(Str(request,"method"),args);Console.WriteLine(Json.Serialize(new{id=id,result=result}));}catch(Exception e){Console.WriteLine(Json.Serialize(new{id=id,error=new{code=e.Message,message=e.ToString()}}));}finally{CancelPath="";}}
         foreach(var key in HeldKeys.ToArray())Key(key,true);HeldKeys.Clear();return 0;}
