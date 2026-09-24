@@ -954,6 +954,8 @@ const ChatView = (() => {
     conversationId?: string;
     turnIndex?: number;
     artifacts?: Array<Record<string, unknown>>;
+    timingMs?: number;
+    pendingInput?: unknown;
   }
 
   interface TurnChip {
@@ -1296,8 +1298,10 @@ const ChatView = (() => {
       attach(bodyHost, markdownRenderer.render(turn.answer));
     }
 
-    if (times.length && doneTimes.length) {
-      const elapsed = Math.max(0, Math.max(...doneTimes) - Math.min(...times));
+    // A turn waiting on the user has not finished; its footer comes with the reply.
+    const timingMs = Number(turn.timingMs) || 0;
+    if (!turn.pendingInput && times.length && doneTimes.length) {
+      const elapsed = timingMs > 0 ? timingMs : Math.max(0, Math.max(...doneTimes) - Math.min(...times));
       attach(bodyHost, runMetaNode(formatRunMeta(elapsed, totalTokens || null)));
     }
 

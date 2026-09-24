@@ -121,7 +121,7 @@ function messages(events: Event[]): Message[] {
 }
 
 export function normalizedInput(value: Data): Data {
-  const questions = array(value.questions || [{ question: value.question, options: value.options }]).map(raw => {
+  const questions = array(value.questions || [{ question: value.question, options: value.options, header: value.header, multiSelect: value.multiSelect }]).map(raw => {
     const item = object(raw);
     const question = text(item.question).trim();
     const options = array(item.options).map(rawOption => {
@@ -137,7 +137,9 @@ export function normalizedInput(value: Data): Data {
   });
   if (!questions.length || questions.length > 4 || new Set(questions.map(question => question.question)).size !== questions.length) throw new Error('invalid questions');
   const pending: Data = { question: questions[0].question, options: questions[0].options.map(option => option.label) };
-  if (value.questions) pending.questions = questions;
+  const detailed = questions.some(question => question.header || question.multiSelect
+    || question.options.some(option => option.description || option.preview));
+  if (value.questions || detailed) pending.questions = questions;
   if (value.kind === 'plan') {
     const plan = text(value.plan);
     if (!plan.trim() || plan.length > 32000) throw new Error('invalid plan');

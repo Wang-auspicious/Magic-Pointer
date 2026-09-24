@@ -60,7 +60,12 @@
 .mp-chat-flow {
   display: flex;
   flex-direction: column;
-  gap: 38px;
+  gap: 20px;
+}
+
+/* A reply sits close under its prompt; a new prompt opens a new beat. */
+.mp-chat-flow > .mp-chat-user:not(:first-child) {
+  margin-top: 12px;
 }
 
 .mp-chat-user {
@@ -498,6 +503,8 @@
 }
 
 .mp-chat-tool-group-header {
+  /* Hover padding bleeds outward so the label lines up with the prose. */
+  margin-inline: -2px;
   transform: translateY(2px);
 }
 

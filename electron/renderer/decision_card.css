@@ -1,6 +1,10 @@
 .mpw-perm-ask { padding-bottom: 12px; }
 #stream > .mpw-perm-ask { padding-block: 16px 0; }
-#stream > .mpw-perm-ask .mp-decision-card { max-width: 480px; margin-inline: auto; }
+/* In the transcript the card is part of the reply column, edge to edge with the prose. */
+#stream > .mpw-perm-ask .mp-decision-card { width: 100%; font-size: 14px; line-height: 20px; }
+#stream > .mpw-perm-ask .mp-decision-card[data-presentation="inline"] .mp-decision-question,
+#stream > .mpw-perm-ask .mp-decision-card[data-presentation="inline"] .mp-decision-option-description,
+#stream > .mpw-perm-ask .mp-decision-card[data-presentation="inline"] .mp-decision-other-label { font-size: 14px; line-height: 20px; }
 .mp-decision-card {
   container-type: inline-size;
   display: flex;
@@ -195,3 +199,20 @@
 .mp-decision-card[data-presentation="inline"][data-kind="question"] .mp-decision-actions { justify-content: flex-end; gap: 8px; margin: 0; padding: 8px 12px 12px; }
 .mp-decision-card[data-presentation="inline"] .mp-decision-hint,
 .mp-decision-card[data-presentation="inline"] .mp-decision-error { padding: 6px 12px; }
+
+.mp-decision-plan {
+  max-height: min(420px, 50vh);
+  overflow: auto;
+  padding: 2px 2px 0;
+  font-size: 14px;
+  line-height: 21px;
+}
+.mp-decision-plan > :first-child { margin-top: 0; }
+.mp-decision-plan > :last-child { margin-bottom: 0; }
+.mp-decision-plan :is(h1, h2, h3) { margin: 14px 0 6px; font-size: 15px; line-height: 22px; font-weight: 600; }
+.mp-decision-plan :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
+.mp-decision-plan li + li { margin-top: 3px; }
+.mp-decision-plan p { margin: 6px 0; }
+.mp-decision-card[data-kind="plan"] { gap: 10px; padding: 14px 16px; }
+.mp-decision-card[data-kind="plan"] .mp-decision-actions { margin-top: 4px; }
+.mp-decision-card[data-kind="permission"][data-presentation="inline"] { padding: 14px 16px; }

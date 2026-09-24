@@ -295,8 +295,13 @@ declare global {
     };
     if (request.kind === 'plan') {
       card.setAttribute('aria-label', 'Plan approval');
-      card.append(element('div', 'mp-decision-heading', 'Review plan'),
-        element('pre', 'mp-decision-command', request.plan || ''));
+      const heading = element('div', 'mp-decision-heading');
+      heading.append(element('span', 'mp-decision-tool', 'Plan'), element('span', 'mp-decision-caption', 'Ready for review'));
+      // chat_markdown.js is a classic script: its const is a global binding, not a globalThis property.
+      const body = typeof ChatMarkdown !== 'undefined' ? ChatMarkdown.render(request.plan || '') as unknown as HTMLElement
+        : element('pre', 'mp-decision-command', request.plan || '');
+      body.classList.add('mp-decision-plan');
+      card.append(heading, body);
       const actions = element('div', 'mp-decision-actions');
       for (const [label, decision] of [['Keep planning', 'deny'], ['Approve · manual', 'once'], ['Approve · accept edits', 'grant']] as const) {
         const action = button(label, () => submit({ decision }), decision === 'grant' ? 'is-primary' : '');

@@ -2285,7 +2285,12 @@ async function openConversation(id: string) {
 function syncConversationPendingInput(turns: MagicPointerTurn[]) {
   const last = turns.at(-1);
   const pending = last && !last.liveProgress ? last.pendingInput : null;
-  const options = Array.isArray(pending?.options) ? pending.options.map(String).filter(Boolean) : [];
+  // Older saved turns kept option objects in the flat list; read their labels, keep their descriptions.
+  const rawOptions: unknown[] = Array.isArray(pending?.options) ? pending.options : [];
+  const optionObjects = rawOptions.map(option => option && typeof option === 'object'
+    ? { ...(option as Record<string, unknown>), label: String((option as Record<string, unknown>).label || '') }
+    : { label: String(option ?? '') }).filter(option => option.label) as MagicPointerDecisionQuestion['options'];
+  const options = optionObjects.map(option => option.label);
   pendingPermissionAsk = null;
   pendingAskInput = null;
   if (pending?.kind === 'permission' && String(pending.tool || '').trim()) {
@@ -2299,8 +2304,10 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
       options: options.length ? options : undefined,
     };
   } else if (pending && (pending.questions?.length || pending.question)) {
-    pendingAskInput = { ...pending, requestId: pending.requestId || pendingToolRequestId(last),
-      question: String(pending.question || '需要你的决定'), options };
+    const question = String(pending.question || '需要你的决定');
+    const detailed = optionObjects.some(option => option.description || option.preview);
+    pendingAskInput = { ...pending, requestId: pending.requestId || pendingToolRequestId(last), question, options,
+      ...(!pending.questions?.length && detailed ? { questions: [{ question, options: optionObjects }] } : {}) };
   }
   renderPermissionAsk();
 }
