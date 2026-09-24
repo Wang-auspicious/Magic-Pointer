@@ -720,14 +720,14 @@ export async function handleSession(payload: Data, userDataDir: string): Promise
   if (['status', 'usage', 'pending'].includes(action)) return handleSessionRead(payload, userDataDir);
   try {
     const session = await EventSession.open(userDataDir, text(payload.sessionId), false);
-    if (action === 'subagent-respond') { const { respondToAgent } = await import('./agent_background.js'); return await respondToAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.requestId), object(payload.response)); }
-    if (action === 'subagent-steer') { const { steerAgent } = await import('./agent_background.js'); return await steerAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.text)); }
+    if (action === 'subagent-respond') { const { respondToAgent } = require('./agent_background') as typeof import('./agent_background'); return await respondToAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.requestId), object(payload.response)); }
+    if (action === 'subagent-steer') { const { steerAgent } = require('./agent_background') as typeof import('./agent_background'); return await steerAgent(userDataDir, text(payload.parentSessionId), session.id, text(payload.text)); }
     if (action === 'fork') {
       const child = await session.fork(userDataDir, text(payload.childSessionId), payload.throughTurn === undefined ? undefined : Number(payload.throughTurn));
       return { ok: true, sessionId: child.id, taskContext: { taskId: child.id, sources: taskSources(child.events), references: taskReferences(child.events), referenceRevision: referenceRevision(child.events) } };
     }
     if (action === 'cancel') {
-      const { readAgentStatus, stopAgent } = await import('./agent_background.js');
+      const { readAgentStatus, stopAgent } = require('./agent_background') as typeof import('./agent_background');
       if (await readAgentStatus(userDataDir, session.id)) return await stopAgent(userDataDir, text(payload.parentSessionId), session.id);
       if (payload.parentSessionId && session.events[0]?.data.parentSessionId !== payload.parentSessionId) throw new Error('subagent_parent_mismatch');
       if (session.openTurn === null) return { ok: false, error: 'no_open_turn' };
