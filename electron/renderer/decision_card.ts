@@ -303,10 +303,13 @@ declare global {
       body.classList.add('mp-decision-plan');
       card.append(heading, body);
       const actions = element('div', 'mp-decision-actions');
+      const approvals = element('div', 'mp-decision-allow');
       for (const [label, decision] of [['Keep planning', 'deny'], ['Approve · manual', 'once'], ['Approve · accept edits', 'grant']] as const) {
         const action = button(label, () => submit({ decision }), decision === 'grant' ? 'is-primary' : '');
-        action.dataset.decision = decision; actions.append(action);
+        action.dataset.decision = decision;
+        (decision === 'deny' ? actions : approvals).append(action);
       }
+      actions.append(approvals);
       card.append(actions);
     } else if (request.kind === 'permission') {
       const head = element('div', 'mp-decision-heading');
@@ -365,6 +368,7 @@ declare global {
             : [index];
           if (!current.multiSelect) { draft.custom[draft.page] = ''; draft.other[draft.page] = false; }
           paint(host, view);
+          host.querySelector<HTMLButtonElement>(`[data-option-index="${index}"]`)?.focus({ preventScroll: true });
         }, `mp-decision-option${selected ? ' is-selected' : ''}`);
         row.dataset.optionIndex = String(index);
         row.setAttribute('role', current.multiSelect ? 'checkbox' : 'radio');

@@ -1116,6 +1116,12 @@ const ChatView = (() => {
     }
     const explicit = chips.find((chip) => typeof chip.groupLabel === 'string' && chip.groupLabel.trim());
     if (explicit?.groupLabel) return explicit.groupLabel.trim();
+    const pending = chips.filter(chip => chip.result === undefined);
+    if (pending.length) {
+      const completed = chips.filter(chip => chip.result !== undefined);
+      const active = pending.length === 1 ? pending[0].name : `${pending.length} tools`;
+      return `Running ${active}` + (completed.length ? ` · ${toolGroupLabel(completed)}` : '');
+    }
     const counts = new Map<ToolVariant, number>();
     const failures = new Map<ToolVariant, number>();
     for (const chip of chips) {
@@ -1300,7 +1306,7 @@ const ChatView = (() => {
 
     // A turn waiting on the user has not finished; its footer comes with the reply.
     const timingMs = Number(turn.timingMs) || 0;
-    if (!turn.pendingInput && times.length && doneTimes.length) {
+    if (!turn.pendingInput && (timingMs > 0 || times.length && doneTimes.length)) {
       const elapsed = timingMs > 0 ? timingMs : Math.max(0, Math.max(...doneTimes) - Math.min(...times));
       attach(bodyHost, runMetaNode(formatRunMeta(elapsed, totalTokens || null)));
     }
@@ -1494,6 +1500,8 @@ const ChatView = (() => {
             : activeTools ? 'Running tools' : snapshot.answer ? 'Writing' : 'Thinking';
           const statusLabel = traceStatus.querySelector('.mp-chat-turn-status-label');
           if (statusLabel && statusLabel.textContent !== statusText) statusLabel.textContent = statusText;
+          statusLabel?.setAttribute('data-quiet', String(statusText === 'Thinking'));
+          traceStatus.setAttribute('aria-label', statusText);
           desired.push(traceStatus);
           for (const child of Array.from(host.children)) if (!desired.includes(child as HTMLElement)) child.remove();
           desired.forEach((node, index) => { if (host.children[index] !== node) host.insertBefore(node, host.children[index] || null); });
@@ -1524,6 +1532,7 @@ const ChatView = (() => {
               const label = liveStatusLabel(String(record.phase || ''), (record.fields || {}) as Record<string, unknown>);
               const copy = row.node.querySelector('.mp-chat-turn-status-label');
               if (copy && copy.textContent !== label) copy.textContent = label;
+              copy?.setAttribute('data-quiet', String(label === 'Thinking'));
               row.node.setAttribute('aria-label', label);
             } else {
               const replacement = liveActivityNode(record, scope, options) as HTMLElement;

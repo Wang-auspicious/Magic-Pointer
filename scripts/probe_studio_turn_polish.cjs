@@ -38,6 +38,30 @@ app.whenReady().then(async () => {
       const meta = document.querySelector('#stream .mp-chat-run-meta');
       check(meta && meta.textContent.includes('1m 7s'), 'finished turn footer ignores the real turn duration: ' + meta?.textContent);
 
+      const plain = document.createElement('div');
+      document.querySelector('.mp-chat-flow').append(plain);
+      ChatView.createLiveTurn(plain, 'plain#0').finish({ answer: 'A normal answer.', timingMs: 12500 });
+      check(plain.querySelector('.mp-chat-run-meta')?.textContent.includes('13s'),
+        'a completed answer without tools loses its recorded duration');
+      plain.remove();
+
+      const live = document.createElement('div');
+      document.querySelector('.mp-chat-flow').append(live);
+      const renderer = ChatView.createLiveTurn(live, 'live-status#0', { taskPanel: true });
+      const messages = [{ kind: 'message', turn: 1, reasoning: 'Reading the current interface.', state: 'running' }];
+      renderer.update({ trajectory: messages });
+      const running = [...messages, ...trajectory.slice(1, 2),
+        { kind: 'tool', name: 'Bash', callId: 'running-command', text: JSON.stringify({ command: 'npm test' }), state: 'running' }];
+      renderer.update({ trajectory: running });
+      const liveStatus = live.querySelector('.mp-chat-turn-status');
+      const statusLabel = liveStatus.querySelector('.mp-chat-turn-status-label');
+      check(statusLabel.textContent === 'Running tools' && getComputedStyle(statusLabel).position !== 'absolute',
+        'the active tool status is still visually hidden after thinking');
+      check(liveStatus.getAttribute('aria-label') === 'Running tools', 'the live status accessible label is stale');
+      check(!live.querySelector('.mp-chat-tool-group-title').textContent.includes('Ran 1 command'),
+        'the running command is already described as completed');
+      live.remove();
+
       const bubble = document.querySelector('#stream .mp-chat-bubble').getBoundingClientRect();
       const assistant = document.querySelector('#stream .mp-chat-flow-item').getBoundingClientRect();
       check(assistant.top - bubble.bottom <= 56, 'user prompt and reply are too far apart: ' + Math.round(assistant.top - bubble.bottom));
@@ -62,6 +86,12 @@ app.whenReady().then(async () => {
       check(Math.abs(card.left - column.left) <= 1 && Math.abs(card.width - column.width) <= 1,
         'question card is not aligned to the transcript column: ' + JSON.stringify([card.left, card.width, column.left, column.width]));
 
+      const option = host.querySelector('[data-option-index="0"]');
+      option.focus(); option.click();
+      check(host.querySelector('[data-option-index="0"]').getAttribute('aria-checked') === 'true'
+        && document.activeElement === host.querySelector('[data-option-index="0"]'),
+        'selecting an answer loses keyboard focus when the card repaints');
+
       stored.turns[0].pendingInput = { requestId: 'p1', kind: 'plan', tool: 'ExitPlanMode',
         plan: '# Polish plan\\n\\n1. Fix the question card\\n2. Verify **both** themes', question: 'Approve?', options: ['Manual', 'Accept edits', 'Keep planning'] };
       await openConversation(stored.id);
@@ -70,7 +100,33 @@ app.whenReady().then(async () => {
         'plan approval shows raw markdown instead of a rendered plan');
       return failures;
     })()`);
+    if (failures.length) console.error(failures.join('\n'));
+    await new Promise(resolve => setTimeout(resolve, 200));
     fs.writeFileSync(path.join(output, 'plan.png'), (await win.webContents.capturePage()).toPNG());
+    await win.setContentSize(720, 480);
+    failures.push(...await win.webContents.executeJavaScript(`(async () => {
+      const failures = [];
+      const host = document.getElementById('composer-permission-ask');
+      setInspector(true, 'tasks');
+      const planText = '# Delivery plan\\n\\n' + Array.from({ length: 18 }, (_, i) =>
+        (i + 1) + '. Review the conversation and preserve the existing task state.').join('\\n');
+      DecisionCard.render(host, { key: 'narrow-plan', kind: 'plan', presentation: 'inline', plan: planText }, () => {});
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      document.getElementById('stream').scrollTop = document.getElementById('stream').scrollHeight;
+      const card = host.querySelector('.mp-decision-card');
+      const actions = card.querySelector('.mp-decision-actions');
+      const bounds = card.getBoundingClientRect();
+      const buttons = [...actions.querySelectorAll('button')];
+      if (card.scrollWidth > card.clientWidth + 1 || buttons.some(button => {
+        const rect = button.getBoundingClientRect();
+        return rect.right > bounds.right || rect.left < bounds.left || button.scrollHeight > button.clientHeight + 1;
+      })) failures.push('narrow plan actions overflow or clip their labels');
+      if (actions.getBoundingClientRect().bottom > bounds.bottom + 1)
+        failures.push('long plan pushes its approval actions out of view');
+      return failures;
+    })()`));
+    await new Promise(resolve => setTimeout(resolve, 200));
+    fs.writeFileSync(path.join(output, 'plan-narrow.png'), (await win.webContents.capturePage()).toPNG());
     if (failures.length) { console.error(failures.join('\n')); process.exitCode = 1; }
   } catch (error) {
     console.error(error); process.exitCode = 1;
