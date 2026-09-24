@@ -135,6 +135,14 @@ function terminalEvidenceText(terminal: BoundedTerminalEvidence): string {
   return `Terminal command: ${terminal.command || 'not observed'}\nExit code observed: ${terminal.exitCodeObserved ? terminal.exitCode : 'not observed'}\nError window:\n${terminal.windowText}`;
 }
 
+/** Failed requests and console errors observed by DevTools, as plain lines the agent can reason about. */
+function pageFailureText(context: Json): string {
+  const browser = record(record(context.artifacts).browser_context);
+  const network = array<Json>(browser.networkFailures).slice(0, 12).map(item => `- ${String(item.errorText ?? '').slice(0, 300)} ${String(item.url ?? '').slice(0, 500)} (${String(item.source ?? '')})`);
+  const consoleErrors = array<Json>(browser.consoleErrors).slice(0, 8).map(item => `- ${String(item.text ?? '').slice(0, 500)}${item.url ? ` at ${String(item.url).slice(0, 300)}${item.line != null ? `:${item.line}` : ''}` : ''}`);
+  return [network.length ? `Page network failures:\n${network.join('\n')}` : '', consoleErrors.length ? `Page console errors:\n${consoleErrors.join('\n')}` : ''].filter(Boolean).join('\n');
+}
+
 export function buildInputArtifact(
   payload: Json,
   sources: SourceRef[],
@@ -386,7 +394,7 @@ export async function prepareTaskContext(
         hwnd: window.hwnd,
         processName: window.process_name ?? window.processName,
         frameLeaseId,
-        content: terminal ? terminalEvidenceText(terminal) : content,
+        content: terminal ? terminalEvidenceText(terminal) : [content, pageFailureText(context)].filter(Boolean).join('\n\n'),
         ...(terminal ? { terminalEvidence: terminal } : {}),
         locators: artifacts.locators,
         ...(context.app === 'powerpoint' && Array.isArray(artifacts.shapes)

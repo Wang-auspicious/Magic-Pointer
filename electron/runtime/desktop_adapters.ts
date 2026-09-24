@@ -95,21 +95,53 @@ export class FigmaClient {
   }
 }
 
-export class CdpConnection {
+export interface CdpEventSource { onEvent(handler: (method: string, params: DesktopRecord) => void): void; request(method: string, params?: DesktopRecord): Promise<DesktopRecord> }
+export class CdpConnection implements CdpEventSource {
   private sequence = 0;
   private pending = new Map<number, { accept(value: DesktopRecord): void; reject(error: Error): void }>();
+  private listeners: ((method: string, params: DesktopRecord) => void)[] = [];
   private socket: WebSocket;
   readonly opened: Promise<void>;
   constructor(url: string, readonly signal?: AbortSignal) {
     this.socket = new WebSocket(url);
     this.opened = new Promise((accept, reject) => { this.socket.addEventListener('open', () => accept(), { once: true }); this.socket.addEventListener('error', () => reject(new Error('cdp_connection_failed')), { once: true }); });
-    this.socket.addEventListener('message', event => { const data = JSON.parse(String(event.data)); const pending = this.pending.get(data.id); if (!pending) return; this.pending.delete(data.id); if (data.error) pending.reject(new Error(data.error.message)); else pending.accept(data.result); });
+    this.socket.addEventListener('message', event => { const data = JSON.parse(String(event.data));
+      if (data.method && data.id === undefined) { for (const listener of this.listeners) listener(String(data.method), data.params || {}); return; }
+      const pending = this.pending.get(data.id); if (!pending) return; this.pending.delete(data.id); if (data.error) pending.reject(new Error(data.error.message)); else pending.accept(data.result); });
     this.socket.addEventListener('close', () => { for (const pending of this.pending.values()) pending.reject(new Error('cdp_connection_closed')); this.pending.clear(); });
     signal?.addEventListener('abort', () => this.close(), { once: true });
   }
-  async request(method: string, params: DesktopRecord): Promise<DesktopRecord> { await this.opened; this.signal?.throwIfAborted(); const id = ++this.sequence; return new Promise((accept, reject) => { this.pending.set(id, { accept, reject }); this.socket.send(JSON.stringify({ id, method, params })); }); }
+  onEvent(handler: (method: string, params: DesktopRecord) => void): void { this.listeners.push(handler); }
+  async request(method: string, params: DesktopRecord = {}): Promise<DesktopRecord> { await this.opened; this.signal?.throwIfAborted(); const id = ++this.sequence; return new Promise((accept, reject) => { this.pending.set(id, { accept, reject }); this.socket.send(JSON.stringify({ id, method, params })); }); }
   close(): void { this.socket.close(); }
 }
+const NETWORK_ERROR = /net::ERR_|failed to load resource|networkerror|http error|status (?:4|5)\d\d/i;
+/**
+ * What went wrong on the page, from DevTools: failed requests, network log lines and HTTP errors seen by
+ * resource timing, plus JavaScript console errors. Log.enable replays entries buffered before we attached.
+ */
+export async function collectDevtoolsFailures(connection: CdpEventSource, resourceFailures: DesktopRecord[] = [], drainMs = 180): Promise<{ networkFailures: DesktopRecord[]; consoleErrors: DesktopRecord[]; uncertainty: string[] }> {
+  const failures: DesktopRecord[] = [], consoleErrors: DesktopRecord[] = [], urls = new Map<string, string>();
+  const stamp = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? new Date(value).toISOString() : new Date().toISOString();
+  connection.onEvent((method, params) => {
+    if (method === 'Network.requestWillBeSent') { const id = String(params.requestId || ''); if (id) urls.set(id, String(params.request?.url || '')); }
+    else if (method === 'Network.loadingFailed') { const id = String(params.requestId || ''); failures.push({ url: urls.get(id) || '', errorText: String(params.errorText || ''), source: 'network.loadingFailed', timestamp: new Date().toISOString(), requestId: id }); }
+    else if (method === 'Log.entryAdded') {
+      const entry = params.entry || {}, text = String(entry.text || '');
+      if (String(entry.source || '').toLowerCase() === 'network' || NETWORK_ERROR.test(text)) failures.push({ url: String(entry.url || ''), errorText: text, source: 'devtools_log', timestamp: stamp(entry.timestamp) });
+      else if (entry.level === 'error') consoleErrors.push({ text: text.slice(0, 2000), url: String(entry.url || ''), line: entry.lineNumber ?? null, source: String(entry.source || ''), timestamp: stamp(entry.timestamp) });
+    }
+  });
+  await connection.request('Network.enable');
+  await connection.request('Log.enable');
+  await delay(drainMs);
+  for (const resource of resourceFailures.slice(0, 20)) failures.push({ url: String(resource.url || ''), errorText: `HTTP ${Number(resource.responseStatus || 0)}`, status: resource.responseStatus ?? null, source: 'resource_timing', timestamp: '' });
+  const seen = new Set<string>(), networkFailures = failures.slice(-40).filter(item => { const key = `${item.url}\n${item.errorText}\n${item.source}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(-20);
+  const consoleSeen = new Set<string>();
+  return { networkFailures, consoleErrors: consoleErrors.filter(item => !consoleSeen.has(item.text) && !!consoleSeen.add(item.text)).slice(-20),
+    uncertainty: networkFailures.length ? [] : ['no_network_failure_observed_in_devtools_log_or_resource_timing'] };
+}
+
 export async function evaluateBrowser(endpoint: string, targetId: string, expression: string, signal?: AbortSignal): Promise<DesktopRecord> {
   const timeout = AbortSignal.timeout(12000); const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(`${endpoint.replace(/\/$/, '')}/json/list`, { signal: combined });
@@ -204,7 +236,18 @@ export async function readBrowserSelection(window: DesktopRecord, request: Deskt
     : [];
   if (bound.length !== 1) throw new Error('browser_target_ambiguous');
   const { result, page, endpoint, version } = bound[0]; const epoch = result.page?.documentEpoch || result.documentEpoch;
-  const browserContext = { ...result, provenance: { ...result.provenance, endpoint, browserInstanceId: endpoint, browserProcessIdentity: version.webSocketDebuggerUrl, targetId: page.id, documentEpoch: epoch, structural: true } };
+  const { resourceFailures = [], ...dom } = result;
+  let failures: DesktopRecord = { networkFailures: [], consoleErrors: [], uncertainty: ['devtools_failure_probe_unavailable'] };
+  if (page.webSocketDebuggerUrl) {
+    const timeout = signal ? AbortSignal.any([signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500);
+    const connection = new CdpConnection(String(page.webSocketDebuggerUrl), timeout);
+    try { failures = await collectDevtoolsFailures(connection, Array.isArray(resourceFailures) ? resourceFailures : []); }
+    catch { signal?.throwIfAborted(); }
+    finally { connection.close(); }
+  }
+  const browserContext = { ...dom, networkFailures: failures.networkFailures, consoleErrors: failures.consoleErrors, uncertainty: [...(Array.isArray(dom.uncertainty) ? dom.uncertainty : []), ...failures.uncertainty],
+    provenance: { ...result.provenance, endpoint, browserInstanceId: endpoint, browserProcessIdentity: version.webSocketDebuggerUrl, targetId: page.id, documentEpoch: epoch, structural: true,
+      networkSources: [...new Set(failures.networkFailures.map((item: DesktopRecord) => String(item.source)))].sort() } };
   const content = result.content || result.selection?.text || result.node?.text || (result.elements || []).map((row: DesktopRecord) => row.text).join('\n');
   return { adapter: 'browser-devtools', app: 'browser', window, content: String(content || ''), method: 'cdp:dom', artifacts: { browser_context: browserContext, region_elements: result.elements || [] } };
 }

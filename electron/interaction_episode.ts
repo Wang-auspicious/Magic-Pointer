@@ -162,6 +162,12 @@ function normalizeBrowserContext(input: UnknownRecord | null): UnknownRecord | n
           requestId: bounded(failure.requestId, 160), status: number(failure.status),
         };
       }),
+    consoleErrors: (Array.isArray(input.consoleErrors) ? input.consoleErrors : []).slice(0, 20)
+      .filter((item: unknown) => item && typeof item === 'object')
+      .map((item: unknown) => {
+        const entry = item as UnknownRecord;
+        return { text: bounded(entry.text, 2000), url: bounded(entry.url, 4000), line: number(entry.line), source: bounded(entry.source, 80), timestamp: bounded(entry.timestamp, 80) };
+      }),
     provenance: {
       endpoint: bounded(provenance.endpoint, 1000), targetId: bounded(provenance.targetId, 200),
       structural: provenance.structural === true,
