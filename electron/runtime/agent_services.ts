@@ -18,6 +18,17 @@ export function contextWindowFor(model: unknown, fallback = 64000): number {
   const name = str(model).toLowerCase().split('/').at(-1)!;
   return windows.filter(([prefix]) => name.startsWith(prefix)).sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? fallback;
 }
+/** Pull inline screenshots out of a tool value so the model receives pixels, not base64 text. */
+export async function extractToolImages(value: unknown, directory: string, callId: string): Promise<{ value: unknown; images: { path: string; mimeType: string; label?: string }[] }> {
+  const data = asObject(value);
+  if (typeof data.image !== 'string' || !data.image) return { value, images: [] };
+  const mimeType = typeof data.mimeType === 'string' ? data.mimeType : 'image/png';
+  const file = path.join(directory, `${callId.replace(/[^A-Za-z0-9_.-]/g, '_')}-0.${mimeType === 'image/jpeg' ? 'jpg' : 'png'}`);
+  await mkdir(directory, { recursive: true });
+  await writeFile(file, Buffer.from(data.image, 'base64'));
+  const { image: _image, imageLabel, ...rest } = data;
+  return { value: { ...rest, imageAttached: file }, images: [{ path: file, mimeType, ...(typeof imageLabel === 'string' ? { label: imageLabel } : {}) }] };
+}
 export function projectContextMessages(messages: AgentMessage[]): AgentMessage[] {
   const seen = new Map<string, string>();
   return messages.map(message => {

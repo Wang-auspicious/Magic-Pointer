@@ -8,13 +8,14 @@ import type { ModelConfig } from './model';
 import type { AccessRequest } from './context';
 import { taskSources, taskReferences, scopeFromEvents } from './context';
 import { projectArtifacts } from './artifacts';
-import { contextWindowFor, estimateCostUsd, projectContextMessages, relevantSkills } from './agent_services';
+import { contextWindowFor, estimateCostUsd, extractToolImages, projectContextMessages, relevantSkills } from './agent_services';
 import { operationOutcomes, taskOutcomes, ProgressTracker } from './agent_outcomes';
 
 export type Data = Record<string, unknown>;
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'tool'; content: string | null; tool_call_id?: string | null; name?: string | null;
   is_error?: boolean; origin?: 'instruction' | 'data'; injected?: boolean; tool_calls?: ToolCall[]; provider_items?: Data[];
+  images?: { path: string; mimeType?: string; label?: string }[];
 }
 export interface ModelEvent { type: 'text_delta' | 'thinking_delta' | 'tool_delta' | 'usage'; text?: string; [key: string]: unknown }
 export interface ModelRequest {
@@ -410,6 +411,8 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         const result = event.result, call = event.call;
         const post = await options.hooks?.run('post', { tool_name: call.name, input: call.arguments, result: result.value });
         if (post?.allowed === false) { result.value = `Tool executed, but its result was blocked: ${post.reason}`; result.is_error = true; }
+        const pictured = await extractToolImages(result.value, path.join(options.userDataDir, 'tool-images', session.id), call.id).catch(() => ({ value: result.value, images: [] }));
+        result.value = pictured.value;
         let body = outputText(result.value);
         if (post?.extraContext) body += '\n' + str(post.extraContext);
         let effect: Effect = 'read'; try { effect = registry.effect(call.name, asObject(call.arguments)); } catch {}
@@ -420,7 +423,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         if (observed.stalled) stalled = true;
         const targetOutcomes = operationOutcomes({ operationId: operationIds.get(call.id), callId: call.id, name: call.name, arguments: call.arguments, effect, dispatched: event.dispatched }, result, !!registry.list().find(spec => spec.name === call.name)?.verify_result);
         await session.append('operation/settled', { operationId: operationIds.get(call.id), turn: session.openTurn, targetOutcomes, outcome: !event.dispatched || value.waitingForDesktop === true && value.notExecuted === true ? 'not_started' : !result.outcome_known ? 'unknown' : result.is_error ? 'failed' : 'succeeded', failureType: result.failure_type, usedBackend: result.used_backend, latencyMs: result.latency_ms,
-          message: { role: 'tool', content: body, tool_call_id: call.id, name: call.name, is_error: result.is_error, origin: 'data' } }, 'append');
+          message: { role: 'tool', content: body, tool_call_id: call.id, name: call.name, is_error: result.is_error, origin: 'data', ...(pictured.images.length ? { images: pictured.images } : {}) } }, 'append');
         const visibleBody = projectContextMessages([{ role: 'tool', content: body, name: call.name, tool_call_id: call.id, origin: 'data' }])[0].content;
         results.push({ ...result, value: visibleBody }); emit({ kind: 'tool_call_finished', result: { ...result, value: visibleBody } });
         if (!result.is_error && value.awaitingUserInput === true) pending ??= { ...normalizedInput(value), requestId: call.id };

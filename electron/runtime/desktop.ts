@@ -12,7 +12,41 @@ export type DesktopRecord = Record<string, any>;
 export type Rect = [number, number, number, number];
 export interface DesktopWindow extends DesktopRecord { hwnd: number; pid: number; bbox: Rect; title: string; processStartTime?: string }
 export interface DesktopElement extends DesktopRecord { index: number; hwnd: number; name: string; role: string; rect: Rect; runtime_id: number[]; patterns: string[] }
-export interface DesktopSnapshot { snapshot_id: string; state_id: string; window: DesktopWindow; windows: DesktopWindow[]; elements: DesktopElement[]; root_ref: string; mode: string; surface?: Buffer }
+export interface DesktopSnapshot { snapshot_id: string; state_id: string; window: DesktopWindow; windows: DesktopWindow[]; elements: DesktopElement[]; root_ref: string; mode: string; surface?: Buffer; markedImage?: Buffer; imageScale?: number; marks?: ObservationMark[] }
+export interface ObservationMark { ref: string; role: string; name: string; imageRect: Rect }
+type SurfaceCapture = (bounds: Rect, signal?: AbortSignal, hwnd?: number) => Promise<{ bytes: Buffer; width: number; height: number; source: string; capturedAtUtc: string }>;
+
+const MAX_OBSERVATION_EDGE = 1600;
+const ACTIONABLE_ROLES = new Set(['button', 'edit', 'hyperlink', 'checkbox', 'radiobutton', 'combobox', 'listitem', 'menuitem', 'tabitem', 'treeitem', 'dataitem', 'splitbutton', 'slider', 'spinner', 'document']);
+const ACTIONABLE_PATTERNS = ['Invoke', 'Value', 'Toggle', 'SelectionItem', 'ExpandCollapse', 'RangeValue'];
+function actionable(element: DesktopElement, window: DesktopWindow): boolean {
+  const [l, t, r, b] = element.rect, [wl, wt, wr, wb] = window.bbox;
+  if (element.offscreen || r - l < 4 || b - t < 4 || r <= wl || b <= wt || l >= wr || t >= wb) return false;
+  if ((r - l) * (b - t) >= (wr - wl) * (wb - wt) * 0.9) return false;
+  return ACTIONABLE_ROLES.has(element.role) || (element.patterns || []).some(pattern => ACTIONABLE_PATTERNS.includes(pattern));
+}
+/** Screenshot the model actually looks at: bounded size, with each actionable UIA element boxed and labelled by its ref. */
+export async function markedObservationImage(surface: Buffer, window: DesktopWindow, elements: DesktopElement[]): Promise<{ bytes: Buffer; scale: number; marks: ObservationMark[] }> {
+  const sharp = (await import('sharp')).default;
+  const meta = await sharp(surface).metadata(), width = meta.width || 1, height = meta.height || 1;
+  const scale = Math.min(1, MAX_OBSERVATION_EDGE / Math.max(width, height));
+  const [left, top] = window.bbox, w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
+  const marks: ObservationMark[] = elements.filter(element => actionable(element, window)).slice(0, 80).map(element => ({ ref: `@e${element.index}`, role: element.role, name: String(element.name || '').slice(0, 60),
+    imageRect: [Math.round((element.rect[0] - left) * scale), Math.round((element.rect[1] - top) * scale), Math.round((element.rect[2] - left) * scale), Math.round((element.rect[3] - top) * scale)] as Rect }));
+  const colors = ['#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00897b'];
+  const svg = marks.map((mark, index) => { const [x1, y1, x2, y2] = mark.imageRect, color = colors[index % colors.length], label = mark.ref.slice(1), lw = 7 * label.length + 6, ly = Math.max(0, y1 - 14);
+    return `<rect x="${x1}" y="${y1}" width="${Math.max(1, x2 - x1)}" height="${Math.max(1, y2 - y1)}" fill="none" stroke="${color}" stroke-width="2"/><rect x="${x1}" y="${ly}" width="${lw}" height="14" fill="${color}"/><text x="${x1 + 3}" y="${ly + 11}" fill="#fff" font-family="Consolas,monospace" font-size="11">${label}</text>`; }).join('');
+  let image = sharp(surface).resize(w, h);
+  if (svg) image = sharp(await image.png().toBuffer()).composite([{ input: Buffer.from(`<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${svg}</svg>`) }]);
+  return { bytes: await image.png().toBuffer(), scale, marks };
+}
+/** Pixel patches differ only when a meaningful share changed; a caret blink or hover tint is not a new screen. */
+export function patchesDiffer(before: Buffer, after: Buffer, channels: number): boolean {
+  if (before.length !== after.length) return true;
+  let changed = 0; const pixels = before.length / channels;
+  for (let i = 0; i < before.length; i += channels) { let delta = 0; for (let c = 0; c < channels; c++) delta = Math.max(delta, Math.abs(before[i + c] - after[i + c])); if (delta > 32) changed++; }
+  return changed / pixels > 0.08;
+}
 
 let desktopRoot = resolve(__dirname, '..', '..');
 if (basename(desktopRoot) === 'build') desktopRoot = resolve(desktopRoot, '..');
@@ -94,7 +128,11 @@ class NativeDesktopHost {
       const id = randomUUID();
       const cancelPath = signal ? join(desktopDataRoot(), `native-cancel-${id}`) : '';
       const abort = () => { const entry = this.pending.get(id); if (!entry) return; if (cancelPath) { writeFileSync(cancelPath, ''); const cleanup = setTimeout(() => { try { unlinkSync(cancelPath); } catch {} }, 30000); cleanup.unref(); } this.pending.delete(id); clearTimeout(entry.timer); entry.cleanup(); reject(signal?.reason || new Error('aborted')); };
-      const timer = setTimeout(() => { this.pending.delete(id); signal?.removeEventListener('abort', abort); reject(new Error(`native_desktop_timeout:${method}`)); this.child?.kill(); }, timeoutMs);
+      const timer = setTimeout(() => {
+        this.pending.delete(id); signal?.removeEventListener('abort', abort); reject(new Error(`native_desktop_timeout:${method}`)); this.child?.kill();
+        // Killing the host mid-input could leave keys or buttons down system-wide; a fresh host releases them.
+        if (method === 'input') setTimeout(() => { this.request('release_input', {}, undefined, 5000).catch(() => {}); }, 50).unref();
+      }, timeoutMs);
       this.pending.set(id, { accept, reject, timer, cleanup: () => signal?.removeEventListener('abort', abort) }); signal?.addEventListener('abort', abort, { once: true });
       this.child!.stdin.write(`${JSON.stringify({ id, method, params: { ...params, cancelPath } })}\n`, error => { if (error) this.fail(error); });
     });
@@ -113,11 +151,13 @@ export function desktopBusyResult(error: unknown): DesktopRecord | null {
   return { awaitingUserInput: true, kind: 'desktop_wait', question: '等你空出桌面后继续任务？', options: ['继续任务', '由我接管'],
     notExecuted: true, waitingForDesktop: true, usedBackend: 'native_desktop' };
 }
+function elevatedTarget(): ActionFailure { return new ActionFailure('permission_denied', 'target window runs as administrator; Windows drops input from Magic Pointer. Ask the user to do this step or run Magic Pointer as administrator.'); }
 function interruptedDesktopInput(): Error { const error = new Error('computer_use_interrupted: inspect the current desktop before continuing'); error.name = 'AbortError'; return error; }
 async function desktopInput(params: DesktopRecord, signal?: AbortSignal, allowWait = true): Promise<DesktopRecord> {
   try { return await nativeRequest('input', params, signal); }
   catch (error) {
     if (error instanceof Error && error.message === 'computer_use_interrupted') throw interruptedDesktopInput();
+    if (error instanceof Error && error.message === 'target_elevated') throw elevatedTarget();
     const waiting = allowWait ? desktopBusyResult(error) : null;
     if (waiting) return waiting;
     if (!allowWait && desktopBusyResult(error)) throw interruptedDesktopInput();
@@ -127,8 +167,8 @@ async function desktopInput(params: DesktopRecord, signal?: AbortSignal, allowWa
 export function closeDesktop(): void { host.close(); selectionHost?.kill(); selectionHost = undefined; }
 export async function listWindows(signal?: AbortSignal): Promise<DesktopWindow[]> { return nativeRequest<DesktopWindow[]>('windows', {}, signal); }
 export async function listElements(hwnd: number, signal?: AbortSignal): Promise<DesktopElement[]> { return nativeRequest<DesktopElement[]>('elements', { hwnd }, signal); }
-export async function captureSurface(bounds: Rect, signal?: AbortSignal): Promise<{ bytes: Buffer; width: number; height: number; source: string; capturedAtUtc: string }> {
-  const result = await nativeRequest('capture', { bounds }, signal);
+export async function captureSurface(bounds: Rect, signal?: AbortSignal, hwnd?: number): Promise<{ bytes: Buffer; width: number; height: number; source: string; capturedAtUtc: string }> {
+  const result = await nativeRequest('capture', { bounds, ...(hwnd ? { hwnd } : {}) }, signal);
   return { bytes: Buffer.from(result.png, 'base64'), width: result.width, height: result.height, source: result.source, capturedAtUtc: result.capturedAtUtc };
 }
 
@@ -217,7 +257,13 @@ export class DesktopActionSession {
   readonly observation = { windows: listWindows, elements: listElements };
   constructor(readonly sessionId: string = randomUUID(), readonly originWindowHwnd?: number) {}
   rootRef(hwnd: number): string { for (const [ref, value] of this.roots) if (value === hwnd) return ref; const ref = `@r${this.roots.size + 1}`; this.roots.set(ref, hwnd); return ref; }
-  async observe(args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope): Promise<DesktopSnapshot> {
+  toScreen(snapshot: DesktopSnapshot, args: DesktopRecord, keys: [string, string] = ['x', 'y']): { x: number; y: number } {
+    const x = Number(args[keys[0]]), y = Number(args[keys[1]]);
+    if (args.coordinate_space !== 'image') return { x, y };
+    if (!snapshot.imageScale) throw new ActionFailure('stale_snapshot', 'image coordinates need an observation that returned an image');
+    return { x: Math.round(snapshot.window.bbox[0] + x / snapshot.imageScale), y: Math.round(snapshot.window.bbox[1] + y / snapshot.imageScale) };
+  }
+  async observe(args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope, capture: SurfaceCapture = captureSurface): Promise<DesktopSnapshot> {
     const windows = (await this.observation.windows(signal)).filter(row => !/^Magic Pointer(?: |$)/i.test(row.title));
     const id = args.hwnd || (args.root ? this.roots.get(args.root) : undefined) || Number(String(args.window_id || '').replace(/^w-/, ''));
     const candidates = windows.filter(window => !id || window.hwnd === Number(id)).filter(window => args.pid === undefined || window.pid === Number(args.pid)).filter(window => !args.app || `${window.process_name} ${window.title}`.toLowerCase().includes(String(args.app).toLowerCase()));
@@ -228,10 +274,19 @@ export class DesktopActionSession {
     const elements = ['image', 'visual'].includes(mode) ? [] : await this.observation.elements(window.hwnd, signal);
     const snapshot_id = randomUUID();
     const snapshot: DesktopSnapshot = { snapshot_id, state_id: snapshot_id, window, windows: [window], elements, root_ref: this.rootRef(window.hwnd), mode };
-    if (['full', 'image', 'visual'].includes(mode)) snapshot.surface = (await captureSurface(window.bbox, signal)).bytes;
+    // A tree with almost nothing actionable (self-drawn Qt/Electron/game UI) is useless on its own: add pixels.
+    const sparse = args.pixels !== false && elements.filter(element => actionable(element, window)).length < 3;
+    const explicit = ['full', 'image', 'visual'].includes(mode);
+    if (explicit || sparse) {
+      try { snapshot.surface = (await capture(window.bbox, signal, window.hwnd)).bytes; }
+      catch (error) { signal?.throwIfAborted(); if (explicit) throw error; }
+    }
+    if (snapshot.surface) {
+      try { const marked = await markedObservationImage(snapshot.surface, window, elements); Object.assign(snapshot, { markedImage: marked.bytes, imageScale: marked.scale, marks: marked.marks }); } catch { signal?.throwIfAborted(); }
+    }
     this.snapshots.set(snapshot_id, snapshot);
     while (this.snapshots.size > 32) this.snapshots.delete(this.snapshots.keys().next().value!);
-    for (const old of [...this.snapshots.values()].slice(0, -8)) delete old.surface;
+    for (const old of [...this.snapshots.values()].slice(0, -8)) { delete old.surface; delete old.markedImage; }
     return snapshot;
   }
   async requireSnapshot(id: unknown, signal?: AbortSignal, indexes: number[] = []): Promise<DesktopSnapshot> {
@@ -266,19 +321,19 @@ export class DesktopActionSession {
     let x: number, y: number;
     if (element) { await this.requireSnapshot(snapshot.snapshot_id, signal, [element.index]); x = Math.round((element.rect[0] + element.rect[2]) / 2); y = Math.round((element.rect[1] + element.rect[3]) / 2); }
     else {
-      x = Number(args.x); y = Number(args.y);
+      ({ x, y } = this.toScreen(snapshot, args));
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('pass index/ref or both x and y');
-      if (!snapshot.surface) throw new ActionFailure('stale_snapshot', 'coordinate actions require Observe(mode=full)');
+      if (!snapshot.surface) throw new ActionFailure('stale_snapshot', 'coordinate actions require an observation with an image (mode=full)');
+      const [left, top, right, bottom] = snapshot.window.bbox;
+      if (x < left || x >= right || y < top || y >= bottom) return { x, y };
       const sharp = (await import('sharp')).default;
-      const live = await captureSurface(snapshot.window.bbox, signal); const [left, top, right, bottom] = snapshot.window.bbox;
+      const live = await captureSurface(snapshot.window.bbox, signal, snapshot.window.hwnd);
       const region = { left: Math.max(0, Math.round(x - left - 32)), top: Math.max(0, Math.round(y - top - 32)), width: 0, height: 0 };
       region.width = Math.min(65, right - left - region.left); region.height = Math.min(65, bottom - top - region.top);
       if (region.width <= 0 || region.height <= 0) throw new ActionFailure('stale_snapshot', 'point outside surface');
-      const [before, after] = await Promise.all([sharp(snapshot.surface).extract(region).raw().toBuffer(), sharp(live.bytes).extract(region).raw().toBuffer()]);
-      if (!before.equals(after)) throw new ActionFailure('stale_snapshot', 'target pixels changed since snapshot; call Observe again');
+      const [before, after] = await Promise.all([sharp(snapshot.surface).extract(region).raw().toBuffer({ resolveWithObject: true }), sharp(live.bytes).extract(region).raw().toBuffer()]);
+      if (patchesDiffer(before.data, after, before.info.channels)) throw new ActionFailure('stale_snapshot', 'target pixels changed since snapshot; call Observe again');
     }
-    const [l, t, r, b] = snapshot.window.bbox;
-    if (x < l || x >= r || y < t || y >= b) throw new ActionFailure('stale_snapshot', 'point outside target window');
     return { x, y, element };
   }
   async call(name: string, args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope): Promise<DesktopRecord> {
@@ -291,8 +346,11 @@ export class DesktopActionSession {
       return { roots: roots.slice(0, 32), total: roots.length, usedBackend: 'win32_windows' };
     }
     if (name === 'get_app_state' || name === 'observe_ui') {
-      const snapshot = await this.observe(args, signal, readScope); const { surface, ...publicSnapshot } = snapshot;
-      return { ...publicSnapshot, ...(surface ? { image: surface.toString('base64'), mimeType: 'image/png' } : {}), outline: snapshot.elements.slice(0, 80).map(row => ({ ...row, ref: `@e${row.index}` })), usedBackend: 'native_uia' };
+      const snapshot = await this.observe(args, signal, readScope); const { surface: _surface, markedImage, marks: _marks, ...publicSnapshot } = snapshot;
+      const image = markedImage ? { image: markedImage.toString('base64'), mimeType: 'image/png', imageLabel: `${snapshot.window.title || snapshot.window.process_name} (state ${snapshot.state_id}); boxes are labelled with element refs`,
+        imageSpace: { scale: snapshot.imageScale, origin: snapshot.window.bbox.slice(0, 2), hint: "click by ref when a box covers the target; otherwise pass the image x/y with coordinate_space:'image'" } } : {};
+      const outline = snapshot.elements.slice(0, 120).map(row => ({ ref: `@e${row.index}`, role: row.role, name: row.name, ...(row.value ? { value: String(row.value).slice(0, 200) } : {}), rect: row.rect, ...(row.focused ? { focused: true } : {}), ...(row.enabled === false ? { enabled: false } : {}), ...(row.parent_index ? { parent: `@e${row.parent_index}` } : {}) }));
+      return { ...publicSnapshot, elements: undefined, elementCount: snapshot.elements.length, ...image, outline, usedBackend: markedImage ? 'native_uia+pixels' : 'native_uia' };
     }
     if (name === 'launch_app') {
       try { return await nativeRequest('launch', { app: args.app }, signal); }
@@ -323,7 +381,7 @@ export class DesktopActionSession {
           windowHwnd: snapshot.window.hwnd, pid: snapshot.window.pid, stateId: snapshot.state_id, observedStateId: current.state_id,
           method: 'uia_condition_wait', scope: 'ui_postcondition', status: !matched ? 'timed_out' : baselineMatched ? 'preexisting_condition' : 'checked',
           condition: { text: args.text, role: args.role, value: args.value } } } : {}) });
-      do { current = await this.observe({ hwnd: snapshot.window.hwnd }, signal, readScope); if (matchesCondition(current.elements, args)) return observed(true); await delay(Math.min(150, Math.max(1, timeout - (Date.now() - started))), signal); } while (Date.now() - started < timeout);
+      do { current = await this.observe({ hwnd: snapshot.window.hwnd, pixels: false }, signal, readScope); if (matchesCondition(current.elements, args)) return observed(true); await delay(Math.min(150, Math.max(1, timeout - (Date.now() - started))), signal); } while (Date.now() - started < timeout);
       return observed(false);
     }
     if (name === 'act_ui') {
@@ -370,7 +428,7 @@ export class DesktopActionSession {
     let coordinates: DesktopRecord = {};
     if (['click', 'drag', 'scroll', 'select_text'].includes(name) || name === 'type_text' && (element || args.x !== undefined)) coordinates = await this.point(snapshot, args, signal);
     if (name === 'select_text' && element) { try { return await nativeRequest('uia', { action: 'select', element }, signal); } catch { signal?.throwIfAborted(); } }
-    if (name === 'drag') { const target = await this.point(snapshot, { index: args.to_index, x: args.to_x, y: args.to_y }, signal); coordinates.to_x = target.x; coordinates.to_y = target.y; }
+    if (name === 'drag') { const target = await this.point(snapshot, { index: args.to_index, x: args.to_x, y: args.to_y, coordinate_space: args.coordinate_space }, signal); coordinates.to_x = target.x; coordinates.to_y = target.y; }
     if (name === 'type_text' || name === 'select_text') {
       let acted = false;
       if ('x' in coordinates) { const clicked = await desktopInput({ action: 'click', ...coordinates, window: snapshot.window }, signal); if (clicked.waitingForDesktop) return clicked; acted = true; }
@@ -406,7 +464,7 @@ export function registerDesktopTools(registry: ToolRegistry, session = desktopSe
   const readScope: WindowReadScope | undefined = authorizeAccess ? hwnd => authorizeAccess({ action: 'read', windowIds: [`w-${hwnd}`] }) : undefined;
   registry.register({ name: 'choose_ui_target', description: 'Resolve a target within an observed state. Unique exact labels are local; configured Jev uses a 900 ms deadline. Returns a reference or ambiguity and never acts.', input_schema: { type: 'object', properties: { state_id: { type: 'string' }, target: { type: 'string' }, candidate_refs: { type: 'array', items: { type: 'string' } } }, required: ['state_id', 'target'], additionalProperties: false }, effect: 'read', deferred: true, is_concurrency_safe: true, execute: async (args: DesktopRecord, context) => { const prior = session.snapshots.get(String(args.state_id || '')); if (prior) requireWindowRead(prior.window.hwnd, readScope); const snapshot = await session.requireSnapshot(args.state_id, context.signal); const rows = snapshot.elements.map(row => ({ ...row, ref: `@e${row.index}` })).filter(row => !args.candidate_refs || args.candidate_refs.includes(row.ref)); return chooseUiTarget(args.target, rows, snapshot.state_id, context.signal); } });
   const string = { type: 'string' }, number = { type: 'number' }, integer = { type: 'integer' }, boolean = { type: 'boolean' };
-  const common = { snapshot_id: string, state_id: string, index: integer, ref: string, x: number, y: number };
+  const common = { snapshot_id: string, state_id: string, index: integer, ref: string, x: number, y: number, coordinate_space: { enum: ['screen', 'image'], description: "x/y read off the returned screenshot are 'image'; default 'screen' physical pixels" } };
   const schemas: Record<string, DesktopRecord> = {
     list_apps: {}, launch_app: { app: string }, activate_window: { window_id: string, pid: integer, app: string },
     get_app_state: { window_id: string, pid: integer, app: string, mode: { enum: ['ax', 'text', 'image', 'full'] } },
@@ -423,7 +481,7 @@ export function registerDesktopTools(registry: ToolRegistry, session = desktopSe
     const effect = actionEffect(name, {});
     const targetAction = ['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name);
     if (['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name)) properties.intent = { type: 'string', enum: ['input', 'send', 'submit', 'delete', 'run', 'purchase'] };
-    registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop. Use observed state_id and element ref; coordinates need a full image observation. Actions revalidate the target and return honest verification.${name === 'wait_for' ? ' To verify a prior UI action, pass its tool call ID as verify_call_id with the same pre-action state_id and an explicit text, role or value condition. This verifies a new UI condition, never external delivery.' : name === 'act_ui' ? ' Each action returns separate verification. For a final expect with multiple actions, set verify_action_index to the action it checks.' : ''}`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args, session),
+    registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop.${name === 'get_app_state' ? " Returns the element outline and, for mode=full or when the accessibility tree is too sparse to act on (self-drawn apps), a screenshot with every actionable element boxed and labelled by its ref." : ''} Prefer element refs; for targets only visible in the screenshot pass its pixel x/y with coordinate_space:'image'. Menus and popups of the same app are part of the observed surface. Actions revalidate the target and return honest verification.${name === 'wait_for' ? ' To verify a prior UI action, pass its tool call ID as verify_call_id with the same pre-action state_id and an explicit text, role or value condition. This verifies a new UI condition, never external delivery.' : name === 'act_ui' ? ' Each action returns separate verification. For a final expect with multiple actions, set verify_action_index to the action it checks.' : ''}`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args, session),
       access_for: targetAction ? args => { const snapshot = session.snapshots.get(String(args.snapshot_id || args.state_id || '')); return { action: 'patch', windowIds: [snapshot?.window.hwnd ? `w-${snapshot.window.hwnd}` : 'unbound-live-surface'] }; } : undefined,
       is_concurrency_safe: effect === 'read', resource_keys: effect === 'read' ? [] : ['desktop:input'], used_backend: 'native_desktop', timeout_ms: 65000, deferred: !['list_apps', 'get_app_state'].includes(name), execute: (args, context) => session.call(name, args, context.signal, readScope) } as ToolSpec);
   }

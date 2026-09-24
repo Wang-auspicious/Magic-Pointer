@@ -40,6 +40,13 @@ export interface ModelMessage {
   injected?: boolean;
   tool_calls?: { id: string; name: string; arguments: unknown; argument_error?: string | null }[];
   provider_items?: Json[];
+  images?: ToolImage[];
+}
+export interface ToolImage { path: string; mimeType?: string; label?: string }
+/** Screenshots are the heaviest context; only the newest ones stay in the request, older ones become a pointer. */
+export const LIVE_TOOL_IMAGES = 2;
+function imageDataUrl(image: ToolImage): string | null {
+  try { return `data:${image.mimeType || 'image/png'};base64,${readFileSync(image.path).toString('base64')}`; } catch { return null; }
 }
 
 export interface StreamRequest {
@@ -248,12 +255,27 @@ export function modelPayload(config: ModelConfig, request: Pick<StreamRequest, '
       : mode === 'responses' ? { type: 'function', ...spec, strict: false } : { type: 'function', function: spec };
   });
   const messages: Json[] = [];
+  const imageBearing = request.messages.filter(message => message.role === 'tool' && message.images?.length);
+  const liveImages = new Set(imageBearing.slice(-LIVE_TOOL_IMAGES));
+  let pendingImages: Json[] = [];
+  const imageParts = (message: ModelMessage): Json[] => (message.images || []).flatMap((image): Json[] => {
+    const url = imageDataUrl(image); if (!url) return [];
+    const label = image.label || `screenshot from ${message.name || 'tool'} ${message.tool_call_id || ''}`.trim();
+    if (mode === 'responses') return [{ type: 'input_text', text: label }, { type: 'input_image', image_url: url }];
+    if (mode === 'messages') { const match = /^data:([^;,]+);base64,(.+)$/s.exec(url)!; return [{ type: 'text', text: label }, { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } }]; }
+    return [{ type: 'text', text: label }, { type: 'image_url', image_url: { url } }];
+  });
+  const flushImages = () => { if (pendingImages.length) messages.push({ role: 'user', content: pendingImages }); pendingImages = []; };
   for (const message of request.messages) {
-    const content = message.content || '';
+    let content = message.content || '';
+    const attach = message.role === 'tool' && liveImages.has(message) ? imageParts(message) : [];
+    if (message.role === 'tool' && message.images?.length && !attach.length) content += `
+[earlier screenshot omitted from context; observe again for the current screen]`;
+    if (message.role !== 'tool' && mode !== 'messages') flushImages();
     const calls = message.tool_calls || [];
     const items = message.provider_items || [];
     if (mode === 'responses') {
-      if (message.role === 'tool') messages.push({ type: 'function_call_output', call_id: message.tool_call_id, output: content });
+      if (message.role === 'tool') { messages.push({ type: 'function_call_output', call_id: message.tool_call_id, output: content }); pendingImages.push(...attach); }
       else {
         if (message.role === 'assistant') messages.push(...items.filter(item => item.type === 'reasoning'));
         if (content) messages.push({ role: message.role, content });
@@ -261,7 +283,7 @@ export function modelPayload(config: ModelConfig, request: Pick<StreamRequest, '
       }
     } else if (mode === 'messages') {
       const blocks: Json[] = [];
-      if (message.role === 'tool') blocks.push({ type: 'tool_result', tool_use_id: message.tool_call_id, content, is_error: Boolean(message.is_error) });
+      if (message.role === 'tool') blocks.push({ type: 'tool_result', tool_use_id: message.tool_call_id, content: attach.length ? [{ type: 'text', text: content }, ...attach] : content, is_error: Boolean(message.is_error) });
       else {
         if (message.role === 'assistant') blocks.push(...items.filter(item => ['thinking', 'redacted_thinking'].includes(item.type)));
         if (content) blocks.push({ type: 'text', text: content });
@@ -272,7 +294,7 @@ export function modelPayload(config: ModelConfig, request: Pick<StreamRequest, '
       else messages.push({ role, content: blocks });
     } else {
       const entry: Json = { role: message.role, content };
-      if (message.role === 'tool') entry.tool_call_id = message.tool_call_id;
+      if (message.role === 'tool') { entry.tool_call_id = message.tool_call_id; pendingImages.push(...attach); }
       if (message.role === 'assistant') {
         const reasoning = items.find(item => item.type === 'chat_reasoning');
         if (reasoning) entry.reasoning_content = reasoning.reasoning_content;
@@ -281,6 +303,7 @@ export function modelPayload(config: ModelConfig, request: Pick<StreamRequest, '
       messages.push(entry);
     }
   }
+  flushImages();
   const body: Json = { model: config.model, ...effortFields(config) };
   if (tools.length) body.tools = tools;
   if (mode === 'responses') Object.assign(body, { instructions: request.system, input: messages, max_output_tokens: maxTokens });
