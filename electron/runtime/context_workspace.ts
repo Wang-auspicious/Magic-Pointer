@@ -28,6 +28,23 @@ async function gitRoot(cwd: string): Promise<string> {
     return '';
   }
 }
+async function gitText(cwd: string, ...args: string[]): Promise<string> {
+  try { return (await runProcess('git', ['-C', cwd, ...args], { timeoutMs: 2500 })).replace(/\s+$/, ''); } catch { return ''; }
+}
+/** What the repository looks like right now: the context a coding agent needs before touching files. */
+export async function probeGitWorkspace(cwd: string): Promise<Json> {
+  const resolved = (await directory(cwd)) || process.cwd(), repoRoot = await gitRoot(resolved);
+  if (!repoRoot) return { cwd: resolved, repoRoot: '', branch: '', head: '', isDirty: false, changedFiles: [], diffStat: '', diffExcerpt: '' };
+  const [branch, head, status, stat, staged, diff, stagedDiff] = await Promise.all([
+    gitText(resolved, 'branch', '--show-current'), gitText(resolved, 'rev-parse', '--short=12', 'HEAD'),
+    gitText(resolved, 'status', '--porcelain=v1', '--untracked-files=normal'),
+    gitText(resolved, 'diff', '--stat', '--', '.'), gitText(resolved, 'diff', '--cached', '--stat', '--', '.'),
+    gitText(resolved, 'diff', '--no-ext-diff', '--unified=3', '--', '.'), gitText(resolved, 'diff', '--cached', '--no-ext-diff', '--unified=3', '--', '.'),
+  ]);
+  const changedFiles = [...new Set(status.split(/\r?\n/).map(line => line.slice(3).trim()).map(path => path.includes(' -> ') ? path.split(' -> ')[1]! : path).map(path => path.replace(/^"|"$/g, '')).filter(Boolean))].slice(0, 80);
+  return { cwd: resolved, repoRoot, branch: branch.slice(0, 240), head: head.slice(0, 40), isDirty: !!status, changedFiles,
+    diffStat: [stat, staged].filter(Boolean).join('\n').slice(0, 6000), diffExcerpt: [diff, stagedDiff].filter(Boolean).join('\n').slice(0, 6000) };
+}
 export function redactLaunchCommand(value: unknown): string {
   return String(value ?? '')
     .replace(/\s+/g, ' ')

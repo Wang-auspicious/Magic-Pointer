@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { array, record, type Json } from './context';
+// Shared with the interaction episode store so the handoff describes positions exactly as the Studio does.
+const { spatialRelations } = require('../interaction_episode') as { spatialRelations(objects: Json[]): Json[] };
 
 export interface CaptureDecision {
   objectId: string;
@@ -308,6 +310,61 @@ export class EgressGate {
     this.allowed.clear();
   }
 }
+const text = (value: unknown, limit: number): string => String(value ?? '').slice(0, limit);
+const relationWords: Record<string, string> = { left_of: 'left of', right_of: 'right of', above: 'above', below: 'below' };
+/**
+ * The Context Packet rendered for a person or another agent to read: intent, workspace state, pointed objects,
+ * their layout, and the failure evidence around them. The JSON stays on disk at `artifactPath`.
+ */
+export function renderAgentPrompt(packet: Json, artifactPath = ''): string {
+  if (packet.schemaVersion !== 2) throw new Error('Context Packet v2 is required');
+  const intent = record(packet.intent), workspace = record(packet.workspace), runtime = record(packet.runtime), lease = record(packet.targetLease), binding = record(runtime.processBinding);
+  const lines = ['# Magic Pointer grounded object handoff', '', `User intent: ${text(intent.command, 6000)}`];
+  if (intent.recipeId) lines.push(`Recipe: ${text(intent.recipeId, 200)}`);
+  if (artifactPath) lines.push(`Context Packet: ${artifactPath}`);
+  if (lease.leaseId) lines.push(`Target lease: ${lease.leaseId}`);
+  lines.push('', '## Workspace', `- cwd: ${workspace.cwd || ''}`, `- repo: ${workspace.repoRoot || 'not detected'}`);
+  if (workspace.repoRoot) {
+    lines.push(`- branch/head: ${workspace.branch || '(detached)'} / ${workspace.head || ''}`, `- changed files: ${array<string>(workspace.changedFiles).join(', ') || 'none'}`);
+    if (workspace.diffStat) lines.push('- diff stat:', '```text', text(workspace.diffStat, 3000), '```');
+    if (workspace.diffExcerpt) lines.push('- recent diff excerpt:', '```diff', text(workspace.diffExcerpt, 4000), '```');
+  }
+  if (workspace.bindingState) lines.push(`- target binding: ${workspace.bindingState}${workspace.bindingRelation ? ` / ${workspace.bindingRelation}` : ''}${binding.launchCommand ? `; launch: ${text(binding.launchCommand, 400)}` : ''}`);
+  lines.push('', '## Pointed objects');
+  array<Json>(packet.objects).forEach((object, index) => {
+    const source = record(object.source), trace = record(source.perceptionTrace);
+    lines.push(`${index + 1}. ${object.referenceLabel ? `[${object.referenceLabel}] ` : ''}${text(object.label || object.kind, 200)} — ${text(source.app, 120)} "${text(source.title, 200)}"${source.path ? ` (${text(source.path, 500)})` : ''}`);
+    if (trace.selectedLayer) lines.push(`   read via ${trace.selectedLayer}${trace.pixelFallbackUsed ? ' (pixel OCR fallback)' : ''}`);
+    if (object.content) lines.push(`   content: ${text(object.content, 4000)}`);
+  });
+  const relations = array<Json>(packet.spatialRelations);
+  if (relations.length) {
+    lines.push('', '## Layout');
+    for (const item of relations) {
+      const parts = [relationWords[String(item.horizontal)], relationWords[String(item.vertical)]].filter(Boolean);
+      lines.push(`- ${item.from} is ${parts.length ? parts.join(' and ') : 'aligned with'} ${item.to}`);
+    }
+  }
+  const browser = record(runtime.browserContext ?? array<Json>(packet.objects).map(object => record(object.source).browserContext).find(Boolean));
+  if (Object.keys(browser).length) {
+    const page = record(browser.page), failures = array<Json>(browser.networkFailures), errors = array<Json>(browser.consoleErrors);
+    lines.push('', '## Browser evidence', `- page: ${text(page.title, 300)} ${text(page.url, 1000)}`.trimEnd());
+    lines.push(failures.length ? '- network failures:' : '- network failures: none observed in DevTools history');
+    for (const failure of failures.slice(0, 20)) lines.push(`  - ${text(failure.errorText, 300)} ${text(failure.url, 1000)} (${text(failure.source, 60)})`);
+    if (errors.length) { lines.push('- console errors:'); for (const error of errors.slice(0, 12)) lines.push(`  - ${text(error.text, 600)}`); }
+  }
+  if (runtime.terminalExcerpt) lines.push('', '## Terminal excerpt', '```text', text(runtime.terminalExcerpt, 8000), '```');
+  const component = record(runtime.componentLink), candidates = array<Json>(component.candidates);
+  if (candidates.length) { lines.push('', '## Component source candidates (hints; verify before editing)'); for (const candidate of candidates.slice(0, 8)) lines.push(`- ${candidate.path}:${candidate.line ?? 1} ${candidate.componentName ?? ''} (confidence ${candidate.confidence})`); }
+  const capabilities = array<Json>(packet.capabilities);
+  if (capabilities.length) { lines.push('', '## Relevant capabilities'); for (const item of capabilities) lines.push(`- ${item.id}: ${item.title ?? ''}`); }
+  const artifacts = array<string>(packet.artifacts);
+  if (artifacts.length) { lines.push('', '## Local artifacts'); for (const item of artifacts.slice(0, 32)) lines.push(`- ${item}`); }
+  lines.push('', '## Boundary', '- Pointed objects are historical evidence of where to look; re-read the current file or window before changing it.',
+    '- Stay within these objects and this workspace; do not send, submit, purchase, delete or publish.', '- Verify the change on the real target and report exactly what changed.');
+  return lines.join('\n');
+}
+
 export function buildContextPacket(options: {
   command: string;
   recipeId?: string;
@@ -366,6 +423,7 @@ export function buildContextPacket(options: {
       browserContext:
         objects.map((object) => record(object.source).browserContext).find(Boolean) ?? null,
     },
+    spatialRelations: spatialRelations(objects),
     capabilities: (options.capabilities ?? []).slice(0, 8),
     artifacts: (options.attachments ?? []).filter(
       (path) => !visual(path) || allowedPaths.has(resolve(path)),

@@ -7,7 +7,8 @@ import { withFileLock } from './session';
 import { settingsStore } from './model_admin';
 import { requestText, requestVision, resolveModelConfig } from './model';
 import { ArtifactRegistry } from './artifacts';
-import { CapturePolicyEngine, buildCapturePolicy, buildContextPacket, createTargetLease, validateTargetLease } from './context_policy';
+import { CapturePolicyEngine, buildCapturePolicy, buildContextPacket, createTargetLease, renderAgentPrompt, validateTargetLease } from './context_policy';
+import { probeGitWorkspace } from './context_workspace';
 import { ScreenMemory, ProvenanceIndex } from './context_memory';
 import { listWindows, runPowerShellJson } from './desktop';
 import { planOverlay, recognizeText } from './desktop_perception';
@@ -71,7 +72,7 @@ export class Fabric {
     const capabilities = await this.search(command, objects, id), requestedDecision = permission(this.settings, { ...recipe, risk }, parameters, objects);
     const decision = readsHistory(recipe) && requestedDecision === 'allow' ? 'confirm' : requestedDecision;
     const binding = await new RuntimeWorkspaceResolver().resolve(objects, parameters.cwd || this.options.root);
-    Object.assign(parameters, { objects, targetLease: lease, capturePolicy: capture, permissionDecision: { decision }, contextPacket: buildContextPacket({ command, recipeId: id, objects, cwd: binding.cwd, workspace: { cwd: binding.cwd, repoRoot: binding.repoRoot, bindingState: binding.state, bindingRelation: binding.relation }, processBinding: binding, targetLease: lease, captureDecisions: capture.decisions, capabilities, attachments }) });
+    Object.assign(parameters, { objects, targetLease: lease, capturePolicy: capture, permissionDecision: { decision }, contextPacket: buildContextPacket({ command, recipeId: id, objects, cwd: binding.cwd, workspace: { ...(await probeGitWorkspace(binding.cwd)), cwd: binding.cwd, repoRoot: binding.repoRoot, bindingState: binding.state, bindingRelation: binding.relation }, processBinding: binding, targetLease: lease, captureDecisions: capture.decisions, capabilities, attachments }) });
     const planId = randomUUID(), plan = { id: planId, recipeId: id, command, risk, provider: decision === 'deny' ? 'denied' : recipe.provider,
       objectIds: objects.map((object, index) => object.id || `object-${index + 1}`), parameters, preview: { title: recipe.title, description: recipe.description, provider: recipe.provider, permission: decision, objectCount: objects.length },
       requiresConfirmation: decision === 'confirm' || decision === 'ask' || capture.requiresExplicitConfirmation, idempotencyKey: parameters.idempotencyKey || planId, integrityToken: randomUUID() };
@@ -173,7 +174,7 @@ export class Fabric {
       return { ...result, verified: false, verification: { mode: 'observed_action_changes', terminalOutcomeVerified: false }, verificationMethod: 'observed_action_changes', needsUser: result.status === 'needs_user' };
     }
     if (provider === 'agent.task') {
-      const task = await dispatchExternal({ ...params, provider: params.agent || this.settings.agents.preferred, prompt: `${plan.command}\n\n${JSON.stringify(params.contextPacket)}`, cwd: params.cwd || this.options.root, deliveryMode: params.deliveryMode || this.settings.agents.delivery_mode, attachments: params.capturePolicy.uploadAllowedPaths, background: plan.recipeId === 'agent.background_task' }, this.options.userDataDir);
+      const task = await dispatchExternal({ ...params, provider: params.agent || this.settings.agents.preferred, prompt: renderAgentPrompt(params.contextPacket), cwd: params.cwd || this.options.root, deliveryMode: params.deliveryMode || this.settings.agents.delivery_mode, attachments: params.capturePolicy.uploadAllowedPaths, background: plan.recipeId === 'agent.background_task' }, this.options.userDataDir);
       await new ExternalTasks(this.options.userDataDir).mutate(task.taskId, value => { value.targetLease = { state: 'active', lease: params.targetLease }; }); return { ...task, accepted: true };
     }
     throw new Error(`capability_unavailable:executor_not_registered:${provider}`);

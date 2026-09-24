@@ -8,7 +8,8 @@ import { Fabric } from './fabric';
 import { handleFabric } from './fabric_api';
 import { readJson, writeAtomic } from './learning';
 import { settingsStore } from './model_admin';
-import { CapturePolicyEngine, buildCapturePolicy, buildContextPacket, createTargetLease } from './context_policy';
+import { CapturePolicyEngine, buildCapturePolicy, buildContextPacket, createTargetLease, renderAgentPrompt } from './context_policy';
+import { probeGitWorkspace } from './context_workspace';
 import { closeDesktop } from './desktop';
 import type { RuntimeOptions, Data } from './index';
 
@@ -58,11 +59,12 @@ export async function buildHookResponse(provider: string, payload: Data, options
   const attachments = [...new Set<string>(objects.flatMap((object: Data) => [object.path, ...['path', 'documentPath', 'imagePath', 'screenshotPath', 'capturePath'].map(key => object.source?.[key])].filter(Boolean)))];
   const capture = buildCapturePolicy(new CapturePolicyEngine(privacy.upload_screenshots, privacy.default_capture_mode, privacy.sensitive_apps, privacy.app_capture_modes), objects, attachments) as Data;
   if (objects.length && capture.deniedObjectIds.length === objects.length) return {};
-  const packet = buildContextPacket({ command: prompt, recipeId: 'agent.handoff', objects, cwd: payload.cwd || payload.workspaceRoot || options.root,
+  const cwd = payload.cwd || payload.workspaceRoot || options.root;
+  const packet = buildContextPacket({ command: prompt, recipeId: 'agent.handoff', objects, cwd, workspace: { ...(await probeGitWorkspace(cwd)), bindingState: 'fallback_unverified' },
     targetLease: await createTargetLease(objects, { selectionSessionId: episode.episodeId, ttlSeconds: 600 }), captureDecisions: capture.decisions, attachments,
     capabilities: await new Fabric(options).search(prompt, objects, 'agent.handoff'), terminalExcerpt: payload.terminalExcerpt || '' });
   const artifact = path.join(options.userDataDir, 'context-packets', `${randomUUID()}.json`); await writeAtomic(artifact, packet);
-  const additionalContext = `[Magic Pointer frozen context]\nHistorical evidence only; do not recapture. Revalidate target before mutation.\nFull context: ${artifact}\n${JSON.stringify(packet)}\nReference slots: ${JSON.stringify(episode.slots || {})}`;
+  const additionalContext = `[Magic Pointer frozen context]\nHistorical evidence only; do not recapture. Revalidate target before mutation.\n${renderAgentPrompt(packet, artifact)}\nReference slots: ${JSON.stringify(episode.slots || {})}`;
   return { hookSpecificOutput: { hookEventName: event, additionalContext: additionalContext.slice(0, 12000) }, suppressOutput: true };
 }
 

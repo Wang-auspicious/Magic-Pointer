@@ -35,6 +35,7 @@ test('selection handoff creates an editable Stage prompt with a reusable Context
   assert.equal(JSON.parse(await readFile(result.contextPacketArtifact, 'utf8')).packetId, result.contextPacket.packetId);
   assert.match(result.contextPrompt, /让 Codex 修这个/);
   assert.match(result.contextPrompt, /Error 42: wrong value/);
+  assert.match(result.contextPrompt, /## Workspace/, 'the handoff carries the rendered workspace and object evidence');
   const stage = stageEventFromBridge(result);
   assert.equal(stage.result.kind, 'agent-prompt-draft');
   assert.equal(stage.result.prompt, result.contextPrompt);
