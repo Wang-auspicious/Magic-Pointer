@@ -2242,6 +2242,7 @@ async function openConversation(id: string) {
   activeConversationObject = (c as { object?: Record<string, unknown> }).object || {};
   clearComposerSuggestion();
   renderProjectTasks();
+  if (inspectorState.open && activeInspectorTab === 'activity') renderConversationActivity();
   if (!turns.length) {
     stream.innerHTML = emptyStateMarkup('ic-message-plus', '这条对话还没有内容', '继续输入任务，或从屏幕上划过一个对象作为上下文。');
     syncConversationPendingInput(turns);
@@ -2351,6 +2352,7 @@ async function refreshOpenConversation(change?: MagicPointerConversationChange) 
   if (stream) followIfNearBottom(stream, () => activeConversationView?.update(conversation!));
   syncExternalConversationRun(conversation);
   if (change.liveProgress && inspectorState.open && activeInspectorTab === 'tasks') renderProjectTasks();
+  if (inspectorState.open && activeInspectorTab === 'activity') renderConversationActivity();
   if (!change.liveProgress) {
     void renderConversationRecovery(conversation.id);
     syncConversationPendingInput(conversation.turns || []);
@@ -3018,6 +3020,8 @@ async function renderConversationRecovery(conversationId: string): Promise<void>
     ok: false, error: error instanceof Error ? error.message : String(error),
   }));
   if (activeConversationId !== conversationId || generation !== recoveryRenderGeneration) return;
+  const attention = document.getElementById('execution-attention');
+  if (attention) { attention.hidden = true; attention.textContent = ''; }
   if (response.ok === false) {
     const message = document.createElement('p');
     message.textContent = response.error === 'session_not_found'
@@ -3028,10 +3032,12 @@ async function renderConversationRecovery(conversationId: string): Promise<void>
     return;
   }
   const operations = Array.isArray(response.pendingRecovery) ? response.pendingRecovery : [];
+  if (attention && operations.length) { attention.hidden = false; attention.textContent = String(operations.length); }
   for (const operation of operations) {
-    const section = document.createElement('section');
-    const title = document.createElement('strong');
-    title.textContent = `需要核对执行结果：${String(operation.tool || '')}`;
+    const section = document.createElement('details');
+    const title = document.createElement('summary');
+    const label = ChatView.toolRowModel(String(operation.tool || ''), JSON.stringify(operation.arguments || {}));
+    title.textContent = `待核对 · ${label.title}${label.summary ? ` · ${label.summary}` : ''}`;
     const details = document.createElement('pre');
     details.textContent = JSON.stringify(operation.arguments, null, 2);
     const candidates = Array.isArray(operation.verificationCandidates) ? operation.verificationCandidates : [];
@@ -3058,6 +3064,30 @@ async function renderConversationRecovery(conversationId: string): Promise<void>
     section.append(title, details, select, readback, allow); host.appendChild(section);
   }
   host.hidden = operations.length === 0;
+}
+
+function renderConversationActivity(): void {
+  const host = document.getElementById('conversation-activity');
+  if (!host) return;
+  const turn = activeConversationTurns.at(-1) as MagicPointerTurn | undefined;
+  const trajectory = pendingConversation?.transcript.trajectory || turn?.liveProgress?.trajectory || turn?.trajectory || [];
+  const calls = trajectory.filter(record => record.kind === 'tool');
+  const signature = JSON.stringify([activeConversationId, calls]);
+  if (host.dataset.signature === signature) return;
+  host.dataset.signature = signature;
+  host.replaceChildren();
+  const heading = document.createElement('p'); heading.className = 'mp-execution-heading';
+  heading.textContent = calls.length ? `本轮执行 · ${calls.length} 步${calls.length > 20 ? '，显示最近 20 步' : ''}` : '工具执行时，目标、步骤和结果会显示在这里。';
+  host.appendChild(heading);
+  for (const call of calls.slice(-20)) {
+    const result = call.state === 'running' || call.result === undefined ? undefined : {
+      text: typeof call.result === 'string' ? call.result : JSON.stringify(call.result),
+      isError: call.state === 'error' || call.isError === true,
+      interrupted: call.state === 'stopped',
+    };
+    host.appendChild(ChatView.toolRowNode(ChatView.toolRowModel(String(call.name || ''), String(call.text || '{}'), result, String(call.callId || '')),
+      `execution:${activeConversationId}:${activeConversationTurns.length}`) as HTMLElement);
+  }
 }
 
 function pendingToolRequestId(turn?: MagicPointerTurn): string {
@@ -4413,7 +4443,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   });
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = ({ materials: 'Materials', files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: inspector.dataset.taskLayout === 'background' ? 'Background tasks' : 'Tasks', artifact: 'Artifact' } as Record<string, string>)[activeInspectorTab] || 'Task';
+    inspectorTitle.textContent = ({ activity: '执行记录', materials: 'Materials', files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: inspector.dataset.taskLayout === 'background' ? 'Background tasks' : 'Tasks', artifact: 'Artifact' } as Record<string, string>)[activeInspectorTab] || 'Task';
   }
   if (!open) { closeProjectBrowserView(); return; }
   if (activeInspectorTab !== 'browser') closeProjectBrowserView();
@@ -4421,6 +4451,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   if (activeInspectorTab === 'materials') renderTaskMaterials();
   if (activeInspectorTab === 'changes') void renderProjectChanges();
   if (activeInspectorTab === 'tasks') renderProjectTasks();
+  if (activeInspectorTab === 'activity') renderConversationActivity();
   if (activeInspectorTab === 'artifact') renderArtifactEditor();
   if (activeInspectorTab === 'browser') scheduleProjectBrowserResize();
 }
@@ -4429,6 +4460,9 @@ document.getElementById('inspector-toggle')?.addEventListener('click', () => {
   setInspector(shell.dataset.inspector !== 'open', activeProjectRoot ? 'files' : 'materials');
 });
 document.getElementById('header-preview-toggle')?.addEventListener('click', () => setInspector(true, 'browser'));
+document.getElementById('execution-toggle')?.addEventListener('click', () => setInspector(true, 'activity'));
+const executionActivity = document.getElementById('conversation-activity');
+if (executionActivity) ChatView.bindDelegation(executionActivity);
 document.getElementById('inspector-close')?.addEventListener('click', () => setInspector(false));
 document.getElementById('inspector-maximize')?.addEventListener('click', () => {
   inspectorState = inspectorStatePolicy.reduceInspectorState(
@@ -6419,6 +6453,7 @@ function schedulePendingRender() {
     if (pendingConversation !== scheduled) return;
     followIfNearBottom(scheduled.body, renderPendingBody);
     if (inspectorState.open && activeInspectorTab === 'tasks') renderProjectTasks();
+    if (inspectorState.open && activeInspectorTab === 'activity') renderConversationActivity();
   }, document.hidden ? 200 : 33);
 }
 
@@ -6872,6 +6907,9 @@ function startNewChat() {
   recoveryRenderGeneration += 1;
   const recovery = document.getElementById('conversation-recovery');
   if (recovery) { recovery.replaceChildren(); recovery.hidden = true; }
+  const executionAttention = document.getElementById('execution-attention');
+  if (executionAttention) executionAttention.hidden = true;
+  renderConversationActivity();
   pendingPermissionChoice = null;
   syncConversationPendingInput([]);
   composerPlan = null;

@@ -19,7 +19,8 @@ async function main() {
   const host = new Element('host'); const calls: any[] = [];
   let confirmed = false; let resolved = false;
   const sandbox: any = { activeConversationId: 'c',
-    document: { getElementById: () => host, createElement: (tag: string) => new Element(tag) },
+    document: { getElementById: (id: string) => id === 'conversation-recovery' ? host : null, createElement: (tag: string) => new Element(tag) },
+    ChatView: require('../electron/renderer/chat_view'),
     window: { confirm: () => confirmed },
     Data: { recovery: async (payload: any) => {
       calls.push(payload);

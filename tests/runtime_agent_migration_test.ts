@@ -36,6 +36,15 @@ test('the model receives a failed tool reason instead of a null result', async (
   assert.match(context.session.deriveMessages().find(message => message.tool_call_id === 'observe')?.content ?? '', /window_not_granted:w-42/);
 });
 
+test('switching permission mode updates the model even when the session prompt is frozen', async () => {
+  const context = await fixture('current-permission');
+  await runAgent({ ...context, registry: new ToolRegistry(), permissionMode: 'default', model: async () => reply() });
+  let system = '';
+  await runAgent({ ...context, registry: new ToolRegistry(), permissionMode: 'accept_reversible',
+    model: async request => { system = request.system; return reply(); } });
+  assert.match(system, /当前生效权限模式：accept_reversible/);
+});
+
 test('permission suspension survives reopening and executes the exact approved action once', async () => {
   const context = await fixture('permission');
   let executions = 0;

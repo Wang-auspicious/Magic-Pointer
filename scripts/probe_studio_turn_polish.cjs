@@ -35,6 +35,34 @@ app.whenReady().then(async () => {
       Data.recovery = async () => ({ ok: true, pendingRecovery: [] });
       await openConversation(stored.id);
 
+      const desktopRow = ChatView.toolRowModel('activate_window', JSON.stringify({ app: 'msedge' }), { text: '{"ok":true}' }, 'focus-edge');
+      check(desktopRow.title.includes('切换') && desktopRow.summary.includes('msedge'), 'desktop tool row does not explain the action and target');
+      const windowsRow = ChatView.toolRowModel('list_windows', '{}', { text: '{"value":"[]"}' }, 'windows');
+      check(windowsRow.title.includes('窗口') && !windowsRow.summary.includes('{}'), 'window discovery is still an opaque Used/empty-JSON row');
+      const navigationRow = ChatView.toolRowModel('Browser.navigate', JSON.stringify({ window_id: '42', url: 'https://github.com' }), { text: '{"ok":true}' }, 'nav');
+      check(navigationRow.summary.includes('https://github.com'), 'browser navigation exposes only an opaque window number');
+      const desktopFlow = document.createElement('div');
+      desktopFlow.append(...ChatView.assistantTurnNode({ trajectory: [
+        { kind: 'tool', name: 'Tools', callId: 'load', text: '{"names":["Browser.navigate"]}', result: '{}', state: 'done' },
+        { kind: 'tool', name: 'Browser.navigate', callId: 'nav', text: '{"url":"https://github.com","window_id":"42"}', result: '{"ok":true}', state: 'done' },
+      ], answer: 'Opened' }, 'desktop-summary'));
+      check(desktopFlow.querySelector('.mp-chat-tool-group-title')?.textContent.includes('打开网页'), 'mixed tool-loading and desktop groups still say only Used tools');
+      Data.recovery = async () => ({ ok: true, pendingRecovery: Array.from({ length: 8 }, (_, i) => ({
+        operationId: 'recover-' + i, tool: 'activate_window', arguments: { app: 'msedge' },
+        verificationCandidates: [{ tool: 'list_windows', callId: 'read-' + i, arguments: {}, result: JSON.stringify({ value: 'x'.repeat(12000) }) }],
+      })) });
+      await renderConversationRecovery(stored.id);
+      const recovery = document.getElementById('conversation-recovery');
+      check(!!recovery.closest('#inspector-activity'), 'recovery cards are still laid over the conversation instead of the execution sidebar');
+      check(document.getElementById('stream').getBoundingClientRect().height > 450, 'recovery records consume the conversation viewport');
+      check(![...recovery.querySelectorAll('details')].some(item => item.open), 'raw recovery details are expanded by default');
+      setInspector(true, 'activity');
+      check(document.documentElement.scrollWidth <= innerWidth + 1, 'long recovery JSON overflows the window');
+      Data.recovery = async () => ({ ok: true, pendingRecovery: [] });
+      await renderConversationRecovery(stored.id);
+      check(recovery.hidden, 'resolved recovery records remain visible');
+      setInspector(false);
+
       const meta = document.querySelector('#stream .mp-chat-run-meta');
       check(meta && meta.textContent.includes('1m 7s'), 'finished turn footer ignores the real turn duration: ' + meta?.textContent);
 

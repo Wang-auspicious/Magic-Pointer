@@ -176,6 +176,7 @@
                 <svg class="codex-icon" aria-hidden="true"><use href="#ic-command-line" /></svg>
               </button>
               <button type="button" class="mp-thread-action" id="inspector-toggle" aria-label="打开任务材料或项目文件" aria-expanded="false" title="任务材料与项目文件"><svg class="codex-icon" aria-hidden="true"><use href="#ic-file-add" /></svg></button>
+              <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="执行记录" title="执行记录"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
               <button type="button" class="mp-thread-action" id="header-preview-toggle" aria-label="Toggle preview" title="Toggle preview"><svg class="codex-icon" aria-hidden="true"><use href="#ic-play" /></svg></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
@@ -237,7 +238,6 @@
           <button type="button" class="mpw-scroll-pill" id="scroll-pill" hidden aria-label="回到底部">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 11.5L2.5 6l1-1L8 9.5 12.5 5l1 1z" fill="currentColor"/></svg>
           </button>
-          <div id="conversation-recovery" hidden></div>
           <div class="mpw-stream" id="stream">
             <div class="mpw-blank" aria-hidden="true"></div>
           </div>
@@ -498,6 +498,7 @@
         </div>
       </header>
       <nav class="mp-inspector-tabs" aria-label="任务与项目工具">
+        <button type="button" data-inspector-tab="activity" aria-selected="false">执行</button>
         <button type="button" data-inspector-tab="materials" aria-selected="false">材料</button>
         <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">文件</button>
         <button type="button" data-inspector-tab="browser" aria-selected="false">浏览器</button>
@@ -505,6 +506,10 @@
         <button type="button" data-inspector-tab="changes" aria-selected="false">更改</button>
         <button type="button" data-inspector-tab="tasks" aria-selected="false">任务</button>
       </nav>
+      <section class="mp-inspector-panel" id="inspector-activity" data-inspector-panel="activity" hidden>
+        <div id="conversation-recovery" class="mp-execution-recovery" hidden></div>
+        <div id="conversation-activity" class="mp-execution-activity"></div>
+      </section>
       <section class="mp-inspector-panel" id="inspector-materials" data-inspector-panel="materials" hidden>
         <header class="mp-task-material-header">
           <div><strong>当前任务材料</strong><p>点选后会作为下一步的明确来源；详情保留来源身份与局部引用。</p></div>

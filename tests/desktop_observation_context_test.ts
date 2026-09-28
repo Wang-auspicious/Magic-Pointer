@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { DesktopActionSession, markedObservationImage, patchesDiffer, type DesktopElement, type DesktopWindow } from '../electron/runtime/desktop';
 import { agentModelVision, registerLookTool } from '../electron/runtime/desktop_perception';
 import { ToolRegistry } from '../electron/runtime/tools';
+import { projectContextMessages } from '../electron/runtime/agent_services';
 
 const window: DesktopWindow = { hwnd: 7, pid: 3, title: 'Big', bbox: [100, 50, 3300, 1850], process_name: 'app.exe' };
 const element = (index: number, rect: [number, number, number, number], role = 'button', patterns = ['Invoke']): DesktopElement => ({ index, hwnd: 7, name: `E${index}`, role, rect, runtime_id: [index], patterns });
@@ -30,6 +31,18 @@ test('image coordinates map back to physical screen pixels', async () => {
   assert.equal(snapshot.imageScale, 0.5);
   assert.deepEqual(session.toScreen(snapshot, { x: 800, y: 400, coordinate_space: 'image' }), { x: 1700, y: 850 });
   assert.deepEqual(session.toScreen(snapshot, { x: 800, y: 400 }), { x: 800, y: 400 });
+});
+
+test('focused controls remain visible in the projected desktop state without paging raw JSON', async () => {
+  const session = new DesktopActionSession('focused-control');
+  const elements = Array.from({ length: 70 }, (_, i) => element(i + 1, [0, 0, 0, 0], 'pane', []));
+  elements.push({ ...element(71, [300, 100, 1200, 150], 'edit', ['Value']), name: 'Address and search bar', focused: true, value: 'https://github.com' });
+  elements.push(...Array.from({ length: 40 }, (_, i) => element(i + 72, [0, 0, 0, 0], 'pane', [])));
+  Object.assign(session.observation, { windows: async () => [window], elements: async () => elements });
+  const state = await session.call('get_app_state', { mode: 'ax', pixels: false });
+  const projected = projectContextMessages([{ role: 'tool', name: 'get_app_state', tool_call_id: 'observe', content: JSON.stringify(state) }]);
+  assert.match(projected[0].content || '', /Address and search bar/);
+  assert.match(projected[0].content || '', /https:\/\/github.com/);
 });
 
 test('a blinking caret does not make a click target stale, a changed region does', async () => {

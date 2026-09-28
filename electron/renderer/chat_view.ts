@@ -216,12 +216,21 @@ const ChatView = (() => {
   const TOOL_TITLES: Record<string, string> = {
     Todo: 'Updated plan', TodoWrite: 'Updated plan', todo_write: 'Updated plan',
     AskUser: 'Asked user', AskUserQuestion: 'Asked user', ask_user_question: 'Asked user', ask_user: 'Asked user',
-    Observe: 'Observed', get_app_state: 'Observed',
+    Observe: 'Observed',
     ListApps: 'Listed windows', ListWindows: 'Listed windows',
     pwsh: 'Ran',
     search: 'Searched',
     list_dir: 'Listed files in working directory',
+    Tools: '加载工具', 'ToolResult.read': '读取执行详情', 'Browser.navigate': '打开网页', list_apps: '查找应用窗口', list_windows: '列出窗口', get_focused: '查看当前窗口',
+    launch_app: '打开应用', activate_window: '切换窗口', get_app_state: '观察窗口', observe_ui: '观察界面',
+    find_roots: '查找窗口', search_ui: '查找控件', inspect_ui: '查看控件', expand_ui: '展开控件', read_text: '读取界面文字',
+    click: '点击控件', type_text: '输入文字', press_key: '按键', scroll: '滚动页面', drag: '拖动',
+    set_value: '填写控件', select_text: '选择文字', perform_secondary_action: '操作控件', act_ui: '执行桌面步骤',
+    wait_for: '等待界面结果', turn_ended: '结束桌面操作',
   };
+  const DESKTOP_TOOLS = new Set(['list_apps', 'list_windows', 'get_focused', 'launch_app', 'activate_window', 'get_app_state', 'observe_ui',
+    'find_roots', 'search_ui', 'inspect_ui', 'expand_ui', 'read_text', 'click', 'type_text', 'press_key', 'scroll', 'drag', 'set_value',
+    'select_text', 'perform_secondary_action', 'act_ui', 'wait_for', 'turn_ended', 'Browser.navigate']);
 
   const SUBAGENT_TOOLS = new Set(['Agent', 'delegate_task']);
   const PLAN_TOOLS = new Set(['Todo', 'TodoWrite', 'todo_write']);
@@ -253,7 +262,7 @@ const ChatView = (() => {
     search: ['query', 'pattern', 'url'],
     write: ['path', 'file_path'],
     edit: ['path', 'file_path'],
-    code: ['description'],
+    code: ['description', 'app', 'url', 'text', 'keys', 'window_id', 'ref'],
     others: [],
   };
 
@@ -279,7 +288,7 @@ const ChatView = (() => {
   }
 
   function classifyTool(name: string): ToolVariant {
-    return TOOL_VARIANTS[name] || 'others';
+    return DESKTOP_TOOLS.has(name) ? 'code' : TOOL_VARIANTS[name] || 'others';
   }
 
   function isJunkSummary(value: string): boolean {
@@ -321,6 +330,7 @@ const ChatView = (() => {
     if (!argsRaw) return null;
     let parsed: unknown;
     try { parsed = JSON.parse(argsRaw); } catch { return argsRaw; }
+    if (parsed && typeof parsed === 'object' && Object.keys(parsed).length === 0) return null;
     if (variant === 'code' && typeof parsed === 'object' && parsed !== null) {
       const code = (parsed as Record<string, unknown>).code;
       if (typeof code === 'string' && code !== '') return code;
@@ -429,8 +439,12 @@ const ChatView = (() => {
     const title = isBlockedResult(result) ? 'Blocked' : SUBAGENT_TOOLS.has(name)
       ? state === 'running' ? 'Running subagent' : 'Subagent'
       : TOOL_TITLES[name] ?? (variant === 'others' ? name : VARIANT_TITLES[variant]);
-    const summary = variant === 'others' || name === 'list_dir' || isQuestionTool(name) || ['Todo', 'TodoWrite', 'todo_write'].includes(name) ? '' : base;
-    const output = result === undefined || !result.text ? null : result.text;
+    let summary = variant === 'others' || name === 'list_dir' || isQuestionTool(name) || ['Todo', 'TodoWrite', 'todo_write'].includes(name) ? '' : base;
+    if (name === 'Tools') { try { const args = JSON.parse(argsRaw); if (Array.isArray(args.names)) summary = args.names.join('、'); } catch {} }
+    let output = result === undefined || !result.text ? null : result.text;
+    if (output) { try { const decoded = JSON.parse(output); if (decoded && typeof decoded.value === 'string') {
+      try { decoded.value = JSON.parse(decoded.value); } catch {}
+    } output = JSON.stringify(decoded, null, 2); } catch {} }
     const rawError = state === 'error' && output !== null ? firstLine(output) : null;
     const errorSummary = rawError !== null && rawError.length > 60 ? `${rawError.slice(0, 60)}…` : rawError;
     return {
@@ -1119,8 +1133,13 @@ const ChatView = (() => {
     const pending = chips.filter(chip => chip.result === undefined);
     if (pending.length) {
       const completed = chips.filter(chip => chip.result !== undefined);
-      const active = pending.length === 1 ? pending[0].name : `${pending.length} tools`;
+      const active = pending.length === 1 ? TOOL_TITLES[pending[0].name] || pending[0].name : `${pending.length} tools`;
       return `Running ${active}` + (completed.length ? ` · ${toolGroupLabel(completed)}` : '');
+    }
+    if (chips.some(chip => DESKTOP_TOOLS.has(chip.name))) {
+      const labels = [...new Set(chips.filter(chip => DESKTOP_TOOLS.has(chip.name)).map(chip => TOOL_TITLES[chip.name]))].slice(0, 3);
+      const failed = failedCount(chips);
+      return `${labels.join('、')} · ${chips.length} 步${failed ? `（${failed} 步失败）` : ''}`;
     }
     const counts = new Map<ToolVariant, number>();
     const failures = new Map<ToolVariant, number>();

@@ -1495,6 +1495,18 @@
   background: var(--mp-panel-subtle);
 }
 
+#execution-attention { font-size: 10px; color: var(--mp-text); }
+.mp-execution-recovery, .mp-execution-activity { min-width: 0; padding: 16px; }
+.mp-execution-heading { margin: 0 0 16px; color: var(--mp-text-muted); font-size: 13px; line-height: 1.5; }
+.mp-execution-recovery details { margin-bottom: 10px; border: 1px solid var(--mp-rule); border-radius: 8px; padding: 12px; }
+.mp-execution-recovery summary { cursor: pointer; font: inherit; font-weight: 500; overflow-wrap: anywhere; }
+.mp-execution-recovery pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 monospace; }
+.mp-execution-recovery select { display: block; max-width: 100%; margin: 12px 0; font: inherit; }
+.mp-execution-recovery button { border: 1px solid var(--mp-rule); border-radius: 6px; padding: 6px 10px; font: inherit; }
+.mp-execution-recovery button:disabled { opacity: .5; }
+.mp-execution-activity .mp-chat-tool { margin-block: 12px; }
+.mp-execution-activity .mp-chat-tool-output { max-height: 320px; overflow: auto; overflow-wrap: anywhere; }
+
 .mp-inspector-tabs button {
   height: 24px;
   padding: 0 8px;

@@ -241,6 +241,11 @@ declare global {
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
 
   interface MagicPointerChatViewApi {
+    toolRowModel(name: string, argsRaw: string, result?: { text?: string; isError?: boolean; interrupted?: boolean }, callId?: string): {
+      title: string; summary: string; name: string; argsRaw: string; variant: string; state: string;
+      body: string | null; output: string | null; errorSummary: string | null; callId: string;
+    };
+    toolRowNode(model: ReturnType<MagicPointerChatViewApi['toolRowModel']>, scope?: string): HTMLElement;
     userNode(question: string, timeMs?: number, branch?: { conversationId: string; turnIndex: number }): Element;
     assistantTurnNode(turn: Record<string, unknown>, scope?: string, options?: { taskPanel?: boolean }): Element[];
     turnStatusNode(label: string): Element;
