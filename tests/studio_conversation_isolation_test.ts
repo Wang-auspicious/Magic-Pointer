@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
-const functions = ['openConversation', 'startNewChat', 'detachPendingConversation'];
+const functions = ['openConversation', 'startNewChat', 'detachPendingConversation', 'renderConversationActivity'];
 const code = ast.statements.filter(node => ts.isFunctionDeclaration(node) && functions.includes(node.name?.text || ''))
   .map(node => node.getText(ast)).join('\n');
 
