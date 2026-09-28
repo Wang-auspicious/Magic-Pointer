@@ -60,8 +60,8 @@ app.whenReady().then(async () => {
       composerAttachments = [{ path: 'draft.md', name: 'draft.md' }];
       const host = document.getElementById('composer-permission-ask');
       check(host.textContent.includes('npm test && npm run build'), 'approval hides the full action behind a prefix');
-      check(host.parentElement?.id === 'stream', 'pending input must be in the scrollable conversation, not a permanent second composer');
-      check(document.getElementById('stream').getBoundingClientRect().height > 550, 'pending input squeezed away the conversation viewport');
+      check(!!host.closest('.mpw-composer-stack'), 'pending decision must stay reachable above the composer');
+      check(document.getElementById('stream').getBoundingClientRect().height > 300, 'pending input squeezed away the conversation viewport');
       const once = [...host.querySelectorAll('button')].find(button => button.textContent.includes('Allow once'));
       check(!!once, 'permission card has no Allow once action');
       once.click(); await wait();
@@ -136,7 +136,7 @@ app.whenReady().then(async () => {
       const otherChoice = host.querySelector('.mp-decision-other [role="radio"]');
       check(!!otherChoice, 'inline Other is missing its selectable radio row');
       check(getComputedStyle(host.querySelector('.mp-decision-option')).gap === '12px', 'inline question choice gap differs from Code 12px');
-      check(host.querySelector('[data-question-next]').getBoundingClientRect().height === 24, 'inline question action is not the Code 24px control');
+      check(host.querySelector('[data-question-next]').offsetHeight >= 34, 'question action has an undersized hit target');
       host.querySelector('[aria-label="Next question"]').click();
       host.querySelector('[data-option-index="0"]').click();
       host.querySelector('[data-question-submit]').click(); await wait();

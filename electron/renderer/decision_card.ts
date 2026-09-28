@@ -29,6 +29,7 @@ declare global {
     render(host: HTMLElement, request: MagicPointerDecisionRequest,
       submit: (response: MagicPointerDecisionResponse) => void): void;
     pending(host: HTMLElement, busy: boolean, error?: string): void;
+    resolve(host: HTMLElement): void;
     clear(host: HTMLElement, forget?: boolean): void;
   };
 }
@@ -58,6 +59,7 @@ declare global {
     submit: (response: MagicPointerDecisionResponse) => void;
   }
   const drafts = new Map<string, Draft>();
+  const resolved = new Set<string>();
   const views = new WeakMap<HTMLElement, View>();
   const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string) => {
     const node = document.createElement(tag);
@@ -281,6 +283,12 @@ declare global {
     card.dataset.kind = request.kind === 'plan' ? 'plan' : request.kind === 'permission' ? 'permission' : 'question';
     card.setAttribute('aria-label', request.kind === 'permission' ? 'Permission request' : 'Question from Magic Pointer');
     card.setAttribute('aria-busy', String(view.busy));
+    if (view.busy) {
+      card.classList.add('is-saving');
+      const status = element('p', 'mp-decision-saving', '正在保存你的选择…');
+      status.setAttribute('role', 'status');
+      card.append(status); mount(host, card, request.key); return;
+    }
     const button = (label: string, action: () => void, className = '') => {
       const node = element('button', `mp-decision-button ${className}`, label);
       node.type = 'button'; node.disabled = view.busy;
@@ -313,8 +321,8 @@ declare global {
       card.append(actions);
     } else if (request.kind === 'permission') {
       const head = element('div', 'mp-decision-heading');
-      head.append(element('span', 'mp-decision-tool', request.tool || 'Tool'),
-        element('span', 'mp-decision-caption', 'Permission needed'));
+      head.append(element('span', 'mp-decision-eyebrow', '需要你的授权'),
+        element('span', 'mp-decision-caption', request.tool || 'Tool'));
       const question = element('p', 'mp-decision-question', request.question || `Allow ${request.tool || 'this action'}?`);
       card.append(head, question);
       const actions = element('div', 'mp-decision-actions');
@@ -342,7 +350,7 @@ declare global {
       const current = questions[draft.page];
       if (!current) { host.hidden = true; return; }
       const header = element('div', 'mp-decision-heading');
-      header.append(element('span', inline ? 'mp-decision-question' : 'mp-decision-caption', inline ? current.question : current.header || 'Question'));
+      header.append(element('span', 'mp-decision-eyebrow', current.header || '需要你的选择'));
       const navigation = element('div', 'mp-decision-pages');
       const back = button('‹', () => { draft.page--; paint(host, view); });
       back.setAttribute('aria-label', 'Previous question');
@@ -353,7 +361,7 @@ declare global {
       navigation.append(back, element('span', '', `${draft.page + 1} / ${questions.length}`), forward);
       if (questions.length > 1) header.append(navigation);
       card.append(header);
-      if (!inline) card.append(element('p', 'mp-decision-question', current.question));
+      card.append(element('p', 'mp-decision-question', current.question));
       if (current.multiSelect) card.append(element('p', 'mp-decision-hint', 'Select all that apply'));
       const options = element('div', 'mp-decision-options');
       options.setAttribute('role', current.multiSelect ? 'group' : 'radiogroup');
@@ -398,7 +406,7 @@ declare global {
             if (mark) mark.textContent = inline ? '' : String(index + 1);
           });
         }
-        const row = card.querySelector('.mp-decision-other-choice');
+        const row = host.querySelector('.mp-decision-other-choice');
         row?.setAttribute('aria-checked', 'true'); row?.classList.add('is-selected');
         const mark = row?.querySelector('.mp-decision-choice-mark');
         if (mark) mark.textContent = '✓';
@@ -464,11 +472,28 @@ declare global {
       const error = element('p', 'mp-decision-error', view.error);
       error.setAttribute('role', 'alert'); card.append(error);
     }
-    if (view.busy) card.append(element('p', 'mp-decision-hint', 'Sending your response…'));
-    host.hidden = false; host.replaceChildren(card);
+    const content = element('div', 'mp-decision-body');
+    const heading = card.querySelector('.mp-decision-heading');
+    const actions = card.querySelector('.mp-decision-actions');
+    for (const child of Array.from(card.children)) if (child !== heading && child !== actions) content.append(child);
+    card.replaceChildren(...[heading, content, actions].filter((item): item is HTMLElement => item instanceof HTMLElement));
+    mount(host, card, request.key);
+  }
+  function mount(host: HTMLElement, card: HTMLElement, key: string): void {
+    const existing = host.firstElementChild as HTMLElement | null;
+    if (host.dataset.decisionKey === key && existing?.classList.contains('mp-decision-card')) {
+      existing.className = card.className;
+      existing.setAttribute('aria-busy', card.getAttribute('aria-busy') || 'false');
+      existing.replaceChildren(...Array.from(card.childNodes));
+    } else { host.dataset.decisionKey = key; host.replaceChildren(card); }
+    host.hidden = false;
   }
   globalThis.DecisionCard = {
     render(host, request, submit) {
+      if (resolved.has(request.key)) {
+        if (!views.has(host) || views.get(host)?.request.key === request.key) DecisionCard.clear(host);
+        return;
+      }
       const existing = views.get(host);
       if (existing?.request.key === request.key) {
         const changedSources = existing.request.historySources !== request.historySources
@@ -496,10 +521,28 @@ declare global {
       if (!view) return;
       view.busy = busy; view.error = error; paint(host, view);
     },
+    resolve(host) {
+      const view = views.get(host);
+      if (!view) return;
+      resolved.add(view.request.key);
+      const card = host.firstElementChild as HTMLElement | null;
+      if (card && !host.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        const bounds = card.getBoundingClientRect();
+        const exit = card.cloneNode(true) as HTMLElement;
+        exit.inert = true; exit.setAttribute('aria-hidden', 'true');
+        exit.classList.add('mp-decision-exit');
+        Object.assign(exit.style, { left: `${bounds.left}px`, top: `${bounds.top}px`, width: `${bounds.width}px`, height: `${bounds.height}px` });
+        document.body.append(exit);
+        void exit.animate([{ opacity: .8, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(6px)' }],
+          { duration: 140, easing: 'ease-out' }).finished.then(() => exit.remove(), () => exit.remove());
+      }
+      DecisionCard.clear(host, true);
+    },
     clear(host, forget = false) {
       const view = views.get(host);
       if (forget && view) drafts.delete(view.request.key);
       views.delete(host); host.hidden = true; host.replaceChildren();
+      delete host.dataset.decisionKey;
     },
   };
 })();

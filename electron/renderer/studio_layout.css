@@ -1496,16 +1496,59 @@
 }
 
 #execution-attention { font-size: 10px; color: var(--mp-text); }
-.mp-execution-recovery, .mp-execution-activity { min-width: 0; padding: 16px; }
-.mp-execution-heading { margin: 0 0 16px; color: var(--mp-text-muted); font-size: 13px; line-height: 1.5; }
+.mp-execution-recovery, .mp-execution-activity { min-width: 0; padding: 20px; }
+.mp-execution-recovery[hidden] + .mp-execution-activity { padding-top: 22px; }
+.mp-execution-activity { font-size: 13px; line-height: 1.5; }
+.mp-execution-overview { margin-bottom: 22px; }
+.mp-execution-overline { margin-bottom: 6px; color: var(--mp-text-muted); font-size: 11px; letter-spacing: .04em; }
+.mp-execution-title { margin: 0 0 10px; font-size: 18px; font-weight: 550; letter-spacing: -.03em; line-height: 1.4; }
+.mp-execution-metrics { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--mp-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mp-execution-failure-count { color: var(--mp-danger); }
+.mp-execution-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.mp-execution-legend > span { padding: 4px 8px; border-radius: 5px; color: var(--phase-ink); background: var(--phase-bg); font-size: 11px; }
+.mp-execution-activity [data-phase="prepare"] { --phase-ink: #6b6978; --phase-bg: #efedf3; }
+.mp-execution-activity [data-phase="read"] { --phase-ink: #376c91; --phase-bg: #eaf2f7; }
+.mp-execution-activity [data-phase="act"] { --phase-ink: #35745e; --phase-bg: #eaf3ee; }
+[data-theme="dark"] .mp-execution-activity [data-phase="prepare"] { --phase-ink: #b5afc4; --phase-bg: #302e37; }
+[data-theme="dark"] .mp-execution-activity [data-phase="read"] { --phase-ink: #9ec2de; --phase-bg: #25333e; }
+[data-theme="dark"] .mp-execution-activity [data-phase="act"] { --phase-ink: #99cdb5; --phase-bg: #263a31; }
+.mp-execution-phases { display: flex; flex-direction: column; gap: 12px; }
+.mp-execution-phase { background: var(--phase-bg); border-radius: 12px; overflow: clip; }
+.mp-execution-phase-heading { display: flex; align-items: center; gap: 8px; padding: 12px 14px; color: var(--phase-ink); cursor: pointer; list-style: none; font-size: 12px; font-weight: 550; }
+.mp-execution-phase-heading::before { content: ''; width: 5px; height: 5px; border-right: 1.5px solid; border-bottom: 1.5px solid; transform: rotate(-45deg); transition: transform 180ms ease; }
+.mp-execution-phase[open] > .mp-execution-phase-heading::before { transform: rotate(45deg); }
+.mp-execution-phase-count { margin-left: auto; font-size: 11px; font-weight: 400; }
+.mp-execution-phase-body { padding: 0 6px 6px; }
+.mp-execution-step { border-radius: 8px; background: color-mix(in srgb, var(--mp-panel) 84%, transparent); }
+.mp-execution-step + .mp-execution-step { margin-top: 4px; }
+.mp-execution-step-summary { padding: 12px; cursor: pointer; list-style: none; transition: background 150ms ease; }
+.mp-execution-step-summary:hover { background: color-mix(in srgb, var(--phase-ink) 5%, transparent); }
+.mp-execution-step-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.mp-execution-step-title { min-width: 0; font-weight: 550; overflow-wrap: anywhere; }
+.mp-execution-status { flex-shrink: 0; color: var(--phase-ink); font-size: 10px; }
+.mp-execution-step[data-state="error"] .mp-execution-status,
+.mp-execution-step[data-state="error"] .mp-execution-result { color: var(--mp-danger); }
+.mp-execution-step[data-state="waiting"] .mp-execution-status { color: var(--mp-clay); }
+.mp-execution-target { margin-top: 3px; color: var(--mp-text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.mp-execution-result { display: flex; align-items: baseline; gap: 12px; margin-top: 10px; font-size: 12px; }
+.mp-execution-result > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mp-execution-result time { flex-shrink: 0; color: var(--mp-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.mp-execution-detail { padding: 0 12px 12px; }
+.mp-execution-detail-label { margin: 10px 0 5px; color: var(--mp-text-muted); font-size: 10px; }
+.mp-execution-raw { max-height: 220px; overflow: auto; margin: 0; padding: 10px; border-radius: 6px; background: var(--mp-hover); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, Consolas, monospace; }
+.mp-execution-note { color: var(--mp-text-muted); font-size: 12px; line-height: 1.7; }
+.mp-execution-more { width: 100%; margin: 0 0 12px; border: 0; border-radius: 6px; padding: 8px; background: var(--mp-hover); color: var(--mp-text-muted); font: inherit; cursor: pointer; }
+.mp-execution-activity summary:focus-visible, .mp-execution-more:focus-visible { outline: 2px solid var(--mp-clay); outline-offset: -2px; }
+.mp-execution-activity summary::-webkit-details-marker { display: none; }
+.mp-execution-step[data-state="running"] .mp-execution-status::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; animation: execution-pulse 1400ms ease-in-out infinite; }
+@keyframes execution-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .mp-execution-activity * { animation: none !important; transition: none !important; } }
 .mp-execution-recovery details { margin-bottom: 10px; border: 1px solid var(--mp-rule); border-radius: 8px; padding: 12px; }
 .mp-execution-recovery summary { cursor: pointer; font: inherit; font-weight: 500; overflow-wrap: anywhere; }
 .mp-execution-recovery pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 monospace; }
 .mp-execution-recovery select { display: block; max-width: 100%; margin: 12px 0; font: inherit; }
 .mp-execution-recovery button { border: 1px solid var(--mp-rule); border-radius: 6px; padding: 6px 10px; font: inherit; }
 .mp-execution-recovery button:disabled { opacity: .5; }
-.mp-execution-activity .mp-chat-tool { margin-block: 12px; }
-.mp-execution-activity .mp-chat-tool-output { max-height: 320px; overflow: auto; overflow-wrap: anywhere; }
 
 .mp-inspector-tabs button {
   height: 24px;

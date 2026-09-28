@@ -109,10 +109,11 @@ app.whenReady().then(async () => {
       check(!host.textContent.includes('[object Object]'), 'object options render as [object Object]');
       check(host.textContent.includes('Plan card') && host.textContent.includes('The checklist.'), 'object option label or description missing');
       check(!document.querySelector('#stream .mp-chat-run-meta'), 'a turn waiting for the user already shows the finished footer');
+      await Promise.all(host.querySelector('.mp-decision-card').getAnimations().map(animation => animation.finished));
       const card = host.querySelector('.mp-decision-card').getBoundingClientRect();
-      const column = document.querySelector('#stream .mp-chat-flow-item').getBoundingClientRect();
+      const column = document.querySelector('.mpw-scroll').getBoundingClientRect();
       check(Math.abs(card.left - column.left) <= 1 && Math.abs(card.width - column.width) <= 1,
-        'question card is not aligned to the transcript column: ' + JSON.stringify([card.left, card.width, column.left, column.width]));
+        'question dock is not aligned to the composer: ' + JSON.stringify([card.left, card.width, column.left, column.width]));
 
       const option = host.querySelector('[data-option-index="0"]');
       option.focus(); option.click();

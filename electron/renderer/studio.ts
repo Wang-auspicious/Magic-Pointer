@@ -3071,23 +3071,11 @@ function renderConversationActivity(): void {
   if (!host) return;
   const turn = activeConversationTurns.at(-1) as MagicPointerTurn | undefined;
   const trajectory = pendingConversation?.transcript.trajectory || turn?.liveProgress?.trajectory || turn?.trajectory || [];
-  const calls = trajectory.filter(record => record.kind === 'tool');
-  const signature = JSON.stringify([activeConversationId, calls]);
-  if (host.dataset.signature === signature) return;
-  host.dataset.signature = signature;
-  host.replaceChildren();
-  const heading = document.createElement('p'); heading.className = 'mp-execution-heading';
-  heading.textContent = calls.length ? `本轮执行 · ${calls.length} 步${calls.length > 20 ? '，显示最近 20 步' : ''}` : '工具执行时，目标、步骤和结果会显示在这里。';
-  host.appendChild(heading);
-  for (const call of calls.slice(-20)) {
-    const result = call.state === 'running' || call.result === undefined ? undefined : {
-      text: typeof call.result === 'string' ? call.result : JSON.stringify(call.result),
-      isError: call.state === 'error' || call.isError === true,
-      interrupted: call.state === 'stopped',
-    };
-    host.appendChild(ChatView.toolRowNode(ChatView.toolRowModel(String(call.name || ''), String(call.text || '{}'), result, String(call.callId || '')),
-      `execution:${activeConversationId}:${activeConversationTurns.length}`) as HTMLElement);
-  }
+  ExecutionView.render(host, { scope: `${activeConversationId}:${activeConversationTurns.length}`, trajectory,
+    timingMs: turn?.timingMs, totalTokens: turn?.modelUsage?.totalTokens,
+    waiting: Boolean(turn?.pendingInput && !turn.liveProgress && !pendingConversation?.inputAccepted),
+    running: Boolean(pendingConversation || turn?.liveProgress),
+  });
 }
 
 function pendingToolRequestId(turn?: MagicPointerTurn): string {
@@ -4118,7 +4106,7 @@ async function respondToChildInput(host: HTMLElement, task: StudioSubagentTask,
     if (!result.ok) throw new Error(result.error || 'Could not answer the child task. Try again.');
     acceptedChildInputs.add(`${conversationId}:${task.id}:${requestId}`);
     if (result.resumeRequired) task.answerSaved = true;
-    DecisionCard.clear(host, true);
+    DecisionCard.resolve(host);
     await refreshBackgroundAgentTasks(conversationId);
   } catch (error) { DecisionCard.pending(host, false, error instanceof Error ? error.message : String(error)); }
 }
@@ -5805,9 +5793,8 @@ function renderPermissionAsk() {
   if (isDailyWrap) {
     if (pendingDailyWrapSources?.key !== key) loadDailyWrapSources(key);
   } else pendingDailyWrapSources = null;
-  const stream = document.getElementById('stream');
-  const follow = stream && stream.scrollHeight - stream.scrollTop - stream.clientHeight < 120;
-  if (stream && host.parentElement !== stream) stream.append(host);
+  const dock = document.querySelector('.mpw-composer-stack');
+  if (dock && host.parentElement !== dock) dock.prepend(host);
   host.dataset.mode = pendingPermissionAsk ? 'permission' : 'ask';
   DecisionCard.render(host, {
     ...input, key,
@@ -5824,12 +5811,14 @@ function renderPermissionAsk() {
       options: (pendingAskInput.options || []).map(label => ({ label })),
     }] : undefined),
   }, response => { void respondToPendingInput(conversationId, requestId, response); });
-  if (stream && follow) stream.scrollTop = stream.scrollHeight;
 }
 
 async function respondToPendingInput(conversationId: string, requestId: string, response: MagicPointerDecisionResponse) {
-  if (studioComposerBusy || pendingConversation || externalConversationRun) return;
   const host = document.getElementById('composer-permission-ask');
+  if (studioComposerBusy || pendingConversation || externalConversationRun) {
+    if (host) DecisionCard.pending(host, false, '任务状态正在更新，请稍后重试。');
+    return;
+  }
   if (!host || conversationId !== activeConversationId) return;
   if (!requestId || !conversationId) {
     DecisionCard.pending(host, false, '无法找到这条请求的执行记录。请重新打开任务后重试。');
@@ -5862,7 +5851,7 @@ async function respondToPendingInput(conversationId: string, requestId: string, 
       return;
     }
     pendingPermissionAsk = null; pendingAskInput = null;
-    DecisionCard.clear(host, true);
+    DecisionCard.resolve(host);
     await openConversation(conversationId);
     if (pendingConversation !== submitted || activeConversationId !== conversationId) return;
     setComposerSettledState(result.ok ? 'success' : 'error');
@@ -6635,7 +6624,7 @@ Data.onConversationProgress((payload) => {
     pendingConversation.inputAccepted = true;
     pendingPermissionAsk = null; pendingAskInput = null;
     const host = document.getElementById('composer-permission-ask');
-    if (host) DecisionCard.clear(host, true);
+    if (host) DecisionCard.resolve(host);
   }
   if (!pendingConversation.scope && payload.conversationId && Number.isInteger(payload.turnIndex)) {
     pendingConversation.scope = `${payload.conversationId}#${payload.turnIndex}`;
