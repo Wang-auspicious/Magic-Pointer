@@ -140,6 +140,8 @@ function permissionFor(options: AgentOptions, call: ToolCall, claimedOnce: Set<s
   for (const event of options.session.events) {
     if (event.type !== 'user_input/answered') continue;
     const pending = asObject(event.data.pendingInput), response = asObject(event.data.response);
+    if (pending.kind === 'desktop_wait' && response.desktopControl === 'continue' && call.id === `approval-${event.data.requestId}` &&
+        asObject(pending.action).tool === call.name && isDeepStrictEqual(asObject(pending.action).arguments, call.arguments)) return 'allow';
     if (pending.kind !== 'permission') continue;
     const rule = pending.prefix ? `Bash(${pending.prefix})` : str(pending.tool);
     if (response.decision === 'grant') { allowed.add(rule); denied.delete(rule); }
@@ -300,6 +302,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       signal.throwIfAborted();
       const steered = await session.claimInbox('next-step');
       if (steered.length) { lastProgress = Date.now(); await session.cancelPermissions(); emit({ kind: 'steered', turn: turns, texts: steered.map(item => item.text), input_ids: steered.map(item => asObject(item.taskInput).inputId).filter(Boolean) }); }
+      if (session.desktopTakenOver()) { reason = 'user_interrupt'; answer = '已停止桌面操作，由你接管。发送新的指令后再继续。'; break; }
       if (Date.now() - lastProgress > timeout) { reason = 'budget_exhausted'; answer = 'No progress within the current activity budget.'; break; }
       const schemas = registry.schemas() as Data[], requestSystem = system + (registry.directory() ? '\n\n可按名字用 Tools 加载的工具：\n' + registry.directory() : '');
       const estimated = estimateTokens(requestSystem + JSON.stringify(schemas) + JSON.stringify(projectContextMessages(session.deriveMessages())));
@@ -413,7 +416,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         if (post?.allowed === false) { result.value = `Tool executed, but its result was blocked: ${post.reason}`; result.is_error = true; }
         const pictured = await extractToolImages(result.value, path.join(options.userDataDir, 'tool-images', session.id), call.id).catch(() => ({ value: result.value, images: [] }));
         result.value = pictured.value;
-        let body = outputText(result.value);
+        let body = result.is_error
+          ? outputText({ error: result.error_message || result.failure_type || 'Tool failed', failureType: result.failure_type,
+            ...(result.value !== null && result.value !== undefined ? { result: result.value } : {}) })
+          : outputText(result.value);
         if (post?.extraContext) body += '\n' + str(post.extraContext);
         let effect: Effect = 'read'; try { effect = registry.effect(call.name, asObject(call.arguments)); } catch {}
         const value = typeof result.value === 'string' ? (() => { try { return asObject(JSON.parse(result.value)); } catch { return {}; } })() : asObject(result.value);

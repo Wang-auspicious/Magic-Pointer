@@ -172,7 +172,11 @@ function pendingInput(events: Event[], surface: Message[]): Data | null {
       if (value.awaitingUserInput !== true || !['AskUser', 'AskUserQuestion', 'ask_user_question', 'ExitPlanMode'].includes(message.name ?? '') &&
         !(value.kind === 'desktop_wait' && value.waitingForDesktop === true && value.notExecuted === true)) continue;
       const pending = { ...normalizedInput(value), requestId: message.tool_call_id } as Data;
-      if (pending.kind === 'desktop_wait') pending.tool = message.name;
+      if (pending.kind === 'desktop_wait') {
+        pending.tool = message.name;
+        const call = reversed.flatMap(item => item.tool_calls ?? []).find(call => call.id === message.tool_call_id);
+        if (call) pending.action = { tool: message.name, arguments: call.arguments ?? {} };
+      }
       if (pending.kind === 'permission') {
         for (const item of reversed) {
           if (item.role === 'user' && !item.injected) break;
@@ -209,7 +213,7 @@ function recovery(events: Event[]): Data[] {
         if (!['succeeded', 'failed', 'unknown', 'not_started'].includes(text(data.outcome))) throw new Error(`operation ${id} has invalid outcome`);
         operation.outcome = text(data.outcome);
         operation.settled = seq;
-        if (['succeeded', 'failed'].includes(operation.outcome)) operation.recovery = 'none';
+        if (['succeeded', 'failed', 'not_started'].includes(operation.outcome)) operation.recovery = 'none';
       }
     }
   }
@@ -647,12 +651,22 @@ export class EventSession {
   approvedCalls(): Data[] {
     const started = new Set(this.events.filter(event => event.type === 'operation/prepared').map(event => event.data.callId));
     for (const event of this.events) if (event.type === 'permission/cancelled') for (const id of array(event.data.requestIds)) started.add(`approval-${id}`);
-    return this.events.filter(event => event.type === 'user_input/answered' && object(event.data.pendingInput).harnessPermission && object(event.data.response).decision !== 'deny' && !started.has(`approval-${event.data.requestId}`))
+    return this.events.filter(event => event.type === 'user_input/answered' &&
+      (object(event.data.pendingInput).harnessPermission && object(event.data.response).decision !== 'deny' ||
+        object(event.data.pendingInput).kind === 'desktop_wait' && object(event.data.response).desktopControl === 'continue' && object(event.data.pendingInput).action) &&
+      !started.has(`approval-${event.data.requestId}`))
       .map(event => {
         const action = object(object(event.data.pendingInput).action), response = object(event.data.response);
         return { id: `approval-${event.data.requestId}`, name: action.tool,
           arguments: action.tool === 'DailyWrap.read' && response.actionArguments !== undefined ? response.actionArguments : action.arguments };
       });
+  }
+  desktopTakenOver(): boolean {
+    for (const event of [...this.events].reverse()) {
+      if (event.type === 'inbox/consumed' || object(event.data.message).role === 'user' && !object(event.data.message).injected) return false;
+      if (event.type === 'user_input/answered') return object(event.data.response).desktopControl === 'takeover';
+    }
+    return false;
   }
   async cancelPermissions(): Promise<void> {
     const answered = new Set(this.events.filter(event => event.type === 'user_input/answered').map(event => event.data.requestId));
@@ -714,7 +728,8 @@ export function normalizeResponse(pending: Data, response: Data): Data {
     if (items.some(item => typeof item !== 'string' || !item.trim() || item.length > 4000)) throw new Error('answer_must_contain_1_4000_characters');
     answers[text(question.question)] = Array.isArray(answer) ? [...new Set(items.map(item => String(item).trim()))] : String(answer).trim();
   }
-  return { answers, ...(skipped.length ? { skippedQuestions: skipped } : {}) };
+  return { answers, ...(skipped.length ? { skippedQuestions: skipped } : {}),
+    ...(pending.kind === 'desktop_wait' ? { desktopControl: answers[text(pending.question)] === array(pending.options)[0] ? 'continue' : 'takeover' } : {}) };
 }
 
 export async function handleSession(payload: Data, userDataDir: string): Promise<Data> {

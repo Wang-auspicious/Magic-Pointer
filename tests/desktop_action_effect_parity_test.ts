@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDesktop, DesktopActionSession, registerDesktopTools, type DesktopElement, type DesktopWindow } from '../electron/runtime/desktop';
 import { authorizeAccess, ensureFolderReadScope, scopeFromEvents } from '../electron/runtime/context';
-import { bindNamedWindows } from '../electron/runtime/context_prepare';
+import { bindNamedWindows, bindDesktopWindow } from '../electron/runtime/context_prepare';
 import { evidence, registerPerceptionTools } from '../electron/runtime/desktop_perception';
 import { EventSession } from '../electron/runtime/session';
 import { ToolRegistry } from '../electron/runtime/tools';
@@ -44,13 +44,34 @@ test('desktop actions classify visible send and delete targets before permission
   registerDesktopTools(registry, session);
   assert.equal(registry.effect('click', { state_id: 'state', ref: '@e1' }), 'external_send');
   assert.equal(registry.effect('click', { state_id: 'state', ref: '@e3' }), 'destructive');
-  assert.equal(registry.effect('click', { state_id: 'state', ref: '@e2' }), 'local_irreversible');
+  assert.equal(registry.effect('click', { state_id: 'state', ref: '@e2' }), 'reversible_write');
   assert.equal(registry.effect('click', { state_id: 'state', ref: '@e2', intent: 'send' }), 'external_send');
   assert.equal(registry.effect('press_key', { state_id: 'state', keys: 'enter' }), 'external_send');
   assert.equal(registry.effect('press_key', { state_id: 'state', keys: 'delete' }), 'destructive');
-  assert.equal(registry.effect('press_key', { state_id: 'state', keys: 'shift+enter' }), 'local_irreversible');
+  assert.equal(registry.effect('press_key', { state_id: 'state', keys: 'shift+enter' }), 'reversible_write');
+  for (const name of ['activate_window', 'launch_app', 'scroll', 'type_text', 'select_text', 'set_value'])
+    assert.equal(registry.effect(name, {}), 'reversible_write', `${name} should not repeatedly prompt in Auto mode`);
   assert.deepEqual(registry.get('click').access_for?.({ state_id: 'state', ref: '@e1' }), { action: 'patch', windowIds: ['w-42'] });
   for (const name of ['scroll', 'drag', 'set_value', 'select_text']) assert.equal(registry.get(name).access_for, undefined);
+});
+
+test('a successfully acquired desktop target grants only that window to this task', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mp-desktop-acquire-'));
+  const task = await EventSession.open(root, 'desktop-acquire');
+  const window: DesktopWindow = { hwnd: 42, pid: 7, process_name: 'msedge.exe', title: 'New tab', bbox: [0, 0, 400, 300] };
+  class TargetSession extends DesktopActionSession {
+    override async call() { return { ok: true, window, usedBackend: 'win32_activate', verification: { matched: true } }; }
+  }
+  const registry = new ToolRegistry();
+  registerDesktopTools(registry, new TargetSession(task.id), request => authorizeAccess(scopeFromEvents(task.events, task.id), request),
+    target => bindDesktopWindow(task, target));
+  const result = await registry.execute({ id: 'focus', name: 'activate_window', arguments: { window_id: 'w-42' } });
+  assert.equal(result.is_error, false, result.error_message);
+  const reopened = await EventSession.open(root, task.id, false);
+  const scope = scopeFromEvents(reopened.events, task.id);
+  assert.equal(authorizeAccess(scope, { action: 'read', windowIds: ['w-42'] }).allowed, true);
+  assert.equal(authorizeAccess(scope, { action: 'patch', windowIds: ['w-42'] }).allowed, true);
+  assert.equal(authorizeAccess(scope, { action: 'read', windowIds: ['w-43'] }).allowed, false);
 });
 
 test('desktop reads honor the selected task window while keeping window candidates discoverable', async t => {

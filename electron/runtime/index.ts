@@ -12,7 +12,7 @@ import { RuntimeActivitySink } from './agent_activity';
 import { EventSession } from './session';
 import { ToolRegistry } from './tools';
 import { resolveModelConfig, streamModel, requestVision } from './model';
-import { prepareTaskContext } from './context_prepare';
+import { bindDesktopWindow, prepareTaskContext } from './context_prepare';
 import { configureDesktop, closeDesktop, registerDesktopTools, desktopSession, listWindows, listElements } from './desktop';
 import { registerPerceptionTools, registerLookTool, createSnapshotPerceptionBackend, closeOcr, agentModelVision, isAgentModelVision, type PerceptionBackend, type VisionBackend } from './desktop_perception';
 import { registerSelectionQuickTools } from './selection_quick_tools';
@@ -84,7 +84,7 @@ export async function runRuntime(payload: Data, options: RuntimeOptions): Promis
     { name: 'wait-tools', apply: ctx => registerWaitTool(ctx.get('tools'), { workspace,
       windows: async () => (await listWindows(signal)).filter(window => perceptionOptions.windowReadScope(window.hwnd)),
       elements: async hwnd => perceptionOptions.windowReadScope(hwnd) ? listElements(hwnd, signal) : [] }) },
-    { name: 'desktop-action-tools', apply: ctx => registerDesktopTools(ctx.get('tools'), desktopSession(session.id, Number(payload.object?.hwnd || payload.object?.windowHwnd || 0) || undefined), prepared.authorizeAccess) },
+    { name: 'desktop-action-tools', apply: ctx => registerDesktopTools(ctx.get('tools'), desktopSession(session.id, Number(payload.object?.hwnd || payload.object?.windowHwnd || 0) || undefined), prepared.authorizeAccess, window => bindDesktopWindow(session, window)) },
     { name: 'local-action-tools', apply: ctx => registerRecipeTools(ctx.get('tools'), new Fabric(options, config), session) },
     { name: 'selection-quick-tools', apply: ctx => { const snapshot = payload.selectionSnapshot || payload.object?.selectionSnapshot; if (snapshot) registerSelectionQuickTools(ctx.get('tools'), snapshot); } },
     { name: 'perception-provider', apply: ctx => ctx.provideUp('perception', perception) },

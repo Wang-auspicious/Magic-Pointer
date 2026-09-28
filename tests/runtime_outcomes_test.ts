@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventSession } from '../electron/runtime/session';
 import { runAgent, type ModelReply } from '../electron/runtime/agent';
-import { ToolRegistry } from '../electron/runtime/tools';
+import { ActionFailure, ToolRegistry } from '../electron/runtime/tools';
 import { operationOutcomes, taskOutcomes } from '../electron/runtime/agent_outcomes';
 
 const schema = { type: 'object', properties: {}, required: [], additionalProperties: true };
@@ -153,6 +153,19 @@ test('switching read tools with identical evidence does not count as new progres
     model: async () => reply([call(`r${++round}`, round % 2 ? 'ReadOne' : 'ReadTwo', { page: round })]) });
   assert.equal(result.reason, 'stalled');
   assert(round < 8);
+});
+
+test('window enumeration between denied observations cannot keep the model retrying forever', async () => {
+  const options = await fixture('denied-desktop-loop'), registry = new ToolRegistry();
+  registry.register({ name: 'get_app_state', description: 'Read denied window', input_schema: schema,
+    execute: () => { throw new ActionFailure('permission_denied', 'window_not_granted:w-42'); } });
+  let round = 0;
+  registry.register({ name: 'list_windows', description: 'Read windows', input_schema: schema,
+    execute: () => ({ windows: [{ hwnd: 42, z_order: round }], observedAt: Date.now() }) });
+  const result = await runAgent({ ...options, registry, emergencyFuse: 14, model: async () =>
+    reply([call(`l${++round}`, 'list_windows'), call(`o${round}`, 'get_app_state', { mode: `attempt-${round}` })]) });
+  assert.equal(result.reason, 'stalled');
+  assert(round <= 4, 'a persistent permission failure must stop without burning more model calls');
 });
 
 test('resuming older settled writes without target metadata does not invent verification', async () => {

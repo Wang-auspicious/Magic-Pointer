@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { EventSession } from '../electron/runtime/session';
 import { compactSession, HookManager, registerAgentTools, runAgent, type ModelReply } from '../electron/runtime/agent';
-import { scheduleToolCalls, ToolRegistry, type ToolEvent } from '../electron/runtime/tools';
+import { ActionFailure, scheduleToolCalls, ToolRegistry, type ToolEvent } from '../electron/runtime/tools';
 import { WorkspaceFiles } from '../electron/runtime/agent_files';
 import { readAgentStatus } from '../electron/runtime/agent_background';
 
@@ -18,6 +18,23 @@ const fixture = async (id: string) => {
   const root = await mkdtemp(join(tmpdir(), 'mp-runtime-'));
   return { root, userDataDir: root, session: await EventSession.open(root, id) };
 };
+
+test('the model receives a failed tool reason instead of a null result', async () => {
+  const context = await fixture('failed-tool-reason'), registry = new ToolRegistry();
+  registry.register({ name: 'Observe', description: 'Read requested window', input_schema: schema,
+    execute: () => { throw new ActionFailure('permission_denied', 'window_not_granted:w-42', 'Grant access to the requested window.'); } });
+  let round = 0;
+  const completed = await runAgent({ ...context, registry, model: async request => {
+    if (++round === 1) return reply([call('observe', 'Observe')]);
+    const result = request.messages.find(message => message.role === 'tool' && message.tool_call_id === 'observe');
+    assert.match(result?.content ?? '', /window_not_granted:w-42/);
+    assert.equal(result?.is_error, true);
+    return reply();
+  } });
+  assert.equal(completed.reason, 'completed', completed.message);
+  assert.equal(round, 2);
+  assert.match(context.session.deriveMessages().find(message => message.tool_call_id === 'observe')?.content ?? '', /window_not_granted:w-42/);
+});
 
 test('permission suspension survives reopening and executes the exact approved action once', async () => {
   const context = await fixture('permission');

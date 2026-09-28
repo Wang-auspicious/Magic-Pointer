@@ -151,10 +151,24 @@ export function desktopBusyResult(error: unknown): DesktopRecord | null {
   return { awaitingUserInput: true, kind: 'desktop_wait', question: '等你空出桌面后继续任务？', options: ['继续任务', '由我接管'],
     notExecuted: true, waitingForDesktop: true, usedBackend: 'native_desktop' };
 }
+export async function waitForDesktop(action: () => Promise<DesktopRecord>, signal?: AbortSignal): Promise<DesktopRecord> {
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    signal?.throwIfAborted();
+    try { return await action(); }
+    catch (error) {
+      signal?.throwIfAborted();
+      const waiting = desktopBusyResult(error);
+      if (!waiting) throw error;
+      if (Date.now() >= deadline) return waiting;
+      await delay(250, signal);
+    }
+  }
+}
 function elevatedTarget(): ActionFailure { return new ActionFailure('permission_denied', 'target window runs as administrator; Windows drops input from Magic Pointer. Ask the user to do this step or run Magic Pointer as administrator.'); }
 function interruptedDesktopInput(): Error { const error = new Error('computer_use_interrupted: inspect the current desktop before continuing'); error.name = 'AbortError'; return error; }
 async function desktopInput(params: DesktopRecord, signal?: AbortSignal, allowWait = true): Promise<DesktopRecord> {
-  try { return await nativeRequest('input', params, signal); }
+  try { return await (allowWait ? waitForDesktop(() => nativeRequest('input', params, signal), signal) : nativeRequest('input', params, signal)); }
   catch (error) {
     if (error instanceof Error && error.message === 'computer_use_interrupted') throw interruptedDesktopInput();
     if (error instanceof Error && error.message === 'target_elevated') throw elevatedTarget();
@@ -232,7 +246,7 @@ const effectRank: Effect[] = ['read', 'reversible_write', 'local_irreversible', 
 function strongerEffect(left: Effect, right: Effect): Effect { return effectRank.indexOf(left) >= effectRank.indexOf(right) ? left : right; }
 function actionEffect(name: string, args: DesktopRecord, session?: DesktopActionSession): Effect {
   if (['list_apps', 'get_app_state', 'find_roots', 'observe_ui', 'search_ui', 'inspect_ui', 'expand_ui', 'read_text', 'wait_for', 'turn_ended'].includes(name)) return 'read';
-  const declared = ({ send: 'external_send', submit: 'external_send', delete: 'destructive', run: 'local_irreversible', purchase: 'purchase' } as Record<string, Effect>)[String(args.intent || '')] || 'local_irreversible';
+  const declared = ({ send: 'external_send', submit: 'external_send', delete: 'destructive', run: 'local_irreversible', purchase: 'purchase' } as Record<string, Effect>)[String(args.intent || '')] || 'reversible_write';
   if (name === 'act_ui') {
     const actions = Array.isArray(args.actions) ? args.actions : [];
     return actions.reduce((effect: Effect, action: DesktopRecord) => {
@@ -241,7 +255,7 @@ function actionEffect(name: string, args: DesktopRecord, session?: DesktopAction
       return strongerEffect(effect, actionEffect(mapped, { ...action, snapshot_id: args.snapshot_id || args.state_id }, session));
     }, declared);
   }
-  let observed: Effect = 'local_irreversible';
+  let observed: Effect = 'reversible_write';
   if (name === 'type_text' && args.submit) observed = 'external_send';
   if (name === 'press_key') {
     const keys = String(args.keys || '').toLowerCase().split(/[+\s]+/).filter(Boolean);
@@ -272,12 +286,16 @@ export class DesktopActionSession {
     if (!snapshot.imageScale) throw new ActionFailure('stale_snapshot', 'image coordinates need an observation that returned an image');
     return { x: Math.round(snapshot.window.bbox[0] + x / snapshot.imageScale), y: Math.round(snapshot.window.bbox[1] + y / snapshot.imageScale) };
   }
-  async observe(args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope, capture: SurfaceCapture = captureSurface): Promise<DesktopSnapshot> {
+  async resolveWindow(args: DesktopRecord = {}, signal?: AbortSignal): Promise<DesktopWindow> {
     const windows = (await this.observation.windows(signal)).filter(row => !/^Magic Pointer(?: |$)/i.test(row.title));
     const id = args.hwnd || (args.root ? this.roots.get(args.root) : undefined) || Number(String(args.window_id || '').replace(/^w-/, ''));
     const candidates = windows.filter(window => !id || window.hwnd === Number(id)).filter(window => args.pid === undefined || window.pid === Number(args.pid)).filter(window => !args.app || `${window.process_name} ${window.title}`.toLowerCase().includes(String(args.app).toLowerCase()));
     const window = candidates.find(row => !id && row.hwnd === this.originWindowHwnd) || candidates.find(row => row.focused) || candidates[0];
     if (!window) throw new ActionFailure('tool_error', 'window not found');
+    return window;
+  }
+  async observe(args: DesktopRecord = {}, signal?: AbortSignal, readScope?: WindowReadScope, capture: SurfaceCapture = captureSurface): Promise<DesktopSnapshot> {
+    const window = await this.resolveWindow(args, signal);
     requireWindowRead(window.hwnd, readScope);
     const mode = String(args.mode || 'ax'); if (mode === 'all') throw new Error("mode 'all' is illegal");
     const elements = ['image', 'visual'].includes(mode) ? [] : await this.observation.elements(window.hwnd, signal);
@@ -363,13 +381,24 @@ export class DesktopActionSession {
       return { ...publicSnapshot, elements: undefined, elementCount: snapshot.elements.length, ...truncated, ...image, outline, usedBackend: markedImage ? 'native_uia+pixels' : 'native_uia' };
     }
     if (name === 'launch_app') {
-      try { return await nativeRequest('launch', { app: args.app }, signal); }
+      try {
+        const result = await waitForDesktop(() => nativeRequest('launch', { app: args.app }, signal), signal);
+        if (result.waitingForDesktop) return result;
+        const windows = await this.observation.windows(signal);
+        const matches = windows.filter(row => String(row.process_name).replace(/\.exe$/i, '').toLowerCase() === basename(String(args.app)).replace(/\.exe$/i, '').toLowerCase());
+        const window = windows.find(row => row.pid === result.pid) || (matches.length === 1 ? matches[0] : undefined);
+        return { ...result, ...(window ? { window } : {}), verification: { matched: !!window, method: 'win32_window_after_launch', scope: 'application_state' } };
+      }
       catch (error) { const waiting = desktopBusyResult(error); if (waiting) return waiting; throw error; }
     }
     if (name === 'turn_ended') return { ok: true };
     if (name === 'activate_window') {
-      const snapshot = await this.observe(args, signal);
-      return desktopInput({ action: name, window: snapshot.window }, signal);
+      const window = await this.resolveWindow(args, signal);
+      const result = await desktopInput({ action: name, window }, signal);
+      if (result.waitingForDesktop) return result;
+      if (!result.ok) throw new ActionFailure('tool_error', 'Could not bring the requested window to the foreground.');
+      const current = await nativeRequest<DesktopWindow>('window', { hwnd: window.hwnd }, signal);
+      return { ...result, window: current, verification: { matched: current.focused === true, method: 'win32_foreground_window', scope: 'application_state' } };
     }
     if (['search_ui', 'inspect_ui', 'expand_ui', 'read_text', 'wait_for'].includes(name)) {
       const prior = this.snapshots.get(String(args.snapshot_id || args.state_id || ''));
@@ -470,7 +499,7 @@ export function desktopSession(sessionId = 'default', originWindowHwnd?: number)
 export async function observeDesktop(args: DesktopRecord = {}, signal?: AbortSignal): Promise<DesktopRecord> { return desktopSession(args.sessionId).call('get_app_state', args, signal); }
 export async function executeDesktopAction(name: string, args: DesktopRecord, signal?: AbortSignal): Promise<DesktopRecord> { return desktopSession(args.sessionId).call(name, args, signal); }
 
-export function registerDesktopTools(registry: ToolRegistry, session = desktopSession(), authorizeAccess?: (request: AccessRequest) => { allowed: boolean; reason: string }): void {
+export function registerDesktopTools(registry: ToolRegistry, session = desktopSession(), authorizeAccess?: (request: AccessRequest) => { allowed: boolean; reason: string }, acquireTarget?: (window: DesktopWindow) => unknown | Promise<unknown>): void {
   const readScope: WindowReadScope | undefined = authorizeAccess ? hwnd => authorizeAccess({ action: 'read', windowIds: [`w-${hwnd}`] }) : undefined;
   registry.register({ name: 'choose_ui_target', description: 'Resolve a target within an observed state. Unique exact labels are local; configured Jev uses a 900 ms deadline. Returns a reference or ambiguity and never acts.', input_schema: { type: 'object', properties: { state_id: { type: 'string' }, target: { type: 'string' }, candidate_refs: { type: 'array', items: { type: 'string' } } }, required: ['state_id', 'target'], additionalProperties: false }, effect: 'read', deferred: true, is_concurrency_safe: true, execute: async (args: DesktopRecord, context) => { const prior = session.snapshots.get(String(args.state_id || '')); if (prior) requireWindowRead(prior.window.hwnd, readScope); const snapshot = await session.requireSnapshot(args.state_id, context.signal); const rows = snapshot.elements.map(row => ({ ...row, ref: `@e${row.index}` })).filter(row => !args.candidate_refs || args.candidate_refs.includes(row.ref)); return chooseUiTarget(args.target, rows, snapshot.state_id, context.signal); } });
   const string = { type: 'string' }, number = { type: 'number' }, integer = { type: 'integer' }, boolean = { type: 'boolean' };
@@ -493,6 +522,11 @@ export function registerDesktopTools(registry: ToolRegistry, session = desktopSe
     if (['click', 'type_text', 'press_key', 'perform_secondary_action', 'act_ui'].includes(name)) properties.intent = { type: 'string', enum: ['input', 'send', 'submit', 'delete', 'run', 'purchase'] };
     registry.register({ name, description: `${name.replaceAll('_', ' ')} on the current desktop.${name === 'get_app_state' ? " Returns the element outline and, for mode=full or when the accessibility tree is too sparse to act on (self-drawn apps), a screenshot with every actionable element boxed and labelled by its ref." : ''} Prefer element refs; for targets only visible in the screenshot pass its pixel x/y with coordinate_space:'image'. Menus and popups of the same app are part of the observed surface. Actions revalidate the target and return honest verification.${name === 'wait_for' ? ' To verify a prior UI action, pass its tool call ID as verify_call_id with the same pre-action state_id and an explicit text, role or value condition. This verifies a new UI condition, never external delivery.' : name === 'act_ui' ? ' Each action returns separate verification. For a final expect with multiple actions, set verify_action_index to the action it checks.' : ''}`, input_schema: { type: 'object', properties, required: [], additionalProperties: false }, effect, effect_for: args => actionEffect(name, args, session),
       access_for: targetAction ? args => { const snapshot = session.snapshots.get(String(args.snapshot_id || args.state_id || '')); return { action: 'patch', windowIds: [snapshot?.window.hwnd ? `w-${snapshot.window.hwnd}` : 'unbound-live-surface'] }; } : undefined,
-      is_concurrency_safe: effect === 'read', resource_keys: effect === 'read' ? [] : ['desktop:input'], used_backend: 'native_desktop', timeout_ms: 65000, deferred: !['list_apps', 'get_app_state'].includes(name), execute: (args, context) => session.call(name, args, context.signal, readScope) } as ToolSpec);
+      is_concurrency_safe: effect === 'read', resource_keys: effect === 'read' ? [] : ['desktop:input'], used_backend: 'native_desktop', timeout_ms: 65000, deferred: !['list_apps', 'get_app_state'].includes(name), execute: async (args, context) => {
+        const result = await session.call(name, args, context.signal, readScope);
+        if (['launch_app', 'activate_window'].includes(name) && result.ok === true && result.window && result.verification?.matched === true)
+          await acquireTarget?.(result.window);
+        return result;
+      } } as ToolSpec);
   }
 }

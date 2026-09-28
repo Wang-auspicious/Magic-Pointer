@@ -36,6 +36,20 @@ import { ActionFailure, type ToolRegistry } from './tools';
 import { exactApprovedToolCall } from './session';
 import { listWindows } from './desktop';
 
+export async function bindDesktopWindow(session: ContextSessionLike, window: Json): Promise<SourceRef> {
+  const hwnd = Number(window.hwnd), pid = Number(window.pid ?? window.process_id);
+  if (!hwnd || !pid) throw new Error('desktop_target_identity_missing');
+  const id = `window-${hwnd}-${pid}`;
+  const source: SourceRef = { sourceId: id, taskId: session.id, kind: 'capture',
+    title: String(window.title || window.process_name || 'Window'),
+    identity: { hwnd, pid, process_name: window.process_name, window }, revision: {},
+    capabilities: ['read', 'patch'], origin: 'task-discovered', parentSourceId: null };
+  if (!taskSources(session.events).some(item => item.sourceId === id)) await registerSource(session, source);
+  await updateContext(session, { scopeGrants: [{ grantId: id, taskId: session.id, sourceIds: [id], folderRoots: [],
+    windowIds: [`w-${hwnd}`], recipients: [], actions: ['read', 'patch'], expiresAtMs: null }] });
+  return source;
+}
+
 export async function bindNamedWindows(
   session: ContextSessionLike,
   instruction: string,
@@ -73,37 +87,7 @@ export async function bindNamedWindows(
             ? candidates
             : [];
     for (const window of selected) {
-      const hwnd = Number(window.hwnd),
-        pid = Number(window.pid ?? window.process_id),
-        id = `window-${hwnd}-${pid}`,
-        source: SourceRef = {
-          sourceId: id,
-          taskId: session.id,
-          kind: 'capture',
-          title: String(window.title ?? process),
-          identity: { hwnd, pid, process_name: window.process_name, window },
-          revision: {},
-          capabilities: ['read', 'patch'],
-          origin: 'task-discovered',
-          parentSourceId: null,
-        };
-      if (!taskSources(session.events).some((item) => item.sourceId === id))
-        await registerSource(session, source);
-      await updateContext(session, {
-        scopeGrants: [
-          {
-            grantId: id,
-            taskId: session.id,
-            sourceIds: [id],
-            folderRoots: [],
-            windowIds: [`w-${hwnd}`],
-            recipients: [],
-            actions: ['read', 'patch'],
-            expiresAtMs: null,
-          },
-        ],
-      });
-      bound.push(source);
+      bound.push(await bindDesktopWindow(session, window));
     }
   }
   return bound;

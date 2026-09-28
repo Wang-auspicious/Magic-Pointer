@@ -131,12 +131,13 @@ export class ProgressTracker {
     const value = parse(result.value);
     let count: number, warning: string;
     if (result.is_error) {
-      if (['steer_pending', 'permission_denied'].includes(String(result.failure_type))) return { progress: false, warning: '', stalled: false };
+      if (result.failure_type === 'steer_pending' || result.failure_type === 'permission_denied' && value.awaitingUserInput === true)
+        return { progress: false, warning: '', stalled: false };
       const key = `${call.name}:${result.failure_type || 'tool_error'}`;
       count = (this.failures.get(key) ?? 0) + 1; this.failures.set(key, count);
       warning = 'This capability keeps failing despite changed arguments. Use a different supported path or report the specific blocker.';
     } else {
-      this.failures.clear();
+      for (const key of this.failures.keys()) if (effect !== 'read' || key.startsWith(`${call.name}:`)) this.failures.delete(key);
       const key = canonicalJson(facts(result.value));
       const store = effect === 'read' ? this.evidence : this.actions;
       const identity = effect === 'read' ? key : canonicalJson([call.name, call.arguments, key]);
