@@ -120,7 +120,7 @@ export class RuntimeActivitySink {
       const at = this.blob('model_usage', event.usage);
       if (this.activeMessage) {
         Object.assign(this.activeMessage, {
-          modelUsage: event.usage,
+          modelUsage: event.requestUsage ?? event.usage,
           completedAt: at,
         });
       }
@@ -133,6 +133,14 @@ export class RuntimeActivitySink {
         name: event.name,
         args: text(event.arguments),
       });
+      if (this.activeMessage) {
+        this.activeMessage.completedAt ??= at;
+        this.activeMessage.state = 'done';
+      }
+      if (this.activeModel && this.activeModel.state === 'running') {
+        this.activeModel.state = 'done';
+        this.activeModel.latencyMs = at - Number(this.activeModel.startedMs);
+      }
       const record = this.add({
         kind: 'tool',
         turn: this.activeMessage?.turn ?? 0,
@@ -207,7 +215,9 @@ export class RuntimeActivitySink {
       if (this.activeModel) {
         Object.assign(this.activeModel, {
           state: 'done',
-          latencyMs: at - Number(this.activeModel.startedMs),
+          latencyMs:
+            this.activeModel.latencyMs ??
+            at - Number(this.activeModel.startedMs),
         });
       }
       return;

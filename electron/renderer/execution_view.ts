@@ -12,39 +12,44 @@ declare global {
 }
 
 (() => {
-  type Kind = 'input' | 'model' | 'tool' | 'context';
-  interface RecordEntry {
+  type Kind = 'input' | 'model' | 'tool' | 'context' | 'fork' | 'join';
+  type State = 'done' | 'running' | 'error' | 'stopped' | 'waiting';
+
+  interface TraceEntry {
     key: string;
     kind: Kind;
     turn: number;
+    order: number;
     title: string;
     preview: string;
-    state: string;
+    state: State;
     status: string;
     body: string;
     args: string;
     output: string;
     backend: string;
     callId?: string;
-    start?: number;
+    locateCallId?: string;
+    branchId?: string;
+    startedAt?: number;
     durationMs?: number;
     firstTokenMs?: number;
+    tokens?: number;
+    model?: string;
+    childSteps?: Array<Record<string, unknown>>;
   }
-  interface Span {
-    record: RecordEntry;
+
+  interface TimeRange {
     start: number;
     end: number;
   }
-  interface Range {
-    start: number;
-    end: number;
-  }
-  interface RowView {
-    row: HTMLButtonElement;
-    title: HTMLElement;
-    preview: HTMLElement;
-    time: HTMLElement;
-    index: HTMLElement;
+  interface ChildBranch {
+    id: string;
+    lane: number;
+    forkKey: string;
+    joinKey?: string;
+    startedAt?: number;
+    completedAt?: number;
   }
   interface View {
     input: MagicPointerSessionLogInput;
@@ -53,71 +58,72 @@ declare global {
     state: HTMLElement;
     mode: HTMLSelectElement;
     search: HTMLInputElement;
-    track: HTMLElement;
-    axis: HTMLElement;
-    hint: HTMLElement;
-    selection: HTMLElement;
-    reset: HTMLButtonElement;
     list: HTMLElement;
+    paths: SVGSVGElement;
     detail: HTMLElement;
-    rows: Map<string, RowView>;
-    bars: Map<string, HTMLButtonElement>;
-    projected: Map<
-      string,
-      {source: Record<string, unknown>; entry: RecordEntry}
-    >;
-    records: RecordEntry[];
-    spans: Span[];
-    range: Range | null;
-    viewport: Range | null;
-    domain: Range;
+    hint: HTMLElement;
+    reset: HTMLButtonElement;
+    rows: Map<string, HTMLButtonElement>;
+    entries: TraceEntry[];
+    branches: ChildBranch[];
     selected: string | null;
-    follow: boolean;
+    range: TimeRange | null;
+    rangeAnchor: string | null;
     query: string;
+    zoom: number;
+    follow: boolean;
     detailVersion: string;
-    drag: {
-      pointer: number;
-      clientX: number;
-      time: number;
-      key: string | null;
-      moved: boolean;
-    } | null;
   }
+
   const views = new WeakMap<HTMLElement, View>();
-  const lane = (kind: Kind) => (kind === 'tool' ? 2 : kind === 'model' ? 1 : 0);
-  const kindLabel: Record<Kind, string> = {
-    input: '你',
-    model: '回复',
-    tool: '操作',
-    context: '上下文',
+  const terminalStates = new Set([
+    'completed',
+    'failed',
+    'stopped',
+    'user_interrupt',
+    'partial',
+    'needs_verification',
+    'provider_unavailable',
+    'budget_exhausted',
+    'invariant_failed',
+  ]);
+  const label: Record<Kind, string> = {
+    input: 'YOU',
+    model: 'GEN',
+    tool: 'TOOL',
+    context: 'CTX',
+    fork: 'FORK',
+    join: 'JOIN',
   };
-  const element = <K extends keyof HTMLElementTagNameMap>(
+  const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
     cls: string,
-    text?: string,
+    value?: string,
   ) => {
     const node = document.createElement(tag);
     node.className = cls;
-    if (text !== undefined) {
-      node.textContent = text;
+    if (value !== undefined) {
+      node.textContent = value;
     }
     return node;
   };
-  const finite = (value: unknown): number | undefined =>
-    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-  const text = (value: unknown): string =>
+  const obj = (value: unknown): Record<string, unknown> =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const str = (value: unknown): string =>
     typeof value === 'string'
       ? value
       : value == null
         ? ''
         : JSON.stringify(value);
-  const object = (value: unknown): Record<string, unknown> =>
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  const compact = (value: string, max = 180) => {
-    const clean = value.replace(/\s+/g, ' ').trim();
-    return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+  const num = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  const short = (value: string, max = 170) => {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    return normalized.length > max
+      ? `${normalized.slice(0, max)}…`
+      : normalized;
   };
   const duration = (ms: number): string =>
     ms < 1000
@@ -134,43 +140,49 @@ declare global {
       second: '2-digit',
       hour12: false,
     });
-  function decode(value: unknown): unknown {
-    for (let count = 0; count < 4; count++) {
-      if (typeof value === 'string') {
+  const actualTime = (value: unknown): number | undefined => {
+    const timestamp = num(value);
+    return timestamp !== undefined && timestamp > 1e11 ? timestamp : undefined;
+  };
+  const content = (value: unknown): unknown => {
+    let next = value;
+    for (let count = 0; count < 3; count++) {
+      if (typeof next === 'string') {
         try {
-          value = JSON.parse(value);
+          next = JSON.parse(next);
         } catch {
           break;
         }
-      } else if (value && typeof value === 'object' && 'value' in value) {
-        value = (value as Record<string, unknown>).value;
+      } else if (next && typeof next === 'object' && 'value' in next) {
+        next = (next as Record<string, unknown>).value;
       } else {
         break;
       }
     }
-    return value;
-  }
+    return next;
+  };
+
   function timing(
-    record: Record<string, unknown>,
-  ): Pick<RecordEntry, 'start' | 'durationMs' | 'firstTokenMs'> {
-    const raw = finite(record.startedAt);
-    const origin = finite(record.timeOriginMs);
-    const end = finite(record.completedAt);
-    const start =
+    row: Record<string, unknown>,
+  ): Pick<TraceEntry, 'startedAt' | 'durationMs' | 'firstTokenMs'> {
+    const raw = num(row.startedAt);
+    const origin = actualTime(row.timeOriginMs);
+    const startedAt =
       raw === undefined
         ? undefined
-        : origin !== undefined
-          ? origin + raw
-          : raw > 1e11
-            ? raw
-            : undefined;
+        : raw > 1e11
+          ? raw
+          : origin === undefined
+            ? undefined
+            : origin + raw;
+    const completed = num(row.completedAt);
     const elapsed =
-      raw !== undefined && end !== undefined && end >= raw
-        ? end - raw
-        : finite(record.latencyMs);
-    const first = finite(record.firstTokenAt);
+      raw !== undefined && completed !== undefined && completed >= raw
+        ? completed - raw
+        : num(row.latencyMs);
+    const first = num(row.firstTokenAt);
     return {
-      start,
+      startedAt,
       durationMs: elapsed !== undefined && elapsed >= 0 ? elapsed : undefined,
       firstTokenMs:
         raw !== undefined && first !== undefined && first >= raw
@@ -178,34 +190,79 @@ declare global {
           : undefined,
     };
   }
-  function recordEntry(
-    raw: Record<string, unknown>,
+
+  function stateOf(row: Record<string, unknown>): State {
+    if (row.state === 'running') {
+      return 'running';
+    }
+    if (
+      row.isError === true ||
+      row.state === 'error' ||
+      row.state === 'failed'
+    ) {
+      return 'error';
+    }
+    if (row.state === 'stopped') {
+      return 'stopped';
+    }
+    if (row.state === 'waiting') {
+      return 'waiting';
+    }
+    return 'done';
+  }
+
+  function childState(status: string): State {
+    if (status === 'starting' || status === 'running') {
+      return 'running';
+    }
+    if (status === 'awaiting_user') {
+      return 'waiting';
+    }
+    if (
+      status === 'failed' ||
+      status === 'invariant_failed' ||
+      status === 'provider_unavailable'
+    ) {
+      return 'error';
+    }
+    if (status === 'stopped' || status === 'user_interrupt') {
+      return 'stopped';
+    }
+    return 'done';
+  }
+
+  function fromRaw(
+    row: Record<string, unknown>,
     key: string,
     turn: number,
-  ): RecordEntry {
-    const rawKind = String(raw.kind || 'context');
-    const kind: Kind = ['tool', 'subtool'].includes(rawKind)
-      ? 'tool'
-      : ['message', 'think', 'output'].includes(rawKind)
-        ? 'model'
-        : ['user', 'input'].includes(rawKind)
-          ? 'input'
-          : 'context';
-    const state =
-      raw.state === 'running'
-        ? 'running'
-        : raw.isError === true || raw.state === 'error'
-          ? 'error'
-          : raw.state === 'stopped'
-            ? 'stopped'
-            : 'done';
-    const entry: RecordEntry = {
+    order: number,
+    branchId?: string,
+    locateCallId?: string,
+  ): TraceEntry {
+    const rawKind = str(row.kind);
+    const kind: Kind =
+      rawKind === 'tool' || rawKind === 'subtool'
+        ? 'tool'
+        : ['message', 'think', 'output', 'model'].includes(rawKind)
+          ? 'model'
+          : ['user', 'input'].includes(rawKind)
+            ? 'input'
+            : 'context';
+    const state = stateOf(row);
+    const time = timing(row);
+    const entry: TraceEntry = {
       key,
       kind,
       turn,
-      title: kindLabel[kind],
-      preview: compact(text(raw.text)),
+      order,
       state,
+      title:
+        kind === 'input'
+          ? '你的输入'
+          : kind === 'model'
+            ? '模型生成'
+            : '上下文',
+      preview: short(str(row.text)),
       status:
         state === 'running'
           ? '进行中'
@@ -213,18 +270,25 @@ declare global {
             ? '失败'
             : state === 'stopped'
               ? '已停止'
-              : '',
-      body: text(raw.text),
+              : state === 'waiting'
+                ? '等待中'
+                : '',
+      body: str(row.text),
       args: '',
       output: '',
-      backend: text(raw.usedBackend),
-      ...timing(raw),
+      backend: str(row.usedBackend),
+      callId: str(row.callId) || undefined,
+      locateCallId,
+      branchId,
+      tokens: num(obj(row.modelUsage).totalTokens),
+      model: str(row.model || row.modelId) || undefined,
+      ...time,
     };
     if (kind === 'tool') {
-      const name = text(raw.name) || 'Tool';
-      const args = text(raw.text || raw.arguments);
-      const output = text(raw.result);
-      const row = ChatView.toolRowModel(
+      const name = str(row.name) || 'Tool';
+      const args = str(row.text || row.arguments);
+      const output = str(row.result);
+      const model = ChatView.toolRowModel(
         name,
         args,
         state === 'running'
@@ -234,46 +298,28 @@ declare global {
               isError: state === 'error',
               interrupted: state === 'stopped',
             },
-        text(raw.callId),
+        entry.callId || '',
       );
-      const data = decode(raw.result);
-      const result = object(data);
-      const verification = object(result.verification);
-      const titles: Record<string, string> = {
-        Read: '读取文件',
-        Write: '保存文件',
-        Edit: '修改文件',
-        'Browser.navigate': '打开网页',
-        Tools: '准备工具',
-        list_windows: '查找窗口',
-        AskUser: '向你提问',
-        AskUserQuestion: '向你提问',
-        TodoWrite: '更新计划',
-        Wait: '等待',
-      };
-      const returned =
-        text(
-          result.documentTitle ||
-            result.title ||
-            result.summary ||
-            result.message ||
-            result.error,
-        ) ||
-        (typeof data === 'string'
-          ? data
-          : Array.isArray(data)
-            ? `返回 ${data.length} 项`
-            : '');
-      entry.callId = text(raw.callId);
-      entry.title = titles[name] || row.title;
-      entry.preview = compact(
-        [row.summary || '', returned].filter(Boolean).join(' · '),
+      const result = obj(content(row.result));
+      const returned = str(
+        result.documentTitle ||
+          result.title ||
+          result.summary ||
+          result.message ||
+          result.error,
       );
-      entry.args = row.body || args;
-      entry.output = row.output || output;
+      entry.title = name;
+      entry.preview = short(
+        [model.summary, returned].filter(Boolean).join(' · ') || model.title,
+      );
+      entry.args = model.body || args;
+      entry.output = model.output || output;
       entry.body = '';
-      entry.backend ||= text(result.usedBackend);
-      if (verification.verified === true || verification.matched === true) {
+      entry.backend ||= str(result.usedBackend);
+      if (
+        obj(result.verification).verified === true ||
+        obj(result.verification).matched === true
+      ) {
         entry.status = '已核验';
       }
       if (result.awaitingUserInput === true) {
@@ -283,133 +329,246 @@ declare global {
     } else if (kind === 'model') {
       entry.title =
         rawKind === 'think'
-          ? '思考'
+          ? '模型思考'
           : state === 'running'
-            ? '正在回复'
-            : '回复';
-      entry.body = [text(raw.reasoning), text(raw.text)]
+            ? '正在生成'
+            : '模型生成';
+      entry.body = [str(row.reasoning), str(row.text)]
         .filter(Boolean)
         .join('\n\n');
-      entry.preview = compact(
-        text(raw.text) ||
-          text(raw.reasoning) ||
-          (state === 'running' ? '正在组织回复…' : '模型已返回'),
+      entry.preview = short(
+        str(row.text) ||
+          str(row.reasoning) ||
+          (state === 'running' ? '正在生成…' : '模型已返回'),
       );
     } else if (rawKind === 'request-header') {
-      entry.title = '请求模型';
+      entry.title = '模型请求';
       entry.preview =
-        text(raw.modelId || raw.model || raw.usedBackend) || '准备本次上下文';
-      entry.body = JSON.stringify(raw, null, 2);
+        str(row.modelId || row.model || row.usedBackend) || '上下文已提交';
+      entry.body = JSON.stringify(row, null, 2);
     } else if (rawKind === 'compacted') {
       entry.title = '整理上下文';
     }
     return entry;
   }
-  function project(
-    turns: MagicPointerTurn[],
-    cache: View['projected'],
-  ): RecordEntry[] {
-    const records: RecordEntry[] = [];
-    const fields = [
-      'kind',
-      'name',
-      'text',
-      'arguments',
-      'result',
-      'state',
-      'isError',
-      'timeOriginMs',
-      'startedAt',
-      'completedAt',
-      'latencyMs',
-      'firstTokenAt',
-      'usedBackend',
-      'reasoning',
-      'modelId',
-      'model',
-    ];
-    const keys = new Set<string>();
-    const add = (
-      source: Record<string, unknown>,
-      key: string,
-      turn: number,
-    ) => {
-      keys.add(key);
-      const previous = cache.get(key);
-      if (
-        previous &&
-        fields.every(field => previous.source[field] === source[field])
-      ) {
-        records.push(previous.entry);
-        return;
-      }
-      const entry = recordEntry(source, key, turn);
-      cache.set(key, {source: {...source}, entry});
-      records.push(entry);
-    };
-    turns.forEach((turn, turnIndex) => {
-      const raw = turn.liveProgress?.trajectory || turn.trajectory || [];
-      const prefix = `${turnIndex}:`;
-      const from = finite(turn.startedAt) ?? finite(turn.at);
-      const to = finite(turn.completedAt);
+
+  function project(input: MagicPointerSessionLogInput): {
+    entries: TraceEntry[];
+    branches: ChildBranch[];
+  } {
+    const entries: TraceEntry[] = [];
+    const branches: ChildBranch[] = [];
+    const seenChildren = new Set<string>();
+    const seenChildRows = new Set<string>();
+    let order = 0;
+    input.turns.forEach((turn, turnIndex) => {
+      const liveRows = turn.liveProgress?.trajectory;
+      const rows = liveRows?.length ? liveRows : turn.trajectory || [];
+      const turnStart = actualTime(turn.startedAt) ?? actualTime(turn.at);
+      const turnEnd = actualTime(turn.completedAt);
       if (
         turn.question &&
-        !raw.some(
+        !rows.some(
           row =>
-            ['user', 'input'].includes(String(row.kind)) &&
+            ['user', 'input'].includes(str(row.kind)) &&
             row.text === turn.question,
         )
       ) {
-        add(
-          {kind: 'user', text: turn.question, startedAt: from},
-          `${prefix}question`,
-          turnIndex,
+        entries.push(
+          fromRaw(
+            {kind: 'user', text: turn.question, startedAt: turnStart},
+            `${turnIndex}:question`,
+            turnIndex,
+            order++,
+          ),
         );
       }
-      raw.forEach((row, index) => {
-        const identity = row.callId
-          ? `${row.kind}:${row.callId}:${row.timeOriginMs ?? 'legacy'}`
-          : row.kind === 'message'
-            ? `message:${row.timeOriginMs ?? 'legacy'}:${row.turn ?? row.step ?? index}`
-            : String(row.recordId || `${row.kind}:${row.seq ?? index}`);
-        add(row, `${prefix}${identity}`, turnIndex);
+      rows.forEach((raw, index) => {
+        const callId = str(raw.callId);
+        const identity = callId
+          ? `${raw.kind}:${callId}:${raw.timeOriginMs || 'legacy'}`
+          : raw.kind === 'message'
+            ? `message:${raw.timeOriginMs || 'legacy'}:${raw.turn ?? raw.step ?? index}`
+            : str(raw.recordId || `${raw.kind}:${raw.seq ?? index}`);
+        const key = `${turnIndex}:${identity}`;
+        const entry = fromRaw(raw, key, turnIndex, order++);
+        if (entry.kind === 'model' && !entry.model) {
+          entry.model = str(turn.modelId) || undefined;
+        }
+        entries.push(entry);
+        if (entry.kind !== 'tool' || !callId) {
+          return;
+        }
+        const snapshot = obj(raw.subagent);
+        const childId = str(snapshot.id);
+        const branchId = `${callId}:${childId}`;
+        if (
+          !childId ||
+          str(snapshot.parentCallId) !== callId ||
+          seenChildren.has(branchId)
+        ) {
+          return;
+        }
+        seenChildren.add(branchId);
+        const result = obj(content(raw.result));
+        const childStart = actualTime(snapshot.startedAt);
+        const childStatus = str(snapshot.status || result.status);
+        const childStatusLabel: Record<string, string> = {
+          starting: '启动中',
+          running: '进行中',
+          awaiting_user: '待答复',
+          completed: '已完成',
+          failed: '失败',
+          stopped: '已停止',
+        };
+        const childEnd = actualTime(snapshot.completedAt);
+        const description = short(
+          str(snapshot.description) || str(result.description) || childId,
+          130,
+        );
+        const childTokens = num(obj(snapshot.modelUsage).totalTokens);
+        const forkKey = `${key}:fork:${childId}`;
+        entries.push({
+          key: forkKey,
+          kind: 'fork',
+          turn: turnIndex,
+          order: order++,
+          title: description,
+          preview: [
+            childStatusLabel[childStatus] || childStatus || '已派发',
+            childTokens === undefined ? '' : `${childTokens} tokens`,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          state: childState(childStatus),
+          status: childStatus,
+          body: str(snapshot.summary || snapshot.reasoning || snapshot.answer),
+          args: '',
+          output: '',
+          backend: 'subagent_session',
+          branchId,
+          locateCallId: callId,
+          startedAt: childStart,
+          tokens: childTokens,
+          childSteps: Array.isArray(snapshot.steps)
+            ? (snapshot.steps as Array<Record<string, unknown>>)
+            : undefined,
+        });
+        const childRows = Array.isArray(snapshot.trajectory)
+          ? (snapshot.trajectory as Array<Record<string, unknown>>)
+          : [];
+        childRows.forEach((child, childIndex) => {
+          const childIdentity = `${childId}:${str(child.timeOriginMs)}:${str(child.seq ?? childIndex)}`;
+          if (seenChildRows.has(childIdentity)) {
+            return;
+          }
+          seenChildRows.add(childIdentity);
+          const childCallId = str(child.callId);
+          const childKey = `${forkKey}:${childCallId || child.seq || childIndex}`;
+          const projected = fromRaw(
+            child,
+            childKey,
+            turnIndex,
+            order++,
+            branchId,
+            callId,
+          );
+          if (projected.kind === 'model' || projected.kind === 'tool') {
+            entries.push(projected);
+          }
+        });
+        let joinKey: string | undefined;
+        if (terminalStates.has(childStatus)) {
+          joinKey = `${key}:join:${childId}`;
+          entries.push({
+            key: joinKey,
+            kind: 'join',
+            turn: turnIndex,
+            order: order++,
+            title: description,
+            preview:
+              childStatus === 'completed'
+                ? '子任务已返回'
+                : `子任务结束 · ${childStatus}`,
+            state: childState(childStatus),
+            status: childStatus,
+            body: str(snapshot.summary || result.summary),
+            args: '',
+            output: '',
+            backend: 'subagent_session',
+            branchId,
+            locateCallId: callId,
+            startedAt: childEnd,
+          });
+        }
+        branches.push({
+          id: branchId,
+          lane: 0,
+          forkKey,
+          joinKey,
+          startedAt: childStart,
+          completedAt: childEnd,
+        });
       });
       const answer = turn.liveProgress?.answer || turn.answer;
       if (
         answer &&
-        !raw.some(
+        !rows.some(
           row =>
-            ['message', 'output'].includes(String(row.kind)) &&
+            ['message', 'output'].includes(str(row.kind)) &&
             row.text === answer,
         )
       ) {
-        add(
-          {kind: 'message', text: answer, startedAt: to},
-          `${prefix}answer`,
-          turnIndex,
+        entries.push(
+          fromRaw(
+            {kind: 'message', text: answer, startedAt: turnEnd},
+            `${turnIndex}:answer`,
+            turnIndex,
+            order++,
+          ),
         );
       }
     });
-    for (const key of cache.keys()) {
-      if (!keys.has(key)) {
-        cache.delete(key);
+    const occupied: number[] = [];
+    for (const branch of [...branches].sort(
+      (left, right) =>
+        (left.startedAt ?? Infinity) - (right.startedAt ?? Infinity),
+    )) {
+      const start = branch.startedAt ?? Infinity;
+      let lane = occupied.findIndex(until => until <= start);
+      if (lane < 0) {
+        lane = occupied.length;
+        occupied.push(Infinity);
       }
+      occupied[lane] = branch.completedAt ?? Infinity;
+      branch.lane = lane + 1;
     }
-    return records;
+    return {entries, branches};
   }
+
+  function ordered(view: View): TraceEntry[] {
+    if (view.mode.value === 'sequence') {
+      return [...view.entries].sort((a, b) => a.order - b.order);
+    }
+    return [...view.entries].sort((a, b) =>
+      a.startedAt === undefined && b.startedAt === undefined
+        ? a.order - b.order
+        : a.startedAt === undefined
+          ? 1
+          : b.startedAt === undefined
+            ? -1
+            : a.startedAt - b.startedAt || a.order - b.order,
+    );
+  }
+
   function setText(node: HTMLElement, value: string): void {
     if (node.textContent !== value) {
       node.textContent = value;
     }
   }
-  function choose(view: View, key: string): void {
-    view.selected = view.selected === key ? null : key;
-    filter(view);
-    showDetail(view);
-    view.rows.get(key)?.row.scrollIntoView({block: 'nearest'});
-  }
+
   function showDetail(view: View): void {
-    const record = view.records.find(item => item.key === view.selected);
+    const record = view.entries.find(entry => entry.key === view.selected);
     view.detail.hidden = !record;
     if (!record) {
       view.detail.replaceChildren();
@@ -421,9 +580,9 @@ declare global {
       return;
     }
     view.detailVersion = version;
-    const heading = element('div', 'mp-session-detail-heading');
-    heading.append(element('strong', '', record.title));
-    const close = element('button', 'mp-session-button', '×');
+    const heading = el('div', 'mp-trace-detail-heading');
+    heading.append(el('strong', '', record.title));
+    const close = el('button', 'mp-trace-control', '×');
     close.type = 'button';
     close.setAttribute('aria-label', '关闭记录详情');
     close.onclick = () => {
@@ -432,35 +591,42 @@ declare global {
       showDetail(view);
     };
     heading.append(close);
-    const metadata = [
+    const meta = [
       record.status,
-      record.start === undefined ? '开始时间未记录' : clock(record.start),
+      record.startedAt === undefined
+        ? '实际时间未记录'
+        : clock(record.startedAt),
       record.durationMs === undefined ? '' : duration(record.durationMs),
       record.backend,
+      record.model,
+      record.tokens === undefined ? '' : `${record.tokens} tokens`,
     ]
       .filter(Boolean)
       .join(' · ');
     const children: HTMLElement[] = [
       heading,
-      element('p', 'mp-session-detail-meta', metadata),
+      el('p', 'mp-trace-detail-meta', meta),
     ];
     if (view.input.onLocate) {
-      const locate = element('button', 'mp-session-locate', '在对话中查看');
+      const locate = el('button', 'mp-trace-locate', '在对话中查看');
       locate.type = 'button';
-      locate.dataset.sessionLocate = '';
-      locate.onclick = () => view.input.onLocate?.(record.turn, record.callId);
+      locate.onclick = () =>
+        view.input.onLocate?.(
+          record.turn,
+          record.locateCallId || record.callId,
+        );
       children.push(locate);
     }
     if (record.firstTokenMs !== undefined && record.durationMs !== undefined) {
       children.push(
-        element(
+        el(
           'p',
-          'mp-session-detail-meta',
-          `等待首字 ${duration(record.firstTokenMs)} · 生成 ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
+          'mp-trace-detail-meta',
+          `首字 ${duration(record.firstTokenMs)} · 后续 ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
         ),
       );
     }
-    for (const [label, value] of [
+    for (const [name, value] of [
       ['内容', record.body],
       ['输入', record.args],
       ['结果', record.output],
@@ -468,211 +634,361 @@ declare global {
       if (!value) {
         continue;
       }
-      if (record.kind === 'tool') {
-        children.push(element('div', 'mp-session-detail-label', label));
-      }
-      children.push(element('pre', 'mp-session-detail-text', value));
+      children.push(el('div', 'mp-trace-detail-label', name));
+      children.push(el('pre', 'mp-trace-detail-text', value));
+    }
+    if (record.childSteps?.length) {
+      children.push(
+        el(
+          'div',
+          'mp-trace-detail-label',
+          '子任务最近工具记录 · 单步开始时间未记录',
+        ),
+      );
+      children.push(
+        el(
+          'pre',
+          'mp-trace-detail-text',
+          record.childSteps
+            .map(step =>
+              [
+                str(step.tool),
+                str(step.status),
+                num(step.latencyMs) === undefined
+                  ? ''
+                  : duration(num(step.latencyMs)!),
+              ]
+                .filter(Boolean)
+                .join(' · '),
+            )
+            .join('\n'),
+        ),
+      );
     }
     view.detail.replaceChildren(...children);
   }
+
   function filter(view: View): void {
-    const spans = new Map(view.spans.map(span => [span.record.key, span]));
+    const display = ordered(view);
+    const selectedOrder = new Map(
+      display.map((entry, index) => [entry.key, index]),
+    );
     let shown = 0;
-    view.records.forEach(record => {
-      const span = spans.get(record.key);
+    for (const entry of display) {
+      const row = view.rows.get(entry.key);
+      if (!row) {
+        continue;
+      }
       const matches =
         !view.query ||
-        `${record.title} ${record.preview} ${record.body} ${record.args} ${record.output}`
+        `${entry.title} ${entry.preview} ${entry.body} ${entry.args} ${entry.output} ${entry.model || ''} ${entry.backend} ${entry.status}`
           .toLocaleLowerCase()
           .includes(view.query);
+      const coordinate =
+        view.mode.value === 'sequence'
+          ? selectedOrder.get(entry.key)
+          : entry.startedAt;
       const inRange =
         !view.range ||
-        Boolean(
-          span && span.start <= view.range.end && span.end >= view.range.start,
-        );
-      const row = view.rows.get(record.key)!.row;
+        (coordinate !== undefined &&
+          coordinate >= view.range.start &&
+          coordinate <= view.range.end);
       row.hidden = !matches || !inRange;
+      row.dataset.selected = String(entry.key === view.selected);
+      row.setAttribute('aria-expanded', String(entry.key === view.selected));
       if (!row.hidden) {
         shown++;
       }
-      row.dataset.selected = String(record.key === view.selected);
-      row.setAttribute('aria-expanded', String(record.key === view.selected));
-      const bar = view.bars.get(record.key);
-      if (bar) {
-        bar.dataset.dimmed = String(!matches || !inRange);
-        bar.dataset.selected = String(record.key === view.selected);
-      }
-    });
+    }
     view.list.dataset.empty = shown ? 'false' : 'true';
-    view.reset.hidden = !view.range && !view.viewport;
-    if (view.range) {
-      const domain = view.viewport || view.domain;
-      const width = Math.max(1, domain.end - domain.start);
-      view.selection.hidden = false;
-      view.selection.style.left = `${((view.range.start - domain.start) / width) * 100}%`;
-      view.selection.style.width = `${((view.range.end - view.range.start) / width) * 100}%`;
-    } else {
-      view.selection.hidden = true;
-    }
+    view.reset.hidden = !view.range;
+    requestAnimationFrame(() => drawPaths(view));
   }
-  function drawTimeline(view: View): void {
-    const sequence = view.mode.value === 'sequence';
-    view.spans = view.records.flatMap((record, index): Span[] =>
-      sequence
-        ? [{record, start: index, end: index + 1}]
-        : record.start === undefined
-          ? []
-          : [
-              {
-                record,
-                start: record.start,
-                end: record.start + (record.durationMs ?? 0),
-              },
-            ],
-    );
-    const starts = view.spans.map(span => span.start);
-    const ends = view.spans.map(span => span.end);
-    view.domain = starts.length
-      ? {start: Math.min(...starts), end: Math.max(...ends)}
-      : {start: 0, end: 1};
-    if (view.domain.end <= view.domain.start) {
-      view.domain.end = view.domain.start + 1;
+
+  function drawPaths(view: View): void {
+    if (!view.root.isConnected) {
+      return;
     }
-    const domain = view.viewport || view.domain;
-    const width = domain.end - domain.start;
-    const keys = new Set<string>();
-    for (const span of view.spans) {
-      const record = span.record;
-      keys.add(record.key);
-      let bar = view.bars.get(record.key);
-      if (!bar) {
-        bar = element('button', 'mp-session-span');
-        bar.type = 'button';
-        bar.dataset.sessionSpan = record.key;
-        bar.tabIndex = -1;
-        bar.onclick = event => {
-          if (event.detail === 0) {
-            choose(view, record.key);
-          }
-        };
-        view.bars.set(record.key, bar);
-        view.track.append(bar);
+    const rows = view.rows;
+    const visible = ordered(view).filter(
+      entry =>
+        !rows.get(entry.key)?.hidden &&
+        (view.mode.value === 'sequence' || entry.startedAt !== undefined),
+    );
+    const last = [...visible]
+      .reverse()
+      .find(entry => !entry.branchId && entry.kind !== 'fork');
+    const first = visible.find(
+      entry => !entry.branchId && entry.kind !== 'fork',
+    );
+    const bounds = (entry?: TraceEntry) => {
+      const row = entry && rows.get(entry.key);
+      return row ? row.offsetTop + row.offsetHeight / 2 : undefined;
+    };
+    const height = Math.max(view.list.scrollHeight, 1);
+    const width =
+      Number(
+        view.root.style
+          .getPropertyValue('--trace-rail-width')
+          .replace('px', ''),
+      ) || 64;
+    view.paths.setAttribute('width', String(width));
+    view.paths.setAttribute('height', String(height));
+    view.paths.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    const paths: SVGPathElement[] = [];
+    const path = (data: string, cls: string) => {
+      const node = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'path',
+      );
+      node.setAttribute('d', data);
+      node.setAttribute('class', cls);
+      paths.push(node);
+    };
+    const firstY = bounds(first);
+    const lastY = bounds(last);
+    if (firstY !== undefined && lastY !== undefined) {
+      path(`M 18 ${firstY} L 18 ${lastY}`, 'mp-trace-main-path');
+    }
+    for (const branch of view.branches) {
+      const fork = view.entries.find(entry => entry.key === branch.forkKey);
+      const join = view.entries.find(entry => entry.key === branch.joinKey);
+      const start = bounds(fork);
+      if (start === undefined || rows.get(branch.forkKey)?.hidden) {
+        continue;
       }
-      bar.dataset.kind = record.kind;
-      bar.dataset.state = record.state;
-      if (record.callId) {
-        bar.dataset.callId = record.callId;
-      }
-      bar.hidden = span.end < domain.start || span.start > domain.end;
-      bar.style.left = `${((Math.max(domain.start, span.start) - domain.start) / width) * 100}%`;
-      bar.style.width = `${(Math.max(0, Math.min(domain.end, span.end) - Math.max(domain.start, span.start)) / width) * 100}%`;
-      bar.style.top = `${lane(record.kind) * 24 + 5}px`;
-      bar.dataset.instant = String(span.start === span.end);
-      if (record.firstTokenMs !== undefined && record.durationMs) {
-        bar.style.setProperty(
-          '--first-token',
-          `${Math.min(100, (record.firstTokenMs / record.durationMs) * 100)}%`,
+      const x = 18 + branch.lane * 22;
+      const end = join && !rows.get(join.key)?.hidden ? bounds(join) : lastY;
+      path(
+        `M 18 ${start - 7} C 18 ${start}, ${x} ${start}, ${x} ${start + 8}${end !== undefined && end > start + 8 ? ` L ${x} ${end - 8}` : ''}`,
+        'mp-trace-branch-path',
+      );
+      if (join && end !== undefined && !rows.get(join.key)?.hidden) {
+        path(
+          `M ${x} ${end - 8} C ${x} ${end}, 18 ${end}, 18 ${end + 7}`,
+          'mp-trace-branch-path',
         );
-      } else {
-        bar.style.removeProperty('--first-token');
-      }
-      bar.title = [
-        record.title,
-        record.preview,
-        record.start === undefined ? '时间未记录' : clock(record.start),
-        record.durationMs === undefined ? '' : duration(record.durationMs),
-        record.status,
-      ]
-        .filter(Boolean)
-        .join('\n');
-      bar.setAttribute('aria-label', bar.title);
-    }
-    for (const [key, bar] of view.bars) {
-      if (!keys.has(key)) {
-        bar.remove();
-        view.bars.delete(key);
       }
     }
-    const ticks = [0, 0.25, 0.5, 0.75, 1].map(fraction =>
-      element(
-        'span',
-        '',
-        sequence
-          ? String(Math.round(domain.start + width * fraction))
-          : duration(width * fraction),
-      ),
-    );
-    view.axis.replaceChildren(...ticks);
-    const missing = view.records.length - view.spans.length;
-    setText(
-      view.hint,
-      sequence
-        ? '按发生顺序排列 · 横向拖选可筛选记录'
-        : `${view.spans.length ? `${clock(domain.start)} 起 · ` : ''}横向拖选可筛选记录${missing ? ` · ${missing} 条未记录开始时间` : ''}`,
-    );
-    filter(view);
+    view.paths.replaceChildren(...paths);
   }
+
+  function choose(view: View, entry: TraceEntry, shift: boolean): void {
+    if (shift && view.rangeAnchor) {
+      const display = ordered(view);
+      const anchor = display.find(item => item.key === view.rangeAnchor);
+      const left =
+        view.mode.value === 'sequence'
+          ? display.indexOf(anchor!)
+          : anchor?.startedAt;
+      const right =
+        view.mode.value === 'sequence'
+          ? display.indexOf(entry)
+          : entry.startedAt;
+      if (
+        left !== undefined &&
+        right !== undefined &&
+        left >= 0 &&
+        right >= 0
+      ) {
+        view.range = {start: Math.min(left, right), end: Math.max(left, right)};
+        filter(view);
+      }
+    } else {
+      view.selected = view.selected === entry.key ? null : entry.key;
+      view.rangeAnchor = entry.key;
+      filter(view);
+      showDetail(view);
+    }
+  }
+
+  function renderRows(view: View): void {
+    const display = ordered(view);
+    const keys = new Set<string>();
+    const laneCount = Math.max(0, ...view.branches.map(branch => branch.lane));
+    const railWidth = 42 + laneCount * 22;
+    view.root.style.setProperty('--trace-rail-width', `${railWidth}px`);
+    const laneById = new Map(
+      view.branches.map(branch => [branch.id, branch.lane]),
+    );
+    let unknownStarted = false;
+    for (const [index, entry] of display.entries()) {
+      keys.add(entry.key);
+      let row = view.rows.get(entry.key);
+      if (!row) {
+        row = el('button', 'mp-trace-row');
+        row.type = 'button';
+        row.dataset.sessionRow = entry.key;
+        row.append(
+          el('span', 'mp-trace-gutter'),
+          el('span', 'mp-trace-kind'),
+          el('span', 'mp-trace-content'),
+          el('span', 'mp-trace-meta'),
+        );
+        view.rows.set(entry.key, row);
+      }
+      row.onclick = event => choose(view, entry, event.shiftKey);
+      row.dataset.kind = entry.kind;
+      row.dataset.state = entry.state;
+      row.dataset.untimed = String(entry.startedAt === undefined);
+      row.dataset.untimedStart = String(
+        entry.startedAt === undefined && !unknownStarted,
+      );
+      if (entry.startedAt === undefined) {
+        unknownStarted = true;
+      }
+      row.style.setProperty(
+        '--trace-x',
+        `${entry.kind === 'join' ? 18 : entry.branchId ? 18 + (laneById.get(entry.branchId) || 1) * 22 : 18}px`,
+      );
+      row.setAttribute(
+        'aria-label',
+        [
+          label[entry.kind],
+          entry.title,
+          entry.preview,
+          entry.startedAt === undefined
+            ? '实际时间未记录'
+            : clock(entry.startedAt),
+          entry.durationMs === undefined ? '' : duration(entry.durationMs),
+          entry.model || '',
+          entry.tokens === undefined ? '' : `${entry.tokens} tokens`,
+          entry.status,
+        ]
+          .filter(Boolean)
+          .join('，'),
+      );
+      const gutter = row.children[0] as HTMLElement;
+      gutter.dataset.marker = entry.kind;
+      setText(row.children[1] as HTMLElement, label[entry.kind]);
+      const contentHost = row.children[2] as HTMLElement;
+      const title =
+        contentHost.querySelector<HTMLElement>('.mp-trace-title') ||
+        el('span', 'mp-trace-title');
+      const preview =
+        contentHost.querySelector<HTMLElement>('.mp-trace-preview') ||
+        el('span', 'mp-trace-preview');
+      setText(title, entry.title);
+      setText(
+        preview,
+        entry.preview || (entry.kind === 'fork' ? '子任务已派发' : '—'),
+      );
+      if (!title.isConnected) {
+        contentHost.append(title, preview);
+      }
+      const meta = row.children[3] as HTMLElement;
+      const modelStats =
+        meta.querySelector<HTMLElement>('.mp-trace-model-stats') ||
+        el('span', 'mp-trace-model-stats');
+      const modelNode =
+        modelStats.querySelector<HTMLElement>('.mp-trace-model-name') ||
+        el('span', 'mp-trace-model-name');
+      const tokensNode =
+        modelStats.querySelector<HTMLElement>('.mp-trace-token-count') ||
+        el('span', 'mp-trace-token-count');
+      const durationNode =
+        meta.querySelector<HTMLElement>('.mp-trace-duration') ||
+        el('span', 'mp-trace-duration');
+      const clockNode =
+        meta.querySelector<HTMLElement>('.mp-trace-clock') ||
+        el('span', 'mp-trace-clock');
+      setText(modelNode, entry.model || '—');
+      modelNode.title = entry.model || '模型未记录';
+      setText(
+        tokensNode,
+        entry.tokens === undefined ? '—' : entry.tokens.toLocaleString('en-US'),
+      );
+      if (!modelNode.isConnected) {
+        modelStats.append(modelNode, tokensNode);
+      }
+      setText(
+        durationNode,
+        entry.durationMs === undefined ? '—' : duration(entry.durationMs),
+      );
+      setText(
+        clockNode,
+        entry.startedAt === undefined ? '—' : clock(entry.startedAt),
+      );
+      if (!durationNode.isConnected) {
+        meta.append(modelStats, durationNode, clockNode);
+      }
+      if (entry.callId) {
+        row.dataset.callId = entry.callId;
+      }
+      if (view.list.children[index + 1] !== row) {
+        view.list.insertBefore(row, view.list.children[index + 1] || null);
+      }
+    }
+    for (const [key, row] of view.rows) {
+      if (!keys.has(key)) {
+        row.remove();
+        view.rows.delete(key);
+      }
+    }
+    if (view.selected && !keys.has(view.selected)) {
+      view.selected = null;
+      view.detailVersion = '';
+    }
+    view.hint.textContent = `按真实时间排列 · 点击展开，Shift+点击另一行选取范围${display.some(entry => entry.startedAt === undefined) ? ' · 未记录时间的事件列在末尾' : ''}`;
+    if (view.mode.value === 'sequence') {
+      view.hint.textContent =
+        '按原始事件顺序排列 · 点击展开，Shift+点击另一行选取范围';
+    }
+    filter(view);
+    showDetail(view);
+  }
+
   function create(host: HTMLElement, input: MagicPointerSessionLogInput): View {
-    const root = element('section', 'mp-session-log');
-    root.setAttribute('aria-label', '完整对话记录');
-    const header = element('header', 'mp-session-header');
-    const heading = element('div', 'mp-session-heading');
-    const summary = element('span', 'mp-session-summary');
-    const state = element('span', 'mp-session-state');
-    heading.append(element('strong', '', '完整会话'), state);
+    const root = el('section', 'mp-trace-root');
+    root.setAttribute('aria-label', '完整会话轨迹');
+    const header = el('header', 'mp-trace-header');
+    const heading = el('div', 'mp-trace-heading');
+    const summary = el('span', 'mp-trace-summary');
+    const state = el('span', 'mp-trace-state');
+    heading.append(el('strong', '', '会话轨迹'), state);
     header.append(heading, summary);
-    const controls = element('div', 'mp-session-controls');
-    const mode = element('select', 'mp-session-mode');
-    mode.dataset.sessionMode = '';
-    mode.setAttribute('aria-label', '时间线排列方式');
-    for (const [value, label] of [
+    const controls = el('div', 'mp-trace-controls');
+    const mode = el('select', 'mp-trace-mode');
+    mode.setAttribute('aria-label', '轨迹排列方式');
+    for (const [value, title] of [
       ['time', '实际时间'],
       ['sequence', '事件顺序'],
     ]) {
-      const option = element('option', '', label);
+      const option = el('option', '', title);
       option.value = value;
       mode.append(option);
     }
-    const reset = element('button', 'mp-session-button', '显示全部');
+    const reset = el('button', 'mp-trace-control', '显示全部');
     reset.type = 'button';
     reset.hidden = true;
-    const zoomOut = element('button', 'mp-session-button', '−');
-    const zoomIn = element('button', 'mp-session-button', '+');
-    zoomOut.type = zoomIn.type = 'button';
-    zoomOut.setAttribute('aria-label', '缩小时间线');
-    zoomIn.setAttribute('aria-label', '放大时间线');
-    controls.append(mode, reset, zoomOut, zoomIn);
-    const plot = element('div', 'mp-session-plot');
-    const labels = element('div', 'mp-session-lanes');
-    ['输入', '模型', '操作'].forEach((label, index) => {
-      const item = element('span', '', label);
-      item.dataset.sessionLane = String(index);
-      labels.append(item);
-    });
-    const track = element('div', 'mp-session-track');
-    track.tabIndex = 0;
-    track.setAttribute(
-      'aria-label',
-      '对话时间线，拖动选择范围，Escape 显示全部',
-    );
-    const selection = element('div', 'mp-session-selection');
-    selection.hidden = true;
-    track.append(selection);
-    const axis = element('div', 'mp-session-axis');
-    const hint = element('p', 'mp-session-hint');
-    plot.append(labels, track, axis);
-    const search = element('input', 'mp-session-search');
+    const shrink = el('button', 'mp-trace-control', '−');
+    shrink.type = 'button';
+    shrink.setAttribute('aria-label', '收紧轨迹');
+    const expand = el('button', 'mp-trace-control', '+');
+    expand.type = 'button';
+    expand.setAttribute('aria-label', '展开轨迹');
+    controls.append(mode, reset, shrink, expand);
+    const hint = el('p', 'mp-trace-hint');
+    const search = el('input', 'mp-trace-search') as HTMLInputElement;
     search.type = 'search';
-    search.placeholder = '查找对话、文件或操作';
+    search.placeholder = '搜索会话、文件或操作';
     search.dataset.sessionSearch = '';
-    search.setAttribute('aria-label', '查找对话记录');
-    const list = element('div', 'mp-session-list');
+    search.setAttribute('aria-label', '搜索轨迹事件');
+    const columnHead = el('div', 'mp-trace-column-head');
+    for (const title of ['', '事件', '内容', '模型 / tokens', '耗时', '时间']) {
+      columnHead.append(el('span', '', title));
+    }
+    const list = el('div', 'mp-trace-list');
     list.setAttribute('role', 'group');
-    list.setAttribute('aria-label', '按发生顺序的事件');
-    const detail = element('section', 'mp-session-detail');
+    list.setAttribute('aria-label', '按实际时间排列的会话事件');
+    const paths = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    paths.classList.add('mp-trace-paths');
+    paths.setAttribute('aria-hidden', 'true');
+    list.append(paths);
+    const detail = el('section', 'mp-trace-detail');
     detail.hidden = true;
-    detail.setAttribute('aria-label', '记录详情');
-    root.append(header, controls, plot, hint, search, list, detail);
+    detail.setAttribute('aria-label', '轨迹事件详情');
+    root.append(header, controls, hint, search, columnHead, list, detail);
     host.replaceChildren(root);
     const view: View = {
       input,
@@ -681,26 +997,21 @@ declare global {
       state,
       mode,
       search,
-      track,
-      axis,
-      hint,
-      selection,
-      reset,
       list,
+      paths,
       detail,
+      hint,
+      reset,
       rows: new Map(),
-      bars: new Map(),
-      projected: new Map(),
-      records: [],
-      spans: [],
-      range: null,
-      viewport: null,
-      domain: {start: 0, end: 1},
+      entries: [],
+      branches: [],
       selected: null,
-      follow: true,
+      range: null,
+      rangeAnchor: null,
       query: '',
+      zoom: 1,
+      follow: true,
       detailVersion: '',
-      drag: null,
     };
     search.oninput = () => {
       view.query = search.value.trim().toLocaleLowerCase();
@@ -708,124 +1019,34 @@ declare global {
     };
     mode.onchange = () => {
       view.range = null;
-      view.viewport = null;
-      drawTimeline(view);
+      renderRows(view);
     };
-    const resetRange = () => {
+    reset.onclick = () => {
       view.range = null;
-      view.viewport = null;
-      drawTimeline(view);
-    };
-    reset.onclick = resetRange;
-    track.ondblclick = resetRange;
-    track.onkeydown = event => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        resetRange();
-      }
-    };
-    const zoom = (factor: number, fraction = 0.5) => {
-      const full = view.domain.end - view.domain.start;
-      const current = view.viewport || view.domain;
-      const width = Math.min(
-        full,
-        Math.max(
-          view.mode.value === 'sequence' ? 3 : 100,
-          (current.end - current.start) * factor,
-        ),
-      );
-      const anchor = current.start + (current.end - current.start) * fraction;
-      const start = Math.max(
-        view.domain.start,
-        Math.min(view.domain.end - width, anchor - width * fraction),
-      );
-      view.viewport = width >= full ? null : {start, end: start + width};
-      drawTimeline(view);
-    };
-    zoomIn.onclick = () => zoom(0.5);
-    zoomOut.onclick = () => zoom(2);
-    track.addEventListener(
-      'wheel',
-      event => {
-        event.preventDefault();
-        const bounds = track.getBoundingClientRect();
-        zoom(
-          Math.exp(event.deltaY * 0.002),
-          Math.max(
-            0,
-            Math.min(1, (event.clientX - bounds.left) / bounds.width),
-          ),
-        );
-      },
-      {passive: false},
-    );
-    const timeAt = (clientX: number) => {
-      const bounds = track.getBoundingClientRect();
-      const domain = view.viewport || view.domain;
-      return (
-        domain.start +
-        Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width)) *
-          (domain.end - domain.start)
-      );
-    };
-    track.onpointerdown = event => {
-      if (event.button !== 0) {
-        return;
-      }
-      view.drag = {
-        pointer: event.pointerId,
-        clientX: event.clientX,
-        time: timeAt(event.clientX),
-        key:
-          (event.target as HTMLElement).closest<HTMLElement>(
-            '[data-session-span]',
-          )?.dataset.sessionSpan || null,
-        moved: false,
-      };
-      track.setPointerCapture(event.pointerId);
-    };
-    track.onpointermove = event => {
-      const drag = view.drag;
-      if (!drag || drag.pointer !== event.pointerId) {
-        return;
-      }
-      if (Math.abs(event.clientX - drag.clientX) < 4 && !drag.moved) {
-        return;
-      }
-      drag.moved = true;
-      const point = timeAt(event.clientX);
-      view.range = {
-        start: Math.min(drag.time, point),
-        end: Math.max(drag.time, point),
-      };
       filter(view);
     };
-    track.onpointerup = event => {
-      const drag = view.drag;
-      if (!drag || drag.pointer !== event.pointerId) {
-        return;
-      }
-      if (!drag.moved && drag.key) {
-        event.preventDefault();
-        choose(view, drag.key);
-      }
-      if (!drag.moved && !drag.key) {
+    shrink.onclick = () => {
+      view.zoom = Math.max(0.8, view.zoom - 0.1);
+      root.style.setProperty('--trace-scale', String(view.zoom));
+      requestAnimationFrame(() => drawPaths(view));
+    };
+    expand.onclick = () => {
+      view.zoom = Math.min(1.4, view.zoom + 0.1);
+      root.style.setProperty('--trace-scale', String(view.zoom));
+      requestAnimationFrame(() => drawPaths(view));
+    };
+    list.onkeydown = event => {
+      if (event.key === 'Escape') {
         view.range = null;
         filter(view);
       }
-      track.releasePointerCapture(event.pointerId);
-      view.drag = null;
-    };
-    track.onpointercancel = () => {
-      view.drag = null;
-      view.range = null;
-      filter(view);
     };
     list.onscroll = () => {
       view.follow = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
     };
     return view;
   }
+
   globalThis.ExecutionView = {
     render(host, input) {
       let view = views.get(host);
@@ -837,35 +1058,33 @@ declare global {
         view = create(host, input);
         views.set(host, view);
       }
-      const current = view;
       view.input = input;
-      const oldCount = view.records.length;
-      view.records = project(input.turns, view.projected);
+      const oldCount = view.entries.length;
+      const projected = project(input);
+      view.entries = projected.entries;
+      view.branches = projected.branches;
       if (
         !oldCount &&
-        view.records.length &&
-        !view.records.some(
-          record =>
-            record.start !== undefined && record.durationMs !== undefined,
-        )
+        !view.entries.some(entry => entry.startedAt !== undefined)
       ) {
         view.mode.value = 'sequence';
       }
-      const toolCount = view.records.filter(
-        record => record.kind === 'tool',
+      const tools = view.entries.filter(
+        entry => entry.kind === 'tool' && !entry.branchId,
       ).length;
       const tokens = input.turns.reduce(
-        (sum, turn) => sum + (turn.modelUsage?.totalTokens || 0),
+        (total, turn) => total + (turn.modelUsage?.totalTokens || 0),
         0,
       );
-      const failures = view.records.filter(
-        record => record.state === 'error',
+      const failures = view.entries.filter(
+        entry => entry.state === 'error',
       ).length;
       setText(
         view.summary,
         [
           `${input.turns.length} 次提问`,
-          `${toolCount} 次操作`,
+          `${tools} 次操作`,
+          view.branches.length ? `${view.branches.length} 个子任务` : '',
           tokens
             ? `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
             : '',
@@ -878,64 +1097,11 @@ declare global {
         view.state,
         input.waiting ? '等你回复' : input.running ? '进行中' : '',
       );
-      const keys = new Set<string>();
-      view.records.forEach((record, index) => {
-        keys.add(record.key);
-        let row = current.rows.get(record.key);
-        if (!row) {
-          const root = element('button', 'mp-session-row');
-          root.type = 'button';
-          root.dataset.sessionRow = record.key;
-          root.onclick = () => choose(current, record.key);
-          const ordinal = element('span', 'mp-session-index');
-          const title = element('span', 'mp-session-event');
-          const preview = element('span', 'mp-session-preview');
-          const time = element('span', 'mp-session-duration');
-          root.append(ordinal, title, preview, time);
-          row = {row: root, title, preview, time, index: ordinal};
-          current.rows.set(record.key, row);
-        }
-        const root = row.row;
-        root.dataset.kind = record.kind;
-        root.dataset.state = record.state;
-        root.dataset.turnStart = String(
-          index === 0 || current.records[index - 1].turn !== record.turn,
-        );
-        if (record.callId) {
-          root.dataset.callId = record.callId;
-        }
-        root.title = [record.title, record.preview, record.status]
-          .filter(Boolean)
-          .join(' · ');
-        setText(row.index, String(index + 1).padStart(2, '0'));
-        setText(row.title, record.title);
-        setText(row.preview, record.preview || '—');
-        setText(
-          row.time,
-          record.durationMs === undefined
-            ? record.state === 'running'
-              ? '…'
-              : '—'
-            : duration(record.durationMs),
-        );
-        if (current.list.children[index] !== root) {
-          current.list.insertBefore(root, current.list.children[index] || null);
-        }
-      });
-      for (const [key, row] of view.rows) {
-        if (!keys.has(key)) {
-          row.row.remove();
-          view.rows.delete(key);
-        }
-      }
-      if (view.selected && !keys.has(view.selected)) {
-        view.selected = null;
-      }
-      drawTimeline(view);
-      showDetail(view);
+      renderRows(view);
       if (
+        input.running &&
         view.follow &&
-        oldCount !== view.records.length &&
+        oldCount !== view.entries.length &&
         !view.query &&
         !view.range
       ) {

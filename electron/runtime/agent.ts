@@ -1034,7 +1034,9 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           toolCallCount: reply.tool_calls.length,
         });
         if (reported) {
-          emit({kind: 'model_usage', usage: {...usage}});
+          const requestUsage: Record<string, number> = {};
+          mergeModelUsage(requestUsage, reply.usage);
+          emit({kind: 'model_usage', usage: {...usage}, requestUsage});
         }
         if (
           reply.stop_reason === 'context_overflow' ||

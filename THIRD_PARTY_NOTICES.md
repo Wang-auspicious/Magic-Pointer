@@ -20,8 +20,6 @@ The session overview and ledger independently follow the Input/Model/Tools lane
 and event inspection concepts in deepseek-harness's `packages/client/ui-trajectory`.
 Both features use Magic Pointer's own persistence, runtime and native host.
 
-## Runtime dependencies
-
 ## Clicky cursor interaction reference
 
 The cursor flight, brief target indication and return/dismiss interaction draw
