@@ -18,7 +18,9 @@ const stateLabels: Record<string, string> = {
 
 function showScreen(name: string) {
   for (const screenName of screenNames) {
-    const screen = document.querySelector(`.onboarding-screen[data-screen="${screenName}"]`)!;
+    const screen = document.querySelector(
+      `.onboarding-screen[data-screen="${screenName}"]`,
+    )!;
     const active = screenName === name;
     screen.classList.toggle('is-active', active);
     screen.setAttribute('aria-hidden', String(!active));
@@ -35,8 +37,8 @@ function appendLog(line: string) {
 
 function renderStages() {
   const list = document.getElementById('onboarding-stage-list')!;
-  const rows = stageOrder.map((id) => {
-    const stage = stages.get(id) || { id, title: id, state: 'pending' };
+  const rows = stageOrder.map(id => {
+    const stage = stages.get(id) || {id, title: id, state: 'pending'};
     const row = document.createElement('div');
     row.className = 'onboarding-stage';
     row.dataset.state = stage.state || 'pending';
@@ -64,12 +66,15 @@ function setProgress(percent: number) {
 }
 
 function begin() {
-  if (running) return;
+  if (running) {
+    return;
+  }
   running = true;
   stageOrder = [];
   stages.clear();
   document.getElementById('onboarding-log')!.textContent = '';
-  document.getElementById('onboarding-current-stage')!.textContent = '正在准备系统环境';
+  document.getElementById('onboarding-current-stage')!.textContent =
+    '正在准备系统环境';
   document.getElementById('onboarding-step-count')!.textContent = '0 / 0 项';
   setProgress(0);
   renderStages();
@@ -79,10 +84,15 @@ function begin() {
 
 function renderEvent(event: MagicPointerPreflightEvent = {}) {
   if (event.type === 'manifest') {
-    stageOrder = Array.isArray(event.stages) ? event.stages.map((stage) => stage.id) : [];
+    stageOrder = Array.isArray(event.stages)
+      ? event.stages.map(stage => stage.id)
+      : [];
     stages.clear();
-    for (const stage of event.stages || []) stages.set(stage.id, { ...stage, state: 'pending' });
-    document.getElementById('onboarding-step-count')!.textContent = `0 / ${stageOrder.length} 项`;
+    for (const stage of event.stages || []) {
+      stages.set(stage.id, {...stage, state: 'pending'});
+    }
+    document.getElementById('onboarding-step-count')!.textContent =
+      `0 / ${stageOrder.length} 项`;
     renderStages();
     appendLog(`读取 ${stageOrder.length} 项本机设置`);
     return;
@@ -90,25 +100,31 @@ function renderEvent(event: MagicPointerPreflightEvent = {}) {
 
   if (event.type === 'stage') {
     const previous = stages.get(event.id as string) || {};
-    const next = { ...previous, ...event };
+    const next = {...previous, ...event};
     stages.set(event.id as string, next);
     if (event.state === 'running') {
-      document.getElementById('onboarding-current-stage')!.textContent = (next.title || next.id) as string;
+      document.getElementById('onboarding-current-stage')!.textContent =
+        (next.title || next.id) as string;
       appendLog(`开始：${next.title || next.id}`);
     } else {
-      appendLog(`${stateLabels[event.state as string] || event.state}：${next.title || next.id}${event.evidence ? ` · ${event.evidence}` : ''}`);
+      appendLog(
+        `${stateLabels[event.state as string] || event.state}：${next.title || next.id}${event.evidence ? ` · ${event.evidence}` : ''}`,
+      );
     }
     renderStages();
     return;
   }
 
   if (event.type === 'progress') {
-    const completed = stageOrder.filter((id) => {
+    const completed = stageOrder.filter(id => {
       const state = stages.get(id)?.state;
-      return ['pass', 'warn', 'needs_user', 'fail', 'skipped'].includes(state as string);
+      return ['pass', 'warn', 'needs_user', 'fail', 'skipped'].includes(
+        state as string,
+      );
     }).length;
     setProgress(event.percent as number);
-    document.getElementById('onboarding-step-count')!.textContent = `${completed} / ${stageOrder.length} 项`;
+    document.getElementById('onboarding-step-count')!.textContent =
+      `${completed} / ${stageOrder.length} 项`;
     return;
   }
 
@@ -116,8 +132,10 @@ function renderEvent(event: MagicPointerPreflightEvent = {}) {
     running = false;
     setProgress(100);
     if (event.ready === true) {
-      document.getElementById('onboarding-current-stage')!.textContent = '设置完成';
-      document.getElementById('onboarding-step-count')!.textContent = `${stageOrder.length} / ${stageOrder.length} 项`;
+      document.getElementById('onboarding-current-stage')!.textContent =
+        '设置完成';
+      document.getElementById('onboarding-step-count')!.textContent =
+        `${stageOrder.length} / ${stageOrder.length} 项`;
       setTimeout(() => showScreen('success'), 280);
     } else {
       document.getElementById('onboarding-failure-copy')!.textContent =
@@ -143,9 +161,17 @@ function renderEvent(event: MagicPointerPreflightEvent = {}) {
 
 document.getElementById('onboarding-start')!.addEventListener('click', begin);
 document.getElementById('onboarding-retry')!.addEventListener('click', begin);
-document.getElementById('onboarding-cancel')!.addEventListener('click', () => api.cancel());
-document.getElementById('onboarding-failure-close')!.addEventListener('click', () => api.cancel());
-document.getElementById('onboarding-continue')!.addEventListener('click', () => api.continue());
-api.onShow((payload: MagicPointerOnboardingShowPayload = {}) => showScreen(payload.screen || 'welcome'));
+document
+  .getElementById('onboarding-cancel')!
+  .addEventListener('click', () => api.cancel());
+document
+  .getElementById('onboarding-failure-close')!
+  .addEventListener('click', () => api.cancel());
+document
+  .getElementById('onboarding-continue')!
+  .addEventListener('click', () => api.continue());
+api.onShow((payload: MagicPointerOnboardingShowPayload = {}) =>
+  showScreen(payload.screen || 'welcome'),
+);
 api.onPreflightEvent(renderEvent);
 showScreen('welcome');

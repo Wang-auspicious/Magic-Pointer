@@ -20,14 +20,19 @@ export default [
     ],
   },
   {
-    files: ['electron/**/*.ts', 'scripts/**/*.ts', 'tests/**/*.ts', 'integrations/figma/**/*.ts'],
+    files: [
+      'electron/**/*.ts',
+      'scripts/**/*.ts',
+      'tests/**/*.ts',
+      'integrations/figma/**/*.ts',
+    ],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
         ecmaVersion: 2023,
         sourceType: 'module',
       },
-      globals: { ...globals.node },
+      globals: {...globals.node},
     },
     plugins: {
       '@typescript-eslint': tseslint.plugin,
@@ -38,7 +43,7 @@ export default [
       'no-undef': 'off',
       'no-unused-vars': 'off',
       '@typescript-eslint/no-require-imports': 'off',
-      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-empty': ['error', {allowEmptyCatch: true}],
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {
@@ -52,12 +57,42 @@ export default [
     },
   },
   {
+    files: [
+      'electron/**/*.ts',
+      'scripts/**/*.ts',
+      'integrations/figma/**/*.ts',
+    ],
+    rules: {
+      curly: ['error', 'all'],
+      'one-var': ['error', 'never'],
+      eqeqeq: ['error', 'always', {null: 'ignore'}],
+      'no-var': 'error',
+      'prefer-const': 'error',
+      'no-new-wrappers': 'error',
+      'no-throw-literal': 'error',
+      'prefer-object-spread': 'error',
+      '@typescript-eslint/array-type': ['error', {default: 'array-simple'}],
+      '@typescript-eslint/consistent-type-assertions': [
+        'error',
+        {assertionStyle: 'as'},
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {selector: 'ExportDefaultDeclaration', message: 'Use named exports.'},
+        {
+          selector: 'TSEnumDeclaration[const=true]',
+          message: 'Use a regular enum or a union type.',
+        },
+      ],
+    },
+  },
+  {
     ...js.configs.recommended,
     files: ['electron/**/*.js', 'scripts/**/*.js', 'tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'commonjs',
-      globals: { ...globals.node },
+      globals: {...globals.node},
     },
     rules: {
       ...js.configs.recommended.rules,
@@ -71,7 +106,7 @@ export default [
         },
       ],
       'no-console': 'off',
-      'no-empty': ['warn', { allowEmptyCatch: true }],
+      'no-empty': ['warn', {allowEmptyCatch: true}],
       'no-prototype-builtins': 'off',
       eqeqeq: ['warn', 'smart'],
       'no-implicit-globals': 'error',
@@ -112,7 +147,7 @@ export default [
       'no-implicit-globals': 'off',
       // 上面把跨文件可见的名字声明成了 global，定义它们的那个文件因此会被
       // 判成「重复声明」。那正是我们要的写法，所以只关掉这一项检查。
-      'no-redeclare': ['error', { builtinGlobals: false }],
+      'no-redeclare': ['error', {builtinGlobals: false}],
       'no-unused-vars': [
         'warn',
         {

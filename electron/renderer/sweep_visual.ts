@@ -1,649 +1,820 @@
-(function initSweepVisual(root: { MagicSweepVisual?: unknown } | null, factory: () => MagicPointerSweepVisualApi) {
+(function initSweepVisual(
+  root: {MagicSweepVisual?: unknown} | null,
+  factory: () => MagicPointerSweepVisualApi,
+) {
   const api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.MagicSweepVisual = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this as unknown as { MagicSweepVisual?: unknown } | null, function createSweepVisual(): MagicPointerSweepVisualApi {
-  'use strict';
-
-  const MAX_POINTS = 64;
-  const SWEEP_STYLE = Object.freeze({
-    color: Object.freeze([0.145, 0.435, 0.82]),
-    bodyOpacity: 0.72,
-    bodyHalfWidthRatio: 0.34,
-    edgeFeatherDip: 4.2,
-    tailSoftnessBoostDip: 1.6,
-    tailFloorOpacity: 0.22,
-    maxPoints: MAX_POINTS,
-  });
-
-  const VERTEX_SHADER_SOURCE = [
-    '#version 300 es',
-    'in vec2 aPosition;',
-    'uniform vec2 uResolution;',
-    'void main() {',
-    '  vec2 clip = vec2(',
-    '    aPosition.x / uResolution.x * 2.0 - 1.0,',
-    '    1.0 - aPosition.y / uResolution.y * 2.0',
-    '  );',
-    '  gl_Position = vec4(clip, 0.0, 1.0);',
-    '}',
-  ].join('\n');
-
-  const FRAGMENT_SHADER_SOURCE = [
-    '#version 300 es',
-    'precision highp float;',
-    '#define MAX_POINTS 64',
-    'uniform vec2 uPoints[MAX_POINTS];',
-    'uniform float uProgresses[MAX_POINTS];',
-    'uniform int uPointCount;',
-    'uniform float uBodyHalfWidth;',
-    'uniform float uEdgeFeather;',
-    'uniform float uTailSoftnessBoost;',
-    'uniform float uTailFloor;',
-    'uniform float uBaseOpacity;',
-    'uniform float uOpacity;',
-    'uniform vec3 uColor;',
-    'out vec4 outColor;',
-    '',
-    'vec2 distanceToSegment(vec2 point, vec2 start, vec2 end) {',
-    '  vec2 segment = end - start;',
-    '  float denominator = max(dot(segment, segment), 0.0001);',
-    '  float projection = clamp(dot(point - start, segment) / denominator, 0.0, 1.0);',
-    '  return vec2(length(point - (start + segment * projection)), projection);',
-    '}',
-    '',
-    'void main() {',
-    '  if (uPointCount < 2) {',
-    '    outColor = vec4(0.0);',
-    '    return;',
-    '  }',
-    '',
-    '  float minimumDistance = 100000.0;',
-    '  float currentProgress = 0.0;',
-    '  for (int index = 0; index < MAX_POINTS - 1; index += 1) {',
-    '    if (index >= uPointCount - 1) break;',
-    '    vec2 result = distanceToSegment(gl_FragCoord.xy, uPoints[index], uPoints[index + 1]);',
-    '    float segmentProgress = mix(uProgresses[index], uProgresses[index + 1], result.y);',
-    '    if (result.x < minimumDistance - 0.25) {',
-    '      minimumDistance = result.x;',
-    '      currentProgress = segmentProgress;',
-    '    } else if (abs(result.x - minimumDistance) <= 0.75) {',
-    '      currentProgress = max(currentProgress, segmentProgress);',
-    '    }',
-    '  }',
-    '',
-    '  float shapedProgress = pow(clamp(currentProgress, 0.0, 1.0), 0.72);',
-    '  float tailRamp = mix(uTailFloor, 1.0, shapedProgress);',
-    '  float edgeFeather = uEdgeFeather + uTailSoftnessBoost * (1.0 - shapedProgress);',
-    '  float flatTopAlpha = 1.0 - smoothstep(',
-    '    uBodyHalfWidth,',
-    '    uBodyHalfWidth + edgeFeather,',
-    '    minimumDistance',
-    '  );',
-    '  float alpha = uBaseOpacity * tailRamp * flatTopAlpha * uOpacity;',
-    '  if (alpha <= 0.001) discard;',
-    '  outColor = vec4(uColor * alpha, alpha);',
-    '}',
-  ].join('\n');
-
-  interface SweepPoint {
-    x: number;
-    y: number;
+  if (typeof module === 'object' && module.exports) {
+    module.exports = api;
   }
-  interface SweepSample extends SweepPoint {
-    progress: number;
+  if (root) {
+    root.MagicSweepVisual = api;
   }
+})(
+  typeof globalThis !== 'undefined'
+    ? globalThis
+    : (this as unknown as {MagicSweepVisual?: unknown} | null),
+  function createSweepVisual(): MagicPointerSweepVisualApi {
+    'use strict';
 
-  function clamp(value: number, minimum: number, maximum: number) {
-    return Math.max(minimum, Math.min(maximum, value));
-  }
+    const MAX_POINTS = 64;
+    const SWEEP_STYLE = Object.freeze({
+      color: Object.freeze([0.145, 0.435, 0.82]),
+      bodyOpacity: 0.72,
+      bodyHalfWidthRatio: 0.34,
+      edgeFeatherDip: 4.2,
+      tailSoftnessBoostDip: 1.6,
+      tailFloorOpacity: 0.22,
+      maxPoints: MAX_POINTS,
+    });
 
-  function usablePoints(points: unknown): SweepPoint[] {
-    return Array.isArray(points)
-      ? (points.filter((point) => Number.isFinite((point as { x?: unknown } | null)?.x as number)
-          && Number.isFinite((point as { y?: unknown } | null)?.y as number)) as SweepPoint[])
-      : [];
-  }
+    const VERTEX_SHADER_SOURCE = [
+      '#version 300 es',
+      'in vec2 aPosition;',
+      'uniform vec2 uResolution;',
+      'void main() {',
+      '  vec2 clip = vec2(',
+      '    aPosition.x / uResolution.x * 2.0 - 1.0,',
+      '    1.0 - aPosition.y / uResolution.y * 2.0',
+      '  );',
+      '  gl_Position = vec4(clip, 0.0, 1.0);',
+      '}',
+    ].join('\n');
 
-  function pathLength(points: SweepPoint[]) {
-    let total = 0;
-    for (let index = 1; index < points.length; index += 1) {
-      total += Math.hypot(
-        points[index].x - points[index - 1].x,
-        points[index].y - points[index - 1].y,
-      );
+    const FRAGMENT_SHADER_SOURCE = [
+      '#version 300 es',
+      'precision highp float;',
+      '#define MAX_POINTS 64',
+      'uniform vec2 uPoints[MAX_POINTS];',
+      'uniform float uProgresses[MAX_POINTS];',
+      'uniform int uPointCount;',
+      'uniform float uBodyHalfWidth;',
+      'uniform float uEdgeFeather;',
+      'uniform float uTailSoftnessBoost;',
+      'uniform float uTailFloor;',
+      'uniform float uBaseOpacity;',
+      'uniform float uOpacity;',
+      'uniform vec3 uColor;',
+      'out vec4 outColor;',
+      '',
+      'vec2 distanceToSegment(vec2 point, vec2 start, vec2 end) {',
+      '  vec2 segment = end - start;',
+      '  float denominator = max(dot(segment, segment), 0.0001);',
+      '  float projection = clamp(dot(point - start, segment) / denominator, 0.0, 1.0);',
+      '  return vec2(length(point - (start + segment * projection)), projection);',
+      '}',
+      '',
+      'void main() {',
+      '  if (uPointCount < 2) {',
+      '    outColor = vec4(0.0);',
+      '    return;',
+      '  }',
+      '',
+      '  float minimumDistance = 100000.0;',
+      '  float currentProgress = 0.0;',
+      '  for (int index = 0; index < MAX_POINTS - 1; index += 1) {',
+      '    if (index >= uPointCount - 1) break;',
+      '    vec2 result = distanceToSegment(gl_FragCoord.xy, uPoints[index], uPoints[index + 1]);',
+      '    float segmentProgress = mix(uProgresses[index], uProgresses[index + 1], result.y);',
+      '    if (result.x < minimumDistance - 0.25) {',
+      '      minimumDistance = result.x;',
+      '      currentProgress = segmentProgress;',
+      '    } else if (abs(result.x - minimumDistance) <= 0.75) {',
+      '      currentProgress = max(currentProgress, segmentProgress);',
+      '    }',
+      '  }',
+      '',
+      '  float shapedProgress = pow(clamp(currentProgress, 0.0, 1.0), 0.72);',
+      '  float tailRamp = mix(uTailFloor, 1.0, shapedProgress);',
+      '  float edgeFeather = uEdgeFeather + uTailSoftnessBoost * (1.0 - shapedProgress);',
+      '  float flatTopAlpha = 1.0 - smoothstep(',
+      '    uBodyHalfWidth,',
+      '    uBodyHalfWidth + edgeFeather,',
+      '    minimumDistance',
+      '  );',
+      '  float alpha = uBaseOpacity * tailRamp * flatTopAlpha * uOpacity;',
+      '  if (alpha <= 0.001) discard;',
+      '  outColor = vec4(uColor * alpha, alpha);',
+      '}',
+    ].join('\n');
+
+    interface SweepPoint {
+      x: number;
+      y: number;
     }
-    return total;
-  }
-
-  function catmullRomPoint(p0: SweepPoint, p1: SweepPoint, p2: SweepPoint, p3: SweepPoint, t: number): SweepPoint {
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return {
-      x: 0.5 * ((2 * p1.x)
-        + (-p0.x + p2.x) * t
-        + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2
-        + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
-      y: 0.5 * ((2 * p1.y)
-        + (-p0.y + p2.y) * t
-        + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2
-        + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
-    };
-  }
-
-  function foldSegment(source: SweepPoint[], index: number, result: SweepPoint[]): void {
-    const p0 = source[Math.max(0, index - 1)];
-    const p1 = source[index];
-    const p2 = source[index + 1];
-    const p3 = source[Math.min(source.length - 1, index + 2)];
-    const steps = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 6));
-    for (let step = 1; step <= steps; step += 1) {
-      const point = catmullRomPoint(p0, p1, p2, p3, step / steps);
-      const previous = result[result.length - 1];
-      if (Math.hypot(point.x - previous.x, point.y - previous.y) > 0.1) {
-        result.push(point);
-      }
+    interface SweepSample extends SweepPoint {
+      progress: number;
     }
-  }
 
-  function smoothPath(points: SweepPoint[]): SweepPoint[] {
-    if (points.length <= 2) {
-      return points.map((point) => ({ x: point.x, y: point.y }));
+    function clamp(value: number, minimum: number, maximum: number) {
+      return Math.max(minimum, Math.min(maximum, value));
     }
-    const result = [{ x: points[0].x, y: points[0].y }];
-    for (let index = 0; index < points.length - 1; index += 1) {
-      foldSegment(points, index, result);
-    }
-    return result;
-  }
 
-  function syncCumulative(points: SweepPoint[], cumulative: number[]): void {
-    if (!cumulative.length) cumulative.push(0);
-    for (let index = cumulative.length; index < points.length; index += 1) {
-      cumulative.push(cumulative[index - 1] + Math.hypot(
-        points[index].x - points[index - 1].x,
-        points[index].y - points[index - 1].y,
-      ));
+    function usablePoints(points: unknown): SweepPoint[] {
+      return Array.isArray(points)
+        ? (points.filter(
+            point =>
+              Number.isFinite((point as {x?: unknown} | null)?.x as number) &&
+              Number.isFinite((point as {y?: unknown} | null)?.y as number),
+          ) as SweepPoint[])
+        : [];
     }
-  }
 
-  function resampleFromCumulative(points: SweepPoint[], cumulative: number[], count: number): SweepPoint[] {
-    const total = cumulative[cumulative.length - 1];
-    const result = [];
-    let segmentIndex = 1;
-    for (let sampleIndex = 0; sampleIndex < count; sampleIndex += 1) {
-      const target = total * sampleIndex / (count - 1);
-      while (segmentIndex < cumulative.length - 1 && cumulative[segmentIndex] < target) {
-        segmentIndex += 1;
-      }
-      const beforeDistance = cumulative[segmentIndex - 1];
-      const afterDistance = cumulative[segmentIndex];
-      const span = Math.max(afterDistance - beforeDistance, 0.0001);
-      const ratio = clamp((target - beforeDistance) / span, 0, 1);
-      const before = points[segmentIndex - 1];
-      const after = points[segmentIndex];
-      result.push({
-        x: before.x + (after.x - before.x) * ratio,
-        y: before.y + (after.y - before.y) * ratio,
-      });
-    }
-    return result;
-  }
-
-  function resamplePath(points: SweepPoint[], count: number): SweepPoint[] {
-    if (points.length <= count) {
-      return points.map((point) => ({ x: point.x, y: point.y }));
-    }
-    const cumulative = [0];
-    syncCumulative(points, cumulative);
-    return resampleFromCumulative(points, cumulative, count);
-  }
-
-  function addArcProgress(points: SweepPoint[]): SweepSample[] {
-    const total = Math.max(pathLength(points), 0.0001);
-    let travelled = 0;
-    return points.map((point, index) => {
-      if (index > 0) {
-        travelled += Math.hypot(
-          point.x - points[index - 1].x,
-          point.y - points[index - 1].y,
+    function pathLength(points: SweepPoint[]) {
+      let total = 0;
+      for (let index = 1; index < points.length; index += 1) {
+        total += Math.hypot(
+          points[index].x - points[index - 1].x,
+          points[index].y - points[index - 1].y,
         );
       }
+      return total;
+    }
+
+    function catmullRomPoint(
+      p0: SweepPoint,
+      p1: SweepPoint,
+      p2: SweepPoint,
+      p3: SweepPoint,
+      t: number,
+    ): SweepPoint {
+      const t2 = t * t;
+      const t3 = t2 * t;
       return {
-        x: point.x,
-        y: point.y,
-        progress: index === points.length - 1 ? 1 : clamp(travelled / total, 0, 1),
+        x:
+          0.5 *
+          (2 * p1.x +
+            (-p0.x + p2.x) * t +
+            (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+            (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+        y:
+          0.5 *
+          (2 * p1.y +
+            (-p0.y + p2.y) * t +
+            (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+            (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
       };
-    });
-  }
-
-  function sweepProfile(progress: number): MagicPointerSweepProfile {
-    const shaped = Math.pow(clamp(progress, 0, 1), 0.72);
-    return {
-      color: SWEEP_STYLE.color,
-      opacity: SWEEP_STYLE.tailFloorOpacity
-        + (1 - SWEEP_STYLE.tailFloorOpacity) * shaped,
-      edgeFeather: SWEEP_STYLE.edgeFeatherDip
-        + SWEEP_STYLE.tailSoftnessBoostDip * (1 - shaped),
-    };
-  }
-
-  function finalizePath(samples: SweepSample[], requestedWidth: number): MagicPointerSweepPath {
-    const width = clamp(Number(requestedWidth) || 22, 8, 40);
-    const bodyHalfWidth = clamp(width * SWEEP_STYLE.bodyHalfWidthRatio, 4.5, 8.5);
-    const maximumRadius = bodyHalfWidth
-      + SWEEP_STYLE.edgeFeatherDip
-      + SWEEP_STYLE.tailSoftnessBoostDip
-      + 2;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (let index = 0; index < samples.length; index += 1) {
-      const point = samples[index];
-      if (point.x < minX) minX = point.x;
-      if (point.x > maxX) maxX = point.x;
-      if (point.y < minY) minY = point.y;
-      if (point.y > maxY) maxY = point.y;
     }
-    return {
-      mode: 'screen-space-path-sdf',
-      samples,
-      bodyHalfWidth,
-      edgeFeather: SWEEP_STYLE.edgeFeatherDip,
-      tailSoftnessBoost: SWEEP_STYLE.tailSoftnessBoostDip,
-      tailFloorOpacity: SWEEP_STYLE.tailFloorOpacity,
-      bounds: {
-        left: minX - maximumRadius,
-        right: maxX + maximumRadius,
-        top: minY - maximumRadius,
-        bottom: maxY + maximumRadius,
-      },
-    };
-  }
 
-  function buildSdfPathStateless(points: unknown, requestedWidth = 22): MagicPointerSweepPath | null {
-    const usable = usablePoints(points);
-    if (usable.length < 2 || pathLength(usable) <= 0.1) return null;
-    const smooth = smoothPath(usable);
-    const sampled = resamplePath(smooth, MAX_POINTS);
-    return finalizePath(addArcProgress(sampled), requestedWidth);
-  }
-
-
-  interface SweepPathCache {
-    source: unknown;
-    sourceLength: number;
-    tailRef: SweepPoint | null;
-    travelled: number;
-    longEnough: boolean;
-    foldedSegments: number;
-    smoothed: SweepPoint[];
-    cumulative: number[];
-  }
-
-  function createSweepPathCache(): SweepPathCache {
-    return {
-      source: null,
-      sourceLength: 0,
-      tailRef: null,
-      travelled: 0,
-      longEnough: false,
-      foldedSegments: 0,
-      smoothed: [],
-      cumulative: [],
-    };
-  }
-
-  function resetPathCache(cache: SweepPathCache, points: unknown): void {
-    const list = Array.isArray(points) ? (points as SweepPoint[]) : [];
-    cache.source = points;
-    cache.sourceLength = 0;
-    cache.tailRef = null;
-    cache.travelled = 0;
-    cache.longEnough = false;
-    cache.foldedSegments = 0;
-    cache.smoothed = list.length ? [{ x: list[0].x, y: list[0].y }] : [];
-    cache.cumulative = list.length ? [0] : [];
-  }
-
-  function buildSdfPathCached(
-    cache: SweepPathCache,
-    points: unknown,
-    requestedWidth: number,
-  ): MagicPointerSweepPath | null | undefined {
-    const list = (Array.isArray(points) ? points : []) as SweepPoint[];
-    const length = list.length;
-    const reusable = cache.source === points
-      && cache.sourceLength <= length
-      && (cache.sourceLength === 0 || list[cache.sourceLength - 1] === cache.tailRef);
-    if (!reusable) resetPathCache(cache, points);
-
-    for (let index = cache.sourceLength; index < length; index += 1) {
-      const point = list[index];
-      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return undefined;
-      if (index > 0 && !cache.longEnough) {
-        cache.travelled += Math.hypot(point.x - list[index - 1].x, point.y - list[index - 1].y);
-        if (cache.travelled > 0.1) cache.longEnough = true;
-      }
-    }
-    cache.sourceLength = length;
-    if (length) cache.tailRef = list[length - 1];
-    if (length < 2 || !cache.longEnough) return null;
-
-    if (length <= 2) {
-      return finalizePath(
-        addArcProgress(list.map((point) => ({ x: point.x, y: point.y }))),
-        requestedWidth,
+    function foldSegment(
+      source: SweepPoint[],
+      index: number,
+      result: SweepPoint[],
+    ): void {
+      const p0 = source[Math.max(0, index - 1)];
+      const p1 = source[index];
+      const p2 = source[index + 1];
+      const p3 = source[Math.min(source.length - 1, index + 2)];
+      const steps = Math.max(
+        1,
+        Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 6),
       );
-    }
-
-    const foldTarget = length - 2;  
-    while (cache.foldedSegments < foldTarget) {
-      foldSegment(list, cache.foldedSegments, cache.smoothed);
-      cache.foldedSegments += 1;
-    }
-    syncCumulative(cache.smoothed, cache.cumulative);
-    const prefixLength = cache.smoothed.length;
-    foldSegment(list, length - 2, cache.smoothed);
-    syncCumulative(cache.smoothed, cache.cumulative);
-    const sampled = cache.smoothed.length <= MAX_POINTS
-      ? cache.smoothed.map((point) => ({ x: point.x, y: point.y }))
-      : resampleFromCumulative(cache.smoothed, cache.cumulative, MAX_POINTS);
-    const path = finalizePath(addArcProgress(sampled), requestedWidth);
-    cache.smoothed.length = prefixLength;
-    cache.cumulative.length = prefixLength;
-    return path;
-  }
-
-  const defaultPathCache = createSweepPathCache();
-
-  function buildSdfPath(
-    points: unknown,
-    requestedWidth = 22,
-    cache: SweepPathCache | null = defaultPathCache,
-  ): MagicPointerSweepPath | null {
-    if (cache) {
-      const cached = buildSdfPathCached(cache, points, requestedWidth);
-      if (cached !== undefined) return cached;
-      resetPathCache(cache, null);
-    }
-    return buildSdfPathStateless(points, requestedWidth);
-  }
-
-  function buildSweepGeometry(points: unknown, requestedWidth = 22) {
-    return buildSdfPath(points, requestedWidth);
-  }
-
-  function buildSweepSegments(points: unknown, requestedWidth = 22): unknown[] {
-    const path = buildSdfPath(points, requestedWidth);
-    if (!path) return [];
-    return path.samples.slice(1).map((point, index) => ({
-      start: path.samples[index],
-      end: point,
-      progress: (path.samples[index].progress + point.progress) / 2,
-      opacity: sweepProfile((path.samples[index].progress + point.progress) / 2).opacity,
-    }));
-  }
-
-  function buildSweepRibbon(points: unknown, requestedWidth = 22) {
-    return buildSdfPath(points, requestedWidth);
-  }
-
-  function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
-    const shader = gl.createShader(type)!;
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
-    const message = gl.getShaderInfoLog(shader) || 'unknown shader error';
-    gl.deleteShader(shader);
-    throw new Error(message);
-  }
-
-  function createProgram(gl: WebGL2RenderingContext): WebGLProgram {
-    const program = gl.createProgram();
-    const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER_SOURCE);
-    const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER_SOURCE);
-    gl.attachShader(program, vertex);
-    gl.attachShader(program, fragment);
-    gl.linkProgram(program);
-    gl.deleteShader(vertex);
-    gl.deleteShader(fragment);
-    if (gl.getProgramParameter(program, gl.LINK_STATUS)) return program;
-    const message = gl.getProgramInfoLog(program) || 'unknown program link error';
-    gl.deleteProgram(program);
-    throw new Error(message);
-  }
-
-  class SweepRenderer implements MagicPointerSweepRenderer {
-    declare canvas: HTMLCanvasElement;
-    declare gl: WebGL2RenderingContext | null;
-    declare ctx: CanvasRenderingContext2D | null;
-    declare program: WebGLProgram | null;
-    declare vertexBuffer: WebGLBuffer | null;
-    declare positionAttribute: number;
-    declare locations: Record<string, WebGLUniformLocation | null> | null;
-    declare cssWidth: number;
-    declare cssHeight: number;
-    declare dpr: number;
-    declare contextLost: boolean;
-    declare pathCache: SweepPathCache;
-
-    constructor(canvas: HTMLCanvasElement) {
-      this.canvas = canvas;
-      this.pathCache = createSweepPathCache();
-      this.gl = null;
-      this.ctx = null;
-      this.program = null;
-      this.vertexBuffer = null;
-      this.positionAttribute = -1;
-      this.locations = null;
-      this.cssWidth = 1;
-      this.cssHeight = 1;
-      this.dpr = 1;
-      this.contextLost = false;
-      this.initialize();
-    }
-
-    initialize() {
-      if (!this.canvas) return;
-      try {
-        this.gl = this.canvas.getContext('webgl2', {
-          alpha: true,
-          antialias: false,
-          depth: false,
-          premultipliedAlpha: true,
-          preserveDrawingBuffer: false,
-          stencil: false,
-        });
-        if (this.gl) this.initializeWebGl();
-      } catch {
-        this.gl = null;
-      }
-      if (!this.gl) this.ctx = this.canvas.getContext('2d', { alpha: true });
-    }
-
-    initializeWebGl() {
-      const gl = this.gl!;
-      this.program = createProgram(gl);
-      const program = this.program!;
-      this.vertexBuffer = gl.createBuffer();
-      const vertexBuffer = this.vertexBuffer!;
-      this.positionAttribute = gl.getAttribLocation(program, 'aPosition');
-      gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-      gl.enableVertexAttribArray(this.positionAttribute);
-      gl.vertexAttribPointer(this.positionAttribute, 2, gl.FLOAT, false, 0, 0);
-      this.locations = {
-        resolution: gl.getUniformLocation(program, 'uResolution'),
-        points: gl.getUniformLocation(program, 'uPoints[0]'),
-        progresses: gl.getUniformLocation(program, 'uProgresses[0]'),
-        pointCount: gl.getUniformLocation(program, 'uPointCount'),
-        bodyHalfWidth: gl.getUniformLocation(program, 'uBodyHalfWidth'),
-        edgeFeather: gl.getUniformLocation(program, 'uEdgeFeather'),
-        tailSoftnessBoost: gl.getUniformLocation(program, 'uTailSoftnessBoost'),
-        tailFloor: gl.getUniformLocation(program, 'uTailFloor'),
-        baseOpacity: gl.getUniformLocation(program, 'uBaseOpacity'),
-        opacity: gl.getUniformLocation(program, 'uOpacity'),
-        color: gl.getUniformLocation(program, 'uColor'),
-      };
-      gl.useProgram(program);
-      gl.enable(gl.BLEND);
-      gl.blendEquation(gl.FUNC_ADD);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      gl.enable(gl.SCISSOR_TEST);
-      this.canvas.addEventListener('webglcontextlost', (event) => {
-        event.preventDefault();
-        this.contextLost = true;
-      });
-      this.canvas.addEventListener('webglcontextrestored', () => {
-        this.contextLost = false;
-        this.initializeWebGl();
-        this.resize(this.cssWidth, this.cssHeight, this.dpr);
-      });
-    }
-
-    resize(width: number, height: number, dpr = 1) {
-      this.cssWidth = Math.max(1, Number(width) || 1);
-      this.cssHeight = Math.max(1, Number(height) || 1);
-      this.dpr = Math.max(1, Number(dpr) || 1);
-      this.canvas.width = Math.round(this.cssWidth * this.dpr);
-      this.canvas.height = Math.round(this.cssHeight * this.dpr);
-      this.canvas.style.width = this.cssWidth + 'px';
-      this.canvas.style.height = this.cssHeight + 'px';
-      if (this.gl) this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-      if (this.ctx) this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-      this.clear();
-    }
-
-    clear() {
-      if (this.gl && !this.contextLost) {
-        this.gl.scissor(0, 0, this.canvas.width, this.canvas.height);
-        this.gl.clearColor(0, 0, 0, 0);
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-      } else if (this.ctx) {
-        this.ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
-      }
-    }
-
-    render(entries: unknown, width = 22) {
-      this.clear();
-      const paths = (Array.isArray(entries) ? entries : [])
-        .slice(-8)
-        .map((entry) => {
-          const item = entry as { points?: unknown; opacity?: unknown } | null | undefined;
-          return {
-            path: buildSdfPath(item?.points, width, this.pathCache),
-            opacity: clamp(item?.opacity == null ? 1 : Number(item.opacity), 0, 1),
-          };
-        })
-        .filter((entry): entry is { path: MagicPointerSweepPath; opacity: number } =>
-          Boolean(entry.path) && entry.opacity > 0.01);
-      if (!paths.length) return;
-      if (this.gl && !this.contextLost) this.renderWebGl(paths);
-      else if (this.ctx) this.renderCanvas(paths);
-    }
-
-    setScissor(bounds: MagicPointerSweepBounds) {
-      const left = clamp(bounds.left, 0, this.cssWidth);
-      const right = clamp(bounds.right, 0, this.cssWidth);
-      const top = clamp(bounds.top, 0, this.cssHeight);
-      const bottom = clamp(bounds.bottom, 0, this.cssHeight);
-      this.gl!.scissor(
-        Math.floor(left * this.dpr),
-        Math.floor((this.cssHeight - bottom) * this.dpr),
-        Math.max(1, Math.ceil((right - left) * this.dpr)),
-        Math.max(1, Math.ceil((bottom - top) * this.dpr)),
-      );
-    }
-
-    renderWebGl(entries: { path: MagicPointerSweepPath; opacity: number }[]) {
-      const gl = this.gl!;
-      const locations = this.locations!;
-      const program = this.program!;
-      gl.useProgram(program);
-      gl.uniform2f(locations.resolution, this.canvas.width, this.canvas.height);
-      gl.uniform3fv(locations.color, SWEEP_STYLE.color as number[]);
-      gl.uniform1f(locations.baseOpacity, SWEEP_STYLE.bodyOpacity);
-      gl.uniform1f(locations.tailFloor, SWEEP_STYLE.tailFloorOpacity);
-
-      for (const entry of entries) {
-        const path = entry.path;
-        const left = path.bounds.left;
-        const right = path.bounds.right;
-        const top = path.bounds.top;
-        const bottom = path.bounds.bottom;
-        const vertices = new Float32Array([
-          left * this.dpr, top * this.dpr,
-          right * this.dpr, top * this.dpr,
-          left * this.dpr, bottom * this.dpr,
-          left * this.dpr, bottom * this.dpr,
-          right * this.dpr, top * this.dpr,
-          right * this.dpr, bottom * this.dpr,
-        ]);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer!);
-        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
-        gl.vertexAttribPointer(this.positionAttribute, 2, gl.FLOAT, false, 0, 0);
-
-        const pointValues = new Float32Array(path.samples.length * 2);
-        const progressValues = new Float32Array(path.samples.length);
-        path.samples.forEach((point, index) => {
-          pointValues[index * 2] = point.x * this.dpr;
-          pointValues[index * 2 + 1] = (this.cssHeight - point.y) * this.dpr;
-          progressValues[index] = point.progress;
-        });
-
-        this.setScissor(path.bounds);
-        gl.uniform2fv(locations.points, pointValues);
-        gl.uniform1fv(locations.progresses, progressValues);
-        gl.uniform1i(locations.pointCount, path.samples.length);
-        gl.uniform1f(locations.bodyHalfWidth, path.bodyHalfWidth * this.dpr);
-        gl.uniform1f(locations.edgeFeather, path.edgeFeather * this.dpr);
-        gl.uniform1f(locations.tailSoftnessBoost, path.tailSoftnessBoost * this.dpr);
-        gl.uniform1f(locations.opacity, entry.opacity);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
-    }
-
-    renderCanvas(entries: { path: MagicPointerSweepPath; opacity: number }[]) {
-      const ctx = this.ctx!;
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      for (const entry of entries) {
-        const samples = entry.path.samples;
-        for (let index = 1; index < samples.length; index += 1) {
-          const progress = (samples[index - 1].progress + samples[index].progress) / 2;
-          const profile = sweepProfile(progress);
-          const alpha = SWEEP_STYLE.bodyOpacity * profile.opacity * entry.opacity;
-          const rgb = SWEEP_STYLE.color.map((component) => Math.round(component * 255));
-          ctx.beginPath();
-          ctx.moveTo(samples[index - 1].x, samples[index - 1].y);
-          ctx.lineTo(samples[index].x, samples[index].y);
-          ctx.lineWidth = entry.path.bodyHalfWidth * 2 + profile.edgeFeather * 1.2;
-          ctx.strokeStyle = 'rgba(' + rgb.join(',') + ',' + (alpha * 0.34) + ')';
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(samples[index - 1].x, samples[index - 1].y);
-          ctx.lineTo(samples[index].x, samples[index].y);
-          ctx.lineWidth = entry.path.bodyHalfWidth * 2;
-          ctx.strokeStyle = 'rgba(' + rgb.join(',') + ',' + alpha + ')';
-          ctx.stroke();
+      for (let step = 1; step <= steps; step += 1) {
+        const point = catmullRomPoint(p0, p1, p2, p3, step / steps);
+        const previous = result[result.length - 1];
+        if (Math.hypot(point.x - previous.x, point.y - previous.y) > 0.1) {
+          result.push(point);
         }
       }
-      ctx.restore();
     }
-  }
 
-  return {
-    SWEEP_STYLE,
-    VERTEX_SHADER_SOURCE,
-    FRAGMENT_SHADER_SOURCE,
-    createSweepPathCache,
-    buildSdfPath,
-    sweepProfile,
-    buildSweepGeometry,
-    buildSweepSegments,
-    buildSweepRibbon,
-    SweepRenderer,
-  };
-}));
+    function smoothPath(points: SweepPoint[]): SweepPoint[] {
+      if (points.length <= 2) {
+        return points.map(point => ({x: point.x, y: point.y}));
+      }
+      const result = [{x: points[0].x, y: points[0].y}];
+      for (let index = 0; index < points.length - 1; index += 1) {
+        foldSegment(points, index, result);
+      }
+      return result;
+    }
+
+    function syncCumulative(points: SweepPoint[], cumulative: number[]): void {
+      if (!cumulative.length) {
+        cumulative.push(0);
+      }
+      for (let index = cumulative.length; index < points.length; index += 1) {
+        cumulative.push(
+          cumulative[index - 1] +
+            Math.hypot(
+              points[index].x - points[index - 1].x,
+              points[index].y - points[index - 1].y,
+            ),
+        );
+      }
+    }
+
+    function resampleFromCumulative(
+      points: SweepPoint[],
+      cumulative: number[],
+      count: number,
+    ): SweepPoint[] {
+      const total = cumulative[cumulative.length - 1];
+      const result = [];
+      let segmentIndex = 1;
+      for (let sampleIndex = 0; sampleIndex < count; sampleIndex += 1) {
+        const target = (total * sampleIndex) / (count - 1);
+        while (
+          segmentIndex < cumulative.length - 1 &&
+          cumulative[segmentIndex] < target
+        ) {
+          segmentIndex += 1;
+        }
+        const beforeDistance = cumulative[segmentIndex - 1];
+        const afterDistance = cumulative[segmentIndex];
+        const span = Math.max(afterDistance - beforeDistance, 0.0001);
+        const ratio = clamp((target - beforeDistance) / span, 0, 1);
+        const before = points[segmentIndex - 1];
+        const after = points[segmentIndex];
+        result.push({
+          x: before.x + (after.x - before.x) * ratio,
+          y: before.y + (after.y - before.y) * ratio,
+        });
+      }
+      return result;
+    }
+
+    function resamplePath(points: SweepPoint[], count: number): SweepPoint[] {
+      if (points.length <= count) {
+        return points.map(point => ({x: point.x, y: point.y}));
+      }
+      const cumulative = [0];
+      syncCumulative(points, cumulative);
+      return resampleFromCumulative(points, cumulative, count);
+    }
+
+    function addArcProgress(points: SweepPoint[]): SweepSample[] {
+      const total = Math.max(pathLength(points), 0.0001);
+      let travelled = 0;
+      return points.map((point, index) => {
+        if (index > 0) {
+          travelled += Math.hypot(
+            point.x - points[index - 1].x,
+            point.y - points[index - 1].y,
+          );
+        }
+        return {
+          x: point.x,
+          y: point.y,
+          progress:
+            index === points.length - 1 ? 1 : clamp(travelled / total, 0, 1),
+        };
+      });
+    }
+
+    function sweepProfile(progress: number): MagicPointerSweepProfile {
+      const shaped = Math.pow(clamp(progress, 0, 1), 0.72);
+      return {
+        color: SWEEP_STYLE.color,
+        opacity:
+          SWEEP_STYLE.tailFloorOpacity +
+          (1 - SWEEP_STYLE.tailFloorOpacity) * shaped,
+        edgeFeather:
+          SWEEP_STYLE.edgeFeatherDip +
+          SWEEP_STYLE.tailSoftnessBoostDip * (1 - shaped),
+      };
+    }
+
+    function finalizePath(
+      samples: SweepSample[],
+      requestedWidth: number,
+    ): MagicPointerSweepPath {
+      const width = clamp(Number(requestedWidth) || 22, 8, 40);
+      const bodyHalfWidth = clamp(
+        width * SWEEP_STYLE.bodyHalfWidthRatio,
+        4.5,
+        8.5,
+      );
+      const maximumRadius =
+        bodyHalfWidth +
+        SWEEP_STYLE.edgeFeatherDip +
+        SWEEP_STYLE.tailSoftnessBoostDip +
+        2;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (let index = 0; index < samples.length; index += 1) {
+        const point = samples[index];
+        if (point.x < minX) {
+          minX = point.x;
+        }
+        if (point.x > maxX) {
+          maxX = point.x;
+        }
+        if (point.y < minY) {
+          minY = point.y;
+        }
+        if (point.y > maxY) {
+          maxY = point.y;
+        }
+      }
+      return {
+        mode: 'screen-space-path-sdf',
+        samples,
+        bodyHalfWidth,
+        edgeFeather: SWEEP_STYLE.edgeFeatherDip,
+        tailSoftnessBoost: SWEEP_STYLE.tailSoftnessBoostDip,
+        tailFloorOpacity: SWEEP_STYLE.tailFloorOpacity,
+        bounds: {
+          left: minX - maximumRadius,
+          right: maxX + maximumRadius,
+          top: minY - maximumRadius,
+          bottom: maxY + maximumRadius,
+        },
+      };
+    }
+
+    function buildSdfPathStateless(
+      points: unknown,
+      requestedWidth = 22,
+    ): MagicPointerSweepPath | null {
+      const usable = usablePoints(points);
+      if (usable.length < 2 || pathLength(usable) <= 0.1) {
+        return null;
+      }
+      const smooth = smoothPath(usable);
+      const sampled = resamplePath(smooth, MAX_POINTS);
+      return finalizePath(addArcProgress(sampled), requestedWidth);
+    }
+
+    interface SweepPathCache {
+      source: unknown;
+      sourceLength: number;
+      tailRef: SweepPoint | null;
+      travelled: number;
+      longEnough: boolean;
+      foldedSegments: number;
+      smoothed: SweepPoint[];
+      cumulative: number[];
+    }
+
+    function createSweepPathCache(): SweepPathCache {
+      return {
+        source: null,
+        sourceLength: 0,
+        tailRef: null,
+        travelled: 0,
+        longEnough: false,
+        foldedSegments: 0,
+        smoothed: [],
+        cumulative: [],
+      };
+    }
+
+    function resetPathCache(cache: SweepPathCache, points: unknown): void {
+      const list = Array.isArray(points) ? (points as SweepPoint[]) : [];
+      cache.source = points;
+      cache.sourceLength = 0;
+      cache.tailRef = null;
+      cache.travelled = 0;
+      cache.longEnough = false;
+      cache.foldedSegments = 0;
+      cache.smoothed = list.length ? [{x: list[0].x, y: list[0].y}] : [];
+      cache.cumulative = list.length ? [0] : [];
+    }
+
+    function buildSdfPathCached(
+      cache: SweepPathCache,
+      points: unknown,
+      requestedWidth: number,
+    ): MagicPointerSweepPath | null | undefined {
+      const list = (Array.isArray(points) ? points : []) as SweepPoint[];
+      const length = list.length;
+      const reusable =
+        cache.source === points &&
+        cache.sourceLength <= length &&
+        (cache.sourceLength === 0 ||
+          list[cache.sourceLength - 1] === cache.tailRef);
+      if (!reusable) {
+        resetPathCache(cache, points);
+      }
+
+      for (let index = cache.sourceLength; index < length; index += 1) {
+        const point = list[index];
+        if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+          return undefined;
+        }
+        if (index > 0 && !cache.longEnough) {
+          cache.travelled += Math.hypot(
+            point.x - list[index - 1].x,
+            point.y - list[index - 1].y,
+          );
+          if (cache.travelled > 0.1) {
+            cache.longEnough = true;
+          }
+        }
+      }
+      cache.sourceLength = length;
+      if (length) {
+        cache.tailRef = list[length - 1];
+      }
+      if (length < 2 || !cache.longEnough) {
+        return null;
+      }
+
+      if (length <= 2) {
+        return finalizePath(
+          addArcProgress(list.map(point => ({x: point.x, y: point.y}))),
+          requestedWidth,
+        );
+      }
+
+      const foldTarget = length - 2;
+      while (cache.foldedSegments < foldTarget) {
+        foldSegment(list, cache.foldedSegments, cache.smoothed);
+        cache.foldedSegments += 1;
+      }
+      syncCumulative(cache.smoothed, cache.cumulative);
+      const prefixLength = cache.smoothed.length;
+      foldSegment(list, length - 2, cache.smoothed);
+      syncCumulative(cache.smoothed, cache.cumulative);
+      const sampled =
+        cache.smoothed.length <= MAX_POINTS
+          ? cache.smoothed.map(point => ({x: point.x, y: point.y}))
+          : resampleFromCumulative(
+              cache.smoothed,
+              cache.cumulative,
+              MAX_POINTS,
+            );
+      const path = finalizePath(addArcProgress(sampled), requestedWidth);
+      cache.smoothed.length = prefixLength;
+      cache.cumulative.length = prefixLength;
+      return path;
+    }
+
+    const defaultPathCache = createSweepPathCache();
+
+    function buildSdfPath(
+      points: unknown,
+      requestedWidth = 22,
+      cache: SweepPathCache | null = defaultPathCache,
+    ): MagicPointerSweepPath | null {
+      if (cache) {
+        const cached = buildSdfPathCached(cache, points, requestedWidth);
+        if (cached !== undefined) {
+          return cached;
+        }
+        resetPathCache(cache, null);
+      }
+      return buildSdfPathStateless(points, requestedWidth);
+    }
+
+    function buildSweepGeometry(points: unknown, requestedWidth = 22) {
+      return buildSdfPath(points, requestedWidth);
+    }
+
+    function buildSweepSegments(
+      points: unknown,
+      requestedWidth = 22,
+    ): unknown[] {
+      const path = buildSdfPath(points, requestedWidth);
+      if (!path) {
+        return [];
+      }
+      return path.samples.slice(1).map((point, index) => ({
+        start: path.samples[index],
+        end: point,
+        progress: (path.samples[index].progress + point.progress) / 2,
+        opacity: sweepProfile(
+          (path.samples[index].progress + point.progress) / 2,
+        ).opacity,
+      }));
+    }
+
+    function buildSweepRibbon(points: unknown, requestedWidth = 22) {
+      return buildSdfPath(points, requestedWidth);
+    }
+
+    function compileShader(
+      gl: WebGL2RenderingContext,
+      type: number,
+      source: string,
+    ) {
+      const shader = gl.createShader(type)!;
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        return shader;
+      }
+      const message = gl.getShaderInfoLog(shader) || 'unknown shader error';
+      gl.deleteShader(shader);
+      throw new Error(message);
+    }
+
+    function createProgram(gl: WebGL2RenderingContext): WebGLProgram {
+      const program = gl.createProgram();
+      const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER_SOURCE);
+      const fragment = compileShader(
+        gl,
+        gl.FRAGMENT_SHADER,
+        FRAGMENT_SHADER_SOURCE,
+      );
+      gl.attachShader(program, vertex);
+      gl.attachShader(program, fragment);
+      gl.linkProgram(program);
+      gl.deleteShader(vertex);
+      gl.deleteShader(fragment);
+      if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        return program;
+      }
+      const message =
+        gl.getProgramInfoLog(program) || 'unknown program link error';
+      gl.deleteProgram(program);
+      throw new Error(message);
+    }
+
+    class SweepRenderer implements MagicPointerSweepRenderer {
+      declare canvas: HTMLCanvasElement;
+      declare gl: WebGL2RenderingContext | null;
+      declare ctx: CanvasRenderingContext2D | null;
+      declare program: WebGLProgram | null;
+      declare vertexBuffer: WebGLBuffer | null;
+      declare positionAttribute: number;
+      declare locations: Record<string, WebGLUniformLocation | null> | null;
+      declare cssWidth: number;
+      declare cssHeight: number;
+      declare dpr: number;
+      declare contextLost: boolean;
+      declare pathCache: SweepPathCache;
+
+      constructor(canvas: HTMLCanvasElement) {
+        this.canvas = canvas;
+        this.pathCache = createSweepPathCache();
+        this.gl = null;
+        this.ctx = null;
+        this.program = null;
+        this.vertexBuffer = null;
+        this.positionAttribute = -1;
+        this.locations = null;
+        this.cssWidth = 1;
+        this.cssHeight = 1;
+        this.dpr = 1;
+        this.contextLost = false;
+        this.initialize();
+      }
+
+      initialize() {
+        if (!this.canvas) {
+          return;
+        }
+        try {
+          this.gl = this.canvas.getContext('webgl2', {
+            alpha: true,
+            antialias: false,
+            depth: false,
+            premultipliedAlpha: true,
+            preserveDrawingBuffer: false,
+            stencil: false,
+          });
+          if (this.gl) {
+            this.initializeWebGl();
+          }
+        } catch {
+          this.gl = null;
+        }
+        if (!this.gl) {
+          this.ctx = this.canvas.getContext('2d', {alpha: true});
+        }
+      }
+
+      initializeWebGl() {
+        const gl = this.gl!;
+        this.program = createProgram(gl);
+        const program = this.program!;
+        this.vertexBuffer = gl.createBuffer();
+        const vertexBuffer = this.vertexBuffer!;
+        this.positionAttribute = gl.getAttribLocation(program, 'aPosition');
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.enableVertexAttribArray(this.positionAttribute);
+        gl.vertexAttribPointer(
+          this.positionAttribute,
+          2,
+          gl.FLOAT,
+          false,
+          0,
+          0,
+        );
+        this.locations = {
+          resolution: gl.getUniformLocation(program, 'uResolution'),
+          points: gl.getUniformLocation(program, 'uPoints[0]'),
+          progresses: gl.getUniformLocation(program, 'uProgresses[0]'),
+          pointCount: gl.getUniformLocation(program, 'uPointCount'),
+          bodyHalfWidth: gl.getUniformLocation(program, 'uBodyHalfWidth'),
+          edgeFeather: gl.getUniformLocation(program, 'uEdgeFeather'),
+          tailSoftnessBoost: gl.getUniformLocation(
+            program,
+            'uTailSoftnessBoost',
+          ),
+          tailFloor: gl.getUniformLocation(program, 'uTailFloor'),
+          baseOpacity: gl.getUniformLocation(program, 'uBaseOpacity'),
+          opacity: gl.getUniformLocation(program, 'uOpacity'),
+          color: gl.getUniformLocation(program, 'uColor'),
+        };
+        gl.useProgram(program);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.SCISSOR_TEST);
+        this.canvas.addEventListener('webglcontextlost', event => {
+          event.preventDefault();
+          this.contextLost = true;
+        });
+        this.canvas.addEventListener('webglcontextrestored', () => {
+          this.contextLost = false;
+          this.initializeWebGl();
+          this.resize(this.cssWidth, this.cssHeight, this.dpr);
+        });
+      }
+
+      resize(width: number, height: number, dpr = 1) {
+        this.cssWidth = Math.max(1, Number(width) || 1);
+        this.cssHeight = Math.max(1, Number(height) || 1);
+        this.dpr = Math.max(1, Number(dpr) || 1);
+        this.canvas.width = Math.round(this.cssWidth * this.dpr);
+        this.canvas.height = Math.round(this.cssHeight * this.dpr);
+        this.canvas.style.width = this.cssWidth + 'px';
+        this.canvas.style.height = this.cssHeight + 'px';
+        if (this.gl) {
+          this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        }
+        if (this.ctx) {
+          this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        }
+        this.clear();
+      }
+
+      clear() {
+        if (this.gl && !this.contextLost) {
+          this.gl.scissor(0, 0, this.canvas.width, this.canvas.height);
+          this.gl.clearColor(0, 0, 0, 0);
+          this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        } else if (this.ctx) {
+          this.ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
+        }
+      }
+
+      render(entries: unknown, width = 22) {
+        this.clear();
+        const paths = (Array.isArray(entries) ? entries : [])
+          .slice(-8)
+          .map(entry => {
+            const item = entry as
+              {points?: unknown; opacity?: unknown} | null | undefined;
+            return {
+              path: buildSdfPath(item?.points, width, this.pathCache),
+              opacity: clamp(
+                item?.opacity == null ? 1 : Number(item.opacity),
+                0,
+                1,
+              ),
+            };
+          })
+          .filter(
+            (entry): entry is {path: MagicPointerSweepPath; opacity: number} =>
+              Boolean(entry.path) && entry.opacity > 0.01,
+          );
+        if (!paths.length) {
+          return;
+        }
+        if (this.gl && !this.contextLost) {
+          this.renderWebGl(paths);
+        } else if (this.ctx) {
+          this.renderCanvas(paths);
+        }
+      }
+
+      setScissor(bounds: MagicPointerSweepBounds) {
+        const left = clamp(bounds.left, 0, this.cssWidth);
+        const right = clamp(bounds.right, 0, this.cssWidth);
+        const top = clamp(bounds.top, 0, this.cssHeight);
+        const bottom = clamp(bounds.bottom, 0, this.cssHeight);
+        this.gl!.scissor(
+          Math.floor(left * this.dpr),
+          Math.floor((this.cssHeight - bottom) * this.dpr),
+          Math.max(1, Math.ceil((right - left) * this.dpr)),
+          Math.max(1, Math.ceil((bottom - top) * this.dpr)),
+        );
+      }
+
+      renderWebGl(
+        entries: Array<{path: MagicPointerSweepPath; opacity: number}>,
+      ) {
+        const gl = this.gl!;
+        const locations = this.locations!;
+        const program = this.program!;
+        gl.useProgram(program);
+        gl.uniform2f(
+          locations.resolution,
+          this.canvas.width,
+          this.canvas.height,
+        );
+        gl.uniform3fv(locations.color, SWEEP_STYLE.color as number[]);
+        gl.uniform1f(locations.baseOpacity, SWEEP_STYLE.bodyOpacity);
+        gl.uniform1f(locations.tailFloor, SWEEP_STYLE.tailFloorOpacity);
+
+        for (const entry of entries) {
+          const path = entry.path;
+          const left = path.bounds.left;
+          const right = path.bounds.right;
+          const top = path.bounds.top;
+          const bottom = path.bounds.bottom;
+          const vertices = new Float32Array([
+            left * this.dpr,
+            top * this.dpr,
+            right * this.dpr,
+            top * this.dpr,
+            left * this.dpr,
+            bottom * this.dpr,
+            left * this.dpr,
+            bottom * this.dpr,
+            right * this.dpr,
+            top * this.dpr,
+            right * this.dpr,
+            bottom * this.dpr,
+          ]);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer!);
+          gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+          gl.vertexAttribPointer(
+            this.positionAttribute,
+            2,
+            gl.FLOAT,
+            false,
+            0,
+            0,
+          );
+
+          const pointValues = new Float32Array(path.samples.length * 2);
+          const progressValues = new Float32Array(path.samples.length);
+          path.samples.forEach((point, index) => {
+            pointValues[index * 2] = point.x * this.dpr;
+            pointValues[index * 2 + 1] = (this.cssHeight - point.y) * this.dpr;
+            progressValues[index] = point.progress;
+          });
+
+          this.setScissor(path.bounds);
+          gl.uniform2fv(locations.points, pointValues);
+          gl.uniform1fv(locations.progresses, progressValues);
+          gl.uniform1i(locations.pointCount, path.samples.length);
+          gl.uniform1f(locations.bodyHalfWidth, path.bodyHalfWidth * this.dpr);
+          gl.uniform1f(locations.edgeFeather, path.edgeFeather * this.dpr);
+          gl.uniform1f(
+            locations.tailSoftnessBoost,
+            path.tailSoftnessBoost * this.dpr,
+          );
+          gl.uniform1f(locations.opacity, entry.opacity);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
+      }
+
+      renderCanvas(
+        entries: Array<{path: MagicPointerSweepPath; opacity: number}>,
+      ) {
+        const ctx = this.ctx!;
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        for (const entry of entries) {
+          const samples = entry.path.samples;
+          for (let index = 1; index < samples.length; index += 1) {
+            const progress =
+              (samples[index - 1].progress + samples[index].progress) / 2;
+            const profile = sweepProfile(progress);
+            const alpha =
+              SWEEP_STYLE.bodyOpacity * profile.opacity * entry.opacity;
+            const rgb = SWEEP_STYLE.color.map(component =>
+              Math.round(component * 255),
+            );
+            ctx.beginPath();
+            ctx.moveTo(samples[index - 1].x, samples[index - 1].y);
+            ctx.lineTo(samples[index].x, samples[index].y);
+            ctx.lineWidth =
+              entry.path.bodyHalfWidth * 2 + profile.edgeFeather * 1.2;
+            ctx.strokeStyle =
+              'rgba(' + rgb.join(',') + ',' + alpha * 0.34 + ')';
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(samples[index - 1].x, samples[index - 1].y);
+            ctx.lineTo(samples[index].x, samples[index].y);
+            ctx.lineWidth = entry.path.bodyHalfWidth * 2;
+            ctx.strokeStyle = 'rgba(' + rgb.join(',') + ',' + alpha + ')';
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+
+    return {
+      SWEEP_STYLE,
+      VERTEX_SHADER_SOURCE,
+      FRAGMENT_SHADER_SOURCE,
+      createSweepPathCache,
+      buildSdfPath,
+      sweepProfile,
+      buildSweepGeometry,
+      buildSweepSegments,
+      buildSweepRibbon,
+      SweepRenderer,
+    };
+  },
+);

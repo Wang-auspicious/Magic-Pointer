@@ -1,18 +1,22 @@
-const { app, BrowserWindow } = require('electron');
+const {app, BrowserWindow} = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const outArg = process.argv[2] || path.join(ROOT, 'data', 'runtime', 'stage.png');
+const outArg =
+  process.argv[2] || path.join(ROOT, 'data', 'runtime', 'stage.png');
 const sceneArg = process.argv[3] || 'finished';
-const PANEL_ANCHOR = Object.freeze({ x: 672, y: 108 });
+const PANEL_ANCHOR = Object.freeze({x: 672, y: 108});
 
-app.setPath('userData', path.join(
-  ROOT,
-  'data',
-  'runtime',
-  `capture-stage-profile-${sceneArg.replace(/[^a-z0-9-]/gi, '-')}`,
-));
+app.setPath(
+  'userData',
+  path.join(
+    ROOT,
+    'data',
+    'runtime',
+    `capture-stage-profile-${sceneArg.replace(/[^a-z0-9-]/gi, '-')}`,
+  ),
+);
 app.disableHardwareAcceleration();
 
 const SCENE = `(() => { try {
@@ -127,19 +131,27 @@ app.whenReady().then(async () => {
     width: 1240,
     height: 820,
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      offscreen: true,
+    },
   });
   try {
-    await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'stage.html'));
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await window.loadFile(
+      path.join(ROOT, 'electron', 'renderer', 'stage.html'),
+    );
+    await new Promise(resolve => setTimeout(resolve, 300));
     const verdict = await window.webContents.executeJavaScript(SCENE);
     process.stdout.write(`scene: ${verdict}\n`);
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await new Promise(resolve => setTimeout(resolve, 900));
     const image = await window.webContents.capturePage();
     fs.writeFileSync(outArg, image.toPNG());
     process.stdout.write(`${outArg}\n`);
   } catch (error) {
-    process.stderr.write(`capture failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `capture failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exitCode = 1;
   } finally {
     app.quit();

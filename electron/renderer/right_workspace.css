@@ -1,0 +1,96 @@
+#project-file-content.is-office-preview {
+  min-height: 0;
+  overflow: auto;
+  background: var(--mp-page);
+}
+
+.mp-preview-page {
+  box-sizing: border-box;
+  width: min(100%, 720px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+  background: var(--mp-panel);
+  color: var(--mp-text);
+  font: 13px/1.65 var(--mp-font);
+}
+
+.mp-preview-page p {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mp-preview-page p[data-style="title"] { font-size: 21px; font-weight: 600; line-height: 1.35; }
+.mp-preview-page p[data-style="heading"] { margin-top: 18px; font-size: 16px; font-weight: 600; line-height: 1.4; }
+
+.mp-preview-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.mp-preview-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font: 12px/1.5 var(--mp-font);
+}
+
+.mp-preview-table :is(th, td) {
+  box-sizing: border-box;
+  min-width: 80px;
+  max-width: 320px;
+  padding: 5px 8px;
+  border: 0;
+  border-right: 1px solid var(--mp-rule);
+  border-bottom: 1px solid var(--mp-rule);
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.mp-preview-table th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 42px;
+  background: var(--mp-panel);
+  color: var(--mp-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  text-align: right;
+}
+
+.mp-preview-sheet-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--mp-rule);
+  background: var(--mp-panel);
+  overflow-x: auto;
+}
+
+.mp-preview-sheet-tab {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mp-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mp-preview-sheet-tab[aria-selected="true"], .mp-preview-sheet-tab:hover {
+  background: var(--mp-hover);
+  color: var(--mp-text);
+}
+
+.mp-preview-limit {
+  padding: 8px 12px;
+  color: var(--mp-text-muted);
+  font-size: 11px;
+}

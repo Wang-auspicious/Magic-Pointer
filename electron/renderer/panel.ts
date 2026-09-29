@@ -14,22 +14,42 @@ const measureCanvas = document.createElement('canvas');
 const measureContext = measureCanvas.getContext('2d')!;
 
 function clearTimers() {
-  if (autoDismissTimer) window.clearTimeout(autoDismissTimer);
+  if (autoDismissTimer) {
+    window.clearTimeout(autoDismissTimer);
+  }
   autoDismissTimer = null;
 }
 
 function measuredWidth(text = '', state = capsule.dataset.state) {
-  if (state === 'running') return 210;
-  if (state === 'error') return 320;
+  if (state === 'running') {
+    return 210;
+  }
+  if (state === 'error') {
+    return 320;
+  }
   const value = String(text || '').trim();
-  if (!value) return 176;
-  measureContext.font = '750 18px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
+  if (!value) {
+    return 176;
+  }
+  measureContext.font =
+    '750 18px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
   const glyphWidth = 44;
-  return Math.max(118, Math.min(560, Math.ceil(measureContext.measureText(value).width + glyphWidth + 42)));
+  return Math.max(
+    118,
+    Math.min(
+      560,
+      Math.ceil(measureContext.measureText(value).width + glyphWidth + 42),
+    ),
+  );
 }
 
-function syncCapsuleSize(text = commandInput.value, state = capsule.dataset.state) {
-  if (!currentSelectionSessionToken || !currentPanelLayoutNonce) return;
+function syncCapsuleSize(
+  text = commandInput.value,
+  state = capsule.dataset.state,
+) {
+  if (!currentSelectionSessionToken || !currentPanelLayoutNonce) {
+    return;
+  }
   api.resize({
     width: measuredWidth(text, state),
     height: 72,
@@ -47,7 +67,9 @@ function setCapsuleState(state: string, message = '') {
 }
 
 function submitCommand(commandOverride = '') {
-  if (submitting || !currentSelectionSessionToken) return;
+  if (submitting || !currentSelectionSessionToken) {
+    return;
+  }
   const command = String(commandOverride || commandInput.value).trim();
   if (!command) {
     commandInput.focus();
@@ -61,9 +83,12 @@ function submitCommand(commandOverride = '') {
   });
 }
 
-
-function renderCaptureEligibility(captureEligibility: MagicPointerCaptureEligibility | undefined) {
-  if (!captureEligibility || captureEligibility.commandReady !== false) return true;
+function renderCaptureEligibility(
+  captureEligibility: MagicPointerCaptureEligibility | undefined,
+) {
+  if (!captureEligibility || captureEligibility.commandReady !== false) {
+    return true;
+  }
   setCapsuleState('error', captureEligibility.message || '当前对象不可用');
   commandInput.disabled = true;
   const delay = Number(captureEligibility.autoDismissMs);
@@ -76,10 +101,12 @@ function renderCaptureEligibility(captureEligibility: MagicPointerCaptureEligibi
 function showResult(payload: MagicPointerPanelResultPayload = {}) {
   submitting = false;
   if (
-    payload.selectionSessionToken
-    && currentSelectionSessionToken
-    && payload.selectionSessionToken !== currentSelectionSessionToken
-  ) return;
+    payload.selectionSessionToken &&
+    currentSelectionSessionToken &&
+    payload.selectionSessionToken !== currentSelectionSessionToken
+  ) {
+    return;
+  }
   if (payload.ok === null) {
     setCapsuleState('running', payload.status || 'Processing…');
     return;
@@ -106,7 +133,7 @@ commandInput.addEventListener('compositionend', () => {
   composing = false;
   syncCapsuleSize();
 });
-commandInput.addEventListener('keydown', (event) => {
+commandInput.addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.shiftKey && !composing) {
     event.preventDefault();
     submitCommand();
@@ -114,8 +141,10 @@ commandInput.addEventListener('keydown', (event) => {
     api.hide();
   }
 });
-window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') api.hide();
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    api.hide();
+  }
 });
 
 api.onShow((payload: MagicPointerPanelShowPayload = {}) => {
@@ -130,7 +159,9 @@ api.onShow((payload: MagicPointerPanelShowPayload = {}) => {
   commandInput.disabled = false;
   commandInput.placeholder = '输入命令…';
   setCapsuleState('ready');
-  if (!renderCaptureEligibility(payload.captureEligibility)) return;
+  if (!renderCaptureEligibility(payload.captureEligibility)) {
+    return;
+  }
   window.setTimeout(() => {
     commandInput.focus();
   }, 0);

@@ -1,10 +1,9 @@
 // @ts-nocheck
 'use strict';
 
-
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const {spawnSync} = require('node:child_process');
 
 const STATES = [
   'landing',
@@ -29,21 +28,36 @@ const ROOT = process.cwd();
 
 function option(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
-  return index >= 0 && process.argv[index + 1] !== undefined ? process.argv[index + 1] : fallback;
+  return index >= 0 && process.argv[index + 1] !== undefined
+    ? process.argv[index + 1]
+    : fallback;
 }
 
 function numberOption(name, fallback) {
   const value = Number(option(name, fallback));
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`invalid --${name}: ${value}`);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid --${name}: ${value}`);
+  }
   return value;
 }
 
 function parseOptions() {
   const state = String(option('state', 'landing'));
   const theme = String(option('theme', 'light'));
-  if (!STATES.includes(state)) throw new Error(`invalid --state: ${state}`);
-  if (!['light', 'dark'].includes(theme)) throw new Error(`invalid --theme: ${theme}`);
-  const output = path.resolve(String(option('output', path.join('data', 'runtime', `studio-layout-${theme}-${state}.png`))));
+  if (!STATES.includes(state)) {
+    throw new Error(`invalid --state: ${state}`);
+  }
+  if (!['light', 'dark'].includes(theme)) {
+    throw new Error(`invalid --theme: ${theme}`);
+  }
+  const output = path.resolve(
+    String(
+      option(
+        'output',
+        path.join('data', 'runtime', `studio-layout-${theme}-${state}.png`),
+      ),
+    ),
+  );
   return {
     width: Math.round(numberOption('width', state === 'minimum' ? 1020 : 1199)),
     height: Math.round(numberOption('height', state === 'minimum' ? 700 : 800)),
@@ -55,20 +69,31 @@ function parseOptions() {
 }
 
 function launchElectron() {
-  const builtEntry = path.join(ROOT, 'build', 'scripts', 'probe_studio_layout.js');
+  const builtEntry = path.join(
+    ROOT,
+    'build',
+    'scripts',
+    'probe_studio_layout.js',
+  );
   if (!fs.existsSync(builtEntry)) {
-    process.stderr.write('probe requires a fresh `npm run build:electron` first\n');
+    process.stderr.write(
+      'probe requires a fresh `npm run build:electron` first\n',
+    );
     process.exitCode = 1;
     return;
   }
   const electronBinary = require('electron');
-  const env = { ...process.env };
+  const env = {...process.env};
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawnSync(electronBinary, [builtEntry, ...process.argv.slice(2)], {
-    cwd: ROOT,
-    env,
-    stdio: 'inherit',
-  });
+  const child = spawnSync(
+    electronBinary,
+    [builtEntry, ...process.argv.slice(2)],
+    {
+      cwd: ROOT,
+      env,
+      stdio: 'inherit',
+    },
+  );
   process.exitCode = child.status === null ? 1 : child.status;
 }
 
@@ -359,8 +384,10 @@ async function waitForStudio(webContents) {
     const ready = await webContents.executeJavaScript(
       "Boolean(document.getElementById('studio-home') && document.getElementById('composer-form') && document.querySelector('#side-convos > *'))",
     );
-    if (ready) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    if (ready) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
   const diagnostic = await webContents.executeJavaScript(`(() => ({
     readyState: document.readyState,
@@ -373,7 +400,9 @@ async function waitForStudio(webContents) {
     projectRows: document.querySelectorAll('#side-convos .mpw-project').length,
     sideText: String(document.getElementById('side-convos')?.textContent || '').slice(0, 300),
   }))()`);
-  throw new Error(`Studio fixture did not finish booting: ${JSON.stringify(diagnostic)}`);
+  throw new Error(
+    `Studio fixture did not finish booting: ${JSON.stringify(diagnostic)}`,
+  );
 }
 
 async function collectMetrics(webContents) {
@@ -557,7 +586,10 @@ function pixelHex(image, cssX, cssY, cssWidth, cssHeight) {
   const b = bitmap[offset] || 0;
   const g = bitmap[offset + 1] || 0;
   const r = bitmap[offset + 2] || 0;
-  return `#${[r, g, b].map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+  return `#${[r, g, b]
+    .map(value => value.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase()}`;
 }
 
 async function runElectron() {
@@ -565,15 +597,25 @@ async function runElectron() {
   try {
     options = parseOptions();
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exitCode = 2;
     return;
   }
 
-  const { app, BrowserWindow } = require('electron');
-  app.commandLine.appendSwitch('force-device-scale-factor', String(options.scaleFactor));
-  const profile = path.join(ROOT, 'data', 'runtime', 'probe-studio-layout-profile');
-  fs.mkdirSync(profile, { recursive: true });
+  const {app, BrowserWindow} = require('electron');
+  app.commandLine.appendSwitch(
+    'force-device-scale-factor',
+    String(options.scaleFactor),
+  );
+  const profile = path.join(
+    ROOT,
+    'data',
+    'runtime',
+    'probe-studio-layout-profile',
+  );
+  fs.mkdirSync(profile, {recursive: true});
   app.setPath('userData', profile);
 
   await app.whenReady();
@@ -598,115 +640,238 @@ async function runElectron() {
     },
   });
   window.setContentSize(options.width, options.height);
-  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    if (level >= 2) consoleErrors.push({ level, message: String(message).slice(0, 500), line, sourceId });
-  });
+  window.webContents.on(
+    'console-message',
+    (_event, level, message, line, sourceId) => {
+      if (level >= 2) {
+        consoleErrors.push({
+          level,
+          message: String(message).slice(0, 500),
+          line,
+          sourceId,
+        });
+      }
+    },
+  );
 
   try {
-    const studioHtml = path.join(ROOT, 'build', 'electron', 'renderer', 'studio.html');
-    if (!fs.existsSync(studioHtml)) throw new Error('built Studio renderer is missing');
-    await window.loadFile(studioHtml, { query: { view: 'chat' } });
+    const studioHtml = path.join(
+      ROOT,
+      'build',
+      'electron',
+      'renderer',
+      'studio.html',
+    );
+    if (!fs.existsSync(studioHtml)) {
+      throw new Error('built Studio renderer is missing');
+    }
+    await window.loadFile(studioHtml, {query: {view: 'chat'}});
     await waitForStudio(window.webContents);
-    await window.webContents.executeJavaScript(statePreparationScript(options.state, options.theme));
-    await window.webContents.executeJavaScript('document.fonts && document.fonts.ready');
+    await window.webContents.executeJavaScript(
+      statePreparationScript(options.state, options.theme),
+    );
+    await window.webContents.executeJavaScript(
+      'document.fonts && document.fonts.ready',
+    );
     await settleTwoFrames(window.webContents);
     const metrics = await collectMetrics(window.webContents);
     const geometry = metrics.geometry;
     const stateFailures = [];
     const requireVisible = (name, value) => {
-      if (!value || value.width <= 0 || value.height <= 0) stateFailures.push(`${name} missing`);
+      if (!value || value.width <= 0 || value.height <= 0) {
+        stateFailures.push(`${name} missing`);
+      }
     };
     if (options.state === 'landing') {
       requireVisible('home', geometry.home);
-      if (stateFailures.length) throw new Error(`invalid landing probe: ${stateFailures.join('; ')}`);
+      if (stateFailures.length) {
+        throw new Error(`invalid landing probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'conversation') {
       requireVisible('repository context', geometry.repositoryContext);
-      if (geometry.sidebarProjects < 2) stateFailures.push('fewer than two project groups');
-      if (geometry.sidebarSessions < 3) stateFailures.push('fewer than three session rows');
-      if (geometry.flowChildren.length < 4) stateFailures.push('conversation fixture did not render');
-      if (stateFailures.length) throw new Error(`invalid Studio work-state probe: ${stateFailures.join('; ')}`);
+      if (geometry.sidebarProjects < 2) {
+        stateFailures.push('fewer than two project groups');
+      }
+      if (geometry.sidebarSessions < 3) {
+        stateFailures.push('fewer than three session rows');
+      }
+      if (geometry.flowChildren.length < 4) {
+        stateFailures.push('conversation fixture did not render');
+      }
+      if (stateFailures.length) {
+        throw new Error(
+          `invalid Studio work-state probe: ${stateFailures.join('; ')}`,
+        );
+      }
     } else if (options.state === 'conversation-inspector') {
       requireVisible('inspector', geometry.inspector);
       requireVisible('file preview', geometry.filePreviewContent);
-      if (geometry.filePreviewBlocks.length < 2) stateFailures.push('file preview content missing');
-      if (stateFailures.length) throw new Error(`invalid conversation-inspector probe: ${stateFailures.join('; ')}`);
+      if (geometry.filePreviewBlocks.length < 2) {
+        stateFailures.push('file preview content missing');
+      }
+      if (stateFailures.length) {
+        throw new Error(
+          `invalid conversation-inspector probe: ${stateFailures.join('; ')}`,
+        );
+      }
     } else if (options.state === 'running') {
-      if (geometry.planRows < 3) stateFailures.push('plan steps missing');
-      if (!geometry.composerBusy) stateFailures.push('composer is not busy');
-      if (stateFailures.length) throw new Error(`invalid running probe: ${stateFailures.join('; ')}`);
+      if (geometry.planRows < 3) {
+        stateFailures.push('plan steps missing');
+      }
+      if (!geometry.composerBusy) {
+        stateFailures.push('composer is not busy');
+      }
+      if (stateFailures.length) {
+        throw new Error(`invalid running probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'permission') {
-      if (geometry.permissionActions < 3) stateFailures.push('permission actions missing');
-      if (stateFailures.length) throw new Error(`invalid permission probe: ${stateFailures.join('; ')}`);
+      if (geometry.permissionActions < 3) {
+        stateFailures.push('permission actions missing');
+      }
+      if (stateFailures.length) {
+        throw new Error(
+          `invalid permission probe: ${stateFailures.join('; ')}`,
+        );
+      }
     } else if (options.state === 'error') {
-      if (geometry.turnErrors < 1) stateFailures.push('turn error missing');
-      if (stateFailures.length) throw new Error(`invalid error probe: ${stateFailures.join('; ')}`);
+      if (geometry.turnErrors < 1) {
+        stateFailures.push('turn error missing');
+      }
+      if (stateFailures.length) {
+        throw new Error(`invalid error probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'inspector-maximized') {
       requireVisible('inspector', geometry.inspector);
-      if (!geometry.inspectorMaximized) stateFailures.push('inspector is not maximized');
-      if (stateFailures.length) throw new Error(`invalid inspector-maximized probe: ${stateFailures.join('; ')}`);
+      if (!geometry.inspectorMaximized) {
+        stateFailures.push('inspector is not maximized');
+      }
+      if (stateFailures.length) {
+        throw new Error(
+          `invalid inspector-maximized probe: ${stateFailures.join('; ')}`,
+        );
+      }
     } else if (options.state === 'thinking-expanded') {
-      if (geometry.thinkingRows < 1) stateFailures.push('thinking row missing');
-      if (geometry.expandedThinkingRows < 1) stateFailures.push('thinking row is not expanded');
-      if (stateFailures.length) throw new Error(`invalid thinking-expanded probe: ${stateFailures.join('; ')}`);
+      if (geometry.thinkingRows < 1) {
+        stateFailures.push('thinking row missing');
+      }
+      if (geometry.expandedThinkingRows < 1) {
+        stateFailures.push('thinking row is not expanded');
+      }
+      if (stateFailures.length) {
+        throw new Error(
+          `invalid thinking-expanded probe: ${stateFailures.join('; ')}`,
+        );
+      }
     } else if (options.state === 'subagent') {
-      if (geometry.subagentRows < 1) stateFailures.push('subagent row missing');
-      if (stateFailures.length) throw new Error(`invalid subagent probe: ${stateFailures.join('; ')}`);
+      if (geometry.subagentRows < 1) {
+        stateFailures.push('subagent row missing');
+      }
+      if (stateFailures.length) {
+        throw new Error(`invalid subagent probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'browser') {
       requireVisible('browser host', geometry.browserHost);
-      if (stateFailures.length) throw new Error(`invalid browser probe: ${stateFailures.join('; ')}`);
+      if (stateFailures.length) {
+        throw new Error(`invalid browser probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'customize') {
-      if (geometry.settingsRows < 1) stateFailures.push('settings rows missing');
-      if (stateFailures.length) throw new Error(`invalid customize probe: ${stateFailures.join('; ')}`);
+      if (geometry.settingsRows < 1) {
+        stateFailures.push('settings rows missing');
+      }
+      if (stateFailures.length) {
+        throw new Error(`invalid customize probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'design') {
-      if (geometry.designRows < 4) stateFailures.push('design rows missing');
-      if (stateFailures.length) throw new Error(`invalid design probe: ${stateFailures.join('; ')}`);
+      if (geometry.designRows < 4) {
+        stateFailures.push('design rows missing');
+      }
+      if (stateFailures.length) {
+        throw new Error(`invalid design probe: ${stateFailures.join('; ')}`);
+      }
     } else if (options.state === 'minimum') {
       requireVisible('home', geometry.home);
-      if (!geometry.sidebar || geometry.sidebar.width > 44) stateFailures.push('sidebar is not collapsed');
-      if (stateFailures.length) throw new Error(`invalid minimum probe: ${stateFailures.join('; ')}`);
+      if (!geometry.sidebar || geometry.sidebar.width > 44) {
+        stateFailures.push('sidebar is not collapsed');
+      }
+      if (stateFailures.length) {
+        throw new Error(`invalid minimum probe: ${stateFailures.join('; ')}`);
+      }
     }
     const image = await window.webContents.capturePage();
     const imageSize = image.getSize();
     const points = {
       titlebar: [Math.min(options.width - 1, 420), 18],
-      sidebar: [Math.min(options.width - 1, 120), Math.min(options.height - 1, 90)],
-      page: [Math.min(options.width - 1, 320), Math.min(options.height - 1, 90)],
+      sidebar: [
+        Math.min(options.width - 1, 120),
+        Math.min(options.height - 1, 90),
+      ],
+      page: [
+        Math.min(options.width - 1, 320),
+        Math.min(options.height - 1, 90),
+      ],
       stats: metrics.geometry.stats
-        ? [metrics.geometry.stats.x + metrics.geometry.stats.width / 2, metrics.geometry.stats.y + metrics.geometry.stats.height / 2]
+        ? [
+            metrics.geometry.stats.x + metrics.geometry.stats.width / 2,
+            metrics.geometry.stats.y + metrics.geometry.stats.height / 2,
+          ]
         : null,
       inspector: metrics.geometry.inspector
-        ? [metrics.geometry.inspector.x + metrics.geometry.inspector.width / 2, metrics.geometry.inspector.y + 20]
+        ? [
+            metrics.geometry.inspector.x + metrics.geometry.inspector.width / 2,
+            metrics.geometry.inspector.y + 20,
+          ]
         : null,
     };
     const pixelSamples = {};
     for (const [name, point] of Object.entries(points)) {
-      if (point) pixelSamples[name] = pixelHex(image, point[0], point[1], options.width, options.height);
+      if (point) {
+        pixelSamples[name] = pixelHex(
+          image,
+          point[0],
+          point[1],
+          options.width,
+          options.height,
+        );
+      }
     }
 
-    fs.mkdirSync(path.dirname(options.output), { recursive: true });
+    fs.mkdirSync(path.dirname(options.output), {recursive: true});
     fs.writeFileSync(options.output, image.toPNG());
     const metadataPath = options.output.replace(/\.png$/i, '') + '.json';
-    fs.writeFileSync(metadataPath, JSON.stringify({
-      options,
-      imageSize,
-      geometry: metrics.geometry,
-      styles: metrics.styles,
-      scroll: metrics.scroll,
-      horizontalOverflow: metrics.horizontalOverflow,
-      pixelSamples,
-      consoleErrors,
-    }, null, 2));
+    fs.writeFileSync(
+      metadataPath,
+      JSON.stringify(
+        {
+          options,
+          imageSize,
+          geometry: metrics.geometry,
+          styles: metrics.styles,
+          scroll: metrics.scroll,
+          horizontalOverflow: metrics.horizontalOverflow,
+          pixelSamples,
+          consoleErrors,
+        },
+        null,
+        2,
+      ),
+    );
 
     process.stdout.write(
-      `state=${options.state} theme=${options.theme} viewport=${options.width}x${options.height} dpr=${options.scaleFactor}\n`
-      + `png=${options.output}\nmetadata=${metadataPath}\n`
-      + `image=${imageSize.width}x${imageSize.height} horizontal_overflow=${metrics.horizontalOverflow} console_errors=${consoleErrors.length}\n`,
+      `state=${options.state} theme=${options.theme} viewport=${options.width}x${options.height} dpr=${options.scaleFactor}\n` +
+        `png=${options.output}\nmetadata=${metadataPath}\n` +
+        `image=${imageSize.width}x${imageSize.height} horizontal_overflow=${metrics.horizontalOverflow} console_errors=${consoleErrors.length}\n`,
     );
-    if (metrics.horizontalOverflow > 0 || consoleErrors.length > 0) process.exitCode = 1;
+    if (metrics.horizontalOverflow > 0 || consoleErrors.length > 0) {
+      process.exitCode = 1;
+    }
   } catch (error) {
-    process.stderr.write(`Studio probe failed: ${error instanceof Error ? error.stack || error.message : String(error)}\n`);
+    process.stderr.write(
+      `Studio probe failed: ${error instanceof Error ? error.stack || error.message : String(error)}\n`,
+    );
     for (const entry of consoleErrors.slice(0, 12)) {
-      process.stderr.write(`console[${entry.level}] ${entry.message} (${entry.sourceId}:${entry.line})\n`);
+      process.stderr.write(
+        `console[${entry.level}] ${entry.message} (${entry.sourceId}:${entry.line})\n`,
+      );
     }
     process.exitCode = 1;
   } finally {

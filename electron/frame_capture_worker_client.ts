@@ -1,10 +1,9 @@
 'use strict';
 
-
-const { EventEmitter } = require('events');
+const {EventEmitter} = require('events');
 const path = require('path');
-const { spawn } = require('child_process');
-const { validateFrameLease } = require('./frame_lease');
+const {spawn} = require('child_process');
+const {validateFrameLease} = require('./frame_lease');
 
 type ChildProcessWithoutNullStreams = ReturnType<typeof spawn>;
 type UnknownRecord = Record<string, unknown>;
@@ -14,7 +13,12 @@ interface CaptureArmRequest {
   displayId: string;
   scaleFactor: number;
   surfaceBoundsPx: [number, number, number, number];
-  targetWindow: { hwnd: number; processId: number; processName: string; title: string };
+  targetWindow: {
+    hwnd: number;
+    processId: number;
+    processName: string;
+    title: string;
+  };
   overlayExcluded?: boolean;
 }
 
@@ -29,7 +33,7 @@ interface FrameCaptureWorkerClientOptions {
   root?: string;
   runtimeExecutable?: string;
   baseEnv?: NodeJS.ProcessEnv;
-  logger?: { log(message: string): void };
+  logger?: {log(message: string): void};
 }
 
 interface PendingRequest {
@@ -50,7 +54,7 @@ class FrameCaptureWorkerClient extends EventEmitter {
   runtimeExecutable: string;
   baseEnv: NodeJS.ProcessEnv;
   requestTimeoutMs: number;
-  logger: { log(message: string): void };
+  logger: {log(message: string): void};
   spawnWorker: () => ChildProcessWithoutNullStreams;
   child: ChildProcessWithoutNullStreams | null;
   stdoutBuffer: string;
@@ -82,34 +86,48 @@ class FrameCaptureWorkerClient extends EventEmitter {
 
   start(): Promise<void> {
     const child = this._ensureStarted();
-    if (!child) return Promise.reject(new Error('frame_capture_worker_unavailable'));
+    if (!child) {
+      return Promise.reject(new Error('frame_capture_worker_unavailable'));
+    }
     this.logger.log('[frame-capture-worker] start, ping for readiness');
     return this._rpc('ping', {}, 'ping').then(() => undefined);
   }
 
   arm(request: CaptureArmRequest): Promise<void> {
-    return this._rpc('arm', request as unknown as UnknownRecord, 'arm').then(() => undefined);
+    return this._rpc('arm', request as unknown as UnknownRecord, 'arm').then(
+      () => undefined,
+    );
   }
 
-  commit(request: CaptureCommitRequest): Promise<ReturnType<typeof validateFrameLease>> {
-    return this._rpc('commit', request as unknown as UnknownRecord, 'commit').then((result) => {
+  commit(
+    request: CaptureCommitRequest,
+  ): Promise<ReturnType<typeof validateFrameLease>> {
+    return this._rpc(
+      'commit',
+      request as unknown as UnknownRecord,
+      'commit',
+    ).then(result => {
       this.logger.log('[frame-capture-worker] commit ok, lease validated');
       return validateFrameLease(result);
     });
   }
 
   cancel(epochId: string): Promise<void> {
-    return this._rpc('cancel', { epochId }, 'cancel').then(() => undefined);
+    return this._rpc('cancel', {epochId}, 'cancel').then(() => undefined);
   }
 
   shutdown(): Promise<void> {
-    if (!this.child || this.child.killed) return Promise.resolve();
+    if (!this.child || this.child.killed) {
+      return Promise.resolve();
+    }
     this.closing = true;
-    return this._rpc('shutdown', {}, 'shutdown').catch((error: Error) => {
-      this.logger.log(
-        `[frame-capture-worker] shutdown failed: ${error?.message || 'unknown'}`,
-      );
-    }).then(() => undefined);
+    return this._rpc('shutdown', {}, 'shutdown')
+      .catch((error: Error) => {
+        this.logger.log(
+          `[frame-capture-worker] shutdown failed: ${error?.message || 'unknown'}`,
+        );
+      })
+      .then(() => undefined);
   }
 
   _defaultSpawn(): ChildProcessWithoutNullStreams {
@@ -118,12 +136,14 @@ class FrameCaptureWorkerClient extends EventEmitter {
       cwd: this.root,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...this.baseEnv, ELECTRON_RUN_AS_NODE: '1' },
+      env: {...this.baseEnv, ELECTRON_RUN_AS_NODE: '1'},
     });
   }
 
   _ensureStarted(): ChildProcessWithoutNullStreams | null {
-    if (this.child && !this.child.killed) return this.child;
+    if (this.child && !this.child.killed) {
+      return this.child;
+    }
     let child: ChildProcessWithoutNullStreams;
     try {
       child = this.spawnWorker();
@@ -144,32 +164,43 @@ class FrameCaptureWorkerClient extends EventEmitter {
     }
     stdout.setEncoding('utf8');
     stdout.on('data', (chunk: string | Buffer) => {
-      if (this.child === child) this._consumeStdout(String(chunk));
+      if (this.child === child) {
+        this._consumeStdout(String(chunk));
+      }
     });
     stderr.setEncoding('utf8');
     stderr.on('data', () => {
       // Diagnostics only; responses are JSONL on stdout and nothing else.
     });
     child.on('error', (error: Error) => {
-      this._detachFailedChild(child, `frame capture worker failed to start: ${error.message}`);
+      this._detachFailedChild(
+        child,
+        `frame capture worker failed to start: ${error.message}`,
+      );
     });
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      if (this.child !== child) return;
+      if (this.child !== child) {
+        return;
+      }
       const expected = this.closing;
       this.child = null;
       if (!expected) {
-        this._rejectAllPending(new Error(
-          `frame_capture_worker_exited:${code ?? signal ?? 'closed'}`,
-        ));
+        this._rejectAllPending(
+          new Error(
+            `frame_capture_worker_exited:${code ?? signal ?? 'closed'}`,
+          ),
+        );
       }
-      this.emit('worker-close', { code, expected });
+      this.emit('worker-close', {code, expected});
     });
     return child;
   }
 
   _rpc(method: string, params: UnknownRecord, label: string): Promise<unknown> {
     const child = this._ensureStarted();
-    if (!child) return Promise.reject(new Error('frame_capture_worker_unavailable'));
+    if (!child) {
+      return Promise.reject(new Error('frame_capture_worker_unavailable'));
+    }
     const requestId = `rpc-${++this.requestSeq}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -192,13 +223,13 @@ class FrameCaptureWorkerClient extends EventEmitter {
           this._write({
             id: cancelId,
             method: 'cancel',
-            params: { epochId },
+            params: {epochId},
           });
         }
         reject(new Error(`frame_capture_worker_timeout:${label}`));
       }, this.requestTimeoutMs);
-      this.pending.set(requestId, { resolve, reject, label, timer });
-      if (!this._write({ id: requestId, method, params })) {
+      this.pending.set(requestId, {resolve, reject, label, timer});
+      if (!this._write({id: requestId, method, params})) {
         clearTimeout(timer);
         this.pending.delete(requestId);
         reject(new Error('frame_capture_worker_transport_failed'));
@@ -208,7 +239,9 @@ class FrameCaptureWorkerClient extends EventEmitter {
 
   _write(payload: UnknownRecord): boolean {
     const child = this.child;
-    if (!child || child.killed || !child.stdin?.writable) return false;
+    if (!child || child.killed || !child.stdin?.writable) {
+      return false;
+    }
     try {
       child.stdin.write(`${JSON.stringify(payload)}\n`, 'utf8');
       return true;
@@ -222,7 +255,9 @@ class FrameCaptureWorkerClient extends EventEmitter {
     const lines = this.stdoutBuffer.split(/\r?\n/);
     this.stdoutBuffer = lines.pop() || '';
     for (const line of lines) {
-      if (!line.trim()) continue;
+      if (!line.trim()) {
+        continue;
+      }
       this._handleLine(line);
     }
   }
@@ -232,12 +267,12 @@ class FrameCaptureWorkerClient extends EventEmitter {
     try {
       parsed = JSON.parse(line);
     } catch (_) {
-      this.emit('protocol-error', { error: 'invalid_jsonl' });
+      this.emit('protocol-error', {error: 'invalid_jsonl'});
       return;
     }
     const candidate = recordOf(parsed);
     if (candidate === null) {
-      this.emit('protocol-error', { error: 'invalid_response' });
+      this.emit('protocol-error', {error: 'invalid_response'});
       return;
     }
     const requestId = typeof candidate.id === 'string' ? candidate.id : '';
@@ -246,7 +281,7 @@ class FrameCaptureWorkerClient extends EventEmitter {
     }
     const pending = requestId ? this.pending.get(requestId) : undefined;
     if (!pending) {
-      this.emit('protocol-error', { error: 'unknown_request_id', id: requestId });
+      this.emit('protocol-error', {error: 'unknown_request_id', id: requestId});
       return;
     }
     if ('error' in candidate) {
@@ -259,7 +294,7 @@ class FrameCaptureWorkerClient extends EventEmitter {
     if (!('result' in candidate)) {
       this.pending.delete(requestId);
       clearTimeout(pending.timer);
-      this.emit('protocol-error', { error: 'malformed_response', id: requestId });
+      this.emit('protocol-error', {error: 'malformed_response', id: requestId});
       pending.reject(new Error('frame_capture_worker_malformed_response'));
       return;
     }
@@ -276,14 +311,21 @@ class FrameCaptureWorkerClient extends EventEmitter {
     }
   }
 
-  _detachFailedChild(child: ChildProcessWithoutNullStreams, message: string): void {
-    if (!child || this.child !== child) return;
+  _detachFailedChild(
+    child: ChildProcessWithoutNullStreams,
+    message: string,
+  ): void {
+    if (!child || this.child !== child) {
+      return;
+    }
     const expected = this.closing;
     this.child = null;
-    this._rejectAllPending(new Error('frame_capture_worker_exited:spawn_error'));
-    this.emit('worker-close', { code: null, expected, error: true });
+    this._rejectAllPending(
+      new Error('frame_capture_worker_exited:spawn_error'),
+    );
+    this.emit('worker-close', {code: null, expected, error: true});
     this.logger.log(`[frame-capture-worker] ${message}`);
   }
 }
 
-module.exports = { FrameCaptureWorkerClient };
+module.exports = {FrameCaptureWorkerClient};

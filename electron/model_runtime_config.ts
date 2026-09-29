@@ -7,7 +7,7 @@ type CredentialReader = {
 };
 
 type CredentialStatusReader = {
-  status(reference: string): { present?: boolean; available?: boolean };
+  status(reference: string): {present?: boolean; available?: boolean};
 };
 
 const GROQ_PROFILE_ID = 'groq-main';
@@ -26,7 +26,7 @@ function groqProfile(): UnknownRecord {
     apiMode: 'chat-completions',
     credentialRef: GROQ_CREDENTIAL_REF,
     enabled: true,
-    overrides: { audioInput: 'no', toolCalls: 'auto' },
+    overrides: {audioInput: 'no', toolCalls: 'auto'},
     resolved: {
       audioInput: 'no',
       toolCalls: 'unknown',
@@ -38,11 +38,14 @@ function groqProfile(): UnknownRecord {
 }
 
 function upsertGroqProfile(settings: UnknownRecord): UnknownRecord {
-  const currentModels = settings?.models && typeof settings.models === 'object'
-    ? settings.models
-    : {};
+  const currentModels =
+    settings?.models && typeof settings.models === 'object'
+      ? settings.models
+      : {};
   const profiles = Array.isArray(currentModels.profiles)
-    ? currentModels.profiles.filter((profile: UnknownRecord) => profile?.id !== GROQ_PROFILE_ID)
+    ? currentModels.profiles.filter(
+        (profile: UnknownRecord) => profile?.id !== GROQ_PROFILE_ID,
+      )
     : [];
   profiles.push(groqProfile());
   return {
@@ -58,11 +61,22 @@ function upsertGroqProfile(settings: UnknownRecord): UnknownRecord {
 
 function activeProfile(settings: UnknownRecord | null): UnknownRecord | null {
   const models = settings?.models;
-  const profiles: UnknownRecord[] = Array.isArray(models?.profiles) ? models.profiles : [];
-  const defaultId = String(models?.defaultProfileId || '').trim().toLowerCase();
-  return profiles.find((item) => String(item?.id || '').trim().toLowerCase() === defaultId)
-    || profiles.find((item) => item?.enabled !== false)
-    || null;
+  const profiles: UnknownRecord[] = Array.isArray(models?.profiles)
+    ? models.profiles
+    : [];
+  const defaultId = String(models?.defaultProfileId || '')
+    .trim()
+    .toLowerCase();
+  return (
+    profiles.find(
+      item =>
+        String(item?.id || '')
+          .trim()
+          .toLowerCase() === defaultId,
+    ) ||
+    profiles.find(item => item?.enabled !== false) ||
+    null
+  );
 }
 
 function activeModelRuntimeStatus(
@@ -84,13 +98,19 @@ function activeModelRuntimeStatus(
   }
   const apiMode = String(profile.apiMode || '');
   const credentialRef = String(profile.credentialRef || '').trim();
-  let credential = { present: apiMode === 'local', available: apiMode === 'local' };
+  let credential = {
+    present: apiMode === 'local',
+    available: apiMode === 'local',
+  };
   if (credentialRef && credentialStore) {
     try {
       const status = credentialStore.status(credentialRef);
-      credential = { present: status.present === true, available: status.available === true };
+      credential = {
+        present: status.present === true,
+        available: status.available === true,
+      };
     } catch (_) {
-      credential = { present: false, available: false };
+      credential = {present: false, available: false};
     }
   }
   return {
@@ -110,11 +130,14 @@ function resolveActiveModelRuntimeConfig(
   credentialStore: CredentialReader | null,
 ): UnknownRecord | null {
   const profile = activeProfile(settings);
-  if (!profile || profile.enabled === false) return null;
+  if (!profile || profile.enabled === false) {
+    return null;
+  }
   const credentialRef = String(profile.credentialRef || '').trim();
   let credential: string | null = null;
-  if (String(profile.apiMode || '') === 'local') credential = '';
-  else if (credentialRef && credentialStore) {
+  if (String(profile.apiMode || '') === 'local') {
+    credential = '';
+  } else if (credentialRef && credentialStore) {
     try {
       credential = credentialStore.get(credentialRef);
     } catch (_) {
@@ -128,7 +151,10 @@ function resolveActiveModelRuntimeConfig(
     model: String(profile.model || ''),
     apiMode: String(profile.apiMode || ''),
     credential,
-    headers: profile.headers && typeof profile.headers === 'object' ? profile.headers : {},
+    headers:
+      profile.headers && typeof profile.headers === 'object'
+        ? profile.headers
+        : {},
     defaultContextWindow: Number(profile.defaultContextWindow || 262144),
     defaultMaxTokens: Number(profile.defaultMaxTokens || 32768),
     transport: String(profile.transport || 'auto'),
@@ -136,16 +162,31 @@ function resolveActiveModelRuntimeConfig(
   };
 }
 
-function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): UnknownRecord {
-  const currentModels = settings?.models && typeof settings.models === 'object' ? settings.models : {};
-  const profiles = Array.isArray(currentModels.profiles) ? currentModels.profiles : [];
-  if (profiles.length || !String(legacy.model || '').trim()) return settings;
-  const mode = String(legacy.apiMode || 'chat-completions').trim().toLowerCase();
+function promoteLegacyProfile(
+  settings: UnknownRecord,
+  legacy: UnknownRecord,
+): UnknownRecord {
+  const currentModels =
+    settings?.models && typeof settings.models === 'object'
+      ? settings.models
+      : {};
+  const profiles = Array.isArray(currentModels.profiles)
+    ? currentModels.profiles
+    : [];
+  if (profiles.length || !String(legacy.model || '').trim()) {
+    return settings;
+  }
+  const mode = String(legacy.apiMode || 'chat-completions')
+    .trim()
+    .toLowerCase();
   const profile = {
     schemaVersion: 1,
     id: LEGACY_PROFILE_ID,
     displayName: `Legacy · ${String(legacy.model).trim()}`,
-    provider: String(legacy.provider || 'openai').trim().toLowerCase() || 'openai',
+    provider:
+      String(legacy.provider || 'openai')
+        .trim()
+        .toLowerCase() || 'openai',
     baseUrl: String(legacy.baseUrl || '').trim(),
     model: String(legacy.model).trim(),
     apiMode: mode,
@@ -155,30 +196,67 @@ function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): U
     defaultContextWindow: 262144,
     defaultMaxTokens: 32768,
     transport: 'auto',
-    overrides: { audioInput: 'auto', toolCalls: 'auto' },
-    resolved: { audioInput: 'unknown', toolCalls: 'unknown', source: 'legacy_migration', evidence: '', checkedAt: '' },
+    overrides: {audioInput: 'auto', toolCalls: 'auto'},
+    resolved: {
+      audioInput: 'unknown',
+      toolCalls: 'unknown',
+      source: 'legacy_migration',
+      evidence: '',
+      checkedAt: '',
+    },
   };
-  return { ...settings, models: { ...currentModels, schemaVersion: 1, defaultProfileId: LEGACY_PROFILE_ID, profiles: [profile] } };
+  return {
+    ...settings,
+    models: {
+      ...currentModels,
+      schemaVersion: 1,
+      defaultProfileId: LEGACY_PROFILE_ID,
+      profiles: [profile],
+    },
+  };
 }
 
-function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown, requestedProfileId?: unknown): UnknownRecord | null {
+function selectActiveProfileModel(
+  settings: UnknownRecord | null,
+  model: unknown,
+  requestedProfileId?: unknown,
+): UnknownRecord | null {
   const name = String(model || '').trim();
-  if (!name) return null;
+  if (!name) {
+    return null;
+  }
   const models = settings?.models;
-  const profiles: UnknownRecord[] = Array.isArray(models?.profiles) ? models.profiles : [];
-  const requested = String(requestedProfileId || '').trim().toLowerCase();
+  const profiles: UnknownRecord[] = Array.isArray(models?.profiles)
+    ? models.profiles
+    : [];
+  const requested = String(requestedProfileId || '')
+    .trim()
+    .toLowerCase();
   const profile = requested
-    ? profiles.find(item => String(item.id || '').trim().toLowerCase() === requested)
+    ? profiles.find(
+        item =>
+          String(item.id || '')
+            .trim()
+            .toLowerCase() === requested,
+      )
     : activeProfile(settings);
-  if (!profile || profile.enabled === false) return null;
-  const profileId = String(profile.id || '').trim().toLowerCase();
-  const nextProfiles = profiles.map((item) => (
-    String(item?.id || '').trim().toLowerCase() === profileId
+  if (!profile || profile.enabled === false) {
+    return null;
+  }
+  const profileId = String(profile.id || '')
+    .trim()
+    .toLowerCase();
+  const nextProfiles = profiles.map(item =>
+    String(item?.id || '')
+      .trim()
+      .toLowerCase() === profileId
       ? {
           ...item,
           model: name,
-          ...(String(item?.model || '').trim() !== name
-            && String(item?.resolved?.source || '').trim().toLowerCase() === 'explicit_probe'
+          ...(String(item?.model || '').trim() !== name &&
+          String(item?.resolved?.source || '')
+            .trim()
+            .toLowerCase() === 'explicit_probe'
             ? {
                 resolved: {
                   audioInput: 'unknown',
@@ -190,8 +268,8 @@ function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown
               }
             : {}),
         }
-      : item
-  ));
+      : item,
+  );
   return {
     ...(settings || {}),
     models: {
@@ -207,30 +285,54 @@ async function collectModelCatalog(
   credentialStore: CredentialReader | null,
   query: (runtime: UnknownRecord | null) => Promise<UnknownRecord>,
 ): Promise<UnknownRecord> {
-  const profiles: UnknownRecord[] = (settings?.models?.profiles || []).filter((item: UnknownRecord) => item.enabled !== false);
-  if (!profiles.length) return query(null);
+  const profiles: UnknownRecord[] = (settings?.models?.profiles || []).filter(
+    (item: UnknownRecord) => item.enabled !== false,
+  );
+  if (!profiles.length) {
+    return query(null);
+  }
   const active = activeProfile(settings);
-  const catalogs = await Promise.all(profiles.map(async profile => {
-    const runtime = resolveActiveModelRuntimeConfig({ ...settings, models: { ...settings?.models, defaultProfileId: profile.id } }, credentialStore);
-    let catalog: UnknownRecord;
-    try {
-      catalog = await query(runtime);
-    } catch (error) {
-      catalog = { source: 'config', error: error instanceof Error ? error.message : String(error),
-        groups: [{ models: [{ id: profile.model }] }] };
-    }
-    return { profile, catalog };
-  }));
+  const catalogs = await Promise.all(
+    profiles.map(async profile => {
+      const runtime = resolveActiveModelRuntimeConfig(
+        {
+          ...settings,
+          models: {...settings?.models, defaultProfileId: profile.id},
+        },
+        credentialStore,
+      );
+      let catalog: UnknownRecord;
+      try {
+        catalog = await query(runtime);
+      } catch (error) {
+        catalog = {
+          source: 'config',
+          error: error instanceof Error ? error.message : String(error),
+          groups: [{models: [{id: profile.model}]}],
+        };
+      }
+      return {profile, catalog};
+    }),
+  );
   return {
-    current: active?.model || '', currentProfileId: active?.id || '',
-    provider: active?.provider || '', source: 'profiles',
-    groups: catalogs.flatMap(({ profile, catalog }) => (catalog.groups || []).map((group: UnknownRecord) => ({
-      id: `${profile.id}:${group.id || 'models'}`, profileId: profile.id,
-      name: profile.displayName || profile.provider || profile.id,
-      provider: catalog.provider || profile.provider || profile.id,
-      source: catalog.source, error: catalog.error || '',
-      models: (group.models || []).map((entry: UnknownRecord) => ({ ...entry, profileId: profile.id })),
-    }))),
+    current: active?.model || '',
+    currentProfileId: active?.id || '',
+    provider: active?.provider || '',
+    source: 'profiles',
+    groups: catalogs.flatMap(({profile, catalog}) =>
+      (catalog.groups || []).map((group: UnknownRecord) => ({
+        id: `${profile.id}:${group.id || 'models'}`,
+        profileId: profile.id,
+        name: profile.displayName || profile.provider || profile.id,
+        provider: catalog.provider || profile.provider || profile.id,
+        source: catalog.source,
+        error: catalog.error || '',
+        models: (group.models || []).map((entry: UnknownRecord) => ({
+          ...entry,
+          profileId: profile.id,
+        })),
+      })),
+    ),
   };
 }
 

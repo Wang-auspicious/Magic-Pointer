@@ -1,7 +1,11 @@
 'use strict';
 
 type UnknownRecord = Record<string, unknown>;
-type SnapshotContext = { capturedAt: number; generation: number; invalidationReason: string };
+type SnapshotContext = {
+  capturedAt: number;
+  generation: number;
+  invalidationReason: string;
+};
 type CompletedSnapshot = Readonly<
   SnapshotContext & {
     schemaVersion: 1;
@@ -18,14 +22,16 @@ type CompletedSnapshot = Readonly<
 >;
 
 function deepFreeze<T>(value: T): T {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.values(value).forEach((entry) => deepFreeze(entry));
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.values(value).forEach(entry => deepFreeze(entry));
   return Object.freeze(value);
 }
 
 function completedSnapshot(
   raw: unknown,
-  { capturedAt, generation, invalidationReason }: SnapshotContext,
+  {capturedAt, generation, invalidationReason}: SnapshotContext,
 ): CompletedSnapshot {
   const source = raw && typeof raw === 'object' ? (raw as UnknownRecord) : {};
   return deepFreeze({
@@ -33,7 +39,7 @@ function completedSnapshot(
     capturedAt,
     generation,
     invalidationReason,
-    readiness: source.readiness || { state: 'unknown' },
+    readiness: source.readiness || {state: 'unknown'},
     workers: source.workers || {},
     models: source.models || {},
     permissions: source.permissions || {},
@@ -45,12 +51,17 @@ function completedSnapshot(
   });
 }
 
-function degradedSnapshot(error: unknown, context: SnapshotContext): CompletedSnapshot {
+function degradedSnapshot(
+  error: unknown,
+  context: SnapshotContext,
+): CompletedSnapshot {
   const message =
-    error instanceof Error ? error.message : String(error || 'unknown runtime probe failure');
+    error instanceof Error
+      ? error.message
+      : String(error || 'unknown runtime probe failure');
   return completedSnapshot(
     {
-      readiness: { state: 'degraded', reason: 'runtime_probe_failed' },
+      readiness: {state: 'degraded', reason: 'runtime_probe_failed'},
       diagnostics: {
         error: {
           code: 'runtime_probe_failed',
@@ -84,10 +95,12 @@ class RuntimeSnapshot {
     clock?: () => number;
     ttlMs?: number;
   } = {}) {
-    if (typeof probe !== 'function')
+    if (typeof probe !== 'function') {
       throw new TypeError('RuntimeSnapshot requires a probe function.');
-    if (typeof clock !== 'function')
+    }
+    if (typeof clock !== 'function') {
       throw new TypeError('RuntimeSnapshot clock must be a function.');
+    }
     this.probe = probe as (
       context: Pick<SnapshotContext, 'generation' | 'invalidationReason'>,
     ) => unknown | Promise<unknown>;
@@ -106,7 +119,9 @@ class RuntimeSnapshot {
     return this.generation;
   }
 
-  async get({ force = false }: { force?: boolean } = {}): Promise<CompletedSnapshot> {
+  async get({
+    force = false,
+  }: {force?: boolean} = {}): Promise<CompletedSnapshot> {
     const generation = this.generation;
     const now = Number(this.clock());
     if (
@@ -119,28 +134,31 @@ class RuntimeSnapshot {
       return this.cache;
     }
     const existing = this.inFlightByGeneration.get(generation);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
 
     const invalidationReason = this.invalidationReason;
-    let request: Promise<CompletedSnapshot>;
-    request = Promise.resolve()
-      .then(() => this.probe({ generation, invalidationReason }))
-      .then((raw) =>
+    const request: Promise<CompletedSnapshot> = Promise.resolve()
+      .then(() => this.probe({generation, invalidationReason}))
+      .then(raw =>
         completedSnapshot(raw, {
           capturedAt: Number(this.clock()),
           generation,
           invalidationReason,
         }),
       )
-      .catch((error) =>
+      .catch(error =>
         degradedSnapshot(error, {
           capturedAt: Number(this.clock()),
           generation,
           invalidationReason,
         }),
       )
-      .then((snapshot) => {
-        if (this.generation === generation) this.cache = snapshot;
+      .then(snapshot => {
+        if (this.generation === generation) {
+          this.cache = snapshot;
+        }
         return snapshot;
       })
       .finally(() => {

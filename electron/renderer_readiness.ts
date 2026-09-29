@@ -14,7 +14,9 @@ class RendererReadiness {
   }
 
   whenReady(callback: unknown): () => boolean | void {
-    if (typeof callback !== 'function') return () => {};
+    if (typeof callback !== 'function') {
+      return () => {};
+    }
     if (this.isReady) {
       callback();
       return () => {};
@@ -25,12 +27,16 @@ class RendererReadiness {
   }
 
   markReady(): void {
-    if (this.isReady) return;
+    if (this.isReady) {
+      return;
+    }
     this.isReady = true;
     const pending = [...this.waiters];
     this.waiters.clear();
-    for (const callback of pending) callback();
+    for (const callback of pending) {
+      callback();
+    }
   }
 }
 
-module.exports = { RendererReadiness };
+module.exports = {RendererReadiness};

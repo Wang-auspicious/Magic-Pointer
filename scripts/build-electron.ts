@@ -1,22 +1,29 @@
-import { cpSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {cpSync, readFileSync, readdirSync, rmSync} from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 const sourceRoot = path.join(root, 'electron');
 const outputRoot = path.join(root, 'build', 'electron');
 const scriptsOutputRoot = path.join(root, 'build', 'scripts');
-const typescriptRoot = path.resolve(path.dirname(require.resolve('typescript')), '..');
+const typescriptRoot = path.resolve(
+  path.dirname(require.resolve('typescript')),
+  '..',
+);
 const compiler = path.join(typescriptRoot, 'bin', 'tsc');
 
-rmSync(outputRoot, { force: true, recursive: true });
-rmSync(scriptsOutputRoot, { force: true, recursive: true });
+rmSync(outputRoot, {force: true, recursive: true});
+rmSync(scriptsOutputRoot, {force: true, recursive: true});
 
 function compileProject(project: string): void {
-  const compile = spawnSync(process.execPath, [compiler, '--project', path.join(root, project)], {
-    cwd: root,
-    stdio: 'inherit',
-  });
+  const compile = spawnSync(
+    process.execPath,
+    [compiler, '--project', path.join(root, project)],
+    {
+      cwd: root,
+      stdio: 'inherit',
+    },
+  );
 
   if (compile.status !== 0) {
     process.exit(compile.status ?? 1);
@@ -36,17 +43,21 @@ cpSync(sourceRoot, outputRoot, {
 });
 
 function verifyCopiedJavaScript(directory: string): void {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+  for (const entry of readdirSync(directory, {withFileTypes: true})) {
     const source = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       verifyCopiedJavaScript(source);
       continue;
     }
-    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    if (!entry.isFile() || !entry.name.endsWith('.js')) {
+      continue;
+    }
     const relative = path.relative(sourceRoot, source);
     const output = path.join(outputRoot, relative);
     if (!readFileSync(source).equals(readFileSync(output))) {
-      throw new Error(`JavaScript source was transformed during build: ${relative}`);
+      throw new Error(
+        `JavaScript source was transformed during build: ${relative}`,
+      );
     }
   }
 }
@@ -57,8 +68,10 @@ verifyCopiedJavaScript(sourceRoot);
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();
-  for (const entry of readdirSync(htmlRoot, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith('.html')) continue;
+  for (const entry of readdirSync(htmlRoot, {withFileTypes: true})) {
+    if (!entry.isFile() || !entry.name.endsWith('.html')) {
+      continue;
+    }
     const html = readFileSync(path.join(htmlRoot, entry.name), 'utf8');
     for (const match of html.matchAll(/<script\s+src="([^"]+)"/g)) {
       const source = match[1].split('?')[0];
@@ -75,16 +88,23 @@ function verifyBrowserGlobalScripts(): void {
       offenders.push(`${relative} (missing from build output)`);
       continue;
     }
-    if (/^\s*Object\.defineProperty\(exports\b/m.test(contents) || /^\s*exports\.\w/m.test(contents)) {
+    if (
+      /^\s*Object\.defineProperty\(exports\b/m.test(contents) ||
+      /^\s*exports\.\w/m.test(contents)
+    ) {
       offenders.push(`${relative} (CommonJS wrapper in a classic script)`);
     }
   }
   if (offenders.length > 0) {
-    throw new Error(`Browser-loaded scripts must compile to classic scripts:\n  ${offenders.join('\n  ')}`);
+    throw new Error(
+      `Browser-loaded scripts must compile to classic scripts:\n  ${offenders.join('\n  ')}`,
+    );
   }
 }
 
 verifyBrowserGlobalScripts();
 
 console.log(`Electron runtime built at ${path.relative(root, outputRoot)}`);
-console.log(`Script runtime built at ${path.relative(root, scriptsOutputRoot)}`);
+console.log(
+  `Script runtime built at ${path.relative(root, scriptsOutputRoot)}`,
+);

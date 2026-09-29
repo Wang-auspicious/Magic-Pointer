@@ -8,14 +8,16 @@
   <script src="theme_boot.js?v=26"></script>
   <link rel="stylesheet" href="cds_icons.css?v=1" />
   <link rel="stylesheet" href="theme_tokens.css?v=35" />
-  <link rel="stylesheet" href="studio_layout.css?v=34" />
-  <link rel="stylesheet" href="chat_styles.css?v=34" />
+  <link rel="stylesheet" href="studio_layout.css?v=35" />
+  <link rel="stylesheet" href="chat_styles.css?v=35" />
   <link rel="stylesheet" href="decision_card.css" />
   <link rel="stylesheet" href="plan_list.css" />
   <link rel="stylesheet" href="studio_artifacts.css?v=1" />
   <link rel="stylesheet" href="assets/library-previews/artifact-previews.css" />
   <link rel="stylesheet" href="studio_libraries.css?v=1" />
   <link rel="stylesheet" href="studio_stash.css?v=1" />
+  <link rel="stylesheet" href="personal_activity_view.css" />
+  <link rel="stylesheet" href="right_workspace.css" />
 </head>
 <body class="studio">
   <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -63,6 +65,9 @@
         <div class="mp-nav-row"><button class="mpw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
         </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="创建产物" title="创建产物"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
+        <button class="mpw-customize" id="nav-personal" data-goto="personal">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">我的一天</span>
+        </button>
         <button class="mpw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Scheduled</span>
         </button>
@@ -170,13 +175,13 @@
               </div>
               <nav class="mp-conversation-view" aria-label="对话视图" hidden>
                 <button class="is-on" data-conversation-tab="chat" aria-selected="true" title="对话"><svg aria-hidden="true"><use href="#ic-message" /></svg></button>
-                <button data-conversation-tab="trajectory" aria-selected="false" title="运行轨迹"><svg aria-hidden="true"><use href="#ic-activity" /></svg></button>
+                <button data-conversation-tab="trajectory" aria-selected="false" title="对话记录"><svg aria-hidden="true"><use href="#ic-activity" /></svg></button>
               </nav>
               <button type="button" class="mp-thread-action" id="bottom-panel-toggle" aria-label="Toggle terminal" aria-expanded="false" title="Toggle terminal">
                 <svg class="codex-icon" aria-hidden="true"><use href="#ic-command-line" /></svg>
               </button>
               <button type="button" class="mp-thread-action" id="inspector-toggle" aria-label="打开任务材料或项目文件" aria-expanded="false" title="任务材料与项目文件"><svg class="codex-icon" aria-hidden="true"><use href="#ic-file-add" /></svg></button>
-              <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="执行记录" title="执行记录"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
+              <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="对话记录" title="对话记录"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
               <button type="button" class="mp-thread-action" id="header-preview-toggle" aria-label="Toggle preview" title="Toggle preview"><svg class="codex-icon" aria-hidden="true"><use href="#ic-play" /></svg></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
@@ -381,6 +386,7 @@
       </section>
 
       <section class="mpw-view mp-library-view" id="view-projects" hidden><div class="mp-library" id="library-projects"></div></section>
+      <section class="mpw-view mp-library-view" id="view-personal" hidden><div id="personal-activity"></div></section>
       <section class="mpw-view mp-library-view" id="view-scheduled" hidden><div class="mp-library" id="library-scheduled"></div></section>
       <section class="mpw-view mp-library-view" id="view-customize" hidden><div class="mp-library" id="library-customize"></div></section>
       <section class="mpw-view mp-library-view" id="view-chats" hidden><div class="mp-library" id="library-chats"></div></section>
@@ -525,6 +531,7 @@
             <span id="project-file-name"></span>
             <input id="project-file-search-input" type="search" placeholder="Search in file…" aria-label="Search in file" hidden />
             <div class="mp-file-preview-actions">
+              <button type="button" id="project-file-open" title="在原应用打开" aria-label="在原应用打开"><svg aria-hidden="true"><use href="#ic-open" /></svg></button>
               <button type="button" id="project-file-code" title="Code" aria-pressed="false"><svg aria-hidden="true"><use href="#ic-code" /></svg></button>
               <button type="button" id="project-file-search" title="Search"><svg aria-hidden="true"><use href="#ic-search" /></svg></button>
               <button type="button" id="project-file-back" title="Show files"><svg aria-hidden="true"><use href="#ic-folder-open" /></svg></button>
@@ -547,6 +554,7 @@
         </div>
       </section>
       <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>
+        <div class="mp-preview-sheet-tabs"><span>PowerShell</span><button type="button" data-terminal-stop>停止终端</button></div>
         <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span>PowerShell · 当前项目</span></div>
         <form class="mp-terminal-form" id="project-terminal-form"><span>&gt;</span><input id="project-terminal-input" autocomplete="off" spellcheck="false" aria-label="终端命令" /><button type="submit">运行</button></form>
       </section>
@@ -666,7 +674,6 @@
   <script defer src="chat_highlight.js?v=1"></script>
   <script defer src="chat_view.js?v=27"></script>
   <script defer src="execution_view.js"></script>
-  <script defer src="chat_trajectory.js?v=25"></script>
   <script defer src="../conversation_control.js?v=23"></script>
   <script defer src="../slash_trigger.js?v=23"></script>
   <script defer src="permission_presets.js?v=23"></script>
@@ -686,8 +693,10 @@
   <script defer src="../task_input_transport.js"></script>
   <script defer src="data.js?v=23"></script>
   <script defer src="studio_libraries.js?v=1"></script>
+  <script defer src="personal_activity_view.js"></script>
   <script defer src="settings_model.js?v=23"></script>
   <script defer src="settings.js?v=23"></script>
+  <script defer src="right_workspace.js"></script>
   <script defer src="studio.js?v=26"></script>
 </body>
 </html>

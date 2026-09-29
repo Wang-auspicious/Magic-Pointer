@@ -48,9 +48,11 @@ function nowIso(): string {
 }
 
 function ensureDir(): void {
-  if (!logDir || directoryReady) return;
+  if (!logDir || directoryReady) {
+    return;
+  }
   try {
-    fs.mkdirSync(logDir, { recursive: true });
+    fs.mkdirSync(logDir, {recursive: true});
     directoryReady = true;
   } catch {
     // Logging must never interrupt the desktop runtime.
@@ -58,7 +60,9 @@ function ensureDir(): void {
 }
 
 function seedWrittenBytes(): void {
-  if (!eventLogPath || writtenBytes !== null) return;
+  if (!eventLogPath || writtenBytes !== null) {
+    return;
+  }
   try {
     writtenBytes = fs.statSync(eventLogPath).size;
   } catch {
@@ -67,14 +71,20 @@ function seedWrittenBytes(): void {
 }
 
 function rotateIfNeeded(): void {
-  if (!eventLogPath) return;
+  if (!eventLogPath) {
+    return;
+  }
   seedWrittenBytes();
-  if ((writtenBytes ?? 0) < rotateBytes) return;
+  if ((writtenBytes ?? 0) < rotateBytes) {
+    return;
+  }
   for (let index = historyCount - 1; index >= 1; index -= 1) {
     const older = `${eventLogPath}.${index}`;
     const newer = index === 1 ? eventLogPath : `${eventLogPath}.${index - 1}`;
     try {
-      if (fs.existsSync(newer)) fs.renameSync(newer, older);
+      if (fs.existsSync(newer)) {
+        fs.renameSync(newer, older);
+      }
     } catch {
       // A locked historical log must not break event recording.
     }
@@ -87,7 +97,9 @@ function flushEvents(): void {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
-  if (!eventLogPath || pendingLines.length === 0) return;
+  if (!eventLogPath || pendingLines.length === 0) {
+    return;
+  }
   const payload = pendingLines.join('');
   const bytes = Buffer.byteLength(payload, 'utf8');
   try {
@@ -109,18 +121,29 @@ function flushEvents(): void {
 }
 
 function scheduleFlush(): void {
-  if (flushTimer !== null) return;
+  if (flushTimer !== null) {
+    return;
+  }
   flushTimer = setTimeout(() => {
     flushTimer = null;
     flushEvents();
   }, DEFAULT_FLUSH_INTERVAL_MS);
-  if (typeof flushTimer === 'object' && flushTimer !== null && 'unref' in flushTimer) {
-    (flushTimer as unknown as { unref(): void }).unref();
+  if (
+    typeof flushTimer === 'object' &&
+    flushTimer !== null &&
+    'unref' in flushTimer
+  ) {
+    (flushTimer as unknown as {unref(): void}).unref();
   }
 }
 
-function writeEvent(type: unknown, payload?: Record<string, unknown> | null): void {
-  if (!eventLogPath) return;
+function writeEvent(
+  type: unknown,
+  payload?: Record<string, unknown> | null,
+): void {
+  if (!eventLogPath) {
+    return;
+  }
   const record: Record<string, unknown> = {
     ts: nowIso(),
     session: sessionId,
@@ -147,7 +170,9 @@ function writeEvent(type: unknown, payload?: Record<string, unknown> | null): vo
 }
 
 function bump(counter: unknown, delta = 1): void {
-  if (!counter) return;
+  if (!counter) {
+    return;
+  }
   const key = String(counter);
   const previous = counters.get(key) ?? 0;
   counters.set(key, previous + Number(delta || 0));
@@ -165,7 +190,9 @@ function install(options: InstallOptions = {}): {
   eventLogPath: string | null;
   logDir: string | null;
 } {
-  if (installed) return { eventLogPath, logDir };
+  if (installed) {
+    return {eventLogPath, logDir};
+  }
   const {
     runtimeDir,
     rotateBytes: requestedRotateBytes,
@@ -175,7 +202,9 @@ function install(options: InstallOptions = {}): {
   logDir = runtimeDir || path.join(os.tmpdir(), 'magic-pointer-runtime');
   eventLogPath = path.join(logDir, 'events.jsonl');
   rotateBytes =
-    Number(requestedRotateBytes) > 0 ? Number(requestedRotateBytes) : DEFAULT_ROTATE_BYTES;
+    Number(requestedRotateBytes) > 0
+      ? Number(requestedRotateBytes)
+      : DEFAULT_ROTATE_BYTES;
   historyCount = Number(history) > 0 ? Number(history) : DEFAULT_HISTORY;
   sessionId = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
   ensureDir();
@@ -207,12 +236,20 @@ function install(options: InstallOptions = {}): {
   }
   installed = true;
   flushEvents();
-  return { eventLogPath, logDir };
+  return {eventLogPath, logDir};
 }
 
-function paths(): { logDir: string | null; eventLogPath: string | null } {
-  return { logDir, eventLogPath };
+function paths(): {logDir: string | null; eventLogPath: string | null} {
+  return {logDir, eventLogPath};
 }
 
 // `flushEvents` is exported for the quit paths and the fatal handler: events
-export { bump, flushEvents, install, paths, resetCounters, snapshotCounters, writeEvent };
+export {
+  bump,
+  flushEvents,
+  install,
+  paths,
+  resetCounters,
+  snapshotCounters,
+  writeEvent,
+};

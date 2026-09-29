@@ -1,6 +1,6 @@
 'use strict';
 
-import type { App, Dialog, Shell, WebContents } from 'electron';
+import type {App, Dialog, Shell, WebContents} from 'electron';
 
 const fs: typeof import('node:fs') = require('node:fs');
 const path: typeof import('node:path') = require('node:path');
@@ -56,7 +56,9 @@ function registerBrowserContents(contents: WebContents): void {
 }
 
 function recordOf(value: unknown): UnknownRecord | null {
-  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+  return value !== null && typeof value === 'object'
+    ? (value as UnknownRecord)
+    : null;
 }
 
 function errorMessage(error: unknown): string {
@@ -64,7 +66,9 @@ function errorMessage(error: unknown): string {
 }
 
 function isAllowedExternalUrl(rawUrl: unknown): boolean {
-  if (typeof rawUrl !== 'string' || !rawUrl) return false;
+  if (typeof rawUrl !== 'string' || !rawUrl) {
+    return false;
+  }
   let parsed;
   try {
     parsed = new URL(rawUrl);
@@ -77,34 +81,43 @@ function isAllowedExternalUrl(rawUrl: unknown): boolean {
 function attachContentsHardening(
   contents: WebContents,
   logger: unknown,
-  { shell }: { shell?: Shell } = {},
+  {shell}: {shell?: Shell} = {},
 ): void {
-  const log: Logger = typeof logger === 'function' ? (logger as Logger) : () => {};
-  if (!contents || !shell) throw new Error('security_hardening_contents_dependencies_missing');
+  const log: Logger =
+    typeof logger === 'function' ? (logger as Logger) : () => {};
+  if (!contents || !shell) {
+    throw new Error('security_hardening_contents_dependencies_missing');
+  }
 
-  contents.setWindowOpenHandler(({ url }) => {
+  contents.setWindowOpenHandler(({url}) => {
     if (isAllowedExternalUrl(url)) {
-      Promise.resolve(shell.openExternal(url)).catch((error) => {
+      Promise.resolve(shell.openExternal(url)).catch(error => {
         log(`security: openExternal failed ${errorMessage(error)}`);
       });
     } else {
       log(`security: blocked window.open for ${String(url).slice(0, 200)}`);
     }
-    return { action: 'deny' };
+    return {action: 'deny'};
   });
 
   contents.on('will-navigate', (event, url) => {
     const current = contents.getURL();
-    if (!url || url === current) return;
+    if (!url || url === current) {
+      return;
+    }
     if (browserContents.has(contents)) {
       try {
-        if (['http:', 'https:'].includes(new URL(url).protocol)) return;
+        if (['http:', 'https:'].includes(new URL(url).protocol)) {
+          return;
+        }
       } catch (_) {}
     }
     event.preventDefault();
     if (isAllowedExternalUrl(url)) {
-      Promise.resolve(shell.openExternal(url)).catch((error) => {
-        log(`security: will-navigate openExternal failed ${errorMessage(error)}`);
+      Promise.resolve(shell.openExternal(url)).catch(error => {
+        log(
+          `security: will-navigate openExternal failed ${errorMessage(error)}`,
+        );
       });
     } else {
       log(`security: blocked navigation to ${String(url).slice(0, 200)}`);
@@ -113,7 +126,9 @@ function attachContentsHardening(
 
   contents.on('will-attach-webview', (event, webPreferences, params) => {
     event.preventDefault();
-    log(`security: blocked webview attach to ${String(params?.src || '').slice(0, 200)}`);
+    log(
+      `security: blocked webview attach to ${String(params?.src || '').slice(0, 200)}`,
+    );
   });
 
   const session = contents.session;
@@ -143,7 +158,10 @@ function createFatalRecoveryGuard({
   const recoveryApp = app;
 
   function markerPath(): string {
-    return pathImpl.join(recoveryApp.getPath('userData'), FATAL_RELAUNCH_MARKER);
+    return pathImpl.join(
+      recoveryApp.getPath('userData'),
+      FATAL_RELAUNCH_MARKER,
+    );
   }
 
   function claim(): boolean {
@@ -157,15 +175,17 @@ function createFatalRecoveryGuard({
         // No previous marker is the normal first-crash case.
       }
       const priorAt = recordOf(prior)?.at;
-      if (typeof priorAt === 'number'
-        && Number.isFinite(priorAt)
-        && timestamp - priorAt >= 0
-        && timestamp - priorAt < windowMs) {
+      if (
+        typeof priorAt === 'number' &&
+        Number.isFinite(priorAt) &&
+        timestamp - priorAt >= 0 &&
+        timestamp - priorAt < windowMs
+      ) {
         return false;
       }
-      fsImpl.mkdirSync(pathImpl.dirname(target), { recursive: true });
+      fsImpl.mkdirSync(pathImpl.dirname(target), {recursive: true});
       const temporary = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      fsImpl.writeFileSync(temporary, JSON.stringify({ at: timestamp }), 'utf8');
+      fsImpl.writeFileSync(temporary, JSON.stringify({at: timestamp}), 'utf8');
       fsImpl.renameSync(temporary, target);
       return true;
     } catch (_) {
@@ -173,7 +193,7 @@ function createFatalRecoveryGuard({
     }
   }
 
-  return { claim };
+  return {claim};
 }
 
 function install({
@@ -184,58 +204,70 @@ function install({
   fatalGuard,
 }: InstallOptions = {}) {
   const runtime: ElectronRuntime = electron || require('electron');
-  const { app, dialog, shell } = runtime;
-  if (!app || !dialog || !shell) throw new Error('security_hardening_electron_dependencies_missing');
-  const log: Logger = typeof logger === 'function' ? (logger as Logger) : () => {};
-  const recovery = fatalGuard || createFatalRecoveryGuard({ app });
-  if (installedApps.has(app)) return { recovery, installed: false };
+  const {app, dialog, shell} = runtime;
+  if (!app || !dialog || !shell) {
+    throw new Error('security_hardening_electron_dependencies_missing');
+  }
+  const log: Logger =
+    typeof logger === 'function' ? (logger as Logger) : () => {};
+  const recovery = fatalGuard || createFatalRecoveryGuard({app});
+  if (installedApps.has(app)) {
+    return {recovery, installed: false};
+  }
   installedApps.add(app);
 
-
   app.on('web-contents-created', (_event, contents) => {
-    attachContentsHardening(contents, log, { shell });
+    attachContentsHardening(contents, log, {shell});
   });
 
-  const handleFatal = (kind: FatalKind) => (error: unknown): void => {
-    const message = error instanceof Error && error.stack ? error.stack : String(error);
-    log(`fatal ${kind}: ${message}`);
-    if (typeof onFatal === 'function') {
-      try {
-        (onFatal as (details: { error: unknown; kind: FatalKind }) => void)({ kind, error });
-      } catch (_hookError) {
-        // The original fatal event was already logged.
+  const handleFatal =
+    (kind: FatalKind) =>
+    (error: unknown): void => {
+      const message =
+        error instanceof Error && error.stack ? error.stack : String(error);
+      log(`fatal ${kind}: ${message}`);
+      if (typeof onFatal === 'function') {
+        try {
+          (onFatal as (details: {error: unknown; kind: FatalKind}) => void)({
+            kind,
+            error,
+          });
+        } catch (_hookError) {
+          // The original fatal event was already logged.
+        }
       }
-    }
-    if (kind !== 'uncaughtException') return;
+      if (kind !== 'uncaughtException') {
+        return;
+      }
 
-    const shouldRelaunch = recovery.claim() === true;
-    try {
-      dialog.showErrorBox(
-        'Magic Pointer 遇到内部错误',
-        shouldRelaunch
-          ? `${errorMessage(error)}\n\n应用将尝试自动重启一次。`
-          : `${errorMessage(error)}\n\n为避免崩溃循环，应用不会自动重启；请修复问题后手动启动。`,
-      );
-    } catch (_dialogError) {
-      // Headless / early crash — the log is still available.
-    }
-    if (shouldRelaunch) {
+      const shouldRelaunch = recovery.claim() === true;
       try {
-        app.relaunch();
-      } catch (_relaunchError) {
-        // A normal quit below still prevents the broken process from surviving.
+        dialog.showErrorBox(
+          'Magic Pointer 遇到内部错误',
+          shouldRelaunch
+            ? `${errorMessage(error)}\n\n应用将尝试自动重启一次。`
+            : `${errorMessage(error)}\n\n为避免崩溃循环，应用不会自动重启；请修复问题后手动启动。`,
+        );
+      } catch (_dialogError) {
+        // Headless / early crash — the log is still available.
       }
-    }
-    try {
-      app.quit();
-    } catch (_quitError) {
-      // Nothing safer remains if Electron cannot start its normal shutdown path.
-    }
-  };
+      if (shouldRelaunch) {
+        try {
+          app.relaunch();
+        } catch (_relaunchError) {
+          // A normal quit below still prevents the broken process from surviving.
+        }
+      }
+      try {
+        app.quit();
+      } catch (_quitError) {
+        // Nothing safer remains if Electron cannot start its normal shutdown path.
+      }
+    };
 
   processRef.on('uncaughtException', handleFatal('uncaughtException'));
   processRef.on('unhandledRejection', handleFatal('unhandledRejection'));
-  return { recovery, installed: true };
+  return {recovery, installed: true};
 }
 
 module.exports = {

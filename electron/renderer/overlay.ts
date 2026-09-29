@@ -1,7 +1,9 @@
 const canvas = document.getElementById('trail') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
 const sweepCanvas = document.getElementById('sweep-layer') as HTMLCanvasElement;
-const sweepRenderer = new globalThis.MagicSweepVisual.SweepRenderer(sweepCanvas);
+const sweepRenderer = new globalThis.MagicSweepVisual.SweepRenderer(
+  sweepCanvas,
+);
 const guideTriangle = document.getElementById('guide-triangle') as HTMLElement;
 const hint = document.getElementById('hint') as HTMLElement;
 
@@ -34,12 +36,16 @@ let hintTimer: ReturnType<typeof setTimeout> | null = null;
 let gestureGraceTimer: ReturnType<typeof setTimeout> | null = null;
 let currentWorkflow = 'generic';
 
-let guideTarget: { x: number; y: number } | null = null;         
-let guideFlight: GuideFlight | null = null;         
-let guideHideTimer: ReturnType<typeof setTimeout> | null = null;      
+let guideTarget: {x: number; y: number} | null = null;
+let guideFlight: GuideFlight | null = null;
+let guideHideTimer: ReturnType<typeof setTimeout> | null = null;
 const GUIDE_FLIGHT_MS = 620;
 
-interface OverlayPoint { x: number; y: number; t: number; }
+interface OverlayPoint {
+  x: number;
+  y: number;
+  t: number;
+}
 interface OverlayStroke {
   points: OverlayPoint[];
   kind?: unknown;
@@ -47,32 +53,43 @@ interface OverlayStroke {
 }
 interface GuideFlight {
   t: number;
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-  ctrl: { x: number; y: number };
+  from: {x: number; y: number};
+  to: {x: number; y: number};
+  ctrl: {x: number; y: number};
   startedAt: number;
   duration: number;
 }
 
 function onGuidePoint(payload: Record<string, unknown> | null | undefined) {
-  if (!payload || !Number.isFinite(Number(payload.x)) || !Number.isFinite(Number(payload.y))) return;
-  if (guideHideTimer) clearTimeout(guideHideTimer);
+  if (
+    !payload ||
+    !Number.isFinite(Number(payload.x)) ||
+    !Number.isFinite(Number(payload.y))
+  ) {
+    return;
+  }
+  if (guideHideTimer) {
+    clearTimeout(guideHideTimer);
+  }
   guideHideTimer = null;
   const bounds = overlayBounds();
   const tx = Number(payload.x) - bounds.x;
   const ty = Number(payload.y) - bounds.y;
-  const from = lastPointer || { x: tx, y: ty };
+  const from = lastPointer || {x: tx, y: ty};
   const ctrl = {
     x: (from.x + tx) / 2,
     y: (from.y + ty) / 2 - Math.max(90, Math.abs(tx - from.x) * 0.35),
   };
-  guideTarget = { x: tx, y: ty };
+  guideTarget = {x: tx, y: ty};
   guideFlight = {
-    t: 0, from: { ...from }, to: { x: tx, y: ty }, ctrl,
-    startedAt: performance.now(), duration: GUIDE_FLIGHT_MS,
+    t: 0,
+    from: {...from},
+    to: {x: tx, y: ty},
+    ctrl,
+    startedAt: performance.now(),
+    duration: GUIDE_FLIGHT_MS,
   };
 }
-
 
 const AGENT_OFFSET_X = 35;
 const AGENT_OFFSET_Y = 25;
@@ -93,9 +110,9 @@ const AGENT_RING_PHASE_STEP = 0.08;
 const AGENT_CANCEL_DISTANCE_PX = 100;
 
 interface AgentCursorFlight {
-  from: { x: number; y: number };
-  ctrl: { x: number; y: number };
-  to: { x: number; y: number };
+  from: {x: number; y: number};
+  ctrl: {x: number; y: number};
+  to: {x: number; y: number};
   startedAt: number;
   duration: number;
   purpose: 'approach' | 'return';
@@ -113,7 +130,7 @@ interface AgentCursor {
   targetX: number;
   targetY: number;
   flight: AgentCursorFlight | null;
-  ring: { x: number; y: number } | null;
+  ring: {x: number; y: number} | null;
   ringPhase: number;
   glowUntil: number;
   clickCount: number;
@@ -121,12 +138,12 @@ interface AgentCursor {
   scale: number;
   rotation: number;
   lastStepAt: number;
-  returnAnchor: { x: number; y: number } | null;
+  returnAnchor: {x: number; y: number} | null;
 }
 
 const agentCursors = new Map<string, AgentCursor>();
 let agentCursorRaf: number | null = null;
-let agentPointer = { x: 0, y: 0, seen: false };
+let agentPointer = {x: 0, y: 0, seen: false};
 
 function agentSmoothstep(t: number) {
   const clamped = t <= 0 ? 0 : t >= 1 ? 1 : t;
@@ -134,9 +151,9 @@ function agentSmoothstep(t: number) {
 }
 
 function agentBezierPoint(
-  from: { x: number; y: number },
-  ctrl: { x: number; y: number },
-  to: { x: number; y: number },
+  from: {x: number; y: number},
+  ctrl: {x: number; y: number},
+  to: {x: number; y: number},
   t: number,
 ) {
   const u = 1 - t;
@@ -147,43 +164,51 @@ function agentBezierPoint(
 }
 
 function agentBezierRotation(
-  from: { x: number; y: number },
-  ctrl: { x: number; y: number },
-  to: { x: number; y: number },
+  from: {x: number; y: number},
+  ctrl: {x: number; y: number},
+  to: {x: number; y: number},
   t: number,
 ) {
   const dx = 2 * (1 - t) * (ctrl.x - from.x) + 2 * t * (to.x - ctrl.x);
   const dy = 2 * (1 - t) * (ctrl.y - from.y) + 2 * t * (to.y - ctrl.y);
-  if (dx === 0 && dy === 0) return AGENT_REST_DEGREES;
+  if (dx === 0 && dy === 0) {
+    return AGENT_REST_DEGREES;
+  }
   return (Math.atan2(dy, dx) * 180) / Math.PI + 90;
 }
 
 function agentFlightDuration(
-  from: { x: number; y: number },
-  to: { x: number; y: number },
+  from: {x: number; y: number},
+  to: {x: number; y: number},
   purpose: 'approach' | 'return',
   requestedMs: number,
 ) {
-  if (purpose === 'return') return AGENT_RETURN_MS;
-  if (Number.isFinite(requestedMs) && requestedMs > 0) return requestedMs;
+  if (purpose === 'return') {
+    return AGENT_RETURN_MS;
+  }
+  if (Number.isFinite(requestedMs) && requestedMs > 0) {
+    return requestedMs;
+  }
   const distance = Math.hypot(to.x - from.x, to.y - from.y);
-  if (distance <= 0) return 0;
+  if (distance <= 0) {
+    return 0;
+  }
   return Math.round(Math.min(Math.max(distance * 1.25, 600), 1400));
 }
 
 function agentBeginFlight(
   cursor: AgentCursor,
-  to: { x: number; y: number },
+  to: {x: number; y: number},
   purpose: 'approach' | 'return',
   requestedMs = 0,
 ) {
-  const from = { x: cursor.x, y: cursor.y };
+  const from = {x: cursor.x, y: cursor.y};
   const distance = Math.hypot(to.x - from.x, to.y - from.y);
   const lift = Math.min(distance * AGENT_ARC_FRACTION, AGENT_ARC_MAX_PX);
   cursor.flight = {
     from,
-    ctrl: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - lift },
-    to: { x: to.x, y: to.y },
+    ctrl: {x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - lift},
+    to: {x: to.x, y: to.y},
     startedAt: performance.now(),
     duration: agentFlightDuration(from, to, purpose, requestedMs),
     purpose,
@@ -191,22 +216,34 @@ function agentBeginFlight(
   cursor.mode = 'flying';
   cursor.vx = 0;
   cursor.vy = 0;
-  if (purpose === 'approach') cursor.ring = { x: to.x, y: to.y };
+  if (purpose === 'approach') {
+    cursor.ring = {x: to.x, y: to.y};
+  }
 }
 
 function agentCursorAdvance(cursor: AgentCursor, now: number) {
   const elapsed = cursor.lastStepAt > 0 ? now - cursor.lastStepAt : 0;
   const steps = Math.min(8, Math.max(0, Math.floor(elapsed / 16)));
-  if (steps > 0) cursor.lastStepAt += steps * 16;
   if (steps > 0) {
-    cursor.ringPhase = (cursor.ringPhase + AGENT_RING_PHASE_STEP * steps) % (Math.PI * 2000);
+    cursor.lastStepAt += steps * 16;
+  }
+  if (steps > 0) {
+    cursor.ringPhase =
+      (cursor.ringPhase + AGENT_RING_PHASE_STEP * steps) % (Math.PI * 2000);
   }
   if (cursor.mode === 'flying' && cursor.flight) {
-    const progress = cursor.flight.duration <= 0
-      ? 1
-      : Math.min(1, Math.max(0, (now - cursor.flight.startedAt) / cursor.flight.duration));
+    const progress =
+      cursor.flight.duration <= 0
+        ? 1
+        : Math.min(
+            1,
+            Math.max(
+              0,
+              (now - cursor.flight.startedAt) / cursor.flight.duration,
+            ),
+          );
     const eased = agentSmoothstep(progress);
-    const { from, ctrl, to } = cursor.flight;
+    const {from, ctrl, to} = cursor.flight;
     const point = agentBezierPoint(from, ctrl, to, eased);
     cursor.x = point.x;
     cursor.y = point.y;
@@ -232,14 +269,16 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
       cursor.x = cursor.ring.x;
       cursor.y = cursor.ring.y;
     }
-    if (!agentPointer.seen || now < cursor.dwellUntil) return;
+    if (!agentPointer.seen || now < cursor.dwellUntil) {
+      return;
+    }
     cursor.ring = null;
     agentBeginFlight(
       cursor,
-      { x: agentPointer.x + AGENT_OFFSET_X, y: agentPointer.y + AGENT_OFFSET_Y },
+      {x: agentPointer.x + AGENT_OFFSET_X, y: agentPointer.y + AGENT_OFFSET_Y},
       'return',
     );
-    cursor.returnAnchor = { x: agentPointer.x, y: agentPointer.y };
+    cursor.returnAnchor = {x: agentPointer.x, y: agentPointer.y};
     return;
   }
   if (cursor.mode === 'clicking' && now >= cursor.glowUntil) {
@@ -247,7 +286,10 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     cursor.glowUntil = 0;
   }
   if (agentPointer.seen && cursor.returnAnchor) {
-    const drift = Math.hypot(agentPointer.x - cursor.returnAnchor.x, agentPointer.y - cursor.returnAnchor.y);
+    const drift = Math.hypot(
+      agentPointer.x - cursor.returnAnchor.x,
+      agentPointer.y - cursor.returnAnchor.y,
+    );
     if (drift > AGENT_CANCEL_DISTANCE_PX) {
       cursor.flight = null;
       cursor.returnAnchor = null;
@@ -257,8 +299,12 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     }
   }
   if (cursor.mode === 'idle' || cursor.mode === 'clicking') {
-    const targetX = agentPointer.seen ? agentPointer.x + AGENT_OFFSET_X : cursor.targetX;
-    const targetY = agentPointer.seen ? agentPointer.y + AGENT_OFFSET_Y : cursor.targetY;
+    const targetX = agentPointer.seen
+      ? agentPointer.x + AGENT_OFFSET_X
+      : cursor.targetX;
+    const targetY = agentPointer.seen
+      ? agentPointer.y + AGENT_OFFSET_Y
+      : cursor.targetY;
     cursor.targetX = targetX;
     cursor.targetY = targetY;
     for (let step = 0; step < steps; step += 1) {
@@ -268,7 +314,10 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
       cursor.vy = cursor.vy * AGENT_SPRING_DAMPING + ay;
       cursor.x += cursor.vx;
       cursor.y += cursor.vy;
-      if (Math.abs(targetX - cursor.x) <= 0.5 && Math.abs(targetY - cursor.y) <= 0.5) {
+      if (
+        Math.abs(targetX - cursor.x) <= 0.5 &&
+        Math.abs(targetY - cursor.y) <= 0.5
+      ) {
         cursor.x = targetX;
         cursor.y = targetY;
         cursor.vx = 0;
@@ -304,7 +353,14 @@ function drawAgentCursor(cursor: AgentCursor) {
     const remaining = Math.max(0, cursor.glowUntil - performance.now());
     const strength = Math.min(1, remaining / 400);
     ctx.save();
-    const halo = ctx.createRadialGradient(cursor.x, cursor.y, 0, cursor.x, cursor.y, 34);
+    const halo = ctx.createRadialGradient(
+      cursor.x,
+      cursor.y,
+      0,
+      cursor.x,
+      cursor.y,
+      34,
+    );
     halo.addColorStop(0, cursor.accent);
     halo.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.globalAlpha = 0.34 * strength;
@@ -330,7 +386,9 @@ function drawAgentCursor(cursor: AgentCursor) {
 }
 
 function drawAgentCursors() {
-  if (!agentCursors.size) return;
+  if (!agentCursors.size) {
+    return;
+  }
   const now = performance.now();
   for (const cursor of agentCursors.values()) {
     agentCursorAdvance(cursor, now);
@@ -341,8 +399,12 @@ function drawAgentCursors() {
 function agentCursorsAnimating() {
   const now = performance.now();
   for (const cursor of agentCursors.values()) {
-    if (cursor.mode !== 'idle') return true;
-    if (now < cursor.glowUntil) return true;
+    if (cursor.mode !== 'idle') {
+      return true;
+    }
+    if (now < cursor.glowUntil) {
+      return true;
+    }
   }
   return false;
 }
@@ -350,11 +412,15 @@ function agentCursorsAnimating() {
 function agentCursorLoop() {
   agentCursorRaf = null;
   render();
-  if (agentCursorsAnimating()) agentCursorRaf = requestAnimationFrame(agentCursorLoop);
+  if (agentCursorsAnimating()) {
+    agentCursorRaf = requestAnimationFrame(agentCursorLoop);
+  }
 }
 
 function ensureAgentCursorLoop() {
-  if (agentCursorRaf !== null || !agentCursorsAnimating()) return;
+  if (agentCursorRaf !== null || !agentCursorsAnimating()) {
+    return;
+  }
   agentCursorRaf = requestAnimationFrame(agentCursorLoop);
 }
 
@@ -390,8 +456,12 @@ function agentCursorTarget(id: string) {
   return cursor;
 }
 
-function onAgentCursorCommand(payload: Record<string, unknown> | null | undefined) {
-  if (!payload) return;
+function onAgentCursorCommand(
+  payload: Record<string, unknown> | null | undefined,
+) {
+  if (!payload) {
+    return;
+  }
   const kind = String(payload.kind || '');
   if (kind === 'clear') {
     agentCursors.clear();
@@ -402,15 +472,21 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
   const id = String(payload.id || 'primary');
   const x = Number(payload.x);
   const y = Number(payload.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return;
+  }
   const cursor = agentCursorTarget(id);
-  if (typeof payload.accent === 'string' && payload.accent) cursor.accent = payload.accent;
-  if (typeof payload.caption === 'string') cursor.caption = payload.caption;
+  if (typeof payload.accent === 'string' && payload.accent) {
+    cursor.accent = payload.accent;
+  }
+  if (typeof payload.caption === 'string') {
+    cursor.caption = payload.caption;
+  }
   if (kind === 'approach') {
-    agentBeginFlight(cursor, { x, y }, 'approach', Number(payload.leadMs) || 0);
+    agentBeginFlight(cursor, {x, y}, 'approach', Number(payload.leadMs) || 0);
   } else if (kind === 'mark' || kind === 'move') {
     cursor.flight = null;
-    cursor.ring = kind === 'mark' ? { x, y } : null;
+    cursor.ring = kind === 'mark' ? {x, y} : null;
     cursor.mode = 'idle';
     cursor.targetX = x;
     cursor.targetY = y;
@@ -418,9 +494,13 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
     cursor.x = x;
     cursor.y = y;
     cursor.mode = 'clicking';
-    if (String(payload.button || '') === 'right') cursor.accent = AGENT_RIGHT_CLICK_ACCENT;
+    if (String(payload.button || '') === 'right') {
+      cursor.accent = AGENT_RIGHT_CLICK_ACCENT;
+    }
     cursor.clickCount = Math.max(1, Math.min(3, Number(payload.count) || 1));
-    cursor.glowUntil = performance.now() + Math.max(400, Math.min(12000, Number(payload.glowMs) || 2400));
+    cursor.glowUntil =
+      performance.now() +
+      Math.max(400, Math.min(12000, Number(payload.glowMs) || 2400));
   } else if (kind === 'release') {
     if (cursor.mode === 'dwelling') {
       cursor.dwellUntil = 0;
@@ -428,14 +508,21 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
       if (agentPointer.seen) {
         agentBeginFlight(
           cursor,
-          { x: agentPointer.x + AGENT_OFFSET_X, y: agentPointer.y + AGENT_OFFSET_Y },
+          {
+            x: agentPointer.x + AGENT_OFFSET_X,
+            y: agentPointer.y + AGENT_OFFSET_Y,
+          },
           'return',
         );
       } else {
         cursor.mode = 'idle';
       }
     }
-  } else if (kind === 'hold' && Boolean(payload.held) && cursor.mode === 'dwelling') {
+  } else if (
+    kind === 'hold' &&
+    Boolean(payload.held) &&
+    cursor.mode === 'dwelling'
+  ) {
     cursor.dwellUntil = Number.POSITIVE_INFINITY;
   } else if (kind === 'idle') {
     cursor.flight = null;
@@ -445,7 +532,10 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
     if (agentPointer.seen) {
       agentBeginFlight(
         cursor,
-        { x: agentPointer.x + AGENT_OFFSET_X, y: agentPointer.y + AGENT_OFFSET_Y },
+        {
+          x: agentPointer.x + AGENT_OFFSET_X,
+          y: agentPointer.y + AGENT_OFFSET_Y,
+        },
         'return',
       );
     }
@@ -455,24 +545,35 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
   ensureAgentCursorLoop();
 }
 
-function onAgentCursorSample(payload: Record<string, unknown> | null | undefined) {
-  if (!payload) return;
+function onAgentCursorSample(
+  payload: Record<string, unknown> | null | undefined,
+) {
+  if (!payload) {
+    return;
+  }
   const x = Number(payload.x);
   const y = Number(payload.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-  agentPointer = { x, y, seen: true };
-  if (agentCursors.size) allocateCanvas();
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return;
+  }
+  agentPointer = {x, y, seen: true};
+  if (agentCursors.size) {
+    allocateCanvas();
+  }
   scheduleRender();
   ensureAgentCursorLoop();
 }
-
 
 const ghostLayer = document.getElementById('element-ghosts') as HTMLElement;
 let ghostTimer: ReturnType<typeof setTimeout> | null = null;
 
 function onElementGhosts(payload: Record<string, unknown> | null | undefined) {
-  if (!ghostLayer || !payload) return;
-  if (ghostTimer) clearTimeout(ghostTimer);
+  if (!ghostLayer || !payload) {
+    return;
+  }
+  if (ghostTimer) {
+    clearTimeout(ghostTimer);
+  }
   ghostTimer = null;
   ghostLayer.replaceChildren();
   const ghosts = Array.isArray(payload.ghosts) ? payload.ghosts : [];
@@ -484,29 +585,48 @@ function onElementGhosts(payload: Record<string, unknown> | null | undefined) {
   }
   const total = holdMs + fadeMs;
   for (const ghost of ghosts) {
-    const rect = (ghost as { rect?: { x: number; y: number; width: number; height: number } }).rect;
-    if (!rect) continue;
+    const rect = (
+      ghost as {rect?: {x: number; y: number; width: number; height: number}}
+    ).rect;
+    if (!rect) {
+      continue;
+    }
     const box = document.createElement('div');
     box.className = 'element-ghost';
     box.style.left = `${rect.x}px`;
     box.style.top = `${rect.y}px`;
     box.style.width = `${rect.width}px`;
     box.style.height = `${rect.height}px`;
-    box.style.setProperty('--ghost-delay', `${Number((ghost as { delayMs?: unknown }).delayMs) || 0}ms`);
+    box.style.setProperty(
+      '--ghost-delay',
+      `${Number((ghost as {delayMs?: unknown}).delayMs) || 0}ms`,
+    );
     box.style.setProperty('--ghost-total', `${total}ms`);
     ghostLayer.appendChild(box);
   }
   ghostLayer.hidden = false;
-  ghostTimer = setTimeout(() => {
-    ghostLayer.replaceChildren();
-    ghostLayer.hidden = true;
-    ghostTimer = null;
-  }, total + Math.max(...ghosts.map((g) => Number((g as { delayMs?: unknown }).delayMs) || 0)) + 60);
+  ghostTimer = setTimeout(
+    () => {
+      ghostLayer.replaceChildren();
+      ghostLayer.hidden = true;
+      ghostTimer = null;
+    },
+    total +
+      Math.max(
+        ...ghosts.map(g => Number((g as {delayMs?: unknown}).delayMs) || 0),
+      ) +
+      60,
+  );
 }
 
 function overlayBounds() {
   const canvasRect = ctx.canvas.getBoundingClientRect();
-  return { x: canvasRect.left, y: canvasRect.top, width: canvasRect.width, height: canvasRect.height };
+  return {
+    x: canvasRect.left,
+    y: canvasRect.top,
+    width: canvasRect.width,
+    height: canvasRect.height,
+  };
 }
 
 // @ts-ignore -- tests/guide_flight_test.js vm-extracts this exact function
@@ -526,10 +646,14 @@ function updateGuideTriangle() {
   const now = performance.now();
   let px;
   let py;
-  if (guideTarget && guideFlight && now < guideFlight.startedAt + guideFlight.duration) {
+  if (
+    guideTarget &&
+    guideFlight &&
+    now < guideFlight.startedAt + guideFlight.duration
+  ) {
     const t = Math.min(1, (now - guideFlight.startedAt) / guideFlight.duration);
     const eased = 1 - Math.pow(1 - t, 3);
-    const { from, to, ctrl } = guideFlight;
+    const {from, to, ctrl} = guideFlight;
     const pos = guideFlightPoint(from, ctrl, to, eased);
     px = pos.x;
     py = pos.y;
@@ -555,15 +679,21 @@ function updateGuideTriangle() {
 let canvasAllocated = false;
 
 function allocateCanvas() {
-  if (canvasAllocated) return;
+  if (canvasAllocated) {
+    return;
+  }
   canvasAllocated = true;
   resize();
 }
 
 function releaseCanvas() {
-  if (!canvasAllocated) return;
+  if (!canvasAllocated) {
+    return;
+  }
   canvasAllocated = false;
-  if (renderRaf) cancelAnimationFrame(renderRaf);
+  if (renderRaf) {
+    cancelAnimationFrame(renderRaf);
+  }
   renderRaf = null;
   canvas.width = 0;
   canvas.height = 0;
@@ -583,37 +713,46 @@ function resize() {
 }
 
 function clear() {
-  if (!canvasAllocated) return;
+  if (!canvasAllocated) {
+    return;
+  }
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   sweepRenderer.clear();
 }
 
 function scheduleRender() {
-  if (!canvasAllocated || renderRaf) return;
+  if (!canvasAllocated || renderRaf) {
+    return;
+  }
   renderRaf = requestAnimationFrame(() => {
     renderRaf = null;
     render();
   });
 }
 
-function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
+function dist(a: {x: number; y: number}, b: {x: number; y: number}) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function addPoint(e: PointerEvent, { force = false }: { force?: boolean } = {}) {
-  const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+function addPoint(e: PointerEvent, {force = false}: {force?: boolean} = {}) {
+  const coalesced =
+    typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
   const batch = coalesced.length ? coalesced : [e];
   for (let index = 0; index < batch.length; index += 1) {
     const ev = batch[index];
-    const p = { x: ev.clientX, y: ev.clientY, t: performance.now() };
+    const p = {x: ev.clientX, y: ev.clientY, t: performance.now()};
     const last = points[points.length - 1];
-    if (!last || dist(p, last) > 4.2 || (force && index === batch.length - 1)) points.push(p);
+    if (!last || dist(p, last) > 4.2 || (force && index === batch.length - 1)) {
+      points.push(p);
+    }
     lastPointer = p;
   }
 }
 
 function drawSmoothPath(path: OverlayPoint[], alpha = 1) {
-  if (path.length < 2 || alpha <= 0.02) return;
+  if (path.length < 2 || alpha <= 0.02) {
+    return;
+  }
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -639,18 +778,28 @@ function drawSmoothPath(path: OverlayPoint[], alpha = 1) {
 
   if (gestureLineStyle === 'thin') {
     trace(gestureLineWidth, 'rgba(49, 119, 255, 0.34)', alpha);
-    trace(Math.max(1.15, gestureLineWidth * 0.22), 'rgba(226, 241, 255, 0.64)', alpha);
+    trace(
+      Math.max(1.15, gestureLineWidth * 0.22),
+      'rgba(226, 241, 255, 0.64)',
+      alpha,
+    );
   } else {
     trace(gestureLineWidth, 'rgba(92, 160, 255, 0.18)', alpha);
     trace(gestureLineWidth * 0.72, 'rgba(73, 145, 255, 0.17)', alpha);
-    trace(Math.max(1.2, gestureLineWidth * 0.075), 'rgba(225, 241, 255, 0.38)', alpha);
+    trace(
+      Math.max(1.2, gestureLineWidth * 0.075),
+      'rgba(225, 241, 255, 0.38)',
+      alpha,
+    );
   }
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
 }
 
 function drawHitTestPixel(p: OverlayPoint | null) {
-  if (!p || captureMode) return;
+  if (!p || captureMode) {
+    return;
+  }
   ctx.save();
   ctx.globalAlpha = 0.012;
   ctx.fillStyle = '#2f7bff';
@@ -659,14 +808,20 @@ function drawHitTestPixel(p: OverlayPoint | null) {
 }
 
 function render() {
-  if (!canvasAllocated) return;
+  if (!canvasAllocated) {
+    return;
+  }
   if (gestureMode) {
-    if (Date.now() < gestureAcceptAt) return;
+    if (Date.now() < gestureAcceptAt) {
+      return;
+    }
     clear();
     if (strokes.length) {
       for (let index = 0; index < strokes.length; index += 1) {
         const stroke = strokes[index];
-        const semanticPoint = stroke.semanticPoint || stroke.points[Math.floor(stroke.points.length / 2)];
+        const semanticPoint =
+          stroke.semanticPoint ||
+          stroke.points[Math.floor(stroke.points.length / 2)];
         if (stroke.kind === 'point') {
           drawPointTarget(stroke.semanticPoint);
           drawStrokeMarker(index + 1, pointMarkerAnchor(semanticPoint));
@@ -677,7 +832,10 @@ function render() {
     }
     if (points.length) {
       if (gestureLineStyle === 'demo6_band') {
-        sweepRenderer.render([{ points, opacity: trailAlpha, head: drawing }], gestureLineWidth);
+        sweepRenderer.render(
+          [{points, opacity: trailAlpha, head: drawing}],
+          gestureLineWidth,
+        );
       } else {
         drawSmoothPath(points, trailAlpha);
       }
@@ -687,12 +845,16 @@ function render() {
     drawAgentCursors();
     return;
   }
-  if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
+  if (!captureMode && points.length) {
+    drawSmoothPath(points, trailAlpha);
+  }
   drawAgentCursors();
 }
 
 function fadeTrail(duration = 760) {
-  if (fadeRaf) cancelAnimationFrame(fadeRaf);
+  if (fadeRaf) {
+    cancelAnimationFrame(fadeRaf);
+  }
   const start = performance.now();
   const from = trailAlpha;
   function tick(now: number) {
@@ -700,8 +862,9 @@ function fadeTrail(duration = 760) {
     const eased = 1 - Math.pow(1 - t, 3);
     trailAlpha = from * (1 - eased);
     render();
-    if (t < 1) fadeRaf = requestAnimationFrame(tick);
-    else {
+    if (t < 1) {
+      fadeRaf = requestAnimationFrame(tick);
+    } else {
       trailAlpha = 0;
       render();
     }
@@ -710,17 +873,18 @@ function fadeTrail(duration = 760) {
 }
 
 function computeSelectionPayload() {
-  const allPoints = strokes.length ? strokes.flatMap((s) => s.points) : points;
-  const xs = allPoints.map((p) => p.x);
-  const ys = allPoints.map((p) => p.y);
-  const geometry = globalThis.GestureCapture?.summarizeGesture(
-    points,
-    strokes.map((s) => ({ points: s.points })),
-  ) || {};
+  const allPoints = strokes.length ? strokes.flatMap(s => s.points) : points;
+  const xs = allPoints.map(p => p.x);
+  const ys = allPoints.map(p => p.y);
+  const geometry =
+    globalThis.GestureCapture?.summarizeGesture(
+      points,
+      strokes.map(s => ({points: s.points})),
+    ) || {};
   return {
     ...geometry,
     points: [...allPoints],
-    strokes: strokes.map((s) => ({ points: [...s.points] })),
+    strokes: strokes.map(s => ({points: [...s.points]})),
     bbox: {
       x1: Math.min(...xs),
       y1: Math.min(...ys),
@@ -738,15 +902,21 @@ function computeSelectionPayload() {
 
 // @ts-ignore -- same reason as guideFlightPoint: inside the vm-extracted
 function showChainHint(count) {
-  if (!gestureMode) return;
+  if (!gestureMode) {
+    return;
+  }
   hint.textContent = `已圈选 ${count} 处 · 继续圈选其他内容，或按 Enter 完成`;
   hint.classList.remove('dim');
-  if (chainHintTimer) clearTimeout(chainHintTimer);
+  if (chainHintTimer) {
+    clearTimeout(chainHintTimer);
+  }
   chainHintTimer = setTimeout(() => hint.classList.add('dim'), 1600);
 }
 
 function scheduleChainFinalize() {
-  if (chainTimer) clearTimeout(chainTimer);
+  if (chainTimer) {
+    clearTimeout(chainTimer);
+  }
   const delay = globalThis.GestureCapture.chainFinalizeDelay({
     now: performance.now(),
     deadlineAt: chainDeadlineAt,
@@ -767,11 +937,15 @@ function finalizeGesture() {
     chainHintTimer = null;
     hint.classList.add('dim');
   }
-  if (!strokes.length || submitting) return;
+  if (!strokes.length || submitting) {
+    return;
+  }
   chainDeadlineAt = 0;
   const graceRemaining = gestureAcceptAt - Date.now();
   if (gestureMode && graceRemaining > 0) {
-    if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
+    if (gestureGraceTimer) {
+      clearTimeout(gestureGraceTimer);
+    }
     gestureGraceTimer = setTimeout(() => {
       gestureGraceTimer = null;
       render();
@@ -789,9 +963,11 @@ function hideVisualsForCapture() {
 }
 
 function submitGesture() {
-  if (submitting || !strokes.length) return;
+  if (submitting || !strokes.length) {
+    return;
+  }
   submitting = true;
-  const payload = { ...computeSelectionPayload(), workflow: currentWorkflow };
+  const payload = {...computeSelectionPayload(), workflow: currentWorkflow};
 
   hideVisualsForCapture();
   requestAnimationFrame(() => {
@@ -802,8 +978,12 @@ function submitGesture() {
 function resetOverlay() {
   if (activePointerId !== null) {
     try {
-      if (canvas.hasPointerCapture(activePointerId)) canvas.releasePointerCapture(activePointerId);
-    } catch (_error) { /* the window may already be hidden */ }
+      if (canvas.hasPointerCapture(activePointerId)) {
+        canvas.releasePointerCapture(activePointerId);
+      }
+    } catch (_error) {
+      /* the window may already be hidden */
+    }
   }
   drawing = false;
   activePointerId = null;
@@ -812,20 +992,32 @@ function resetOverlay() {
   guideTarget = null;
   guideFlight = null;
   updateGuideTriangle();
-  if (guideHideTimer) clearTimeout(guideHideTimer);
+  if (guideHideTimer) {
+    clearTimeout(guideHideTimer);
+  }
   guideHideTimer = null;
-  if (chainTimer) clearTimeout(chainTimer);
+  if (chainTimer) {
+    clearTimeout(chainTimer);
+  }
   chainTimer = null;
   chainDeadlineAt = 0;
-  if (chainHintTimer) clearTimeout(chainHintTimer);
+  if (chainHintTimer) {
+    clearTimeout(chainHintTimer);
+  }
   chainHintTimer = null;
   lastPointer = null;
   trailAlpha = 1;
   captureMode = false;
   submitting = false;
-  if (fadeRaf) cancelAnimationFrame(fadeRaf);
-  if (renderRaf) cancelAnimationFrame(renderRaf);
-  if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
+  if (fadeRaf) {
+    cancelAnimationFrame(fadeRaf);
+  }
+  if (renderRaf) {
+    cancelAnimationFrame(renderRaf);
+  }
+  if (gestureGraceTimer) {
+    clearTimeout(gestureGraceTimer);
+  }
   fadeRaf = null;
   renderRaf = null;
   gestureGraceTimer = null;
@@ -834,8 +1026,13 @@ function resetOverlay() {
   clear();
 }
 
-function drawStrokeMarker(index: number, point: { x: number; y: number } | null | undefined) {
-  if (!point) return;
+function drawStrokeMarker(
+  index: number,
+  point: {x: number; y: number} | null | undefined,
+) {
+  if (!point) {
+    return;
+  }
   const radius = 14;
   ctx.save();
   ctx.globalAlpha = 0.95;
@@ -855,10 +1052,19 @@ function drawStrokeMarker(index: number, point: { x: number; y: number } | null 
 }
 
 function drawPointTarget(point: OverlayPoint | null | undefined) {
-  if (!point) return;
+  if (!point) {
+    return;
+  }
   const radius = 38;
   const color = '47, 124, 246';
-  const feather = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+  const feather = ctx.createRadialGradient(
+    point.x,
+    point.y,
+    0,
+    point.x,
+    point.y,
+    radius,
+  );
   feather.addColorStop(0, `rgba(${color}, 0.74)`);
   feather.addColorStop(0.18, `rgba(${color}, 0.66)`);
   feather.addColorStop(0.52, `rgba(${color}, 0.28)`);
@@ -871,24 +1077,36 @@ function drawPointTarget(point: OverlayPoint | null | undefined) {
   ctx.restore();
 }
 
-function pointMarkerAnchor(point: OverlayPoint | null | undefined): { x: number; y: number } | null | undefined {
-  if (!point) return point;
+function pointMarkerAnchor(
+  point: OverlayPoint | null | undefined,
+): {x: number; y: number} | null | undefined {
+  if (!point) {
+    return point;
+  }
   const xOffset = point.x > window.innerWidth - 48 ? -24 : 24;
   const yOffset = point.y < 48 ? 24 : -24;
-  return { x: point.x + xOffset, y: point.y + yOffset };
+  return {x: point.x + xOffset, y: point.y + yOffset};
 }
 
-
 function pulseAllowed() {
-  return canvasAllocated && document.visibilityState !== 'hidden' && !captureMode && !gestureMode;
+  return (
+    canvasAllocated &&
+    document.visibilityState !== 'hidden' &&
+    !captureMode &&
+    !gestureMode
+  );
 }
 
 function startPulseLoop() {
-  if (pulseRaf) return;
-  if (!pulseAllowed()) return;
+  if (pulseRaf) {
+    return;
+  }
+  if (!pulseAllowed()) {
+    return;
+  }
   function tick(now: number) {
     if (!pulseAllowed()) {
-      pulseRaf = null;  
+      pulseRaf = null;
       return;
     }
     if (now - lastPulseFrame > 33) {
@@ -901,30 +1119,50 @@ function startPulseLoop() {
 }
 
 function stopPulseLoop() {
-  if (pulseRaf) cancelAnimationFrame(pulseRaf);
+  if (pulseRaf) {
+    cancelAnimationFrame(pulseRaf);
+  }
   pulseRaf = null;
   lastPulseFrame = 0;
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') stopPulseLoop();
-  else startPulseLoop();
+  if (document.visibilityState === 'hidden') {
+    stopPulseLoop();
+  } else {
+    startPulseLoop();
+  }
 });
 
-window.addEventListener('resize', () => { if (canvasAllocated) resize(); });
-window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magicPointer?.hide(); });
+window.addEventListener('resize', () => {
+  if (canvasAllocated) {
+    resize();
+  }
+});
+window.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  window.magicPointer?.hide();
+});
 
-window.addEventListener('pointerdown', (e) => {
+window.addEventListener('pointerdown', e => {
   if (e.button === 2) {
     guideTarget = null;
     guideFlight = null;
     window.magicPointer?.hide();
     return;
   }
-  if (e.button !== 0) return;
-  if (gestureMode && gestureInteractionMode === 'pass_through') return;
-  if (observerMode || captureMode || submitting) return;
-  if (drawing) return;
+  if (e.button !== 0) {
+    return;
+  }
+  if (gestureMode && gestureInteractionMode === 'pass_through') {
+    return;
+  }
+  if (observerMode || captureMode || submitting) {
+    return;
+  }
+  if (drawing) {
+    return;
+  }
   if (chainTimer) {
     clearTimeout(chainTimer);
     chainTimer = null;
@@ -934,20 +1172,32 @@ window.addEventListener('pointerdown', (e) => {
     chainHintTimer = null;
     hint.classList.add('dim');
   }
-  if (fadeRaf) cancelAnimationFrame(fadeRaf);
+  if (fadeRaf) {
+    cancelAnimationFrame(fadeRaf);
+  }
   drawing = true;
   activePointerId = e.pointerId;
-  try { canvas.setPointerCapture(e.pointerId); } catch (_error) { /* best effort */ }
-  if (gestureMode) window.magicPointer?.gestureStarted(gestureToken);
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch (_error) {
+    /* best effort */
+  }
+  if (gestureMode) {
+    window.magicPointer?.gestureStarted(gestureToken);
+  }
   points = [];
   trailAlpha = 1;
   addPoint(e);
   const graceRemaining = gestureAcceptAt - Date.now();
   if (gestureMode && graceRemaining > 0) {
-    if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
+    if (gestureGraceTimer) {
+      clearTimeout(gestureGraceTimer);
+    }
     gestureGraceTimer = setTimeout(() => {
       gestureGraceTimer = null;
-      if (drawing) scheduleRender();
+      if (drawing) {
+        scheduleRender();
+      }
     }, graceRemaining);
   } else {
     scheduleRender();
@@ -956,42 +1206,68 @@ window.addEventListener('pointerdown', (e) => {
   e.preventDefault();
 });
 
-window.addEventListener('pointermove', (e) => {
-  if (captureMode) return;
+window.addEventListener('pointermove', e => {
+  if (captureMode) {
+    return;
+  }
   if (!drawing) {
-    const nextPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-    const continuesChain = strokes.length > 0 && chainTimer && globalThis.GestureCapture
-      .pointerContinuesGestureChain(lastPointer, nextPointer);
+    const nextPointer = {x: e.clientX, y: e.clientY, t: performance.now()};
+    const continuesChain =
+      strokes.length > 0 &&
+      chainTimer &&
+      globalThis.GestureCapture.pointerContinuesGestureChain(
+        lastPointer,
+        nextPointer,
+      );
     lastPointer = nextPointer;
-    if (continuesChain) scheduleChainFinalize();
+    if (continuesChain) {
+      scheduleChainFinalize();
+    }
     scheduleRender();
     return;
   }
-  if (activePointerId !== null && e.pointerId !== activePointerId) return;
+  if (activePointerId !== null && e.pointerId !== activePointerId) {
+    return;
+  }
   addPoint(e);
   scheduleRender();
   e.stopPropagation();
   e.preventDefault();
 });
 
-window.addEventListener('pointerup', (e) => {
-  if (!drawing) return;
-  if (activePointerId !== null && e.pointerId !== activePointerId) return;
+window.addEventListener('pointerup', e => {
+  if (!drawing) {
+    return;
+  }
+  if (activePointerId !== null && e.pointerId !== activePointerId) {
+    return;
+  }
   drawing = false;
   activePointerId = null;
-  try { canvas.releasePointerCapture(e.pointerId); } catch (_error) { /* best effort */ }
-  addPoint(e, { force: true });
+  try {
+    canvas.releasePointerCapture(e.pointerId);
+  } catch (_error) {
+    /* best effort */
+  }
+  addPoint(e, {force: true});
   render();
-  if (window.magicPointer && typeof window.magicPointer.syncHitRegions === 'function') {
+  if (
+    window.magicPointer &&
+    typeof window.magicPointer.syncHitRegions === 'function'
+  ) {
     window.magicPointer.syncHitRegions();
   }
   if (points.length >= 1) {
-    const strokeSummary = (globalThis.GestureCapture?.summarizeGesture?.(points, null) || {}) as Record<string, unknown>;
+    const strokeSummary = (globalThis.GestureCapture?.summarizeGesture?.(
+      points,
+      null,
+    ) || {}) as Record<string, unknown>;
     strokes.push({
       points: [...points],
       kind: strokeSummary.kind,
-      semanticPoint: (strokeSummary.semanticPoint as OverlayPoint | undefined)
-        || points[Math.floor(points.length / 2)],
+      semanticPoint:
+        (strokeSummary.semanticPoint as OverlayPoint | undefined) ||
+        points[Math.floor(points.length / 2)],
     });
     if (gestureMode) {
       window.magicPointer?.gestureStroke(gestureToken, strokes.length);
@@ -1007,8 +1283,13 @@ window.addEventListener('pointerup', (e) => {
   e.preventDefault();
 });
 
-window.addEventListener('pointercancel', (e) => {
-  if (!drawing || (activePointerId !== null && e.pointerId !== activePointerId)) return;
+window.addEventListener('pointercancel', e => {
+  if (
+    !drawing ||
+    (activePointerId !== null && e.pointerId !== activePointerId)
+  ) {
+    return;
+  }
   drawing = false;
   activePointerId = null;
   points = [];
@@ -1017,38 +1298,61 @@ window.addEventListener('pointercancel', (e) => {
   e.preventDefault();
 });
 
-
-window.magicPointer?.onGestureSubmit((payload) => {
-  if (!gestureMode || String(payload?.token || '') !== String(gestureToken || '')) return;
+window.magicPointer?.onGestureSubmit(payload => {
+  if (
+    !gestureMode ||
+    String(payload?.token || '') !== String(gestureToken || '')
+  ) {
+    return;
+  }
   finalizeGesture();
 });
 
-window.addEventListener('keydown', (e) => {
+window.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     finalizeGesture();
     return;
   }
-  if (e.key === 'Escape') window.magicPointer?.hide();
-  if (e.key.toLowerCase() === 'r') resetOverlay();
+  if (e.key === 'Escape') {
+    window.magicPointer?.hide();
+  }
+  if (e.key.toLowerCase() === 'r') {
+    resetOverlay();
+  }
 });
 
-window.magicPointer?.onShow((payload) => {
+window.magicPointer?.onShow(payload => {
   resetOverlay();
   allocateCanvas();
   observerMode = payload?.observerMode === true;
   gestureMode = payload?.gestureMode === true;
-  gestureToken = payload?.selectionGestureToken ? String(payload.selectionGestureToken) : null;
+  gestureToken = payload?.selectionGestureToken
+    ? String(payload.selectionGestureToken)
+    : null;
   gestureAcceptAt = Number(payload?.gestureAcceptAt) || 0;
-  gestureLineStyle = payload?.gestureLineStyle === 'thin' ? 'thin' : 'demo6_band';
-  gestureLineWidth = Math.max(3, Math.min(40, Number(payload?.gestureLineWidth) || 22));
-  gestureChainGapMs = Math.max(1500, Math.min(30000,
-    Number(payload?.gestureChainGapMs) || DEFAULT_CHAIN_GAP_MS));
-  gestureInteractionMode = payload?.gestureInteractionMode === 'pass_through'
-    ? 'pass_through'
-    : 'exclusive_overlay';
+  gestureLineStyle =
+    payload?.gestureLineStyle === 'thin' ? 'thin' : 'demo6_band';
+  gestureLineWidth = Math.max(
+    3,
+    Math.min(40, Number(payload?.gestureLineWidth) || 22),
+  );
+  gestureChainGapMs = Math.max(
+    1500,
+    Math.min(30000, Number(payload?.gestureChainGapMs) || DEFAULT_CHAIN_GAP_MS),
+  );
+  gestureInteractionMode =
+    payload?.gestureInteractionMode === 'pass_through'
+      ? 'pass_through'
+      : 'exclusive_overlay';
   currentWorkflow = String(payload?.workflow || 'generic');
-  document.body.dataset.mode = gestureMode ? 'gesture' : observerMode ? 'observer' : 'capture';
-  if (hintTimer) clearTimeout(hintTimer);
+  document.body.dataset.mode = gestureMode
+    ? 'gesture'
+    : observerMode
+      ? 'observer'
+      : 'capture';
+  if (hintTimer) {
+    clearTimeout(hintTimer);
+  }
   if (currentWorkflow === 'runtime_issue') {
     hint.textContent = '圈出运行中的问题，然后说你期望什么';
     hint.classList.remove('dim');
@@ -1063,34 +1367,48 @@ window.magicPointer?.onShow((payload) => {
     startPulseLoop();
   }
 });
-window.magicPointer?.onCursor((payload) => {
-  if (!payload) return;
-  lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
+window.magicPointer?.onCursor(payload => {
+  if (!payload) {
+    return;
+  }
+  lastPointer = {
+    x: Number(payload.x) || 0,
+    y: Number(payload.y) || 0,
+    t: performance.now(),
+  };
   onAgentCursorSample(payload);
-  if (gestureMode) return;
+  if (gestureMode) {
+    return;
+  }
   scheduleRender();
 });
-window.magicPointer?.onAgentCursor?.((payload) => {
+window.magicPointer?.onAgentCursor?.(payload => {
   onAgentCursorCommand(payload);
 });
-window.magicPointer?.onElementGhosts?.((payload) => {
+window.magicPointer?.onElementGhosts?.(payload => {
   onElementGhosts(payload);
 });
-window.magicPointer?.onGuidePoint?.((payload) => {
+window.magicPointer?.onGuidePoint?.(payload => {
   onGuidePoint(payload);
   function guideTick() {
     updateGuideTriangle();
-    const stillFlying = guideFlight && performance.now() < guideFlight.startedAt + guideFlight.duration;
-    if (stillFlying) requestAnimationFrame(guideTick);
+    const stillFlying =
+      guideFlight &&
+      performance.now() < guideFlight.startedAt + guideFlight.duration;
+    if (stillFlying) {
+      requestAnimationFrame(guideTick);
+    }
   }
   requestAnimationFrame(guideTick);
 });
-window.magicPointer?.onGestureInput((payload) => {
+window.magicPointer?.onGestureInput(payload => {
   if (
-    !gestureMode
-    || gestureInteractionMode !== 'pass_through'
-    || String(payload?.token || '') !== String(gestureToken || '')
-  ) return;
+    !gestureMode ||
+    gestureInteractionMode !== 'pass_through' ||
+    String(payload?.token || '') !== String(gestureToken || '')
+  ) {
+    return;
+  }
   const phase = String(payload?.phase || '');
   if (phase === 'start') {
     drawing = true;
@@ -1102,12 +1420,14 @@ window.magicPointer?.onGestureInput((payload) => {
   }
   if (phase === 'point' && payload?.point) {
     const point = {
-      x: Number((payload.point as { x?: unknown }).x) || 0,
-      y: Number((payload.point as { y?: unknown }).y) || 0,
-      t: Number((payload.point as { t?: unknown }).t) || performance.now(),
+      x: Number((payload.point as {x?: unknown}).x) || 0,
+      y: Number((payload.point as {y?: unknown}).y) || 0,
+      t: Number((payload.point as {t?: unknown}).t) || performance.now(),
     };
     const previous = points[points.length - 1];
-    if (!previous || dist(point, previous) > 0.5) points.push(point);
+    if (!previous || dist(point, previous) > 0.5) {
+      points.push(point);
+    }
     lastPointer = point;
     scheduleRender();
     return;
@@ -1119,7 +1439,9 @@ window.magicPointer?.onGestureInput((payload) => {
   }
 });
 window.magicPointer?.onHide(() => {
-  if (hintTimer) clearTimeout(hintTimer);
+  if (hintTimer) {
+    clearTimeout(hintTimer);
+  }
   hintTimer = null;
   stopPulseLoop();
   resetOverlay();

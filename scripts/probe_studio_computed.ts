@@ -1,12 +1,16 @@
-
-const { app, BrowserWindow } = require('electron');
+const {app, BrowserWindow} = require('electron');
 const path = require('path');
 const fs = require('node:fs');
 
 const ROOT = path.resolve(__dirname, '..');
-const OUT = process.argv[2] || path.join(ROOT, 'data', 'runtime', 'css-parity', 'dump.json');
+const OUT =
+  process.argv[2] ||
+  path.join(ROOT, 'data', 'runtime', 'css-parity', 'dump.json');
 
-app.setPath('userData', path.join(ROOT, 'data', 'runtime', 'probe-studio-profile'));
+app.setPath(
+  'userData',
+  path.join(ROOT, 'data', 'runtime', 'probe-studio-profile'),
+);
 app.disableHardwareAcceleration();
 
 const SELECTORS = [
@@ -57,18 +61,56 @@ const SELECTORS = [
 ];
 
 const PROPERTIES = [
-  'display', 'position', 'box-sizing', 'flex-direction', 'align-items', 'justify-content',
-  'gap', 'row-gap', 'grid-template-columns', 'grid-template-rows',
-  'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
-  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-  'color', 'background-color', 'background-image',
-  'border-top-width', 'border-top-color', 'border-top-style', 'border-radius',
-  'outline-color', 'box-shadow', 'opacity', 'z-index', 'overflow', 'overflow-x', 'overflow-y',
-  'font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing',
-  'text-transform', 'white-space', 'text-overflow',
-  'width', 'height', 'max-width', 'min-height',
-  'transition-property', 'transition-duration', 'animation-name',
-  'backdrop-filter', 'pointer-events', 'visibility',
+  'display',
+  'position',
+  'box-sizing',
+  'flex-direction',
+  'align-items',
+  'justify-content',
+  'gap',
+  'row-gap',
+  'grid-template-columns',
+  'grid-template-rows',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'color',
+  'background-color',
+  'background-image',
+  'border-top-width',
+  'border-top-color',
+  'border-top-style',
+  'border-radius',
+  'outline-color',
+  'box-shadow',
+  'opacity',
+  'z-index',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'line-height',
+  'letter-spacing',
+  'text-transform',
+  'white-space',
+  'text-overflow',
+  'width',
+  'height',
+  'max-width',
+  'min-height',
+  'transition-property',
+  'transition-duration',
+  'animation-name',
+  'backdrop-filter',
+  'pointer-events',
+  'visibility',
 ];
 
 function dumpTheme(window: Electron.WebContents, theme: string) {
@@ -104,21 +146,39 @@ app.whenReady().then(async () => {
       width: 1500,
       height: 1000,
       show: false,
-      webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true },
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        offscreen: true,
+      },
     });
-    window.webContents.on('console-message', (_event: unknown, level: number, message: string) => {
-      if (level >= 2) errors.push(String(message).slice(0, 300));
-    });
+    window.webContents.on(
+      'console-message',
+      (_event: unknown, level: number, message: string) => {
+        if (level >= 2) {
+          errors.push(String(message).slice(0, 300));
+        }
+      },
+    );
     await window.loadFile(builtHtml);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await new Promise(resolve => setTimeout(resolve, 1200));
     const light = await dumpTheme(window.webContents, 'light');
     const dark = await dumpTheme(window.webContents, 'dark');
-    fs.mkdirSync(path.dirname(OUT), { recursive: true });
-    fs.writeFileSync(OUT, JSON.stringify({ viewport: '1500x1000', light, dark }, null, 1));
-    process.stdout.write(`dumped=${OUT} selectors=${Object.keys(light).length} console_errors=${errors.length}\n`);
-    for (const error of errors.slice(0, 5)) process.stdout.write(`  ${error}\n`);
+    fs.mkdirSync(path.dirname(OUT), {recursive: true});
+    fs.writeFileSync(
+      OUT,
+      JSON.stringify({viewport: '1500x1000', light, dark}, null, 1),
+    );
+    process.stdout.write(
+      `dumped=${OUT} selectors=${Object.keys(light).length} console_errors=${errors.length}\n`,
+    );
+    for (const error of errors.slice(0, 5)) {
+      process.stdout.write(`  ${error}\n`);
+    }
   } catch (error) {
-    process.stderr.write(`probe failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `probe failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exitCode = 1;
   } finally {
     app.quit();

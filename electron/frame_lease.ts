@@ -1,7 +1,7 @@
 'use strict';
 
-
-type CaptureSource = 'wgc-window' | 'wgc-display' | 'dxgi-display' | 'gdi-fallback' | 'test';
+type CaptureSource =
+  'wgc-window' | 'wgc-display' | 'dxgi-display' | 'gdi-fallback' | 'test';
 
 interface WindowIdentity {
   hwnd: number;
@@ -81,82 +81,160 @@ function fail(message: string): never {
 }
 
 function requireNonEmptyString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !value.trim()) fail(`${field} must be a non-empty string`);
+  if (typeof value !== 'string' || !value.trim()) {
+    fail(`${field} must be a non-empty string`);
+  }
   return value;
 }
 
 function requireFiniteNonNegative(value: unknown, field: string): number {
   const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) fail(`${field} must be a finite non-negative number`);
+  if (!Number.isFinite(number) || number < 0) {
+    fail(`${field} must be a finite non-negative number`);
+  }
   return number;
 }
 
 function blankField(entry: unknown): boolean {
-  if (entry === undefined || entry === null) return true;
-  if (typeof entry === 'string') return entry.trim() === '';
-  if (typeof entry === 'number') return !Number.isFinite(entry);
-  if (typeof entry === 'boolean') return false;
-  if (Array.isArray(entry)) return entry.length === 0;
-  if (typeof entry === 'object') return false;
+  if (entry === undefined || entry === null) {
+    return true;
+  }
+  if (typeof entry === 'string') {
+    return entry.trim() === '';
+  }
+  if (typeof entry === 'number') {
+    return !Number.isFinite(entry);
+  }
+  if (typeof entry === 'boolean') {
+    return false;
+  }
+  if (Array.isArray(entry)) {
+    return entry.length === 0;
+  }
+  if (typeof entry === 'object') {
+    return false;
+  }
   return true;
 }
 
 function deepFreeze<T>(value: T): T {
-  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value as UnknownRecord)) deepFreeze(child);
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const child of Object.values(value as UnknownRecord)) {
+    deepFreeze(child);
+  }
   return Object.freeze(value);
 }
 
 function validateWindowIdentity(value: unknown): WindowIdentity {
   const record = recordOf(value);
-  if (record === null) fail('targetWindow must be an object');
+  if (record === null) {
+    fail('targetWindow must be an object');
+  }
   const hwnd = requireFiniteNonNegative(record.hwnd, 'targetWindow.hwnd');
-  const processId = requireFiniteNonNegative(record.processId, 'targetWindow.processId');
-  const processName = requireNonEmptyString(record.processName, 'targetWindow.processName');
+  const processId = requireFiniteNonNegative(
+    record.processId,
+    'targetWindow.processId',
+  );
+  const processName = requireNonEmptyString(
+    record.processName,
+    'targetWindow.processName',
+  );
   const title = typeof record.title === 'string' ? record.title : '';
-  const bbox = record.bbox === undefined ? undefined : validateSurfaceBounds(record.bbox, 'targetWindow.bbox');
-  const processStartTime = typeof record.processStartTime === 'string' && record.processStartTime ? record.processStartTime : undefined;
-  return { hwnd, processId, processName, title, ...(bbox ? { bbox } : {}), ...(processStartTime ? { processStartTime } : {}) };
+  const bbox =
+    record.bbox === undefined
+      ? undefined
+      : validateSurfaceBounds(record.bbox, 'targetWindow.bbox');
+  const processStartTime =
+    typeof record.processStartTime === 'string' && record.processStartTime
+      ? record.processStartTime
+      : undefined;
+  return {
+    hwnd,
+    processId,
+    processName,
+    title,
+    ...(bbox ? {bbox} : {}),
+    ...(processStartTime ? {processStartTime} : {}),
+  };
 }
 
-function validateSurfaceBounds(value: unknown, field = 'surfaceBoundsPx'): [number, number, number, number] {
+function validateSurfaceBounds(
+  value: unknown,
+  field = 'surfaceBoundsPx',
+): [number, number, number, number] {
   if (!Array.isArray(value) || value.length !== 4) {
     fail(`${field} must be [left, top, right, bottom]`);
   }
-  const numbers = value.map((entry) => Number(entry));
-  if (!numbers.every(Number.isFinite)) fail(`${field} must contain finite numbers`);
-  const [left, top, right, bottom] = numbers as [number, number, number, number];
-  if (right - left <= 0 || bottom - top <= 0) fail(`${field} must have positive area`);
+  const numbers = value.map(entry => Number(entry));
+  if (!numbers.every(Number.isFinite)) {
+    fail(`${field} must contain finite numbers`);
+  }
+  const [left, top, right, bottom] = numbers as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  if (right - left <= 0 || bottom - top <= 0) {
+    fail(`${field} must have positive area`);
+  }
   return [left, top, right, bottom];
 }
 
 function validateArtifact(value: unknown): FrameArtifactRef {
   const record = recordOf(value);
-  if (record === null) fail('localArtifact must be an object');
+  if (record === null) {
+    fail('localArtifact must be an object');
+  }
   const path = requireNonEmptyString(record.path, 'localArtifact.path');
-  const mimeType = requireNonEmptyString(record.mimeType, 'localArtifact.mimeType');
+  const mimeType = requireNonEmptyString(
+    record.mimeType,
+    'localArtifact.mimeType',
+  );
   const width = requireFiniteNonNegative(record.width, 'localArtifact.width');
-  const height = requireFiniteNonNegative(record.height, 'localArtifact.height');
-  if (width <= 0 || height <= 0) fail('localArtifact.width/height must be positive');
-  return { path, mimeType, width, height };
+  const height = requireFiniteNonNegative(
+    record.height,
+    'localArtifact.height',
+  );
+  if (width <= 0 || height <= 0) {
+    fail('localArtifact.width/height must be positive');
+  }
+  return {path, mimeType, width, height};
 }
 
 function validateGesture(value: unknown): GestureGeometry {
   const record = recordOf(value);
-  if (record === null) fail('gesture must be an object');
-  return { ...record };
+  if (record === null) {
+    fail('gesture must be an object');
+  }
+  return {...record};
 }
 
 function validateFrameLease(value: unknown): FrameLease {
   const candidate = recordOf(value);
-  if (candidate === null) fail('frameLease must be an object');
-  if (Number(candidate.schemaVersion) !== 1) fail('schemaVersion must be 1');
-  const missing = REQUIRED_FIELDS.filter((field) => blankField(candidate[field]));
-  if (missing.length) fail(`missing frame lease field(s): ${missing.join(', ')}`);
+  if (candidate === null) {
+    fail('frameLease must be an object');
+  }
+  if (Number(candidate.schemaVersion) !== 1) {
+    fail('schemaVersion must be 1');
+  }
+  const missing = REQUIRED_FIELDS.filter(field => blankField(candidate[field]));
+  if (missing.length) {
+    fail(`missing frame lease field(s): ${missing.join(', ')}`);
+  }
   const source = requireNonEmptyString(candidate.source, 'source');
-  if (!ALLOWED_SOURCES.has(source)) fail(`source must be one of ${[...ALLOWED_SOURCES].join('|')}`);
-  const scaleFactor = requireFiniteNonNegative(candidate.scaleFactor, 'scaleFactor');
-  if (scaleFactor <= 0) fail('scaleFactor must be positive');
+  if (!ALLOWED_SOURCES.has(source)) {
+    fail(`source must be one of ${[...ALLOWED_SOURCES].join('|')}`);
+  }
+  const scaleFactor = requireFiniteNonNegative(
+    candidate.scaleFactor,
+    'scaleFactor',
+  );
+  if (scaleFactor <= 0) {
+    fail('scaleFactor must be positive');
+  }
   return deepFreeze({
     schemaVersion: 1,
     frameLeaseId: requireNonEmptyString(candidate.frameLeaseId, 'frameLeaseId'),
@@ -165,7 +243,10 @@ function validateFrameLease(value: unknown): FrameLease {
       candidate.capturedAtMonotonicMs,
       'capturedAtMonotonicMs',
     ),
-    capturedAtUtc: requireNonEmptyString(candidate.capturedAtUtc, 'capturedAtUtc'),
+    capturedAtUtc: requireNonEmptyString(
+      candidate.capturedAtUtc,
+      'capturedAtUtc',
+    ),
     source: source as CaptureSource,
     targetWindow: validateWindowIdentity(candidate.targetWindow),
     surfaceBoundsPx: validateSurfaceBounds(candidate.surfaceBoundsPx),
@@ -175,7 +256,10 @@ function validateFrameLease(value: unknown): FrameLease {
     localArtifact: validateArtifact(candidate.localArtifact),
     contentHash: requireNonEmptyString(candidate.contentHash, 'contentHash'),
     overlayExcluded: candidate.overlayExcluded === true,
-    captureLatencyMs: requireFiniteNonNegative(candidate.captureLatencyMs, 'captureLatencyMs'),
+    captureLatencyMs: requireFiniteNonNegative(
+      candidate.captureLatencyMs,
+      'captureLatencyMs',
+    ),
   });
 }
 
@@ -183,4 +267,4 @@ function cloneFrameLease(value: FrameLease): FrameLease {
   return validateFrameLease(JSON.parse(JSON.stringify(value)));
 }
 
-module.exports = { validateFrameLease, cloneFrameLease };
+module.exports = {validateFrameLease, cloneFrameLease};

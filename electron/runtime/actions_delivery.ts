@@ -1,12 +1,12 @@
-import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { record } from './context';
-import { contentHash, projectArtifacts } from './artifacts';
-import { ensureNativeTool, runProcess, runPowerShellJson } from './desktop';
-import { EventSession, withFileLock } from './session';
-import { ContextSessionStore } from './context_sessions';
-import { ClipboardHistory } from './context_memory';
+import {randomUUID} from 'node:crypto';
+import {readFile, writeFile, appendFile, mkdir} from 'node:fs/promises';
+import {join, dirname} from 'node:path';
+import {record} from './context';
+import {contentHash, projectArtifacts} from './artifacts';
+import {ensureNativeTool, runProcess, runPowerShellJson} from './desktop';
+import {EventSession, withFileLock} from './session';
+import {ContextSessionStore} from './context_sessions';
+import {ClipboardHistory} from './context_memory';
 type Json = Record<string, any>;
 
 export interface ActionOptions {
@@ -19,31 +19,37 @@ export interface ActionOptions {
 export function wantsRouteDraft(command: string): boolean {
   const value = command.trim().replace(/\s+/g, ' ');
   return (
-    ['规划路线', '这两个地方怎么走', '这两处怎么走', '查看路线', '生成路线'].includes(value) ||
+    [
+      '规划路线',
+      '这两个地方怎么走',
+      '这两处怎么走',
+      '查看路线',
+      '生成路线',
+    ].includes(value) ||
     /^(?:route (?:these|them)|get directions between (?:these|them)|plan (?:a )?route between (?:these|them))$/i.test(
       value,
     )
   );
 }
 export function parseRouteDraft(episode: Json): Json {
-  const slots = record(episode.slots),
-    these = Array.isArray(slots.these) ? slots.these : [],
-    origin = record(these.length === 2 ? these[0] : slots.that),
-    destination = record(these.length === 2 ? these[1] : slots.this),
-    location = (object: Json) => {
-      const value = String(object.content ?? '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return value.length <= 240 ? value : '';
-    },
-    safe = (object: Json) =>
-      Object.fromEntries(
-        ['objectId', 'label', 'app', 'windowTitle']
-          .filter((key) => object[key] !== undefined)
-          .map((key) => [key, object[key]]),
-      ),
-    start = location(origin),
-    end = location(destination);
+  const slots = record(episode.slots);
+  const these = Array.isArray(slots.these) ? slots.these : [];
+  const origin = record(these.length === 2 ? these[0] : slots.that);
+  const destination = record(these.length === 2 ? these[1] : slots.this);
+  const location = (object: Json) => {
+    const value = String(object.content ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return value.length <= 240 ? value : '';
+  };
+  const safe = (object: Json) =>
+    Object.fromEntries(
+      ['objectId', 'label', 'app', 'windowTitle']
+        .filter(key => object[key] !== undefined)
+        .map(key => [key, object[key]]),
+    );
+  const start = location(origin);
+  const end = location(destination);
   return {
     origin: start,
     destination: end,
@@ -51,7 +57,10 @@ export function parseRouteDraft(episode: Json): Json {
     origin_source: safe(origin),
     destination_source: safe(destination),
     episode_id: String(episode.episodeId ?? ''),
-    missing_fields: [...(!start ? ['origin'] : []), ...(!end ? ['destination'] : [])],
+    missing_fields: [
+      ...(!start ? ['origin'] : []),
+      ...(!end ? ['destination'] : []),
+    ],
   };
 }
 const psPayload = (value: unknown) =>
@@ -61,35 +70,43 @@ async function historyRecords(path: string): Promise<Json[]> {
   try {
     text = await readFile(path, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
   }
   return text
     .split('\n')
     .filter(Boolean)
-    .map((line) => JSON.parse(line));
+    .map(line => JSON.parse(line));
 }
 export function makePromptDeliveryProposal(text: string, options: Json): Json {
-  if (!text.trim()) throw new Error('draft text is empty');
-  const window = record(options.targetWindow),
-    current = record(options.currentTargetWindow),
-    rawPoint = options.targetPoint,
-    point = Array.isArray(rawPoint) ? rawPoint : [rawPoint?.x, rawPoint?.y];
+  if (!text.trim()) {
+    throw new Error('draft text is empty');
+  }
+  const window = record(options.targetWindow);
+  const current = record(options.currentTargetWindow);
+  const rawPoint = options.targetPoint;
+  const point = Array.isArray(rawPoint) ? rawPoint : [rawPoint?.x, rawPoint?.y];
   if (
     !(Number(window.hwnd) > 0) ||
     !(Number(window.process_id ?? window.pid) > 0) ||
     !String(window.title ?? '').trim()
-  )
+  ) {
     throw new Error('target window identity is missing');
+  }
   if (
     point.length !== 2 ||
     !point.every(Number.isFinite) ||
     options.targetPointSpace !== 'physical_screen_pixels'
-  )
-    throw new Error('target coordinate space is not trusted physical screen pixels');
+  ) {
+    throw new Error(
+      'target coordinate space is not trusted physical screen pixels',
+    );
+  }
   return {
     id: `prompt-delivery-${randomUUID()}`,
     action_type: 'paste_text_to_foreground',
-    target: { point, description: window.title, metadata: window },
+    target: {point, description: window.title, metadata: window},
     parameters: {
       text,
       text_sha256: contentHash(text),
@@ -99,7 +116,8 @@ export function makePromptDeliveryProposal(text: string, options: Json): Json {
       target_process_name: window.process_name ?? '',
       target_point: point,
       target_point_space: options.targetPointSpace,
-      target_resolution: options.targetResolution === 'adaptive' ? 'adaptive' : 'exact',
+      target_resolution:
+        options.targetResolution === 'adaptive' ? 'adaptive' : 'exact',
       current_target_hwnd: current.hwnd ?? 0,
       current_target_process_id: current.process_id ?? current.pid ?? 0,
       current_target_process_name: current.process_name ?? '',
@@ -120,9 +138,12 @@ export function makePromptDeliveryProposal(text: string, options: Json): Json {
     },
   };
 }
-export async function copyText(text: string, signal?: AbortSignal): Promise<Json> {
+export async function copyText(
+  text: string,
+  signal?: AbortSignal,
+): Promise<Json> {
   return runPowerShellJson(
-    psPayload({ text }) +
+    psPayload({text}) +
       `Add-Type -AssemblyName System.Windows.Forms
 [Windows.Forms.Clipboard]::SetText([string]$p.text)
 if ([Windows.Forms.Clipboard]::GetText() -cne [string]$p.text) { throw 'Clipboard verification failed' }
@@ -131,9 +152,13 @@ if ([Windows.Forms.Clipboard]::GetText() -cne [string]$p.text) { throw 'Clipboar
   );
 }
 
-async function wordAction(parameters: Json, undo: boolean, options: ActionOptions): Promise<Json> {
+async function wordAction(
+  parameters: Json,
+  undo: boolean,
+  options: ActionOptions,
+): Promise<Json> {
   const script =
-    psPayload({ ...parameters, undo }) +
+    psPayload({...parameters, undo}) +
     `function HashText([string]$s) { return (([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s)) | ForEach-Object { $_.ToString('x2') }) -join '') }
 $prog = [string]$p.com_prog_id
 if ($prog -notin @('Word.Application','kwps.Application','wps.Application')) { $prog='Word.Application' }
@@ -188,70 +213,101 @@ export class ActionBroker {
     );
   }
   private async append(value: Json): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, `${JSON.stringify({ ...value, task_id: this.taskId })}\n`);
+    await mkdir(dirname(this.path), {recursive: true});
+    await appendFile(
+      this.path,
+      `${JSON.stringify({...value, task_id: this.taskId})}\n`,
+    );
   }
   async execute(proposal: Json, confirmed = false): Promise<Json> {
-    const started = new Date().toISOString(),
-      action = String(proposal.action_type),
-      p = record(proposal.parameters),
-      meta = record(proposal.metadata);
-    let output: Json = {},
-      status = 'succeeded',
-      error: string | null = null;
+    const started = new Date().toISOString();
+    const action = String(proposal.action_type);
+    const p = record(proposal.parameters);
+    const meta = record(proposal.metadata);
+    let output: Json = {};
+    let status = 'succeeded';
+    let error: string | null = null;
     try {
-      if (!proposal.id) throw new Error('Action proposal id is required');
+      if (!proposal.id) {
+        throw new Error('Action proposal id is required');
+      }
       const trustedDelivery =
         action === 'paste_text_to_foreground' &&
         meta.trusted_local_intent === true &&
         meta.explicit_user_delivery_intent === true &&
         meta.no_submit === true &&
         p.submit === false;
-      if (action !== 'copy_text_to_clipboard' && !trustedDelivery && !confirmed) {
+      if (
+        action !== 'copy_text_to_clipboard' &&
+        !trustedDelivery &&
+        !confirmed
+      ) {
         status = 'skipped';
         throw new Error('confirmation required');
       }
       this.options.signal?.throwIfAborted();
       if (action === 'copy_text_to_clipboard') {
         output = await copyText(String(p.text ?? ''), this.options.signal);
-        await new ClipboardHistory(join(this.options.userDataDir, 'clipboard-history.json')).record(
-          String(p.text ?? ''),
-          { app: String(p.app ?? ''), secret: p.secret === true },
-        );
+        await new ClipboardHistory(
+          join(this.options.userDataDir, 'clipboard-history.json'),
+        ).record(String(p.text ?? ''), {
+          app: String(p.app ?? ''),
+          secret: p.secret === true,
+        });
       } else if (action === 'paste_text_to_foreground') {
-        if (p.submit !== false || contentHash(String(p.text)) !== p.text_sha256)
+        if (
+          p.submit !== false ||
+          contentHash(String(p.text)) !== p.text_sha256
+        ) {
           throw new Error('Draft text identity or no-submit intent changed');
+        }
         if (p.artifact_id) {
           const session = await EventSession.open(
-              this.options.userDataDir,
-              String(p.review_session_id || this.taskId),
-              false,
-            ),
-            draft = projectArtifacts(session.events).find(
-              (item) => item.artifactId === p.artifact_id,
-            );
-          if (!draft || draft.revision !== p.artifact_revision || draft.content !== p.text)
+            this.options.userDataDir,
+            String(p.review_session_id || this.taskId),
+            false,
+          );
+          const draft = projectArtifacts(session.events).find(
+            item => item.artifactId === p.artifact_id,
+          );
+          if (
+            !draft ||
+            draft.revision !== p.artifact_revision ||
+            draft.content !== p.text
+          ) {
             throw new Error('Draft artifact changed before delivery');
+          }
         }
-        const executable = await ensureNativeTool('uia_draft_writer'),
-          raw = await runProcess(executable, [], {
-            input: JSON.stringify(p),
-            signal: this.options.signal,
-            timeoutMs: 12000,
-          });
+        const executable = await ensureNativeTool('uia_draft_writer');
+        const raw = await runProcess(executable, [], {
+          input: JSON.stringify(p),
+          signal: this.options.signal,
+          timeoutMs: 12000,
+        });
         output = record(JSON.parse(raw.trim().split(/\r?\n/).at(-1) || '{}'));
-        if (!output.ok || !output.verified || output.submit_sent)
-          throw new Error(String(output.error ?? 'Draft write could not be verified'));
+        if (!output.ok || !output.verified || output.submit_sent) {
+          throw new Error(
+            String(output.error ?? 'Draft write could not be verified'),
+          );
+        }
       } else if (action === 'office_replace_selection') {
         if (
           p.replacement_text_sha256 &&
           contentHash(String(p.replacement_text)) !== p.replacement_text_sha256
-        )
+        ) {
           throw new Error('Replacement text changed');
+        }
         const data = await wordAction(p, false, this.options);
-        if (!data.ok) throw new Error(String(data.error));
-        const historyId = `history-${randomUUID()}`,
-          historyPath = join(this.options.root, 'data', 'runtime', 'action_history.jsonl');
+        if (!data.ok) {
+          throw new Error(String(data.error));
+        }
+        const historyId = `history-${randomUUID()}`;
+        const historyPath = join(
+          this.options.root,
+          'data',
+          'runtime',
+          'action_history.jsonl',
+        );
         await withFileLock(`${historyPath}.lock`, async () => {
           const entries = await historyRecords(historyPath);
           entries.push({
@@ -265,12 +321,12 @@ export class ActionBroker {
             selection_session_id: p.selection_session_id,
             selection_snapshot_id: p.selection_snapshot_id,
             created_at: started,
-            metadata: { com_prog_id: data.com_prog_id },
+            metadata: {com_prog_id: data.com_prog_id},
           });
-          await mkdir(dirname(historyPath), { recursive: true });
+          await mkdir(dirname(historyPath), {recursive: true});
           await writeFile(
             historyPath,
-            entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+            entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
           );
         });
         output = {
@@ -279,54 +335,86 @@ export class ActionBroker {
           undo_proposal: {
             id: `undo-${randomUUID()}`,
             action_type: 'office_undo_last_action',
-            parameters: { history_id: historyId },
+            parameters: {history_id: historyId},
             confirmation_required: true,
           },
         };
       } else if (action === 'office_undo_last_action') {
-        const path = join(this.options.root, 'data', 'runtime', 'action_history.jsonl');
+        const path = join(
+          this.options.root,
+          'data',
+          'runtime',
+          'action_history.jsonl',
+        );
         output = await withFileLock(`${path}.lock`, async () => {
-          const entries = await historyRecords(path),
-            entry = [...entries]
-              .reverse()
-              .find((item) => !item.undone_at && (!p.history_id || item.id === p.history_id));
-          if (!entry) throw new Error('No undoable Magic Pointer Word action was found');
+          const entries = await historyRecords(path);
+          const entry = [...entries]
+            .reverse()
+            .find(
+              item =>
+                !item.undone_at && (!p.history_id || item.id === p.history_id),
+            );
+          if (!entry) {
+            throw new Error('No undoable Magic Pointer Word action was found');
+          }
           const result = await wordAction(
-            { ...entry, com_prog_id: entry.com_prog_id ?? record(entry.metadata).com_prog_id },
+            {
+              ...entry,
+              com_prog_id:
+                entry.com_prog_id ?? record(entry.metadata).com_prog_id,
+            },
             true,
             this.options,
           );
-          if (!result.ok) throw new Error(String(result.error));
+          if (!result.ok) {
+            throw new Error(String(result.error));
+          }
           entry.undone_at = new Date().toISOString();
           entry.before_text = null;
           entry.after_text = null;
-          await writeFile(path, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
-          return { ...result, history_id: entry.id, undone_at: entry.undone_at };
+          await writeFile(
+            path,
+            entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
+          );
+          return {...result, history_id: entry.id, undone_at: entry.undone_at};
         });
       } else if (action === 'fabric_recipe_execute') {
-        if (!this.options.executeRecipe) throw new Error('Recipe executor is not registered');
+        if (!this.options.executeRecipe) {
+          throw new Error('Recipe executor is not registered');
+        }
         output = await this.options.executeRecipe(proposal);
         const receipt = record(output.fabric_receipt ?? output);
-        if (receipt.status === 'pending' || receipt.status === 'accepted') status = 'pending';
-        else if (receipt.status === 'failed' || receipt.ok === false)
+        if (receipt.status === 'pending' || receipt.status === 'accepted') {
+          status = 'pending';
+        } else if (receipt.status === 'failed' || receipt.ok === false) {
           throw new Error(String(receipt.error ?? 'Recipe failed'));
+        }
       } else if (action === 'document_patch_operation') {
-        if (!this.options.executeDocumentOperation)
+        if (!this.options.executeDocumentOperation) {
           throw new Error('Document operation executor is not registered');
+        }
         output = await this.options.executeDocumentOperation(proposal);
-        if (output.ok === false || output.verified === false)
-          throw new Error(String(output.error ?? 'Document operation failed verification'));
-      } else throw new Error(`unsupported action_type: ${action}`);
-      if (status === 'succeeded' && output.undo_proposal)
+        if (output.ok === false || output.verified === false) {
+          throw new Error(
+            String(output.error ?? 'Document operation failed verification'),
+          );
+        }
+      } else {
+        throw new Error(`unsupported action_type: ${action}`);
+      }
+      if (status === 'succeeded' && output.undo_proposal) {
         await this.append({
           kind: 'record',
           action_id: proposal.id,
           tool_name: action,
           undo_proposal: output.undo_proposal,
         });
+      }
     } catch (cause) {
       error = String(cause instanceof Error ? cause.message : cause);
-      if (status !== 'skipped') status = 'failed';
+      if (status !== 'skipped') {
+        status = 'failed';
+      }
     }
     return {
       proposal_id: proposal.id,
@@ -349,24 +437,37 @@ export class ActionBroker {
       const active = new Map<string, Json>();
       for (const line of text.split('\n').filter(Boolean)) {
         const event: Json = record(JSON.parse(line));
-        if (event.kind === 'record') active.set(event.action_id, event);
-        else if (event.kind === 'undone') active.delete(event.action_id);
+        if (event.kind === 'record') {
+          active.set(event.action_id, event);
+        } else if (event.kind === 'undone') {
+          active.delete(event.action_id);
+        }
       }
       const entry = id ? active.get(id) : [...active.values()].at(-1);
-      if (!entry) throw new Error('No matching undoable action');
+      if (!entry) {
+        throw new Error('No matching undoable action');
+      }
       const result = await this.execute(entry.undo_proposal, true);
-      if (result.status !== 'succeeded') throw new Error(result.error);
-      await this.append({ kind: 'undone', action_id: entry.action_id });
+      if (result.status !== 'succeeded') {
+        throw new Error(result.error);
+      }
+      await this.append({kind: 'undone', action_id: entry.action_id});
       return entry;
     });
   }
 }
-export async function handleAction(payload: Json, options: ActionOptions): Promise<Json> {
-  const proposal = record(payload.proposal),
-    taskId = String(
-      payload.taskId ?? payload.sessionId ?? record(proposal.metadata).task_id ?? 'action-bridge',
-    ),
-    broker = new ActionBroker(taskId, options);
+export async function handleAction(
+  payload: Json,
+  options: ActionOptions,
+): Promise<Json> {
+  const proposal = record(payload.proposal);
+  const taskId = String(
+    payload.taskId ??
+      payload.sessionId ??
+      record(proposal.metadata).task_id ??
+      'action-bridge',
+  );
+  const broker = new ActionBroker(taskId, options);
   if (payload.operation === 'undo') {
     try {
       const item = await broker.undo(payload.actionId ?? payload.action_id);
@@ -377,15 +478,17 @@ export async function handleAction(payload: Json, options: ActionOptions): Promi
         undoneActionId: item.action_id,
       };
     } catch (error) {
-      return { ok: false, prompt: 'Undo result', error: String(error) };
+      return {ok: false, prompt: 'Undo result', error: String(error)};
     }
   }
-  if (!proposal.action_type) return { ok: false, error: 'missing proposal' };
-  const result = await broker.execute(proposal, payload.confirmed === true),
-    completed = result.status === 'succeeded',
-    ok = completed || result.status === 'pending';
-  let contextSessionFinished = false,
-    reviewSessionFinished = false;
+  if (!proposal.action_type) {
+    return {ok: false, error: 'missing proposal'};
+  }
+  const result = await broker.execute(proposal, payload.confirmed === true);
+  const completed = result.status === 'succeeded';
+  const ok = completed || result.status === 'pending';
+  let contextSessionFinished = false;
+  let reviewSessionFinished = false;
   const p = record(proposal.parameters);
   if (
     completed &&
@@ -394,15 +497,24 @@ export async function handleAction(payload: Json, options: ActionOptions): Promi
     p.context_session_id
   ) {
     try {
-      await new ContextSessionStore(options.userDataDir).finish(String(p.context_session_id));
+      await new ContextSessionStore(options.userDataDir).finish(
+        String(p.context_session_id),
+      );
       contextSessionFinished = true;
     } catch {}
   }
   const undo = record(result.output).undo_proposal;
-  if (completed && proposal.action_type === 'paste_text_to_foreground' && p.review_session_id) {
+  if (
+    completed &&
+    proposal.action_type === 'paste_text_to_foreground' &&
+    p.review_session_id
+  ) {
     try {
-      const { ReviewSessionStore } = require('./review') as typeof import('./review');
-      await new ReviewSessionStore(options.userDataDir).finish(String(p.review_session_id));
+      const {ReviewSessionStore} =
+        require('./review') as typeof import('./review');
+      await new ReviewSessionStore(options.userDataDir).finish(
+        String(p.review_session_id),
+      );
       reviewSessionFinished = true;
     } catch {}
   }
@@ -416,8 +528,10 @@ export async function handleAction(payload: Json, options: ActionOptions): Promi
           ? ((
               {
                 copy_text_to_clipboard: 'Copied to clipboard.',
-                office_replace_selection: '文档选区已替换，可精确撤销这次修改。',
-                office_undo_last_action: '已精确恢复这一次 Magic Pointer 文档修改。',
+                office_replace_selection:
+                  '文档选区已替换，可精确撤销这次修改。',
+                office_undo_last_action:
+                  '已精确恢复这一次 Magic Pointer 文档修改。',
                 paste_text_to_foreground:
                   '草稿已完整填入目标输入框，未发送；请检查后由你点击发送。',
               } as Json
@@ -427,35 +541,95 @@ export async function handleAction(payload: Json, options: ActionOptions): Promi
     taskId,
     actions:
       completed && undo
-        ? [{ id: proposal.id, kind: 'undo', label: '撤销这一步', actionId: proposal.id, taskId }]
+        ? [
+            {
+              id: proposal.id,
+              kind: 'undo',
+              label: '撤销这一步',
+              actionId: proposal.id,
+              taskId,
+            },
+          ]
         : [],
     actionProposals: ok && undo ? [undo] : [],
     contextSessionFinished,
     reviewSessionFinished,
   };
 }
-export function describeDeliveryFailure(error: unknown): { reasonCode: string; message: string; writeAttempted: boolean } {
+export function describeDeliveryFailure(error: unknown): {
+  reasonCode: string;
+  message: string;
+  writeAttempted: boolean;
+} {
   const text = String(error || '').toLowerCase();
-  const rules: [string, string, string, boolean][] = [
-    ['not an editable input surface', 'not_an_input_surface', '你划的位置不是可输入的框，所以没有写入。', false],
-    ['already contains a different draft', 'input_already_has_text', '输入框里已有其他内容，没有覆盖它。', false],
+  const rules: Array<[string, string, string, boolean]> = [
+    [
+      'not an editable input surface',
+      'not_an_input_surface',
+      '你划的位置不是可输入的框，所以没有写入。',
+      false,
+    ],
+    [
+      'already contains a different draft',
+      'input_already_has_text',
+      '输入框里已有其他内容，没有覆盖它。',
+      false,
+    ],
     ['password', 'password_input', '目标是密码框，没有写入。', false],
-    ['input surface is disabled', 'input_disabled', '输入框当前不可编辑。', false],
-    ['foreground', 'window_not_foreground', '目标窗口没有处于前台，没有写入。', false],
+    [
+      'input surface is disabled',
+      'input_disabled',
+      '输入框当前不可编辑。',
+      false,
+    ],
+    [
+      'foreground',
+      'window_not_foreground',
+      '目标窗口没有处于前台，没有写入。',
+      false,
+    ],
     ['terminal', 'terminal_target', '目标是终端窗口，没有直接输入。', false],
-    ['could not be verified', 'write_not_verifiable', '已尝试填入，但无法读回核对，请查看目标输入框。', true],
-    ['verification failed', 'write_not_verifiable', '已尝试填入，但读回结果不匹配，请查看目标输入框。', true],
-    ['character-count verification', 'write_not_verifiable', '已尝试填入，但字数核对失败，请查看目标输入框。', true],
-    ['did not verify the write', 'write_not_verifiable', '写入没有通过核对，请查看目标输入框。', true],
+    [
+      'could not be verified',
+      'write_not_verifiable',
+      '已尝试填入，但无法读回核对，请查看目标输入框。',
+      true,
+    ],
+    [
+      'verification failed',
+      'write_not_verifiable',
+      '已尝试填入，但读回结果不匹配，请查看目标输入框。',
+      true,
+    ],
+    [
+      'character-count verification',
+      'write_not_verifiable',
+      '已尝试填入，但字数核对失败，请查看目标输入框。',
+      true,
+    ],
+    [
+      'did not verify the write',
+      'write_not_verifiable',
+      '写入没有通过核对，请查看目标输入框。',
+      true,
+    ],
   ];
   const match = rules.find(([needle]) => text.includes(needle));
-  return match ? { reasonCode: match[1], message: match[2], writeAttempted: match[3] }
-    : { reasonCode: 'write_refused', message: '没能确认已写进这个应用。', writeAttempted: false };
+  return match
+    ? {reasonCode: match[1], message: match[2], writeAttempted: match[3]}
+    : {
+        reasonCode: 'write_refused',
+        message: '没能确认已写进这个应用。',
+        writeAttempted: false,
+      };
 }
 
-export async function handleDelivery(payload: Json, options: ActionOptions): Promise<Json> {
+export async function handleDelivery(
+  payload: Json,
+  options: ActionOptions,
+): Promise<Json> {
   const text = String(payload.text ?? '');
-  if (!text.trim() || text.length > 20000)
+  if (!text.trim() || text.length > 20000) {
     return {
       ok: false,
       prompt: '填入',
@@ -463,11 +637,20 @@ export async function handleDelivery(payload: Json, options: ActionOptions): Pro
         ? '没有可填入的文字。'
         : `这段文字有 ${text.length} 字，超过一次填入的上限 20000 字。`,
     };
-  let verdict = { reasonCode: 'missing_target_identity', message: '没有可信的目标窗口或坐标，所以没往任何地方写。', writeAttempted: false }, detail = '';
+  }
+  let verdict = {
+    reasonCode: 'missing_target_identity',
+    message: '没有可信的目标窗口或坐标，所以没往任何地方写。',
+    writeAttempted: false,
+  };
+  let detail = '';
   try {
     const proposal = makePromptDeliveryProposal(text, payload);
-    const result = await new ActionBroker('delivery', options).execute(proposal, true);
-    if (result.status === 'succeeded')
+    const result = await new ActionBroker('delivery', options).execute(
+      proposal,
+      true,
+    );
+    if (result.status === 'succeeded') {
       return {
         ok: true,
         prompt: '填入',
@@ -480,11 +663,18 @@ export async function handleDelivery(payload: Json, options: ActionOptions): Pro
           writeAttempted: true,
         },
       };
+    }
     detail = String(result.error);
     verdict = describeDeliveryFailure(result.error);
   } catch (error) {
     detail = String(error);
-    if (!/target window identity is missing|target coordinate space is not trusted/i.test(detail)) verdict = describeDeliveryFailure(error);
+    if (
+      !/target window identity is missing|target coordinate space is not trusted/i.test(
+        detail,
+      )
+    ) {
+      verdict = describeDeliveryFailure(error);
+    }
   }
   const message = `${verdict.message}结果已复制，把光标点进输入框按 Ctrl+V 就行。`;
   try {
@@ -494,7 +684,12 @@ export async function handleDelivery(payload: Json, options: ActionOptions): Pro
       prompt: '填入',
       answer: message,
       detail,
-      delivery: { kind: 'clipboard', reasonCode: verdict.reasonCode, message, writeAttempted: verdict.writeAttempted },
+      delivery: {
+        kind: 'clipboard',
+        reasonCode: verdict.reasonCode,
+        message,
+        writeAttempted: verdict.writeAttempted,
+      },
     };
   } catch (error) {
     const failedMessage = `${verdict.message}剪贴板也未确认写入。`;

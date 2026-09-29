@@ -22,7 +22,6 @@ interface CardData {
   [key: string]: unknown;
 }
 
-
 const CardModel = (() => {
   const KINDS = Object.freeze([
     'prose',
@@ -34,7 +33,7 @@ const CardModel = (() => {
     'table',
     'prompt',
     'steps',
-    'slot',       // MCP server 自己渲染的一块界面（沙盒 iframe）
+    'slot', // MCP server 自己渲染的一块界面（沙盒 iframe）
   ]);
 
   const STATES = Object.freeze(['running', 'done', 'failed']);
@@ -48,9 +47,13 @@ const CardModel = (() => {
 
   function normalizeKind(raw: unknown): string {
     const key = String(raw || '').trim();
-    if (KINDS.includes(key)) return key;
+    if (KINDS.includes(key)) {
+      return key;
+    }
     const legacyKinds = LEGACY_KIND as Readonly<Record<string, string>>;
-    if (legacyKinds[key]) return legacyKinds[key];
+    if (legacyKinds[key]) {
+      return legacyKinds[key];
+    }
     return 'prose';
   }
 
@@ -79,13 +82,23 @@ const CardModel = (() => {
     total: '完成',
   });
 
-
   const PLUMBING_PHASES: ReadonlySet<string> = new Set([
-    'perceived', 'payload_read', 'settings_loaded', 'windows_enumerated',
-    'pixels_frozen', 'structured_read', 'context_from_snapshot',
-    'enrich_screen_region', 'enrich_local_file', 'route_recipe',
-    'loop_started', 'loop_router_start', 'loop_progress',
-    'model_request', 'model_response', 'backend_recovery',
+    'perceived',
+    'payload_read',
+    'settings_loaded',
+    'windows_enumerated',
+    'pixels_frozen',
+    'structured_read',
+    'context_from_snapshot',
+    'enrich_screen_region',
+    'enrich_local_file',
+    'route_recipe',
+    'loop_started',
+    'loop_router_start',
+    'loop_progress',
+    'model_request',
+    'model_response',
+    'backend_recovery',
     'total',
   ]);
 
@@ -97,10 +110,17 @@ const CardModel = (() => {
 
   function decodeActivity(blob: unknown): Record<string, unknown> | null {
     const text = String(blob || '').trim();
-    if (!text) return null;
+    if (!text) {
+      return null;
+    }
     try {
       const globalScope = globalThis as unknown as {
-        Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } };
+        Buffer?: {
+          from(
+            input: string,
+            encoding: string,
+          ): {toString(encoding: string): string};
+        };
         atob?: (input: string) => string;
       };
       let json = '';
@@ -108,26 +128,31 @@ const CardModel = (() => {
         json = globalScope.Buffer.from(text, 'base64').toString('utf8');
       } else if (typeof globalScope.atob === 'function') {
         const binary = globalScope.atob(text);
-        const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+        const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
         json = new TextDecoder().decode(bytes);
       } else {
         return null;
       }
       const parsed = JSON.parse(json);
-      return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : null;
     } catch (_) {
       return null;
     }
   }
 
-  function toolStep(record: { phase?: unknown; fields?: unknown } = {}) {
+  function toolStep(record: {phase?: unknown; fields?: unknown} = {}) {
     const phase = String(record.phase || '').trim();
-    const fields = record.fields && typeof record.fields === 'object'
-      ? record.fields as Record<string, unknown>
-      : {};
+    const fields =
+      record.fields && typeof record.fields === 'object'
+        ? (record.fields as Record<string, unknown>)
+        : {};
     if (phase === 'tool_call') {
       const name = String(fields.name || '').trim();
-      if (!name) return null;
+      if (!name) {
+        return null;
+      }
       return {
         phase: `tool:${String(fields.id || name)}`,
         label: name,
@@ -136,11 +161,17 @@ const CardModel = (() => {
         state: 'pending',
       };
     }
-    if (phase !== 'tool_activity') return null;
+    if (phase !== 'tool_activity') {
+      return null;
+    }
     const line = decodeActivity(fields.b64);
-    if (!line) return null;
+    if (!line) {
+      return null;
+    }
     const tool = String(line.tool || '').trim();
-    if (!tool) return null;
+    if (!tool) {
+      return null;
+    }
     const target = String(line.target || '').trim();
     return {
       phase: `tool:${String(line.id || tool)}`,
@@ -151,23 +182,39 @@ const CardModel = (() => {
     };
   }
 
-  function phaseStep(record: { phase?: unknown; fields?: unknown; ms?: number } = {}) {
+  function phaseStep(
+    record: {phase?: unknown; fields?: unknown; ms?: number} = {},
+  ) {
     const phase = String(record.phase || '').trim();
-    if (!phase) return null;
-    if (phase === 'tool_call' || phase === 'tool_activity') return toolStep(record);
-    const label = (PHASE_TEXT as Readonly<Record<string, string>>)[phase] || phase.replace(/_/g, ' ');
-    const fields = record.fields && typeof record.fields === 'object'
-      ? record.fields as Record<string, unknown>
-      : {};
+    if (!phase) {
+      return null;
+    }
+    if (phase === 'tool_call' || phase === 'tool_activity') {
+      return toolStep(record);
+    }
+    const label =
+      (PHASE_TEXT as Readonly<Record<string, string>>)[phase] ||
+      phase.replace(/_/g, ' ');
+    const fields =
+      record.fields && typeof record.fields === 'object'
+        ? (record.fields as Record<string, unknown>)
+        : {};
     let note = '';
-    if (fields.w && fields.h) note = `${fields.w}×${fields.h}`;
-    else if (fields.hit) note = String(fields.hit);
-    else if (fields.recipe) note = String(fields.recipe);
-    else if (fields.tier) note = String(fields.tier);
-    else if (fields.name) note = String(fields.name);
-    else if (phase === 'tools_truncated' && fields.count && fields.limit) {
+    if (fields.w && fields.h) {
+      note = `${fields.w}×${fields.h}`;
+    } else if (fields.hit) {
+      note = String(fields.hit);
+    } else if (fields.recipe) {
+      note = String(fields.recipe);
+    } else if (fields.tier) {
+      note = String(fields.tier);
+    } else if (fields.name) {
+      note = String(fields.name);
+    } else if (phase === 'tools_truncated' && fields.count && fields.limit) {
       note = `${fields.count} 个 · 上限 ${fields.limit}`;
-      if (fields.names) note += ` · ${fields.names}`;
+      if (fields.names) {
+        note += ` · ${fields.names}`;
+      }
     }
     const round = Number(fields.turn);
     if (Number.isFinite(round) && round > 0) {
@@ -182,9 +229,14 @@ const CardModel = (() => {
     };
   }
 
-  function progressFromSteps(steps: CardStep[] = [], typical = TYPICAL_PHASES): number | null {
-    const done = steps.filter((s) => s && s.state === 'done').length;
-    if (!done) return null;
+  function progressFromSteps(
+    steps: CardStep[] = [],
+    typical = TYPICAL_PHASES,
+  ): number | null {
+    const done = steps.filter(s => s && s.state === 'done').length;
+    if (!done) {
+      return null;
+    }
     return Math.min(0.92, done / Math.max(1, typical));
   }
 
@@ -195,13 +247,20 @@ const CardModel = (() => {
     return `c${seed || 0}-${counter.toString(36)}`;
   }
 
-  function normalizeCard(raw: CardData = {}, options: { id?: string; seed?: unknown } = {}): CardData {
+  function normalizeCard(
+    raw: CardData = {},
+    options: {id?: string; seed?: unknown} = {},
+  ): CardData {
     const kind = normalizeKind(raw.kind);
-    const state = typeof raw.state === 'string' && STATES.includes(raw.state) ? raw.state : 'done';
+    const state =
+      typeof raw.state === 'string' && STATES.includes(raw.state)
+        ? raw.state
+        : 'done';
     const steps = Array.isArray(raw.steps) ? raw.steps.filter(Boolean) : [];
-    const explicit = typeof raw.progress === 'number' && Number.isFinite(raw.progress)
-      ? clamp01(raw.progress)
-      : null;
+    const explicit =
+      typeof raw.progress === 'number' && Number.isFinite(raw.progress)
+        ? clamp01(raw.progress)
+        : null;
     return {
       ...raw,
       id: raw.id || options.id || newCardId(options.seed),
@@ -210,9 +269,11 @@ const CardModel = (() => {
       title: String(raw.title || ''),
       subtitle: String(raw.subtitle || ''),
       steps,
-      progress: state === 'done'
-        ? 1
-        : (explicit ?? (state === 'failed' ? null : progressFromSteps(steps))),
+      progress:
+        state === 'done'
+          ? 1
+          : (explicit ??
+            (state === 'failed' ? null : progressFromSteps(steps))),
       stage: String(raw.stage || ''),
       actions: Array.isArray(raw.actions) ? raw.actions : [],
       source: raw.source && typeof raw.source === 'object' ? raw.source : null,
@@ -221,50 +282,72 @@ const CardModel = (() => {
   }
 
   function clamp01(n: number): number | null {
-    if (!Number.isFinite(n)) return null;
+    if (!Number.isFinite(n)) {
+      return null;
+    }
     return Math.max(0, Math.min(1, n));
   }
 
   function applyPatch(card: CardData, patch: CardData = {}): CardData {
     const base = normalizeCard(card);
-    if (base.state !== 'running') return base;
+    if (base.state !== 'running') {
+      return base;
+    }
 
-    const next = { ...base };
+    const next = {...base};
 
     if (Array.isArray(patch.steps) && patch.steps.length) {
-      const byPhase = new Map((next.steps || []).map((s) => [s.phase || s.label || '', s]));
+      const byPhase = new Map(
+        (next.steps || []).map(s => [s.phase || s.label || '', s]),
+      );
       for (const step of patch.steps) {
-        if (!step) continue;
+        if (!step) {
+          continue;
+        }
         const key = step.phase || step.label || '';
-        byPhase.set(key, { ...byPhase.get(key), ...step });
+        byPhase.set(key, {...byPhase.get(key), ...step});
       }
       next.steps = [...byPhase.values()];
     }
 
     for (const [key, value] of Object.entries(patch)) {
-      if (key === 'steps' || key === 'id' || key === 'progress') continue;
-      if (value === undefined) continue;
+      if (key === 'steps' || key === 'id' || key === 'progress') {
+        continue;
+      }
+      if (value === undefined) {
+        continue;
+      }
       next[key] = value;
     }
 
-    if (typeof patch.state === 'string' && STATES.includes(patch.state)) next.state = patch.state;
+    if (typeof patch.state === 'string' && STATES.includes(patch.state)) {
+      next.state = patch.state;
+    }
     if (next.state === 'done') {
       next.progress = 1;
     } else if (next.state === 'failed') {
       next.progress = base.progress;
     } else {
-      const proposed = typeof patch.progress === 'number' && Number.isFinite(patch.progress)
-        ? clamp01(patch.progress)
-        : progressFromSteps(next.steps || []);
+      const proposed =
+        typeof patch.progress === 'number' && Number.isFinite(patch.progress)
+          ? clamp01(patch.progress)
+          : progressFromSteps(next.steps || []);
       next.progress = pickForward(base.progress, proposed);
     }
 
-    return normalizeCard(next, { id: next.id });
+    return normalizeCard(next, {id: next.id});
   }
 
-  function pickForward(current: number | null | undefined, proposed: number | null): number | null | undefined {
-    if (typeof proposed !== 'number' || !Number.isFinite(proposed)) return current;
-    if (typeof current !== 'number' || !Number.isFinite(current)) return proposed;
+  function pickForward(
+    current: number | null | undefined,
+    proposed: number | null,
+  ): number | null | undefined {
+    if (typeof proposed !== 'number' || !Number.isFinite(proposed)) {
+      return current;
+    }
+    if (typeof current !== 'number' || !Number.isFinite(current)) {
+      return proposed;
+    }
     return Math.max(current, proposed);
   }
 
@@ -282,18 +365,31 @@ const CardModel = (() => {
   });
 
   function runningLabel(card: CardData = {}): string {
-    if (card.stage) return card.stage;
+    if (card.stage) {
+      return card.stage;
+    }
     const steps = card.steps || [];
-    const active = steps.find((s) => s && s.state === 'pending' && s.label);
-    if (active) return active.label || '';
-    const generic = (RUNNING_HINT as Readonly<Record<string, string>>)[normalizeKind(card.kind)] || '正在处理';
-    if (!steps.length) return generic;
+    const active = steps.find(s => s && s.state === 'pending' && s.label);
+    if (active) {
+      return active.label || '';
+    }
+    const generic =
+      (RUNNING_HINT as Readonly<Record<string, string>>)[
+        normalizeKind(card.kind)
+      ] || '正在处理';
+    if (!steps.length) {
+      return generic;
+    }
     return card.kind === 'image' ? RUNNING_HINT.image : '在等模型回话';
   }
 
-  function perceivedStep(summary: { label?: unknown; detail?: unknown } | null | undefined) {
+  function perceivedStep(
+    summary: {label?: unknown; detail?: unknown} | null | undefined,
+  ) {
     const label = String(summary?.label || '').trim();
-    if (!label) return null;
+    if (!label) {
+      return null;
+    }
     const detail = String(summary?.detail || '').trim();
     return {
       phase: 'perceived',

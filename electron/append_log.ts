@@ -3,10 +3,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-
 interface AppendLogDependencies {
-  appendFileSync?: (path: string, data: string, encoding: BufferEncoding) => void;
-  mkdirSync?: (path: string, options: { recursive: boolean }) => unknown;
+  appendFileSync?: (
+    path: string,
+    data: string,
+    encoding: BufferEncoding,
+  ) => void;
+  mkdirSync?: (path: string, options: {recursive: boolean}) => unknown;
   now?: () => Date;
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -35,19 +38,24 @@ function createBufferedLog({
   maxPendingLines = DEFAULT_MAX_PENDING_LINES,
   dependencies = {},
 }: CreateBufferedLogOptions): BufferedLog {
-  const appendFileSync = dependencies.appendFileSync
-    || ((target: string, data: string, encoding: BufferEncoding) => {
+  const appendFileSync =
+    dependencies.appendFileSync ||
+    ((target: string, data: string, encoding: BufferEncoding) => {
       fs.appendFileSync(target, data, encoding);
     });
-  const mkdirSync = dependencies.mkdirSync
-    || ((target: string, options: { recursive: boolean }) => {
+  const mkdirSync =
+    dependencies.mkdirSync ||
+    ((target: string, options: {recursive: boolean}) => {
       fs.mkdirSync(target, options);
     });
   const now = dependencies.now || (() => new Date());
-  const setTimer = dependencies.setTimer
-    || ((callback: () => void, delayMs: number) => setTimeout(callback, delayMs));
-  const clearTimer = dependencies.clearTimer
-    || ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const setTimer =
+    dependencies.setTimer ||
+    ((callback: () => void, delayMs: number) => setTimeout(callback, delayMs));
+  const clearTimer =
+    dependencies.clearTimer ||
+    ((handle: unknown) =>
+      clearTimeout(handle as ReturnType<typeof setTimeout>));
 
   const directory = path.dirname(filePath);
   const pending: string[] = [];
@@ -55,20 +63,26 @@ function createBufferedLog({
   let directoryReady = false;
 
   function ensureDirectory(): void {
-    if (directoryReady) return;
-    mkdirSync(directory, { recursive: true });
+    if (directoryReady) {
+      return;
+    }
+    mkdirSync(directory, {recursive: true});
     directoryReady = true;
   }
 
   function clearFlushTimer(): void {
-    if (timer === null) return;
+    if (timer === null) {
+      return;
+    }
     clearTimer(timer);
     timer = null;
   }
 
   function flush(): void {
     clearFlushTimer();
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      return;
+    }
     const payload = pending.join('');
     try {
       ensureDirectory();
@@ -106,4 +120,4 @@ function createBufferedLog({
   };
 }
 
-module.exports = { createBufferedLog };
+module.exports = {createBufferedLog};

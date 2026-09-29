@@ -1,7 +1,7 @@
 'use strict';
 
 import crypto from 'node:crypto';
-import { spawn, type SpawnOptions } from 'node:child_process';
+import {spawn, type SpawnOptions} from 'node:child_process';
 
 interface ProgressRecord {
   phase: string;
@@ -9,7 +9,7 @@ interface ProgressRecord {
   fields: Record<string, string>;
 }
 
-const { createProgressLineSplitter } = require('./bridge_progress_lines') as {
+const {createProgressLineSplitter} = require('./bridge_progress_lines') as {
   createProgressLineSplitter(
     onProgress: (record: ProgressRecord) => void,
   ): (chunk: unknown) => void;
@@ -97,13 +97,16 @@ function createRuntimeBridgeRunner({
     onProgress = null,
     logger,
   }: RunOptions = {}): BridgeChild {
-    const log: (message: string) => void = typeof logger === 'function' ? logger : () => {};
+    const log: (message: string) => void =
+      typeof logger === 'function' ? logger : () => {};
     const complete: (result: BridgeResult) => void =
       typeof onComplete === 'function' ? onComplete : () => {};
     const feedProgress =
       typeof onProgress === 'function'
-        ? createProgressLineSplitter((record) => {
-            if (!delivered) onProgress(record);
+        ? createProgressLineSplitter(record => {
+            if (!delivered) {
+              onProgress(record);
+            }
           })
         : null;
     const child = spawnImpl(executable as string, args, spawnOptions);
@@ -114,14 +117,18 @@ function createRuntimeBridgeRunner({
     let timer: TimerHandle | null = null;
 
     const detach = (): void => {
-      if (timer !== null) clearTimeoutImpl(timer);
+      if (timer !== null) {
+        clearTimeoutImpl(timer);
+      }
       timer = null;
       child.stdout?.off?.('data', onStdout);
       child.stderr?.off?.('data', onStderr);
       signal?.removeEventListener?.('abort', onAbort);
     };
     const deliver = (value: BridgeResult): void => {
-      if (delivered) return;
+      if (delivered) {
+        return;
+      }
       delivered = true;
       detach();
       complete(value);
@@ -135,10 +142,14 @@ function createRuntimeBridgeRunner({
       deliver(value);
     };
     const armIdleDeadline = (): void => {
-      if (delivered) return;
-      if (timer !== null) clearTimeoutImpl(timer);
+      if (delivered) {
+        return;
+      }
+      if (timer !== null) {
+        clearTimeoutImpl(timer);
+      }
       timer = setTimeoutImpl(
-        () => stop({ ok: false, error: 'bridge_timeout' }),
+        () => stop({ok: false, error: 'bridge_timeout'}),
         Math.max(1, Number(timeoutMs) || 60_000),
       );
     };
@@ -149,24 +160,28 @@ function createRuntimeBridgeRunner({
       if (stream === 'stdout') {
         stdoutBytes += bytes;
         if (stdoutBytes > maxStdoutBytes) {
-          stop({ ok: false, error: 'bridge_output_limit', stream: 'stdout' });
+          stop({ok: false, error: 'bridge_output_limit', stream: 'stdout'});
           return;
         }
         stdout += text;
       } else {
-        if (feedProgress) feedProgress(text);
-        stderr = Buffer.from(stderr + text, 'utf8').subarray(-maxStderrBytes).toString('utf8');
+        if (feedProgress) {
+          feedProgress(text);
+        }
+        stderr = Buffer.from(stderr + text, 'utf8')
+          .subarray(-maxStderrBytes)
+          .toString('utf8');
       }
     };
     const onStdout = (chunk: unknown): void => append('stdout', chunk);
     const onStderr = (chunk: unknown): void => append('stderr', chunk);
-    const onAbort = (): void => stop({ ok: false, error: 'bridge_cancelled' });
+    const onAbort = (): void => stop({ok: false, error: 'bridge_cancelled'});
 
     child.stdout?.setEncoding?.('utf8');
     child.stderr?.setEncoding?.('utf8');
     child.stdout?.on?.('data', onStdout);
     child.stderr?.on?.('data', onStderr);
-    child.on('error', (error) => {
+    child.on('error', error => {
       log(`bridge spawn error ${errorName(error)}: ${errorMessage(error)}`);
       deliver({
         ok: false,
@@ -174,12 +189,16 @@ function createRuntimeBridgeRunner({
         detail: errorMessage(error).slice(0, 500),
       });
     });
-    child.on('close', (code) => {
-      if (delivered) return;
+    child.on('close', code => {
+      if (delivered) {
+        return;
+      }
       if (!stdout.trim()) {
         const stderrTail = stderr.slice(-800).trim();
-        log(`bridge no-output stderr tail code=${code}: ${stderrTail || '(empty)'}`);
-        deliver({ ok: false, error: 'bridge_no_output', code, stderrTail });
+        log(
+          `bridge no-output stderr tail code=${code}: ${stderrTail || '(empty)'}`,
+        );
+        deliver({ok: false, error: 'bridge_no_output', code, stderrTail});
         return;
       }
       let parsed: BridgeResult;
@@ -189,31 +208,40 @@ function createRuntimeBridgeRunner({
         parsed =
           decoded && typeof decoded === 'object'
             ? (decoded as BridgeResult)
-            : { ok: false, error: 'bridge_invalid_json' };
+            : {ok: false, error: 'bridge_invalid_json'};
       } catch {
         deliver({
           ok: false,
           error: 'bridge_invalid_json',
-          stdout_sha256: crypto.createHash('sha256').update(stdout).digest('hex'),
+          stdout_sha256: crypto
+            .createHash('sha256')
+            .update(stdout)
+            .digest('hex'),
         });
         return;
       }
       if (code !== 0 && parsed?.ok !== true) {
         parsed.code = code;
         parsed.stderr = stderr.slice(0, 2000);
-        parsed.stderr_sha256 = crypto.createHash('sha256').update(stderr).digest('hex');
+        parsed.stderr_sha256 = crypto
+          .createHash('sha256')
+          .update(stderr)
+          .digest('hex');
       }
       deliver(parsed);
     });
-    child.stdin?.on?.('error', (error) => {
+    child.stdin?.on?.('error', error => {
       log(`bridge stdin error ${errorName(error)}: ${errorMessage(error)}`);
-      deliver({ ok: false, error: 'bridge_stdin_error' });
+      deliver({ok: false, error: 'bridge_stdin_error'});
     });
 
     armIdleDeadline();
     if (signal) {
-      if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener('abort', onAbort, {once: true});
+      }
     }
     if (!delivered) {
       try {
@@ -231,7 +259,7 @@ function createRuntimeBridgeRunner({
     return child;
   }
 
-  return { run };
+  return {run};
 }
 
-export { createRuntimeBridgeRunner };
+export {createRuntimeBridgeRunner};

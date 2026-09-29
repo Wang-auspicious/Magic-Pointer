@@ -27,13 +27,15 @@ function scheduleBackgroundLearning({
   log?: (message: string) => void;
 }): boolean {
   if (
-    enabled !== true
-    || request?.requested !== true
-    || typeof request.sessionId !== 'string'
-    || request.sessionId.length === 0
-    || typeof request.terminalReason !== 'string'
-    || request.terminalReason.length === 0
-  ) return false;
+    enabled !== true ||
+    request?.requested !== true ||
+    typeof request.sessionId !== 'string' ||
+    request.sessionId.length === 0 ||
+    typeof request.terminalReason !== 'string' ||
+    request.terminalReason.length === 0
+  ) {
+    return false;
+  }
   const child = runBridge(
     {
       requested: true,
@@ -47,8 +49,8 @@ function scheduleBackgroundLearning({
       timeoutMs: 45_000,
       onComplete: (result: any) => {
         log(
-          `background learning complete session=${request.sessionId} `
-          + `ok=${result?.ok === true} candidates=${Array.isArray(result?.candidateIds) ? result.candidateIds.length : 0}`,
+          `background learning complete session=${request.sessionId} ` +
+            `ok=${result?.ok === true} candidates=${Array.isArray(result?.candidateIds) ? result.candidateIds.length : 0}`,
         );
       },
     },
@@ -56,4 +58,4 @@ function scheduleBackgroundLearning({
   return Boolean(child);
 }
 
-module.exports = { scheduleBackgroundLearning };
+module.exports = {scheduleBackgroundLearning};

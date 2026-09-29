@@ -1,4 +1,3 @@
-
 interface FabricPlan {
   risk?: string;
   provider?: string;
@@ -66,7 +65,7 @@ function canAutoExecuteInternalProposal(
     proposal?.parameters?.target_point_space === 'physical_screen_pixels' &&
     Array.isArray(targetPoint) &&
     targetPoint.length === 2 &&
-    targetPoint.every((value) => Number.isFinite(Number(value))) &&
+    targetPoint.every(value => Number.isFinite(Number(value))) &&
     Array.isArray(proposalPoint) &&
     proposalPoint.length === 2 &&
     Number(proposalPoint[0]) === Number(targetPoint[0]) &&
@@ -79,7 +78,9 @@ function canAutoExecuteInternalProposal(
     proposal?.metadata?.no_submit === true &&
     (isReviewDelivery ||
       (proposal?.metadata?.delivery_kind === 'context_prompt_delivery' &&
-        String(proposal?.parameters?.context_session_id || '').startsWith('context-'))),
+        String(proposal?.parameters?.context_session_id || '').startsWith(
+          'context-',
+        ))),
   );
   const fabricPlan = proposal?.parameters?.plan;
   const fabricAction = Boolean(
@@ -88,7 +89,9 @@ function canAutoExecuteInternalProposal(
     parsed.autoExecuteProposalId === proposal?.id &&
     proposal?.action_type === 'fabric_recipe_execute' &&
     proposal?.confirmation_required === false &&
-    String(proposal?.target?.object_id || '').startsWith('magic-pointer://fabric/recipe/') &&
+    String(proposal?.target?.object_id || '').startsWith(
+      'magic-pointer://fabric/recipe/',
+    ) &&
     proposal?.metadata?.trusted_local_intent === true &&
     proposal?.metadata?.fabric_plan_signed === true &&
     proposal?.metadata?.auto_execute === true &&
@@ -101,4 +104,4 @@ function canAutoExecuteInternalProposal(
   return groundedPromptDelivery || fabricAction;
 }
 
-export { canAutoExecuteInternalProposal };
+export {canAutoExecuteInternalProposal};

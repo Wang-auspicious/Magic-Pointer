@@ -1,6 +1,5 @@
 'use strict';
 
-
 const PROGRESS_PREFIX = '@@mp ';
 const MAX_PENDING_BYTES = 1024 * 1024;
 
@@ -12,42 +11,76 @@ type ProgressRecord = {
 
 function parseProgressLine(line: unknown): ProgressRecord | null {
   const text = String(line == null ? '' : line).trim();
-  if (!text.startsWith(PROGRESS_PREFIX)) return null;
-  const tokens = text.slice(PROGRESS_PREFIX.length).trim().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return null;
+  if (!text.startsWith(PROGRESS_PREFIX)) {
+    return null;
+  }
+  const tokens = text
+    .slice(PROGRESS_PREFIX.length)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!tokens.length) {
+    return null;
+  }
   const fields: Record<string, string> = {};
   for (const token of tokens) {
     const eq = token.indexOf('=');
-    if (eq <= 0) continue;
+    if (eq <= 0) {
+      continue;
+    }
     fields[token.slice(0, eq)] = token.slice(eq + 1);
   }
   const phase = String(fields.phase || '').trim();
-  if (!phase) return null;
+  if (!phase) {
+    return null;
+  }
   if ((phase === 'tool_result' || phase === 'tool_call') && fields.b64) {
     try {
-      const tool = JSON.parse(Buffer.from(fields.b64, 'base64').toString('utf8'));
-      for (const key of ['id', 'name', 'state', 'backend', 'latency_ms', 'args', 'result']) {
-        if (tool[key] !== undefined) fields[key] = String(tool[key]);
+      const tool = JSON.parse(
+        Buffer.from(fields.b64, 'base64').toString('utf8'),
+      );
+      for (const key of [
+        'id',
+        'name',
+        'state',
+        'backend',
+        'latency_ms',
+        'args',
+        'result',
+      ]) {
+        if (tool[key] !== undefined) {
+          fields[key] = String(tool[key]);
+        }
       }
       delete fields.b64;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
   const ms = Number(fields.ms);
-  return { phase, ms: Number.isFinite(ms) ? ms : null, fields };
+  return {phase, ms: Number.isFinite(ms) ? ms : null, fields};
 }
 
-function createProgressLineSplitter(onProgress: unknown): (chunk: unknown) => void {
+function createProgressLineSplitter(
+  onProgress: unknown,
+): (chunk: unknown) => void {
   const emit: (record: ProgressRecord) => void =
-    typeof onProgress === 'function' ? (onProgress as (record: ProgressRecord) => void) : () => {};
+    typeof onProgress === 'function'
+      ? (onProgress as (record: ProgressRecord) => void)
+      : () => {};
   let pending = '';
-  return (chunk) => {
+  return chunk => {
     pending += String(chunk == null ? '' : chunk);
     const lines = pending.split(/\r?\n/);
     pending = lines.pop() || '';
-    if (pending.length > MAX_PENDING_BYTES) pending = '';
+    if (pending.length > MAX_PENDING_BYTES) {
+      pending = '';
+    }
     for (const line of lines) {
       const record = parseProgressLine(line);
-      if (!record) continue;
+      if (!record) {
+        continue;
+      }
       try {
         emit(record);
       } catch (_) {
@@ -57,4 +90,8 @@ function createProgressLineSplitter(onProgress: unknown): (chunk: unknown) => vo
   };
 }
 
-module.exports = { PROGRESS_PREFIX, parseProgressLine, createProgressLineSplitter };
+module.exports = {
+  PROGRESS_PREFIX,
+  parseProgressLine,
+  createProgressLineSplitter,
+};

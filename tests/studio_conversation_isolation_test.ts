@@ -11,6 +11,8 @@ const code = ast.statements.filter(node => ts.isFunctionDeclaration(node) && fun
 
 function setup() {
   const recovery = { hidden: false, replaceChildren() {} };
+  const activity = {};
+  const activityInputs: Array<{ scope: string; turns: unknown[] }> = [];
   const sandbox: any = {
     activeConversationId: 'old', activeConversationView: {}, activeConversationRecord: {},
     activeConversationTurns: [{ answer: 'old answer' }], activeConversationObject: { label: 'old source' },
@@ -21,8 +23,11 @@ function setup() {
     pendingPermissionChoice: { grant: 'old authorization' }, composerAttachments: [],
     projectEnvironment: null, repositoryContextDismissedFor: '',
     artifactEditor: { state: () => ({}) },
-    document: { getElementById: (id: string) => id === 'conversation-recovery' ? recovery : null,
+    document: { getElementById: (id: string) => id === 'conversation-recovery' ? recovery : id === 'conversation-activity' ? activity : null,
       querySelectorAll: () => [], querySelector: () => null },
+    ExecutionView: { render: (host: unknown, input: { scope: string; turns: unknown[] }) => {
+      assert.equal(host, activity); activityInputs.push(input);
+    } },
     syncConversationPendingInput() {}, setActiveTaskContext() {}, renderComposerAttachments() {},
     refreshFigmaConnection() {}, renderProjectContext() {}, setStudioHomeVisible() {},
     renderUsageMeter() {}, setConversationTab() {}, renderStudioHome() {}, renderProjectTasks() {},
@@ -33,17 +38,19 @@ function setup() {
     Data: { conversation: async (id: string) => ({ id, turns: [] }) },
   };
   vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox);
-  return { sandbox, recovery };
+  return { sandbox, recovery, activityInputs };
 }
 
 async function main() {
-  const { sandbox, recovery } = setup();
+  const { sandbox, recovery, activityInputs } = setup();
   sandbox.startNewChat();
   assert.equal(sandbox.activeConversationTurns.length, 0, 'new chat must not project historical child tasks or usage');
   assert.equal(Object.keys(sandbox.activeConversationObject).length, 0, 'new chat must clear the prior selection object');
   assert.equal(sandbox.composerPlan, null, 'new chat must clear the previous task plan');
   assert.equal(sandbox.pendingPermissionChoice, null, 'a previous task authorization must not enter the new task');
   assert.equal(recovery.hidden, true, 'new chat must remove the previous task recovery panel');
+  assert.equal(activityInputs.at(-1)?.turns.length, 0, 'new chat clears the session log through its real render entry');
+  assert.equal(activityInputs.at(-1)?.scope, 'new', 'new chat must not reuse the previous session log scope');
   sandbox.pendingConversation = { requestId: 'old-running' };
   sandbox.studioComposerBusy = true;
   sandbox.startNewChat();

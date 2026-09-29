@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import http, {type IncomingMessage, type ServerResponse} from 'node:http';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_RESULT_BODY_BYTES = 12 * 1024 * 1024;
@@ -72,7 +72,10 @@ function bearer(request: IncomingMessage): string {
 function cors(response: ServerResponse): void {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type');
+  response.setHeader(
+    'Access-Control-Allow-Headers',
+    'Authorization,Content-Type',
+  );
   response.setHeader('Access-Control-Max-Age', '600');
 }
 
@@ -96,10 +99,14 @@ async function readBody(
   for await (const raw of request) {
     const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
     size += chunk.length;
-    if (size > maxBytes) throw new Error('request_body_too_large');
+    if (size > maxBytes) {
+      throw new Error('request_body_too_large');
+    }
     chunks.push(chunk);
   }
-  if (!chunks.length) return {};
+  if (!chunks.length) {
+    return {};
+  }
   const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('request_body_must_be_object');
@@ -120,27 +127,32 @@ export class FigmaLoopbackBridge {
   private readonly connections = new Map<string, PluginConnection>();
   private readonly commands = new Map<string, CommandRecord>();
 
-  constructor(options: { port?: number; now?: () => number } = {}) {
+  constructor(options: {port?: number; now?: () => number} = {}) {
     this.requestedPort = options.port ?? 37843;
     this.now = options.now || Date.now;
     this.controlToken = crypto.randomBytes(32).toString('base64url');
   }
 
-  openPairing(taskId: string, pairCode?: string): { taskId: string; pairCode: string; expiresAt: number } {
+  openPairing(
+    taskId: string,
+    pairCode?: string,
+  ): {taskId: string; pairCode: string; expiresAt: number} {
     const normalizedTask = nonEmpty(taskId);
-    if (!normalizedTask) throw new Error('figma_pairing_task_required');
-    const normalizedCode = nonEmpty(pairCode)
-      || crypto.randomInt(100_000, 1_000_000).toString();
+    if (!normalizedTask) {
+      throw new Error('figma_pairing_task_required');
+    }
+    const normalizedCode =
+      nonEmpty(pairCode) || crypto.randomInt(100_000, 1_000_000).toString();
     this.pairing = {
       taskId: normalizedTask,
       pairCode: normalizedCode,
       expiresAt: this.now() + 10 * 60_000,
     };
-    return { ...this.pairing };
+    return {...this.pairing};
   }
 
   connectionSnapshot(): FigmaConnectionSnapshot[] {
-    return [...this.connections.values()].map((connection) => ({
+    return [...this.connections.values()].map(connection => ({
       taskId: connection.taskId,
       documentSessionId: connection.documentSessionId,
       documentName: connection.documentName,
@@ -153,14 +165,21 @@ export class FigmaLoopbackBridge {
   }
 
   closeConnection(taskId: string, documentSessionId: string): boolean {
-    const entry = [...this.connections.entries()].find(([, connection]) => (
-      connection.taskId === taskId && connection.documentSessionId === documentSessionId
-    ));
-    if (!entry) return false;
+    const entry = [...this.connections.entries()].find(
+      ([, connection]) =>
+        connection.taskId === taskId &&
+        connection.documentSessionId === documentSessionId,
+    );
+    if (!entry) {
+      return false;
+    }
     const [token] = entry;
     this.connections.delete(token);
     for (const command of this.commands.values()) {
-      if (command.pluginToken === token && ['completed', 'failed', 'cancelled'].includes(command.status)) {
+      if (
+        command.pluginToken === token &&
+        ['completed', 'failed', 'cancelled'].includes(command.status)
+      ) {
         this.commands.delete(command.commandId);
         continue;
       }
@@ -176,14 +195,24 @@ export class FigmaLoopbackBridge {
   clientConfiguration(
     taskId: string,
     documentSessionId: string,
-  ): { baseUrl: string; controlToken: string; taskId: string; documentSessionId: string } {
+  ): {
+    baseUrl: string;
+    controlToken: string;
+    taskId: string;
+    documentSessionId: string;
+  } {
     const connection = [...this.connections.values()].find(
-      (candidate) => candidate.taskId === taskId
-        && candidate.documentSessionId === documentSessionId,
+      candidate =>
+        candidate.taskId === taskId &&
+        candidate.documentSessionId === documentSessionId,
     );
-    if (!connection) throw new Error('figma_document_not_connected');
+    if (!connection) {
+      throw new Error('figma_document_not_connected');
+    }
     const address = this.server?.address();
-    if (!address || typeof address === 'string') throw new Error('figma_bridge_not_started');
+    if (!address || typeof address === 'string') {
+      throw new Error('figma_bridge_not_started');
+    }
     return {
       baseUrl: `http://127.0.0.1:${address.port}`,
       controlToken: this.controlToken,
@@ -208,7 +237,7 @@ export class FigmaLoopbackBridge {
       void this.handle(request, response).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         const status = message === 'request_body_too_large' ? 413 : 400;
-        reply(response, status, { ok: false, error: message });
+        reply(response, status, {ok: false, error: message});
       });
     });
     this.server = server;
@@ -216,11 +245,13 @@ export class FigmaLoopbackBridge {
       const onError = (error: NodeJS.ErrnoException) => {
         server.off('listening', onListening);
         this.server = null;
-        reject(new Error(
-          error.code === 'EADDRINUSE'
-            ? `figma_bridge_port_in_use:${this.requestedPort}`
-            : `figma_bridge_start_failed:${error.code || error.message}`,
-        ));
+        reject(
+          new Error(
+            error.code === 'EADDRINUSE'
+              ? `figma_bridge_port_in_use:${this.requestedPort}`
+              : `figma_bridge_start_failed:${error.code || error.message}`,
+          ),
+        );
       };
       const onListening = () => {
         server.off('error', onError);
@@ -231,7 +262,9 @@ export class FigmaLoopbackBridge {
       server.listen(this.requestedPort, '127.0.0.1');
     });
     const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('figma_bridge_address_unavailable');
+    if (!address || typeof address === 'string') {
+      throw new Error('figma_bridge_address_unavailable');
+    }
     return {
       host: '127.0.0.1',
       port: address.port,
@@ -245,9 +278,11 @@ export class FigmaLoopbackBridge {
     this.pairing = null;
     this.connections.clear();
     this.commands.clear();
-    if (!server) return;
+    if (!server) {
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
+      server.close(error => (error ? reject(error) : resolve()));
     });
   }
 
@@ -256,10 +291,12 @@ export class FigmaLoopbackBridge {
     documentSessionId: string,
     operation: string,
     args: Record<string, unknown>,
-    options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+    options: {timeoutMs?: number; pollIntervalMs?: number} = {},
   ): Promise<Record<string, unknown>> {
     const address = this.server?.address();
-    if (!address || typeof address === 'string') throw new Error('figma_bridge_not_started');
+    if (!address || typeof address === 'string') {
+      throw new Error('figma_bridge_not_started');
+    }
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const headers = {
       Authorization: `Bearer ${this.controlToken}`,
@@ -268,22 +305,38 @@ export class FigmaLoopbackBridge {
     const queuedResponse = await fetch(`${baseUrl}/requests`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ taskId, documentSessionId, operation, arguments: args,
-        timeoutMs: Math.max(100, options.timeoutMs ?? 15_000) }),
+      body: JSON.stringify({
+        taskId,
+        documentSessionId,
+        operation,
+        arguments: args,
+        timeoutMs: Math.max(100, options.timeoutMs ?? 15_000),
+      }),
     });
-    const queued = await queuedResponse.json() as Record<string, unknown>;
-    if (!queuedResponse.ok) throw new Error(String(queued.error || `figma_request_${queuedResponse.status}`));
+    const queued = (await queuedResponse.json()) as Record<string, unknown>;
+    if (!queuedResponse.ok) {
+      throw new Error(
+        String(queued.error || `figma_request_${queuedResponse.status}`),
+      );
+    }
     const commandId = nonEmpty(queued.commandId);
-    if (!commandId) throw new Error('figma_command_not_queued');
+    if (!commandId) {
+      throw new Error('figma_command_not_queued');
+    }
     const deadline = this.now() + Math.max(100, options.timeoutMs ?? 15_000);
     const pollIntervalMs = Math.max(10, options.pollIntervalMs ?? 50);
     while (this.now() < deadline) {
-      const resultResponse = await fetch(`${baseUrl}/results/${encodeURIComponent(commandId)}`, {
-        headers: { Authorization: `Bearer ${this.controlToken}` },
-      });
-      const result = await resultResponse.json() as Record<string, unknown>;
+      const resultResponse = await fetch(
+        `${baseUrl}/results/${encodeURIComponent(commandId)}`,
+        {
+          headers: {Authorization: `Bearer ${this.controlToken}`},
+        },
+      );
+      const result = (await resultResponse.json()) as Record<string, unknown>;
       if (!resultResponse.ok) {
-        throw new Error(String(result.error || `figma_result_${resultResponse.status}`));
+        throw new Error(
+          String(result.error || `figma_result_${resultResponse.status}`),
+        );
       }
       const status = nonEmpty(result.status);
       if (status === 'completed') {
@@ -296,7 +349,9 @@ export class FigmaLoopbackBridge {
       if (status === 'failed' || status === 'cancelled') {
         throw new Error(nonEmpty(result.error) || `figma_command_${status}`);
       }
-      await new Promise<void>((resolve) => { setTimeout(resolve, pollIntervalMs); });
+      await new Promise<void>(resolve => {
+        setTimeout(resolve, pollIntervalMs);
+      });
     }
     const command = this.commands.get(commandId);
     if (command?.status === 'queued') {
@@ -315,7 +370,10 @@ export class FigmaLoopbackBridge {
     return bearer(request) === this.controlToken;
   }
 
-  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async handle(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     if (request.method === 'OPTIONS') {
       cors(response);
       response.statusCode = 204;
@@ -344,26 +402,33 @@ export class FigmaLoopbackBridge {
       return;
     }
     if (request.method === 'GET' && url.pathname.startsWith('/results/')) {
-      this.getResult(request, response, decodeURIComponent(url.pathname.slice('/results/'.length)));
+      this.getResult(
+        request,
+        response,
+        decodeURIComponent(url.pathname.slice('/results/'.length)),
+      );
       return;
     }
-    reply(response, 404, { ok: false, error: 'figma_bridge_route_not_found' });
+    reply(response, 404, {ok: false, error: 'figma_bridge_route_not_found'});
   }
 
-  private async pair(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async pair(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     const body = await readBody(request);
     const pairing = this.pairing;
     if (
-      !pairing
-      || pairing.expiresAt < this.now()
-      || nonEmpty(body.pairCode) !== pairing.pairCode
+      !pairing ||
+      pairing.expiresAt < this.now() ||
+      nonEmpty(body.pairCode) !== pairing.pairCode
     ) {
-      reply(response, 403, { ok: false, error: 'figma_pairing_rejected' });
+      reply(response, 403, {ok: false, error: 'figma_pairing_rejected'});
       return;
     }
     const documentSessionId = nonEmpty(body.documentSessionId);
     if (!documentSessionId) {
-      reply(response, 400, { ok: false, error: 'document_session_id_required' });
+      reply(response, 400, {ok: false, error: 'document_session_id_required'});
       return;
     }
     const pluginToken = crypto.randomBytes(32).toString('base64url');
@@ -386,19 +451,25 @@ export class FigmaLoopbackBridge {
     });
   }
 
-  private async events(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async events(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     const token = bearer(request);
     const connection = this.plugin(token);
     if (!connection) {
-      reply(response, 401, { ok: false, error: 'figma_plugin_unauthorized' });
+      reply(response, 401, {ok: false, error: 'figma_plugin_unauthorized'});
       return;
     }
     const body = await readBody(request);
     if (
-      nonEmpty(body.taskId) !== connection.taskId
-      || nonEmpty(body.documentSessionId) !== connection.documentSessionId
+      nonEmpty(body.taskId) !== connection.taskId ||
+      nonEmpty(body.documentSessionId) !== connection.documentSessionId
     ) {
-      reply(response, 409, { ok: false, error: 'figma_connection_identity_mismatch' });
+      reply(response, 409, {
+        ok: false,
+        error: 'figma_connection_identity_mismatch',
+      });
       return;
     }
     connection.lastEventAt = this.now();
@@ -406,13 +477,17 @@ export class FigmaLoopbackBridge {
     if (Array.isArray(selectionIds)) {
       connection.selectionIds = selectionIds
         .slice(0, 100)
-        .map((value) => nonEmpty(value))
+        .map(value => nonEmpty(value))
         .filter(Boolean);
     }
     const pageId = nonEmpty(body.pageId);
     const pageName = nonEmpty(body.pageName);
-    if (pageId) connection.pageId = pageId;
-    if (pageName) connection.pageName = pageName;
+    if (pageId) {
+      connection.pageId = pageId;
+    }
+    if (pageName) {
+      connection.pageName = pageName;
+    }
     if (body.status === 'disconnected') {
       this.connections.delete(token);
       for (const command of this.commands.values()) {
@@ -423,18 +498,24 @@ export class FigmaLoopbackBridge {
         }
       }
     }
-    reply(response, 200, { ok: true });
+    reply(response, 200, {ok: true});
   }
 
-  private pullCommands(request: IncomingMessage, response: ServerResponse): void {
+  private pullCommands(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): void {
     const token = bearer(request);
     const connection = this.plugin(token);
     if (!connection) {
-      reply(response, 401, { ok: false, error: 'figma_plugin_unauthorized' });
+      reply(response, 401, {ok: false, error: 'figma_plugin_unauthorized'});
       return;
     }
     for (const command of this.commands.values()) {
-      if (command.completedAt !== undefined && this.now() - command.completedAt > 60_000) {
+      if (
+        command.completedAt !== undefined &&
+        this.now() - command.completedAt > 60_000
+      ) {
         this.commands.delete(command.commandId);
         continue;
       }
@@ -446,7 +527,9 @@ export class FigmaLoopbackBridge {
       }
     }
     const commands = [...this.commands.values()]
-      .filter((command) => command.pluginToken === token && command.status === 'queued')
+      .filter(
+        command => command.pluginToken === token && command.status === 'queued',
+      )
       .slice(0, 20);
     for (const command of commands) {
       command.status = 'dispatched';
@@ -454,7 +537,7 @@ export class FigmaLoopbackBridge {
     }
     reply(response, 200, {
       ok: true,
-      commands: commands.map((command) => ({
+      commands: commands.map(command => ({
         commandId: command.commandId,
         taskId: command.taskId,
         documentSessionId: command.documentSessionId,
@@ -464,24 +547,30 @@ export class FigmaLoopbackBridge {
     });
   }
 
-  private async postResult(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async postResult(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     const token = bearer(request);
     const connection = this.plugin(token);
     if (!connection) {
-      reply(response, 401, { ok: false, error: 'figma_plugin_unauthorized' });
+      reply(response, 401, {ok: false, error: 'figma_plugin_unauthorized'});
       return;
     }
     // Exported node previews are bounded local PNG evidence and can legitimately
     const body = await readBody(request, MAX_RESULT_BODY_BYTES);
     const command = this.commands.get(nonEmpty(body.commandId));
     if (
-      !command
-      || command.pluginToken !== token
-      || command.taskId !== nonEmpty(body.taskId)
-      || command.documentSessionId !== nonEmpty(body.documentSessionId)
-      || command.status !== 'dispatched'
+      !command ||
+      command.pluginToken !== token ||
+      command.taskId !== nonEmpty(body.taskId) ||
+      command.documentSessionId !== nonEmpty(body.documentSessionId) ||
+      command.status !== 'dispatched'
     ) {
-      reply(response, 409, { ok: false, error: 'figma_result_identity_mismatch' });
+      reply(response, 409, {
+        ok: false,
+        error: 'figma_result_identity_mismatch',
+      });
       return;
     }
     command.ok = body.ok === true;
@@ -490,12 +579,15 @@ export class FigmaLoopbackBridge {
     command.arguments = {};
     command.error = nonEmpty(body.error) || undefined;
     command.completedAt = this.now();
-    reply(response, 200, { ok: true });
+    reply(response, 200, {ok: true});
   }
 
-  private async enqueue(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async enqueue(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     if (!this.controlAuthorized(request)) {
-      reply(response, 401, { ok: false, error: 'figma_control_unauthorized' });
+      reply(response, 401, {ok: false, error: 'figma_control_unauthorized'});
       return;
     }
     const body = await readBody(request);
@@ -503,20 +595,24 @@ export class FigmaLoopbackBridge {
     const documentSessionId = nonEmpty(body.documentSessionId);
     const operation = nonEmpty(body.operation);
     if (!FIGMA_OPERATIONS.has(operation)) {
-      reply(response, 400, { ok: false, error: 'figma_operation_not_allowed' });
+      reply(response, 400, {ok: false, error: 'figma_operation_not_allowed'});
       return;
     }
     const connection = [...this.connections.values()].find(
-      (candidate) => candidate.taskId === taskId
-        && candidate.documentSessionId === documentSessionId,
+      candidate =>
+        candidate.taskId === taskId &&
+        candidate.documentSessionId === documentSessionId,
     );
     if (!connection) {
-      reply(response, 409, { ok: false, error: 'figma_document_not_connected' });
+      reply(response, 409, {ok: false, error: 'figma_document_not_connected'});
       return;
     }
     const args = body.arguments;
     if (!args || typeof args !== 'object' || Array.isArray(args)) {
-      reply(response, 400, { ok: false, error: 'figma_arguments_must_be_object' });
+      reply(response, 400, {
+        ok: false,
+        error: 'figma_arguments_must_be_object',
+      });
       return;
     }
     const commandId = crypto.randomUUID();
@@ -531,7 +627,7 @@ export class FigmaLoopbackBridge {
       createdAt: this.now(),
       expiresAt: this.now() + Math.max(100, Number(body.timeoutMs) || 15_000),
     });
-    reply(response, 202, { ok: true, commandId, status: 'queued' });
+    reply(response, 202, {ok: true, commandId, status: 'queued'});
   }
 
   private getResult(
@@ -540,12 +636,12 @@ export class FigmaLoopbackBridge {
     commandId: string,
   ): void {
     if (!this.controlAuthorized(request)) {
-      reply(response, 401, { ok: false, error: 'figma_control_unauthorized' });
+      reply(response, 401, {ok: false, error: 'figma_control_unauthorized'});
       return;
     }
     const command = this.commands.get(commandId);
     if (!command) {
-      reply(response, 404, { ok: false, error: 'figma_command_not_found' });
+      reply(response, 404, {ok: false, error: 'figma_command_not_found'});
       return;
     }
     reply(response, 200, {
@@ -564,4 +660,4 @@ export class FigmaLoopbackBridge {
   }
 }
 
-export { FIGMA_OPERATIONS };
+export {FIGMA_OPERATIONS};

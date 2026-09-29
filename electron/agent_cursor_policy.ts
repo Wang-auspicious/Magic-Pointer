@@ -1,7 +1,9 @@
 'use strict';
 
-
-export interface AgentCursorPoint { x: number; y: number }
+export interface AgentCursorPoint {
+  x: number;
+  y: number;
+}
 
 export interface AgentDisplay {
   displayId: string;
@@ -19,7 +21,6 @@ export interface AgentSurfaceBounds {
   width: number;
   height: number;
 }
-
 
 export const OFFSET_X = 35;
 export const OFFSET_Y = 25;
@@ -52,30 +53,47 @@ export const SAMPLE_EPSILON_PX = 0.5;
 export const TASKBAR_SHAVE_PX = 2;
 export const MIN_SURFACE_PX = 1;
 
-
 function asFiniteNumber(value: unknown): number | null {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
 export function parseAgentDisplays(raw: unknown): AgentDisplay[] {
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) {
+    return [];
+  }
   const displays: AgentDisplay[] = [];
   raw.forEach((entry, index) => {
-    if (!entry || typeof entry !== 'object') return;
-    const bounds = (entry as { bounds?: unknown }).bounds;
-    const source = entry as { id?: unknown; scaleFactor?: unknown };
-    if (!bounds || typeof bounds !== 'object') return;
-    const rect = bounds as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const bounds = (entry as {bounds?: unknown}).bounds;
+    const source = entry as {id?: unknown; scaleFactor?: unknown};
+    if (!bounds || typeof bounds !== 'object') {
+      return;
+    }
+    const rect = bounds as {
+      x?: unknown;
+      y?: unknown;
+      width?: unknown;
+      height?: unknown;
+    };
     const x = asFiniteNumber(rect.x);
     const y = asFiniteNumber(rect.y);
     const width = asFiniteNumber(rect.width);
     const height = asFiniteNumber(rect.height);
-    if (x === null || y === null || width === null || height === null) return;
-    if (width <= 0 || height <= 0) return;
+    if (x === null || y === null || width === null || height === null) {
+      return;
+    }
+    if (width <= 0 || height <= 0) {
+      return;
+    }
     const rawScale = asFiniteNumber(source.scaleFactor);
     displays.push({
-      displayId: source.id === undefined || source.id === null ? `display-${index}` : String(source.id),
+      displayId:
+        source.id === undefined || source.id === null
+          ? `display-${index}`
+          : String(source.id),
       x: Math.round(x),
       y: Math.round(y),
       width: Math.round(width),
@@ -104,13 +122,19 @@ export function agentDisplayForPoint(
   displays: AgentDisplay[],
   point: AgentCursorPoint,
 ): AgentDisplay | null {
-  if (!displays.length || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  if (
+    !displays.length ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y)
+  ) {
+    return null;
+  }
   for (const display of displays) {
     if (
-      point.x >= display.x
-      && point.x < display.x + display.width
-      && point.y >= display.y
-      && point.y < display.y + display.height
+      point.x >= display.x &&
+      point.x < display.x + display.width &&
+      point.y >= display.y &&
+      point.y < display.y + display.height
     ) {
       return display;
     }
@@ -122,9 +146,11 @@ export function agentSurfaceForPoint(
   displays: AgentDisplay[],
   point: AgentCursorPoint,
   shavePx: number = TASKBAR_SHAVE_PX,
-): { surface: AgentSurfaceBounds; localX: number; localY: number } | null {
+): {surface: AgentSurfaceBounds; localX: number; localY: number} | null {
   const display = agentDisplayForPoint(displays, point);
-  if (!display) return null;
+  if (!display) {
+    return null;
+  }
   const surface = agentSurfaceBounds(display, shavePx);
   return {
     surface,
@@ -133,19 +159,25 @@ export function agentSurfaceForPoint(
   };
 }
 
-
 export class CursorSampleGate {
   private lastX = Number.NaN;
   private lastY = Number.NaN;
   private queued = false;
 
-  accept(point: AgentCursorPoint, epsilonPx: number = SAMPLE_EPSILON_PX): boolean {
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
-    if (this.queued) return false;
+  accept(
+    point: AgentCursorPoint,
+    epsilonPx: number = SAMPLE_EPSILON_PX,
+  ): boolean {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      return false;
+    }
+    if (this.queued) {
+      return false;
+    }
     if (
-      Number.isFinite(this.lastX)
-      && Math.abs(point.x - this.lastX) <= epsilonPx
-      && Math.abs(point.y - this.lastY) <= epsilonPx
+      Number.isFinite(this.lastX) &&
+      Math.abs(point.x - this.lastX) <= epsilonPx &&
+      Math.abs(point.y - this.lastY) <= epsilonPx
     ) {
       return false;
     }
@@ -169,7 +201,6 @@ export class CursorSampleGate {
     return this.queued;
   }
 }
-
 
 export type AgentCursorCommandKind =
   | 'approach'
@@ -207,20 +238,41 @@ function intOr(value: unknown, fallback: number): number {
 }
 
 function clamp(value: number, low: number, high: number): number {
-  if (value < low) return low;
-  if (value > high) return high;
+  if (value < low) {
+    return low;
+  }
+  if (value > high) {
+    return high;
+  }
   return value;
 }
 
-export function normalizeAgentCursorCommand(raw: unknown): AgentCursorCommand | null {
-  if (!raw || typeof raw !== 'object') return null;
+export function normalizeAgentCursorCommand(
+  raw: unknown,
+): AgentCursorCommand | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
   const source = raw as Record<string, unknown>;
   const kind = stringOr(source.kind, '') as AgentCursorCommandKind;
-  const known: AgentCursorCommandKind[] = ['approach', 'mark', 'move', 'click', 'hold', 'release', 'clear', 'idle'];
-  if (!known.includes(kind)) return null;
+  const known: AgentCursorCommandKind[] = [
+    'approach',
+    'mark',
+    'move',
+    'click',
+    'hold',
+    'release',
+    'clear',
+    'idle',
+  ];
+  if (!known.includes(kind)) {
+    return null;
+  }
   const x = asFiniteNumber(source.x);
   const y = asFiniteNumber(source.y);
-  if (kind !== 'clear' && (x === null || y === null)) return null;
+  if (kind !== 'clear' && (x === null || y === null)) {
+    return null;
+  }
   const ttlRaw = asFiniteNumber(source.ttlMs);
   return {
     kind,
@@ -229,8 +281,14 @@ export function normalizeAgentCursorCommand(raw: unknown): AgentCursorCommand | 
     y: y === null ? 0 : y,
     leadMs: Math.max(0, intOr(source.leadMs, APPROACH_LEAD_MS)),
     accent: stringOr(source.accent, ACCENT_BLUE),
-    caption: typeof source.caption === 'string' && source.caption.trim() ? source.caption.trim() : null,
-    ttlMs: ttlRaw === null ? DEFAULT_TTL_MS : Math.max(TTL_MIN_MS, Math.round(ttlRaw)),
+    caption:
+      typeof source.caption === 'string' && source.caption.trim()
+        ? source.caption.trim()
+        : null,
+    ttlMs:
+      ttlRaw === null
+        ? DEFAULT_TTL_MS
+        : Math.max(TTL_MIN_MS, Math.round(ttlRaw)),
     glowMs: clamp(intOr(source.glowMs, GLOW_MS), GLOW_MIN_MS, GLOW_MAX_MS),
     held: Boolean(source.held),
     button: stringOr(source.button, 'left') === 'right' ? 'right' : 'left',
@@ -239,12 +297,21 @@ export function normalizeAgentCursorCommand(raw: unknown): AgentCursorCommand | 
 }
 
 export function flightDurationMs(distance: number, requestedMs = 0): number {
-  if (Number.isFinite(requestedMs) && requestedMs > 0) return Math.round(requestedMs);
-  if (!Number.isFinite(distance) || distance <= 0) return 0;
-  return Math.round(clamp(distance * FLIGHT_MS_PER_PIXEL, FLIGHT_MIN_MS, FLIGHT_MAX_MS));
+  if (Number.isFinite(requestedMs) && requestedMs > 0) {
+    return Math.round(requestedMs);
+  }
+  if (!Number.isFinite(distance) || distance <= 0) {
+    return 0;
+  }
+  return Math.round(
+    clamp(distance * FLIGHT_MS_PER_PIXEL, FLIGHT_MIN_MS, FLIGHT_MAX_MS),
+  );
 }
 
-export function approachLeadMs(distance: number, floorMs: number = APPROACH_LEAD_MS): number {
+export function approachLeadMs(
+  distance: number,
+  floorMs: number = APPROACH_LEAD_MS,
+): number {
   return Math.max(Math.round(floorMs), flightDurationMs(distance));
 }
 

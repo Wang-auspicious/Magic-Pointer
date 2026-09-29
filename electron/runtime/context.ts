@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { resolve, relative, isAbsolute } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { ToolRegistry, ActionFailure } from './tools';
+import {randomUUID} from 'node:crypto';
+import {resolve, relative, isAbsolute} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
+import {ToolRegistry, ActionFailure} from './tools';
 
 export type Json = Record<string, unknown>;
 export interface ContextEvent {
@@ -103,13 +103,17 @@ export interface AccessRequest {
 }
 
 export function record(value: unknown): Json {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : {};
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Json)
+    : {};
 }
 export function array<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 export function requiredText(value: unknown, name: string): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`${name} is required`);
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${name} is required`);
+  }
   return value.trim();
 }
 export function insidePath(path: string, root: string): boolean {
@@ -118,20 +122,36 @@ export function insidePath(path: string, root: string): boolean {
 }
 export function sourceRef(value: unknown): SourceRef {
   const data = record(value);
-  for (const name of ['sourceId', 'taskId', 'title']) requiredText(data[name], name);
-  if (!['file', 'document', 'chat', 'web', 'figma', 'capture'].includes(String(data.kind)))
+  for (const name of ['sourceId', 'taskId', 'title']) {
+    requiredText(data[name], name);
+  }
+  if (
+    !['file', 'document', 'chat', 'web', 'figma', 'capture'].includes(
+      String(data.kind),
+    )
+  ) {
     throw new Error('Unsupported source kind');
-  if (!['user-attached', 'user-pointed', 'task-discovered'].includes(String(data.origin)))
+  }
+  if (
+    !['user-attached', 'user-pointed', 'task-discovered'].includes(
+      String(data.origin),
+    )
+  ) {
     throw new Error('Unsupported source origin');
+  }
   if (
     !Array.isArray(data.capabilities) ||
-    data.capabilities.some((x) => !['read', 'search', 'follow', 'patch', 'move_file'].includes(String(x)))
-  )
+    data.capabilities.some(
+      x =>
+        !['read', 'search', 'follow', 'patch', 'move_file'].includes(String(x)),
+    )
+  ) {
     throw new Error('Invalid source capabilities');
+  }
   return structuredClone(data) as unknown as SourceRef;
 }
 export function contextUpdates(events: readonly ContextEvent[]): Json[] {
-  return events.flatMap((e) =>
+  return events.flatMap(e =>
     e.type === 'context/updated'
       ? [e.data]
       : e.type === 'inbox/consumed' && e.data.contextUpdate
@@ -141,68 +161,102 @@ export function contextUpdates(events: readonly ContextEvent[]): Json[] {
 }
 export function taskSources(events: readonly ContextEvent[]): SourceRef[] {
   const sources = new Map<string, SourceRef>();
-  for (const update of contextUpdates(events))
+  for (const update of contextUpdates(events)) {
     for (const raw of array(update.sources)) {
       const source = sourceRef(raw);
-      if (source.taskId !== update.taskId) throw new Error('Source task identity mismatch');
+      if (source.taskId !== update.taskId) {
+        throw new Error('Source task identity mismatch');
+      }
       sources.set(source.sourceId, source);
     }
+  }
   return [...sources.values()];
 }
-function applyReference(map: Map<string, ReferenceBinding>, update: ReferenceUpdate): void {
-  const value = structuredClone(update.binding),
-    previous = map.get(value.referenceId);
-  if (!['target', 'source', 'reference', 'exclude', 'unresolved'].includes(value.role))
+function applyReference(
+  map: Map<string, ReferenceBinding>,
+  update: ReferenceUpdate,
+): void {
+  const value = structuredClone(update.binding);
+  const previous = map.get(value.referenceId);
+  if (
+    !['target', 'source', 'reference', 'exclude', 'unresolved'].includes(
+      value.role,
+    )
+  ) {
     throw new Error('Invalid reference role');
+  }
   if (update.operation === 'add') {
     if (
       previous ||
-      [...map.values()].some((item) => item.label === value.label || item.ordinal === value.ordinal)
-    )
+      [...map.values()].some(
+        item => item.label === value.label || item.ordinal === value.ordinal,
+      )
+    ) {
       throw new Error('Reference identity or ordinal already exists');
-    if (!value.active) throw new Error('Added reference must be active');
+    }
+    if (!value.active) {
+      throw new Error('Added reference must be active');
+    }
   } else {
-    if (!previous || previous.label !== value.label || previous.ordinal !== value.ordinal)
+    if (
+      !previous ||
+      previous.label !== value.label ||
+      previous.ordinal !== value.ordinal
+    ) {
       throw new Error('Reference correction cannot renumber');
+    }
     if (update.operation === 'remove') {
-      if (previous.sourceId !== value.sourceId || value.active)
+      if (previous.sourceId !== value.sourceId || value.active) {
         throw new Error('Invalid reference removal');
-      map.set(value.referenceId, { ...previous, active: false });
+      }
+      map.set(value.referenceId, {...previous, active: false});
       return;
     }
-    if (update.operation !== 'correct' || !value.active)
+    if (update.operation !== 'correct' || !value.active) {
       throw new Error('Invalid reference correction');
+    }
     value.frameLeaseId ||= previous.frameLeaseId;
   }
   map.set(value.referenceId, value);
 }
-export function taskReferences(events: readonly ContextEvent[]): ReferenceBinding[] {
+export function taskReferences(
+  events: readonly ContextEvent[],
+): ReferenceBinding[] {
   const references = new Map<string, ReferenceBinding>();
-  for (const update of contextUpdates(events))
-    for (const raw of array<ReferenceUpdate>(update.referenceUpdates))
+  for (const update of contextUpdates(events)) {
+    for (const raw of array<ReferenceUpdate>(update.referenceUpdates)) {
       applyReference(references, raw);
+    }
+  }
   return [...references.values()];
 }
 export function referenceRevision(events: readonly ContextEvent[]): number {
   let revision = 0;
   for (const update of contextUpdates(events)) {
     const next = Number(update.referenceRevision);
-    if (!Number.isInteger(next) || next < revision)
+    if (!Number.isInteger(next) || next < revision) {
       throw new Error('Reference revision must be monotonic');
+    }
     revision = next;
   }
   return revision;
 }
-export function resolveSource(events: readonly ContextEvent[], id: string): SourceRef {
+export function resolveSource(
+  events: readonly ContextEvent[],
+  id: string,
+): SourceRef {
   const references = taskReferences(events).filter(
-    (item) => item.active && (item.referenceId === id || item.label === id),
+    item => item.active && (item.referenceId === id || item.label === id),
   );
-  if (new Set(references.map((item) => item.sourceId)).size > 1)
+  if (new Set(references.map(item => item.sourceId)).size > 1) {
     throw new Error(`Ambiguous source reference: ${id}`);
+  }
   const source = taskSources(events).find(
-    (item) => item.sourceId === id || item.sourceId === references[0]?.sourceId,
+    item => item.sourceId === id || item.sourceId === references[0]?.sourceId,
   );
-  if (!source) throw new Error(`Unknown task source: ${id}`);
+  if (!source) {
+    throw new Error(`Unknown task source: ${id}`);
+  }
   return source;
 }
 export function validateContextUpdate(
@@ -214,23 +268,37 @@ export function validateContextUpdate(
     data.taskId !== sessionId ||
     !Array.isArray(data.sources) ||
     !Array.isArray(data.referenceUpdates)
-  )
+  ) {
     throw new Error('Invalid task context update');
-  const sources = new Set(taskSources(events).map((source) => source.sourceId));
+  }
+  const sources = new Set(taskSources(events).map(source => source.sourceId));
   for (const raw of data.sources) {
     const source = sourceRef(raw);
-    if (source.taskId !== sessionId) throw new Error('Source belongs to another task');
+    if (source.taskId !== sessionId) {
+      throw new Error('Source belongs to another task');
+    }
     sources.add(source.sourceId);
   }
-  if (data.referenceRevision !== referenceRevision(events) + (data.referenceUpdates.length ? 1 : 0))
+  if (
+    data.referenceRevision !==
+    referenceRevision(events) + (data.referenceUpdates.length ? 1 : 0)
+  ) {
     throw new Error('Reference revision conflict');
-  const references = new Map(taskReferences(events).map((item) => [item.referenceId, item]));
+  }
+  const references = new Map(
+    taskReferences(events).map(item => [item.referenceId, item]),
+  );
   for (const update of data.referenceUpdates as ReferenceUpdate[]) {
-    if (!sources.has(update.binding.sourceId)) throw new Error('Reference source not registered');
+    if (!sources.has(update.binding.sourceId)) {
+      throw new Error('Reference source not registered');
+    }
     applyReference(references, update);
   }
-  for (const grant of array<ScopeGrant>(data.scopeGrants))
-    if (grant.taskId !== sessionId || !grant.actions.length) throw new Error('Invalid scope grant');
+  for (const grant of array<ScopeGrant>(data.scopeGrants)) {
+    if (grant.taskId !== sessionId || !grant.actions.length) {
+      throw new Error('Invalid scope grant');
+    }
+  }
 }
 export function updateContext(
   session: ContextSessionLike,
@@ -243,8 +311,9 @@ export function updateContext(
   expectedRevision?: number,
 ): unknown {
   const revision = referenceRevision(session.events);
-  if (expectedRevision !== undefined && revision !== expectedRevision)
+  if (expectedRevision !== undefined && revision !== expectedRevision) {
     throw new Error('Reference revision conflict');
+  }
   const data: Json = {
     taskId: session.id,
     sources: [],
@@ -255,55 +324,91 @@ export function updateContext(
   validateContextUpdate(data, session.id, session.events);
   return session.append('context/updated', data);
 }
-export function registerSource(session: ContextSessionLike, source: SourceRef): unknown {
-  return updateContext(session, { sources: [source] });
+export function registerSource(
+  session: ContextSessionLike,
+  source: SourceRef,
+): unknown {
+  return updateContext(session, {sources: [source]});
 }
-export function scopeFromEvents(events: readonly ContextEvent[], taskId: string): TaskSourceScope {
+export function scopeFromEvents(
+  events: readonly ContextEvent[],
+  taskId: string,
+): TaskSourceScope {
   const grants = new Map<string, ScopeGrant>();
   for (const update of contextUpdates(events)) {
     for (const grant of array<ScopeGrant>(update.scopeGrants)) {
-      if (grant.taskId !== taskId) throw new Error('Grant belongs to another task');
+      if (grant.taskId !== taskId) {
+        throw new Error('Grant belongs to another task');
+      }
       grants.set(grant.grantId, grant);
     }
-    for (const id of array<string>(update.scopeRevocations)) grants.delete(id);
+    for (const id of array<string>(update.scopeRevocations)) {
+      grants.delete(id);
+    }
   }
-  return { taskId, sources: taskSources(events), grants: [...grants.values()] };
+  return {taskId, sources: taskSources(events), grants: [...grants.values()]};
 }
 export function authorizeAccess(
   scope: TaskSourceScope,
   request: AccessRequest,
   now = Date.now(),
-): { allowed: boolean; reason: string } {
+): {allowed: boolean; reason: string} {
   const active = scope.grants.filter(
-    (grant) =>
+    grant =>
       grant.actions.includes(request.action) &&
       (grant.expiresAtMs === null || now <= grant.expiresAtMs),
   );
-  const sources = new Map(scope.sources.map((source) => [source.sourceId, source]));
+  const sources = new Map(
+    scope.sources.map(source => [source.sourceId, source]),
+  );
   for (const id of request.sourceIds ?? []) {
-    let source = sources.get(id),
-      allowed = !!source && active.some((grant) => grant.sourceIds.includes(id));
+    let source = sources.get(id);
+    let allowed =
+      !!source && active.some(grant => grant.sourceIds.includes(id));
     const seen = new Set<string>();
-    while (!allowed && request.action === 'read' && source && !seen.has(source.sourceId)) {
+    while (
+      !allowed &&
+      request.action === 'read' &&
+      source &&
+      !seen.has(source.sourceId)
+    ) {
       seen.add(source.sourceId);
-      const sourcePath = String(source.identity.absolutePath ?? source.identity.path ?? '');
-      allowed = ['user-attached', 'user-pointed'].includes(source.origin) ||
-        (['file', 'document'].includes(source.kind) && !!sourcePath &&
-          active.some((grant) => grant.folderRoots.some((root) => insidePath(sourcePath, root))));
+      const sourcePath = String(
+        source.identity.absolutePath ?? source.identity.path ?? '',
+      );
+      allowed =
+        ['user-attached', 'user-pointed'].includes(source.origin) ||
+        (['file', 'document'].includes(source.kind) &&
+          !!sourcePath &&
+          active.some(grant =>
+            grant.folderRoots.some(root => insidePath(sourcePath, root)),
+          ));
       source = sources.get(source.parentSourceId ?? '');
     }
-    if (!allowed) return { allowed: false, reason: `source_not_granted:${id}` };
+    if (!allowed) {
+      return {allowed: false, reason: `source_not_granted:${id}`};
+    }
   }
-  for (const path of request.paths ?? [])
-    if (!active.some((grant) => grant.folderRoots.some((root) => insidePath(path, root))))
-      return { allowed: false, reason: `path_not_granted:${path}` };
-  for (const id of request.windowIds ?? [])
-    if (!active.some((grant) => grant.windowIds.includes(id)))
-      return { allowed: false, reason: `window_not_granted:${id}` };
-  for (const recipient of request.recipients ?? [])
-    if (!active.some((grant) => grant.recipients.includes(recipient)))
-      return { allowed: false, reason: `recipient_not_granted:${recipient}` };
-  return { allowed: true, reason: '' };
+  for (const path of request.paths ?? []) {
+    if (
+      !active.some(grant =>
+        grant.folderRoots.some(root => insidePath(path, root)),
+      )
+    ) {
+      return {allowed: false, reason: `path_not_granted:${path}`};
+    }
+  }
+  for (const id of request.windowIds ?? []) {
+    if (!active.some(grant => grant.windowIds.includes(id))) {
+      return {allowed: false, reason: `window_not_granted:${id}`};
+    }
+  }
+  for (const recipient of request.recipients ?? []) {
+    if (!active.some(grant => grant.recipients.includes(recipient))) {
+      return {allowed: false, reason: `recipient_not_granted:${recipient}`};
+    }
+  }
+  return {allowed: true, reason: ''};
 }
 export async function ensureFolderReadScope(
   session: ContextSessionLike,
@@ -320,29 +425,41 @@ export async function ensureFolderReadScope(
     expiresAtMs: null,
   };
   if (
-    !scopeFromEvents(session.events, session.id).grants.some((item) =>
+    !scopeFromEvents(session.events, session.id).grants.some(item =>
       isDeepStrictEqual(item, grant),
     )
-  )
-    await updateContext(session, { scopeGrants: [grant] });
+  ) {
+    await updateContext(session, {scopeGrants: [grant]});
+  }
 }
 export class SourceReaderRegistry {
-  private entries: { match(source: SourceRef): boolean; reader: SourceReader }[] = [];
+  private entries: Array<{
+    match(source: SourceRef): boolean;
+    reader: SourceReader;
+  }> = [];
   register(
     match: string | ((source: SourceRef) => boolean),
     reader: SourceReader,
     first = false,
   ): void {
     const entry = {
-      match: typeof match === 'string' ? (source: SourceRef) => source.kind === match : match,
+      match:
+        typeof match === 'string'
+          ? (source: SourceRef) => source.kind === match
+          : match,
       reader,
     };
-    if (first) this.entries.unshift(entry);
-    else this.entries.push(entry);
+    if (first) {
+      this.entries.unshift(entry);
+    } else {
+      this.entries.push(entry);
+    }
   }
   get(source: SourceRef): SourceReader {
-    const entry = this.entries.find((item) => item.match(source));
-    if (!entry) throw new Error(`No reader for ${source.kind}`);
+    const entry = this.entries.find(item => item.match(source));
+    if (!entry) {
+      throw new Error(`No reader for ${source.kind}`);
+    }
     return entry.reader;
   }
 }
@@ -370,18 +487,41 @@ export function emptyRead(
 }
 export class FrozenSelectionReader implements SourceReader {
   constructor(private fallback?: SourceReader) {}
-  private async readSaved(source: SourceRef, options: ReadOptions): Promise<ReadResult> {
-    if (!this.fallback) return emptyRead(source, 'frozen.selection', 'saved-document-unavailable');
-    const absolutePath = String(source.identity.absolutePath ?? source.identity.path ?? '');
-    if (!absolutePath) return emptyRead(source, 'frozen.selection', 'saved-document-path-unavailable');
-    const diskRevision = { authority: 'disk' };
-    const saved = await this.fallback.read({
-      ...source,
-      identity: { ...source.identity, hwnd: undefined },
-      revision: diskRevision,
-    }, options);
+  private async readSaved(
+    source: SourceRef,
+    options: ReadOptions,
+  ): Promise<ReadResult> {
+    if (!this.fallback) {
+      return emptyRead(
+        source,
+        'frozen.selection',
+        'saved-document-unavailable',
+      );
+    }
+    const absolutePath = String(
+      source.identity.absolutePath ?? source.identity.path ?? '',
+    );
+    if (!absolutePath) {
+      return emptyRead(
+        source,
+        'frozen.selection',
+        'saved-document-path-unavailable',
+      );
+    }
+    const diskRevision = {authority: 'disk'};
+    const saved = await this.fallback.read(
+      {
+        ...source,
+        identity: {...source.identity, hwnd: undefined},
+        revision: diskRevision,
+      },
+      options,
+    );
     const historicalSelectionTextUnavailable = !String(
-      source.identity.text ?? source.identity.content ?? record(source.identity.availableContent).text ?? '',
+      source.identity.text ??
+        source.identity.content ??
+        record(source.identity.availableContent).text ??
+        '',
     ).trim();
     return {
       ...saved,
@@ -392,10 +532,14 @@ export class FrozenSelectionReader implements SourceReader {
             missingReason: [
               saved.coverage.missingReason,
               'historical-selection-text-unavailable; saved-document-may-differ-from-unsaved-application',
-            ].filter(Boolean).join(';'),
+            ]
+              .filter(Boolean)
+              .join(';'),
           }
         : saved.coverage,
-      evidenceStatus: historicalSelectionTextUnavailable ? 'degraded' : saved.evidenceStatus,
+      evidenceStatus: historicalSelectionTextUnavailable
+        ? 'degraded'
+        : saved.evidenceStatus,
       structure: {
         ...saved.structure,
         readFrom: 'disk',
@@ -406,28 +550,48 @@ export class FrozenSelectionReader implements SourceReader {
       },
     };
   }
-  async read(source: SourceRef, options: ReadOptions = {}): Promise<ReadResult> {
-    const identity = source.identity,
-      content = String(
-        identity.text ?? identity.content ?? record(identity.availableContent).text ?? '',
-      );
+  async read(
+    source: SourceRef,
+    options: ReadOptions = {},
+  ): Promise<ReadResult> {
+    const identity = source.identity;
+    const content = String(
+      identity.text ??
+        identity.content ??
+        record(identity.availableContent).text ??
+        '',
+    );
     const frozenLocator = array<FragmentLocator>(identity.locators)[0] ?? {
       kind: 'visual-region',
-      value: { frameLeaseId: identity.frameLeaseId, bbox: identity.bbox },
+      value: {frameLeaseId: identity.frameLeaseId, bbox: identity.bbox},
     };
     const locator = options.locator ?? frozenLocator;
     const hasSavedDocument =
-      !!this.fallback && !!String(identity.absolutePath ?? identity.path ?? '').trim();
-    if (options.cursor || (options.locator && !isDeepStrictEqual(options.locator, frozenLocator))) {
-      if (this.fallback)
+      !!this.fallback &&
+      !!String(identity.absolutePath ?? identity.path ?? '').trim();
+    if (
+      options.cursor ||
+      (options.locator && !isDeepStrictEqual(options.locator, frozenLocator))
+    ) {
+      if (this.fallback) {
         return this.readSaved(source, {
           ...options,
-          cursor: options.cursor === 'frozen-selection:remainder' ? undefined : options.cursor,
+          cursor:
+            options.cursor === 'frozen-selection:remainder'
+              ? undefined
+              : options.cursor,
         });
-      return emptyRead(source, 'frozen.selection', 'requested-content-not-in-frozen-selection');
+      }
+      return emptyRead(
+        source,
+        'frozen.selection',
+        'requested-content-not-in-frozen-selection',
+      );
     }
     if (!content.trim()) {
-      if (hasSavedDocument) return this.readSaved(source, options);
+      if (hasSavedDocument) {
+        return this.readSaved(source, options);
+      }
       return emptyRead(
         source,
         'frozen.selection',
@@ -435,7 +599,8 @@ export class FrozenSelectionReader implements SourceReader {
       );
     }
     const fragments =
-      options.query && !content.toLowerCase().includes(options.query.toLowerCase())
+      options.query &&
+      !content.toLowerCase().includes(options.query.toLowerCase())
         ? []
         : [
             {
@@ -445,13 +610,13 @@ export class FrozenSelectionReader implements SourceReader {
               metadata: {
                 historical: true,
                 capturedAt: identity.capturedAt,
-                 frameLeaseId: identity.frameLeaseId,
-                 sourceRevision: source.revision,
-                 ...(Array.isArray(identity.officeShapes)
-                   ? { officeShapes: identity.officeShapes }
-                   : {}),
+                frameLeaseId: identity.frameLeaseId,
+                sourceRevision: source.revision,
+                ...(Array.isArray(identity.officeShapes)
+                  ? {officeShapes: identity.officeShapes}
+                  : {}),
               },
-              citations: [{ sourceId: source.sourceId, locator }],
+              citations: [{sourceId: source.sourceId, locator}],
             },
           ];
     const result: ReadResult = {
@@ -459,7 +624,7 @@ export class FrozenSelectionReader implements SourceReader {
       fragments,
       coverage: {
         extent: 'selection',
-        readRanges: fragments.map((f) => f.locator),
+        readRanges: fragments.map(f => f.locator),
         totalUnits: hasSavedDocument ? null : 1,
         complete: !hasSavedDocument,
         nextCursor: hasSavedDocument ? 'frozen-selection:remainder' : null,
@@ -472,7 +637,7 @@ export class FrozenSelectionReader implements SourceReader {
       latencyMs: 0,
     };
     if (options.query && hasSavedDocument) {
-      if (fragments.length >= (options.limit ?? 20))
+      if (fragments.length >= (options.limit ?? 20)) {
         return {
           ...result,
           coverage: {
@@ -482,6 +647,7 @@ export class FrozenSelectionReader implements SourceReader {
             missingReason: 'disk-search-pending',
           },
         };
+      }
       const disk = await this.readSaved(source, {
         ...options,
         limit: Math.max(1, (options.limit ?? 20) - fragments.length),
@@ -489,8 +655,10 @@ export class FrozenSelectionReader implements SourceReader {
       const combined = [
         ...fragments,
         ...disk.fragments.filter(
-          (fragment) =>
-            !fragments.some((item) => isDeepStrictEqual(item.locator, fragment.locator)),
+          fragment =>
+            !fragments.some(item =>
+              isDeepStrictEqual(item.locator, fragment.locator),
+            ),
         ),
       ];
       return {
@@ -498,7 +666,7 @@ export class FrozenSelectionReader implements SourceReader {
         fragments: combined,
         coverage: {
           ...disk.coverage,
-          readRanges: combined.map((fragment) => fragment.locator),
+          readRanges: combined.map(fragment => fragment.locator),
           missingReason: 'historical-selection-overlays-disk-revision',
         },
         usedBackend: `frozen.selection+${disk.usedBackend}`,
@@ -516,8 +684,8 @@ export function registerContextTools(
   readers = new SourceReaderRegistry(),
 ): void {
   const observed = new Map<string, ReadFragment>();
-  const string = { type: 'string' },
-    object = { type: 'object', additionalProperties: true };
+  const string = {type: 'string'};
+  const object = {type: 'object', additionalProperties: true};
   const schema = (properties: Json, required: string[] = []) => ({
     type: 'object',
     properties,
@@ -525,23 +693,52 @@ export function registerContextTools(
   });
   const allowed = (id: string) => {
     const source = resolveSource(session.events, id);
-    const decision = authorizeAccess(scopeFromEvents(session.events, session.id), {
-      action: 'read',
-      sourceIds: [source.sourceId],
-    });
-    if (!decision.allowed) throw new ActionFailure('permission_denied', decision.reason);
+    const decision = authorizeAccess(
+      scopeFromEvents(session.events, session.id),
+      {
+        action: 'read',
+        sourceIds: [source.sourceId],
+      },
+    );
+    if (!decision.allowed) {
+      throw new ActionFailure('permission_denied', decision.reason);
+    }
     return source;
   };
   const chatKeys = (sources: SourceRef[]) => {
     const chats = sources.filter(source => source.kind === 'chat');
-    if (!chats.length) return [];
-    const windowId = (source: SourceRef) => Number(record(source.identity.conversationIdentity).windowHwnd ?? record(source.identity.window).hwnd);
-    const unbound = taskSources(session.events).some(source => source.kind === 'chat' && !(windowId(source) > 0));
-    return [...new Set([...(unbound ? ['chat:unbound'] : []), ...chats.flatMap(source => {
-      const identity = record(source.identity.conversationIdentity);
-      const conversation = String(identity.nativeConversationId ?? identity.conversationKey ?? '');
-      return [...(windowId(source) > 0 ? [`chat:window:${windowId(source)}`] : []), ...(conversation ? [`chat:conversation:${identity.adapterId ?? ''}:${conversation}`] : [])];
-    })])];
+    if (!chats.length) {
+      return [];
+    }
+    const windowId = (source: SourceRef) =>
+      Number(
+        record(source.identity.conversationIdentity).windowHwnd ??
+          record(source.identity.window).hwnd,
+      );
+    const unbound = taskSources(session.events).some(
+      source => source.kind === 'chat' && !(windowId(source) > 0),
+    );
+    return [
+      ...new Set([
+        ...(unbound ? ['chat:unbound'] : []),
+        ...chats.flatMap(source => {
+          const identity = record(source.identity.conversationIdentity);
+          const conversation = String(
+            identity.nativeConversationId ?? identity.conversationKey ?? '',
+          );
+          return [
+            ...(windowId(source) > 0
+              ? [`chat:window:${windowId(source)}`]
+              : []),
+            ...(conversation
+              ? [
+                  `chat:conversation:${identity.adapterId ?? ''}:${conversation}`,
+                ]
+              : []),
+          ];
+        }),
+      ]),
+    ];
   };
   const searchSources = (args: Json) => {
     const ids = array<string>(args.source_ids);
@@ -549,12 +746,21 @@ export function registerContextTools(
     const explicit = ids.length ? ids : one ? [one] : null;
     const candidates = explicit
       ? explicit.map(id => allowed(String(id)))
-      : taskSources(session.events).filter(source => authorizeAccess(scopeFromEvents(session.events, session.id), { action: 'read', sourceIds: [source.sourceId] }).allowed);
-    return [...new Map(candidates.map(source => [source.sourceId, source])).values()];
+      : taskSources(session.events).filter(
+          source =>
+            authorizeAccess(scopeFromEvents(session.events, session.id), {
+              action: 'read',
+              sourceIds: [source.sourceId],
+            }).allowed,
+        );
+    return [
+      ...new Map(candidates.map(source => [source.sourceId, source])).values(),
+    ];
   };
   registry.register({
     name: 'Context.list',
-    description: 'List the task sources, references and current reference revision.',
+    description:
+      'List the task sources, references and current reference revision.',
     input_schema: schema({}),
     is_concurrency_safe: true,
     execute: () => ({
@@ -573,44 +779,82 @@ export function registerContextTools(
       input_schema: schema(
         {
           source_id: string,
-          ...(search ? { source_ids: { type: 'array', items: string } } : {}),
+          ...(search ? {source_ids: {type: 'array', items: string}} : {}),
           locator: object,
           cursor: string,
-          limit: { type: 'integer', minimum: 1, maximum: search ? 100 : 1000 },
-          ...(search ? { query: string } : {}),
+          limit: {type: 'integer', minimum: 1, maximum: search ? 100 : 1000},
+          ...(search ? {query: string} : {}),
         },
         search ? ['query'] : ['source_id'],
       ),
       is_concurrency_safe: true,
-      resource_keys: (args) => chatKeys(search ? searchSources(args) : [resolveSource(session.events, String(args.source_id))]),
-      access_for: (args) => ({
+      resource_keys: args =>
+        chatKeys(
+          search
+            ? searchSources(args)
+            : [resolveSource(session.events, String(args.source_id))],
+        ),
+      access_for: args => ({
         action: 'read',
-        sourceIds: search ? searchSources(args).map(source => source.sourceId) : [resolveSource(session.events, String(args.source_id)).sourceId],
+        sourceIds: search
+          ? searchSources(args).map(source => source.sourceId)
+          : [resolveSource(session.events, String(args.source_id)).sourceId],
       }),
       execute: async (args, context) => {
         if (search) {
           const sources = searchSources(args);
           const limit = Math.max(1, Math.min(100, Number(args.limit ?? 20)));
           const included = sources.slice(0, limit);
-          if (args.cursor && included.length !== 1) throw new Error('Search continuation requires one source_id');
-          const base = Math.floor(limit / Math.max(1, included.length)), extra = limit % Math.max(1, included.length);
-          const results: (ReadResult & { source: SourceRef })[] = [];
-          for (const [index, source] of included.entries()) {
-            const result = await readers.get(source).read(source, { cursor: args.cursor as string | undefined, limit: base + (index < extra ? 1 : 0), query: String(args.query), signal: context.signal });
-            if (result.sourceId !== source.sourceId) throw new Error('Reader returned a different source');
-            if (result.evidenceStatus === 'ok' || result.evidenceStatus === 'degraded' && result.fragments.length)
-              for (const fragment of result.fragments) observed.set(`${source.sourceId}:${JSON.stringify(fragment.locator)}`, fragment);
-            results.push({ ...result, source });
+          if (args.cursor && included.length !== 1) {
+            throw new Error('Search continuation requires one source_id');
           }
-          const remainingSourceIds = sources.slice(limit).map(source => source.sourceId);
+          const base = Math.floor(limit / Math.max(1, included.length));
+          const extra = limit % Math.max(1, included.length);
+          const results: Array<ReadResult & {source: SourceRef}> = [];
+          for (const [index, source] of included.entries()) {
+            const result = await readers.get(source).read(source, {
+              cursor: args.cursor as string | undefined,
+              limit: base + (index < extra ? 1 : 0),
+              query: String(args.query),
+              signal: context.signal,
+            });
+            if (result.sourceId !== source.sourceId) {
+              throw new Error('Reader returned a different source');
+            }
+            if (
+              result.evidenceStatus === 'ok' ||
+              (result.evidenceStatus === 'degraded' && result.fragments.length)
+            ) {
+              for (const fragment of result.fragments) {
+                observed.set(
+                  `${source.sourceId}:${JSON.stringify(fragment.locator)}`,
+                  fragment,
+                );
+              }
+            }
+            results.push({...result, source});
+          }
+          const remainingSourceIds = sources
+            .slice(limit)
+            .map(source => source.sourceId);
           const statuses = results.map(result => result.evidenceStatus);
-          const evidenceStatus = remainingSourceIds.length ? 'degraded'
-            : !statuses.length ? 'unavailable'
-            : statuses.every(status => status === 'empty_confirmed') ? 'empty_confirmed'
-            : statuses.every(status => status === 'unsupported') ? 'unsupported'
-            : statuses.every(status => status === 'ok') ? 'ok'
-            : 'degraded';
-          return { query: String(args.query), results, remainingSourceIds, evidenceStatus };
+          const evidenceStatus = remainingSourceIds.length
+            ? 'degraded'
+            : !statuses.length
+              ? 'unavailable'
+              : statuses.every(status => status === 'empty_confirmed')
+                ? 'empty_confirmed'
+                : statuses.every(status => status === 'unsupported')
+                  ? 'unsupported'
+                  : statuses.every(status => status === 'ok')
+                    ? 'ok'
+                    : 'degraded';
+          return {
+            query: String(args.query),
+            results,
+            remainingSourceIds,
+            evidenceStatus,
+          };
         }
         const source = allowed(String(args.source_id));
         const result = await readers.get(source).read(source, {
@@ -623,51 +867,76 @@ export function registerContextTools(
         if (
           result.evidenceStatus === 'ok' ||
           (result.evidenceStatus === 'degraded' && result.fragments.length)
-        )
-          for (const fragment of result.fragments)
-            observed.set(`${source.sourceId}:${JSON.stringify(fragment.locator)}`, fragment);
+        ) {
+          for (const fragment of result.fragments) {
+            observed.set(
+              `${source.sourceId}:${JSON.stringify(fragment.locator)}`,
+              fragment,
+            );
+          }
+        }
         return result;
       },
     });
   }
   registry.register({
     name: 'Context.follow',
-    description: 'Register traceable child sources from an observed attachment or directory entry.',
-    input_schema: schema({ source_id: string, fragment_id: string }, ['source_id', 'fragment_id']),
-    execute: async (args) => {
-      const source = allowed(String(args.source_id)),
-        reader = readers.get(source);
-      const children = (await reader.follow?.(source, String(args.fragment_id))) ?? [];
+    description:
+      'Register traceable child sources from an observed attachment or directory entry.',
+    input_schema: schema({source_id: string, fragment_id: string}, [
+      'source_id',
+      'fragment_id',
+    ]),
+    execute: async args => {
+      const source = allowed(String(args.source_id));
+      const reader = readers.get(source);
+      const children =
+        (await reader.follow?.(source, String(args.fragment_id))) ?? [];
       for (const child of children) {
-        if (child.parentSourceId !== source.sourceId || child.taskId !== session.id)
+        if (
+          child.parentSourceId !== source.sourceId ||
+          child.taskId !== session.id
+        ) {
           throw new Error('Invalid child provenance');
+        }
         await registerSource(session, child);
       }
-      return { sources: children };
+      return {sources: children};
     },
   });
   registry.register({
     name: 'Context.bind',
-    description: 'Bind an already read locator to a task reference; does not grant new access.',
+    description:
+      'Bind an already read locator to a task reference; does not grant new access.',
     input_schema: schema(
       {
         source_id: string,
         locator: object,
-        role: { type: 'string', enum: ['source', 'reference', 'target', 'exclude'] },
+        role: {
+          type: 'string',
+          enum: ['source', 'reference', 'target', 'exclude'],
+        },
         reference_id: string,
       },
       ['source_id', 'locator', 'role'],
     ),
-    execute: async (args) => {
-      const id = resolveSource(session.events, String(args.source_id)).sourceId,
-        locator = args.locator as FragmentLocator;
+    execute: async args => {
+      const id = resolveSource(session.events, String(args.source_id)).sourceId;
+      const locator = args.locator as FragmentLocator;
       allowed(id);
-      if (!observed.has(`${id}:${JSON.stringify(locator)}`))
+      if (!observed.has(`${id}:${JSON.stringify(locator)}`)) {
         throw new Error('Binding requires an observed locator');
-      const references = taskReferences(session.events),
-        old = references.find((item) => item.referenceId === args.reference_id);
-      if (args.reference_id && !old) throw new Error('Unknown reference');
-      const ordinal = old?.ordinal ?? Math.max(0, ...references.map((item) => item.ordinal)) + 1;
+      }
+      const references = taskReferences(session.events);
+      const old = references.find(
+        item => item.referenceId === args.reference_id,
+      );
+      if (args.reference_id && !old) {
+        throw new Error('Unknown reference');
+      }
+      const ordinal =
+        old?.ordinal ??
+        Math.max(0, ...references.map(item => item.ordinal)) + 1;
       const binding: ReferenceBinding = {
         referenceId: old?.referenceId ?? randomUUID(),
         label: old?.label ?? referenceLabel(ordinal),
@@ -680,9 +949,9 @@ export function registerContextTools(
         active: true,
       };
       await updateContext(session, {
-        referenceUpdates: [{ operation: old ? 'correct' : 'add', binding }],
+        referenceUpdates: [{operation: old ? 'correct' : 'add', binding}],
       });
-      return { binding, referenceRevision: referenceRevision(session.events) };
+      return {binding, referenceRevision: referenceRevision(session.events)};
     },
   });
 }
@@ -706,7 +975,7 @@ export function fileSource(
     taskId,
     kind: 'file',
     title: absolutePath.split(/[\\/]/).pop()!,
-    identity: { absolutePath },
+    identity: {absolutePath},
     revision: {},
     capabilities: ['read', 'search', 'follow', 'patch'],
     origin: parentSourceId ? 'task-discovered' : 'user-attached',

@@ -32,7 +32,9 @@ interface DialogResult {
 }
 
 interface UpdateDialog {
-  showMessageBox(options: Record<string, unknown>): DialogResult | Promise<DialogResult>;
+  showMessageBox(
+    options: Record<string, unknown>,
+  ): DialogResult | Promise<DialogResult>;
 }
 
 interface UpdateState {
@@ -65,8 +67,11 @@ interface CheckResult {
 }
 
 interface UpdateManager {
-  start(options?: { channel?: string; automatic?: boolean }): Readonly<UpdateState>;
-  check(options?: { manual?: boolean }): Promise<CheckResult>;
+  start(options?: {
+    channel?: string;
+    automatic?: boolean;
+  }): Readonly<UpdateState>;
+  check(options?: {manual?: boolean}): Promise<CheckResult>;
   setChannel(channel?: string): string;
   dispose(): void;
   status(): Readonly<UpdateState>;
@@ -89,8 +94,8 @@ function errorMessage(error: unknown): string {
 }
 
 const UPDATE_CHANNELS = Object.freeze({
-  stable: Object.freeze({ updaterChannel: 'latest', allowPrerelease: false }),
-  preview: Object.freeze({ updaterChannel: 'beta', allowPrerelease: true }),
+  stable: Object.freeze({updaterChannel: 'latest', allowPrerelease: false}),
+  preview: Object.freeze({updaterChannel: 'beta', allowPrerelease: true}),
 });
 
 function createUpdateManager({
@@ -100,7 +105,7 @@ function createUpdateManager({
   log = () => {},
   onStatus = () => {},
   setTimeoutFn = setTimeout,
-  clearTimeoutFn = (handle) => clearTimeout(handle as NodeJS.Timeout),
+  clearTimeoutFn = handle => clearTimeout(handle as NodeJS.Timeout),
   automaticDelayMs = 20_000,
 }: UpdateManagerOptions = {}): UpdateManager {
   if (!appDependency || !updaterDependency || !dialogDependency) {
@@ -124,32 +129,43 @@ function createUpdateManager({
     const info = infoFrom(value);
     const current = semver.valid(app.getVersion());
     const candidate = semver.valid(String(info.version || ''));
-    if (!current || !candidate) return null;
-    if (semver.prerelease(candidate) && updater.allowPrerelease !== true) return null;
+    if (!current || !candidate) {
+      return null;
+    }
+    if (semver.prerelease(candidate) && updater.allowPrerelease !== true) {
+      return null;
+    }
     return semver.gt(candidate, current) ? candidate : null;
   }
 
   function publish(next: UpdateState): Readonly<UpdateState> {
-    state = Object.freeze({ ...next, checkedAt: Date.now() });
+    state = Object.freeze({...next, checkedAt: Date.now()});
     onStatus(state);
-    log(`update state=${state.state}${state.version ? ` version=${state.version}` : ''}`);
+    log(
+      `update state=${state.state}${state.version ? ` version=${state.version}` : ''}`,
+    );
     return state;
   }
 
   function show(options: Record<string, unknown>): Promise<DialogResult> {
-    return Promise.resolve(dialog.showMessageBox(options)).catch((error) => {
+    return Promise.resolve(dialog.showMessageBox(options)).catch(error => {
       log(`update dialog failed ${errorName(error)}: ${errorMessage(error)}`);
-      return { response: 1 };
+      return {response: 1};
     });
   }
 
   function bindEvents(): void {
-    if (started) return;
+    if (started) {
+      return;
+    }
     started = true;
-    updater.on('checking-for-update', () => publish({ state: 'checking' }));
+    updater.on('checking-for-update', () => publish({state: 'checking'}));
     updater.on('update-not-available', (value = {}) => {
       const info = infoFrom(value);
-      publish({ state: 'current', version: String(info.version || app.getVersion()) });
+      publish({
+        state: 'current',
+        version: String(info.version || app.getVersion()),
+      });
       if (lastCheckWasManual) {
         show({
           type: 'info',
@@ -164,12 +180,14 @@ function createUpdateManager({
       const info = infoFrom(value);
       const version = acceptedUpdateVersion(info);
       if (!version) {
-        publish({ state: 'current', version: app.getVersion() });
+        publish({state: 'current', version: app.getVersion()});
         log(`update rejected version=${String(info.version || '')}`);
         return;
       }
-      publish({ state: 'available', version });
-      if (availablePromptOpen) return;
+      publish({state: 'available', version});
+      if (availablePromptOpen) {
+        return;
+      }
       availablePromptOpen = true;
       const answer = await show({
         type: 'info',
@@ -182,25 +200,31 @@ function createUpdateManager({
         noLink: true,
       });
       availablePromptOpen = false;
-      if (answer.response !== 0) return;
-      publish({ state: 'downloading', version, progress: 0 });
+      if (answer.response !== 0) {
+        return;
+      }
+      publish({state: 'downloading', version, progress: 0});
       try {
         await updater.downloadUpdate();
       } catch (error) {
-        publish({ state: 'error', message: errorMessage(error) });
-        log(`update download failed ${errorName(error)}: ${errorMessage(error)}`);
+        publish({state: 'error', message: errorMessage(error)});
+        log(
+          `update download failed ${errorName(error)}: ${errorMessage(error)}`,
+        );
       }
     });
     updater.on('download-progress', (value = {}) => {
       const progress = progressFrom(value);
       const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
-      publish({ state: 'downloading', progress: percent });
+      publish({state: 'downloading', progress: percent});
     });
     updater.on('update-downloaded', async (value = {}) => {
       const info = infoFrom(value);
       const version = String(info.version || '新版本');
-      publish({ state: 'downloaded', version, progress: 100 });
-      if (downloadedPromptOpen) return;
+      publish({state: 'downloaded', version, progress: 100});
+      if (downloadedPromptOpen) {
+        return;
+      }
       downloadedPromptOpen = true;
       const answer = await show({
         type: 'info',
@@ -209,17 +233,23 @@ function createUpdateManager({
         cancelId: 1,
         title: 'Magic Pointer 更新',
         message: `Magic Pointer ${version} 已下载完成`,
-        detail: '重启只关闭 Magic Pointer，不会关闭其他应用。选择稍后安装时，将在正常退出后安装，下次启动使用新版。',
+        detail:
+          '重启只关闭 Magic Pointer，不会关闭其他应用。选择稍后安装时，将在正常退出后安装，下次启动使用新版。',
         noLink: true,
       });
       downloadedPromptOpen = false;
-      if (answer.response === 0) updater.quitAndInstall(false, true);
-      else updater.autoInstallOnAppQuit = true;
+      if (answer.response === 0) {
+        updater.quitAndInstall(false, true);
+      } else {
+        updater.autoInstallOnAppQuit = true;
+      }
     });
-    updater.on('error', (error) => {
-      publish(lastCheckWasManual
-        ? { state: 'error', message: errorMessage(error || 'update_failed') }
-        : { state: 'idle' });
+    updater.on('error', error => {
+      publish(
+        lastCheckWasManual
+          ? {state: 'error', message: errorMessage(error || 'update_failed')}
+          : {state: 'idle'},
+      );
       log(`update failed ${errorName(error)}: ${errorMessage(error)}`);
     });
   }
@@ -227,20 +257,26 @@ function createUpdateManager({
   function setChannel(channel = 'stable'): string {
     const selected = (
       UPDATE_CHANNELS as Readonly<
-        Record<string, { updaterChannel: string; allowPrerelease: boolean }>
+        Record<string, {updaterChannel: string; allowPrerelease: boolean}>
       >
     )[channel];
-    if (!selected) throw new Error('update_channel_unsupported');
+    if (!selected) {
+      throw new Error('update_channel_unsupported');
+    }
     updater.channel = selected.updaterChannel;
     updater.allowPrerelease = selected.allowPrerelease;
     updater.allowDowngrade = false;
     return channel;
   }
 
-  function check({ manual = false }: { manual?: boolean } = {}): Promise<CheckResult> {
+  function check({
+    manual = false,
+  }: {manual?: boolean} = {}): Promise<CheckResult> {
     if (!app.isPackaged) {
-      const result = { ok: false, reason: 'packaged_only' };
-      if (!manual) return Promise.resolve(result);
+      const result = {ok: false, reason: 'packaged_only'};
+      if (!manual) {
+        return Promise.resolve(result);
+      }
       return show({
         type: 'info',
         buttons: ['知道了'],
@@ -250,26 +286,28 @@ function createUpdateManager({
       }).then(() => result);
     }
     bindEvents();
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      return inFlight;
+    }
     lastCheckWasManual = manual;
-    publish({ state: 'checking' });
+    publish({state: 'checking'});
     inFlight = Promise.resolve()
       .then(() => updater.checkForUpdates())
-      .then((result) => ({ ok: true, result }))
-      .catch((error) => {
+      .then(result => ({ok: true, result}))
+      .catch(error => {
         log(`update check failed ${errorName(error)}: ${errorMessage(error)}`);
         if (manual) {
-          publish({ state: 'error', message: errorMessage(error) });
+          publish({state: 'error', message: errorMessage(error)});
           return show({
             type: 'warning',
             buttons: ['知道了'],
             title: 'Magic Pointer 更新',
             message: '暂时无法检查更新。',
             detail: '请检查网络后重试。Magic Pointer 仍可正常使用。',
-          }).then(() => ({ ok: false, reason: 'check_failed' }));
+          }).then(() => ({ok: false, reason: 'check_failed'}));
         }
-        publish({ state: 'idle' });
-        return { ok: false, reason: 'check_failed' };
+        publish({state: 'idle'});
+        return {ok: false, reason: 'check_failed'};
       })
       .finally(() => {
         inFlight = null;
@@ -281,7 +319,7 @@ function createUpdateManager({
   function start({
     channel = 'stable',
     automatic = true,
-  }: { channel?: string; automatic?: boolean } = {}): Readonly<UpdateState> {
+  }: {channel?: string; automatic?: boolean} = {}): Readonly<UpdateState> {
     bindEvents();
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
@@ -289,7 +327,7 @@ function createUpdateManager({
     if (automatic && app.isPackaged && !automaticTimer) {
       automaticTimer = setTimeoutFn(() => {
         automaticTimer = null;
-        void check({ manual: false });
+        void check({manual: false});
       }, automaticDelayMs);
       automaticTimer.unref?.();
     }
@@ -297,7 +335,9 @@ function createUpdateManager({
   }
 
   function dispose(): void {
-    if (automaticTimer) clearTimeoutFn(automaticTimer);
+    if (automaticTimer) {
+      clearTimeoutFn(automaticTimer);
+    }
     automaticTimer = null;
   }
 
@@ -310,4 +350,4 @@ function createUpdateManager({
   };
 }
 
-export { createUpdateManager };
+export {createUpdateManager};

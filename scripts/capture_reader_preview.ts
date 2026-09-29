@@ -1,11 +1,24 @@
-const { app, BrowserWindow } = require('electron');
+const {app, BrowserWindow} = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const OUTPUT = path.join(ROOT, 'data', 'runtime', 'secondary_reader_preview_20260712.png');
+const OUTPUT = path.join(
+  ROOT,
+  'data',
+  'runtime',
+  'secondary_reader_preview_20260712.png',
+);
 
-app.setPath('userData', path.join(ROOT, 'data', 'runtime', 'secondary-reader-preview-profile-20260712'));
+app.setPath(
+  'userData',
+  path.join(
+    ROOT,
+    'data',
+    'runtime',
+    'secondary-reader-preview-profile-20260712',
+  ),
+);
 app.disableHardwareAcceleration();
 
 app.whenReady().then(async () => {
@@ -18,10 +31,16 @@ app.whenReady().then(async () => {
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
-    webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      offscreen: true,
+    },
   });
   try {
-    await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'reader.html'));
+    await window.loadFile(
+      path.join(ROOT, 'electron', 'renderer', 'reader.html'),
+    );
     await window.webContents.executeJavaScript(`renderPayload({
       ok: true,
       title: '润色结果',
@@ -47,9 +66,9 @@ app.whenReady().then(async () => {
       )
     `);
     window.setSize(420, Math.max(240, Math.min(520, readerHeight)));
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, 250));
     const image = await window.webContents.capturePage();
-    fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
+    fs.mkdirSync(path.dirname(OUTPUT), {recursive: true});
     fs.writeFileSync(OUTPUT, image.toPNG());
     console.log(OUTPUT);
     app.exit(0);

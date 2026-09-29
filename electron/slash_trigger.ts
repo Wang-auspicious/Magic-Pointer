@@ -10,7 +10,7 @@ const SlashTrigger = (() => {
     return match ? match[1].toLowerCase() : null;
   }
 
-  return { detectSlashToken };
+  return {detectSlashToken};
 })();
 
 if (typeof module !== 'undefined' && module.exports) {

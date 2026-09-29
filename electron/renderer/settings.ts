@@ -6,7 +6,7 @@ type SettingsApi = {
   getFabricSettings?: () => Promise<any>;
   saveFabricSettings?: (patch: unknown) => Promise<any>;
   setTheme?: (theme: unknown) => void;
-  conversations?: { memories?: () => Promise<any[]> };
+  conversations?: {memories?: () => Promise<any[]>};
 };
 
 type SettingsModelApi = {
@@ -52,8 +52,14 @@ function controlForSetting(row: any, value: unknown) {
   }
   if (row.control === 'select') {
     return `<label class="settings-select"><select data-setting="${path}" data-control="select">
-      ${(row.options || []).map((entry: any) => `<option value="${escSetting(JSON.stringify(entry.value))}"
-        ${entry.value === value ? 'selected' : ''}>${escSetting(entry.label)}</option>`).join('')}
+      ${(row.options || [])
+        .map(
+          (
+            entry: any,
+          ) => `<option value="${escSetting(JSON.stringify(entry.value))}"
+        ${entry.value === value ? 'selected' : ''}>${escSetting(entry.label)}</option>`,
+        )
+        .join('')}
       </select>${settingIcon('ic-chev')}</label>`;
   }
   if (row.control === 'range') {
@@ -73,15 +79,22 @@ function controlForSetting(row: any, value: unknown) {
   }
   const infoValue = row.infoKey
     ? row.infoKey === 'grants'
-      ? Array.isArray(canonicalSettings.permissions?.scoped_grants) ? canonicalSettings.permissions.scoped_grants.length : 0
+      ? Array.isArray(canonicalSettings.permissions?.scoped_grants)
+        ? canonicalSettings.permissions.scoped_grants.length
+        : 0
       : settingsModel.modelInfoValue(row.infoKey, activeModelStatus)
     : null;
-  const displayValue = typeof infoValue === 'number' ? `${infoValue} active` : infoValue || 'Read only';
+  const displayValue =
+    typeof infoValue === 'number'
+      ? `${infoValue} active`
+      : infoValue || 'Read only';
   return `<span class="settings-info-value" data-info-key="${escSetting(row.infoKey || '')}">${escSetting(displayValue)}</span>`;
 }
 
 function renderSettingsRow(row: any) {
-  const value = row.path ? settingsModel.valueForSetting(row.path, canonicalSettings) : undefined;
+  const value = row.path
+    ? settingsModel.valueForSetting(row.path, canonicalSettings)
+    : undefined;
   return `<div class="mp-settings-row" data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
     <div class="mp-settings-copy"><b>${escSetting(row.label)}</b>${row.description ? `<small>${escSetting(row.description)}</small>` : ''}</div>
     <div class="mp-settings-control">${controlForSetting(row, value)}</div>
@@ -102,13 +115,23 @@ function renderMemoryLibrary() {
       <div class="mp-memory-empty">No memory files yet. Repeated work on the same objects will appear here.</div></section>`;
   }
   return `<section class="mp-settings-section mp-memory-library"><h3>Memory files</h3><div class="mp-memory-list">
-    ${learnedMemories.slice(0, 12).map((memory) => {
-      const identity = String(memory.object?.windowTitle || memory.object?.label || memory.object?.app || 'Untitled object');
-      const questions = Array.isArray(memory.questions) ? memory.questions.slice(0, 2) : [];
-      return `<article class="mp-memory-item"><span class="mp-memory-mark">${settingIcon('ic-memory')}</span>
+    ${learnedMemories
+      .slice(0, 12)
+      .map(memory => {
+        const identity = String(
+          memory.object?.windowTitle ||
+            memory.object?.label ||
+            memory.object?.app ||
+            'Untitled object',
+        );
+        const questions = Array.isArray(memory.questions)
+          ? memory.questions.slice(0, 2)
+          : [];
+        return `<article class="mp-memory-item"><span class="mp-memory-mark">${settingIcon('ic-memory')}</span>
         <span class="mp-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || 'Local context')}</small></span>
         <span class="mp-memory-count">${escSetting(memory.touches || 0)} uses</span></article>`;
-    }).join('')}
+      })
+      .join('')}
   </div></section>`;
 }
 
@@ -126,75 +149,135 @@ function renderSettingsPage(page: any) {
 
 function renderSettingsSearchResults(query: string) {
   const needle = query.trim().toLocaleLowerCase();
-  const matches: { title: string; rows: any[] }[] = [];
+  const matches: Array<{title: string; rows: any[]}> = [];
   for (const page of settingsModel.SETTINGS_PAGES) {
     for (const section of page.sections) {
-      const rows = section.rows.filter((row: any) => [page.title, section.title, row.label, row.description]
-        .filter(Boolean).join(' ').toLocaleLowerCase().includes(needle));
-      if (rows.length) matches.push({ title: `${page.title} · ${section.title}`, rows });
+      const rows = section.rows.filter((row: any) =>
+        [page.title, section.title, row.label, row.description]
+          .filter(Boolean)
+          .join(' ')
+          .toLocaleLowerCase()
+          .includes(needle),
+      );
+      if (rows.length) {
+        matches.push({title: `${page.title} · ${section.title}`, rows});
+      }
     }
   }
-  const count = matches.reduce((total, section) => total + section.rows.length, 0);
+  const count = matches.reduce(
+    (total, section) => total + section.rows.length,
+    0,
+  );
   return `<section class="mp-settings-page" data-page="search">
     <header class="mp-settings-page-head"><div><h2>Search settings</h2><p>“${escSetting(query)}” · ${count} results</p></div></header>
-    ${matches.length
-      ? `<div class="mp-settings-sections">${matches.map((section) => renderSettingsSection(section.title, section.rows)).join('')}</div>`
-      : '<div class="mp-settings-search-empty">No matching settings.</div>'}
+    ${
+      matches.length
+        ? `<div class="mp-settings-sections">${matches.map(section => renderSettingsSection(section.title, section.rows)).join('')}</div>`
+        : '<div class="mp-settings-search-empty">No matching settings.</div>'
+    }
   </section>`;
 }
 
-function setSettingsStatus(state: 'idle' | 'saving' | 'saved' | 'error', message = '') {
+function setSettingsStatus(
+  state: 'idle' | 'saving' | 'saved' | 'error',
+  message = '',
+) {
   const status = document.getElementById('settings-save-status');
-  if (!status) return;
+  if (!status) {
+    return;
+  }
   status.dataset.state = state;
-  status.textContent = message || (state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : '');
+  status.textContent =
+    message ||
+    (state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : '');
 }
 
 function renderSettings() {
-  if (!settingsModel) return;
+  if (!settingsModel) {
+    return;
+  }
   const nav = document.getElementById('set-nav');
   const body = document.getElementById('set-body');
-  if (!nav || !body) return;
-  if (!settingsModel.SETTINGS_PAGES.some((page) => page.id === activeSettingsPage)) {
+  if (!nav || !body) {
+    return;
+  }
+  if (
+    !settingsModel.SETTINGS_PAGES.some(page => page.id === activeSettingsPage)
+  ) {
     activeSettingsPage = settingsModel.SETTINGS_PAGES[0].id;
   }
   const groups = new Map<string, any[]>();
-  settingsModel.SETTINGS_PAGES.forEach((page) => {
+  settingsModel.SETTINGS_PAGES.forEach(page => {
     const group = String(page.group || 'Settings');
     groups.set(group, [...(groups.get(group) || []), page]);
   });
-  nav.innerHTML = [...groups.entries()].map(([group, pages]) => `<section class="settings-nav-group">
+  nav.innerHTML = [...groups.entries()]
+    .map(
+      ([group, pages]) => `<section class="settings-nav-group">
     <h2>${escSetting(group)}</h2>
-    ${pages.map((page) => `<button type="button" class="settings-nav-item${!settingsQuery && page.id === activeSettingsPage ? ' is-on' : ''}"
-      data-settings-page="${escSetting(page.id)}">${settingIcon(page.icon)}<span>${escSetting(page.title)}</span></button>`).join('')}
-  </section>`).join('');
-  const search = document.getElementById('settings-search') as HTMLInputElement | null;
-  if (search && search.value !== settingsQuery) search.value = settingsQuery;
+    ${pages
+      .map(
+        page => `<button type="button" class="settings-nav-item${!settingsQuery && page.id === activeSettingsPage ? ' is-on' : ''}"
+      data-settings-page="${escSetting(page.id)}">${settingIcon(page.icon)}<span>${escSetting(page.title)}</span></button>`,
+      )
+      .join('')}
+  </section>`,
+    )
+    .join('');
+  const search = document.getElementById(
+    'settings-search',
+  ) as HTMLInputElement | null;
+  if (search && search.value !== settingsQuery) {
+    search.value = settingsQuery;
+  }
   if (settingsQuery.trim()) {
     body.innerHTML = renderSettingsSearchResults(settingsQuery);
     return;
   }
-  const page = settingsModel.SETTINGS_PAGES.find((entry) => entry.id === activeSettingsPage);
+  const page = settingsModel.SETTINGS_PAGES.find(
+    entry => entry.id === activeSettingsPage,
+  );
   body.innerHTML = renderSettingsPage(page);
 }
 
-function hydrateCanonical(settings: unknown, modelStatus: unknown = activeModelStatus) {
-  canonicalSettings = settings && typeof settings === 'object' ? structuredClone(settings) : {};
-  activeModelStatus = modelStatus && typeof modelStatus === 'object' ? structuredClone(modelStatus) : {};
+function hydrateCanonical(
+  settings: unknown,
+  modelStatus: unknown = activeModelStatus,
+) {
+  canonicalSettings =
+    settings && typeof settings === 'object' ? structuredClone(settings) : {};
+  activeModelStatus =
+    modelStatus && typeof modelStatus === 'object'
+      ? structuredClone(modelStatus)
+      : {};
   settingsHydrated = true;
   renderSettings();
   const theme = canonicalSettings.appearance?.theme;
   if (theme) {
-    const resolvedTheme = theme === 'system' ? (systemThemeQuery.matches ? 'dark' : 'light') : theme;
+    const resolvedTheme =
+      theme === 'system'
+        ? systemThemeQuery.matches
+          ? 'dark'
+          : 'light'
+        : theme;
     document.documentElement.dataset.theme = resolvedTheme;
-    document.body.toggleAttribute('data-ds-dark-theme', resolvedTheme === 'dark');
-    try { localStorage.setItem('mp:theme', resolvedTheme); } catch { /* storage unavailable */ }
+    document.body.toggleAttribute(
+      'data-ds-dark-theme',
+      resolvedTheme === 'dark',
+    );
+    try {
+      localStorage.setItem('mp:theme', resolvedTheme);
+    } catch {
+      /* storage unavailable */
+    }
     settingsApi()?.setTheme?.(theme);
   }
 }
 
 systemThemeQuery.addEventListener('change', () => {
-  if (canonicalSettings.appearance?.theme !== 'system') return;
+  if (canonicalSettings.appearance?.theme !== 'system') {
+    return;
+  }
   const dark = systemThemeQuery.matches;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.body.toggleAttribute('data-ds-dark-theme', dark);
@@ -202,31 +285,53 @@ systemThemeQuery.addEventListener('change', () => {
 
 async function persistSetting(path: string, value: unknown) {
   const api = settingsApi();
-  if (!api?.saveFabricSettings) return;
+  if (!api?.saveFabricSettings) {
+    return;
+  }
   const before = structuredClone(canonicalSettings);
   const patch = settingsModel.patchForSetting(path, value);
-  const row = document.querySelector<HTMLElement>(`[data-setting-row="${CSS.escape(path)}"]`);
-  if (row) row.dataset.saveState = 'saving';
+  const row = document.querySelector<HTMLElement>(
+    `[data-setting-row="${CSS.escape(path)}"]`,
+  );
+  if (row) {
+    row.dataset.saveState = 'saving';
+  }
   setSettingsStatus('saving');
   try {
     const response = await api.saveFabricSettings(patch);
-    if (!response?.ok || !response.settings) throw new Error(response?.error || 'The main process did not confirm this setting.');
+    if (!response?.ok || !response.settings) {
+      throw new Error(
+        response?.error || 'The main process did not confirm this setting.',
+      );
+    }
     hydrateCanonical(response.settings);
-    const savedRow = document.querySelector<HTMLElement>(`[data-setting-row="${CSS.escape(path)}"]`);
-    if (savedRow) savedRow.dataset.saveState = 'saved';
+    const savedRow = document.querySelector<HTMLElement>(
+      `[data-setting-row="${CSS.escape(path)}"]`,
+    );
+    if (savedRow) {
+      savedRow.dataset.saveState = 'saved';
+    }
     setSettingsStatus('saved');
   } catch (error) {
     hydrateCanonical(before);
-    const failedRow = document.querySelector<HTMLElement>(`[data-setting-row="${CSS.escape(path)}"]`);
+    const failedRow = document.querySelector<HTMLElement>(
+      `[data-setting-row="${CSS.escape(path)}"]`,
+    );
     if (failedRow) {
       failedRow.dataset.saveState = 'error';
-      const message = failedRow.querySelector<HTMLElement>('.settings-row-error');
+      const message = failedRow.querySelector<HTMLElement>(
+        '.settings-row-error',
+      );
       if (message) {
         message.hidden = false;
-        message.textContent = error instanceof Error ? error.message : String(error);
+        message.textContent =
+          error instanceof Error ? error.message : String(error);
       }
     }
-    setSettingsStatus('error', error instanceof Error ? error.message : String(error));
+    setSettingsStatus(
+      'error',
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -237,14 +342,25 @@ function queueSettingSave(path: string, value: unknown) {
 function parseSettingValue(element: HTMLInputElement | HTMLSelectElement) {
   const control = element.dataset.control;
   if (control === 'select') {
-    try { return JSON.parse(element.value); } catch (_) { return element.value; }
+    try {
+      return JSON.parse(element.value);
+    } catch (_) {
+      return element.value;
+    }
   }
-  if (control === 'range') return Number(element.value);
-  if (control === 'tags') return element.value.split(',').map((item) => item.trim()).filter(Boolean);
+  if (control === 'range') {
+    return Number(element.value);
+  }
+  if (control === 'tags') {
+    return element.value
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
   return element.value;
 }
 
-document.addEventListener('click', (event) => {
+document.addEventListener('click', event => {
   const target = event.target as HTMLElement;
   const nav = target.closest<HTMLElement>('[data-settings-page]');
   if (nav) {
@@ -253,16 +369,22 @@ document.addEventListener('click', (event) => {
     renderSettings();
     return;
   }
-  const toggle = target.closest<HTMLElement>('[data-control="toggle"][data-setting]');
-  if (!toggle) return;
+  const toggle = target.closest<HTMLElement>(
+    '[data-control="toggle"][data-setting]',
+  );
+  if (!toggle) {
+    return;
+  }
   const next = toggle.getAttribute('aria-checked') !== 'true';
   toggle.setAttribute('aria-checked', String(next));
   toggle.classList.toggle('is-on', next);
   queueSettingSave(toggle.dataset.setting || '', next);
 });
 
-document.addEventListener('input', (event) => {
-  const search = (event.target as HTMLElement).closest<HTMLInputElement>('#settings-search');
+document.addEventListener('input', event => {
+  const search = (event.target as HTMLElement).closest<HTMLInputElement>(
+    '#settings-search',
+  );
   if (search) {
     settingsQuery = search.value;
     renderSettings();
@@ -270,28 +392,53 @@ document.addEventListener('input', (event) => {
     search.setSelectionRange(search.value.length, search.value.length);
     return;
   }
-  const range = (event.target as HTMLElement).closest<HTMLInputElement>('[data-control="range"]');
-  if (range) range.parentElement?.querySelector('output')?.replaceChildren(String(range.value));
+  const range = (event.target as HTMLElement).closest<HTMLInputElement>(
+    '[data-control="range"]',
+  );
+  if (range) {
+    range.parentElement
+      ?.querySelector('output')
+      ?.replaceChildren(String(range.value));
+  }
 });
 
-document.addEventListener('change', (event) => {
-  const control = (event.target as HTMLElement).closest<HTMLInputElement | HTMLSelectElement>('[data-setting]');
-  if (!control || control.dataset.control === 'toggle') return;
+document.addEventListener('change', event => {
+  const control = (event.target as HTMLElement).closest<
+    HTMLInputElement | HTMLSelectElement
+  >('[data-setting]');
+  if (!control || control.dataset.control === 'toggle') {
+    return;
+  }
   queueSettingSave(control.dataset.setting || '', parseSettingValue(control));
 });
 
 async function hydrateSettings() {
   const api = settingsApi();
-  if (!api?.getFabricSettings) return;
+  if (!api?.getFabricSettings) {
+    return;
+  }
   try {
-    const memoryPromise = api.conversations?.memories ? api.conversations.memories() : Promise.resolve([]);
-    const [response, memories] = await Promise.all([api.getFabricSettings(), memoryPromise]);
+    const memoryPromise = api.conversations?.memories
+      ? api.conversations.memories()
+      : Promise.resolve([]);
+    const [response, memories] = await Promise.all([
+      api.getFabricSettings(),
+      memoryPromise,
+    ]);
     learnedMemories = Array.isArray(memories) ? memories : [];
-    if (response?.ok && response.settings) hydrateCanonical(response.settings, response.modelStatus);
-    else setSettingsStatus('error', response?.error || 'Settings did not load.');
+    if (response?.ok && response.settings) {
+      hydrateCanonical(response.settings, response.modelStatus);
+    } else {
+      setSettingsStatus('error', response?.error || 'Settings did not load.');
+    }
   } catch (error) {
-    setSettingsStatus('error', error instanceof Error ? error.message : String(error));
+    setSettingsStatus(
+      'error',
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
-if (!settingsHydrated) void hydrateSettings();
+if (!settingsHydrated) {
+  void hydrateSettings();
+}

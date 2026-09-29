@@ -1,6 +1,5 @@
 'use strict';
 
-
 const GLYPHS: Readonly<Record<string, number>> = Object.freeze({
   'sidebar-panel': 0xe0dd,
   scheduled: 0xe043,
@@ -74,20 +73,31 @@ const GLYPHS: Readonly<Record<string, number>> = Object.freeze({
 
 const SIZES: readonly string[] = Object.freeze(['large', 'small', 'micro']);
 const ANIMATION_AXES: Readonly<Record<string, string>> = Object.freeze({
-  artifacts: 'ANIM', customize: 'ANIM', projects: 'ANIM', design: 'ANIM',
-  'attach-design': 'ANIM', code: 'ANIM ANM2', lightbulb: 'ANIM',
+  artifacts: 'ANIM',
+  customize: 'ANIM',
+  projects: 'ANIM',
+  design: 'ANIM',
+  'attach-design': 'ANIM',
+  code: 'ANIM ANM2',
+  lightbulb: 'ANIM',
 });
 
 function codepoint(name: unknown): number | null {
-  if (typeof name !== 'string') return null;
-  if (!Object.prototype.hasOwnProperty.call(GLYPHS, name)) return null;
+  if (typeof name !== 'string') {
+    return null;
+  }
+  if (!Object.prototype.hasOwnProperty.call(GLYPHS, name)) {
+    return null;
+  }
   const value = GLYPHS[name];
   return typeof value === 'number' ? value : null;
 }
 
 function html(name: unknown, size: unknown = 'large'): string {
   const value = codepoint(name);
-  if (value === null) return '';
+  if (value === null) {
+    return '';
+  }
   const resolved = SIZES.includes(size as string) ? (size as string) : 'large';
   const axes = typeof name === 'string' ? ANIMATION_AXES[name] : '';
   return `<span class="cds-icon" data-size="${resolved}"${axes ? ` data-cds-anim="${axes}"` : ''} aria-hidden="true" data-glyph="&#x${value.toString(16).toUpperCase()};"></span>`;
@@ -97,8 +107,11 @@ function names(): string[] {
   return Object.keys(GLYPHS).sort();
 }
 
-const CdsIcons = { GLYPHS, codepoint, html, names };
-if (typeof module !== 'undefined' && module.exports) module.exports = CdsIcons;
+const CdsIcons = {GLYPHS, codepoint, html, names};
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = CdsIcons;
+}
 if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { CdsIcons?: typeof CdsIcons }).CdsIcons = CdsIcons;
+  (globalThis as typeof globalThis & {CdsIcons?: typeof CdsIcons}).CdsIcons =
+    CdsIcons;
 }

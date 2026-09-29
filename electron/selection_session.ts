@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
-type SessionState = 'capturing' | 'ready' | 'unavailable' | 'running' | 'cancelled';
+type SessionState =
+  'capturing' | 'ready' | 'unavailable' | 'running' | 'cancelled';
 type JsonObject = Record<string, unknown>;
 
 interface ContextPacket extends JsonObject {
@@ -75,15 +76,19 @@ function continuationTaskForSelection({
 }: {
   episodeTaskId?: unknown;
   taskOwners?: TaskOwner[];
-}): { token: string; taskId: string } | null {
+}): {token: string; taskId: string} | null {
   const taskId = String(episodeTaskId || '').trim();
-  const liveOwners = (Array.isArray(taskOwners) ? taskOwners : []).filter((item) =>
-    item?.running === true && Boolean(String(item.taskId || '').trim()),
+  const liveOwners = (Array.isArray(taskOwners) ? taskOwners : []).filter(
+    item => item?.running === true && Boolean(String(item.taskId || '').trim()),
   );
   const owner = taskId
-    ? liveOwners.find((item) => String(item.taskId || '').trim() === taskId)
-    : liveOwners.length === 1 ? liveOwners[0] : null;
-  return owner ? { token: owner.token, taskId: String(owner.taskId).trim() } : null;
+    ? liveOwners.find(item => String(item.taskId || '').trim() === taskId)
+    : liveOwners.length === 1
+      ? liveOwners[0]
+      : null;
+  return owner
+    ? {token: owner.token, taskId: String(owner.taskId).trim()}
+    : null;
 }
 
 class SelectionSessionStore {
@@ -103,7 +108,11 @@ class SelectionSessionStore {
   }
 
   static isFrozen(entry: SelectionSession): boolean {
-    return entry.state === 'ready' || entry.state === 'unavailable' || entry.state === 'running';
+    return (
+      entry.state === 'ready' ||
+      entry.state === 'unavailable' ||
+      entry.state === 'running'
+    );
   }
 
   prune(now = Date.now()): void {
@@ -112,16 +121,23 @@ class SelectionSessionStore {
         this.sessions.delete(token);
         continue;
       }
-      if (SelectionSessionStore.isFrozen(entry)) continue;
-      if (entry.expiresAt <= now) this.sessions.delete(token);
+      if (SelectionSessionStore.isFrozen(entry)) {
+        continue;
+      }
+      if (entry.expiresAt <= now) {
+        this.sessions.delete(token);
+      }
     }
   }
 
   evictOverflow(): void {
-    const frozen = [...this.sessions.entries()].filter(([, entry]) =>
-      SelectionSessionStore.isFrozen(entry) && entry.state !== 'running',
+    const frozen = [...this.sessions.entries()].filter(
+      ([, entry]) =>
+        SelectionSessionStore.isFrozen(entry) && entry.state !== 'running',
     );
-    if (frozen.length <= this.maxFrozen) return;
+    if (frozen.length <= this.maxFrozen) {
+      return;
+    }
     frozen.sort((a, b) => a[1].createdAt - b[1].createdAt);
     for (const [token] of frozen.slice(0, frozen.length - this.maxFrozen)) {
       this.sessions.delete(token);
@@ -129,7 +145,7 @@ class SelectionSessionStore {
   }
 
   create(
-    { reason = 'manual', cursor = null, taskId = '' }: CreateOptions = {},
+    {reason = 'manual', cursor = null, taskId = ''}: CreateOptions = {},
     now = Date.now(),
   ): SelectionSession {
     this.prune(now);
@@ -159,7 +175,9 @@ class SelectionSessionStore {
 
   get(token: unknown, now = Date.now()): SelectionSession | null {
     this.prune(now);
-    if (typeof token !== 'string' || !token) return null;
+    if (typeof token !== 'string' || !token) {
+      return null;
+    }
     return this.sessions.get(token) ?? null;
   }
 
@@ -169,7 +187,9 @@ class SelectionSessionStore {
     now = Date.now(),
   ): SelectionSession | null {
     const entry = this.get(token, now);
-    if (!entry) return null;
+    if (!entry) {
+      return null;
+    }
     entry.snapshot = payload?.selectionSnapshot || null;
     entry.summary = payload?.captureSummary || null;
     entry.suggestedCommands = Array.isArray(payload?.suggestedCommands)
@@ -182,20 +202,28 @@ class SelectionSessionStore {
 
   setPanelLayout(
     token: unknown,
-    { nonce, geometry }: PanelLayout,
+    {nonce, geometry}: PanelLayout,
     now = Date.now(),
   ): SelectionSession | null {
     const entry = this.get(token, now);
-    if (!entry || typeof nonce !== 'string' || !nonce) return null;
+    if (!entry || typeof nonce !== 'string' || !nonce) {
+      return null;
+    }
     entry.panelLayoutNonce = nonce;
     entry.panelGeometry = geometry || null;
     entry.panelPlacement = null;
     return entry;
   }
 
-  setPanelPlacement(token: unknown, placement: unknown, now = Date.now()): SelectionSession | null {
+  setPanelPlacement(
+    token: unknown,
+    placement: unknown,
+    now = Date.now(),
+  ): SelectionSession | null {
     const entry = this.get(token, now);
-    if (!entry) return null;
+    if (!entry) {
+      return null;
+    }
     entry.panelPlacement = placement || null;
     return entry;
   }
@@ -226,21 +254,30 @@ class SelectionSessionStore {
     return entry.agentPromptDraft;
   }
 
-  getAgentPromptDraft(token: unknown, now = Date.now()): AgentPromptDraft | null {
+  getAgentPromptDraft(
+    token: unknown,
+    now = Date.now(),
+  ): AgentPromptDraft | null {
     return this.get(token, now)?.agentPromptDraft ?? null;
   }
 
   clearAgentPromptDraft(token: unknown, now = Date.now()): boolean {
     const entry = this.get(token, now);
-    if (!entry) return false;
+    if (!entry) {
+      return false;
+    }
     entry.agentPromptDraft = null;
     return true;
   }
 
   startRequest(token: unknown, now = Date.now()): string | null {
     const entry = this.get(token, now);
-    if (!entry || !entry.snapshot) return null;
-    if (entry.state === 'running' && entry.activeRequestId) return null;
+    if (!entry || !entry.snapshot) {
+      return null;
+    }
+    if (entry.state === 'running' && entry.activeRequestId) {
+      return null;
+    }
     const requestId = this.idFactory();
     entry.activeRequestId = requestId;
     entry.state = 'running';
@@ -248,32 +285,46 @@ class SelectionSessionStore {
     return requestId;
   }
 
-  finishRequest(token: unknown, requestId: unknown, now = Date.now()): SelectionSession | null {
+  finishRequest(
+    token: unknown,
+    requestId: unknown,
+    now = Date.now(),
+  ): SelectionSession | null {
     const entry = this.get(token, now);
-    if (!entry || entry.activeRequestId !== requestId) return null;
+    if (!entry || entry.activeRequestId !== requestId) {
+      return null;
+    }
     entry.state = 'ready';
     entry.activeRequestId = null;
     entry.expiresAt = now + this.ttlMs;
     return entry;
   }
 
-  isCurrentRequest(token: unknown, requestId: unknown, now = Date.now()): boolean {
+  isCurrentRequest(
+    token: unknown,
+    requestId: unknown,
+    now = Date.now(),
+  ): boolean {
     const entry = this.get(token, now);
     return Boolean(entry && entry.activeRequestId === requestId);
   }
 
   detach(token: string): void {
     const entry = this.sessions.get(token);
-    if (entry) entry.stageAttached = false;
+    if (entry) {
+      entry.stageAttached = false;
+    }
   }
 
   cancel(token: string): boolean {
     const entry = this.sessions.get(token);
-    if (!entry) return false;
+    if (!entry) {
+      return false;
+    }
     entry.state = 'cancelled';
     this.sessions.delete(token);
     return true;
   }
 }
 
-export { SelectionSessionStore, continuationTaskForSelection };
+export {SelectionSessionStore, continuationTaskForSelection};

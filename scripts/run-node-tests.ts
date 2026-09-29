@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 
@@ -19,17 +19,21 @@ const testPattern = /_test\.[jt]s$/;
 function selectedTestFiles(): string[] {
   if (requested.length === 0) {
     return fs
-      .readdirSync(path.join(root, 'tests'), { withFileTypes: true })
-      .filter((entry) => entry.isFile() && testPattern.test(entry.name))
-      .map((entry) => path.join('tests', entry.name))
+      .readdirSync(path.join(root, 'tests'), {withFileTypes: true})
+      .filter(entry => entry.isFile() && testPattern.test(entry.name))
+      .map(entry => path.join('tests', entry.name))
       .sort();
   }
 
-  return requested.map((candidate) => {
+  return requested.map(candidate => {
     const absolute = path.resolve(root, candidate);
     const relative = path.relative(root, absolute);
     const parts = relative.split(path.sep);
-    if (parts[0] !== 'tests' || parts.length !== 2 || !testPattern.test(parts[1])) {
+    if (
+      parts[0] !== 'tests' ||
+      parts.length !== 2 ||
+      !testPattern.test(parts[1])
+    ) {
       throw new Error(`invalid test path: ${candidate}`);
     }
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
@@ -61,7 +65,9 @@ for (const file of testFiles) {
 }
 
 if (failures.length) {
-  console.error(`node suite failed (${failures.length}): ${failures.join(', ')}`);
+  console.error(
+    `node suite failed (${failures.length}): ${failures.join(', ')}`,
+  );
   process.exitCode = 1;
 } else {
   console.log(`node suite passed: ${testFiles.length} test files`);

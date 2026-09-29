@@ -72,7 +72,9 @@ class WiggleDetector {
     windowMs = 700,
   }: WiggleDetectorOptions = {}) {
     this.sensitivity = Math.max(0, Math.min(1, Number(sensitivity) || 0.55));
-    this.disabledApps = disabledApps.map((value) => String(value).toLowerCase()).filter(Boolean);
+    this.disabledApps = disabledApps
+      .map(value => String(value).toLowerCase())
+      .filter(Boolean);
     this.cooldownMs = Math.max(500, Number(cooldownMs) || 900);
     this.windowMs = Math.max(280, Math.min(900, Number(windowMs) || 700));
     this.points = [];
@@ -99,7 +101,7 @@ class WiggleDetector {
   }: WiggleDetectorOptions = {}): void {
     this.sensitivity = Math.max(0, Math.min(1, Number(sensitivity) || 0.55));
     this.disabledApps = Array.from(disabledApps || [])
-      .map((value) => String(value).toLowerCase())
+      .map(value => String(value).toLowerCase())
       .filter(Boolean);
     this.cooldownMs = Math.max(500, Number(cooldownMs) || 900);
     this.windowMs = Math.max(280, Math.min(900, Number(windowMs) || 700));
@@ -107,7 +109,10 @@ class WiggleDetector {
     this.reset();
   }
 
-  startCalibration(now: unknown = Date.now(), durationMs: unknown = 10000): void {
+  startCalibration(
+    now: unknown = Date.now(),
+    durationMs: unknown = 10000,
+  ): void {
     this.calibration = {
       startedAt: Number(now),
       until: Number(now) + Math.max(3000, Number(durationMs) || 10000),
@@ -126,15 +131,21 @@ class WiggleDetector {
     this.calibration = null;
     this.reset();
     if (!calibration || calibration.samples.length === 0) {
-      return { ok: false, samples: 0, sensitivity: this.sensitivity };
+      return {ok: false, samples: 0, sensitivity: this.sensitivity};
     }
     const ranges = calibration.samples
-      .map((metrics) => metrics.xRange ?? 0)
+      .map(metrics => metrics.xRange ?? 0)
       .sort((a, b) => a - b);
     const medianRange = ranges[Math.floor(ranges.length / 2)];
-    const targetScale = Math.max(0.68, Math.min(1.24, (medianRange * 0.58) / 38));
-    const sensitivity = Math.max(0.2, Math.min(0.9, 0.5 + (1 - targetScale) / 0.8));
-    this.updateSettings({ sensitivity });
+    const targetScale = Math.max(
+      0.68,
+      Math.min(1.24, (medianRange * 0.58) / 38),
+    );
+    const sensitivity = Math.max(
+      0.2,
+      Math.min(0.9, 0.5 + (1 - targetScale) / 0.8),
+    );
+    this.updateSettings({sensitivity});
     return {
       ok: true,
       samples: calibration.samples.length,
@@ -146,7 +157,7 @@ class WiggleDetector {
   recordOutcome({
     cancelledImmediately = false,
     completed = false,
-  }: { cancelledImmediately?: boolean; completed?: boolean } = {}): void {
+  }: {cancelledImmediately?: boolean; completed?: boolean} = {}): void {
     if (cancelledImmediately) {
       this.immediateCancels += 1;
       this.thresholdScale = Math.min(1.45, this.thresholdScale + 0.08);
@@ -158,33 +169,66 @@ class WiggleDetector {
   }
 
   _blocked(sample: WigglePoint, recent: WigglePoint[]): string | null {
-    if (recent.some((point) => Number(point.buttons || 0) !== 0)) return 'button_down';
-    if (recent.reduce((sum, point) => sum + Math.abs(Number(point.scrollDelta || 0)), 0) >= 80) return 'active_scroll';
-    if (recent.some((point) => point.isWindowMoving === true)) return 'window_move';
+    if (recent.some(point => Number(point.buttons || 0) !== 0)) {
+      return 'button_down';
+    }
+    if (
+      recent.reduce(
+        (sum, point) => sum + Math.abs(Number(point.scrollDelta || 0)),
+        0,
+      ) >= 80
+    ) {
+      return 'active_scroll';
+    }
+    if (recent.some(point => point.isWindowMoving === true)) {
+      return 'window_move';
+    }
     const app = String(sample.foregroundApp || '').toLowerCase();
-    if (app && this.disabledApps.some((entry) => app.includes(entry))) return 'disabled_app';
+    if (app && this.disabledApps.some(entry => app.includes(entry))) {
+      return 'disabled_app';
+    }
     return null;
   }
 
   _metrics(recent: WigglePoint[]): WiggleMetrics {
-    if (recent.length < 4) return { ready: false, reason: 'insufficient_samples' };
+    if (recent.length < 4) {
+      return {ready: false, reason: 'insufficient_samples'};
+    }
     const first = recent[0];
     const last = recent[recent.length - 1];
     const durationMs = last.t - first.t;
-    if (durationMs < 65) return { ready: false, reason: 'too_fast', durationMs };
-    if (durationMs > this.windowMs) return { ready: false, reason: 'too_slow', durationMs };
+    if (durationMs < 65) {
+      return {ready: false, reason: 'too_fast', durationMs};
+    }
+    if (durationMs > this.windowMs) {
+      return {ready: false, reason: 'too_slow', durationMs};
+    }
 
-    const xs = recent.map((point) => point.x);
-    const ys = recent.map((point) => point.y);
+    const xs = recent.map(point => point.x);
+    const ys = recent.map(point => point.y);
     const xRange = Math.max(...xs) - Math.min(...xs);
     const yRange = Math.max(...ys) - Math.min(...ys);
     const minRange = 28 * this.thresholdScale;
-    if (xRange < minRange) return { ready: false, reason: 'horizontal_range', durationMs, xRange, yRange };
-    if (yRange > Math.max(48, xRange * 0.90)) {
-      return { ready: false, reason: 'vertical_drift', durationMs, xRange, yRange };
+    if (xRange < minRange) {
+      return {
+        ready: false,
+        reason: 'horizontal_range',
+        durationMs,
+        xRange,
+        yRange,
+      };
+    }
+    if (yRange > Math.max(48, xRange * 0.9)) {
+      return {
+        ready: false,
+        reason: 'vertical_drift',
+        durationMs,
+        xRange,
+        yRange,
+      };
     }
 
-    const segments: Array<{ direction: number; distance: number }> = [];
+    const segments: Array<{direction: number; distance: number}> = [];
     let direction = 0;
     let distance = 0;
     let total = 0;
@@ -192,20 +236,29 @@ class WiggleDetector {
       const dx = recent[index].x - recent[index - 1].x;
       const dy = recent[index].y - recent[index - 1].y;
       total += Math.hypot(dx, dy);
-      if (Math.abs(dx) < 5) continue;
+      if (Math.abs(dx) < 5) {
+        continue;
+      }
       const nextDirection = dx > 0 ? 1 : -1;
       if (direction === 0 || nextDirection === direction) {
         direction = nextDirection;
         distance += Math.abs(dx);
       } else {
-        if (distance >= 10 * this.thresholdScale) segments.push({ direction, distance });
+        if (distance >= 10 * this.thresholdScale) {
+          segments.push({direction, distance});
+        }
         direction = nextDirection;
         distance = Math.abs(dx);
       }
     }
-    if (distance >= 10 * this.thresholdScale) segments.push({ direction, distance });
+    if (distance >= 10 * this.thresholdScale) {
+      segments.push({direction, distance});
+    }
     const reversals = Math.max(0, segments.length - 1);
-    const horizontalTravel = segments.reduce((sum, segment) => sum + segment.distance, 0);
+    const horizontalTravel = segments.reduce(
+      (sum, segment) => sum + segment.distance,
+      0,
+    );
     const net = Math.hypot(last.x - first.x, last.y - first.y);
     const returnRatio = 1 - Math.min(1, net / Math.max(xRange, 1));
     const velocity = horizontalTravel / Math.max(durationMs / 1000, 0.001);
@@ -222,10 +275,18 @@ class WiggleDetector {
       returnRatio,
       velocity,
     };
-    if (reversals < 2) return { ...metrics, ready: false, reason: 'insufficient_reversals' };
-    if (horizontalTravel < 68 * this.thresholdScale) return { ...metrics, ready: false, reason: 'travel_too_short' };
-    if (returnRatio < 0.12) return { ...metrics, ready: false, reason: 'did_not_return' };
-    if (velocity < 90 * this.thresholdScale) return { ...metrics, ready: false, reason: 'velocity_too_low' };
+    if (reversals < 2) {
+      return {...metrics, ready: false, reason: 'insufficient_reversals'};
+    }
+    if (horizontalTravel < 68 * this.thresholdScale) {
+      return {...metrics, ready: false, reason: 'travel_too_short'};
+    }
+    if (returnRatio < 0.12) {
+      return {...metrics, ready: false, reason: 'did_not_return'};
+    }
+    if (velocity < 90 * this.thresholdScale) {
+      return {...metrics, ready: false, reason: 'velocity_too_low'};
+    }
     return metrics;
   }
 
@@ -239,8 +300,12 @@ class WiggleDetector {
       isWindowMoving: sample.isWindowMoving === true,
       foregroundApp: String(sample.foregroundApp || ''),
     };
-    if (!Number.isFinite(point.t) || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
-      return { triggered: false, reason: 'invalid_sample', metrics: {} };
+    if (
+      !Number.isFinite(point.t) ||
+      !Number.isFinite(point.x) ||
+      !Number.isFinite(point.y)
+    ) {
+      return {triggered: false, reason: 'invalid_sample', metrics: {}};
     }
     const previousSample = this.lastSample;
     this.lastSample = point;
@@ -248,48 +313,57 @@ class WiggleDetector {
     if (blocked) {
       this.points = [];
       this.lastMotionAt = null;
-      return { triggered: false, reason: blocked, metrics: {} };
+      return {triggered: false, reason: blocked, metrics: {}};
     }
 
     if (!previousSample) {
       this.points = [point];
-      return { triggered: false, reason: 'insufficient_samples', metrics: {} };
+      return {triggered: false, reason: 'insufficient_samples', metrics: {}};
     }
 
-    const movement = Math.hypot(point.x - previousSample.x, point.y - previousSample.y);
+    const movement = Math.hypot(
+      point.x - previousSample.x,
+      point.y - previousSample.y,
+    );
     if (movement < 1.5 * this.thresholdScale) {
-      if (this.lastMotionAt === null || point.t - this.lastMotionAt >= this.idleResetMs) {
+      if (
+        this.lastMotionAt === null ||
+        point.t - this.lastMotionAt >= this.idleResetMs
+      ) {
         this.points = [point];
         this.lastMotionAt = null;
       }
-      return { triggered: false, reason: 'idle', metrics: {} };
+      return {triggered: false, reason: 'idle', metrics: {}};
     }
 
-    if (this.lastMotionAt === null || point.t - this.lastMotionAt >= this.idleResetMs) {
+    if (
+      this.lastMotionAt === null ||
+      point.t - this.lastMotionAt >= this.idleResetMs
+    ) {
       this.points = [previousSample];
     }
     this.lastMotionAt = point.t;
     this.points.push(point);
     const cutoff = point.t - this.windowMs;
-    this.points = this.points.filter((item) => item.t >= cutoff);
+    this.points = this.points.filter(item => item.t >= cutoff);
 
     const metrics = this._metrics(this.points);
     if (!metrics.ready) {
-      return { triggered: false, reason: metrics.reason || 'not_ready', metrics };
+      return {triggered: false, reason: metrics.reason || 'not_ready', metrics};
     }
     if (this.calibration && point.t <= this.calibration.until) {
       this.calibration.samples.push(metrics);
       this.reset();
-      return { triggered: false, reason: 'calibrating', metrics };
+      return {triggered: false, reason: 'calibrating', metrics};
     }
     if (point.t - this.lastTriggeredAt < this.cooldownMs) {
       this.reset();
-      return { triggered: false, reason: 'cooldown', metrics };
+      return {triggered: false, reason: 'cooldown', metrics};
     }
     this.lastTriggeredAt = point.t;
     this.reset();
-    return { triggered: true, reason: 'intentional_wiggle', metrics };
+    return {triggered: true, reason: 'intentional_wiggle', metrics};
   }
 }
 
-module.exports = { WiggleDetector };
+module.exports = {WiggleDetector};

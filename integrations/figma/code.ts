@@ -26,12 +26,20 @@ const documentSessionId = [
 ].join(':');
 
 function cloneForWire(value: unknown): unknown {
-  if (value === figma.mixed) return { mixed: true };
-  if (Array.isArray(value)) return value.map(cloneForWire);
+  if (value === figma.mixed) {
+    return {mixed: true};
+  }
+  if (Array.isArray(value)) {
+    return value.map(cloneForWire);
+  }
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof item !== 'function' && typeof item !== 'symbol') result[key] = cloneForWire(item);
+    for (const [key, item] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      if (typeof item !== 'function' && typeof item !== 'symbol') {
+        result[key] = cloneForWire(item);
+      }
     }
     return result;
   }
@@ -56,24 +64,46 @@ function serializeNode(node: BaseNode): Record<string, unknown> {
       setFill: supports(node, 'fills') && record.fills !== figma.mixed,
       setSpacing: supports(node, 'layoutMode'),
       resize: supports(node, 'resize'),
-      move: supports(node, 'x') && supports(node, 'y')
-        && !(
-          node.parent
-          && 'layoutMode' in node.parent
-          && node.parent.layoutMode !== 'NONE'
+      move:
+        supports(node, 'x') &&
+        supports(node, 'y') &&
+        !(
+          node.parent &&
+          'layoutMode' in node.parent &&
+          node.parent.layoutMode !== 'NONE'
         ),
     },
   };
-  if ('absoluteBoundingBox' in node) result.bounds = cloneForWire(node.absoluteBoundingBox);
-  if ('characters' in node) result.characters = node.characters;
-  if ('fontName' in node) result.fontName = cloneForWire(node.fontName);
-  if ('fills' in node) result.fills = cloneForWire(node.fills);
+  if ('absoluteBoundingBox' in node) {
+    result.bounds = cloneForWire(node.absoluteBoundingBox);
+  }
+  if ('characters' in node) {
+    result.characters = node.characters;
+  }
+  if ('fontName' in node) {
+    result.fontName = cloneForWire(node.fontName);
+  }
+  if ('fills' in node) {
+    result.fills = cloneForWire(node.fills);
+  }
   for (const property of [
-    'x', 'y', 'width', 'height', 'layoutMode', 'primaryAxisSizingMode',
-    'counterAxisSizingMode', 'itemSpacing', 'paddingTop', 'paddingRight',
-    'paddingBottom', 'paddingLeft', 'componentProperties',
+    'x',
+    'y',
+    'width',
+    'height',
+    'layoutMode',
+    'primaryAxisSizingMode',
+    'counterAxisSizingMode',
+    'itemSpacing',
+    'paddingTop',
+    'paddingRight',
+    'paddingBottom',
+    'paddingLeft',
+    'componentProperties',
   ]) {
-    if (property in record) result[property] = cloneForWire(record[property]);
+    if (property in record) {
+      result[property] = cloneForWire(record[property]);
+    }
   }
   if (node.type === 'INSTANCE') {
     result.mainComponentId = node.mainComponent?.id || null;
@@ -82,13 +112,19 @@ function serializeNode(node: BaseNode): Record<string, unknown> {
 }
 
 async function nodesById(rawIds: unknown): Promise<BaseNode[]> {
-  if (!Array.isArray(rawIds)) throw new Error('node_ids_must_be_array');
-  const ids = rawIds.map((value) => String(value || '').trim()).filter(Boolean);
-  if (!ids.length || ids.length > 100) throw new Error('node_ids_count_invalid');
+  if (!Array.isArray(rawIds)) {
+    throw new Error('node_ids_must_be_array');
+  }
+  const ids = rawIds.map(value => String(value || '').trim()).filter(Boolean);
+  if (!ids.length || ids.length > 100) {
+    throw new Error('node_ids_count_invalid');
+  }
   const found: BaseNode[] = [];
   for (const id of ids) {
     const node = await figma.getNodeByIdAsync(id);
-    if (!node) throw new Error(`node_not_found:${id}`);
+    if (!node) {
+      throw new Error(`node_not_found:${id}`);
+    }
     found.push(node);
   }
   return found;
@@ -103,12 +139,14 @@ async function readSelection(): Promise<Record<string, unknown>> {
     if (parent && parent.type !== 'DOCUMENT') {
       related.set(parent.id, parent);
       if ('children' in parent) {
-        for (const sibling of parent.children.slice(0, 20)) related.set(sibling.id, sibling);
+        for (const sibling of parent.children.slice(0, 20)) {
+          related.set(sibling.id, sibling);
+        }
       }
     }
   }
   return {
-    selectionIds: selected.map((node) => node.id),
+    selectionIds: selected.map(node => node.id),
     nodes: [...related.values()].map(serializeNode),
     pageId: figma.currentPage.id,
     pageName: figma.currentPage.name,
@@ -117,11 +155,13 @@ async function readSelection(): Promise<Record<string, unknown>> {
 }
 
 async function execute(command: BridgeCommand): Promise<unknown> {
-  if (!connected) throw new Error('figma_plugin_not_connected');
+  if (!connected) {
+    throw new Error('figma_plugin_not_connected');
+  }
   if (
-    command.taskId !== connected.taskId
-    || command.documentSessionId !== connected.documentSessionId
-    || command.documentSessionId !== documentSessionId
+    command.taskId !== connected.taskId ||
+    command.documentSessionId !== connected.documentSessionId ||
+    command.documentSessionId !== documentSessionId
   ) {
     throw new Error('figma_command_identity_mismatch');
   }
@@ -131,36 +171,53 @@ async function execute(command: BridgeCommand): Promise<unknown> {
     case 'read_nodes':
     case 'readback': {
       const nodes = await nodesById(command.arguments.nodeIds);
-      return { nodes: nodes.map(serializeNode) };
+      return {nodes: nodes.map(serializeNode)};
     }
     case 'read_parent': {
       const [node] = await nodesById([command.arguments.nodeId]);
       const parent = node.parent;
-      const siblings = parent && 'children' in parent
-        ? parent.children.slice(0, 50).map(serializeNode)
-        : [];
+      const siblings =
+        parent && 'children' in parent
+          ? parent.children.slice(0, 50).map(serializeNode)
+          : [];
       return {
         node: serializeNode(node),
-        parent: parent && parent.type !== 'DOCUMENT' ? serializeNode(parent) : null,
+        parent:
+          parent && parent.type !== 'DOCUMENT' ? serializeNode(parent) : null,
         siblings,
       };
     }
     case 'export_preview': {
       const [node] = await nodesById([command.arguments.nodeId]);
-      if (!('exportAsync' in node)) throw new Error(`node_export_unsupported:${node.id}`);
-      const bytes = await node.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
-      return { nodeId: node.id, mimeType: 'image/png', base64: figma.base64Encode(bytes) };
+      if (!('exportAsync' in node)) {
+        throw new Error(`node_export_unsupported:${node.id}`);
+      }
+      const bytes = await node.exportAsync({
+        format: 'PNG',
+        constraint: {type: 'SCALE', value: 1},
+      });
+      return {
+        nodeId: node.id,
+        mimeType: 'image/png',
+        base64: figma.base64Encode(bytes),
+      };
     }
     case 'apply_patch': {
       const operations = command.arguments.operations;
-      if (!Array.isArray(operations)) throw new Error('figma_patch_operations_required');
+      if (!Array.isArray(operations)) {
+        throw new Error('figma_patch_operations_required');
+      }
       return applyFigmaNodePatch(
         {
           documentSessionId,
           async getNodeById(nodeId) {
-            return await figma.getNodeByIdAsync(nodeId) as unknown as FigmaNodeLike | null;
+            return (await figma.getNodeByIdAsync(
+              nodeId,
+            )) as unknown as FigmaNodeLike | null;
           },
-          async loadFont(font) { await figma.loadFontAsync(font); },
+          async loadFont(font) {
+            await figma.loadFontAsync(font);
+          },
         },
         {
           taskId: command.taskId,
@@ -175,17 +232,19 @@ async function execute(command: BridgeCommand): Promise<unknown> {
 }
 
 function sendSelectionEvent(): void {
-  if (!connected) return;
+  if (!connected) {
+    return;
+  }
   figma.ui.postMessage({
     type: 'selection-event',
     taskId: connected.taskId,
     documentSessionId,
-    selectionIds: figma.currentPage.selection.map((node) => node.id),
+    selectionIds: figma.currentPage.selection.map(node => node.id),
     pageId: figma.currentPage.id,
   });
 }
 
-figma.showUI(__html__, { width: 360, height: 420, themeColors: true });
+figma.showUI(__html__, {width: 360, height: 420, themeColors: true});
 figma.ui.postMessage({
   type: 'plugin-ready',
   documentSessionId,
@@ -196,7 +255,9 @@ figma.ui.postMessage({
 
 figma.on('selectionchange', sendSelectionEvent);
 figma.on('currentpagechange', () => {
-  if (!connected) return;
+  if (!connected) {
+    return;
+  }
   figma.ui.postMessage({
     type: 'document-event',
     taskId: connected.taskId,
@@ -212,10 +273,13 @@ figma.ui.onmessage = async (message: Record<string, unknown>) => {
     const taskId = String(message.taskId || '').trim();
     const incomingDocument = String(message.documentSessionId || '').trim();
     if (!taskId || incomingDocument !== documentSessionId) {
-      figma.ui.postMessage({ type: 'plugin-error', error: 'figma_connection_identity_mismatch' });
+      figma.ui.postMessage({
+        type: 'plugin-error',
+        error: 'figma_connection_identity_mismatch',
+      });
       return;
     }
-    connected = { taskId, documentSessionId };
+    connected = {taskId, documentSessionId};
     sendSelectionEvent();
     return;
   }
@@ -223,7 +287,9 @@ figma.ui.onmessage = async (message: Record<string, unknown>) => {
     connected = null;
     return;
   }
-  if (message.type !== 'bridge-command') return;
+  if (message.type !== 'bridge-command') {
+    return;
+  }
   const command = message.command as BridgeCommand;
   try {
     const result = await execute(command);

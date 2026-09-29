@@ -1,6 +1,6 @@
 'use strict';
 
-import type { PathLike } from 'node:fs';
+import type {PathLike} from 'node:fs';
 
 const fs = require('fs');
 
@@ -12,8 +12,8 @@ type ReadinessReason =
   | 'ready'
   | 'marker_missing'
   | 'marker_invalid';
-type Readiness = { ready: boolean; reason: ReadinessReason };
-type ReadinessOptions = { bootstrapVersion?: number; requiredPaths?: PathLike[] };
+type Readiness = {ready: boolean; reason: ReadinessReason};
+type ReadinessOptions = {bootstrapVersion?: number; requiredPaths?: PathLike[]};
 
 function shouldStartHidden({
   argv = [],
@@ -25,32 +25,43 @@ function shouldStartHidden({
   captureMode?: boolean;
 } = {}): boolean {
   const switches = new Set(
-    (Array.isArray(argv) ? argv : []).map((value) => String(value).toLowerCase()),
+    (Array.isArray(argv) ? argv : []).map(value => String(value).toLowerCase()),
   );
-  if (captureMode === true || wasOpenedAtLogin === true) return true;
-  if (switches.has('--show') || switches.has('--dashboard')) return false;
+  if (captureMode === true || wasOpenedAtLogin === true) {
+    return true;
+  }
+  if (switches.has('--show') || switches.has('--dashboard')) {
+    return false;
+  }
   return true;
 }
 
-function onboardingIsReady(markerPath: PathLike, options: ReadinessOptions = {}): boolean {
-  return inspectOnboardingReadiness({ markerPath, ...options }).ready;
+function onboardingIsReady(
+  markerPath: PathLike,
+  options: ReadinessOptions = {},
+): boolean {
+  return inspectOnboardingReadiness({markerPath, ...options}).ready;
 }
 
 function inspectOnboardingReadiness({
   markerPath,
   bootstrapVersion = 1,
   requiredPaths = [],
-}: ReadinessOptions & { markerPath?: PathLike } = {}): Readiness {
+}: ReadinessOptions & {markerPath?: PathLike} = {}): Readiness {
   try {
     const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-    if (marker?.schemaVersion !== 2) return { ready: false, reason: 'marker_schema_outdated' };
-    if (marker?.status !== 'ready') return { ready: false, reason: 'marker_not_ready' };
+    if (marker?.schemaVersion !== 2) {
+      return {ready: false, reason: 'marker_schema_outdated'};
+    }
+    if (marker?.status !== 'ready') {
+      return {ready: false, reason: 'marker_not_ready'};
+    }
     if (Number(marker.bootstrapVersion) !== Number(bootstrapVersion)) {
-      return { ready: false, reason: 'bootstrap_version_changed' };
+      return {ready: false, reason: 'bootstrap_version_changed'};
     }
     if (
       !Array.isArray(requiredPaths) ||
-      requiredPaths.some((requiredPath) => {
+      requiredPaths.some(requiredPath => {
         try {
           return !fs.statSync(requiredPath).isFile();
         } catch (_) {
@@ -58,16 +69,22 @@ function inspectOnboardingReadiness({
         }
       })
     ) {
-      return { ready: false, reason: 'runtime_probe_failed' };
+      return {ready: false, reason: 'runtime_probe_failed'};
     }
-    return { ready: true, reason: 'ready' };
+    return {ready: true, reason: 'ready'};
   } catch (error: unknown) {
     return {
       ready: false,
       reason:
-        (error as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'marker_missing' : 'marker_invalid',
+        (error as NodeJS.ErrnoException)?.code === 'ENOENT'
+          ? 'marker_missing'
+          : 'marker_invalid',
     };
   }
 }
 
-module.exports = { inspectOnboardingReadiness, onboardingIsReady, shouldStartHidden };
+module.exports = {
+  inspectOnboardingReadiness,
+  onboardingIsReady,
+  shouldStartHidden,
+};

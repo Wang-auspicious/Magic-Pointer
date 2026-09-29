@@ -1,358 +1,437 @@
 (() => {
-type UnknownRecord = Record<string, unknown>;
+  type UnknownRecord = Record<string, unknown>;
 
-interface Point {
-  x: number;
-  y: number;
-}
+  interface Point {
+    x: number;
+    y: number;
+  }
 
-interface TimedPoint extends Point {
-  t: number;
-}
+  interface TimedPoint extends Point {
+    t: number;
+  }
 
-interface Rect extends Point {
-  height: number;
-  width: number;
-}
+  interface Rect extends Point {
+    height: number;
+    width: number;
+  }
 
-interface GestureThresholds {
-  minDistance?: number;
-  minDurationMs?: number;
-  quickPointMaxDistance?: number;
-}
+  interface GestureThresholds {
+    minDistance?: number;
+    minDurationMs?: number;
+    quickPointMaxDistance?: number;
+  }
 
-interface GestureInputBudget {
-  maxPoints?: number;
-  maxStrokes?: number;
-}
+  interface GestureInputBudget {
+    maxPoints?: number;
+    maxStrokes?: number;
+  }
 
-const CIRCLE_MIN_POINTS = 6;
-const CIRCLE_MIN_EDGE_DIP = 16;
-const CIRCLE_MAX_CLOSURE_RATIO = 0.36;
-const CIRCLE_MIN_CIRCUIT_RATIO = 1.65;
-const LINE_MIN_STRAIGHTNESS = 0.80;
-const STROKE_CLASSIFIER_THRESHOLDS = Object.freeze({
-  minPoints: CIRCLE_MIN_POINTS,
-  minEdgeDip: CIRCLE_MIN_EDGE_DIP,
-  closureRatio: CIRCLE_MAX_CLOSURE_RATIO,
-  circuitRatio: CIRCLE_MIN_CIRCUIT_RATIO,
-  straightness: LINE_MIN_STRAIGHTNESS,
-});
+  const CIRCLE_MIN_POINTS = 6;
+  const CIRCLE_MIN_EDGE_DIP = 16;
+  const CIRCLE_MAX_CLOSURE_RATIO = 0.36;
+  const CIRCLE_MIN_CIRCUIT_RATIO = 1.65;
+  const LINE_MIN_STRAIGHTNESS = 0.8;
+  const STROKE_CLASSIFIER_THRESHOLDS = Object.freeze({
+    minPoints: CIRCLE_MIN_POINTS,
+    minEdgeDip: CIRCLE_MIN_EDGE_DIP,
+    closureRatio: CIRCLE_MAX_CLOSURE_RATIO,
+    circuitRatio: CIRCLE_MIN_CIRCUIT_RATIO,
+    straightness: LINE_MIN_STRAIGHTNESS,
+  });
 
-const QUICK_POINT_MAX_DISTANCE = 14;
-const CHAIN_IDLE_FINALIZE_MS = 520;
-const CHAIN_CONTINUE_DISTANCE = 4;
+  const QUICK_POINT_MAX_DISTANCE = 14;
+  const CHAIN_IDLE_FINALIZE_MS = 520;
+  const CHAIN_CONTINUE_DISTANCE = 4;
 
-const GEOMETRY_COORDINATE_SPACE = 'dip_window';
+  const GEOMETRY_COORDINATE_SPACE = 'dip_window';
 
-function recordOf(value: unknown): UnknownRecord | null {
-  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
-}
+  function recordOf(value: unknown): UnknownRecord | null {
+    return value !== null && typeof value === 'object'
+      ? (value as UnknownRecord)
+      : null;
+  }
 
-function finitePoint(value: unknown, index = 0): TimedPoint | null {
-  const candidate = recordOf(value);
-  const x = Number(candidate?.x);
-  const y = Number(candidate?.y);
-  const t = Number(candidate?.t);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return { x, y, t: Number.isFinite(t) ? t : index };
-}
+  function finitePoint(value: unknown, index = 0): TimedPoint | null {
+    const candidate = recordOf(value);
+    const x = Number(candidate?.x);
+    const y = Number(candidate?.y);
+    const t = Number(candidate?.t);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return {x, y, t: Number.isFinite(t) ? t : index};
+  }
 
-function distance(left: Point, right: Point): number {
-  return Math.hypot(right.x - left.x, right.y - left.y);
-}
+  function distance(left: Point, right: Point): number {
+    return Math.hypot(right.x - left.x, right.y - left.y);
+  }
 
-function chainFinalizeDelay({
-  now,
-  deadlineAt,
-  idleMs = CHAIN_IDLE_FINALIZE_MS,
-}: { deadlineAt?: unknown; idleMs?: unknown; now?: unknown } = {}): number {
-  const current = Number(now);
-  const deadline = Number(deadlineAt);
-  const idle = Math.max(1, Number(idleMs) || CHAIN_IDLE_FINALIZE_MS);
-  if (!Number.isFinite(current) || !Number.isFinite(deadline)) return idle;
-  return Math.max(0, Math.min(idle, deadline - current));
-}
+  function chainFinalizeDelay({
+    now,
+    deadlineAt,
+    idleMs = CHAIN_IDLE_FINALIZE_MS,
+  }: {deadlineAt?: unknown; idleMs?: unknown; now?: unknown} = {}): number {
+    const current = Number(now);
+    const deadline = Number(deadlineAt);
+    const idle = Math.max(1, Number(idleMs) || CHAIN_IDLE_FINALIZE_MS);
+    if (!Number.isFinite(current) || !Number.isFinite(deadline)) {
+      return idle;
+    }
+    return Math.max(0, Math.min(idle, deadline - current));
+  }
 
-function pointerContinuesGestureChain(
-  previous: unknown,
-  next: unknown,
-  minimumDistance: unknown = CHAIN_CONTINUE_DISTANCE,
-): boolean {
-  const left = finitePoint(previous);
-  const right = finitePoint(next);
-  if (!left || !right) return false;
-  return distance(left, right) >= Math.max(0, Number(minimumDistance) || CHAIN_CONTINUE_DISTANCE);
-}
+  function pointerContinuesGestureChain(
+    previous: unknown,
+    next: unknown,
+    minimumDistance: unknown = CHAIN_CONTINUE_DISTANCE,
+  ): boolean {
+    const left = finitePoint(previous);
+    const right = finitePoint(next);
+    if (!left || !right) {
+      return false;
+    }
+    return (
+      distance(left, right) >=
+      Math.max(0, Number(minimumDistance) || CHAIN_CONTINUE_DISTANCE)
+    );
+  }
 
-function roundedPoint(point: Point): Point {
-  return { x: Math.round(point.x), y: Math.round(point.y) };
-}
+  function roundedPoint(point: Point): Point {
+    return {x: Math.round(point.x), y: Math.round(point.y)};
+  }
 
-function corridorWidthFor(pathLength: number): number {
-  return Math.max(10, Math.min(36, pathLength * 0.05));
-}
+  function corridorWidthFor(pathLength: number): number {
+    return Math.max(10, Math.min(36, pathLength * 0.05));
+  }
 
-function buildCorridor(points: readonly Point[], width: number): Point[] {
-  const left: Point[] = [];
-  const right: Point[] = [];
-  for (let index = 0; index < points.length; index += 1) {
-    const prev = points[Math.max(0, index - 1)];
-    const next = points[Math.min(points.length - 1, index + 1)];
-    let dx = next.x - prev.x;
-    let dy = next.y - prev.y;
+  function buildCorridor(points: readonly Point[], width: number): Point[] {
+    const left: Point[] = [];
+    const right: Point[] = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const prev = points[Math.max(0, index - 1)];
+      const next = points[Math.min(points.length - 1, index + 1)];
+      let dx = next.x - prev.x;
+      let dy = next.y - prev.y;
+      const length = Math.hypot(dx, dy) || 1;
+      dx /= length;
+      dy /= length;
+      const half = width / 2;
+      left.push({
+        x: points[index].x - dy * half,
+        y: points[index].y + dx * half,
+      });
+      right.push({
+        x: points[index].x + dy * half,
+        y: points[index].y - dx * half,
+      });
+    }
+    return [...left, ...right.reverse()];
+  }
+
+  function buildCircleRing(bbox: Rect, sampleCount = 32): Point[] {
+    const centerX = bbox.x + bbox.width / 2;
+    const centerY = bbox.y + bbox.height / 2;
+    const radiusX = Math.max(8, bbox.width / 2);
+    const radiusY = Math.max(8, bbox.height / 2);
+    const ring: Point[] = [];
+    for (let index = 0; index < sampleCount; index += 1) {
+      const angle = (2 * Math.PI * index) / sampleCount;
+      ring.push({
+        x: centerX + radiusX * Math.cos(angle),
+        y: centerY + radiusY * Math.sin(angle),
+      });
+    }
+    const closing = {x: centerX + radiusX, y: centerY};
+    ring.push(closing);
+    return ring;
+  }
+
+  function directionOf(points: readonly Point[]): Point {
+    const first = points[0];
+    const last = points.at(-1)!;
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
     const length = Math.hypot(dx, dy) || 1;
-    dx /= length;
-    dy /= length;
-    const half = width / 2;
-    left.push({ x: points[index].x - dy * half, y: points[index].y + dx * half });
-    right.push({ x: points[index].x + dy * half, y: points[index].y - dx * half });
+    return {x: dx / length, y: dy / length};
   }
-  return [...left, ...right.reverse()];
-}
 
-function buildCircleRing(bbox: Rect, sampleCount = 32): Point[] {
-  const centerX = bbox.x + bbox.width / 2;
-  const centerY = bbox.y + bbox.height / 2;
-  const radiusX = Math.max(8, bbox.width / 2);
-  const radiusY = Math.max(8, bbox.height / 2);
-  const ring: Point[] = [];
-  for (let index = 0; index < sampleCount; index += 1) {
-    const angle = (2 * Math.PI * index) / sampleCount;
-    ring.push({ x: centerX + radiusX * Math.cos(angle), y: centerY + radiusY * Math.sin(angle) });
-  }
-  const closing = { x: centerX + radiusX, y: centerY };
-  ring.push(closing);
-  return ring;
-}
+  function summarizeStroke(
+    points: TimedPoint[],
+    {
+      minDistance = 12,
+      minDurationMs = 40,
+      quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
+    }: GestureThresholds = {},
+  ) {
+    if (points.length < 2) {
+      return null;
+    }
+    let pathLength = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      pathLength += distance(points[index - 1], points[index]);
+    }
+    const finalPoint = points.at(-1)!;
+    const durationMs = Math.max(0, finalPoint.t - points[0].t);
+    const releasePoint = roundedPoint(finalPoint);
+    const isPoint = pathLength <= quickPointMaxDistance;
+    if (isPoint) {
+      return {
+        schemaVersion: 2,
+        kind: 'point',
+        points,
+        bbox: {x: releasePoint.x, y: releasePoint.y, width: 0, height: 0},
+        semanticPoint: releasePoint,
+        geometry: {
+          type: 'point_target',
+          point: releasePoint,
+          radiusPx: quickPointMaxDistance,
+          coordinateSpace: GEOMETRY_COORDINATE_SPACE,
+        },
+        shapeVerdict: {
+          kind: 'point',
+          closed: false,
+          closureRatio: null,
+          circuitRatio: null,
+          straightness: 1,
+          thresholds: STROKE_CLASSIFIER_THRESHOLDS,
+        },
+        direction: undefined,
+        pathLength,
+        durationMs,
+        straightness: 1,
+        releasePoint,
+      };
+    }
+    if (pathLength < minDistance || durationMs < minDurationMs) {
+      return null;
+    }
 
-function directionOf(points: readonly Point[]): Point {
-  const first = points[0];
-  const last = points.at(-1)!;
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  const length = Math.hypot(dx, dy) || 1;
-  return { x: dx / length, y: dy / length };
-}
+    const xs = points.map(point => point.x);
+    const ys = points.map(point => point.y);
+    const bbox = {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys),
+    };
+    const chord = distance(points[0], finalPoint);
+    const straightness = chord / Math.max(pathLength, 1);
+    const diagonal = Math.hypot(bbox.width, bbox.height) || 1;
+    const closure = chord / diagonal;
+    const circuit = pathLength / diagonal;
+    const isCircle =
+      points.length >= CIRCLE_MIN_POINTS &&
+      bbox.width >= CIRCLE_MIN_EDGE_DIP &&
+      bbox.height >= CIRCLE_MIN_EDGE_DIP &&
+      closure <= CIRCLE_MAX_CLOSURE_RATIO &&
+      circuit >= CIRCLE_MIN_CIRCUIT_RATIO;
+    const kind = isCircle
+      ? 'circle'
+      : straightness >= LINE_MIN_STRAIGHTNESS
+        ? 'line'
+        : 'freeform';
+    const raw =
+      kind === 'circle'
+        ? {x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2}
+        : kind === 'freeform'
+          ? {
+              x: xs.reduce((sum, value) => sum + value, 0) / points.length,
+              y: ys.reduce((sum, value) => sum + value, 0) / points.length,
+            }
+          : {
+              x: (points[0].x + finalPoint.x) / 2,
+              y: (points[0].y + finalPoint.y) / 2,
+            };
 
-function summarizeStroke(points: TimedPoint[], {
-  minDistance = 12,
-  minDurationMs = 40,
-  quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
-}: GestureThresholds = {}) {
-  if (points.length < 2) {
-    return null;
-  }
-  let pathLength = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    pathLength += distance(points[index - 1], points[index]);
-  }
-  const finalPoint = points.at(-1)!;
-  const durationMs = Math.max(0, finalPoint.t - points[0].t);
-  const releasePoint = roundedPoint(finalPoint);
-  const isPoint = pathLength <= quickPointMaxDistance;
-  if (isPoint) {
     return {
       schemaVersion: 2,
-      kind: 'point',
+      kind,
       points,
-      bbox: { x: releasePoint.x, y: releasePoint.y, width: 0, height: 0 },
-      semanticPoint: releasePoint,
-      geometry: {
-        type: 'point_target',
-        point: releasePoint,
-        radiusPx: quickPointMaxDistance,
-        coordinateSpace: GEOMETRY_COORDINATE_SPACE,
+      bbox: {
+        x: Math.round(bbox.x),
+        y: Math.round(bbox.y),
+        width: Math.round(bbox.width),
+        height: Math.round(bbox.height),
       },
+      semanticPoint:
+        Number.isFinite(raw.x) && Number.isFinite(raw.y)
+          ? roundedPoint(raw)
+          : roundedPoint({
+              x: (points[0].x + finalPoint.x) / 2,
+              y: (points[0].y + finalPoint.y) / 2,
+            }),
       shapeVerdict: {
-        kind: 'point',
-        closed: false,
-        closureRatio: null,
-        circuitRatio: null,
-        straightness: 1,
+        kind,
+        closed: kind === 'circle',
+        closureRatio: closure,
+        circuitRatio: circuit,
+        straightness,
         thresholds: STROKE_CLASSIFIER_THRESHOLDS,
       },
-      direction: undefined,
+      geometry:
+        kind === 'circle'
+          ? {
+              type: 'polygon_region',
+              ring: buildCircleRing(bbox),
+              coordinateSpace: GEOMETRY_COORDINATE_SPACE,
+            }
+          : {
+              type: 'band_corridor',
+              centerline: points.map(point => ({x: point.x, y: point.y})),
+              corridor: buildCorridor(points, corridorWidthFor(pathLength)),
+              widthPx: Math.round(corridorWidthFor(pathLength)),
+              coordinateSpace: GEOMETRY_COORDINATE_SPACE,
+            },
+      direction: kind === 'circle' ? undefined : directionOf(points),
       pathLength,
       durationMs,
-      straightness: 1,
+      straightness,
       releasePoint,
     };
   }
-  if (pathLength < minDistance || durationMs < minDurationMs) {
-    return null;
+
+  type StrokeSummary = NonNullable<ReturnType<typeof summarizeStroke>>;
+
+  function boundGestureInput(
+    rawPoints: unknown,
+    rawStrokes: unknown,
+    {maxPoints = 4096, maxStrokes = 32}: GestureInputBudget = {},
+  ) {
+    const pointBudget = Math.max(
+      2,
+      Math.min(65_536, Math.trunc(Number(maxPoints) || 4096)),
+    );
+    const strokeBudget = Math.max(
+      1,
+      Math.min(128, Math.trunc(Number(maxStrokes) || 32)),
+    );
+    if (!Array.isArray(rawStrokes) || rawStrokes.length === 0) {
+      return {
+        points: Array.isArray(rawPoints)
+          ? rawPoints.slice(0, pointBudget)
+          : rawPoints,
+        strokes: rawStrokes,
+      };
+    }
+    let remaining = pointBudget;
+    const strokes: Array<Record<string, unknown>> = [];
+    for (const value of rawStrokes.slice(0, strokeBudget)) {
+      if (remaining < 2) {
+        break;
+      }
+      const stroke = recordOf(value);
+      if (!stroke || !Array.isArray(stroke.points)) {
+        continue;
+      }
+      const points = stroke.points.slice(0, remaining);
+      if (points.length < 2) {
+        continue;
+      }
+      strokes.push({...stroke, points});
+      remaining -= points.length;
+    }
+    return {points: [], strokes};
   }
 
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const bbox = {
-    x: Math.min(...xs),
-    y: Math.min(...ys),
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys),
-  };
-  const chord = distance(points[0], finalPoint);
-  const straightness = chord / Math.max(pathLength, 1);
-  const diagonal = Math.hypot(bbox.width, bbox.height) || 1;
-  const closure = chord / diagonal;
-  const circuit = pathLength / diagonal;
-  const isCircle = points.length >= CIRCLE_MIN_POINTS
-    && bbox.width >= CIRCLE_MIN_EDGE_DIP && bbox.height >= CIRCLE_MIN_EDGE_DIP
-    && closure <= CIRCLE_MAX_CLOSURE_RATIO && circuit >= CIRCLE_MIN_CIRCUIT_RATIO;
-  const kind = isCircle
-    ? 'circle'
-    : straightness >= LINE_MIN_STRAIGHTNESS ? 'line' : 'freeform';
-  const raw = kind === 'circle'
-    ? { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }
-    : kind === 'freeform'
-      ? {
-        x: xs.reduce((sum, value) => sum + value, 0) / points.length,
-        y: ys.reduce((sum, value) => sum + value, 0) / points.length,
-      }
-      : { x: (points[0].x + finalPoint.x) / 2, y: (points[0].y + finalPoint.y) / 2 };
-
-  return {
-    schemaVersion: 2,
-    kind,
-    points,
-    bbox: {
-      x: Math.round(bbox.x),
-      y: Math.round(bbox.y),
-      width: Math.round(bbox.width),
-      height: Math.round(bbox.height),
-    },
-    semanticPoint: Number.isFinite(raw.x) && Number.isFinite(raw.y)
-      ? roundedPoint(raw)
-      : roundedPoint({ x: (points[0].x + finalPoint.x) / 2, y: (points[0].y + finalPoint.y) / 2 }),
-    shapeVerdict: {
-      kind,
-      closed: kind === 'circle',
-      closureRatio: closure,
-      circuitRatio: circuit,
-      straightness,
-      thresholds: STROKE_CLASSIFIER_THRESHOLDS,
-    },
-    geometry: kind === 'circle'
-      ? {
-        type: 'polygon_region',
-        ring: buildCircleRing(bbox),
-        coordinateSpace: GEOMETRY_COORDINATE_SPACE,
-      }
-      : {
-        type: 'band_corridor',
-        centerline: points.map((point) => ({ x: point.x, y: point.y })),
-        corridor: buildCorridor(points, corridorWidthFor(pathLength)),
-        widthPx: Math.round(corridorWidthFor(pathLength)),
-        coordinateSpace: GEOMETRY_COORDINATE_SPACE,
-      },
-    direction: kind === 'circle' ? undefined : directionOf(points),
-    pathLength,
-    durationMs,
-    straightness,
-    releasePoint,
-  };
-}
-
-type StrokeSummary = NonNullable<ReturnType<typeof summarizeStroke>>;
-
-function boundGestureInput(rawPoints: unknown, rawStrokes: unknown, {
-  maxPoints = 4096,
-  maxStrokes = 32,
-}: GestureInputBudget = {}) {
-  const pointBudget = Math.max(2, Math.min(65_536, Math.trunc(Number(maxPoints) || 4096)));
-  const strokeBudget = Math.max(1, Math.min(128, Math.trunc(Number(maxStrokes) || 32)));
-  if (!Array.isArray(rawStrokes) || rawStrokes.length === 0) {
+  function summarizeGesture(
+    rawPoints: unknown,
+    rawStrokes?: unknown,
+    {
+      minDistance = 12,
+      minDurationMs = 40,
+      quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
+    }: GestureThresholds = {},
+  ) {
+    const strokeInputs =
+      Array.isArray(rawStrokes) && rawStrokes.length
+        ? rawStrokes
+            .map(value => {
+              const stroke = recordOf(value);
+              return (Array.isArray(stroke?.points) ? stroke.points : [])
+                .map(finitePoint)
+                .filter(
+                  (point: TimedPoint | null): point is TimedPoint =>
+                    point !== null,
+                );
+            })
+            .filter(strokePoints => strokePoints.length >= 2)
+        : [
+            (Array.isArray(rawPoints) ? rawPoints : [])
+              .map(finitePoint)
+              .filter(
+                (point: TimedPoint | null): point is TimedPoint =>
+                  point !== null,
+              ),
+          ];
+    const strokeSummaries = strokeInputs
+      .map(strokePoints =>
+        summarizeStroke(strokePoints, {
+          minDistance,
+          minDurationMs,
+          quickPointMaxDistance,
+        }),
+      )
+      .filter(
+        (stroke: StrokeSummary | null): stroke is StrokeSummary =>
+          stroke !== null,
+      );
+    if (!strokeSummaries.length) {
+      const reason = strokeInputs.some(strokePoints => strokePoints.length >= 2)
+        ? 'gesture_too_short'
+        : 'insufficient_points';
+      return {valid: false, reason, points: []};
+    }
+    const points = strokeSummaries.flatMap(stroke => stroke.points);
+    const xs = points.map(point => point.x);
+    const ys = points.map(point => point.y);
+    const first = strokeSummaries[0];
+    const last = strokeSummaries[strokeSummaries.length - 1];
     return {
-      points: Array.isArray(rawPoints) ? rawPoints.slice(0, pointBudget) : rawPoints,
-      strokes: rawStrokes,
+      schemaVersion: 2,
+      valid: true,
+      reason: null,
+      kind: strokeSummaries.length === 1 ? first.kind : 'multi',
+      points,
+      strokes: strokeSummaries,
+      bbox: {
+        x: Math.round(Math.min(...xs)),
+        y: Math.round(Math.min(...ys)),
+        width: Math.round(Math.max(...xs) - Math.min(...xs)),
+        height: Math.round(Math.max(...ys) - Math.min(...ys)),
+      },
+      semanticPoint: first.semanticPoint,
+      anchorPoint: first.releasePoint,
+      releasePoint: last.releasePoint,
+      geometry: strokeSummaries.map(stroke => stroke.geometry),
+      direction: strokeSummaries.length === 1 ? first.direction : undefined,
+      pathLength: strokeSummaries.reduce(
+        (sum, stroke) => sum + stroke.pathLength,
+        0,
+      ),
+      durationMs: strokeSummaries.reduce(
+        (sum, stroke) => sum + stroke.durationMs,
+        0,
+      ),
+      straightness: first.straightness,
     };
   }
-  let remaining = pointBudget;
-  const strokes: Record<string, unknown>[] = [];
-  for (const value of rawStrokes.slice(0, strokeBudget)) {
-    if (remaining < 2) break;
-    const stroke = recordOf(value);
-    if (!stroke || !Array.isArray(stroke.points)) continue;
-    const points = stroke.points.slice(0, remaining);
-    if (points.length < 2) continue;
-    strokes.push({ ...stroke, points });
-    remaining -= points.length;
-  }
-  return { points: [], strokes };
-}
 
-function summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, {
-  minDistance = 12,
-  minDurationMs = 40,
-  quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
-}: GestureThresholds = {}) {
-  const strokeInputs = (Array.isArray(rawStrokes) && rawStrokes.length)
-    ? rawStrokes
-      .map((value) => {
-        const stroke = recordOf(value);
-        return (Array.isArray(stroke?.points) ? stroke.points : [])
-          .map(finitePoint)
-          .filter((point: TimedPoint | null): point is TimedPoint => point !== null);
-      })
-      .filter((strokePoints) => strokePoints.length >= 2)
-    : [(Array.isArray(rawPoints) ? rawPoints : [])
-      .map(finitePoint)
-      .filter((point: TimedPoint | null): point is TimedPoint => point !== null)];
-  const strokeSummaries = strokeInputs
-    .map((strokePoints) => summarizeStroke(strokePoints, {
-      minDistance,
-      minDurationMs,
-      quickPointMaxDistance,
-    }))
-    .filter((stroke: StrokeSummary | null): stroke is StrokeSummary => stroke !== null);
-  if (!strokeSummaries.length) {
-    const reason = strokeInputs.some((strokePoints) => strokePoints.length >= 2)
-      ? 'gesture_too_short'
-      : 'insufficient_points';
-    return { valid: false, reason, points: [] };
-  }
-  const points = strokeSummaries.flatMap((stroke) => stroke.points);
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const first = strokeSummaries[0];
-  const last = strokeSummaries[strokeSummaries.length - 1];
-  return {
-    schemaVersion: 2,
-    valid: true,
-    reason: null,
-    kind: strokeSummaries.length === 1 ? first.kind : 'multi',
-    points,
-    strokes: strokeSummaries,
-    bbox: {
-      x: Math.round(Math.min(...xs)),
-      y: Math.round(Math.min(...ys)),
-      width: Math.round(Math.max(...xs) - Math.min(...xs)),
-      height: Math.round(Math.max(...ys) - Math.min(...ys)),
-    },
-    semanticPoint: first.semanticPoint,
-    anchorPoint: first.releasePoint,
-    releasePoint: last.releasePoint,
-    geometry: strokeSummaries.map((stroke) => stroke.geometry),
-    direction: strokeSummaries.length === 1 ? first.direction : undefined,
-    pathLength: strokeSummaries.reduce((sum, stroke) => sum + stroke.pathLength, 0),
-    durationMs: strokeSummaries.reduce((sum, stroke) => sum + stroke.durationMs, 0),
-    straightness: first.straightness,
+  const GestureCapture = {
+    CHAIN_IDLE_FINALIZE_MS,
+    GEOMETRY_COORDINATE_SPACE,
+    QUICK_POINT_MAX_DISTANCE,
+    STROKE_CLASSIFIER_THRESHOLDS,
+    chainFinalizeDelay,
+    pointerContinuesGestureChain,
+    boundGestureInput,
+    summarizeGesture,
   };
-}
-
-const GestureCapture = {
-  CHAIN_IDLE_FINALIZE_MS,
-  GEOMETRY_COORDINATE_SPACE,
-  QUICK_POINT_MAX_DISTANCE,
-  STROKE_CLASSIFIER_THRESHOLDS,
-  chainFinalizeDelay,
-  pointerContinuesGestureChain,
-  boundGestureInput,
-  summarizeGesture,
-};
-if (typeof module !== 'undefined' && module.exports) module.exports = GestureCapture;
-if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { GestureCapture?: typeof GestureCapture })
-    .GestureCapture = GestureCapture;
-}
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = GestureCapture;
+  }
+  if (typeof globalThis !== 'undefined') {
+    (
+      globalThis as typeof globalThis & {GestureCapture?: typeof GestureCapture}
+    ).GestureCapture = GestureCapture;
+  }
 })();

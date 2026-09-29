@@ -30,64 +30,72 @@ function revision(value: unknown): number | null {
 }
 
 function createArtifactRuntime(options: ArtifactRuntimeOptions) {
-  const { conversationStore, runBridge } = options;
+  const {conversationStore, runBridge} = options;
 
   async function invoke(
     action: ArtifactAction,
     raw: Record<string, unknown> = {},
   ): Promise<Record<string, unknown>> {
     const conversationId = identifier(raw.conversationId);
-    if (!conversationId) return { ok: false, error: 'conversation_id_invalid' };
+    if (!conversationId) {
+      return {ok: false, error: 'conversation_id_invalid'};
+    }
     let conversation: ArtifactConversation | undefined;
     try {
       conversation = conversationStore.get(conversationId);
     } catch {
-      return { ok: false, error: 'conversation_store_failed' };
+      return {ok: false, error: 'conversation_store_failed'};
     }
-    if (!conversation) return { ok: false, error: 'conversation_not_found' };
+    if (!conversation) {
+      return {ok: false, error: 'conversation_not_found'};
+    }
     const sessionId = identifier(conversation.agentSessionId);
-    if (!sessionId) return { ok: false, error: 'conversation_has_no_agent_session' };
+    if (!sessionId) {
+      return {ok: false, error: 'conversation_has_no_agent_session'};
+    }
     const artifactId = identifier(raw.artifactId);
     if (!artifactId && action !== 'read') {
-      return { ok: false, error: 'artifact_id_invalid' };
+      return {ok: false, error: 'artifact_id_invalid'};
     }
 
     const payload: Record<string, unknown> = {
       action,
       sessionId,
-      ...(artifactId ? { artifactId } : {}),
+      ...(artifactId ? {artifactId} : {}),
     };
     if (action === 'edit') {
       const expectedRevision = revision(raw.expectedRevision);
       if (expectedRevision === null) {
-        return { ok: false, error: 'artifact_revision_invalid' };
+        return {ok: false, error: 'artifact_revision_invalid'};
       }
       const content = typeof raw.content === 'string' ? raw.content : null;
       if (content === null || content.length > 1_000_000) {
-        return { ok: false, error: 'artifact_content_invalid' };
+        return {ok: false, error: 'artifact_content_invalid'};
       }
       if (
-        raw.patchPayload !== undefined
-        && (
-          raw.patchPayload === null
-          || typeof raw.patchPayload !== 'object'
-          || Array.isArray(raw.patchPayload)
-        )
+        raw.patchPayload !== undefined &&
+        (raw.patchPayload === null ||
+          typeof raw.patchPayload !== 'object' ||
+          Array.isArray(raw.patchPayload))
       ) {
-        return { ok: false, error: 'artifact_patch_payload_invalid' };
+        return {ok: false, error: 'artifact_patch_payload_invalid'};
       }
       payload.expectedRevision = expectedRevision;
       payload.content = content;
-      if (raw.patchPayload !== undefined) payload.patchPayload = raw.patchPayload;
+      if (raw.patchPayload !== undefined) {
+        payload.patchPayload = raw.patchPayload;
+      }
     }
     if (action === 'undo') {
-      if (raw.confirmed !== true) return { ok: false, error: 'artifact_undo_confirmation_required' };
+      if (raw.confirmed !== true) {
+        return {ok: false, error: 'artifact_undo_confirmation_required'};
+      }
       payload.confirmed = true;
     }
     if (action === 'accept' || action === 'apply' || action === 'undo') {
       const currentRevision = revision(raw.revision);
       if (currentRevision === null) {
-        return { ok: false, error: 'artifact_revision_invalid' };
+        return {ok: false, error: 'artifact_revision_invalid'};
       }
       payload.revision = currentRevision;
     }
@@ -110,4 +118,4 @@ function createArtifactRuntime(options: ArtifactRuntimeOptions) {
   };
 }
 
-export { createArtifactRuntime };
+export {createArtifactRuntime};

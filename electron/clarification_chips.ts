@@ -1,61 +1,82 @@
-
 (() => {
-type Chip = Readonly<{ command: string; id: string; label: string }>;
-type UnknownRecord = Record<string, unknown>;
+  type Chip = Readonly<{command: string; id: string; label: string}>;
+  type UnknownRecord = Record<string, unknown>;
 
-const MAX_CHIPS = 4;
+  const MAX_CHIPS = 4;
 
-function recordOf(value: unknown): UnknownRecord | null {
-  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
-}
-
-function optionTexts(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const texts: string[] = [];
-  for (const item of value) {
-    const text = String(item ?? '').trim().slice(0, 200);
-    if (text) texts.push(text);
-    if (texts.length >= MAX_CHIPS) break;
+  function recordOf(value: unknown): UnknownRecord | null {
+    return value !== null && typeof value === 'object'
+      ? (value as UnknownRecord)
+      : null;
   }
-  return texts;
-}
 
-function pendingOptions(input: unknown): string[] {
-  const candidate = recordOf(input);
-  if (candidate === null || candidate.status !== 'awaiting') return [];
-  const result = recordOf(candidate.result);
-  const pending = recordOf(candidate.pendingInput) || (result ? recordOf(result.pendingInput) : null);
-  if (pending === null) return [];
-  const options = optionTexts(pending.options);
-  return options.length >= 2 ? options : [];
-}
+  function optionTexts(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const texts: string[] = [];
+    for (const item of value) {
+      const text = String(item ?? '')
+        .trim()
+        .slice(0, 200);
+      if (text) {
+        texts.push(text);
+      }
+      if (texts.length >= MAX_CHIPS) {
+        break;
+      }
+    }
+    return texts;
+  }
 
-function clarificationChips(input?: unknown): Chip[] {
-  return pendingOptions(input).map((text, index) => ({
-    id: `clarify-${index}`,
-    label: text,
-    command: text,
-  }));
-}
+  function pendingOptions(input: unknown): string[] {
+    const candidate = recordOf(input);
+    if (candidate === null || candidate.status !== 'awaiting') {
+      return [];
+    }
+    const result = recordOf(candidate.result);
+    const pending =
+      recordOf(candidate.pendingInput) ||
+      (result ? recordOf(result.pendingInput) : null);
+    if (pending === null) {
+      return [];
+    }
+    const options = optionTexts(pending.options);
+    return options.length >= 2 ? options : [];
+  }
 
-function commandForClarificationChip(chip: unknown): string | null {
-  const candidate = recordOf(chip);
-  if (candidate === null) return null;
-  const command = typeof candidate.command === 'string' ? candidate.command.trim() : '';
-  return command || null;
-}
+  function clarificationChips(input?: unknown): Chip[] {
+    return pendingOptions(input).map((text, index) => ({
+      id: `clarify-${index}`,
+      label: text,
+      command: text,
+    }));
+  }
 
-const ClarificationChips = {
-  MAX_CHIPS,
-  clarificationChips,
-  commandForClarificationChip,
-};
+  function commandForClarificationChip(chip: unknown): string | null {
+    const candidate = recordOf(chip);
+    if (candidate === null) {
+      return null;
+    }
+    const command =
+      typeof candidate.command === 'string' ? candidate.command.trim() : '';
+    return command || null;
+  }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = ClarificationChips;
-}
-if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { ClarificationChips?: typeof ClarificationChips })
-    .ClarificationChips = ClarificationChips;
-}
+  const ClarificationChips = {
+    MAX_CHIPS,
+    clarificationChips,
+    commandForClarificationChip,
+  };
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ClarificationChips;
+  }
+  if (typeof globalThis !== 'undefined') {
+    (
+      globalThis as typeof globalThis & {
+        ClarificationChips?: typeof ClarificationChips;
+      }
+    ).ClarificationChips = ClarificationChips;
+  }
 })();

@@ -1,10 +1,10 @@
 'use strict';
 
+const {randomUUID} = require('crypto');
+const {validateFrameLease} = require('./frame_lease');
 
-const { randomUUID } = require('crypto');
-const { validateFrameLease } = require('./frame_lease');
-
-type CoordinatorState = 'idle' | 'armed' | 'committing' | 'committed' | 'failed' | 'cancelled';
+type CoordinatorState =
+  'idle' | 'armed' | 'committing' | 'committed' | 'failed' | 'cancelled';
 type UnknownRecord = Record<string, unknown>;
 
 interface CaptureArmRequest {
@@ -12,7 +12,12 @@ interface CaptureArmRequest {
   displayId: string;
   scaleFactor: number;
   surfaceBoundsPx: [number, number, number, number];
-  targetWindow: { hwnd: number; processId: number; processName: string; title: string };
+  targetWindow: {
+    hwnd: number;
+    processId: number;
+    processName: string;
+    title: string;
+  };
   overlayExcluded?: boolean;
 }
 
@@ -30,7 +35,10 @@ interface CaptureCommitProvider {
 interface CaptureCommitCoordinatorOptions {
   provider: CaptureCommitProvider;
   releaseOverlay: () => void;
-  beginSession: (gesture: unknown, lease: ReturnType<typeof validateFrameLease>) => void;
+  beginSession: (
+    gesture: unknown,
+    lease: ReturnType<typeof validateFrameLease>,
+  ) => void;
   onCommitFailure?: (error: unknown) => void;
   tokenFactory?: () => string;
   commitTimeoutMs?: number;
@@ -41,7 +49,10 @@ const DEFAULT_COMMIT_TIMEOUT_MS = 12_000;
 class CaptureCommitCoordinator {
   provider: CaptureCommitProvider;
   releaseOverlay: () => void;
-  beginSession: (gesture: unknown, lease: ReturnType<typeof validateFrameLease>) => void;
+  beginSession: (
+    gesture: unknown,
+    lease: ReturnType<typeof validateFrameLease>,
+  ) => void;
   onCommitFailure: (error: unknown) => void;
   tokenFactory: () => string;
   commitTimeoutMs: number;
@@ -63,7 +74,10 @@ class CaptureCommitCoordinator {
     this.beginSession = beginSession;
     this.onCommitFailure = onCommitFailure;
     this.tokenFactory = tokenFactory;
-    this.commitTimeoutMs = Math.max(1_000, Number(commitTimeoutMs) || DEFAULT_COMMIT_TIMEOUT_MS);
+    this.commitTimeoutMs = Math.max(
+      1_000,
+      Number(commitTimeoutMs) || DEFAULT_COMMIT_TIMEOUT_MS,
+    );
     this.state = 'idle';
     this.activeToken = null;
     this.armedRequest = null;
@@ -76,7 +90,7 @@ class CaptureCommitCoordinator {
     }
     const token = this.tokenFactory();
     this.activeToken = token;
-    this.armedRequest = { ...request };
+    this.armedRequest = {...request};
     this.cancelledDuringCommit = false;
     this.state = 'armed';
     try {
@@ -113,7 +127,10 @@ class CaptureCommitCoordinator {
         new Promise<never>((_resolve, reject) => {
           const wait = Math.max(0, commitDeadline - Date.now());
           commitTimeout = setTimeout(
-            () => reject(new Error(`frame_commit_timeout_${this.commitTimeoutMs}ms`)),
+            () =>
+              reject(
+                new Error(`frame_commit_timeout_${this.commitTimeoutMs}ms`),
+              ),
             wait,
           );
         }),
@@ -122,12 +139,16 @@ class CaptureCommitCoordinator {
     } catch (error) {
       failure = error;
     } finally {
-      if (commitTimeout) clearTimeout(commitTimeout);
+      if (commitTimeout) {
+        clearTimeout(commitTimeout);
+      }
     }
     if (this.state !== 'committing' || this.activeToken !== owningToken) {
       return null;
     }
-    if (this.state === 'committing') this.state = failure ? 'failed' : 'committed';
+    if (this.state === 'committing') {
+      this.state = failure ? 'failed' : 'committed';
+    }
     try {
       this.releaseOverlay();
     } catch (_releaseError) {
@@ -168,4 +189,4 @@ class CaptureCommitCoordinator {
   }
 }
 
-module.exports = { CaptureCommitCoordinator };
+module.exports = {CaptureCommitCoordinator};

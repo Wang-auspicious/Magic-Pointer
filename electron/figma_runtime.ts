@@ -6,11 +6,18 @@ import {
 } from './figma_bridge';
 
 interface RuntimeBridge {
-  start(): Promise<{ host: '127.0.0.1'; port: number; baseUrl: string }>;
+  start(): Promise<{host: '127.0.0.1'; port: number; baseUrl: string}>;
   stop(): Promise<void>;
-  openPairing(taskId: string): { taskId: string; pairCode: string; expiresAt: number };
+  openPairing(taskId: string): {
+    taskId: string;
+    pairCode: string;
+    expiresAt: number;
+  };
   connectionSnapshot(): FigmaConnectionSnapshot[];
-  clientConfiguration(taskId: string, documentSessionId: string): {
+  clientConfiguration(
+    taskId: string,
+    documentSessionId: string,
+  ): {
     baseUrl: string;
     controlToken: string;
     taskId: string;
@@ -27,10 +34,12 @@ interface RuntimeBridge {
 
 export class FigmaRuntimeController {
   private readonly bridge: RuntimeBridge;
-  private address: { host: '127.0.0.1'; port: number; baseUrl: string } | null = null;
+  private address: {host: '127.0.0.1'; port: number; baseUrl: string} | null =
+    null;
 
-  constructor(options: { bridge?: RuntimeBridge; port?: number } = {}) {
-    this.bridge = options.bridge || new FigmaLoopbackBridge({ port: options.port });
+  constructor(options: {bridge?: RuntimeBridge; port?: number} = {}) {
+    this.bridge =
+      options.bridge || new FigmaLoopbackBridge({port: options.port});
   }
 
   async openPairing(taskId: string): Promise<{
@@ -41,7 +50,9 @@ export class FigmaRuntimeController {
     port: number;
   }> {
     const normalized = String(taskId || '').trim();
-    if (!normalized) throw new Error('figma_pairing_task_required');
+    if (!normalized) {
+      throw new Error('figma_pairing_task_required');
+    }
     this.address = await this.bridge.start();
     const pairing = this.bridge.openPairing(normalized);
     return {
@@ -60,9 +71,9 @@ export class FigmaRuntimeController {
     return {
       running: this.address !== null,
       baseUrl: this.address?.baseUrl || null,
-      connections: this.bridge.connectionSnapshot().filter(
-        (connection) => !normalized || connection.taskId === normalized,
-      ),
+      connections: this.bridge
+        .connectionSnapshot()
+        .filter(connection => !normalized || connection.taskId === normalized),
     };
   }
 
@@ -76,11 +87,14 @@ export class FigmaRuntimeController {
     pageName?: string;
     selectionIds: string[];
   }> {
-    return this.bridge.connectionSnapshot().map((connection) => ({
-      ...this.bridge.clientConfiguration(connection.taskId, connection.documentSessionId),
+    return this.bridge.connectionSnapshot().map(connection => ({
+      ...this.bridge.clientConfiguration(
+        connection.taskId,
+        connection.documentSessionId,
+      ),
       documentName: connection.documentName,
-      ...(connection.pageId ? { pageId: connection.pageId } : {}),
-      ...(connection.pageName ? { pageName: connection.pageName } : {}),
+      ...(connection.pageId ? {pageId: connection.pageId} : {}),
+      ...(connection.pageName ? {pageName: connection.pageName} : {}),
       selectionIds: [...connection.selectionIds],
     }));
   }
@@ -102,7 +116,7 @@ export class FigmaRuntimeController {
       String(taskId || '').trim(),
       String(documentSessionId || '').trim(),
       String(operation || '').trim(),
-      { ...args },
+      {...args},
     );
   }
 

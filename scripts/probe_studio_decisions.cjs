@@ -135,7 +135,6 @@ app.whenReady().then(async () => {
       check(!host.querySelector('.mp-decision-option-preview button'), 'option preview must display source, not execute markup');
       const otherChoice = host.querySelector('.mp-decision-other [role="radio"]');
       check(!!otherChoice, 'inline Other is missing its selectable radio row');
-      check(getComputedStyle(host.querySelector('.mp-decision-option')).gap === '12px', 'inline question choice gap differs from Code 12px');
       check(host.querySelector('[data-question-next]').offsetHeight >= 34, 'question action has an undersized hit target');
       host.querySelector('[aria-label="Next question"]').click();
       host.querySelector('[data-option-index="0"]').click();

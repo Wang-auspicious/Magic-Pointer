@@ -22,6 +22,7 @@ const end = studio.indexOf('\n}\n', start) + 2;
 const calls = [];
 const recoveryCalls = [];
 let taskPaints = 0;
+let activityPaints = 0;
 let diskTurn = { question: 'What is here?', answer: 'Final disk answer' };
 const context = {
   activeConversationId: 'selection-c1',
@@ -32,6 +33,7 @@ const context = {
   composerPlan: null,
   pendingConversation: null,
   activeConversationTurnCount: 1,
+  activeConversationTab: 'chat',
   inspectorState: { open: true }, activeInspectorTab: 'tasks',
   Data: { conversation: async id => ({ id, turns: [diskTurn] }) },
   followIfNearBottom: (_body, mutate) => mutate(),
@@ -41,6 +43,7 @@ const context = {
   setActiveTaskContext() {},
   pendingPermissionAsk: null, pendingAskInput: null, renderPermissionAsk() {},
   renderPlanCard() {},
+  renderConversationActivity() { activityPaints++; },
 };
 vm.runInNewContext(compile(fs.readFileSync('electron/renderer/plan_list.ts', 'utf8')), context);
 vm.runInNewContext(compile(studio.slice(start, end)), context);
@@ -61,9 +64,21 @@ if (pendingStart >= 0) {
   context.inspectorState.open = false;
   await context.refreshOpenConversation(event);
   assert.equal(taskPaints, 1, 'hidden Tasks panel must not paint each external snapshot');
+  assert.equal(activityPaints, 0, 'hidden session log must not paint each streaming snapshot');
+  context.activeConversationTab = 'trajectory';
+  await context.refreshOpenConversation(event);
+  assert.equal(activityPaints, 1, 'the full session log follows external progress while its tab is visible');
+  context.activeConversationTab = 'chat';
+  context.inspectorState.open = true;
+  context.activeInspectorTab = 'activity';
+  await context.refreshOpenConversation(event);
+  assert.equal(activityPaints, 2, 'the visible session log inspector follows external progress');
+  context.inspectorState.open = false;
+  context.activeInspectorTab = 'tasks';
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(calls.at(-1).turns[0].answer, 'Final disk answer');
   assert.deepEqual(recoveryCalls, ['selection-c1'], 'a settled task refreshes its recovery panel');
+  assert.equal(activityPaints, 3, 'settled external progress refreshes the session log projection');
   diskTurn = { answer: 'Updated plan', trajectory: [{ kind: 'tool', callId: 'plan-1', name: 'Todo', state: 'done', text: '{"todos":[{"content":"Verify notes","status":"blocked"}]}' }] };
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(context.composerPlan.steps[0].content, 'Verify notes', 'settled external updates project the durable plan into the task rail');

@@ -1,6 +1,5 @@
 'use strict';
 
-
 const MAX_SESSIONS = 20;
 const MAX_PHASES_PER_SESSION = 40;
 
@@ -40,17 +39,24 @@ class SessionTimeline {
   constructor({
     maxSessions = MAX_SESSIONS,
     now = () => Date.now(),
-  }: { maxSessions?: number; now?: () => number } = {}) {
+  }: {maxSessions?: number; now?: () => number} = {}) {
     this.maxSessions = Math.max(1, Number(maxSessions) || MAX_SESSIONS);
     this.now = now;
     this.sessions = [];
   }
 
-  begin(token: unknown, { reason = '' }: { reason?: unknown } = {}): TimelineSession | null {
+  begin(
+    token: unknown,
+    {reason = ''}: {reason?: unknown} = {},
+  ): TimelineSession | null {
     const id = String(token || '');
-    if (!id) return null;
-    const existing = this.sessions.find((session) => session.id === id);
-    if (existing) return existing;
+    if (!id) {
+      return null;
+    }
+    const existing = this.sessions.find(session => session.id === id);
+    if (existing) {
+      return existing;
+    }
     const session = {
       id,
       reason: String(reason || ''),
@@ -62,7 +68,9 @@ class SessionTimeline {
       tier: '',
     };
     this.sessions.unshift(session);
-    if (this.sessions.length > this.maxSessions) this.sessions.length = this.maxSessions;
+    if (this.sessions.length > this.maxSessions) {
+      this.sessions.length = this.maxSessions;
+    }
     return session;
   }
 
@@ -73,11 +81,15 @@ class SessionTimeline {
       phase = '',
       ms = 0,
       detail = '',
-    }: { script?: unknown; phase?: unknown; ms?: unknown; detail?: unknown } = {},
+    }: {script?: unknown; phase?: unknown; ms?: unknown; detail?: unknown} = {},
   ): void {
-    const session = this.sessions.find((item) => item.id === String(token || ''));
-    if (!session) return;
-    if (session.phases.length >= MAX_PHASES_PER_SESSION) return;
+    const session = this.sessions.find(item => item.id === String(token || ''));
+    if (!session) {
+      return;
+    }
+    if (session.phases.length >= MAX_PHASES_PER_SESSION) {
+      return;
+    }
     const elapsed = Number(ms);
     session.phases.push({
       script: String(script || '').replace(/^scripts\//, ''),
@@ -94,24 +106,35 @@ class SessionTimeline {
       outcome = '',
       error = '',
       tier = '',
-    }: { outcome?: unknown; error?: unknown; tier?: unknown } = {},
+    }: {outcome?: unknown; error?: unknown; tier?: unknown} = {},
   ): void {
-    const session = this.sessions.find((item) => item.id === String(token || ''));
-    if (!session) return;
+    const session = this.sessions.find(item => item.id === String(token || ''));
+    if (!session) {
+      return;
+    }
     session.endedAt = this.now();
     session.outcome = String(outcome || '');
-    if (error) session.error = String(error).slice(0, 300);
-    if (tier) session.tier = String(tier).slice(0, 8);
+    if (error) {
+      session.error = String(error).slice(0, 300);
+    }
+    if (tier) {
+      session.tier = String(tier).slice(0, 8);
+    }
   }
 
   snapshot() {
-    return this.sessions.map((session) => {
+    return this.sessions.map(session => {
       const headline = [];
-      for (const [phase, label] of Object.entries(HEADLINE_PHASES) as Array<[PhaseName, string]>) {
-        const match = session.phases.filter((item) => item.phase === phase).pop();
-        if (match) headline.push({ label, phase, ms: match.ms });
+      for (const [phase, label] of Object.entries(HEADLINE_PHASES) as Array<
+        [PhaseName, string]
+      >) {
+        const match = session.phases.filter(item => item.phase === phase).pop();
+        if (match) {
+          headline.push({label, phase, ms: match.ms});
+        }
       }
-      const totalMs = session.endedAt === null ? null : session.endedAt - session.startedAt;
+      const totalMs =
+        session.endedAt === null ? null : session.endedAt - session.startedAt;
       return {
         id: session.id,
         reason: session.reason,
@@ -121,7 +144,7 @@ class SessionTimeline {
         error: session.error,
         tier: session.tier,
         headline,
-        phases: session.phases.map((item) => ({
+        phases: session.phases.map(item => ({
           script: item.script,
           phase: item.phase,
           ms: item.ms,
@@ -136,4 +159,9 @@ class SessionTimeline {
   }
 }
 
-module.exports = { HEADLINE_PHASES, MAX_PHASES_PER_SESSION, MAX_SESSIONS, SessionTimeline };
+module.exports = {
+  HEADLINE_PHASES,
+  MAX_PHASES_PER_SESSION,
+  MAX_SESSIONS,
+  SessionTimeline,
+};

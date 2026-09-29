@@ -15,16 +15,27 @@ export interface FigmaPluginManifest {
 
 export function normalizePublishedPluginId(value: unknown): string | null {
   const candidate = String(value || '').trim();
-  if (!candidate || candidate === '__FIGMA_PLUGIN_ID__') return null;
+  if (!candidate || candidate === '__FIGMA_PLUGIN_ID__') {
+    return null;
+  }
   if (!/^\d{8,32}$/.test(candidate)) {
-    throw new Error('Figma plugin ID must be the numeric ID assigned by Figma Create New Plugin');
+    throw new Error(
+      'Figma plugin ID must be the numeric ID assigned by Figma Create New Plugin',
+    );
   }
   return candidate;
 }
 
-export function manifestForPlugin(pluginId: string, port: number): FigmaPluginManifest {
+export function manifestForPlugin(
+  pluginId: string,
+  port: number,
+): FigmaPluginManifest {
   const id = normalizePublishedPluginId(pluginId);
-  if (!id) throw new Error('A genuine Figma-assigned plugin ID is required to create manifest.json');
+  if (!id) {
+    throw new Error(
+      'A genuine Figma-assigned plugin ID is required to create manifest.json',
+    );
+  }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('Figma bridge port must be an integer from 1 to 65535');
   }
@@ -40,7 +51,8 @@ export function manifestForPlugin(pluginId: string, port: number): FigmaPluginMa
     networkAccess: {
       allowedDomains: [origin],
       devAllowedDomains: [origin],
-      reasoning: 'Connects this explicitly opened plugin to the Magic Pointer loopback bridge on the same computer.',
+      reasoning:
+        'Connects this explicitly opened plugin to the Magic Pointer loopback bridge on the same computer.',
     },
   };
 }

@@ -107,10 +107,13 @@ function usageBreakdown(usage: StudioUsageLike | undefined): {
   outputTokens: number;
   totalTokens: number;
 } {
-  if (!usage) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  const inputTokens = finiteNonNegative(usage.inputTokens)
-    + finiteNonNegative(usage.cacheCreationInputTokens)
-    + finiteNonNegative(usage.cacheWriteTokens);
+  if (!usage) {
+    return {inputTokens: 0, outputTokens: 0, totalTokens: 0};
+  }
+  const inputTokens =
+    finiteNonNegative(usage.inputTokens) +
+    finiteNonNegative(usage.cacheCreationInputTokens) +
+    finiteNonNegative(usage.cacheWriteTokens);
   const outputTokens = finiteNonNegative(usage.outputTokens);
   const rawTotal = Number(usage.totalTokens);
   return {
@@ -122,7 +125,10 @@ function usageBreakdown(usage: StudioUsageLike | undefined): {
   };
 }
 
-function streaks(dayStarts: number[], todayStart: number): {
+function streaks(
+  dayStarts: number[],
+  todayStart: number,
+): {
   current: number;
   longest: number;
 } {
@@ -135,7 +141,9 @@ function streaks(dayStarts: number[], todayStart: number): {
     longest = Math.max(longest, run);
     previous = day;
   }
-  if (!unique.includes(todayStart)) return { current: 0, longest };
+  if (!unique.includes(todayStart)) {
+    return {current: 0, longest};
+  }
   let current = 1;
   let cursor = todayStart - DAY_MS;
   const set = new Set(unique);
@@ -143,7 +151,7 @@ function streaks(dayStarts: number[], todayStart: number): {
     current += 1;
     cursor -= DAY_MS;
   }
-  return { current, longest };
+  return {current, longest};
 }
 
 function normalizeTurns(
@@ -153,14 +161,17 @@ function normalizeTurns(
   const normalized: NormalizedTurn[] = [];
   conversations.forEach((conversation, conversationIndex) => {
     const turns = Array.isArray(conversation.turns) ? conversation.turns : [];
-    turns.forEach((turn) => {
+    turns.forEach(turn => {
       const question = String(turn.question ?? '').trim();
       const answer = String(turn.answer ?? '').trim();
       const messages = Number(Boolean(question)) + Number(Boolean(answer));
-      if (messages === 0) return;
-      const fallbackAt = finiteNonNegative(conversation.updatedAt)
-        || finiteNonNegative(conversation.createdAt)
-        || now;
+      if (messages === 0) {
+        return;
+      }
+      const fallbackAt =
+        finiteNonNegative(conversation.updatedAt) ||
+        finiteNonNegative(conversation.createdAt) ||
+        now;
       const rawAt = Number(turn.at);
       const at = Number.isFinite(rawAt) && rawAt > 0 ? rawAt : fallbackAt;
       const usage = usageBreakdown(turn.modelUsage);
@@ -183,20 +194,28 @@ function aggregateSlice(
   turns: readonly NormalizedTurn[],
   now: number,
   dayCount: number,
-  options: { allTime?: boolean; sessionCount?: number; alignHeatmapWeek?: boolean } = {},
+  options: {
+    allTime?: boolean;
+    sessionCount?: number;
+    alignHeatmapWeek?: boolean;
+  } = {},
 ): StudioHomeStatsSlice {
   const today = startOfLocalDay(now);
   const todayStart = today.getTime();
   const lowerBound = addLocalDays(today, -(dayCount - 1)).getTime();
-  const included = turns.filter((turn) => (
-    turn.dayStart <= todayStart
-    && (options.allTime || turn.dayStart >= lowerBound)
-  ));
+  const included = turns.filter(
+    turn =>
+      turn.dayStart <= todayStart &&
+      (options.allTime || turn.dayStart >= lowerBound),
+  );
   const messagesByDay = new Map<string, number>();
   const dailyByDay = new Map<string, Omit<StudioDailyTokens, 'date'>>();
   const activeDayStarts: number[] = [];
   const peakHours = new Map<number, number>();
-  const modelTotals = new Map<string, Omit<StudioModelStats, 'modelId' | 'share'>>();
+  const modelTotals = new Map<
+    string,
+    Omit<StudioModelStats, 'modelId' | 'share'>
+  >();
   let messages = 0;
   let totalTokens = 0;
 
@@ -236,34 +255,47 @@ function aggregateSlice(
     }
   }
 
-  const totalModelTurns = [...modelTotals.values()]
-    .reduce((total, row) => total + row.turns, 0);
-  const models = [...modelTotals.entries()].map(([modelId, row]) => ({
-    modelId,
-    ...row,
-    share: totalTokens > 0
-      ? (row.totalTokens / totalTokens) * 100
-      : (totalModelTurns > 0 ? (row.turns / totalModelTurns) * 100 : 0),
-  })).sort((a, b) => b.totalTokens - a.totalTokens
-    || b.turns - a.turns
-    || a.modelId.localeCompare(b.modelId));
+  const totalModelTurns = [...modelTotals.values()].reduce(
+    (total, row) => total + row.turns,
+    0,
+  );
+  const models = [...modelTotals.entries()]
+    .map(([modelId, row]) => ({
+      modelId,
+      ...row,
+      share:
+        totalTokens > 0
+          ? (row.totalTokens / totalTokens) * 100
+          : totalModelTurns > 0
+            ? (row.turns / totalModelTurns) * 100
+            : 0,
+    }))
+    .sort(
+      (a, b) =>
+        b.totalTokens - a.totalTokens ||
+        b.turns - a.turns ||
+        a.modelId.localeCompare(b.modelId),
+    );
 
-  const daily = Array.from({ length: dayCount }, (_, index) => {
+  const daily = Array.from({length: dayCount}, (_, index) => {
     const date = addLocalDays(today, index - (dayCount - 1));
     const dateKey = localDateKey(date);
-    return { date: dateKey, ...(dailyByDay.get(dateKey) ?? {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      messages: 0,
-    }) };
+    return {
+      date: dateKey,
+      ...(dailyByDay.get(dateKey) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        messages: 0,
+      }),
+    };
   });
 
   const heatmapEnd = options.alignHeatmapWeek
     ? addLocalDays(today, 6 - today.getDay())
     : today;
   const heatmapStart = addLocalDays(heatmapEnd, -(dayCount - 1));
-  const heatmap = Array.from({ length: dayCount }, (_, index) => {
+  const heatmap = Array.from({length: dayCount}, (_, index) => {
     const date = addLocalDays(heatmapStart, index);
     const dateKey = localDateKey(date);
     return {
@@ -274,13 +306,15 @@ function aggregateSlice(
   });
 
   const streak = streaks(activeDayStarts, todayStart);
-  const peakHour = [...peakHours.entries()].sort(
-    (a, b) => b[1] - a[1] || a[0] - b[0],
-  )[0]?.[0] ?? null;
+  const peakHour =
+    [...peakHours.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0] - b[0],
+    )[0]?.[0] ?? null;
 
   return {
-    sessions: options.sessionCount
-      ?? new Set(included.map((turn) => turn.sessionKey)).size,
+    sessions:
+      options.sessionCount ??
+      new Set(included.map(turn => turn.sessionKey)).size,
     messages,
     totalTokens,
     activeDays: new Set(activeDayStarts).size,

@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { array, record } from './context';
-import { withFileLock } from './session';
+import {randomUUID} from 'node:crypto';
+import {readFile, writeFile, mkdir, rename} from 'node:fs/promises';
+import {join, dirname} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
+import {array, record} from './context';
+import {withFileLock} from './session';
 type Json = Record<string, any>;
 
 export class ContextSessionStore {
@@ -14,17 +14,19 @@ export class ContextSessionStore {
   private async load(): Promise<Json> {
     try {
       const value = record(JSON.parse(await readFile(this.path, 'utf8')));
-      if (value.version !== 1 || !Array.isArray(value.sessions))
+      if (value.version !== 1 || !Array.isArray(value.sessions)) {
         throw new Error('Invalid context session store');
+      }
       return value;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-        return { version: 1, revision: 0, active_session_id: null, sessions: [] };
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return {version: 1, revision: 0, active_session_id: null, sessions: []};
+      }
       throw error;
     }
   }
   private async save(state: Json): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), {recursive: true});
     const temporary = `${this.path}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(state));
     await rename(temporary, this.path);
@@ -34,14 +36,17 @@ export class ContextSessionStore {
       ...structuredClone(session),
       item_count: array(session.items).length,
       store_revision: revision,
-      items_digest: JSON.stringify(array<Json>(session.items).map((item) => item.item_id)),
+      items_digest: JSON.stringify(
+        array<Json>(session.items).map(item => item.item_id),
+      ),
     };
   }
   async active(): Promise<Json | null> {
-    const state = await this.load(),
-      session = array<Json>(state.sessions).find(
-        (item) => item.session_id === state.active_session_id && item.status === 'active',
-      );
+    const state = await this.load();
+    const session = array<Json>(state.sessions).find(
+      item =>
+        item.session_id === state.active_session_id && item.status === 'active',
+    );
     return session ? this.public(session, state.revision) : null;
   }
   async record(
@@ -50,17 +55,20 @@ export class ContextSessionStore {
     workflow = 'context_pack',
     native = false,
   ): Promise<Json> {
-    if (!instruction.trim()) throw new Error('context explanation is empty');
-    const context = record(capture.context),
-      artifacts = record(context.artifacts),
-      now = new Date().toISOString();
+    if (!instruction.trim()) {
+      throw new Error('context explanation is empty');
+    }
+    const context = record(capture.context);
+    const artifacts = record(context.artifacts);
+    const now = new Date().toISOString();
     if (
       native &&
       !context.content &&
       !artifacts.selection_context &&
       !Object.keys(artifacts).length
-    )
+    ) {
       throw new Error('context requires a grounded native selection');
+    }
     if (
       !native &&
       !capture.raw_image &&
@@ -68,15 +76,17 @@ export class ContextSessionStore {
       !record(capture.images).raw &&
       !capture.grounding &&
       !capture.bbox
-    )
+    ) {
       throw new Error('context requires frozen visual evidence');
+    }
     const item: Json = native
       ? {
           modality: 'native_selection',
           source: {
             app: context.app,
             window: capture.window ?? context.window,
-            document_path: artifacts.pdf_document_path ?? artifacts.document ?? context.path,
+            document_path:
+              artifacts.pdf_document_path ?? artifacts.document ?? context.path,
             document_label: context.label,
             page_number: artifacts.page_number,
             url: artifacts.url,
@@ -84,7 +94,10 @@ export class ContextSessionStore {
           },
           selected_text: String(context.content ?? ''),
           surrounding_context: String(artifacts.selection_context ?? ''),
-          geometry: { point: capture.point, selection_rectangles: artifacts.selection_rectangles },
+          geometry: {
+            point: capture.point,
+            selection_rectangles: artifacts.selection_rectangles,
+          },
           images: {},
           grounding: capture.grounding ?? artifacts,
           file_context: {},
@@ -120,10 +133,12 @@ export class ContextSessionStore {
     item.instruction = instruction.trim();
     item.captured_at = capture.captured_at ?? now;
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.load(),
-        sessions = array<Json>(state.sessions);
+      const state = await this.load();
+      const sessions = array<Json>(state.sessions);
       let session = sessions.find(
-        (value) => value.session_id === state.active_session_id && value.status === 'active',
+        value =>
+          value.session_id === state.active_session_id &&
+          value.status === 'active',
       );
       if (session && (session.workflow_kind ?? 'context_pack') !== workflow) {
         session.status = 'finished';
@@ -146,29 +161,36 @@ export class ContextSessionStore {
         sessions.push(session);
         state.active_session_id = session.session_id;
       }
-      const items = array<Json>(session.items),
-        prior = items.find((value) =>
-          isDeepStrictEqual(
-            [
-              value.modality,
-              value.source,
-              value.geometry,
-              value.selected_text,
-              value.images,
-              value.instruction,
-            ],
-            JSON.parse(JSON.stringify([
+      const items = array<Json>(session.items);
+      const prior = items.find(value =>
+        isDeepStrictEqual(
+          [
+            value.modality,
+            value.source,
+            value.geometry,
+            value.selected_text,
+            value.images,
+            value.instruction,
+          ],
+          JSON.parse(
+            JSON.stringify([
               item.modality,
               item.source,
               item.geometry,
               item.selected_text,
               item.images,
               item.instruction,
-            ])),
+            ]),
           ),
-        );
-      if (prior)
-        return { recorded: false, item: prior, session: this.public(session, state.revision) };
+        ),
+      );
+      if (prior) {
+        return {
+          recorded: false,
+          item: prior,
+          session: this.public(session, state.revision),
+        };
+      }
       Object.assign(item, {
         item_id: `item-${randomUUID()}`,
         sequence: items.length + 1,
@@ -180,7 +202,9 @@ export class ContextSessionStore {
           item.selected_text,
           item.images,
         ]),
-        ...(workflow === 'runtime_issue' ? { role: items.length ? 'reference' : 'issue' } : {}),
+        ...(workflow === 'runtime_issue'
+          ? {role: items.length ? 'reference' : 'issue'}
+          : {}),
       });
       items.push(item);
       session.items = items;
@@ -190,21 +214,28 @@ export class ContextSessionStore {
       state.sessions = sessions;
       state.revision++;
       await this.save(state);
-      return { recorded: true, item, session: this.public(session, state.revision) };
+      return {
+        recorded: true,
+        item,
+        session: this.public(session, state.revision),
+      };
     });
   }
   async saveCompilation(options: Json): Promise<Json> {
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.load(),
-        session = array<Json>(state.sessions).find(
-          (item) => item.session_id === state.active_session_id,
-        );
+      const state = await this.load();
+      const session = array<Json>(state.sessions).find(
+        item => item.session_id === state.active_session_id,
+      );
       if (
         !session ||
-        (options.expected_session_id && session.session_id !== options.expected_session_id) ||
-        (options.expected_revision !== undefined && state.revision !== options.expected_revision)
-      )
+        (options.expected_session_id &&
+          session.session_id !== options.expected_session_id) ||
+        (options.expected_revision !== undefined &&
+          state.revision !== options.expected_revision)
+      ) {
         throw new Error('Context session changed during compilation');
+      }
       Object.assign(session, {
         task_instruction: options.task_instruction,
         target_profile: options.target_profile ?? 'generic',
@@ -219,13 +250,16 @@ export class ContextSessionStore {
   }
   async finish(expectedSessionId?: string): Promise<Json | null> {
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.load(),
-        session = array<Json>(state.sessions).find(
-          (item) => item.session_id === state.active_session_id,
-        );
-      if (expectedSessionId && session?.session_id !== expectedSessionId)
+      const state = await this.load();
+      const session = array<Json>(state.sessions).find(
+        item => item.session_id === state.active_session_id,
+      );
+      if (expectedSessionId && session?.session_id !== expectedSessionId) {
         throw new Error('Context session changed');
-      if (!session) return null;
+      }
+      if (!session) {
+        return null;
+      }
       session.status = 'finished';
       session.finished_at = new Date().toISOString();
       state.active_session_id = null;
@@ -243,13 +277,13 @@ export function parseContextIntent(text: string): Json | null {
     compile: ['生成完整提示词', '生成提示词', '整理上下文', 'compile context'],
     deliver: ['交给这个 agent', '发送到这里', '填入这里', 'deliver here'],
     clear: ['清空上下文', 'clear context'],
-  }))
-    for (const prefix of prefixes)
+  })) {
+    for (const prefix of prefixes) {
       if (
         value.toLowerCase() === prefix ||
         value.toLowerCase().startsWith(`${prefix}:`) ||
         value.toLowerCase().startsWith(`${prefix}：`)
-      )
+      ) {
         return {
           kind,
           instruction: value
@@ -257,11 +291,21 @@ export function parseContextIntent(text: string): Json | null {
             .replace(/^[:：]/, '')
             .trim(),
         };
+      }
+    }
+  }
   return null;
 }
-export function compileContextPrompt(session: Json, options: Json = {}): string {
-  const instruction = String(options.task_instruction ?? session.task_instruction ?? '').trim();
-  if (!instruction) throw new Error('A task instruction is required');
+export function compileContextPrompt(
+  session: Json,
+  options: Json = {},
+): string {
+  const instruction = String(
+    options.task_instruction ?? session.task_instruction ?? '',
+  ).trim();
+  if (!instruction) {
+    throw new Error('A task instruction is required');
+  }
   const lines = [
     '# Task',
     instruction,
@@ -293,7 +337,7 @@ export async function writeContextPromptArtifact(
   root: string,
 ): Promise<string> {
   const directory = join(root, 'context', 'prompts');
-  await mkdir(directory, { recursive: true });
+  await mkdir(directory, {recursive: true});
   const path = join(
     directory,
     `${String(session.session_id).replace(/[^a-zA-Z0-9_-]/g, '_')}-${randomUUID()}.md`,
@@ -303,18 +347,26 @@ export async function writeContextPromptArtifact(
 }
 export async function handleContext(
   payload: Json,
-  options: { root: string; userDataDir: string; capture?: Json; allowScreenshotUpload?: boolean },
+  options: {
+    root: string;
+    userDataDir: string;
+    capture?: Json;
+    allowScreenshotUpload?: boolean;
+  },
 ): Promise<Json> {
-  const store = new ContextSessionStore(options.userDataDir),
-    command = String(payload.command ?? payload.prompt ?? payload.instruction ?? ''),
-    intent = parseContextIntent(command),
-    operation = String(
-      payload.operation ??
-        intent?.kind ??
-        (payload.workflow === 'runtime_issue' ? 'runtime_issue' : 'active'),
-    );
-  if (operation === 'active' || operation === 'status')
-    return { ok: true, contextSession: await store.active() };
+  const store = new ContextSessionStore(options.userDataDir);
+  const command = String(
+    payload.command ?? payload.prompt ?? payload.instruction ?? '',
+  );
+  const intent = parseContextIntent(command);
+  const operation = String(
+    payload.operation ??
+      intent?.kind ??
+      (payload.workflow === 'runtime_issue' ? 'runtime_issue' : 'active'),
+  );
+  if (operation === 'active' || operation === 'status') {
+    return {ok: true, contextSession: await store.active()};
+  }
   if (operation === 'clear' || operation === 'finish') {
     await store.finish(payload.sessionId);
     return {
@@ -324,23 +376,31 @@ export async function handleContext(
       intentKind: 'context_cleared',
     };
   }
-  if (operation === 'collect' || operation === 'runtime_issue' || operation === 'record') {
-    const capture = options.capture ?? record(payload.capture ?? payload.snapshot),
-      statement = String(intent?.instruction ?? payload.statement ?? command),
-      runtime = operation === 'runtime_issue';
+  if (
+    operation === 'collect' ||
+    operation === 'runtime_issue' ||
+    operation === 'record'
+  ) {
+    const capture =
+      options.capture ?? record(payload.capture ?? payload.snapshot);
+    const statement = String(
+      intent?.instruction ?? payload.statement ?? command,
+    );
+    const runtime = operation === 'runtime_issue';
     const result = await store.record(
       capture,
       statement,
       runtime ? 'runtime_issue' : 'context_pack',
       !!capture.context,
     );
-    if (!runtime)
+    if (!runtime) {
       return {
         ok: true,
         answer: `已收集 ${result.session.item_count} 条上下文。`,
         intentKind: 'context_item_recorded',
-        contextSession: { ...result.session, last_item: result.item },
+        contextSession: {...result.session, last_item: result.item},
       };
+    }
     const compiled = await compileStored(store, options, statement);
     return {
       ...compiled,
@@ -350,17 +410,26 @@ export async function handleContext(
       autoDismissMs: 2600,
     };
   }
-  if (operation === 'compile')
+  if (operation === 'compile') {
     return compileStored(
       store,
       options,
-      String(intent?.instruction ?? payload.taskInstruction ?? payload.task_instruction ?? ''),
+      String(
+        intent?.instruction ??
+          payload.taskInstruction ??
+          payload.task_instruction ??
+          '',
+      ),
       payload.targetProfile,
     );
+  }
   if (operation === 'deliver') {
     const session = await store.active();
-    if (!session?.compiled_prompt) throw new Error('请先生成完整提示词');
-    const { makePromptDeliveryProposal } = require('./actions_delivery') as typeof import('./actions_delivery');
+    if (!session?.compiled_prompt) {
+      throw new Error('请先生成完整提示词');
+    }
+    const {makePromptDeliveryProposal} =
+      require('./actions_delivery') as typeof import('./actions_delivery');
     return {
       ok: true,
       answer: '提示词已准备，等待目标输入框核验。',
@@ -380,27 +449,33 @@ export async function handleContext(
 }
 async function compileStored(
   store: ContextSessionStore,
-  options: { userDataDir: string; allowScreenshotUpload?: boolean },
+  options: {userDataDir: string; allowScreenshotUpload?: boolean},
   instruction: string,
   targetProfile = 'generic',
 ): Promise<Json> {
   const session = await store.active();
-  if (!session) throw new Error('没有已收集的上下文');
-  const task = instruction || session.task_instruction,
-    prompt = compileContextPrompt(session, {
-      task_instruction: task,
-      target_profile: targetProfile,
-      allow_screenshot_upload: options.allowScreenshotUpload === true,
-    }),
-    path = await writeContextPromptArtifact(session, prompt, options.userDataDir),
-    updated = await store.saveCompilation({
-      task_instruction: task,
-      target_profile: targetProfile,
-      prompt,
-      prompt_artifact: path,
-      expected_session_id: session.session_id,
-      expected_revision: session.store_revision,
-    });
+  if (!session) {
+    throw new Error('没有已收集的上下文');
+  }
+  const task = instruction || session.task_instruction;
+  const prompt = compileContextPrompt(session, {
+    task_instruction: task,
+    target_profile: targetProfile,
+    allow_screenshot_upload: options.allowScreenshotUpload === true,
+  });
+  const path = await writeContextPromptArtifact(
+    session,
+    prompt,
+    options.userDataDir,
+  );
+  const updated = await store.saveCompilation({
+    task_instruction: task,
+    target_profile: targetProfile,
+    prompt,
+    prompt_artifact: path,
+    expected_session_id: session.session_id,
+    expected_revision: session.store_revision,
+  });
   return {
     ok: true,
     answer: prompt,

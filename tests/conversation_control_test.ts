@@ -45,6 +45,23 @@ append('tool_call', { id: 'parent-b', name: 'Agent' });
 append('subagent', { b64: Buffer.from(JSON.stringify({ id: 'child-a', parentCallId: 'parent-a', reasoning: 'Inspecting A', status: 'running' })).toString('base64') });
 assert.equal(transcript.trajectory.find((r: any) => r.callId === 'parent-a').subagent.reasoning, 'Inspecting A');
 assert.equal(transcript.trajectory.find((r: any) => r.callId === 'parent-b').subagent, undefined);
+const timedTranscript = transcriptApi.createTranscript();
+const timeOriginMs = Date.UTC(2026, 8, 29, 1);
+const timed = (phase: string, atMs: number, fields: Record<string, unknown> = {}) => transcriptApi.appendTranscript(timedTranscript,
+  { phase, ms: 9000 + atMs, fields: { timeOriginMs, atMs, ...fields } });
+timed('model_request', 5, { turn: 1 });
+timed('model_first_chunk', 80);
+timed('answer_chunk', 110, { b64: Buffer.from('hello').toString('base64') });
+timed('model_usage', 150, { b64: Buffer.from('{"totalTokens":23}').toString('base64') });
+timed('tool_call', 160, { id: 'timed-read', name: 'Read' });
+timed('tool_result', 300, { id: 'timed-read', name: 'Read', state: 'done', result: 'file', latency_ms: 140 });
+timed('model_response', 310);
+assert.equal(timedTranscript.trajectory[0].timeOriginMs, timeOriginMs, 'live records preserve the runtime clock origin');
+assert.equal(timedTranscript.trajectory[0].startedAt, 5, 'live record time uses the sink clock rather than worker uptime');
+assert.equal(timedTranscript.trajectory[0].firstTokenAt, 80);
+assert.equal(timedTranscript.trajectory[0].completedAt, 150, 'model timing stops at response usage, before tool execution');
+assert.equal(timedTranscript.trajectory[1].timeOriginMs, timeOriginMs);
+assert.equal(timedTranscript.trajectory[1].completedAt, 300);
 assert.deepStrictEqual(planConversationStop({ requestId: 'selection-request', agentSessionId: SELECTION_SESSION_ID }),
   { action: 'cancel', sessionId: SELECTION_SESSION_ID });
 assert.deepStrictEqual(planConversationSteer({ text: '继续看右侧', agentSessionId: SELECTION_SESSION_ID }),

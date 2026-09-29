@@ -1,413 +1,548 @@
 'use strict';
 
 (() => {
-interface ArtifactRecord {
-  artifactId: string;
-  revision: number;
-  content: string;
-  kind: string;
-  state: string;
-  acceptedRevision: number | null;
-  patchPayload: Record<string, unknown> | null;
-  [key: string]: unknown;
-}
-
-interface ArtifactResponse {
-  ok?: boolean;
-  error?: string;
-  artifact?: ArtifactRecord;
-  result?: Record<string, unknown>;
-}
-
-interface ArtifactClient {
-  read(payload: Record<string, unknown>): Promise<ArtifactResponse>;
-  edit(payload: Record<string, unknown>): Promise<ArtifactResponse>;
-  accept(payload: Record<string, unknown>): Promise<ArtifactResponse>;
-  apply(payload: Record<string, unknown>): Promise<ArtifactResponse>;
-  undo?(payload: Record<string, unknown>): Promise<ArtifactResponse>;
-}
-
-interface EditorState {
-  undoAvailable: boolean;
-  conversationId: string;
-  artifactId: string;
-  revision: number;
-  content: string;
-  savedContent: string;
-  kind: string;
-  patchPayload: Record<string, unknown> | null;
-  acceptedRevision: number | null;
-  dirty: boolean;
-  status: 'idle' | 'loading' | 'ready' | 'saving' | 'accepting' | 'applying' | 'error';
-  error: string;
-  applyResult: Record<string, unknown> | null;
-}
-
-const emptyState = (): EditorState => ({
-  undoAvailable: false,
-  conversationId: '',
-  artifactId: '',
-  revision: 0,
-  content: '',
-  savedContent: '',
-  kind: '',
-  patchPayload: null,
-  acceptedRevision: null,
-  dirty: false,
-  status: 'idle',
-  error: '',
-  applyResult: null,
-});
-
-function artifactValue(value: unknown): ArtifactRecord | null {
-  if (!value || typeof value !== 'object') return null;
-  const item = value as Partial<ArtifactRecord>;
-  const revision = Number(item.revision);
-  if (!String(item.artifactId || '') || !Number.isInteger(revision) || revision < 1) return null;
-  return {
-    ...item,
-    artifactId: String(item.artifactId),
-    revision,
-    content: String(item.content || ''),
-    kind: String(item.kind || 'text'),
-    state: String(item.state || 'generated'),
-    acceptedRevision: typeof item.acceptedRevision === 'number'
-      && Number.isInteger(item.acceptedRevision)
-      && item.acceptedRevision >= 1
-      ? item.acceptedRevision
-      : null,
-    patchPayload: item.patchPayload && typeof item.patchPayload === 'object'
-      ? item.patchPayload as Record<string, unknown>
-      : null,
-  };
-}
-
-function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('figma_retarget_value_must_be_object');
+  interface ArtifactRecord {
+    artifactId: string;
+    revision: number;
+    content: string;
+    kind: string;
+    state: string;
+    acceptedRevision: number | null;
+    patchPayload: Record<string, unknown> | null;
+    [key: string]: unknown;
   }
-  return value as Record<string, unknown>;
-}
 
-function cloneValue<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
+  interface ArtifactResponse {
+    ok?: boolean;
+    error?: string;
+    artifact?: ArtifactRecord;
+    result?: Record<string, unknown>;
+  }
 
-function figmaBaseValue(
-  operation: Record<string, unknown>,
-  node: Record<string, unknown>,
-  locatorValue: Record<string, unknown>,
-): unknown {
-  const kind = String(operation.operation || '');
-  if (kind === 'replace_text') {
-    if (String(node.type || '') !== 'TEXT' || typeof node.characters !== 'string') {
-      throw new Error('figma_retarget_requires_text_node');
-    }
-    locatorValue.textStart = 0;
-    locatorValue.textEnd = node.characters.length;
-    return node.characters;
+  interface ArtifactClient {
+    read(payload: Record<string, unknown>): Promise<ArtifactResponse>;
+    edit(payload: Record<string, unknown>): Promise<ArtifactResponse>;
+    accept(payload: Record<string, unknown>): Promise<ArtifactResponse>;
+    apply(payload: Record<string, unknown>): Promise<ArtifactResponse>;
+    undo?(payload: Record<string, unknown>): Promise<ArtifactResponse>;
   }
-  if (kind === 'set_figma_fill') {
-    const fills = node.fills;
-    const first = Array.isArray(fills) ? record(fills[0]) : null;
-    const color = first ? record(first.color) : null;
-    if (!first || !color) throw new Error('figma_retarget_fill_unavailable');
-    return { r: color.r, g: color.g, b: color.b, a: first.opacity ?? 1 };
-  }
-  if (kind === 'set_figma_spacing') {
-    const after = record(operation.after);
-    const property = String(after.property || '');
-    if (!property || typeof node[property] !== 'number') {
-      throw new Error('figma_retarget_spacing_unavailable');
-    }
-    return { property, value: node[property] };
-  }
-  if (kind === 'set_figma_size') {
-    if (typeof node.width !== 'number' || typeof node.height !== 'number') {
-      throw new Error('figma_retarget_size_unavailable');
-    }
-    return { width: node.width, height: node.height };
-  }
-  if (kind === 'set_figma_position') {
-    if (typeof node.x !== 'number' || typeof node.y !== 'number') {
-      throw new Error('figma_retarget_position_unavailable');
-    }
-    return { x: node.x, y: node.y };
-  }
-  throw new Error(`figma_retarget_operation_unsupported:${kind}`);
-}
 
-function retargetFigmaPatch(
-  patchPayload: Record<string, unknown>,
-  operationIndex: number,
-  selectedNode: Record<string, unknown>,
-): Record<string, any> {
-  const payload = cloneValue(record(patchPayload));
-  const operations = payload.operations;
-  const references = payload.references;
-  if (!Array.isArray(operations) || !Array.isArray(references)) {
-    throw new Error('figma_retarget_patch_shape_invalid');
+  interface EditorState {
+    undoAvailable: boolean;
+    conversationId: string;
+    artifactId: string;
+    revision: number;
+    content: string;
+    savedContent: string;
+    kind: string;
+    patchPayload: Record<string, unknown> | null;
+    acceptedRevision: number | null;
+    dirty: boolean;
+    status:
+      | 'idle'
+      | 'loading'
+      | 'ready'
+      | 'saving'
+      | 'accepting'
+      | 'applying'
+      | 'error';
+    error: string;
+    applyResult: Record<string, unknown> | null;
   }
-  if (!Number.isInteger(operationIndex) || operationIndex < 0 || operationIndex >= operations.length) {
-    throw new Error('figma_retarget_operation_index_invalid');
-  }
-  const selected = record(selectedNode);
-  const nodeId = String(selected.id || '').trim();
-  if (!nodeId) throw new Error('figma_retarget_selection_missing_node_id');
-  const chosen = record(operations[operationIndex]);
-  const chosenLocator = record(chosen.locator);
-  if (chosenLocator.kind !== 'figma-node') throw new Error('figma_retarget_requires_figma_locator');
-  const referenceId = String(chosen.referenceId || '');
-  if (!referenceId) throw new Error('figma_retarget_reference_missing');
 
-  let updatedCount = 0;
-  payload.operations = operations.map((raw) => {
-    const operation = record(raw);
-    if (String(operation.referenceId || '') !== referenceId) return operation;
-    const locator = record(operation.locator);
-    if (locator.kind !== 'figma-node') throw new Error('figma_retarget_reference_locator_mismatch');
-    const value: Record<string, unknown> = { ...record(locator.value), nodeId };
-    if (typeof selected.pageId === 'string' && selected.pageId) value.pageId = selected.pageId;
-    const before = figmaBaseValue(operation, selected, value);
-    if (JSON.stringify(before) === JSON.stringify(operation.after)) {
-      throw new Error('figma_retarget_would_be_noop');
-    }
-    updatedCount += 1;
-    return { ...operation, locator: { ...locator, value }, before };
+  const emptyState = (): EditorState => ({
+    undoAvailable: false,
+    conversationId: '',
+    artifactId: '',
+    revision: 0,
+    content: '',
+    savedContent: '',
+    kind: '',
+    patchPayload: null,
+    acceptedRevision: null,
+    dirty: false,
+    status: 'idle',
+    error: '',
+    applyResult: null,
   });
-  if (!updatedCount) throw new Error('figma_retarget_target_operation_missing');
 
-  let targetFound = false;
-  payload.references = references.map((raw) => {
-    const reference = record(raw);
-    if (String(reference.referenceId || '') !== referenceId) return reference;
-    if (reference.role !== 'target') throw new Error('figma_retarget_reference_is_not_target');
-    const locator = record(reference.locator);
-    if (locator.kind !== 'figma-node') throw new Error('figma_retarget_reference_locator_mismatch');
-    const value: Record<string, unknown> = { ...record(locator.value), nodeId };
-    if (typeof selected.pageId === 'string' && selected.pageId) value.pageId = selected.pageId;
-    targetFound = true;
-    return { ...reference, locator: { ...locator, value } };
-  });
-  if (!targetFound) throw new Error('figma_retarget_target_reference_missing');
-  return payload as Record<string, any>;
-}
-
-function createArtifactEditor(client: ArtifactClient) {
-  let current = emptyState();
-  let selectionGeneration = 0;
-  let savedPatchPayload: Record<string, unknown> | null = null;
-
-  function hasUnsavedPatch(): boolean {
-    return JSON.stringify(current.patchPayload) !== JSON.stringify(savedPatchPayload);
-  }
-
-  function adopt(artifact: ArtifactRecord, options: { keepContent?: boolean; keepPatch?: boolean } = {}) {
-    const priorContent = current.content;
-    const priorPatch = current.patchPayload;
-    savedPatchPayload = cloneValue(artifact.patchPayload);
-    current = {
-      ...current,
-      artifactId: artifact.artifactId,
-      undoAvailable: artifact.undoAvailable === true,
-      revision: artifact.revision,
-      content: options.keepContent ? priorContent : artifact.content,
-      savedContent: artifact.content,
-      kind: artifact.kind,
-      patchPayload: options.keepPatch ? priorPatch : artifact.patchPayload,
-      acceptedRevision: artifact.acceptedRevision,
-      dirty: false,
-      status: 'ready',
-      error: '',
-    };
-    current.dirty = current.content !== current.savedContent || hasUnsavedPatch();
-    if (current.dirty) current.acceptedRevision = null;
-  }
-
-  function fail(error: unknown): ArtifactResponse {
-    current = {
-      ...current,
-      status: 'error',
-      error: String(error || 'artifact_operation_failed'),
-    };
-    return { ok: false, error: current.error };
-  }
-
-  async function select(conversationId: string, artifactId: string): Promise<ArtifactResponse> {
-    const generation = ++selectionGeneration;
-    current = {
-      ...emptyState(),
-      conversationId: String(conversationId || ''),
-      artifactId: String(artifactId || ''),
-      status: 'loading',
-    };
-    try {
-      const response = await client.read({
-        conversationId: current.conversationId,
-        artifactId: current.artifactId,
-      });
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      const artifact = artifactValue(response?.artifact);
-      if (response?.ok !== true || artifact === null) {
-        return fail(response?.error || 'artifact_read_failed');
-      }
-      adopt(artifact);
-      return response;
-    } catch (error) {
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      return fail(error instanceof Error ? error.message : error);
+  function artifactValue(value: unknown): ArtifactRecord | null {
+    if (!value || typeof value !== 'object') {
+      return null;
     }
-  }
-
-  function updateContent(content: unknown): void {
-    if (!current.artifactId) return;
-    const value = String(content ?? '');
-    current = {
-      ...current,
-      content: value,
-      dirty: value !== current.savedContent || hasUnsavedPatch(),
-      acceptedRevision: value === current.savedContent ? current.acceptedRevision : null,
-      status: 'ready',
-      error: '',
-      applyResult: null,
+    const item = value as Partial<ArtifactRecord>;
+    const revision = Number(item.revision);
+    if (
+      !String(item.artifactId || '') ||
+      !Number.isInteger(revision) ||
+      revision < 1
+    ) {
+      return null;
+    }
+    return {
+      ...item,
+      artifactId: String(item.artifactId),
+      revision,
+      content: String(item.content || ''),
+      kind: String(item.kind || 'text'),
+      state: String(item.state || 'generated'),
+      acceptedRevision:
+        typeof item.acceptedRevision === 'number' &&
+        Number.isInteger(item.acceptedRevision) &&
+        item.acceptedRevision >= 1
+          ? item.acceptedRevision
+          : null,
+      patchPayload:
+        item.patchPayload && typeof item.patchPayload === 'object'
+          ? (item.patchPayload as Record<string, unknown>)
+          : null,
     };
   }
 
-  function updatePatchPayload(patchPayload: Record<string, unknown>): void {
-    if (!current.artifactId || !patchPayload || typeof patchPayload !== 'object') return;
-    current = {
-      ...current,
-      patchPayload,
-      dirty: current.content !== current.savedContent
-        || JSON.stringify(patchPayload) !== JSON.stringify(savedPatchPayload),
-      acceptedRevision: null,
-      status: 'ready',
-      error: '',
-      applyResult: null,
-    };
-  }
-
-  async function save(): Promise<ArtifactResponse> {
-    if (!current.artifactId || current.revision < 1) return fail('artifact_not_selected');
-    if (!current.dirty) return { ok: true, artifact: undefined };
-    const generation = selectionGeneration;
-    const submittedContent = current.content;
-    const submittedPatch = current.patchPayload;
-    current = { ...current, status: 'saving', error: '' };
-    try {
-      const response = await client.edit({
-        conversationId: current.conversationId,
-        artifactId: current.artifactId,
-        expectedRevision: current.revision,
-        content: submittedContent,
-        patchPayload: submittedPatch,
-      });
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      const artifact = artifactValue(response?.artifact);
-      if (response?.ok !== true || artifact === null) {
-        return fail(response?.error || 'artifact_save_failed');
-      }
-      adopt(artifact, {
-        keepContent: current.content !== submittedContent,
-        keepPatch: current.patchPayload !== submittedPatch,
-      });
-      return response;
-    } catch (error) {
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      return fail(error instanceof Error ? error.message : error);
+  function record(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('figma_retarget_value_must_be_object');
     }
+    return value as Record<string, unknown>;
   }
 
-  async function accept(): Promise<ArtifactResponse> {
-    if (!current.artifactId || current.revision < 1) return fail('artifact_not_selected');
-    if (current.dirty) return fail('save_required_before_accept');
-    const generation = selectionGeneration;
-    current = { ...current, status: 'accepting', error: '' };
-    try {
-      const response = await client.accept({
-        conversationId: current.conversationId,
-        artifactId: current.artifactId,
-        revision: current.revision,
-      });
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      const artifact = artifactValue(response?.artifact);
-      if (response?.ok !== true || artifact === null) {
-        return fail(response?.error || 'artifact_accept_failed');
+  function cloneValue<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+  }
+
+  function figmaBaseValue(
+    operation: Record<string, unknown>,
+    node: Record<string, unknown>,
+    locatorValue: Record<string, unknown>,
+  ): unknown {
+    const kind = String(operation.operation || '');
+    if (kind === 'replace_text') {
+      if (
+        String(node.type || '') !== 'TEXT' ||
+        typeof node.characters !== 'string'
+      ) {
+        throw new Error('figma_retarget_requires_text_node');
       }
-      adopt(artifact);
-      return response;
-    } catch (error) {
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      return fail(error instanceof Error ? error.message : error);
+      locatorValue.textStart = 0;
+      locatorValue.textEnd = node.characters.length;
+      return node.characters;
     }
+    if (kind === 'set_figma_fill') {
+      const fills = node.fills;
+      const first = Array.isArray(fills) ? record(fills[0]) : null;
+      const color = first ? record(first.color) : null;
+      if (!first || !color) {
+        throw new Error('figma_retarget_fill_unavailable');
+      }
+      return {r: color.r, g: color.g, b: color.b, a: first.opacity ?? 1};
+    }
+    if (kind === 'set_figma_spacing') {
+      const after = record(operation.after);
+      const property = String(after.property || '');
+      if (!property || typeof node[property] !== 'number') {
+        throw new Error('figma_retarget_spacing_unavailable');
+      }
+      return {property, value: node[property]};
+    }
+    if (kind === 'set_figma_size') {
+      if (typeof node.width !== 'number' || typeof node.height !== 'number') {
+        throw new Error('figma_retarget_size_unavailable');
+      }
+      return {width: node.width, height: node.height};
+    }
+    if (kind === 'set_figma_position') {
+      if (typeof node.x !== 'number' || typeof node.y !== 'number') {
+        throw new Error('figma_retarget_position_unavailable');
+      }
+      return {x: node.x, y: node.y};
+    }
+    throw new Error(`figma_retarget_operation_unsupported:${kind}`);
   }
 
-  async function apply(): Promise<ArtifactResponse> {
-    if (!current.artifactId || current.revision < 1) return fail('artifact_not_selected');
-    if (current.dirty) return fail('save_required_before_apply');
-    if (current.acceptedRevision !== current.revision) return fail('accept_required_before_apply');
-    const generation = selectionGeneration;
-    current = { ...current, status: 'applying', error: '', applyResult: null };
-    try {
-      const response = await client.apply({
-        conversationId: current.conversationId,
-        artifactId: current.artifactId,
-        revision: current.revision,
-      });
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      if (response?.ok !== true || !response.result) {
-        return fail(response?.error || 'artifact_apply_failed');
+  function retargetFigmaPatch(
+    patchPayload: Record<string, unknown>,
+    operationIndex: number,
+    selectedNode: Record<string, unknown>,
+  ): Record<string, any> {
+    const payload = cloneValue(record(patchPayload));
+    const operations = payload.operations;
+    const references = payload.references;
+    if (!Array.isArray(operations) || !Array.isArray(references)) {
+      throw new Error('figma_retarget_patch_shape_invalid');
+    }
+    if (
+      !Number.isInteger(operationIndex) ||
+      operationIndex < 0 ||
+      operationIndex >= operations.length
+    ) {
+      throw new Error('figma_retarget_operation_index_invalid');
+    }
+    const selected = record(selectedNode);
+    const nodeId = String(selected.id || '').trim();
+    if (!nodeId) {
+      throw new Error('figma_retarget_selection_missing_node_id');
+    }
+    const chosen = record(operations[operationIndex]);
+    const chosenLocator = record(chosen.locator);
+    if (chosenLocator.kind !== 'figma-node') {
+      throw new Error('figma_retarget_requires_figma_locator');
+    }
+    const referenceId = String(chosen.referenceId || '');
+    if (!referenceId) {
+      throw new Error('figma_retarget_reference_missing');
+    }
+
+    let updatedCount = 0;
+    payload.operations = operations.map(raw => {
+      const operation = record(raw);
+      if (String(operation.referenceId || '') !== referenceId) {
+        return operation;
+      }
+      const locator = record(operation.locator);
+      if (locator.kind !== 'figma-node') {
+        throw new Error('figma_retarget_reference_locator_mismatch');
+      }
+      const value: Record<string, unknown> = {...record(locator.value), nodeId};
+      if (typeof selected.pageId === 'string' && selected.pageId) {
+        value.pageId = selected.pageId;
+      }
+      const before = figmaBaseValue(operation, selected, value);
+      if (JSON.stringify(before) === JSON.stringify(operation.after)) {
+        throw new Error('figma_retarget_would_be_noop');
+      }
+      updatedCount += 1;
+      return {...operation, locator: {...locator, value}, before};
+    });
+    if (!updatedCount) {
+      throw new Error('figma_retarget_target_operation_missing');
+    }
+
+    let targetFound = false;
+    payload.references = references.map(raw => {
+      const reference = record(raw);
+      if (String(reference.referenceId || '') !== referenceId) {
+        return reference;
+      }
+      if (reference.role !== 'target') {
+        throw new Error('figma_retarget_reference_is_not_target');
+      }
+      const locator = record(reference.locator);
+      if (locator.kind !== 'figma-node') {
+        throw new Error('figma_retarget_reference_locator_mismatch');
+      }
+      const value: Record<string, unknown> = {...record(locator.value), nodeId};
+      if (typeof selected.pageId === 'string' && selected.pageId) {
+        value.pageId = selected.pageId;
+      }
+      targetFound = true;
+      return {...reference, locator: {...locator, value}};
+    });
+    if (!targetFound) {
+      throw new Error('figma_retarget_target_reference_missing');
+    }
+    return payload as Record<string, any>;
+  }
+
+  function createArtifactEditor(client: ArtifactClient) {
+    let current = emptyState();
+    let selectionGeneration = 0;
+    let savedPatchPayload: Record<string, unknown> | null = null;
+
+    function hasUnsavedPatch(): boolean {
+      return (
+        JSON.stringify(current.patchPayload) !==
+        JSON.stringify(savedPatchPayload)
+      );
+    }
+
+    function adopt(
+      artifact: ArtifactRecord,
+      options: {keepContent?: boolean; keepPatch?: boolean} = {},
+    ) {
+      const priorContent = current.content;
+      const priorPatch = current.patchPayload;
+      savedPatchPayload = cloneValue(artifact.patchPayload);
+      current = {
+        ...current,
+        artifactId: artifact.artifactId,
+        undoAvailable: artifact.undoAvailable === true,
+        revision: artifact.revision,
+        content: options.keepContent ? priorContent : artifact.content,
+        savedContent: artifact.content,
+        kind: artifact.kind,
+        patchPayload: options.keepPatch ? priorPatch : artifact.patchPayload,
+        acceptedRevision: artifact.acceptedRevision,
+        dirty: false,
+        status: 'ready',
+        error: '',
+      };
+      current.dirty =
+        current.content !== current.savedContent || hasUnsavedPatch();
+      if (current.dirty) {
+        current.acceptedRevision = null;
+      }
+    }
+
+    function fail(error: unknown): ArtifactResponse {
+      current = {
+        ...current,
+        status: 'error',
+        error: String(error || 'artifact_operation_failed'),
+      };
+      return {ok: false, error: current.error};
+    }
+
+    async function select(
+      conversationId: string,
+      artifactId: string,
+    ): Promise<ArtifactResponse> {
+      const generation = ++selectionGeneration;
+      current = {
+        ...emptyState(),
+        conversationId: String(conversationId || ''),
+        artifactId: String(artifactId || ''),
+        status: 'loading',
+      };
+      try {
+        const response = await client.read({
+          conversationId: current.conversationId,
+          artifactId: current.artifactId,
+        });
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        const artifact = artifactValue(response?.artifact);
+        if (response?.ok !== true || artifact === null) {
+          return fail(response?.error || 'artifact_read_failed');
+        }
+        adopt(artifact);
+        return response;
+      } catch (error) {
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        return fail(error instanceof Error ? error.message : error);
+      }
+    }
+
+    function updateContent(content: unknown): void {
+      if (!current.artifactId) {
+        return;
+      }
+      const value = String(content ?? '');
+      current = {
+        ...current,
+        content: value,
+        dirty: value !== current.savedContent || hasUnsavedPatch(),
+        acceptedRevision:
+          value === current.savedContent ? current.acceptedRevision : null,
+        status: 'ready',
+        error: '',
+        applyResult: null,
+      };
+    }
+
+    function updatePatchPayload(patchPayload: Record<string, unknown>): void {
+      if (
+        !current.artifactId ||
+        !patchPayload ||
+        typeof patchPayload !== 'object'
+      ) {
+        return;
       }
       current = {
         ...current,
-        status: response.result.status === 'succeeded' ? 'ready' : 'error',
-        error: response.result.status === 'succeeded'
-          ? ''
-          : String(response.result.error || response.result.status || 'artifact_apply_failed'),
-        applyResult: response.result,
-        undoAvailable: response.result.undoAvailable === true,
+        patchPayload,
+        dirty:
+          current.content !== current.savedContent ||
+          JSON.stringify(patchPayload) !== JSON.stringify(savedPatchPayload),
+        acceptedRevision: null,
+        status: 'ready',
+        error: '',
+        applyResult: null,
       };
-      return response;
-    } catch (error) {
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      return fail(error instanceof Error ? error.message : error);
     }
+
+    async function save(): Promise<ArtifactResponse> {
+      if (!current.artifactId || current.revision < 1) {
+        return fail('artifact_not_selected');
+      }
+      if (!current.dirty) {
+        return {ok: true, artifact: undefined};
+      }
+      const generation = selectionGeneration;
+      const submittedContent = current.content;
+      const submittedPatch = current.patchPayload;
+      current = {...current, status: 'saving', error: ''};
+      try {
+        const response = await client.edit({
+          conversationId: current.conversationId,
+          artifactId: current.artifactId,
+          expectedRevision: current.revision,
+          content: submittedContent,
+          patchPayload: submittedPatch,
+        });
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        const artifact = artifactValue(response?.artifact);
+        if (response?.ok !== true || artifact === null) {
+          return fail(response?.error || 'artifact_save_failed');
+        }
+        adopt(artifact, {
+          keepContent: current.content !== submittedContent,
+          keepPatch: current.patchPayload !== submittedPatch,
+        });
+        return response;
+      } catch (error) {
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        return fail(error instanceof Error ? error.message : error);
+      }
+    }
+
+    async function accept(): Promise<ArtifactResponse> {
+      if (!current.artifactId || current.revision < 1) {
+        return fail('artifact_not_selected');
+      }
+      if (current.dirty) {
+        return fail('save_required_before_accept');
+      }
+      const generation = selectionGeneration;
+      current = {...current, status: 'accepting', error: ''};
+      try {
+        const response = await client.accept({
+          conversationId: current.conversationId,
+          artifactId: current.artifactId,
+          revision: current.revision,
+        });
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        const artifact = artifactValue(response?.artifact);
+        if (response?.ok !== true || artifact === null) {
+          return fail(response?.error || 'artifact_accept_failed');
+        }
+        adopt(artifact);
+        return response;
+      } catch (error) {
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        return fail(error instanceof Error ? error.message : error);
+      }
+    }
+
+    async function apply(): Promise<ArtifactResponse> {
+      if (!current.artifactId || current.revision < 1) {
+        return fail('artifact_not_selected');
+      }
+      if (current.dirty) {
+        return fail('save_required_before_apply');
+      }
+      if (current.acceptedRevision !== current.revision) {
+        return fail('accept_required_before_apply');
+      }
+      const generation = selectionGeneration;
+      current = {...current, status: 'applying', error: '', applyResult: null};
+      try {
+        const response = await client.apply({
+          conversationId: current.conversationId,
+          artifactId: current.artifactId,
+          revision: current.revision,
+        });
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        if (response?.ok !== true || !response.result) {
+          return fail(response?.error || 'artifact_apply_failed');
+        }
+        current = {
+          ...current,
+          status: response.result.status === 'succeeded' ? 'ready' : 'error',
+          error:
+            response.result.status === 'succeeded'
+              ? ''
+              : String(
+                  response.result.error ||
+                    response.result.status ||
+                    'artifact_apply_failed',
+                ),
+          applyResult: response.result,
+          undoAvailable: response.result.undoAvailable === true,
+        };
+        return response;
+      } catch (error) {
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        return fail(error instanceof Error ? error.message : error);
+      }
+    }
+
+    async function undo(confirmed: boolean): Promise<ArtifactResponse> {
+      if (!confirmed || !current.undoAvailable || !client.undo) {
+        return fail('artifact_undo_unavailable');
+      }
+      const generation = selectionGeneration;
+      current = {...current, status: 'applying', error: ''};
+      try {
+        const response = await client.undo({
+          conversationId: current.conversationId,
+          artifactId: current.artifactId,
+          revision: current.revision,
+          confirmed: true,
+        });
+        if (generation !== selectionGeneration) {
+          return {ok: false, error: 'selection_changed'};
+        }
+        if (
+          response.ok !== true ||
+          response.result?.status !== 'succeeded' ||
+          response.result?.verified !== true
+        ) {
+          return fail(
+            response.error || response.result?.error || 'artifact_undo_failed',
+          );
+        }
+        current = {
+          ...current,
+          status: 'ready',
+          undoAvailable: false,
+          applyResult: {...response.result, undone: true},
+        };
+        return response;
+      } catch (error) {
+        return generation !== selectionGeneration
+          ? {ok: false, error: 'selection_changed'}
+          : fail(error);
+      }
+    }
+
+    return {
+      select,
+      updateContent,
+      updatePatchPayload,
+      save,
+      accept,
+      apply,
+      undo,
+      clear: () => {
+        selectionGeneration += 1;
+        current = emptyState();
+      },
+      state: () => ({...current, selectionGeneration}),
+    };
   }
 
-  async function undo(confirmed: boolean): Promise<ArtifactResponse> {
-    if (!confirmed || !current.undoAvailable || !client.undo) return fail('artifact_undo_unavailable');
-    const generation = selectionGeneration;
-    current = { ...current, status: 'applying', error: '' };
-    try {
-      const response = await client.undo({ conversationId: current.conversationId,
-        artifactId: current.artifactId, revision: current.revision, confirmed: true });
-      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
-      if (response.ok !== true || response.result?.status !== 'succeeded' || response.result?.verified !== true) return fail(response.error || response.result?.error || 'artifact_undo_failed');
-      current = { ...current, status: 'ready', undoAvailable: false, applyResult: { ...response.result, undone: true } };
-      return response;
-    } catch (error) { return generation !== selectionGeneration ? { ok: false, error: 'selection_changed' } : fail(error); }
+  const ArtifactEditor = {createArtifactEditor, retargetFigmaPatch};
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ArtifactEditor;
   }
-
-  return {
-    select,
-    updateContent,
-    updatePatchPayload,
-    save,
-    accept,
-    apply,
-    undo,
-    clear: () => {
-      selectionGeneration += 1;
-      current = emptyState();
-    },
-    state: () => ({ ...current, selectionGeneration }),
-  };
-}
-
-const ArtifactEditor = { createArtifactEditor, retargetFigmaPatch };
-if (typeof module !== 'undefined' && module.exports) module.exports = ArtifactEditor;
-if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { ArtifactEditor?: typeof ArtifactEditor })
-    .ArtifactEditor = ArtifactEditor;
-}
+  if (typeof globalThis !== 'undefined') {
+    (
+      globalThis as typeof globalThis & {ArtifactEditor?: typeof ArtifactEditor}
+    ).ArtifactEditor = ArtifactEditor;
+  }
 })();

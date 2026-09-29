@@ -1,6 +1,5 @@
 'use strict';
 
-
 const MAX_GROUNDING_WAIT_MS = 20000;
 
 const UNKNOWN_CAPTURE_WAIT_MS = 1500;
@@ -19,7 +18,8 @@ type SubmitGateInput = {
 };
 
 type SubmitGateDecision = {
-  decision: typeof DECISION_SUBMIT | typeof DECISION_WAIT | typeof DECISION_FAIL;
+  decision:
+    typeof DECISION_SUBMIT | typeof DECISION_WAIT | typeof DECISION_FAIL;
   reason: string;
   message?: string;
   notice?: string;
@@ -40,24 +40,32 @@ function decideSubmitGate(input?: SubmitGateInput): SubmitGateDecision {
     };
   }
   if (hasSnapshot) {
-    return { decision: DECISION_SUBMIT, reason: 'grounded' };
+    return {decision: DECISION_SUBMIT, reason: 'grounded'};
   }
   if (captureInFlight) {
     if (elapsed >= MAX_GROUNDING_WAIT_MS) {
       return {
         decision: DECISION_FAIL,
-        message: '读取这个选区花的时间超出了预期，已经停下。请再选一次，或换一个小一点的范围。',
+        message:
+          '读取这个选区花的时间超出了预期，已经停下。请再选一次，或换一个小一点的范围。',
         reason: 'capture_exceeded_bridge_budget',
       };
     }
     return {
       decision: DECISION_WAIT,
       reason: 'capture_in_flight',
-      notice: elapsed >= PROGRESS_NOTICE_AFTER_MS ? '正在读取选中的内容，马上就好…' : '',
+      notice:
+        elapsed >= PROGRESS_NOTICE_AFTER_MS
+          ? '正在读取选中的内容，马上就好…'
+          : '',
     };
   }
   if (elapsed < UNKNOWN_CAPTURE_WAIT_MS) {
-    return { decision: DECISION_WAIT, reason: 'awaiting_capture_start', notice: '' };
+    return {
+      decision: DECISION_WAIT,
+      reason: 'awaiting_capture_start',
+      notice: '',
+    };
   }
   return {
     decision: DECISION_FAIL,

@@ -17,12 +17,16 @@ export function resolveConversationWorkspace(
   threadRoot: unknown,
 ): string | null {
   const explicit = String(explicitRoot ?? '').trim();
-  if (explicit) return explicit;
+  if (explicit) {
+    return explicit;
+  }
   const existing = String(threadRoot ?? '').trim();
   return existing || null;
 }
 
-export function workspaceCapabilityState(root: unknown): WorkspaceCapabilityState {
+export function workspaceCapabilityState(
+  root: unknown,
+): WorkspaceCapabilityState {
   const value = String(root ?? '').trim();
   if (!value) {
     return {
@@ -38,11 +42,15 @@ export function workspaceCapabilityState(root: unknown): WorkspaceCapabilityStat
   };
 }
 
-export function attachmentDialogOptions(projectRoot: unknown, kind: 'files' | 'folder' = 'files'): AttachmentDialogOptions {
+export function attachmentDialogOptions(
+  projectRoot: unknown,
+  kind: 'files' | 'folder' = 'files',
+): AttachmentDialogOptions {
   const root = String(projectRoot ?? '').trim();
   return {
     title: kind === 'folder' ? '添加材料文件夹' : '添加任务材料',
-    ...(root ? { defaultPath: root } : {}),
-    properties: kind === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections'],
+    ...(root ? {defaultPath: root} : {}),
+    properties:
+      kind === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections'],
   };
 }

@@ -1,6 +1,5 @@
 /* exported ChatHighlight */
 
-
 type ChatTokenName =
   | 'plain'
   | 'keyword'
@@ -56,26 +55,85 @@ const ChatHighlight = (() => {
   const UPPER_X = 88;
 
   const PWSH_KEYWORDS = new Set([
-    'function', 'filter', 'param', 'begin', 'process', 'end', 'if', 'elseif', 'else',
-    'try', 'catch', 'finally', 'throw', 'return', 'foreach', 'for', 'while', 'do',
-    'until', 'switch', 'break', 'continue', 'trap', 'class', 'enum',
+    'function',
+    'filter',
+    'param',
+    'begin',
+    'process',
+    'end',
+    'if',
+    'elseif',
+    'else',
+    'try',
+    'catch',
+    'finally',
+    'throw',
+    'return',
+    'foreach',
+    'for',
+    'while',
+    'do',
+    'until',
+    'switch',
+    'break',
+    'continue',
+    'trap',
+    'class',
+    'enum',
   ]);
 
   const SHELL_KEYWORDS = new Set([
-    'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'do', 'done', 'case', 'esac',
-    'function', 'return', 'export', 'local',
+    'if',
+    'then',
+    'else',
+    'elif',
+    'fi',
+    'for',
+    'while',
+    'do',
+    'done',
+    'case',
+    'esac',
+    'function',
+    'return',
+    'export',
+    'local',
   ]);
   const SHELL_COMMAND_KEYWORDS = new Set(['export', 'local']);
   const SHELL_CONTINUATION = new Set(['then', 'do', 'else']);
 
   const OPERATORS = new Set([
-    EQ, PLUS, DASH, STAR, SLASH, PIPE, GT, LT, BANG, QUESTION, COLON, COMMA, SEMI,
-    LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
+    EQ,
+    PLUS,
+    DASH,
+    STAR,
+    SLASH,
+    PIPE,
+    GT,
+    LT,
+    BANG,
+    QUESTION,
+    COLON,
+    COMMA,
+    SEMI,
+    LPAREN,
+    RPAREN,
+    LBRACE,
+    RBRACE,
+    LBRACKET,
+    RBRACKET,
   ]);
 
-  const PWSH_MARKERS = ['Invoke-WebRequest', 'Write-Host', 'Get-', 'Set-', '-ErrorAction'];
+  const PWSH_MARKERS = [
+    'Invoke-WebRequest',
+    'Write-Host',
+    'Get-',
+    'Set-',
+    '-ErrorAction',
+  ];
 
-  const isSpaceCode = (code: number): boolean => code === SPACE || code === TAB || code === CR;
+  const isSpaceCode = (code: number): boolean =>
+    code === SPACE || code === TAB || code === CR;
   const isDigit = (code: number): boolean => code >= ZERO && code <= NINE;
   const isLetter = (code: number): boolean =>
     (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
@@ -88,11 +146,22 @@ const ChatHighlight = (() => {
   const isPathLead = (code: number): boolean =>
     code === DOT || code === SLASH || code === BACKSLASH;
   const isSeparator = (code: number): boolean =>
-    isSpaceCode(code) || code === SEMI || code === PIPE || code === AMP ||
-    code === LT || code === GT || code === RPAREN;
+    isSpaceCode(code) ||
+    code === SEMI ||
+    code === PIPE ||
+    code === AMP ||
+    code === LT ||
+    code === GT ||
+    code === RPAREN;
   const isSpecialParam = (code: number): boolean =>
-    code === QUESTION || code === BANG || code === HASH || code === 64 ||
-    code === STAR || code === DOLLAR || code === DASH || isDigit(code);
+    code === QUESTION ||
+    code === BANG ||
+    code === HASH ||
+    code === 64 ||
+    code === STAR ||
+    code === DOLLAR ||
+    code === DASH ||
+    isDigit(code);
 
   function wordEnd(line: string, start: number, length: number): number {
     let index = start + 1;
@@ -103,7 +172,11 @@ const ChatHighlight = (() => {
         continue;
       }
       if (
-        (code === DASH || code === DOT || code === SLASH || code === BACKSLASH || code === COLON) &&
+        (code === DASH ||
+          code === DOT ||
+          code === SLASH ||
+          code === BACKSLASH ||
+          code === COLON) &&
         index + 1 < length &&
         isNameCode(line.charCodeAt(index + 1))
       ) {
@@ -116,27 +189,45 @@ const ChatHighlight = (() => {
   }
 
   function isAssignmentName(line: string, start: number, end: number): boolean {
-    if (end <= start) return false;
+    if (end <= start) {
+      return false;
+    }
     for (let index = start; index < end; index += 1) {
       const code = line.charCodeAt(index);
-      if (!isNameCode(code) || (isDigit(code) && index === start)) return false;
+      if (!isNameCode(code) || (isDigit(code) && index === start)) {
+        return false;
+      }
     }
     return true;
   }
 
-  function followedByParameter(line: string, from: number, length: number): boolean {
+  function followedByParameter(
+    line: string,
+    from: number,
+    length: number,
+  ): boolean {
     let index = from;
-    while (index < length && isSpaceCode(line.charCodeAt(index))) index += 1;
-    if (index >= length || line.charCodeAt(index) !== DASH) return false;
+    while (index < length && isSpaceCode(line.charCodeAt(index))) {
+      index += 1;
+    }
+    if (index >= length || line.charCodeAt(index) !== DASH) {
+      return false;
+    }
     index += 1;
-    if (index < length && line.charCodeAt(index) === DASH) index += 1;
+    if (index < length && line.charCodeAt(index) === DASH) {
+      index += 1;
+    }
     return index < length && isLetter(line.charCodeAt(index));
   }
 
   function looksLikeCmdlet(word: string): boolean {
     const dash = word.indexOf('-');
-    if (dash < 1 || dash + 1 >= word.length) return false;
-    if (!isLetter(word.charCodeAt(0))) return false;
+    if (dash < 1 || dash + 1 >= word.length) {
+      return false;
+    }
+    if (!isLetter(word.charCodeAt(0))) {
+      return false;
+    }
     return isLetter(word.charCodeAt(dash + 1));
   }
 
@@ -147,8 +238,14 @@ const ChatHighlight = (() => {
     atStart: boolean,
   ): ChatTokenName {
     const word = line.slice(start, end);
-    if (PWSH_KEYWORDS.has(word.toLowerCase())) return 'keyword';
-    if (atStart || followedByParameter(line, end, line.length) || looksLikeCmdlet(word)) {
+    if (PWSH_KEYWORDS.has(word.toLowerCase())) {
+      return 'keyword';
+    }
+    if (
+      atStart ||
+      followedByParameter(line, end, line.length) ||
+      looksLikeCmdlet(word)
+    ) {
       return 'command';
     }
     return 'plain';
@@ -159,15 +256,15 @@ const ChatHighlight = (() => {
     start: number,
     end: number,
     atStart: boolean,
-  ): { token: ChatTokenName; keepsStart: boolean } {
+  ): {token: ChatTokenName; keepsStart: boolean} {
     const word = line.slice(start, end);
     if (atStart) {
       if (SHELL_KEYWORDS.has(word) && !SHELL_COMMAND_KEYWORDS.has(word)) {
-        return { token: 'keyword', keepsStart: SHELL_CONTINUATION.has(word) };
+        return {token: 'keyword', keepsStart: SHELL_CONTINUATION.has(word)};
       }
-      return { token: 'command', keepsStart: false };
+      return {token: 'command', keepsStart: false};
     }
-    return { token: 'plain', keepsStart: false };
+    return {token: 'plain', keepsStart: false};
   }
 
   function scanLine(line: string, lang: ChatLanguage): ChatSpan[] {
@@ -181,8 +278,10 @@ const ChatHighlight = (() => {
 
       if (isSpaceCode(code)) {
         const start = index;
-        while (index < length && isSpaceCode(line.charCodeAt(index))) index += 1;
-        spans.push({ text: line.slice(start, index), token: 'plain' });
+        while (index < length && isSpaceCode(line.charCodeAt(index))) {
+          index += 1;
+        }
+        spans.push({text: line.slice(start, index), token: 'plain'});
         continue;
       }
 
@@ -191,20 +290,30 @@ const ChatHighlight = (() => {
         index += 1;
         while (index < length) {
           const inner = line.charCodeAt(index);
-          if (inner === BACKSLASH || (inner === BACKTICK && lang === 'powershell')) {
+          if (
+            inner === BACKSLASH ||
+            (inner === BACKTICK && lang === 'powershell')
+          ) {
             index += 2;
             continue;
           }
           index += 1;
-          if (inner === code) break;
+          if (inner === code) {
+            break;
+          }
         }
-        spans.push({ text: line.slice(start, index), token: 'string' });
+        spans.push({text: line.slice(start, index), token: 'string'});
         atStart = false;
         continue;
       }
 
-      if (code === HASH && (lang === 'powershell' || index === 0 || isSpaceCode(line.charCodeAt(index - 1)))) {
-        spans.push({ text: line.slice(index), token: 'comment' });
+      if (
+        code === HASH &&
+        (lang === 'powershell' ||
+          index === 0 ||
+          isSpaceCode(line.charCodeAt(index - 1)))
+      ) {
+        spans.push({text: line.slice(index), token: 'comment'});
         break;
       }
 
@@ -213,19 +322,35 @@ const ChatHighlight = (() => {
         index += 1;
         if (index < length && line.charCodeAt(index) === LBRACE) {
           index += 1;
-          while (index < length && line.charCodeAt(index) !== RBRACE) index += 1;
-          if (index < length) index += 1;
+          while (index < length && line.charCodeAt(index) !== RBRACE) {
+            index += 1;
+          }
+          if (index < length) {
+            index += 1;
+          }
         } else {
           const nameStart = index;
-          while (index < length && isNameCode(line.charCodeAt(index))) index += 1;
-          if (index > nameStart && index < length && line.charCodeAt(index) === COLON) {
+          while (index < length && isNameCode(line.charCodeAt(index))) {
+            index += 1;
+          }
+          if (
+            index > nameStart &&
+            index < length &&
+            line.charCodeAt(index) === COLON
+          ) {
             const after = index + 1;
             if (after < length && isNameCode(line.charCodeAt(after))) {
               index = after;
-              while (index < length && isNameCode(line.charCodeAt(index))) index += 1;
+              while (index < length && isNameCode(line.charCodeAt(index))) {
+                index += 1;
+              }
             }
           }
-          if (index === nameStart && index < length && isSpecialParam(line.charCodeAt(index))) {
+          if (
+            index === nameStart &&
+            index < length &&
+            isSpecialParam(line.charCodeAt(index))
+          ) {
             index += 1;
           }
         }
@@ -237,68 +362,109 @@ const ChatHighlight = (() => {
         continue;
       }
 
-      if (isDigit(code) || (code === DOT && index + 1 < length && isDigit(line.charCodeAt(index + 1)))) {
+      if (
+        isDigit(code) ||
+        (code === DOT &&
+          index + 1 < length &&
+          isDigit(line.charCodeAt(index + 1)))
+      ) {
         const start = index;
         if (code === ZERO && index + 2 < length) {
           const marker = line.charCodeAt(index + 1);
-          if ((marker === LOWER_X || marker === UPPER_X) && isHex(line.charCodeAt(index + 2))) {
+          if (
+            (marker === LOWER_X || marker === UPPER_X) &&
+            isHex(line.charCodeAt(index + 2))
+          ) {
             index += 2;
-            while (index < length && isHex(line.charCodeAt(index))) index += 1;
+            while (index < length && isHex(line.charCodeAt(index))) {
+              index += 1;
+            }
           }
         }
         if (index === start) {
-          while (index < length && isDigit(line.charCodeAt(index))) index += 1;
+          while (index < length && isDigit(line.charCodeAt(index))) {
+            index += 1;
+          }
           if (
             index + 1 < length &&
             line.charCodeAt(index) === DOT &&
             isDigit(line.charCodeAt(index + 1))
           ) {
             index += 1;
-            while (index < length && isDigit(line.charCodeAt(index))) index += 1;
+            while (index < length && isDigit(line.charCodeAt(index))) {
+              index += 1;
+            }
           }
         }
-        spans.push({ text: line.slice(start, index), token: 'number' });
+        spans.push({text: line.slice(start, index), token: 'number'});
         atStart = false;
         continue;
       }
 
       if (code === DASH) {
         let cursor = index + 1;
-        if (cursor < length && line.charCodeAt(cursor) === DASH) cursor += 1;
+        if (cursor < length && line.charCodeAt(cursor) === DASH) {
+          cursor += 1;
+        }
         if (cursor < length && isLetter(line.charCodeAt(cursor))) {
           const start = index;
           index = cursor;
-          while (index < length && isNameCode(line.charCodeAt(index))) index += 1;
-          spans.push({ text: line.slice(start, index), token: 'command' });
+          while (index < length && isNameCode(line.charCodeAt(index))) {
+            index += 1;
+          }
+          spans.push({text: line.slice(start, index), token: 'command'});
           atStart = false;
           continue;
         }
       }
 
-      if (isWordLead(code) || (isPathLead(code) && index + 1 < length && (isNameCode(line.charCodeAt(index + 1)) || isPathLead(line.charCodeAt(index + 1))))) {
+      if (
+        isWordLead(code) ||
+        (isPathLead(code) &&
+          index + 1 < length &&
+          (isNameCode(line.charCodeAt(index + 1)) ||
+            isPathLead(line.charCodeAt(index + 1))))
+      ) {
         const start = index;
         const end = wordEnd(line, start, length);
-        if (lang === 'shell' && atStart && end < length && line.charCodeAt(end) === EQ && isAssignmentName(line, start, end)) {
+        if (
+          lang === 'shell' &&
+          atStart &&
+          end < length &&
+          line.charCodeAt(end) === EQ &&
+          isAssignmentName(line, start, end)
+        ) {
           let cursor = end + 1;
-          while (cursor < length && !isSeparator(line.charCodeAt(cursor))) cursor += 1;
-          spans.push({ text: line.slice(start, cursor), token: 'plain' });
+          while (cursor < length && !isSeparator(line.charCodeAt(cursor))) {
+            cursor += 1;
+          }
+          spans.push({text: line.slice(start, cursor), token: 'plain'});
           index = cursor;
           continue;
         }
-        const decision: { token: ChatTokenName; keepsStart: boolean } =
+        const decision: {token: ChatTokenName; keepsStart: boolean} =
           lang === 'powershell'
-            ? { token: classifyPowerShellWord(line, start, end, atStart), keepsStart: false }
+            ? {
+                token: classifyPowerShellWord(line, start, end, atStart),
+                keepsStart: false,
+              }
             : classifyShellWord(line, start, end, atStart);
-        spans.push({ text: line.slice(start, end), token: decision.token });
+        spans.push({text: line.slice(start, end), token: decision.token});
         atStart = decision.keepsStart;
         index = end;
         continue;
       }
 
       if (OPERATORS.has(code)) {
-        spans.push({ text: line[index], token: 'operator' });
+        spans.push({text: line[index], token: 'operator'});
         index += 1;
-        if (code === SEMI || code === PIPE || code === LBRACE || code === RBRACE || code === LPAREN) {
+        if (
+          code === SEMI ||
+          code === PIPE ||
+          code === LBRACE ||
+          code === RBRACE ||
+          code === LPAREN
+        ) {
           atStart = true;
         } else if (code === EQ && lang === 'powershell') {
           atStart = true;
@@ -310,17 +476,21 @@ const ChatHighlight = (() => {
 
       if (code === AMP) {
         const start = index;
-        while (index < length && line.charCodeAt(index) === AMP) index += 1;
-        spans.push({ text: line.slice(start, index), token: 'plain' });
+        while (index < length && line.charCodeAt(index) === AMP) {
+          index += 1;
+        }
+        spans.push({text: line.slice(start, index), token: 'plain'});
         atStart = true;
         continue;
       }
-      spans.push({ text: line[index], token: 'plain' });
+      spans.push({text: line[index], token: 'plain'});
       index += 1;
       atStart = false;
     }
 
-    if (spans.length === 0) spans.push({ text: '', token: 'plain' });
+    if (spans.length === 0) {
+      spans.push({text: '', token: 'plain'});
+    }
     return merge(spans);
   }
 
@@ -328,22 +498,28 @@ const ChatHighlight = (() => {
     const merged: ChatSpan[] = [];
     for (const span of spans) {
       const last = merged[merged.length - 1];
-      if (last && last.token === span.token) last.text += span.text;
-      else merged.push({ text: span.text, token: span.token });
+      if (last && last.token === span.token) {
+        last.text += span.text;
+      } else {
+        merged.push({text: span.text, token: span.token});
+      }
     }
     return merged;
   }
 
   function plainLines(lines: string[]): ChatSpan[][] {
-    return lines.map((raw) => {
-      const line = raw.charCodeAt(raw.length - 1) === CR ? raw.slice(0, -1) : raw;
-      return [{ text: line, token: 'plain' as ChatTokenName }];
+    return lines.map(raw => {
+      const line =
+        raw.charCodeAt(raw.length - 1) === CR ? raw.slice(0, -1) : raw;
+      return [{text: line, token: 'plain' as ChatTokenName}];
     });
   }
 
   function languageOf(lang: string): ChatLanguage {
     const name = typeof lang === 'string' ? lang.trim().toLowerCase() : '';
-    if (name === 'powershell' || name === 'shell') return name;
+    if (name === 'powershell' || name === 'shell') {
+      return name;
+    }
     return 'plain';
   }
 
@@ -351,10 +527,13 @@ const ChatHighlight = (() => {
     const source = typeof code === 'string' ? code : String(code ?? '');
     const lines = source.split('\n');
     const language = languageOf(lang);
-    if (language === 'plain') return plainLines(lines);
+    if (language === 'plain') {
+      return plainLines(lines);
+    }
     try {
-      return lines.map((raw) => {
-        const line = raw.charCodeAt(raw.length - 1) === CR ? raw.slice(0, -1) : raw;
+      return lines.map(raw => {
+        const line =
+          raw.charCodeAt(raw.length - 1) === CR ? raw.slice(0, -1) : raw;
         return scanLine(line, language);
       });
     } catch {
@@ -363,21 +542,34 @@ const ChatHighlight = (() => {
   }
 
   function langFor(toolName: string, command: string): ChatLanguage {
-    const tool = typeof toolName === 'string' ? toolName.trim().toLowerCase() : '';
+    const tool =
+      typeof toolName === 'string' ? toolName.trim().toLowerCase() : '';
     const text = typeof command === 'string' ? command : '';
-    if (tool === 'pwsh' || tool === 'powershell') return 'powershell';
-    for (const marker of PWSH_MARKERS) {
-      if (text.includes(marker)) return 'powershell';
+    if (tool === 'pwsh' || tool === 'powershell') {
+      return 'powershell';
     }
-    if (/\$env:/i.test(text)) return 'powershell';
-    if (tool === 'bash' || tool === 'sh' || tool === 'shell') return 'shell';
+    for (const marker of PWSH_MARKERS) {
+      if (text.includes(marker)) {
+        return 'powershell';
+      }
+    }
+    if (/\$env:/i.test(text)) {
+      return 'powershell';
+    }
+    if (tool === 'bash' || tool === 'sh' || tool === 'shell') {
+      return 'shell';
+    }
     return 'plain';
   }
 
-  return { highlight, langFor };
+  return {highlight, langFor};
 })();
 
-if (typeof module !== 'undefined' && module.exports) module.exports = ChatHighlight;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = ChatHighlight;
+}
 if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { ChatHighlight?: typeof ChatHighlight }).ChatHighlight = ChatHighlight;
+  (
+    globalThis as typeof globalThis & {ChatHighlight?: typeof ChatHighlight}
+  ).ChatHighlight = ChatHighlight;
 }

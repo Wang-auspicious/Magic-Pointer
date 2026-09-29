@@ -1,13 +1,12 @@
 'use strict';
 
-
 interface PresetOption {
   value: string;
   name: string;
   description: string;
   label: string;
   primary?: boolean;
-  confirm?: { title: string; description: string };
+  confirm?: {title: string; description: string};
   badge?: string;
   action?: string;
   shortcut?: string;
@@ -72,23 +71,34 @@ const CUSTOM_OPTION: PresetOption = {
 };
 
 function optionOf(value: string): PresetOption | undefined {
-  if (value === 'custom') return CUSTOM_OPTION;
+  if (value === 'custom') {
+    return CUSTOM_OPTION;
+  }
   return PRESETS.find(option => option.value === value);
 }
 
 function presetSvg(option: PresetOption): string {
   const paths: Record<string, string> = {
     plan: 'M5 6h9M5 11h9M5 16h6M17 5v12M14.5 14.5 17 17l2.5-2.5',
-    'read-only': 'M12 3 5 6v5.5c0 4 2.8 7.3 7 8.5 4.2-1.2 7-4.5 7-8.5V6l-7-3Zm-3 8.5 2 2 4-4',
-    'workspace-write': 'M3 8a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Zm10.5 7.5 4-4 1.5 1.5-4 4-2 .5.5-2Z',
-    'danger-full-access': 'M12 3 5 6v5.5c0 4 2.8 7.3 7 8.5 4.2-1.2 7-4.5 7-8.5V6l-7-3Zm0 5v5m0 3v.1',
+    'read-only':
+      'M12 3 5 6v5.5c0 4 2.8 7.3 7 8.5 4.2-1.2 7-4.5 7-8.5V6l-7-3Zm-3 8.5 2 2 4-4',
+    'workspace-write':
+      'M3 8a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Zm10.5 7.5 4-4 1.5 1.5-4 4-2 .5.5-2Z',
+    'danger-full-access':
+      'M12 3 5 6v5.5c0 4 2.8 7.3 7 8.5 4.2-1.2 7-4.5 7-8.5V6l-7-3Zm0 5v5m0 3v.1',
     custom: 'M4 7h9m4 0h3M4 12h3m4 0h9M4 17h11m4 0h1M15 5v4M9 10v4m8 1v4',
   };
   return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[option.value] || paths.custom}" /></svg>`;
 }
 
-const PermissionPresets = { PRESETS, PRIMARY_PRESETS, optionOf, presetSvg };
-if (typeof module !== 'undefined' && module.exports) module.exports = PermissionPresets;
+const PermissionPresets = {PRESETS, PRIMARY_PRESETS, optionOf, presetSvg};
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = PermissionPresets;
+}
 if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { PermissionPresets?: typeof PermissionPresets }).PermissionPresets = PermissionPresets;
+  (
+    globalThis as typeof globalThis & {
+      PermissionPresets?: typeof PermissionPresets;
+    }
+  ).PermissionPresets = PermissionPresets;
 }

@@ -2,7 +2,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const STATES = new Set(['pending', 'running', 'pass', 'warn', 'fail', 'skipped', 'needs_user']);
+const STATES = new Set([
+  'pending',
+  'running',
+  'pass',
+  'warn',
+  'fail',
+  'skipped',
+  'needs_user',
+]);
 
 class PreflightError extends Error {}
 
@@ -47,7 +55,10 @@ interface StageResult {
   durationMs: number;
 }
 
-type Check = (stage: PreflightStage, context?: { signal: AbortSignal | null }) => unknown;
+type Check = (
+  stage: PreflightStage,
+  context?: {signal: AbortSignal | null},
+) => unknown;
 
 interface RunnerOptions {
   manifest: unknown;
@@ -84,7 +95,7 @@ function errorName(error: unknown): string {
 function validateManifest(value: unknown): PreflightManifest {
   const raw =
     value && typeof value === 'object'
-      ? (value as { schemaVersion?: unknown; stages?: unknown })
+      ? (value as {schemaVersion?: unknown; stages?: unknown})
       : {};
   if (
     raw.schemaVersion !== 1 ||
@@ -96,10 +107,12 @@ function validateManifest(value: unknown): PreflightManifest {
   }
   const seen = new Set<string>();
   const stages = raw.stages.map((item: unknown): PreflightStage => {
-    const rawStage: RawStage = item && typeof item === 'object' ? (item as RawStage) : {};
+    const rawStage: RawStage =
+      item && typeof item === 'object' ? (item as RawStage) : {};
     const id = String(rawStage.id || '').trim();
-    if (!/^[a-z][a-z0-9_]{1,63}$/.test(id) || seen.has(id))
+    if (!/^[a-z][a-z0-9_]{1,63}$/.test(id) || seen.has(id)) {
       throw new PreflightError('preflight_stage_id_invalid');
+    }
     seen.add(id);
     const title = String(rawStage.title || '').trim();
     if (
@@ -111,7 +124,10 @@ function validateManifest(value: unknown): PreflightManifest {
       throw new PreflightError('preflight_stage_invalid');
     }
     const rawWeight = Number(rawStage.weight);
-    const weight = Number.isFinite(rawWeight) && rawWeight > 0 && rawWeight <= 1000 ? rawWeight : 1;
+    const weight =
+      Number.isFinite(rawWeight) && rawWeight > 0 && rawWeight <= 1000
+        ? rawWeight
+        : 1;
     return {
       id,
       title,
@@ -121,7 +137,7 @@ function validateManifest(value: unknown): PreflightManifest {
       weight,
     };
   });
-  return { schemaVersion: 1, stages };
+  return {schemaVersion: 1, stages};
 }
 
 function fingerprintManifest(manifest: unknown): string {
@@ -131,11 +147,16 @@ function fingerprintManifest(manifest: unknown): string {
     .digest('hex');
 }
 
-function normalizedStage(stage: PreflightStage, value: unknown, durationMs: number): StageResult {
+function normalizedStage(
+  stage: PreflightStage,
+  value: unknown,
+  durationMs: number,
+): StageResult {
   const safeValue = asStageValue(value);
   const state = String(safeValue.state || 'fail');
-  if (!STATES.has(state) || state === 'pending' || state === 'running')
+  if (!STATES.has(state) || state === 'pending' || state === 'running') {
     throw new PreflightError('preflight_stage_state_invalid');
+  }
   return {
     id: stage.id,
     title: stage.title,
@@ -176,25 +197,30 @@ class PreflightRunner {
     this.now = now;
     this.bootstrapVersion = Number(bootstrapVersion) || 1;
     this.productVersion = String(productVersion || 'unknown');
-    this.manifestDigest = String(manifestDigest || fingerprintManifest(manifest));
+    this.manifestDigest = String(
+      manifestDigest || fingerprintManifest(manifest),
+    );
   }
 
-  run({ stageIds = null, userSkips = [] }: RunOptions = {}): RunOutput {
+  run({stageIds = null, userSkips = []}: RunOptions = {}): RunOutput {
     const wanted = this._wantedStages(stageIds);
-    if (stageIds != null && wanted.length !== new Set(stageIds).size)
+    if (stageIds != null && wanted.length !== new Set(stageIds).size) {
       throw new PreflightError('preflight_retry_stage_unknown');
-    const skips = new Set(userSkips.map((item) => String(item || '').trim()));
-    this.emit({ type: 'manifest', stages: this.manifest.stages });
-    const results = wanted.map((stage) => this._runStage(stage, skips));
+    }
+    const skips = new Set(userSkips.map(item => String(item || '').trim()));
+    this.emit({type: 'manifest', stages: this.manifest.stages});
+    const results = wanted.map(stage => this._runStage(stage, skips));
     const ready = this._ready(wanted, results);
-    if (ready) this._writeMarker(results);
+    if (ready) {
+      this._writeMarker(results);
+    }
     const output: RunOutput = {
       schemaVersion: 2,
       ready,
       stages: results,
       markerPath: ready ? this.markerPath : null,
     };
-    this.emit({ type: 'complete', ...output });
+    this.emit({type: 'complete', ...output});
     return output;
   }
 
@@ -204,15 +230,19 @@ class PreflightRunner {
     signal = null,
   }: RunOptions = {}): Promise<RunOutput> {
     const wanted = this._wantedStages(stageIds);
-    if (stageIds != null && wanted.length !== new Set(stageIds).size)
+    if (stageIds != null && wanted.length !== new Set(stageIds).size) {
       throw new PreflightError('preflight_retry_stage_unknown');
+    }
     this._throwIfCancelled(signal);
-    const skips = new Set(userSkips.map((item) => String(item || '').trim()));
-    const totalWeight = wanted.reduce((total, stage) => total + stage.weight, 0);
+    const skips = new Set(userSkips.map(item => String(item || '').trim()));
+    const totalWeight = wanted.reduce(
+      (total, stage) => total + stage.weight,
+      0,
+    );
     let completedWeight = 0;
     const results: StageResult[] = [];
-    this.emit({ type: 'manifest', stages: this.manifest.stages });
-    this.emit({ type: 'progress', percent: 0, completedWeight, totalWeight });
+    this.emit({type: 'manifest', stages: this.manifest.stages});
+    this.emit({type: 'progress', percent: 0, completedWeight, totalWeight});
     for (const stage of wanted) {
       this._throwIfCancelled(signal);
       const result = await this._runStageAsync(stage, skips, signal);
@@ -221,32 +251,39 @@ class PreflightRunner {
       completedWeight += stage.weight;
       this.emit({
         type: 'progress',
-        percent: totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 100,
+        percent:
+          totalWeight > 0
+            ? Math.round((completedWeight / totalWeight) * 100)
+            : 100,
         completedWeight,
         totalWeight,
         completedStageId: stage.id,
       });
     }
     const ready = this._ready(wanted, results);
-    if (ready) this._writeMarker(results);
+    if (ready) {
+      this._writeMarker(results);
+    }
     const output: RunOutput = {
       schemaVersion: 2,
       ready,
       stages: results,
       markerPath: ready ? this.markerPath : null,
     };
-    this.emit({ type: 'complete', ...output });
+    this.emit({type: 'complete', ...output});
     return output;
   }
 
   private _throwIfCancelled(signal: AbortSignal | null): void {
-    if (signal?.aborted === true) throw new PreflightError('preflight_cancelled');
+    if (signal?.aborted === true) {
+      throw new PreflightError('preflight_cancelled');
+    }
   }
 
   private _wantedStages(stageIds: string[] | null): PreflightStage[] {
     return stageIds == null
       ? this.manifest.stages
-      : this.manifest.stages.filter((stage) => stageIds.includes(stage.id));
+      : this.manifest.stages.filter(stage => stageIds.includes(stage.id));
   }
 
   private _ready(wanted: PreflightStage[], results: StageResult[]): boolean {
@@ -254,19 +291,28 @@ class PreflightRunner {
     return (
       fullRun &&
       results.every(
-        (result) => !result.blocking || result.state === 'pass' || result.state === 'skipped',
+        result =>
+          !result.blocking ||
+          result.state === 'pass' ||
+          result.state === 'skipped',
       )
     );
   }
 
   private _runStage(stage: PreflightStage, skips: Set<string>): StageResult {
     if (skips.has(stage.id)) {
-      if (!stage.skippable) throw new PreflightError('preflight_stage_not_skippable');
-      const skipped = normalizedStage(stage, { state: 'skipped', evidence: 'user_skipped' }, 0);
-      this.emit({ type: 'stage', ...skipped });
+      if (!stage.skippable) {
+        throw new PreflightError('preflight_stage_not_skippable');
+      }
+      const skipped = normalizedStage(
+        stage,
+        {state: 'skipped', evidence: 'user_skipped'},
+        0,
+      );
+      this.emit({type: 'stage', ...skipped});
       return skipped;
     }
-    this.emit({ type: 'stage', id: stage.id, state: 'running' });
+    this.emit({type: 'stage', id: stage.id, state: 'running'});
     const started = this.now();
     let value: unknown;
     try {
@@ -274,12 +320,15 @@ class PreflightRunner {
       value =
         typeof check === 'function'
           ? check(stage)
-          : { state: stage.blocking ? 'fail' : 'skipped', evidence: 'check_not_configured' };
+          : {
+              state: stage.blocking ? 'fail' : 'skipped',
+              evidence: 'check_not_configured',
+            };
     } catch (error) {
-      value = { state: 'fail', evidence: `check_error:${errorName(error)}` };
+      value = {state: 'fail', evidence: `check_error:${errorName(error)}`};
     }
     const result = normalizedStage(stage, value, this.now() - started);
-    this.emit({ type: 'stage', ...result });
+    this.emit({type: 'stage', ...result});
     return result;
   }
 
@@ -290,9 +339,15 @@ class PreflightRunner {
   ): Promise<StageResult> {
     this._throwIfCancelled(signal);
     if (skips.has(stage.id)) {
-      if (!stage.skippable) throw new PreflightError('preflight_stage_not_skippable');
-      const skipped = normalizedStage(stage, { state: 'skipped', evidence: 'user_skipped' }, 0);
-      this.emit({ type: 'stage', ...skipped });
+      if (!stage.skippable) {
+        throw new PreflightError('preflight_stage_not_skippable');
+      }
+      const skipped = normalizedStage(
+        stage,
+        {state: 'skipped', evidence: 'user_skipped'},
+        0,
+      );
+      this.emit({type: 'stage', ...skipped});
       return skipped;
     }
     this.emit({
@@ -308,8 +363,11 @@ class PreflightRunner {
       const check = this.checks[stage.id];
       value =
         typeof check === 'function'
-          ? await check(stage, { signal })
-          : { state: stage.blocking ? 'fail' : 'skipped', evidence: 'check_not_configured' };
+          ? await check(stage, {signal})
+          : {
+              state: stage.blocking ? 'fail' : 'skipped',
+              evidence: 'check_not_configured',
+            };
     } catch (error) {
       if (
         signal?.aborted === true ||
@@ -317,10 +375,10 @@ class PreflightRunner {
       ) {
         throw new PreflightError('preflight_cancelled');
       }
-      value = { state: 'fail', evidence: `check_error:${errorName(error)}` };
+      value = {state: 'fail', evidence: `check_error:${errorName(error)}`};
     }
     const result = normalizedStage(stage, value, this.now() - started);
-    this.emit({ type: 'stage', ...result });
+    this.emit({type: 'stage', ...result});
     return result;
   }
 
@@ -332,10 +390,10 @@ class PreflightRunner {
       productVersion: this.productVersion,
       manifestDigest: this.manifestDigest,
       completedAt: new Date(this.now()).toISOString(),
-      completedStageIds: stages.map((stage) => stage.id),
+      completedStageIds: stages.map(stage => stage.id),
       stages,
     };
-    fs.mkdirSync(path.dirname(this.markerPath), { recursive: true });
+    fs.mkdirSync(path.dirname(this.markerPath), {recursive: true});
     const temporary = `${this.markerPath}.${process.pid}.tmp`;
     fs.writeFileSync(temporary, `${JSON.stringify(marker, null, 2)}\n`, {
       encoding: 'utf8',
@@ -345,4 +403,10 @@ class PreflightRunner {
   }
 }
 
-export { fingerprintManifest, PreflightError, PreflightRunner, STATES, validateManifest };
+export {
+  fingerprintManifest,
+  PreflightError,
+  PreflightRunner,
+  STATES,
+  validateManifest,
+};

@@ -6,7 +6,7 @@ interface DetectorSample {
 
 interface DetectorResult {
   triggered: boolean;
-  metrics: { durationMs: number };
+  metrics: {durationMs: number};
 }
 
 interface DetectorInstance {
@@ -17,7 +17,7 @@ interface DetectorConstructor {
   new (options?: Record<string, unknown>): DetectorInstance;
 }
 
-const { WiggleDetector } = require('./wiggle_detector') as {
+const {WiggleDetector} = require('./wiggle_detector') as {
   WiggleDetector: DetectorConstructor;
 };
 
@@ -62,8 +62,11 @@ class WiggleReliabilityRun {
   finalized = false;
   summary: ReliabilitySummary | null = null;
 
-  constructor({ runId, expectedTrials = 100 }: ReliabilityOptions = {}) {
-    if (typeof runId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(runId)) {
+  constructor({runId, expectedTrials = 100}: ReliabilityOptions = {}) {
+    if (
+      typeof runId !== 'string' ||
+      !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(runId)
+    ) {
       throw new TypeError('runId must be a bounded semantic identifier');
     }
     if (!Number.isSafeInteger(expectedTrials) || expectedTrials <= 0) {
@@ -75,16 +78,22 @@ class WiggleReliabilityRun {
   }
 
   private assertOpen(): void {
-    if (this.finalized) throw new TypeError('run is finalized');
+    if (this.finalized) {
+      throw new TypeError('run is finalized');
+    }
   }
 
-  recordIntent({ detected, latencyMs }: IntentTrial = {}): void {
+  recordIntent({detected, latencyMs}: IntentTrial = {}): void {
     this.assertOpen();
     if (this.intentsCompleted >= this.expectedTrials) {
       throw new TypeError('intent trial limit reached');
     }
-    if (typeof detected !== 'boolean') throw new TypeError('detected must be boolean');
-    if (detected && latencyMs === undefined) throw new TypeError('latencyMs is required');
+    if (typeof detected !== 'boolean') {
+      throw new TypeError('detected must be boolean');
+    }
+    if (detected && latencyMs === undefined) {
+      throw new TypeError('latencyMs is required');
+    }
     if (
       latencyMs !== undefined &&
       latencyMs !== null &&
@@ -100,32 +109,44 @@ class WiggleReliabilityRun {
     }
   }
 
-  recordBackground({ triggered }: BackgroundTrial = {}): void {
+  recordBackground({triggered}: BackgroundTrial = {}): void {
     this.assertOpen();
     if (this.backgroundTrials >= this.expectedTrials) {
       throw new TypeError('background trial limit reached');
     }
-    if (typeof triggered !== 'boolean') throw new TypeError('triggered must be boolean');
+    if (typeof triggered !== 'boolean') {
+      throw new TypeError('triggered must be boolean');
+    }
 
     this.backgroundTrials += 1;
-    if (triggered) this.falseTriggers += 1;
+    if (triggered) {
+      this.falseTriggers += 1;
+    }
   }
 
   private percentile(percentile: number): number | null {
-    if (this.latencies.length === 0) return null;
+    if (this.latencies.length === 0) {
+      return null;
+    }
     const values = [...this.latencies].sort((left, right) => left - right);
     const rank = (values.length - 1) * percentile;
     const lower = Math.floor(rank);
     const upper = Math.ceil(rank);
     const lowerValue = values[lower];
     const upperValue = values[upper];
-    if (lowerValue === undefined || upperValue === undefined) return null;
-    if (lower === upper) return lowerValue;
+    if (lowerValue === undefined || upperValue === undefined) {
+      return null;
+    }
+    if (lower === upper) {
+      return lowerValue;
+    }
     return lowerValue + (upperValue - lowerValue) * (rank - lower);
   }
 
   finalize(): ReliabilitySummary {
-    if (this.summary) return { ...this.summary };
+    if (this.summary) {
+      return {...this.summary};
+    }
 
     const misses = this.intentsCompleted - this.hits;
     const complete =
@@ -139,9 +160,12 @@ class WiggleReliabilityRun {
       hits: this.hits,
       misses,
       falseTriggers: this.falseTriggers,
-      hitRate: this.intentsCompleted === 0 ? 0 : this.hits / this.intentsCompleted,
+      hitRate:
+        this.intentsCompleted === 0 ? 0 : this.hits / this.intentsCompleted,
       falseTriggerRate:
-        this.backgroundTrials === 0 ? 0 : this.falseTriggers / this.backgroundTrials,
+        this.backgroundTrials === 0
+          ? 0
+          : this.falseTriggers / this.backgroundTrials,
       p50: this.percentile(0.5),
       p95: this.percentile(0.95),
       complete,
@@ -150,7 +174,7 @@ class WiggleReliabilityRun {
 
     this.finalized = true;
     this.summary = summary;
-    return { ...summary };
+    return {...summary};
   }
 }
 
@@ -168,7 +192,7 @@ function runDeterministicWiggleEvidence({
   physicalInputValidated: false;
   releaseGatePass: false;
 } {
-  const run = new WiggleReliabilityRun({ runId, expectedTrials });
+  const run = new WiggleReliabilityRun({runId, expectedTrials});
   for (let trial = 0; trial < expectedTrials; trial += 1) {
     const detector = new WiggleDetector(detectorOptions);
     const base = trial * 20;
@@ -182,26 +206,28 @@ function runDeterministicWiggleEvidence({
     let detected = false;
     let latencyMs: number | null = null;
     for (const [t, x, y] of intentional) {
-      const result = detector.push({ t, x, y });
+      const result = detector.push({t, x, y});
       if (result.triggered) {
         detected = true;
         latencyMs = Number(result.metrics.durationMs);
         break;
       }
     }
-    run.recordIntent({ detected, ...(detected ? { latencyMs } : {}) });
+    run.recordIntent({detected, ...(detected ? {latencyMs} : {})});
 
     const backgroundDetector = new WiggleDetector(detectorOptions);
-    const background = Array.from({ length: 10 }, (_item, index) => ({
+    const background = Array.from({length: 10}, (_item, index) => ({
       t: index * 45,
       x: 100 + base + index * 18,
       y: 200 + (trial % 2),
     }));
     let triggered = false;
     for (const sample of background) {
-      if (backgroundDetector.push(sample).triggered) triggered = true;
+      if (backgroundDetector.push(sample).triggered) {
+        triggered = true;
+      }
     }
-    run.recordBackground({ triggered });
+    run.recordBackground({triggered});
   }
   return {
     schemaVersion: 1,
@@ -212,4 +238,4 @@ function runDeterministicWiggleEvidence({
   };
 }
 
-export { WiggleReliabilityRun, runDeterministicWiggleEvidence };
+export {WiggleReliabilityRun, runDeterministicWiggleEvidence};

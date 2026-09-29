@@ -7,7 +7,7 @@ interface SourceWindow {
 
 interface CaptureSnapshot {
   status?: unknown;
-  target_point?: { x?: unknown; y?: unknown } | null;
+  target_point?: {x?: unknown; y?: unknown} | null;
   source_window?: SourceWindow | null;
   source_kind?: unknown;
   capture_path?: unknown;
@@ -41,9 +41,13 @@ function captureEligibility({
   summary = null,
   reason = '',
 }: CaptureEligibilityInput = {}): CaptureEligibility {
-  const safeSnapshot: CaptureSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
-  const safeSummary: CaptureSummary = summary && typeof summary === 'object' ? summary : {};
-  const state = String(safeSummary.state || safeSnapshot.status || 'unsupported');
+  const safeSnapshot: CaptureSnapshot =
+    snapshot && typeof snapshot === 'object' ? snapshot : {};
+  const safeSummary: CaptureSummary =
+    summary && typeof summary === 'object' ? summary : {};
+  const state = String(
+    safeSummary.state || safeSnapshot.status || 'unsupported',
+  );
   const targetPoint = safeSnapshot.target_point;
   const targetHwnd = Number(safeSnapshot?.source_window?.hwnd);
   const targetPid = Number(
@@ -88,7 +92,9 @@ function captureEligibility({
       autoDismissMs: 1800,
     };
   }
-  const deliveryTargetReady = Boolean((contextTarget || reviewTarget) && targetCoordinatesReady);
+  const deliveryTargetReady = Boolean(
+    (contextTarget || reviewTarget) && targetCoordinatesReady,
+  );
   if (deliveryTargetReady) {
     return {
       commandReady: true,
@@ -118,11 +124,15 @@ function captureEligibility({
     safeSnapshot?.source_window?.title || safeSummary.label || '当前应用',
   ).trim();
   let message = `未能从「${title}」读取可靠选中内容`;
-  if (state === 'target_mismatch') message = '截图目标已变化，未保存或外发图像；请重新指向后重试';
-  else if (/obsidian/i.test(title)) message = 'Obsidian PDF 暂不支持读取选中文字';
-  else if (state === 'empty') message = `「${title}」中未检测到选中内容`;
+  if (state === 'target_mismatch') {
+    message = '截图目标已变化，未保存或外发图像；请重新指向后重试';
+  } else if (/obsidian/i.test(title)) {
+    message = 'Obsidian PDF 暂不支持读取选中文字';
+  } else if (state === 'empty') {
+    message = `「${title}」中未检测到选中内容`;
+  }
 
-  return { commandReady: false, state, message, autoDismissMs: 1800 };
+  return {commandReady: false, state, message, autoDismissMs: 1800};
 }
 
 interface ActionProposal {
@@ -139,15 +149,26 @@ interface BridgeResult {
 type ResultSurface = 'error' | 'card' | 'inline';
 
 function classifyResult(parsed: BridgeResult | null = {}): ResultSurface {
-  if (!parsed || typeof parsed !== 'object') return 'error';
+  if (!parsed || typeof parsed !== 'object') {
+    return 'error';
+  }
   const proposals: ActionProposal[] = Array.isArray(parsed.actionProposals)
     ? (parsed.actionProposals as ActionProposal[])
     : [];
-  if (parsed.ok === false && proposals.length === 0) return 'error';
-  if (parsed.intentKind === 'route_draft' && parsed.routeDraft) return 'card';
-  if (proposals.some((proposal) => proposal?.action_type === 'office_replace_selection'))
+  if (parsed.ok === false && proposals.length === 0) {
+    return 'error';
+  }
+  if (parsed.intentKind === 'route_draft' && parsed.routeDraft) {
     return 'card';
+  }
+  if (
+    proposals.some(
+      proposal => proposal?.action_type === 'office_replace_selection',
+    )
+  ) {
+    return 'card';
+  }
   return 'inline';
 }
 
-export { captureEligibility, classifyResult };
+export {captureEligibility, classifyResult};

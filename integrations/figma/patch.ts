@@ -22,14 +22,18 @@ export interface FigmaNodeLike {
   paddingRight?: number;
   paddingBottom?: number;
   paddingLeft?: number;
-  parent?: { layoutMode?: string } | null;
+  parent?: {layoutMode?: string} | null;
   getStyledTextSegments?: (
     fields: Array<'fontName'>,
     start?: number,
     end?: number,
-  ) => Array<{ start: number; end: number; fontName: FigmaFontName }>;
+  ) => Array<{start: number; end: number; fontName: FigmaFontName}>;
   deleteCharacters?: (start: number, end: number) => void;
-  insertCharacters?: (start: number, characters: string, useStyle?: 'BEFORE' | 'AFTER') => void;
+  insertCharacters?: (
+    start: number,
+    characters: string,
+    useStyle?: 'BEFORE' | 'AFTER',
+  ) => void;
   resize?: (width: number, height: number) => void;
   [key: string]: unknown;
 }
@@ -42,38 +46,43 @@ export interface FigmaPatchContext {
 
 export type FigmaPatchOperation =
   | {
-    op: 'replace_text';
-    nodeId: string;
-    start: number;
-    end: number;
-    before: string;
-    after: string;
-  }
+      op: 'replace_text';
+      nodeId: string;
+      start: number;
+      end: number;
+      before: string;
+      after: string;
+    }
   | {
-    op: 'set_fill';
-    nodeId: string;
-    before: unknown;
-    after: { r: number; g: number; b: number; a?: number };
-  }
+      op: 'set_fill';
+      nodeId: string;
+      before: unknown;
+      after: {r: number; g: number; b: number; a?: number};
+    }
   | {
-    op: 'set_spacing';
-    nodeId: string;
-    property: 'itemSpacing' | 'paddingTop' | 'paddingRight' | 'paddingBottom' | 'paddingLeft';
-    before: number;
-    after: number;
-  }
+      op: 'set_spacing';
+      nodeId: string;
+      property:
+        | 'itemSpacing'
+        | 'paddingTop'
+        | 'paddingRight'
+        | 'paddingBottom'
+        | 'paddingLeft';
+      before: number;
+      after: number;
+    }
   | {
-    op: 'resize';
-    nodeId: string;
-    before: { width: number; height: number };
-    after: { width: number; height: number };
-  }
+      op: 'resize';
+      nodeId: string;
+      before: {width: number; height: number};
+      after: {width: number; height: number};
+    }
   | {
-    op: 'move';
-    nodeId: string;
-    before: { x: number; y: number };
-    after: { x: number; y: number };
-  };
+      op: 'move';
+      nodeId: string;
+      before: {x: number; y: number};
+      after: {x: number; y: number};
+    };
 
 export interface FigmaPatchRequest {
   taskId: string;
@@ -130,13 +139,21 @@ function fontKey(font: FigmaFontName): string {
   return `${font.family}/${font.style}`;
 }
 
-function fontsForRange(node: FigmaNodeLike, start: number, end: number): FigmaFontName[] {
+function fontsForRange(
+  node: FigmaNodeLike,
+  start: number,
+  end: number,
+): FigmaFontName[] {
   if (node.getStyledTextSegments) {
     const segments = node.getStyledTextSegments(['fontName'], start, end);
     const fonts = segments
-      .map((segment) => segment.fontName)
-      .filter((font): font is FigmaFontName => Boolean(font?.family && font?.style));
-    if (fonts.length) return fonts;
+      .map(segment => segment.fontName)
+      .filter((font): font is FigmaFontName =>
+        Boolean(font?.family && font?.style),
+      );
+    if (fonts.length) {
+      return fonts;
+    }
   }
   const font = node.fontName;
   if (font && typeof font === 'object' && 'family' in font && 'style' in font) {
@@ -167,7 +184,11 @@ function readback(node: FigmaNodeLike): FigmaNodeReadback {
   ];
   for (const property of properties) {
     const raw = node[property];
-    if (raw !== undefined && typeof raw !== 'function' && typeof raw !== 'symbol') {
+    if (
+      raw !== undefined &&
+      typeof raw !== 'function' &&
+      typeof raw !== 'symbol'
+    ) {
       (value as unknown as Record<string, unknown>)[property] = raw;
     }
   }
@@ -176,21 +197,23 @@ function readback(node: FigmaNodeLike): FigmaNodeReadback {
 
 function prepareText(
   node: FigmaNodeLike,
-  operation: Extract<FigmaPatchOperation, { op: 'replace_text' }>,
+  operation: Extract<FigmaPatchOperation, {op: 'replace_text'}>,
 ): PreparedChange {
   if (node.type !== 'TEXT' || typeof node.characters !== 'string') {
     fail('node_is_not_text', node.id);
   }
   if (
-    !Number.isInteger(operation.start)
-    || !Number.isInteger(operation.end)
-    || operation.start < 0
-    || operation.end < operation.start
-    || operation.end > node.characters.length
+    !Number.isInteger(operation.start) ||
+    !Number.isInteger(operation.end) ||
+    operation.start < 0 ||
+    operation.end < operation.start ||
+    operation.end > node.characters.length
   ) {
     fail('text_range_invalid', node.id);
   }
-  if (node.characters.slice(operation.start, operation.end) !== operation.before) {
+  if (
+    node.characters.slice(operation.start, operation.end) !== operation.before
+  ) {
     fail('base_changed', node.id);
   }
   if (!node.deleteCharacters || !node.insertCharacters) {
@@ -206,104 +229,153 @@ function prepareText(
     }
   }
   const fonts = fontsForRange(node, fontStart, fontEnd);
-  if (!fonts.length && operation.after) fail('font_identity_unavailable', node.id);
+  if (!fonts.length && operation.after) {
+    fail('font_identity_unavailable', node.id);
+  }
   let deleted = false;
   let lengthAfterDelete = 0;
   return {
     node,
     fonts,
     apply() {
-      if (operation.end > operation.start) node.deleteCharacters?.(operation.start, operation.end);
+      if (operation.end > operation.start) {
+        node.deleteCharacters?.(operation.start, operation.end);
+      }
       deleted = true;
       lengthAfterDelete = node.characters!.length;
-      if (operation.after) node.insertCharacters?.(operation.start, operation.after, 'BEFORE');
+      if (operation.after) {
+        node.insertCharacters?.(operation.start, operation.after, 'BEFORE');
+      }
     },
     revert() {
-      if (!deleted) return;
+      if (!deleted) {
+        return;
+      }
       const insertedLength = node.characters!.length - lengthAfterDelete;
-      if (insertedLength > 0) node.deleteCharacters?.(operation.start, operation.start + insertedLength);
-      if (operation.before) node.insertCharacters?.(operation.start, operation.before, 'BEFORE');
+      if (insertedLength > 0) {
+        node.deleteCharacters?.(
+          operation.start,
+          operation.start + insertedLength,
+        );
+      }
+      if (operation.before) {
+        node.insertCharacters?.(operation.start, operation.before, 'BEFORE');
+      }
     },
   };
 }
 
 function prepareFill(
   node: FigmaNodeLike,
-  operation: Extract<FigmaPatchOperation, { op: 'set_fill' }>,
+  operation: Extract<FigmaPatchOperation, {op: 'set_fill'}>,
 ): PreparedChange {
-  if (!('fills' in node) || typeof node.fills === 'symbol') fail('fill_write_unsupported', node.id);
-  if (!same(node.fills, operation.before)) fail('base_changed', node.id);
-  const { r, g, b, a = 1 } = operation.after;
-  if (![r, g, b, a].every(finite) || [r, g, b, a].some((value) => value < 0 || value > 1)) {
+  if (!('fills' in node) || typeof node.fills === 'symbol') {
+    fail('fill_write_unsupported', node.id);
+  }
+  if (!same(node.fills, operation.before)) {
+    fail('base_changed', node.id);
+  }
+  const {r, g, b, a = 1} = operation.after;
+  if (
+    ![r, g, b, a].every(finite) ||
+    [r, g, b, a].some(value => value < 0 || value > 1)
+  ) {
     fail('fill_color_invalid', node.id);
   }
   const previous = node.fills;
-  const replacement = [{ type: 'SOLID', color: { r, g, b }, opacity: a }];
+  const replacement = [{type: 'SOLID', color: {r, g, b}, opacity: a}];
   return {
     node,
     fonts: [],
-    apply() { node.fills = replacement; },
-    revert() { node.fills = previous; },
+    apply() {
+      node.fills = replacement;
+    },
+    revert() {
+      node.fills = previous;
+    },
   };
 }
 
 function prepareSpacing(
   node: FigmaNodeLike,
-  operation: Extract<FigmaPatchOperation, { op: 'set_spacing' }>,
+  operation: Extract<FigmaPatchOperation, {op: 'set_spacing'}>,
 ): PreparedChange {
-  if (!SPACING_PROPERTIES.has(operation.property) || node.layoutMode === undefined) {
+  if (
+    !SPACING_PROPERTIES.has(operation.property) ||
+    node.layoutMode === undefined
+  ) {
     fail('spacing_write_unsupported', node.id);
   }
-  if (!finite(operation.before) || node[operation.property] !== operation.before) {
+  if (
+    !finite(operation.before) ||
+    node[operation.property] !== operation.before
+  ) {
     fail('base_changed', node.id);
   }
-  if (!finite(operation.after) || operation.after < 0) fail('spacing_value_invalid', node.id);
+  if (!finite(operation.after) || operation.after < 0) {
+    fail('spacing_value_invalid', node.id);
+  }
   return {
     node,
     fonts: [],
-    apply() { node[operation.property] = operation.after; },
-    revert() { node[operation.property] = operation.before; },
+    apply() {
+      node[operation.property] = operation.after;
+    },
+    revert() {
+      node[operation.property] = operation.before;
+    },
   };
 }
 
 function prepareResize(
   node: FigmaNodeLike,
-  operation: Extract<FigmaPatchOperation, { op: 'resize' }>,
+  operation: Extract<FigmaPatchOperation, {op: 'resize'}>,
 ): PreparedChange {
   if (!node.resize || !finite(node.width) || !finite(node.height)) {
     fail('resize_unsupported', node.id);
   }
-  if (node.width !== operation.before.width || node.height !== operation.before.height) {
+  if (
+    node.width !== operation.before.width ||
+    node.height !== operation.before.height
+  ) {
     fail('base_changed', node.id);
   }
   if (
-    !finite(operation.after.width)
-    || !finite(operation.after.height)
-    || operation.after.width <= 0
-    || operation.after.height <= 0
+    !finite(operation.after.width) ||
+    !finite(operation.after.height) ||
+    operation.after.width <= 0 ||
+    operation.after.height <= 0
   ) {
     fail('resize_value_invalid', node.id);
   }
   return {
     node,
     fonts: [],
-    apply() { node.resize?.(operation.after.width, operation.after.height); },
-    revert() { node.resize?.(operation.before.width, operation.before.height); },
+    apply() {
+      node.resize?.(operation.after.width, operation.after.height);
+    },
+    revert() {
+      node.resize?.(operation.before.width, operation.before.height);
+    },
   };
 }
 
 function prepareMove(
   node: FigmaNodeLike,
-  operation: Extract<FigmaPatchOperation, { op: 'move' }>,
+  operation: Extract<FigmaPatchOperation, {op: 'move'}>,
 ): PreparedChange {
-  if (!finite(node.x) || !finite(node.y)) fail('move_unsupported', node.id);
+  if (!finite(node.x) || !finite(node.y)) {
+    fail('move_unsupported', node.id);
+  }
   if (node.parent?.layoutMode && node.parent.layoutMode !== 'NONE') {
     fail('move_controlled_by_auto_layout', node.id);
   }
   if (node.x !== operation.before.x || node.y !== operation.before.y) {
     fail('base_changed', node.id);
   }
-  if (!finite(operation.after.x) || !finite(operation.after.y)) fail('move_value_invalid', node.id);
+  if (!finite(operation.after.x) || !finite(operation.after.y)) {
+    fail('move_value_invalid', node.id);
+  }
   return {
     node,
     fonts: [],
@@ -323,28 +395,45 @@ async function prepare(
   operation: FigmaPatchOperation,
 ): Promise<PreparedChange> {
   const node = await context.getNodeById(operation.nodeId);
-  if (!node) fail('node_not_found', operation.nodeId);
+  if (!node) {
+    fail('node_not_found', operation.nodeId);
+  }
   return prepareNode(node, operation);
 }
 
-function prepareNode(node: FigmaNodeLike, operation: FigmaPatchOperation): PreparedChange {
-  if (node.removed) fail('node_not_found', node.id);
-  if (node.locked) fail('node_locked', node.id);
+function prepareNode(
+  node: FigmaNodeLike,
+  operation: FigmaPatchOperation,
+): PreparedChange {
+  if (node.removed) {
+    fail('node_not_found', node.id);
+  }
+  if (node.locked) {
+    fail('node_locked', node.id);
+  }
   switch (operation.op) {
-    case 'replace_text': return prepareText(node, operation);
-    case 'set_fill': return prepareFill(node, operation);
-    case 'set_spacing': return prepareSpacing(node, operation);
-    case 'resize': return prepareResize(node, operation);
-    case 'move': return prepareMove(node, operation);
-    default: return fail('figma_patch_operation_not_allowed');
+    case 'replace_text':
+      return prepareText(node, operation);
+    case 'set_fill':
+      return prepareFill(node, operation);
+    case 'set_spacing':
+      return prepareSpacing(node, operation);
+    case 'resize':
+      return prepareResize(node, operation);
+    case 'move':
+      return prepareMove(node, operation);
+    default:
+      return fail('figma_patch_operation_not_allowed');
   }
 }
 
 export async function applyFigmaNodePatch(
   context: FigmaPatchContext,
   request: FigmaPatchRequest,
-): Promise<{ appliedCount: number; nodes: FigmaNodeReadback[] }> {
-  if (!request.taskId.trim()) fail('task_identity_required');
+): Promise<{appliedCount: number; nodes: FigmaNodeReadback[]}> {
+  if (!request.taskId.trim()) {
+    fail('task_identity_required');
+  }
   if (request.documentSessionId !== context.documentSessionId) {
     fail('document_identity_mismatch');
   }
@@ -353,9 +442,14 @@ export async function applyFigmaNodePatch(
   }
 
   const prepared: PreparedChange[] = [];
-  const textByNode = new Map<string, Extract<FigmaPatchOperation, { op: 'replace_text' }>[]>();
+  const textByNode = new Map<
+    string,
+    Array<Extract<FigmaPatchOperation, {op: 'replace_text'}>>
+  >();
   for (const operation of request.operations) {
-    if (operation.op !== 'replace_text') continue;
+    if (operation.op !== 'replace_text') {
+      continue;
+    }
     const group = textByNode.get(operation.nodeId) || [];
     group.push(operation);
     textByNode.set(operation.nodeId, group);
@@ -363,20 +457,30 @@ export async function applyFigmaNodePatch(
   for (const [nodeId, group] of textByNode) {
     group.sort((left, right) => right.start - left.start);
     for (let index = 1; index < group.length; index += 1) {
-      if (group[index].end > group[index - 1].start || group[index].start === group[index - 1].start) {
+      if (
+        group[index].end > group[index - 1].start ||
+        group[index].start === group[index - 1].start
+      ) {
         fail('overlapping_text_ranges', nodeId);
       }
     }
   }
-  const operations = request.operations.map((operation) => operation.op === 'replace_text'
-    ? textByNode.get(operation.nodeId)!.shift()! : operation);
-  for (const operation of operations) prepared.push(await prepare(context, operation));
-
-  const uniqueFonts = new Map<string, { font: FigmaFontName; nodeId: string }>();
-  for (const change of prepared) {
-    for (const font of change.fonts) uniqueFonts.set(fontKey(font), { font, nodeId: change.node.id });
+  const operations = request.operations.map(operation =>
+    operation.op === 'replace_text'
+      ? textByNode.get(operation.nodeId)!.shift()!
+      : operation,
+  );
+  for (const operation of operations) {
+    prepared.push(await prepare(context, operation));
   }
-  for (const { font, nodeId } of uniqueFonts.values()) {
+
+  const uniqueFonts = new Map<string, {font: FigmaFontName; nodeId: string}>();
+  for (const change of prepared) {
+    for (const font of change.fonts) {
+      uniqueFonts.set(fontKey(font), {font, nodeId: change.node.id});
+    }
+  }
+  for (const {font, nodeId} of uniqueFonts.values()) {
     try {
       await context.loadFont(font);
     } catch {
@@ -386,7 +490,7 @@ export async function applyFigmaNodePatch(
 
   for (let index = 0; index < prepared.length; index += 1) {
     const change = prepareNode(prepared[index].node, operations[index]);
-    if (change.fonts.some((font) => !uniqueFonts.has(fontKey(font)))) {
+    if (change.fonts.some(font => !uniqueFonts.has(fontKey(font)))) {
       fail('font_identity_changed', change.node.id);
     }
     prepared[index] = change;
@@ -401,14 +505,20 @@ export async function applyFigmaNodePatch(
   } catch (error) {
     const rollbackErrors: string[] = [];
     for (const change of applied.reverse()) {
-      try { change.revert(); } catch (rollbackError) {
+      try {
+        change.revert();
+      } catch (rollbackError) {
         rollbackErrors.push(`${change.node.id}:${String(rollbackError)}`);
       }
     }
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`figma_patch_apply_failed:${message}${rollbackErrors.length ? `;rollback_failed:${rollbackErrors.join(';')}` : ''}`);
+    throw new Error(
+      `figma_patch_apply_failed:${message}${rollbackErrors.length ? `;rollback_failed:${rollbackErrors.join(';')}` : ''}`,
+    );
   }
 
-  const nodes = [...new Map(prepared.map((change) => [change.node.id, change.node])).values()];
-  return { appliedCount: prepared.length, nodes: nodes.map(readback) };
+  const nodes = [
+    ...new Map(prepared.map(change => [change.node.id, change.node])).values(),
+  ];
+  return {appliedCount: prepared.length, nodes: nodes.map(readback)};
 }

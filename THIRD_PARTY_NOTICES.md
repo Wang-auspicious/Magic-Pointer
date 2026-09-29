@@ -1,5 +1,15 @@
 # Third-party notices
 
+## Personal activity and session visualization references
+
+The personal activity recorder independently implements local activity aggregation,
+searchable screen samples and daily summaries, informed by Screenpipe's product
+and data-flow ideas (screenpipe/screenpipe, reviewed at 8752574c5a5a04d921c16a9c84b9e223faff3cbb).
+It includes no Screenpipe source code or runtime dependency.
+The session overview and ledger independently follow the Input/Model/Tools lane
+and event inspection concepts in deepseek-harness's `packages/client/ui-trajectory`.
+Both features use Magic Pointer's own persistence, runtime and native host.
+
 ## Runtime dependencies
 
 The TypeScript Runtime uses the packages below. Their upstream license files

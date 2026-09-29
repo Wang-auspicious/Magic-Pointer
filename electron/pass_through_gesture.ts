@@ -31,7 +31,7 @@ interface ArmOptions {
 }
 interface ArmState {
   token: string;
-  displayBounds: { x: number; y: number; width: number; height: number };
+  displayBounds: {x: number; y: number; width: number; height: number};
   source: unknown;
   multiStroke: boolean;
 }
@@ -41,9 +41,9 @@ interface GestureEvent {
   source?: unknown;
   point?: Point;
   points?: Point[];
-  strokes?: Array<{ points: Point[] }>;
+  strokes?: Array<{points: Point[]}>;
   index?: number;
-  releasePoint?: { x: number; y: number } | null;
+  releasePoint?: {x: number; y: number} | null;
 }
 
 class PassThroughGestureCapture {
@@ -52,9 +52,11 @@ class PassThroughGestureCapture {
   previousButtons = 0;
   drawing = false;
   points: Point[] = [];
-  strokes: Array<{ points: Point[] }> = [];
+  strokes: Array<{points: Point[]}> = [];
 
-  constructor({ minimumPointDistance = 2.5 }: { minimumPointDistance?: number } = {}) {
+  constructor({
+    minimumPointDistance = 2.5,
+  }: {minimumPointDistance?: number} = {}) {
     this.minimumPointDistance = Math.max(0, finite(minimumPointDistance, 2.5));
     this.cancel();
   }
@@ -97,7 +99,9 @@ class PassThroughGestureCapture {
   }
 
   localPoint(sample?: Sample | null): Point {
-    if (!this.armState) throw new Error('gesture_capture_not_armed');
+    if (!this.armState) {
+      throw new Error('gesture_capture_not_armed');
+    }
     const bounds = this.armState.displayBounds;
     return {
       x: Math.max(0, Math.min(bounds.width - 1, finite(sample?.x) - bounds.x)),
@@ -111,7 +115,8 @@ class PassThroughGestureCapture {
     const previous = this.points.at(-1);
     if (
       previous &&
-      Math.hypot(point.x - previous.x, point.y - previous.y) < this.minimumPointDistance
+      Math.hypot(point.x - previous.x, point.y - previous.y) <
+        this.minimumPointDistance
     ) {
       return null;
     }
@@ -120,7 +125,9 @@ class PassThroughGestureCapture {
   }
 
   push(sample: Sample = {}): GestureEvent[] {
-    if (!this.armState) return [];
+    if (!this.armState) {
+      return [];
+    }
     const buttons = Number(sample.buttons || 0);
     const primaryDown = (buttons & 1) !== 0;
     const primaryWasDown = (this.previousButtons & 1) !== 0;
@@ -131,24 +138,30 @@ class PassThroughGestureCapture {
     if (secondaryDown && !secondaryWasDown) {
       const token = this.armState.token;
       this.cancel();
-      return [{ type: 'dismissed', token }];
+      return [{type: 'dismissed', token}];
     }
 
     const events: GestureEvent[] = [];
     if (!this.drawing && primaryDown && !primaryWasDown) {
       this.drawing = true;
       this.points = [];
-      events.push({ type: 'started', token: this.armState.token });
+      events.push({type: 'started', token: this.armState.token});
       const point = this.appendPoint(sample);
-      if (point) events.push({ type: 'point', token: this.armState.token, point });
+      if (point) {
+        events.push({type: 'point', token: this.armState.token, point});
+      }
       return events;
     }
-    if (!this.drawing) return events;
+    if (!this.drawing) {
+      return events;
+    }
 
     const point = this.appendPoint(sample);
-    if (point) events.push({ type: 'point', token: this.armState.token, point });
+    if (point) {
+      events.push({type: 'point', token: this.armState.token, point});
+    }
     if (!primaryDown && primaryWasDown) {
-      const { token, source } = this.armState;
+      const {token, source} = this.armState;
       const releaseSample = this.localPoint(sample);
       const latest = this.points.at(-1);
       if (
@@ -159,10 +172,10 @@ class PassThroughGestureCapture {
       ) {
         this.points.push(releaseSample);
       }
-      const points = this.points.map((entry) => ({ ...entry }));
+      const points = this.points.map(entry => ({...entry}));
       const release = points.at(-1) || releaseSample;
       if (this.armState.multiStroke) {
-        this.strokes.push({ points });
+        this.strokes.push({points});
         this.drawing = false;
         this.points = [];
         events.push({
@@ -171,7 +184,7 @@ class PassThroughGestureCapture {
           source,
           index: this.strokes.length,
           points,
-          releasePoint: { x: release.x, y: release.y },
+          releasePoint: {x: release.x, y: release.y},
         });
         return events;
       }
@@ -181,19 +194,21 @@ class PassThroughGestureCapture {
         token,
         source,
         points,
-        releasePoint: { x: release.x, y: release.y },
+        releasePoint: {x: release.x, y: release.y},
       });
     }
     return events;
   }
 
   finish(): GestureEvent | null {
-    if (!this.armState || !this.strokes.length) return null;
-    const { token, source } = this.armState;
-    const strokes = this.strokes.map((stroke) => ({
-      points: stroke.points.map((point) => ({ ...point })),
+    if (!this.armState || !this.strokes.length) {
+      return null;
+    }
+    const {token, source} = this.armState;
+    const strokes = this.strokes.map(stroke => ({
+      points: stroke.points.map(point => ({...point})),
     }));
-    const points = strokes.flatMap((stroke) => stroke.points);
+    const points = strokes.flatMap(stroke => stroke.points);
     const release = points.at(-1);
     this.cancel();
     return {
@@ -202,9 +217,9 @@ class PassThroughGestureCapture {
       source,
       points,
       strokes,
-      releasePoint: release ? { x: release.x, y: release.y } : null,
+      releasePoint: release ? {x: release.x, y: release.y} : null,
     };
   }
 }
 
-export { PassThroughGestureCapture };
+export {PassThroughGestureCapture};

@@ -1,10 +1,15 @@
 'use strict';
 
-
 function pollDelayMs(elapsedMs: number): number {
-  if (elapsedMs < 10_000) return 1000;
-  if (elapsedMs < 60_000) return 2000;
-  if (elapsedMs < 5 * 60_000) return 4000;
+  if (elapsedMs < 10_000) {
+    return 1000;
+  }
+  if (elapsedMs < 60_000) {
+    return 2000;
+  }
+  if (elapsedMs < 5 * 60_000) {
+    return 4000;
+  }
   return 8000;
 }
 
@@ -32,14 +37,23 @@ interface StatusShape {
 }
 
 const STATUS_CARD: Readonly<Record<string, StatusShape>> = Object.freeze({
-  queued: { state: 'running', stage: '排队中' },
-  running: { state: 'running', stage: '' },
-  cancelling: { state: 'running', stage: '正在停下来' },
-  succeeded: { state: 'done' },
-  failed: { state: 'failed' },
-  cancelled: { state: 'failed', error: '这次被取消了。已完成的部分记录在会话里，不会再有新动作。' },
-  interrupted: { state: 'failed', error: '执行的进程中断了。已完成的部分保留，未完成的没有生效。' },
-  pausing_target_mismatch: { state: 'running', stage: '目标窗口变了，正在停下来' },
+  queued: {state: 'running', stage: '排队中'},
+  running: {state: 'running', stage: ''},
+  cancelling: {state: 'running', stage: '正在停下来'},
+  succeeded: {state: 'done'},
+  failed: {state: 'failed'},
+  cancelled: {
+    state: 'failed',
+    error: '这次被取消了。已完成的部分记录在会话里，不会再有新动作。',
+  },
+  interrupted: {
+    state: 'failed',
+    error: '执行的进程中断了。已完成的部分保留，未完成的没有生效。',
+  },
+  pausing_target_mismatch: {
+    state: 'running',
+    stage: '目标窗口变了，正在停下来',
+  },
   paused_target_mismatch: {
     state: 'running',
     stage: '目标窗口被切走了，停下来等你确认',
@@ -49,8 +63,12 @@ const STATUS_CARD: Readonly<Record<string, StatusShape>> = Object.freeze({
 
 function toDisplaySrc(rawPath: unknown): string {
   const value = String(rawPath || '').trim();
-  if (!value) return '';
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^data:/i.test(value)) return value;
+  if (!value) {
+    return '';
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^data:/i.test(value)) {
+    return value;
+  }
   const slashed = value.split('\\').join('/');
   return slashed.startsWith('/') ? `file://${slashed}` : `file:///${slashed}`;
 }
@@ -102,22 +120,30 @@ interface CardPatch {
   h?: number;
   caption?: string;
   answer?: string;
-  actions?: Array<{ id: string; label: string }>;
+  actions?: Array<{id: string; label: string}>;
 }
 
-function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPatch {
+function cardPatchFromTask(
+  task: WatchedTask = {},
+  CardModel?: unknown,
+): CardPatch {
   const status = String(task.status || '');
-  const shape = STATUS_CARD[status] || { state: 'running', stage: '' };
-  const patch: CardPatch = { state: shape.state };
-  if (shape.stage) patch.stage = shape.stage;
-  if (shape.needsConfirm) patch.needsConfirm = true;
+  const shape = STATUS_CARD[status] || {state: 'running', stage: ''};
+  const patch: CardPatch = {state: shape.state};
+  if (shape.stage) {
+    patch.stage = shape.stage;
+  }
+  if (shape.needsConfirm) {
+    patch.needsConfirm = true;
+  }
 
-  const result: TaskResult = task.result && typeof task.result === 'object' ? task.result : {};
+  const result: TaskResult =
+    task.result && typeof task.result === 'object' ? task.result : {};
   const steps = Array.isArray(result.steps)
     ? (result.steps as Array<string | TaskStepInput>)
         .map((step): CardStep =>
           typeof step === 'string'
-            ? { label: step, state: 'done' }
+            ? {label: step, state: 'done'}
             : {
                 phase: step.phase,
                 label: step.label || step.phase,
@@ -126,9 +152,11 @@ function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPat
                 state: step.state || 'done',
               },
         )
-        .filter((step) => Boolean(step.label))
+        .filter(step => Boolean(step.label))
     : [];
-  if (steps.length) patch.steps = steps;
+  if (steps.length) {
+    patch.steps = steps;
+  }
   if (typeof result.progress === 'number' && Number.isFinite(result.progress)) {
     patch.progress = result.progress;
   }
@@ -153,7 +181,9 @@ function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPat
       patch.answer = String(task.summary);
     }
     if (CardModel && result.artifact) {
-      patch.actions = [{ id: `open-artifact:${result.artifact}`, label: '打开产物' }];
+      patch.actions = [
+        {id: `open-artifact:${result.artifact}`, label: '打开产物'},
+      ];
     }
   }
   return patch;
@@ -205,7 +235,9 @@ interface TaskWatcher {
 }
 
 function errorDetails(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : String(error);
 }
 
 function createTaskWatcher({
@@ -214,7 +246,7 @@ function createTaskWatcher({
   log = () => {},
   now = () => Date.now(),
   schedule = (callback, ms) => setTimeout(callback, ms),
-  cancelSchedule = (handle) => clearTimeout(handle as NodeJS.Timeout),
+  cancelSchedule = handle => clearTimeout(handle as NodeJS.Timeout),
   CardModel = null,
   probeEnabled = () => true,
   idleDelayMs = IDLE_DELAY_MS,
@@ -223,14 +255,20 @@ function createTaskWatcher({
 
   function stop(taskId: string): void {
     const entry = watching.get(taskId);
-    if (!entry) return;
-    if (entry.handle) cancelSchedule(entry.handle);
+    if (!entry) {
+      return;
+    }
+    if (entry.handle) {
+      cancelSchedule(entry.handle);
+    }
     watching.delete(taskId);
   }
 
   function reschedule(taskId: string, delayMs: number): void {
     const entry = watching.get(taskId);
-    if (!entry) return;
+    if (!entry) {
+      return;
+    }
     entry.handle = schedule(() => {
       void tick(taskId);
     }, delayMs);
@@ -239,7 +277,9 @@ function createTaskWatcher({
 
   async function tick(taskId: string): Promise<void> {
     const entry = watching.get(taskId);
-    if (!entry) return;
+    if (!entry) {
+      return;
+    }
     entry.handle = null;
 
     let enabled = true;
@@ -284,9 +324,11 @@ function createTaskWatcher({
   }
 
   return {
-    watch({ taskId, cardId, selectionSessionToken }: WatchInput): boolean {
+    watch({taskId, cardId, selectionSessionToken}: WatchInput): boolean {
       const id = String(taskId || '');
-      if (!id || watching.has(id)) return false;
+      if (!id || watching.has(id)) {
+        return false;
+      }
       watching.set(id, {
         cardId: String(cardId || ''),
         sessionToken: String(selectionSessionToken || ''),
@@ -300,7 +342,9 @@ function createTaskWatcher({
     },
     stop,
     stopAll(): void {
-      for (const id of [...watching.keys()]) stop(id);
+      for (const id of [...watching.keys()]) {
+        stop(id);
+      }
     },
     watching(): string[] {
       return [...watching.keys()];
@@ -310,7 +354,9 @@ function createTaskWatcher({
       for (const [taskId, entry] of watching) {
         const delayMs = index * KICK_STAGGER_MS;
         index += 1;
-        if (entry.handle) cancelSchedule(entry.handle);
+        if (entry.handle) {
+          cancelSchedule(entry.handle);
+        }
         entry.handle = null;
         if (delayMs === 0) {
           void tick(taskId);
@@ -322,4 +368,11 @@ function createTaskWatcher({
   };
 }
 
-export { createTaskWatcher, cardPatchFromTask, toDisplaySrc, pollDelayMs, isTerminal, STATUS_CARD };
+export {
+  createTaskWatcher,
+  cardPatchFromTask,
+  toDisplaySrc,
+  pollDelayMs,
+  isTerminal,
+  STATUS_CARD,
+};

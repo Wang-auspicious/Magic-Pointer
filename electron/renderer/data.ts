@@ -1,6 +1,4 @@
-
 declare global {
-
   interface MagicPointerTaskInput {
     inputId: string;
     taskId: string;
@@ -79,13 +77,13 @@ declare global {
     thinking?: string;
     liveProgress?: MagicPointerLiveProgress;
     failed?: boolean;
-    trace?: (string | { label: string; note?: string })[];
-    facts?: { label?: string; value?: string; tone?: string }[];
+    trace?: Array<string | {label: string; note?: string}>;
+    facts?: Array<{label?: string; value?: string; tone?: string}>;
     artifacts?: MagicPointerArtifact[];
-    events?: Record<string, unknown>[];
-    activities?: Record<string, unknown>[];
-    trajectory?: Record<string, unknown>[];
-    receipts?: Record<string, unknown>[];
+    events?: Array<Record<string, unknown>>;
+    activities?: Array<Record<string, unknown>>;
+    trajectory?: Array<Record<string, unknown>>;
+    receipts?: Array<Record<string, unknown>>;
     modelUsage?: MagicPointerModelUsage;
     modelId?: string;
     timingMs?: number;
@@ -93,11 +91,16 @@ declare global {
     pendingInput?: {
       plan?: string;
       actionPreview?: string;
-      action?: { tool?: string; arguments?: Record<string, unknown> };
+      action?: {tool?: string; arguments?: Record<string, unknown>};
       requestId?: string;
       question?: string;
       options?: string[];
-      questions?: Array<{ header?: string; question: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>;
+      questions?: Array<{
+        header?: string;
+        question: string;
+        options: Array<{label: string; description?: string}>;
+        multiSelect?: boolean;
+      }>;
       kind?: string;
       tool?: string;
       prefix?: string;
@@ -108,9 +111,16 @@ declare global {
   interface MagicPointerInputResponse {
     conversationId: string;
     requestId: string;
-    response: { decision?: 'once' | 'grant' | 'deny'; actionArguments?: {
-      from_ms: number; to_ms: number; conversation_ids: string[]; limit?: number;
-    }; answers?: Record<string, string | string[]> };
+    response: {
+      decision?: 'once' | 'grant' | 'deny';
+      actionArguments?: {
+        from_ms: number;
+        to_ms: number;
+        conversation_ids: string[];
+        limit?: number;
+      };
+      answers?: Record<string, string | string[]>;
+    };
     requestToken?: string;
     permissionPreset?: string;
     effort?: string;
@@ -119,7 +129,7 @@ declare global {
   interface MagicPointerLiveProgress {
     answer?: string;
     thinking?: string;
-    records?: Record<string, unknown>[];
+    records?: Array<Record<string, unknown>>;
     requestId?: string;
     agentSessionId?: string;
     trajectory?: Array<Record<string, unknown>>;
@@ -161,11 +171,52 @@ declare global {
     agentSessionId?: string;
     taskContext?: MagicPointerTaskContext;
     hasPendingWork?: boolean;
+    lastOutcome?: string;
+    lastFailed?: boolean;
+    lastPendingInputKind?: string;
     workspaceRoot?: string;
     object?: MagicPointerObject | null;
     turns?: MagicPointerTurn[];
     [key: string]: unknown;
   }
+
+  type MagicPointerProjectPreview =
+    | {kind: 'text'; text: string; truncated: boolean}
+    | {
+        kind: 'document';
+        blocks: Array<
+          {kind: 'paragraph'; text: string} | {kind: 'table'; rows: string[][]}
+        >;
+        truncated: boolean;
+      }
+    | {
+        kind: 'spreadsheet';
+        sheets: Array<{name: string; rows: string[][]; truncated: boolean}>;
+        truncated: boolean;
+      };
+
+  interface MagicPointerProjectFileResponse {
+    ok?: boolean;
+    error?: string;
+    kind?: MagicPointerProjectPreview['kind'];
+    text?: string;
+    blocks?: Array<
+      {kind: 'paragraph'; text: string} | {kind: 'table'; rows: string[][]}
+    >;
+    sheets?: Array<{name: string; rows: string[][]; truncated: boolean}>;
+    truncated?: boolean;
+  }
+
+  type MagicPointerTerminalEvent =
+    | {type: 'output'; stream: 'stdout' | 'stderr'; text: string}
+    | {type: 'exit'; code: number | null};
+
+  var ProjectPreviewView: {
+    renderProjectPreview(
+      host: HTMLElement,
+      preview: MagicPointerProjectPreview,
+    ): void;
+  };
 
   interface MagicPointerProject {
     root: string;
@@ -183,7 +234,7 @@ declare global {
     longestStreak: number;
     peakHour: number | null;
     favoriteModel: string | null;
-    heatmap: Array<{ date: string; messages: number; future: boolean }>;
+    heatmap: Array<{date: string; messages: number; future: boolean}>;
     daily: Array<{
       date: string;
       inputTokens: number;
@@ -228,34 +279,78 @@ declare global {
   }
 
   interface MagicPointerCardModel {
-    normalizeCard(raw: Record<string, unknown>, options?: { id?: string; seed?: unknown }): MagicPointerCard;
-    applyPatch(card: MagicPointerCard, patch: Record<string, unknown>): MagicPointerCard;
+    normalizeCard(
+      raw: Record<string, unknown>,
+      options?: {id?: string; seed?: unknown},
+    ): MagicPointerCard;
+    applyPatch(
+      card: MagicPointerCard,
+      patch: Record<string, unknown>,
+    ): MagicPointerCard;
     runningLabel(card: MagicPointerCard): string;
     isSettled(card: MagicPointerCard): boolean;
-    phaseStep(record: { phase?: unknown; fields?: unknown; ms?: number }): unknown;
+    phaseStep(record: {
+      phase?: unknown;
+      fields?: unknown;
+      ms?: number;
+    }): unknown;
   }
   const CardModel: MagicPointerCardModel;
 
-  const renderCard: (card: unknown, options?: { density?: string }) => Element;
+  const renderCard: (card: unknown, options?: {density?: string}) => Element;
   const renderFoldedProcess: (steps?: unknown[]) => Element | null;
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
 
   interface MagicPointerChatViewApi {
-    toolRowModel(name: string, argsRaw: string, result?: { text?: string; isError?: boolean; interrupted?: boolean }, callId?: string): {
-      title: string; summary: string; name: string; argsRaw: string; variant: string; state: string;
-      body: string | null; output: string | null; errorSummary: string | null; callId: string;
+    toolRowModel(
+      name: string,
+      argsRaw: string,
+      result?: {text?: string; isError?: boolean; interrupted?: boolean},
+      callId?: string,
+    ): {
+      title: string;
+      summary: string;
+      name: string;
+      argsRaw: string;
+      variant: string;
+      state: string;
+      body: string | null;
+      output: string | null;
+      errorSummary: string | null;
+      callId: string;
     };
-    toolRowNode(model: ReturnType<MagicPointerChatViewApi['toolRowModel']>, scope?: string): HTMLElement;
-    userNode(question: string, timeMs?: number, branch?: { conversationId: string; turnIndex: number }): Element;
-    assistantTurnNode(turn: Record<string, unknown>, scope?: string, options?: { taskPanel?: boolean }): Element[];
+    toolRowNode(
+      model: ReturnType<MagicPointerChatViewApi['toolRowModel']>,
+      scope?: string,
+    ): HTMLElement;
+    userNode(
+      question: string,
+      timeMs?: number,
+      branch?: {conversationId: string; turnIndex: number},
+    ): Element;
+    assistantTurnNode(
+      turn: Record<string, unknown>,
+      scope?: string,
+      options?: {taskPanel?: boolean},
+    ): Element[];
     turnStatusNode(label: string): Element;
-    turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
+    turnErrorNode(
+      message: string,
+      code?: string,
+      tone?: 'error' | 'warning',
+    ): Element;
     bindDelegation(scope?: Element): void;
     liveActivityNode(record: Record<string, unknown>): Element;
-    createLiveTurn(host: HTMLElement, scope?: string, options?: { taskPanel?: boolean }): MagicPointerLiveTurn;
-    createConversationView(flow: HTMLElement): { update(conversation: MagicPointerConversation): void };
+    createLiveTurn(
+      host: HTMLElement,
+      scope?: string,
+      options?: {taskPanel?: boolean},
+    ): MagicPointerLiveTurn;
+    createConversationView(flow: HTMLElement): {
+      update(conversation: MagicPointerConversation): void;
+    };
     thinkNode(reasoning: string, running?: boolean): Element;
-    permissionAnswerNode(answer: { decision?: string; rule?: string }): Element;
+    permissionAnswerNode(answer: {decision?: string; rule?: string}): Element;
     formatRunMeta(ms: number, tokens: number | null): string;
   }
   const ChatView: MagicPointerChatViewApi;
@@ -264,16 +359,29 @@ declare global {
     render(markdown: unknown): Element;
   };
   interface MagicPointerConversationControlApi {
-    createTranscript(): { answer: string; thinking: string; trajectory: Array<Record<string, unknown>> };
-    appendTranscript(transcript: ReturnType<MagicPointerConversationControlApi['createTranscript']>, record: unknown): boolean;
+    createTranscript(): {
+      answer: string;
+      thinking: string;
+      trajectory: Array<Record<string, unknown>>;
+    };
+    appendTranscript(
+      transcript: ReturnType<
+        MagicPointerConversationControlApi['createTranscript']
+      >,
+      record: unknown,
+    ): boolean;
     SESSION_READY_PHASE: string;
     ANSWER_CHUNK_PHASE: string;
     PLAN_PHASE: string;
     sessionIdFromRecord(record: unknown): string | null;
     decodeChunkBlob(fields: Record<string, string>): string;
     failedDraftValue(current: unknown, submitted: unknown): string;
-    callConversationAction(action: () => Promise<{ ok?: boolean; error?: string }>): Promise<{ ok: boolean; error: string }>;
-    planStepsFromRecord(record: unknown): { steps: Array<{ content: string; status: string }> } | null;
+    callConversationAction(
+      action: () => Promise<{ok?: boolean; error?: string}>,
+    ): Promise<{ok: boolean; error: string}>;
+    planStepsFromRecord(
+      record: unknown,
+    ): {steps: Array<{content: string; status: string}>} | null;
     permissionGrantRule(tool: unknown, prefix?: unknown): string;
     sanitizePermissionRule(value: unknown): string;
   }
@@ -285,14 +393,13 @@ declare global {
   const ChatIcons: {
     node(name: string, size?: number): Element;
   };
-  const ChatTrajectory: {
-    project(turns: Array<Record<string, any>>): Array<Record<string, any>>;
-    render(rows: Array<Record<string, any>>): Element;
-  };
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;
-    patch(cardId: string, patch: Record<string, unknown>): MagicPointerCard | null;
+    patch(
+      cardId: string,
+      patch: Record<string, unknown>,
+    ): MagicPointerCard | null;
     get(cardId: string): MagicPointerCard | null;
     reset(): void;
   }
@@ -315,7 +422,10 @@ declare global {
     applyResult: Record<string, unknown> | null;
   }
   interface MagicPointerArtifactEditorController {
-    select(conversationId: string, artifactId: string): Promise<Record<string, any>>;
+    select(
+      conversationId: string,
+      artifactId: string,
+    ): Promise<Record<string, any>>;
     updateContent(content: unknown): void;
     updatePatchPayload(payload: Record<string, unknown>): void;
     save(): Promise<Record<string, any>>;
@@ -350,12 +460,22 @@ declare global {
   interface MagicPointerComposerOptions {
     placeholder?: string;
     density?: string;
-    onSubmit?: (payload: { text: string; attachments: MagicPointerAttachment[] }) => boolean | void | Promise<boolean | void>;
+    onSubmit?: (payload: {
+      text: string;
+      attachments: MagicPointerAttachment[];
+    }) => boolean | void | Promise<boolean | void>;
     onStop?: (() => boolean | void | Promise<boolean | void>) | null;
-    onSteer?: ((text: string) => boolean | void | Promise<boolean | void>) | null;
+    onSteer?:
+      ((text: string) => boolean | void | Promise<boolean | void>) | null;
     onScissor?: (() => void) | null;
     allowAttachments?: boolean;
-    meta?: { id?: string; title?: string; label?: string; dot?: string; icon?: string }[];
+    meta?: Array<{
+      id?: string;
+      title?: string;
+      label?: string;
+      dot?: string;
+      icon?: string;
+    }>;
     onMeta?: (id: string, btn: HTMLElement) => void;
   }
   interface MagicPointerComposerInstance {
@@ -372,15 +492,34 @@ declare global {
   const Composer: {
     create(options?: MagicPointerComposerOptions): MagicPointerComposerInstance;
     safeThumb(value: unknown): string;
-    decideSubmission(state: 'idle' | 'running', value: unknown, attachments: MagicPointerAttachment[]): Record<string, unknown>;
+    decideSubmission(
+      state: 'idle' | 'running',
+      value: unknown,
+      attachments: MagicPointerAttachment[],
+    ): Record<string, unknown>;
     shouldRestoreFocus(active: unknown, composerInput: unknown): boolean;
     isTextAttachmentName(name: unknown): boolean;
     textAttachmentWithinLimit(size: unknown): boolean;
-    attachmentSubmissionSnapshot<T extends { id: number }>(entries: T[], cutoff: number): T[];
-    pendingReadsThrough(pending: Map<number, Promise<void>>, cutoff: number): Promise<void>[];
-    remainingAttachmentEntries<T extends { id: number }>(current: T[], submitted: T[]): T[];
-    createInFlightGate(): { tryEnter(): boolean; leave(): void; active(): boolean };
-    callAcknowledged(callback: () => boolean | void | Promise<boolean | void>): Promise<boolean>;
+    attachmentSubmissionSnapshot<T extends {id: number}>(
+      entries: T[],
+      cutoff: number,
+    ): T[];
+    pendingReadsThrough(
+      pending: Map<number, Promise<void>>,
+      cutoff: number,
+    ): Array<Promise<void>>;
+    remainingAttachmentEntries<T extends {id: number}>(
+      current: T[],
+      submitted: T[],
+    ): T[];
+    createInFlightGate(): {
+      tryEnter(): boolean;
+      leave(): void;
+      active(): boolean;
+    };
+    callAcknowledged(
+      callback: () => boolean | void | Promise<boolean | void>,
+    ): Promise<boolean>;
   };
 
   interface MagicPointerStashItem {
@@ -413,7 +552,7 @@ declare global {
     icon: string;
     time: string;
     kind: string;
-    items: {
+    items: Array<{
       t: string;
       w?: number;
       h?: number;
@@ -429,7 +568,7 @@ declare global {
       sourceId?: string;
       sourceTimeMs?: number;
       userCategory?: string;
-    }[];
+    }>;
   }
   interface MagicPointerModelEntry {
     id: string;
@@ -477,6 +616,7 @@ declare global {
   }
 
   interface MagicPointerQuotaReport {
+    stale?: boolean;
     adapter: string | null;
     label: string;
     rows: MagicPointerQuotaRow[];
@@ -500,97 +640,325 @@ declare global {
   }
 
   interface MagicPointerDashboardApi {
-    undoAction?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
+    personalActivity?: {
+      read(date?: string): Promise<Record<string, any>>;
+      configure(patch: Record<string, any>): Promise<Record<string, any>>;
+      generate(date: string): Promise<Record<string, any>>;
+      pickRoot(): Promise<Record<string, any>>;
+      openSource(payload: Record<string, any>): Promise<Record<string, any>>;
+      clear(): Promise<Record<string, any>>;
+    };
+    undoAction?(
+      payload: Record<string, unknown>,
+    ): Promise<Record<string, unknown>>;
     setTheme?(theme: unknown): void;
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
-    modelsCatalog?(options?: { refresh?: boolean }): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
-    slashDirectory?(): Promise<MagicPointerSlashDirectory | { ok?: boolean; error?: string }>;
-    selectModel?(model: unknown, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
-    modelQuota?(options?: { force?: unknown }): Promise<{ ok?: boolean; quota?: MagicPointerQuotaReport; error?: string }>;
+    modelsCatalog?(options?: {refresh?: boolean}): Promise<{
+      ok?: boolean;
+      catalog?: MagicPointerModelCatalog;
+      error?: string;
+    }>;
+    slashDirectory?(): Promise<
+      MagicPointerSlashDirectory | {ok?: boolean; error?: string}
+    >;
+    selectModel?(
+      model: unknown,
+      profileId?: string,
+    ): Promise<{ok?: boolean; model?: string; error?: string}>;
+    modelQuota?(options?: {force?: unknown}): Promise<{
+      ok?: boolean;
+      quota?: MagicPointerQuotaReport;
+      error?: string;
+    }>;
     projects?: {
+      startTerminal(
+        projectRoot: string,
+        relativePath?: string,
+      ): Promise<{ok?: boolean; error?: string}>;
+      writeTerminal(input: string): Promise<{ok?: boolean; error?: string}>;
+      stopTerminal(): Promise<{ok?: boolean; error?: string}>;
+      onTerminalEvent(
+        callback: (event: MagicPointerTerminalEvent) => void,
+      ): void;
       list(): Promise<MagicPointerProject[]>;
-      open(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
-      pickFiles(projectRoot: string, kind?: 'files' | 'folder'): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
-      tree(projectRoot: string, relativePath?: string): Promise<{ ok?: boolean; entries?: Array<{ name: string; path: string; kind: 'directory' | 'file' }>; error?: string }>;
-      readFile(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; text?: string; truncated?: boolean; error?: string }>;
-      openPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
-      openUrl(url: string): Promise<{ ok?: boolean; error?: string }>;
-      environment(projectRoot: string, conversationId?: string | null): Promise<MagicPointerProjectEnvironment>;
-      worktree?(payload: { action: 'create' | 'remove'; projectRoot: string; conversationId?: string; path?: string }): Promise<{ ok?: boolean; path?: string; branch?: string; error?: string }>;
-      contextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file'): Promise<{ ok?: boolean; action?: string; absolutePath?: string; error?: string }>;
-      runCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
+      open(): Promise<{
+        ok?: boolean;
+        canceled?: boolean;
+        project?: MagicPointerProject;
+        error?: string;
+      }>;
+      pickFiles(
+        projectRoot: string,
+        kind?: 'files' | 'folder',
+      ): Promise<{
+        ok?: boolean;
+        canceled?: boolean;
+        paths?: string[];
+        error?: string;
+      }>;
+      tree(
+        projectRoot: string,
+        relativePath?: string,
+      ): Promise<{
+        ok?: boolean;
+        entries?: Array<{
+          name: string;
+          path: string;
+          kind: 'directory' | 'file';
+        }>;
+        error?: string;
+      }>;
+      readFile(
+        projectRoot: string,
+        relativePath: string,
+      ): Promise<MagicPointerProjectFileResponse>;
+      openPath(
+        projectRoot: string,
+        relativePath: string,
+      ): Promise<{ok?: boolean; error?: string}>;
+      openUrl(url: string): Promise<{ok?: boolean; error?: string}>;
+      environment(
+        projectRoot: string,
+        conversationId?: string | null,
+      ): Promise<MagicPointerProjectEnvironment>;
+      worktree?(payload: {
+        action: 'create' | 'remove';
+        projectRoot: string;
+        conversationId?: string;
+        path?: string;
+      }): Promise<{
+        ok?: boolean;
+        path?: string;
+        branch?: string;
+        error?: string;
+      }>;
+      contextMenu(
+        projectRoot: string,
+        relativePath: string,
+        kind: 'directory' | 'file',
+      ): Promise<{
+        ok?: boolean;
+        action?: string;
+        absolutePath?: string;
+        error?: string;
+      }>;
     };
     browserView?: {
-      open(url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
-      resize(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; error?: string }>;
-      command(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close'): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
+      open(
+        url: string,
+        bounds: {x: number; y: number; width: number; height: number},
+        projectRoot?: string,
+        relativePath?: string,
+      ): Promise<{
+        ok?: boolean;
+        state?: MagicPointerBrowserViewState;
+        error?: string;
+      }>;
+      resize(bounds: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }): Promise<{ok?: boolean; error?: string}>;
+      command(
+        command:
+          | 'back'
+          | 'forward'
+          | 'reload'
+          | 'stop'
+          | 'external'
+          | 'close'
+          | 'hide',
+      ): Promise<{
+        ok?: boolean;
+        state?: MagicPointerBrowserViewState;
+        error?: string;
+      }>;
       onState(callback: (state: MagicPointerBrowserViewState) => void): void;
     };
     windowControls?: {
-      command(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
+      command(command: string): Promise<{
+        ok?: boolean;
+        version?: string;
+        electron?: string;
+        chrome?: string;
+        error?: string;
+      }>;
     };
     updates?: {
       status(): Promise<MagicPointerUpdateState>;
-      check(): Promise<{ ok?: boolean; reason?: string }>;
+      check(): Promise<{ok?: boolean; reason?: string}>;
       onStatus(callback: (state: MagicPointerUpdateState) => void): void;
     };
     conversations: {
-      subagents?(payload: { conversationId: string }): Promise<{ ok?: boolean; tasks?: Record<string, any>[]; error?: string }>;
-      respondSubagent?(payload: Record<string, unknown>): Promise<Record<string, any>>;
-      stopSubagent?(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }>;
-      respond?(payload: MagicPointerInputResponse): Promise<Record<string, any>>;
+      subagents?(payload: {conversationId: string}): Promise<{
+        ok?: boolean;
+        tasks?: Array<Record<string, any>>;
+        error?: string;
+      }>;
+      respondSubagent?(
+        payload: Record<string, unknown>,
+      ): Promise<Record<string, any>>;
+      stopSubagent?(payload: {
+        conversationId: string;
+        subagentId: string;
+      }): Promise<{
+        ok?: boolean;
+        error?: string;
+        sessionId?: string;
+        turn?: number;
+      }>;
+      respond?(
+        payload: MagicPointerInputResponse,
+      ): Promise<Record<string, any>>;
       recovery?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       list(): Promise<MagicPointerConversation[]>;
       stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
-      branch?(payload: { id?: unknown; turnIndex?: unknown }): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
-      send(payload: { conversationId?: string | null; question: string; attachments?: string[]; taskInput?: MagicPointerTaskInput; permissionPreset?: string; requestId?: string; workspaceRoot?: string; effort?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
-      pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
-      export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
-      rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
-      delete?(id: unknown): Promise<{ ok?: boolean; error?: string }>;
-      setProject?(id: string, root: string): Promise<{ ok?: boolean; error?: string }>;
-      suggest?(payload: { turns?: unknown; object?: unknown }): Promise<{ ok?: boolean; suggestion?: string; error?: string }>;
-      stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
-      steer?(payload: { agentSessionId?: unknown; text?: unknown; taskInput?: MagicPointerTaskInput; sources?: Record<string, unknown>[] }): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
+      branch?(payload: {id?: unknown; turnIndex?: unknown}): Promise<{
+        ok?: boolean;
+        conversation?: MagicPointerConversation;
+        error?: string;
+      }>;
+      send(payload: {
+        conversationId?: string | null;
+        question: string;
+        attachments?: string[];
+        taskInput?: MagicPointerTaskInput;
+        permissionPreset?: string;
+        requestId?: string;
+        workspaceRoot?: string;
+        effort?: string;
+        permissionGrant?: string;
+        permissionDeny?: string;
+        permissionGrantOnce?: string;
+      }): Promise<Record<string, any>>;
+      pickWorkspace?(): Promise<{
+        ok?: boolean;
+        canceled?: boolean;
+        path?: string;
+        error?: string;
+      }>;
+      export?(id: unknown): Promise<{
+        ok?: boolean;
+        canceled?: boolean;
+        path?: string;
+        error?: string;
+      }>;
+      rename?(payload: {
+        id?: unknown;
+        title?: unknown;
+      }): Promise<{ok?: boolean; title?: string; error?: string}>;
+      delete?(id: unknown): Promise<{ok?: boolean; error?: string}>;
+      setProject?(
+        id: string,
+        root: string,
+      ): Promise<{ok?: boolean; error?: string}>;
+      suggest?(payload: {
+        turns?: unknown;
+        object?: unknown;
+      }): Promise<{ok?: boolean; suggestion?: string; error?: string}>;
+      stop?(
+        requestId: unknown,
+      ): Promise<{ok?: boolean; sessionId?: string; error?: string}>;
+      steer?(payload: {
+        agentSessionId?: unknown;
+        text?: unknown;
+        taskInput?: MagicPointerTaskInput;
+        sources?: Array<Record<string, unknown>>;
+      }): Promise<{
+        ok?: boolean;
+        inputId?: string;
+        status?: string;
+        error?: string;
+      }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
-      eventSummaries?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      eventSummaries?(
+        payload: Record<string, unknown>,
+      ): Promise<Record<string, any>>;
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
       onTurn?(cb: (change?: MagicPointerConversationChange) => void): void;
-      onProgress?(cb: (payload: { requestId?: string; conversationId?: string; turnIndex?: number; record?: Record<string, unknown> }) => void): void;
+      onProgress?(
+        cb: (payload: {
+          requestId?: string;
+          conversationId?: string;
+          turnIndex?: number;
+          record?: Record<string, unknown>;
+        }) => void,
+      ): void;
     };
     contextTrackers?: {
       list(): Promise<Record<string, any>>;
-      setEnabled(trackerId: string, enabled: boolean): Promise<Record<string, any>>;
+      setEnabled(
+        trackerId: string,
+        enabled: boolean,
+      ): Promise<Record<string, any>>;
       remove(trackerId: string): Promise<Record<string, any>>;
       material(payload: Record<string, unknown>): Promise<Record<string, any>>;
     };
-    extensions?: { inventory(): Promise<Record<string, any>> };
+    extensions?: {inventory(): Promise<Record<string, any>>};
     artifacts?: {
-      undo?(payload: { conversationId: string; artifactId: string; revision: number; confirmed: boolean }): Promise<Record<string, any>>;
-      read(payload: { conversationId: string; artifactId?: string }): Promise<Record<string, any>>;
-      edit(payload: { conversationId: string; artifactId: string; expectedRevision: number; content: string; patchPayload?: Record<string, unknown> | null }): Promise<Record<string, any>>;
-      accept(payload: { conversationId: string; artifactId: string; revision: number }): Promise<Record<string, any>>;
-      apply(payload: { conversationId: string; artifactId: string; revision: number }): Promise<Record<string, any>>;
+      undo?(payload: {
+        conversationId: string;
+        artifactId: string;
+        revision: number;
+        confirmed: boolean;
+      }): Promise<Record<string, any>>;
+      read(payload: {
+        conversationId: string;
+        artifactId?: string;
+      }): Promise<Record<string, any>>;
+      edit(payload: {
+        conversationId: string;
+        artifactId: string;
+        expectedRevision: number;
+        content: string;
+        patchPayload?: Record<string, unknown> | null;
+      }): Promise<Record<string, any>>;
+      accept(payload: {
+        conversationId: string;
+        artifactId: string;
+        revision: number;
+      }): Promise<Record<string, any>>;
+      apply(payload: {
+        conversationId: string;
+        artifactId: string;
+        revision: number;
+      }): Promise<Record<string, any>>;
     };
     figma?: {
       pair(conversationId: string): Promise<Record<string, any>>;
       status(conversationId: string): Promise<Record<string, any>>;
-      disconnect(conversationId: string, documentSessionId: string): Promise<Record<string, any>>;
-      inspectSelection(conversationId: string, documentSessionId?: string): Promise<Record<string, any>>;
-      exportPreview(conversationId: string, documentSessionId: string, nodeId: string): Promise<Record<string, any>>;
+      disconnect(
+        conversationId: string,
+        documentSessionId: string,
+      ): Promise<Record<string, any>>;
+      inspectSelection(
+        conversationId: string,
+        documentSessionId?: string,
+      ): Promise<Record<string, any>>;
+      exportPreview(
+        conversationId: string,
+        documentSessionId: string,
+        nodeId: string,
+      ): Promise<Record<string, any>>;
     };
     stash: {
       list(): Promise<MagicPointerStashBurst[]>;
       addNote?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       addFiles?(): Promise<Record<string, any>>;
-      search?(payload: Record<string, unknown>): Promise<MagicPointerStashItem[]>;
+      search?(
+        payload: Record<string, unknown>,
+      ): Promise<MagicPointerStashItem[]>;
       open?(id: unknown): Promise<Record<string, any>>;
-      updateCategory?(id: unknown, category: unknown): Promise<Record<string, any>>;
+      updateCategory?(
+        id: unknown,
+        category: unknown,
+      ): Promise<Record<string, any>>;
       remove?(id: unknown): Promise<Record<string, any>>;
-      describe?(src: unknown): Promise<{ ok?: boolean; summary?: string }>;
+      describe?(src: unknown): Promise<{ok?: boolean; summary?: string}>;
       onEntry?(cb: () => void): void;
     };
     onShow?(cb: (payload: Record<string, unknown>) => void): void;
@@ -660,7 +1028,7 @@ declare global {
   }
   interface MagicPointerPreflightEvent {
     type?: string;
-    stages?: { id: string; title?: string }[];
+    stages?: Array<{id: string; title?: string}>;
     id?: string;
     state?: string;
     title?: string;
@@ -679,69 +1047,263 @@ declare global {
   }
 
   interface MagicPointerDataApi {
-    subagents(payload: { conversationId: string }): Promise<{ ok?: boolean; tasks?: Record<string, any>[]; error?: string }>;
-    respondSubagent(payload: Record<string, unknown>): Promise<Record<string, any>>;
+    subagents(payload: {conversationId: string}): Promise<{
+      ok?: boolean;
+      tasks?: Array<Record<string, any>>;
+      error?: string;
+    }>;
+    respondSubagent(
+      payload: Record<string, unknown>,
+    ): Promise<Record<string, any>>;
     isLive(): boolean;
     projects(): Promise<MagicPointerProject[]>;
-    openProject(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
-    pickProjectFiles(projectRoot: string, kind?: 'files' | 'folder'): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
-    projectTree(projectRoot: string, relativePath?: string): Promise<{ ok?: boolean; entries?: Array<{ name: string; path: string; kind: 'directory' | 'file' }>; error?: string }>;
-    readProjectFile(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; text?: string; truncated?: boolean; error?: string }>;
-    openProjectPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
-    openProjectUrl(url: string): Promise<{ ok?: boolean; error?: string }>;
-    projectEnvironment(projectRoot: string, conversationId?: string | null): Promise<MagicPointerProjectEnvironment>;
-    projectWorktree(payload: { action: 'create' | 'remove'; projectRoot: string; conversationId?: string; path?: string }): Promise<{ ok?: boolean; path?: string; branch?: string; error?: string }>;
-    showProjectContextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file'): Promise<{ ok?: boolean; action?: string; absolutePath?: string; error?: string }>;
-    openBrowserView(url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
-    resizeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; error?: string }>;
-    browserViewCommand(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close'): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
-    onBrowserViewState(callback: (state: MagicPointerBrowserViewState) => void): void;
-    windowCommand(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
+    openProject(): Promise<{
+      ok?: boolean;
+      canceled?: boolean;
+      project?: MagicPointerProject;
+      error?: string;
+    }>;
+    pickProjectFiles(
+      projectRoot: string,
+      kind?: 'files' | 'folder',
+    ): Promise<{
+      ok?: boolean;
+      canceled?: boolean;
+      paths?: string[];
+      error?: string;
+    }>;
+    projectTree(
+      projectRoot: string,
+      relativePath?: string,
+    ): Promise<{
+      ok?: boolean;
+      entries?: Array<{name: string; path: string; kind: 'directory' | 'file'}>;
+      error?: string;
+    }>;
+    readProjectFile(
+      projectRoot: string,
+      relativePath: string,
+    ): Promise<MagicPointerProjectFileResponse>;
+    startProjectTerminal(
+      projectRoot: string,
+      relativePath?: string,
+    ): Promise<{ok?: boolean; error?: string}>;
+    writeProjectTerminal(
+      input: string,
+    ): Promise<{ok?: boolean; error?: string}>;
+    stopProjectTerminal(): Promise<{ok?: boolean; error?: string}>;
+    onProjectTerminalEvent(
+      callback: (event: MagicPointerTerminalEvent) => void,
+    ): void;
+    openProjectPath(
+      projectRoot: string,
+      relativePath: string,
+    ): Promise<{ok?: boolean; error?: string}>;
+    openProjectUrl(url: string): Promise<{ok?: boolean; error?: string}>;
+    projectEnvironment(
+      projectRoot: string,
+      conversationId?: string | null,
+    ): Promise<MagicPointerProjectEnvironment>;
+    projectWorktree(payload: {
+      action: 'create' | 'remove';
+      projectRoot: string;
+      conversationId?: string;
+      path?: string;
+    }): Promise<{ok?: boolean; path?: string; branch?: string; error?: string}>;
+    showProjectContextMenu(
+      projectRoot: string,
+      relativePath: string,
+      kind: 'directory' | 'file',
+    ): Promise<{
+      ok?: boolean;
+      action?: string;
+      absolutePath?: string;
+      error?: string;
+    }>;
+    openBrowserView(
+      url: string,
+      bounds: {x: number; y: number; width: number; height: number},
+      projectRoot?: string,
+      relativePath?: string,
+    ): Promise<{
+      ok?: boolean;
+      state?: MagicPointerBrowserViewState;
+      error?: string;
+    }>;
+    resizeBrowserView(bounds: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }): Promise<{ok?: boolean; error?: string}>;
+    browserViewCommand(
+      command:
+        'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close' | 'hide',
+    ): Promise<{
+      ok?: boolean;
+      state?: MagicPointerBrowserViewState;
+      error?: string;
+    }>;
+    onBrowserViewState(
+      callback: (state: MagicPointerBrowserViewState) => void,
+    ): void;
+    windowCommand(command: string): Promise<{
+      ok?: boolean;
+      version?: string;
+      electron?: string;
+      chrome?: string;
+      error?: string;
+    }>;
     updateStatus(): Promise<MagicPointerUpdateState>;
-    checkForUpdates(): Promise<{ ok?: boolean; reason?: string }>;
+    checkForUpdates(): Promise<{ok?: boolean; reason?: string}>;
     onUpdateStatus(callback: (state: MagicPointerUpdateState) => void): void;
-    runProjectCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
     conversations(): Promise<MagicPointerConversation[]>;
     conversationStats(): Promise<MagicPointerHomeStats | null>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
-    branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
-    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }, attachments?: string[], taskInput?: MagicPointerTaskInput): Promise<Record<string, any>>;
-    respondConversation(payload: MagicPointerInputResponse): Promise<Record<string, any>>;
-    stopSubagent(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }>;
-    pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
-    exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
-    renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
-    deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }>;
-    setConversationProject(id: string, root: string): Promise<{ ok?: boolean; error?: string }>;
+    branchConversation(
+      id: string,
+      turnIndex: number,
+    ): Promise<{
+      ok?: boolean;
+      conversation?: MagicPointerConversation;
+      error?: string;
+    }>;
+    sendConversation(
+      conversationId: string | null,
+      question: string,
+      permissionPreset?: string,
+      requestId?: string,
+      workspaceRoot?: string,
+      effort?: string,
+      permission?: {grant?: string; deny?: string; once?: string},
+      attachments?: string[],
+      taskInput?: MagicPointerTaskInput,
+    ): Promise<Record<string, any>>;
+    respondConversation(
+      payload: MagicPointerInputResponse,
+    ): Promise<Record<string, any>>;
+    stopSubagent(payload: {
+      conversationId: string;
+      subagentId: string;
+    }): Promise<{
+      ok?: boolean;
+      error?: string;
+      sessionId?: string;
+      turn?: number;
+    }>;
+    pickWorkspace(): Promise<{
+      ok?: boolean;
+      canceled?: boolean;
+      path?: string;
+      error?: string;
+    }>;
+    exportConversation(id: string): Promise<{
+      ok?: boolean;
+      canceled?: boolean;
+      path?: string;
+      error?: string;
+    }>;
+    renameConversation(
+      id: string,
+      title: string,
+    ): Promise<{ok?: boolean; title?: string; error?: string}>;
+    deleteConversation(id: string): Promise<{ok?: boolean; error?: string}>;
+    setConversationProject(
+      id: string,
+      root: string,
+    ): Promise<{ok?: boolean; error?: string}>;
     suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
-    stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
-    steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources?: Record<string, unknown>[]): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
-    onConversationProgress(callback: (payload: { requestId?: string; conversationId?: string; turnIndex?: number; record?: Record<string, unknown> }) => void): void;
+    stopConversation(
+      requestId: string,
+    ): Promise<{ok?: boolean; sessionId?: string; error?: string}>;
+    steerConversation(
+      agentSessionId: string,
+      input: string | MagicPointerTaskInput,
+      sources?: Array<Record<string, unknown>>,
+    ): Promise<{
+      ok?: boolean;
+      inputId?: string;
+      status?: string;
+      error?: string;
+    }>;
+    onConversationProgress(
+      callback: (payload: {
+        requestId?: string;
+        conversationId?: string;
+        turnIndex?: number;
+        record?: Record<string, unknown>;
+      }) => void,
+    ): void;
     models(refresh?: boolean): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
-    selectModel(model: string, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
-    modelQuota(options?: { force?: boolean }): Promise<MagicPointerQuotaReport | null>;
+    selectModel(
+      model: string,
+      profileId?: string,
+    ): Promise<{ok?: boolean; model?: string; error?: string}>;
+    modelQuota(options?: {
+      force?: boolean;
+    }): Promise<MagicPointerQuotaReport | null>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
-    readArtifact(conversationId: string, artifactId: string): Promise<Record<string, any>>;
-    trackMaterial(payload: Record<string, unknown>): Promise<Record<string, any>>;
-    editArtifact(payload: { conversationId: string; artifactId: string; expectedRevision: number; content: string; patchPayload?: Record<string, unknown> | null }): Promise<Record<string, any>>;
-    acceptArtifact(conversationId: string, artifactId: string, revision: number): Promise<Record<string, any>>;
-    applyArtifact(conversationId: string, artifactId: string, revision: number): Promise<Record<string, any>>;
-    undoArtifact(conversationId: string, artifactId: string, revision: number, confirmed: boolean): Promise<Record<string, any>>;
+    readArtifact(
+      conversationId: string,
+      artifactId: string,
+    ): Promise<Record<string, any>>;
+    trackMaterial(
+      payload: Record<string, unknown>,
+    ): Promise<Record<string, any>>;
+    editArtifact(payload: {
+      conversationId: string;
+      artifactId: string;
+      expectedRevision: number;
+      content: string;
+      patchPayload?: Record<string, unknown> | null;
+    }): Promise<Record<string, any>>;
+    acceptArtifact(
+      conversationId: string,
+      artifactId: string,
+      revision: number,
+    ): Promise<Record<string, any>>;
+    applyArtifact(
+      conversationId: string,
+      artifactId: string,
+      revision: number,
+    ): Promise<Record<string, any>>;
+    undoArtifact(
+      conversationId: string,
+      artifactId: string,
+      revision: number,
+      confirmed: boolean,
+    ): Promise<Record<string, any>>;
     recovery(payload: Record<string, unknown>): Promise<Record<string, any>>;
     pairFigma(conversationId: string): Promise<Record<string, any>>;
     figmaStatus(conversationId: string): Promise<Record<string, any>>;
-    disconnectFigma(conversationId: string, documentSessionId: string): Promise<Record<string, any>>;
-    inspectFigmaSelection(conversationId: string, documentSessionId?: string): Promise<Record<string, any>>;
-    exportFigmaPreview(conversationId: string, documentSessionId: string, nodeId: string): Promise<Record<string, any>>;
+    disconnectFigma(
+      conversationId: string,
+      documentSessionId: string,
+    ): Promise<Record<string, any>>;
+    inspectFigmaSelection(
+      conversationId: string,
+      documentSessionId?: string,
+    ): Promise<Record<string, any>>;
+    exportFigmaPreview(
+      conversationId: string,
+      documentSessionId: string,
+      nodeId: string,
+    ): Promise<Record<string, any>>;
     stash(): Promise<MagicPointerStashEntry[]>;
-    searchStash(query?: string, category?: string): Promise<MagicPointerStashEntry[]>;
+    searchStash(
+      query?: string,
+      category?: string,
+    ): Promise<MagicPointerStashEntry[]>;
     addStashNote(text: string, category?: string): Promise<Record<string, any>>;
     addStashFiles(): Promise<Record<string, any>>;
     openStashEntry(id: string): Promise<Record<string, any>>;
-    updateStashCategory(id: string, category: string): Promise<Record<string, any>>;
+    updateStashCategory(
+      id: string,
+      category: string,
+    ): Promise<Record<string, any>>;
     removeStashEntry(id: string): Promise<Record<string, any>>;
     describeStashImage(src: string): Promise<string | null | undefined>;
     onChange(callback: (change?: MagicPointerConversationChange) => void): void;
@@ -758,7 +1320,7 @@ declare global {
     ahead?: number;
     behind?: number;
     changedFiles?: number;
-    fileChanges?: Array<{ path: string; status: string; staged: boolean }>;
+    fileChanges?: Array<{path: string; status: string; staged: boolean}>;
     addedLines?: number;
     deletedLines?: number;
     remoteUrl?: string;
@@ -796,9 +1358,21 @@ declare global {
   }
 
   interface MagicPointerGestureCaptureApi {
-    chainFinalizeDelay(options?: { deadlineAt?: unknown; idleMs?: unknown; now?: unknown }): number;
-    pointerContinuesGestureChain(previous: unknown, next: unknown, minimumDistance?: unknown): boolean;
-    summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, thresholds?: unknown): Record<string, unknown>;
+    chainFinalizeDelay(options?: {
+      deadlineAt?: unknown;
+      idleMs?: unknown;
+      now?: unknown;
+    }): number;
+    pointerContinuesGestureChain(
+      previous: unknown,
+      next: unknown,
+      minimumDistance?: unknown,
+    ): boolean;
+    summarizeGesture(
+      rawPoints: unknown,
+      rawStrokes?: unknown,
+      thresholds?: unknown,
+    ): Record<string, unknown>;
   }
   var GestureCapture: MagicPointerGestureCaptureApi;
 
@@ -837,11 +1411,21 @@ declare global {
     VERTEX_SHADER_SOURCE: string;
     FRAGMENT_SHADER_SOURCE: string;
     createSweepPathCache(): unknown;
-    buildSdfPath(points: unknown, requestedWidth?: number, cache?: unknown): MagicPointerSweepPath | null;
+    buildSdfPath(
+      points: unknown,
+      requestedWidth?: number,
+      cache?: unknown,
+    ): MagicPointerSweepPath | null;
     sweepProfile(progress: number): MagicPointerSweepProfile;
-    buildSweepGeometry(points: unknown, requestedWidth?: number): MagicPointerSweepPath | null;
+    buildSweepGeometry(
+      points: unknown,
+      requestedWidth?: number,
+    ): MagicPointerSweepPath | null;
     buildSweepSegments(points: unknown, requestedWidth?: number): unknown[];
-    buildSweepRibbon(points: unknown, requestedWidth?: number): MagicPointerSweepPath | null;
+    buildSweepRibbon(
+      points: unknown,
+      requestedWidth?: number,
+    ): MagicPointerSweepPath | null;
     SweepRenderer: new (canvas: HTMLCanvasElement) => MagicPointerSweepRenderer;
   }
   var MagicSweepVisual: MagicPointerSweepVisualApi;
@@ -860,10 +1444,24 @@ declare global {
   function renderSettings(): void;
 
   interface MagicPointerStageApi {
-    respondInput?(payload: Omit<MagicPointerInputResponse, 'conversationId'> & { selectionSessionToken: string }): Promise<Record<string, any>>;
-    listHistorySources?(): Promise<Array<{ id: string; title?: string }>>;
-    onConversationProgress?(callback: (payload: { requestId: string; conversationId?: string; turnIndex?: number; record: any }) => void): (() => void) | void;
-    openArtifact?(payload: { selectionSessionToken: string; artifactId: string }): Promise<Record<string, any>>;
+    respondInput?(
+      payload: Omit<MagicPointerInputResponse, 'conversationId'> & {
+        selectionSessionToken: string;
+      },
+    ): Promise<Record<string, any>>;
+    listHistorySources?(): Promise<Array<{id: string; title?: string}>>;
+    onConversationProgress?(
+      callback: (payload: {
+        requestId: string;
+        conversationId?: string;
+        turnIndex?: number;
+        record: any;
+      }) => void,
+    ): (() => void) | void;
+    openArtifact?(payload: {
+      selectionSessionToken: string;
+      artifactId: string;
+    }): Promise<Record<string, any>>;
     ready(): void;
     reportState(payload: unknown): void;
     hidden(): void;
@@ -872,7 +1470,9 @@ declare global {
     steerSelectionCommand(payload: unknown): Promise<any>;
     stopSelectionCommand(payload: unknown): Promise<any>;
     executeAction(payload: unknown): void;
-    undoAction?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
+    undoAction?(
+      payload: Record<string, unknown>,
+    ): Promise<Record<string, unknown>>;
     contextAction(payload: unknown): void;
     insertResultText(payload: unknown): void;
     expandPassage(payload: unknown): Promise<any>;
@@ -892,6 +1492,7 @@ declare global {
   var StageAnchor: any;
   var StageSurfacePolicy: any;
   var StudioShell: any;
+  var PersonalActivityView: any;
   var MagicPointerStageHitPolicy: any;
   var AnswerShapePolicy: any;
   var CaptureProofPolicy: any;
@@ -906,7 +1507,8 @@ declare global {
 
 /* exported Data, formatTime, dayLabel */
 
-const bridge = (): MagicPointerDashboardApi | null => window.magicPointerDashboard || null;
+const bridge = (): MagicPointerDashboardApi | null =>
+  window.magicPointerDashboard || null;
 const hasBridge = () => Boolean(bridge()?.conversations);
 
 // classic-script 全局 API，被 overlay/stage/settings 等以 global 方式消费。
@@ -915,80 +1517,169 @@ const Data: MagicPointerDataApi = {
   isLive: hasBridge,
 
   async projects(): Promise<MagicPointerProject[]> {
-    if (!hasBridge()) return [];
+    if (!hasBridge()) {
+      return [];
+    }
     const projects = await bridge()!.projects?.list?.();
     return Array.isArray(projects) ? projects : [];
   },
 
-  async openProject(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }> {
+  async openProject(): Promise<{
+    ok?: boolean;
+    canceled?: boolean;
+    project?: MagicPointerProject;
+    error?: string;
+  }> {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.open) return { ok: false, error: '打开项目通道不可用。' };
+    if (!hasBridge() || !projects?.open) {
+      return {ok: false, error: '打开项目通道不可用。'};
+    }
     return projects.open();
   },
 
-  async pickProjectFiles(projectRoot: string, kind: 'files' | 'folder' = 'files'): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }> {
+  async pickProjectFiles(
+    projectRoot: string,
+    kind: 'files' | 'folder' = 'files',
+  ): Promise<{
+    ok?: boolean;
+    canceled?: boolean;
+    paths?: string[];
+    error?: string;
+  }> {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.pickFiles) return { ok: false, error: '附件通道不可用。' };
+    if (!hasBridge() || !projects?.pickFiles) {
+      return {ok: false, error: '附件通道不可用。'};
+    }
     return projects.pickFiles(projectRoot, kind);
   },
 
   async projectTree(projectRoot: string, relativePath = '') {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.tree) return { ok: false, error: '文件树通道不可用。' };
+    if (!hasBridge() || !projects?.tree) {
+      return {ok: false, error: '文件树通道不可用。'};
+    }
     return projects.tree(projectRoot, relativePath);
   },
 
   async readProjectFile(projectRoot: string, relativePath: string) {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.readFile) return { ok: false, error: '文件读取通道不可用。' };
+    if (!hasBridge() || !projects?.readFile) {
+      return {ok: false, error: '文件读取通道不可用。'};
+    }
     return projects.readFile(projectRoot, relativePath);
+  },
+
+  async startProjectTerminal(projectRoot: string, relativePath = '') {
+    const projects = bridge()?.projects;
+    return projects?.startTerminal
+      ? projects.startTerminal(projectRoot, relativePath)
+      : {ok: false, error: '终端不可用。'};
+  },
+
+  async writeProjectTerminal(input: string) {
+    const projects = bridge()?.projects;
+    return projects?.writeTerminal
+      ? projects.writeTerminal(input)
+      : {ok: false, error: '终端不可用。'};
+  },
+
+  async stopProjectTerminal() {
+    const projects = bridge()?.projects;
+    return projects?.stopTerminal
+      ? projects.stopTerminal()
+      : {ok: false, error: '终端不可用。'};
+  },
+
+  onProjectTerminalEvent(callback: (event: MagicPointerTerminalEvent) => void) {
+    bridge()?.projects?.onTerminalEvent?.(callback);
   },
 
   async openProjectPath(projectRoot: string, relativePath: string) {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.openPath) return { ok: false, error: '文件打开通道不可用。' };
+    if (!hasBridge() || !projects?.openPath) {
+      return {ok: false, error: '文件打开通道不可用。'};
+    }
     return projects.openPath(projectRoot, relativePath);
   },
 
   async openProjectUrl(url: string) {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.openUrl) return { ok: false, error: '浏览器通道不可用。' };
+    if (!hasBridge() || !projects?.openUrl) {
+      return {ok: false, error: '浏览器通道不可用。'};
+    }
     return projects.openUrl(url);
   },
 
-  async projectEnvironment(projectRoot: string, conversationId?: string | null) {
+  async projectEnvironment(
+    projectRoot: string,
+    conversationId?: string | null,
+  ) {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.environment) return { ok: false, error: '项目环境通道不可用。' };
+    if (!hasBridge() || !projects?.environment) {
+      return {ok: false, error: '项目环境通道不可用。'};
+    }
     return projects.environment(projectRoot, conversationId);
   },
 
-  async projectWorktree(payload: { action: 'create' | 'remove'; projectRoot: string; conversationId?: string; path?: string }) {
+  async projectWorktree(payload: {
+    action: 'create' | 'remove';
+    projectRoot: string;
+    conversationId?: string;
+    path?: string;
+  }) {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.worktree) return { ok: false, error: 'worktree 通道不可用。' };
+    if (!hasBridge() || !projects?.worktree) {
+      return {ok: false, error: 'worktree 通道不可用。'};
+    }
     return projects.worktree(payload);
   },
 
-  async showProjectContextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file') {
+  async showProjectContextMenu(
+    projectRoot: string,
+    relativePath: string,
+    kind: 'directory' | 'file',
+  ) {
     const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.contextMenu) return { ok: false, error: '文件操作菜单不可用。' };
+    if (!hasBridge() || !projects?.contextMenu) {
+      return {ok: false, error: '文件操作菜单不可用。'};
+    }
     return projects.contextMenu(projectRoot, relativePath, kind);
   },
 
-  async openBrowserView(url: string, bounds: { x: number; y: number; width: number; height: number }) {
+  async openBrowserView(
+    url: string,
+    bounds: {x: number; y: number; width: number; height: number},
+    projectRoot?: string,
+    relativePath?: string,
+  ) {
     const browserView = bridge()?.browserView;
-    if (!hasBridge() || !browserView?.open) return { ok: false, error: '内置浏览器不可用。' };
-    return browserView.open(url, bounds);
+    if (!hasBridge() || !browserView?.open) {
+      return {ok: false, error: '内置浏览器不可用。'};
+    }
+    return browserView.open(url, bounds, projectRoot, relativePath);
   },
 
-  async resizeBrowserView(bounds: { x: number; y: number; width: number; height: number }) {
+  async resizeBrowserView(bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) {
     const browserView = bridge()?.browserView;
-    if (!hasBridge() || !browserView?.resize) return { ok: false, error: '内置浏览器不可用。' };
+    if (!hasBridge() || !browserView?.resize) {
+      return {ok: false, error: '内置浏览器不可用。'};
+    }
     return browserView.resize(bounds);
   },
 
-  async browserViewCommand(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close') {
+  async browserViewCommand(
+    command:
+      'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close' | 'hide',
+  ) {
     const browserView = bridge()?.browserView;
-    if (!hasBridge() || !browserView?.command) return { ok: false, error: '内置浏览器不可用。' };
+    if (!hasBridge() || !browserView?.command) {
+      return {ok: false, error: '内置浏览器不可用。'};
+    }
     return browserView.command(command);
   },
 
@@ -998,28 +1689,36 @@ const Data: MagicPointerDataApi = {
 
   async windowCommand(command: string) {
     const controls = bridge()?.windowControls;
-    if (!hasBridge() || !controls?.command) return { ok: false, error: '窗口命令通道不可用。' };
+    if (!hasBridge() || !controls?.command) {
+      return {ok: false, error: '窗口命令通道不可用。'};
+    }
     return controls.command(command);
   },
 
   async updateStatus(): Promise<MagicPointerUpdateState> {
     const updates = bridge()?.updates;
-    if (!hasBridge() || !updates?.status) return { state: 'unsupported' };
+    if (!hasBridge() || !updates?.status) {
+      return {state: 'unsupported'};
+    }
     try {
       const state = await updates.status();
-      return state && typeof state === 'object' ? state : { state: 'unsupported' };
+      return state && typeof state === 'object'
+        ? state
+        : {state: 'unsupported'};
     } catch {
-      return { state: 'error', message: '暂时无法读取更新状态。' };
+      return {state: 'error', message: '暂时无法读取更新状态。'};
     }
   },
 
-  async checkForUpdates(): Promise<{ ok?: boolean; reason?: string }> {
+  async checkForUpdates(): Promise<{ok?: boolean; reason?: string}> {
     const updates = bridge()?.updates;
-    if (!hasBridge() || !updates?.check) return { ok: false, reason: 'update_channel_unavailable' };
+    if (!hasBridge() || !updates?.check) {
+      return {ok: false, reason: 'update_channel_unavailable'};
+    }
     try {
       return await updates.check();
     } catch {
-      return { ok: false, reason: 'update_check_failed' };
+      return {ok: false, reason: 'update_check_failed'};
     }
   },
 
@@ -1027,20 +1726,18 @@ const Data: MagicPointerDataApi = {
     bridge()?.updates?.onStatus?.(callback);
   },
 
-  async runProjectCommand(projectRoot: string, command: string, relativeDirectory = '') {
-    const projects = bridge()?.projects;
-    if (!hasBridge() || !projects?.runCommand) return { ok: false, error: '终端通道不可用。' };
-    return projects.runCommand(projectRoot, command, relativeDirectory);
-  },
-
   async conversations(): Promise<MagicPointerConversation[]> {
-    if (!hasBridge()) return [];
+    if (!hasBridge()) {
+      return [];
+    }
     const list = await bridge()!.conversations.list();
     return Array.isArray(list) ? list : [];
   },
 
   async conversationStats(): Promise<MagicPointerHomeStats | null> {
-    if (!hasBridge() || !bridge()!.conversations.stats) return null;
+    if (!hasBridge() || !bridge()!.conversations.stats) {
+      return null;
+    }
     try {
       return await bridge()!.conversations.stats!();
     } catch {
@@ -1048,94 +1745,210 @@ const Data: MagicPointerDataApi = {
     }
   },
 
-  async conversation(id: string): Promise<MagicPointerConversation | undefined> {
-    if (!hasBridge()) return undefined;
+  async conversation(
+    id: string,
+  ): Promise<MagicPointerConversation | undefined> {
+    if (!hasBridge()) {
+      return undefined;
+    }
     return bridge()!.conversations.get(id);
   },
 
-  async branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }> {
-    if (!hasBridge() || !bridge()!.conversations.branch) return { ok: false, error: '分支通道不可用。' };
-    return bridge()!.conversations.branch!({ id, turnIndex });
+  async branchConversation(
+    id: string,
+    turnIndex: number,
+  ): Promise<{
+    ok?: boolean;
+    conversation?: MagicPointerConversation;
+    error?: string;
+  }> {
+    if (!hasBridge() || !bridge()!.conversations.branch) {
+      return {ok: false, error: '分支通道不可用。'};
+    }
+    return bridge()!.conversations.branch!({id, turnIndex});
   },
 
-  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }, attachments: string[] = [], taskInput?: MagicPointerTaskInput): Promise<Record<string, any>> {
-    if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
-    return bridge()!.conversations.send({ conversationId, question, attachments, taskInput, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot, effort: effort || 'high', permissionGrant: permission?.grant, permissionDeny: permission?.deny, permissionGrantOnce: permission?.once });
+  async sendConversation(
+    conversationId: string | null,
+    question: string,
+    permissionPreset?: string,
+    requestId?: string,
+    workspaceRoot?: string,
+    effort?: string,
+    permission?: {grant?: string; deny?: string; once?: string},
+    attachments: string[] = [],
+    taskInput?: MagicPointerTaskInput,
+  ): Promise<Record<string, any>> {
+    if (!hasBridge()) {
+      return {ok: false, error: '请在 Magic Pointer 应用里发送。'};
+    }
+    return bridge()!.conversations.send({
+      conversationId,
+      question,
+      attachments,
+      taskInput,
+      permissionPreset: permissionPreset || 'workspace-write',
+      requestId,
+      workspaceRoot,
+      effort: effort || 'high',
+      permissionGrant: permission?.grant,
+      permissionDeny: permission?.deny,
+      permissionGrantOnce: permission?.once,
+    });
   },
 
-  async pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {
-    if (!hasBridge() || !bridge()!.conversations.pickWorkspace) return { ok: false, error: '选择工作区通道不可用。' };
+  async pickWorkspace(): Promise<{
+    ok?: boolean;
+    canceled?: boolean;
+    path?: string;
+    error?: string;
+  }> {
+    if (!hasBridge() || !bridge()!.conversations.pickWorkspace) {
+      return {ok: false, error: '选择工作区通道不可用。'};
+    }
     return bridge()!.conversations.pickWorkspace!();
   },
 
-  async exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {
-    if (!hasBridge() || !bridge()!.conversations.export) return { ok: false, error: '导出通道不可用。' };
+  async exportConversation(id: string): Promise<{
+    ok?: boolean;
+    canceled?: boolean;
+    path?: string;
+    error?: string;
+  }> {
+    if (!hasBridge() || !bridge()!.conversations.export) {
+      return {ok: false, error: '导出通道不可用。'};
+    }
     return bridge()!.conversations.export!(id);
   },
 
-  async renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }> {
-    if (!hasBridge() || !bridge()!.conversations.rename) return { ok: false, error: '重命名通道不可用。' };
-    return bridge()!.conversations.rename!({ id, title });
+  async renameConversation(
+    id: string,
+    title: string,
+  ): Promise<{ok?: boolean; title?: string; error?: string}> {
+    if (!hasBridge() || !bridge()!.conversations.rename) {
+      return {ok: false, error: '重命名通道不可用。'};
+    }
+    return bridge()!.conversations.rename!({id, title});
   },
 
-  async deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }> {
-    if (!hasBridge() || !bridge()!.conversations.delete) return { ok: false, error: '删除通道不可用。' };
+  async deleteConversation(
+    id: string,
+  ): Promise<{ok?: boolean; error?: string}> {
+    if (!hasBridge() || !bridge()!.conversations.delete) {
+      return {ok: false, error: '删除通道不可用。'};
+    }
     return bridge()!.conversations.delete!(id);
   },
 
-  async respondConversation(payload: MagicPointerInputResponse): Promise<Record<string, any>> {
+  async respondConversation(
+    payload: MagicPointerInputResponse,
+  ): Promise<Record<string, any>> {
     const respond = bridge()?.conversations?.respond;
-    return respond ? respond(payload) : { ok: false, accepted: false, error: '任务回答通道不可用。' };
+    return respond
+      ? respond(payload)
+      : {ok: false, accepted: false, error: '任务回答通道不可用。'};
   },
-  async stopSubagent(payload: { conversationId: string; subagentId: string }): Promise<{ ok?: boolean; error?: string; sessionId?: string; turn?: number }> {
+  async stopSubagent(payload: {
+    conversationId: string;
+    subagentId: string;
+  }): Promise<{
+    ok?: boolean;
+    error?: string;
+    sessionId?: string;
+    turn?: number;
+  }> {
     const stop = bridge()?.conversations?.stopSubagent;
-    return stop ? stop(payload) : { ok: false, error: '子任务停止通道不可用。' };
+    return stop ? stop(payload) : {ok: false, error: '子任务停止通道不可用。'};
   },
-  async subagents(payload: { conversationId: string }): Promise<{ ok?: boolean; tasks?: Record<string, any>[]; error?: string }> {
+  async subagents(payload: {conversationId: string}): Promise<{
+    ok?: boolean;
+    tasks?: Array<Record<string, any>>;
+    error?: string;
+  }> {
     const read = bridge()?.conversations?.subagents;
-    return read ? read(payload) : { ok: true, tasks: [] };
+    return read ? read(payload) : {ok: true, tasks: []};
   },
-  async respondSubagent(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  async respondSubagent(
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, any>> {
     const respond = bridge()?.conversations?.respondSubagent;
-    return respond ? respond(payload) : { ok: false, error: '子任务审批通道不可用。' };
+    return respond
+      ? respond(payload)
+      : {ok: false, error: '子任务审批通道不可用。'};
   },
-  async setConversationProject(id: string, root: string): Promise<{ ok?: boolean; error?: string }> {
+  async setConversationProject(
+    id: string,
+    root: string,
+  ): Promise<{ok?: boolean; error?: string}> {
     const api = bridge()?.conversations;
-    if (!api?.setProject) return { ok: false, error: '项目切换通道不可用。' };
+    if (!api?.setProject) {
+      return {ok: false, error: '项目切换通道不可用。'};
+    }
     return api.setProject(id, root);
   },
 
-  async suggestNextPrompt(turns: unknown, object: unknown = {}): Promise<string> {
-    if (!hasBridge() || !bridge()!.conversations.suggest) return '';
+  async suggestNextPrompt(
+    turns: unknown,
+    object: unknown = {},
+  ): Promise<string> {
+    if (!hasBridge() || !bridge()!.conversations.suggest) {
+      return '';
+    }
     try {
-      const result = await bridge()!.conversations.suggest!({ turns, object });
+      const result = await bridge()!.conversations.suggest!({turns, object});
       return result?.ok === true ? String(result.suggestion || '') : '';
     } catch {
       return '';
     }
   },
 
-  async stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }> {
-    if (!hasBridge()) return { ok: false, error: '停止通道不可用。' };
+  async stopConversation(
+    requestId: string,
+  ): Promise<{ok?: boolean; sessionId?: string; error?: string}> {
+    if (!hasBridge()) {
+      return {ok: false, error: '停止通道不可用。'};
+    }
     return bridge()!.conversations.stop!(requestId);
   },
 
-  async steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources: Record<string, unknown>[] = []): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }> {
-    if (!hasBridge()) return { ok: false, error: '插话通道不可用。' };
+  async steerConversation(
+    agentSessionId: string,
+    input: string | MagicPointerTaskInput,
+    sources: Array<Record<string, unknown>> = [],
+  ): Promise<{
+    ok?: boolean;
+    inputId?: string;
+    status?: string;
+    error?: string;
+  }> {
+    if (!hasBridge()) {
+      return {ok: false, error: '插话通道不可用。'};
+    }
     return bridge()!.conversations.steer!({
       agentSessionId,
-      ...(typeof input === 'string' ? { text: input } : { taskInput: input, sources }),
+      ...(typeof input === 'string'
+        ? {text: input}
+        : {taskInput: input, sources}),
     });
   },
 
-  onConversationProgress(callback: (payload: { requestId?: string; conversationId?: string; turnIndex?: number; record?: Record<string, unknown> }) => void): void {
+  onConversationProgress(
+    callback: (payload: {
+      requestId?: string;
+      conversationId?: string;
+      turnIndex?: number;
+      record?: Record<string, unknown>;
+    }) => void,
+  ): void {
     bridge()?.conversations?.onProgress?.(callback);
   },
 
   async models(refresh = false): Promise<MagicPointerModelCatalog | null> {
-    if (!hasBridge()) return null;
+    if (!hasBridge()) {
+      return null;
+    }
     try {
-      const response = await bridge()!.modelsCatalog?.({ refresh });
+      const response = await bridge()!.modelsCatalog?.({refresh});
       return response?.ok ? (response.catalog ?? null) : null;
     } catch {
       return null;
@@ -1143,29 +1956,53 @@ const Data: MagicPointerDataApi = {
   },
 
   async slashDirectory(): Promise<MagicPointerSlashDirectory | null> {
-    if (!hasBridge()) return null;
+    if (!hasBridge()) {
+      return null;
+    }
     try {
-      const response = (await bridge()!.slashDirectory?.()) as MagicPointerSlashDirectory | { ok?: boolean; error?: string } | undefined;
-      if (!response || (response as { ok?: boolean }).ok === false) return null;
+      const response = (await bridge()!.slashDirectory?.()) as
+        MagicPointerSlashDirectory | {ok?: boolean; error?: string} | undefined;
+      if (!response || (response as {ok?: boolean}).ok === false) {
+        return null;
+      }
       return response as MagicPointerSlashDirectory;
     } catch {
       return null;
     }
   },
 
-  async selectModel(model: string, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }> {
-    if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里切换。' };
+  async selectModel(
+    model: string,
+    profileId?: string,
+  ): Promise<{ok?: boolean; model?: string; error?: string}> {
+    if (!hasBridge()) {
+      return {ok: false, error: '请在 Magic Pointer 应用里切换。'};
+    }
     try {
-      return (await bridge()!.selectModel?.(model, profileId)) || { ok: false, error: '模型切换通道不可用。' };
+      return (
+        (await bridge()!.selectModel?.(model, profileId)) || {
+          ok: false,
+          error: '模型切换通道不可用。',
+        }
+      );
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   },
 
-  async modelQuota(options: { force?: boolean } = {}): Promise<MagicPointerQuotaReport | null> {
-    if (!hasBridge()) return null;
+  async modelQuota(
+    options: {force?: boolean} = {},
+  ): Promise<MagicPointerQuotaReport | null> {
+    if (!hasBridge()) {
+      return null;
+    }
     try {
-      const response = await bridge()!.modelQuota?.({ force: options.force === true });
+      const response = await bridge()!.modelQuota?.({
+        force: options.force === true,
+      });
       return response?.ok ? (response.quota ?? null) : null;
     } catch {
       return null;
@@ -1173,46 +2010,74 @@ const Data: MagicPointerDataApi = {
   },
 
   async timeline(): Promise<MagicPointerTimelineDay[]> {
-    if (!hasBridge()) return [];
+    if (!hasBridge()) {
+      return [];
+    }
     const days = await bridge()!.conversations.timeline();
     return Array.isArray(days) ? days : [];
   },
 
   async memories(): Promise<unknown[]> {
-    if (!hasBridge()) return [];
+    if (!hasBridge()) {
+      return [];
+    }
     const list = await bridge()!.conversations.memories();
     return Array.isArray(list) ? list : [];
   },
 
   async artifacts(): Promise<unknown[]> {
-    if (!hasBridge()) return [];
+    if (!hasBridge()) {
+      return [];
+    }
     const list = await bridge()!.conversations.artifacts();
     return Array.isArray(list) ? list : [];
   },
 
-  async trackMaterial(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  async trackMaterial(
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, any>> {
     const trackers = bridge()?.contextTrackers;
-    if (!trackers) return { ok: false, error: '材料关注通道不可用。' };
+    if (!trackers) {
+      return {ok: false, error: '材料关注通道不可用。'};
+    }
     return trackers.material(payload);
   },
 
-  async readArtifact(conversationId: string, artifactId: string): Promise<Record<string, any>> {
+  async readArtifact(
+    conversationId: string,
+    artifactId: string,
+  ): Promise<Record<string, any>> {
     const artifacts = bridge()?.artifacts;
-    if (!hasBridge() || !artifacts?.read) return { ok: false, error: '产物读取通道不可用。' };
-    return artifacts.read({ conversationId, artifactId });
+    if (!hasBridge() || !artifacts?.read) {
+      return {ok: false, error: '产物读取通道不可用。'};
+    }
+    return artifacts.read({conversationId, artifactId});
   },
-  async undoArtifact(conversationId: string, artifactId: string, revision: number, confirmed: boolean): Promise<Record<string, any>> {
+  async undoArtifact(
+    conversationId: string,
+    artifactId: string,
+    revision: number,
+    confirmed: boolean,
+  ): Promise<Record<string, any>> {
     const undo = bridge()?.artifacts?.undo;
-    return undo ? undo({ conversationId, artifactId, revision, confirmed }) : { ok: false, error: '撤销通道不可用。' };
+    return undo
+      ? undo({conversationId, artifactId, revision, confirmed})
+      : {ok: false, error: '撤销通道不可用。'};
   },
-  async recovery(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  async recovery(
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, any>> {
     const recovery = bridge()?.conversations?.recovery;
-    return recovery ? recovery(payload) : { ok: false, error: '恢复通道不可用。' };
+    return recovery
+      ? recovery(payload)
+      : {ok: false, error: '恢复通道不可用。'};
   },
 
   async editArtifact(payload): Promise<Record<string, any>> {
     const artifacts = bridge()?.artifacts;
-    if (!hasBridge() || !artifacts?.edit) return { ok: false, error: '产物编辑通道不可用。' };
+    if (!hasBridge() || !artifacts?.edit) {
+      return {ok: false, error: '产物编辑通道不可用。'};
+    }
     return artifacts.edit(payload);
   },
 
@@ -1222,8 +2087,10 @@ const Data: MagicPointerDataApi = {
     revision: number,
   ): Promise<Record<string, any>> {
     const artifacts = bridge()?.artifacts;
-    if (!hasBridge() || !artifacts?.accept) return { ok: false, error: '产物批准通道不可用。' };
-    return artifacts.accept({ conversationId, artifactId, revision });
+    if (!hasBridge() || !artifacts?.accept) {
+      return {ok: false, error: '产物批准通道不可用。'};
+    }
+    return artifacts.accept({conversationId, artifactId, revision});
   },
 
   async applyArtifact(
@@ -1232,19 +2099,25 @@ const Data: MagicPointerDataApi = {
     revision: number,
   ): Promise<Record<string, any>> {
     const artifacts = bridge()?.artifacts;
-    if (!hasBridge() || !artifacts?.apply) return { ok: false, error: '产物应用通道不可用。' };
-    return artifacts.apply({ conversationId, artifactId, revision });
+    if (!hasBridge() || !artifacts?.apply) {
+      return {ok: false, error: '产物应用通道不可用。'};
+    }
+    return artifacts.apply({conversationId, artifactId, revision});
   },
 
   async pairFigma(conversationId: string): Promise<Record<string, any>> {
     const figma = bridge()?.figma;
-    if (!hasBridge() || !figma?.pair) return { ok: false, error: 'Figma 配对通道不可用。' };
+    if (!hasBridge() || !figma?.pair) {
+      return {ok: false, error: 'Figma 配对通道不可用。'};
+    }
     return figma.pair(conversationId);
   },
 
   async figmaStatus(conversationId: string): Promise<Record<string, any>> {
     const figma = bridge()?.figma;
-    if (!hasBridge() || !figma?.status) return { ok: false, error: 'Figma 状态通道不可用。' };
+    if (!hasBridge() || !figma?.status) {
+      return {ok: false, error: 'Figma 状态通道不可用。'};
+    }
     return figma.status(conversationId);
   },
 
@@ -1253,7 +2126,9 @@ const Data: MagicPointerDataApi = {
     documentSessionId: string,
   ): Promise<Record<string, any>> {
     const figma = bridge()?.figma;
-    if (!hasBridge() || !figma?.disconnect) return { ok: false, error: 'Figma 断开通道不可用。' };
+    if (!hasBridge() || !figma?.disconnect) {
+      return {ok: false, error: 'Figma 断开通道不可用。'};
+    }
     return figma.disconnect(conversationId, documentSessionId);
   },
 
@@ -1263,7 +2138,7 @@ const Data: MagicPointerDataApi = {
   ): Promise<Record<string, any>> {
     const figma = bridge()?.figma;
     if (!hasBridge() || !figma?.inspectSelection) {
-      return { ok: false, error: 'Figma 选区读取通道不可用。' };
+      return {ok: false, error: 'Figma 选区读取通道不可用。'};
     }
     return figma.inspectSelection(conversationId, documentSessionId);
   },
@@ -1275,15 +2150,19 @@ const Data: MagicPointerDataApi = {
   ): Promise<Record<string, any>> {
     const figma = bridge()?.figma;
     if (!hasBridge() || !figma?.exportPreview) {
-      return { ok: false, error: 'Figma 节点预览通道不可用。' };
+      return {ok: false, error: 'Figma 节点预览通道不可用。'};
     }
     return figma.exportPreview(conversationId, documentSessionId, nodeId);
   },
 
   async stash(): Promise<MagicPointerStashEntry[]> {
-    if (!bridge()?.stash) return [];
+    if (!bridge()?.stash) {
+      return [];
+    }
     const bursts = await bridge()!.stash.list();
-    if (!Array.isArray(bursts) || !bursts.length) return [];
+    if (!Array.isArray(bursts) || !bursts.length) {
+      return [];
+    }
     return bursts.map((b: MagicPointerStashBurst) => ({
       id: b.id,
       title: b.items![0]?.desc || b.app || '一组',
@@ -1291,9 +2170,15 @@ const Data: MagicPointerDataApi = {
       icon: 'ic-window',
       time: formatTime(b.capturedAt),
       kind: b.kind || '素材',
-      items: b.items!.map((e) => ({
-        t: e.media === 'text' ? 'note' : 'shot', w: 180, h: 120, desc: e.desc, src: e.absPath,
-        text: e.text || '', media: e.media || 'image', summary: e.summary || '',
+      items: b.items!.map(e => ({
+        t: e.media === 'text' ? 'note' : 'shot',
+        w: 180,
+        h: 120,
+        desc: e.desc,
+        src: e.absPath,
+        text: e.text || '',
+        media: e.media || 'image',
+        summary: e.summary || '',
         id: e.id,
         capturedAt: e.capturedAt,
         locator: e.locator,
@@ -1305,70 +2190,99 @@ const Data: MagicPointerDataApi = {
     }));
   },
 
-  async searchStash(query = '', category = ''): Promise<MagicPointerStashEntry[]> {
+  async searchStash(
+    query = '',
+    category = '',
+  ): Promise<MagicPointerStashEntry[]> {
     const stash = bridge()?.stash;
-    if (!hasBridge() || !stash?.search) return [];
-    const entries = await stash.search({ query, category, limit: 200 });
-    if (!Array.isArray(entries)) return [];
+    if (!hasBridge() || !stash?.search) {
+      return [];
+    }
+    const entries = await stash.search({query, category, limit: 200});
+    if (!Array.isArray(entries)) {
+      return [];
+    }
     return entries.map((entry, index) => ({
       id: String(entry.id || `search-${index}`),
-      title: String(entry.desc || entry.summary || entry.originalArtifactPath || '收藏材料'),
+      title: String(
+        entry.desc || entry.summary || entry.originalArtifactPath || '收藏材料',
+      ),
       app: String(entry.app || ''),
       icon: 'ic-window',
       time: formatTime(entry.capturedAt),
       kind: String(entry.userCategory || entry.kind || '素材'),
-      items: [{
-        t: entry.media === 'text' ? 'note' : 'shot',
-        w: 180,
-        h: 120,
-        desc: entry.desc,
-        src: entry.absPath,
-        text: entry.text || '',
-        media: entry.media || 'file',
-        summary: entry.summary || '',
-        id: entry.id,
-        capturedAt: entry.capturedAt,
-        locator: entry.locator,
-        originalArtifactPath: entry.originalArtifactPath,
-        sourceId: entry.sourceId,
-        sourceTimeMs: entry.sourceTimeMs,
-        userCategory: entry.userCategory,
-      }],
+      items: [
+        {
+          t: entry.media === 'text' ? 'note' : 'shot',
+          w: 180,
+          h: 120,
+          desc: entry.desc,
+          src: entry.absPath,
+          text: entry.text || '',
+          media: entry.media || 'file',
+          summary: entry.summary || '',
+          id: entry.id,
+          capturedAt: entry.capturedAt,
+          locator: entry.locator,
+          originalArtifactPath: entry.originalArtifactPath,
+          sourceId: entry.sourceId,
+          sourceTimeMs: entry.sourceTimeMs,
+          userCategory: entry.userCategory,
+        },
+      ],
     }));
   },
 
-  async addStashNote(text: string, category = '笔记'): Promise<Record<string, any>> {
+  async addStashNote(
+    text: string,
+    category = '笔记',
+  ): Promise<Record<string, any>> {
     const stash = bridge()?.stash;
-    if (!hasBridge() || !stash?.addNote) return { ok: false, error: '收藏通道不可用。' };
-    return stash.addNote({ text, summary: text, userCategory: category });
+    if (!hasBridge() || !stash?.addNote) {
+      return {ok: false, error: '收藏通道不可用。'};
+    }
+    return stash.addNote({text, summary: text, userCategory: category});
   },
 
   async addStashFiles(): Promise<Record<string, any>> {
     const stash = bridge()?.stash;
-    if (!hasBridge() || !stash?.addFiles) return { ok: false, error: '收藏通道不可用。' };
+    if (!hasBridge() || !stash?.addFiles) {
+      return {ok: false, error: '收藏通道不可用。'};
+    }
     return stash.addFiles();
   },
 
   async openStashEntry(id: string): Promise<Record<string, any>> {
     const stash = bridge()?.stash;
-    if (!hasBridge() || !stash?.open) return { ok: false, error: '来源打开通道不可用。' };
+    if (!hasBridge() || !stash?.open) {
+      return {ok: false, error: '来源打开通道不可用。'};
+    }
     return stash.open(id);
   },
 
-  async updateStashCategory(id: string, category: string): Promise<Record<string, any>> {
+  async updateStashCategory(
+    id: string,
+    category: string,
+  ): Promise<Record<string, any>> {
     const stash = bridge()?.stash;
-    if (!hasBridge() || !stash?.updateCategory) return { ok: false, error: '分类修改通道不可用。' };
+    if (!hasBridge() || !stash?.updateCategory) {
+      return {ok: false, error: '分类修改通道不可用。'};
+    }
     return stash.updateCategory(id, category);
   },
 
   async removeStashEntry(id: string): Promise<Record<string, any>> {
     const stash = bridge()?.stash;
-    if (!hasBridge() || !stash?.remove) return { ok: false, error: '收藏删除通道不可用。' };
+    if (!hasBridge() || !stash?.remove) {
+      return {ok: false, error: '收藏删除通道不可用。'};
+    }
     return stash.remove(id);
   },
 
   async describeStashImage(src: string): Promise<string | null | undefined> {
-    if (!bridge()?.stash?.describe) return null;
+    if (!bridge()?.stash?.describe) {
+      return null;
+    }
     try {
       const result = await bridge()!.stash.describe!(src);
       return result?.ok ? result.summary : null;
@@ -1378,20 +2292,26 @@ const Data: MagicPointerDataApi = {
   },
 
   onChange(callback: (change?: MagicPointerConversationChange) => void) {
-    bridge()?.conversations?.onTurn?.((change) => callback(change));
+    bridge()?.conversations?.onTurn?.(change => callback(change));
     bridge()?.stash?.onEntry?.(() => callback());
   },
 };
 
 function formatTime(ms: number | null | undefined): string {
-  if (!ms) return '';
+  if (!ms) {
+    return '';
+  }
   const d = new Date(ms);
   const today = new Date();
   const sameDay = d.toDateString() === today.toDateString();
   const pad = (n: number) => String(n).padStart(2, '0');
-  if (sameDay) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (sameDay) {
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
   const y = new Date(today.getTime() - 86400000);
-  if (d.toDateString() === y.toDateString()) return '昨天';
+  if (d.toDateString() === y.toDateString()) {
+    return '昨天';
+  }
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
@@ -1399,8 +2319,12 @@ function formatTime(ms: number | null | undefined): string {
 function dayLabel(ms: number): string {
   const d = new Date(ms);
   const today = new Date();
-  if (d.toDateString() === today.toDateString()) return '今天';
+  if (d.toDateString() === today.toDateString()) {
+    return '今天';
+  }
   const y = new Date(today.getTime() - 86400000);
-  if (d.toDateString() === y.toDateString()) return '昨天';
+  if (d.toDateString() === y.toDateString()) {
+    return '昨天';
+  }
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
 }

@@ -1,22 +1,41 @@
-import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, appendFile, mkdir, rename, unlink, stat } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { array, record, insidePath, fileSource, type Json, type SourceRef } from './context';
-import { EventSession, withFileLock } from './session';
-import { ArtifactRegistry, projectArtifacts } from './artifacts';
+import {randomUUID} from 'node:crypto';
+import {
+  readFile,
+  writeFile,
+  appendFile,
+  mkdir,
+  rename,
+  unlink,
+  stat,
+} from 'node:fs/promises';
+import {basename, dirname, join, resolve} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
+import {
+  array,
+  record,
+  insidePath,
+  fileSource,
+  type Json,
+  type SourceRef,
+} from './context';
+import {EventSession, withFileLock} from './session';
+import {ArtifactRegistry, projectArtifacts} from './artifacts';
 
 async function json(path: string, fallback: unknown): Promise<unknown> {
   try {
     return JSON.parse(await readFile(path, 'utf8'));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError)
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      error instanceof SyntaxError
+    ) {
       return fallback;
+    }
     throw error;
   }
 }
 async function save(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), {recursive: true});
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, JSON.stringify(value));
@@ -26,7 +45,9 @@ async function save(path: string, value: unknown): Promise<void> {
   }
 }
 async function fileExists(path: string): Promise<boolean> {
-  if (!path) return false;
+  if (!path) {
+    return false;
+  }
   try {
     return (await stat(path)).isFile();
   } catch {
@@ -40,33 +61,46 @@ export class ScreenMemory {
   ) {}
   async recall(
     query = '',
-    options: { since?: number; until?: number; limit?: number; now?: number } = {},
+    options: {
+      since?: number;
+      until?: number;
+      limit?: number;
+      now?: number;
+    } = {},
   ): Promise<Json[]> {
-    const now = options.now ?? Date.now() / 1000,
-      needle = query.trim().toLowerCase();
+    const now = options.now ?? Date.now() / 1000;
+    const needle = query.trim().toLowerCase();
     return array<Json>(record(await json(this.path, {})).entries)
       .filter(
-        (entry) =>
+        entry =>
           Number(entry.at) >= now - 86400 &&
           (options.since === undefined || Number(entry.at) >= options.since) &&
           (options.until === undefined || Number(entry.at) <= options.until) &&
-          (!needle || `${entry.excerpt} ${entry.windowTitle}`.toLowerCase().includes(needle)),
+          (!needle ||
+            `${entry.excerpt} ${entry.windowTitle}`
+              .toLowerCase()
+              .includes(needle)),
       )
       .slice(0, Math.min(400, options.limit ?? 20))
-      .map((entry) => ({
+      .map(entry => ({
         ...entry,
-        provenanceMissing: entry.provenanceMissing === true || !entry.sourceId || !entry.locator,
+        provenanceMissing:
+          entry.provenanceMissing === true || !entry.sourceId || !entry.locator,
       }));
   }
   async record(value: Json): Promise<Json | null> {
-    if (!this.enabled || value.sensitive) return null;
+    if (!this.enabled || value.sensitive) {
+      return null;
+    }
     const excerpt = String(value.excerpt ?? '')
-        .trim()
-        .slice(0, 400),
-      windowTitle = String(value.windowTitle ?? '')
-        .trim()
-        .slice(0, 200);
-    if (!excerpt && !windowTitle) return null;
+      .trim()
+      .slice(0, 400);
+    const windowTitle = String(value.windowTitle ?? '')
+      .trim()
+      .slice(0, 200);
+    if (!excerpt && !windowTitle) {
+      return null;
+    }
     const entry = {
       id: randomUUID(),
       at: Date.now() / 1000,
@@ -78,8 +112,8 @@ export class ScreenMemory {
       provenanceMissing: !value.sourceId || !value.locator,
     };
     await withFileLock(`${this.path}.lock`, async () => {
-      const entries = (await this.recall('', { limit: 400 })).filter(
-        (item) =>
+      const entries = (await this.recall('', {limit: 400})).filter(
+        item =>
           !(
             item.excerpt === excerpt &&
             item.windowTitle === windowTitle &&
@@ -87,14 +121,17 @@ export class ScreenMemory {
             isDeepStrictEqual(item.locator, entry.locator)
           ),
       );
-      await save(this.path, { version: 2, entries: [entry, ...entries].slice(0, 400) });
+      await save(this.path, {
+        version: 2,
+        entries: [entry, ...entries].slice(0, 400),
+      });
     });
     return entry;
   }
   async clear(): Promise<number> {
     return withFileLock(`${this.path}.lock`, async () => {
       const entries = array(record(await json(this.path, {})).entries);
-      await save(this.path, { version: 2, entries: [] });
+      await save(this.path, {version: 2, entries: []});
       return entries.length;
     });
   }
@@ -103,45 +140,60 @@ export class ClipboardHistory {
   constructor(readonly path: string) {}
   async recent(limit = 20): Promise<Json[]> {
     return array<Json>(record(await json(this.path, {})).entries)
-      .filter((entry) => entry.text && Number(entry.at) >= Date.now() / 1000 - 7 * 86400)
+      .filter(
+        entry =>
+          entry.text && Number(entry.at) >= Date.now() / 1000 - 7 * 86400,
+      )
       .slice(0, Math.max(0, limit));
   }
   async record(
     text: string,
-    options: { app?: string; formats?: string[]; secret?: boolean; now?: number } = {},
+    options: {
+      app?: string;
+      formats?: string[];
+      secret?: boolean;
+      now?: number;
+    } = {},
   ): Promise<Json | null> {
-    if (!text.trim() || options.secret) return null;
+    if (!text.trim() || options.secret) {
+      return null;
+    }
     return withFileLock(`${this.path}.lock`, async () => {
-      const entries = await this.recent(100),
-        value = text.slice(0, 20000),
-        prior = entries.find((entry) => entry.text === value),
-        entry = {
-          digest: prior?.digest ?? randomUUID(),
-          text: value,
-          at: options.now ?? Date.now() / 1000,
-          app: options.app ?? '',
-          formats: options.formats ?? [],
-          truncated: text.length > 20000,
-        };
+      const entries = await this.recent(100);
+      const value = text.slice(0, 20000);
+      const prior = entries.find(entry => entry.text === value);
+      const entry = {
+        digest: prior?.digest ?? randomUUID(),
+        text: value,
+        at: options.now ?? Date.now() / 1000,
+        app: options.app ?? '',
+        formats: options.formats ?? [],
+        truncated: text.length > 20000,
+      };
       await save(this.path, {
         version: 1,
-        entries: [entry, ...entries.filter((item) => item.text !== value)].slice(0, 100),
+        entries: [entry, ...entries.filter(item => item.text !== value)].slice(
+          0,
+          100,
+        ),
       });
       return entry;
     });
   }
   async search(query: string, limit = 20): Promise<Json[]> {
     return (await this.recent(100))
-      .filter((entry) => String(entry.text).toLowerCase().includes(query.trim().toLowerCase()))
+      .filter(entry =>
+        String(entry.text).toLowerCase().includes(query.trim().toLowerCase()),
+      )
       .slice(0, Math.max(0, limit));
   }
   async get(id: string): Promise<Json | null> {
-    return (await this.recent(100)).find((entry) => entry.digest === id) ?? null;
+    return (await this.recent(100)).find(entry => entry.digest === id) ?? null;
   }
   async clear(): Promise<number> {
     return withFileLock(`${this.path}.lock`, async () => {
       const count = (await this.recent(100)).length;
-      await save(this.path, { version: 1, entries: [] });
+      await save(this.path, {version: 1, entries: []});
       return count;
     });
   }
@@ -150,13 +202,18 @@ export class KnowledgeCatalog {
   constructor(readonly indexPath: string) {}
   async entries(): Promise<Json[]> {
     return array<Json>(await json(this.indexPath, []))
-      .filter((entry) => entry.id)
-      .map((entry) => ({
+      .filter(entry => entry.id)
+      .map(entry => ({
         entryId: entry.id,
         sourceId: entry.sourceId ?? `knowledge:${entry.id}`,
-        locator: entry.locator ?? { kind: 'text', value: { knowledgeEntryId: entry.id } },
+        locator: entry.locator ?? {
+          kind: 'text',
+          value: {knowledgeEntryId: entry.id},
+        },
         title:
-          (entry.desc ?? entry.elementName ?? basename(String(entry.originalArtifactPath ?? ''))) ||
+          (entry.desc ??
+            entry.elementName ??
+            basename(String(entry.originalArtifactPath ?? ''))) ||
           '收藏材料',
         summary: String(entry.summary ?? entry.text ?? '').slice(0, 4000),
         userCategory: entry.userCategory ?? entry.kind ?? '',
@@ -170,38 +227,62 @@ export class KnowledgeCatalog {
       }))
       .sort((a, b) => b.addedAtMs - a.addedAtMs);
   }
-  async search(query = '', category?: string, limit = 20, include?: (entry: Json) => boolean): Promise<Json[]> {
+  async search(
+    query = '',
+    category?: string,
+    limit = 20,
+    include?: (entry: Json) => boolean,
+  ): Promise<Json[]> {
     const needle = query.toLowerCase();
     return (await this.entries())
       .filter(
-        (entry) =>
+        entry =>
           (!include || include(entry)) &&
-          (!category || String(entry.userCategory).toLowerCase() === category.toLowerCase()) &&
+          (!category ||
+            String(entry.userCategory).toLowerCase() ===
+              category.toLowerCase()) &&
           (!needle ||
-            [entry.title, entry.summary, entry.userCategory, entry.originalArtifactPath].some(
-              (value) => String(value).toLowerCase().includes(needle),
-            )),
+            [
+              entry.title,
+              entry.summary,
+              entry.userCategory,
+              entry.originalArtifactPath,
+            ].some(value => String(value).toLowerCase().includes(needle))),
       )
       .slice(0, Math.max(0, Math.min(limit, 100)));
   }
-  async resolve(id: string, taskId: string, allowedPaths: string[]): Promise<Json & { source: SourceRef }> {
-    const entry = (await this.entries()).find((entry) => entry.entryId === id);
-    if (!entry) throw new Error('Unknown knowledge entry');
-    const original = String(entry.originalArtifactPath),
-      retained = String(entry.retainedArtifactPath),
-      allowed = new Set(allowedPaths.map((path) => resolve(path))),
-      originalAllowed = !!original && allowed.has(resolve(original)),
-      retainedAllowed = !!retained && allowed.has(resolve(retained));
-    if (!originalAllowed && !retainedAllowed) throw new Error('Knowledge entry is outside task scope');
-    const originalExists = originalAllowed && await fileExists(original),
-      retainedExists = retainedAllowed && await fileExists(retained),
-      path = originalExists ? original : retainedExists ? retained : originalAllowed ? original : retained,
-      evidenceState = originalExists
-        ? 'original'
-        : retainedExists
-          ? 'retained_evidence'
-          : 'missing',
-      source = fileSource(taskId, path);
+  async resolve(
+    id: string,
+    taskId: string,
+    allowedPaths: string[],
+  ): Promise<Json & {source: SourceRef}> {
+    const entry = (await this.entries()).find(entry => entry.entryId === id);
+    if (!entry) {
+      throw new Error('Unknown knowledge entry');
+    }
+    const original = String(entry.originalArtifactPath);
+    const retained = String(entry.retainedArtifactPath);
+    const allowed = new Set(allowedPaths.map(path => resolve(path)));
+    const originalAllowed = !!original && allowed.has(resolve(original));
+    const retainedAllowed = !!retained && allowed.has(resolve(retained));
+    if (!originalAllowed && !retainedAllowed) {
+      throw new Error('Knowledge entry is outside task scope');
+    }
+    const originalExists = originalAllowed && (await fileExists(original));
+    const retainedExists = retainedAllowed && (await fileExists(retained));
+    const path = originalExists
+      ? original
+      : retainedExists
+        ? retained
+        : originalAllowed
+          ? original
+          : retained;
+    const evidenceState = originalExists
+      ? 'original'
+      : retainedExists
+        ? 'retained_evidence'
+        : 'missing';
+    const source = fileSource(taskId, path);
     source.sourceId = String(entry.sourceId);
     source.title = String(entry.title);
     source.identity = {
@@ -210,7 +291,10 @@ export class KnowledgeCatalog {
       originalArtifactPath: original,
       evidenceState,
     };
-    source.revision = { sourceTimeMs: entry.sourceTimeMs, addedAtMs: entry.addedAtMs };
+    source.revision = {
+      sourceTimeMs: entry.sourceTimeMs,
+      addedAtMs: entry.addedAtMs,
+    };
     source.capabilities = ['read', 'search'];
     source.origin = 'task-discovered';
     return {
@@ -218,26 +302,32 @@ export class KnowledgeCatalog {
       source,
       locator: entry.locator,
       available: evidenceState !== 'missing',
-      unavailableReason: evidenceState === 'missing' ? 'artifact_missing' : null,
+      unavailableReason:
+        evidenceState === 'missing' ? 'artifact_missing' : null,
       evidenceState,
     };
   }
   async remove(id: string): Promise<boolean> {
     return withFileLock(`${this.indexPath}.lock`, async () => {
-      const entries = array<Json>(await json(this.indexPath, [])),
-        entry = entries.find((entry) => entry.id === id);
-      if (!entry) return false;
+      const entries = array<Json>(await json(this.indexPath, []));
+      const entry = entries.find(entry => entry.id === id);
+      if (!entry) {
+        return false;
+      }
       await save(
         this.indexPath,
-        entries.filter((entry) => entry.id !== id),
+        entries.filter(entry => entry.id !== id),
       );
-      const retained = entry.relPath ? resolve(dirname(this.indexPath), String(entry.relPath)) : '';
+      const retained = entry.relPath
+        ? resolve(dirname(this.indexPath), String(entry.relPath))
+        : '';
       if (
         retained &&
         insidePath(retained, dirname(this.indexPath)) &&
         retained !== resolve(String(entry.originalArtifactPath ?? ''))
-      )
+      ) {
         await unlink(retained).catch(() => {});
+      }
       return true;
     });
   }
@@ -250,15 +340,19 @@ export class ConversationEventCatalog {
     conversationIds: string[] = [],
     limit = 200,
   ): Promise<Json> {
-    if (fromMs < 0 || toMs < fromMs) throw new Error('Invalid DailyWrap time range');
+    if (fromMs < 0 || toMs < fromMs) {
+      throw new Error('Invalid DailyWrap time range');
+    }
     const conversations = array<Json>(
-        await json(join(this.userDataDir, 'history', 'conversations.json'), []),
-      ),
-      selected = new Set(conversationIds),
-      included = new Set<string>(),
-      events: Json[] = [];
+      await json(join(this.userDataDir, 'history', 'conversations.json'), []),
+    );
+    const selected = new Set(conversationIds);
+    const included = new Set<string>();
+    const events: Json[] = [];
     for (const conversation of conversations) {
-      if (selected.size && !selected.has(String(conversation.id))) continue;
+      if (selected.size && !selected.has(String(conversation.id))) {
+        continue;
+      }
       let authoritative = new Map<string, unknown>();
       if (conversation.agentSessionId) {
         try {
@@ -268,18 +362,21 @@ export class ConversationEventCatalog {
             false,
           );
           authoritative = new Map(
-            projectArtifacts(session.events).map((draft) => [
+            projectArtifacts(session.events).map(draft => [
               draft.artifactId,
-              { ...draft, authority: 'event_session' },
+              {...draft, authority: 'event_session'},
             ]),
           );
         } catch {}
       }
       for (const turn of array<Json>(conversation.turns)) {
-        const startedAt = Number(turn.startedAt ?? turn.at ?? 0),
-          completedAt = turn.completedAt === undefined ? null : Number(turn.completedAt),
-          observed = completedAt ?? startedAt;
-        if (observed < fromMs || observed > toMs) continue;
+        const startedAt = Number(turn.startedAt ?? turn.at ?? 0);
+        const completedAt =
+          turn.completedAt === undefined ? null : Number(turn.completedAt);
+        const observed = completedAt ?? startedAt;
+        if (observed < fromMs || observed > toMs) {
+          continue;
+        }
         included.add(String(conversation.id));
         events.push({
           conversationId: conversation.id,
@@ -295,13 +392,18 @@ export class ConversationEventCatalog {
           receipts: array(turn.receipts).slice(0, 48),
           artifacts: array<Json>(turn.artifacts)
             .slice(0, 24)
-            .map((artifact) => authoritative.get(String(artifact.artifactId)) ?? artifact),
+            .map(
+              artifact =>
+                authoritative.get(String(artifact.artifactId)) ?? artifact,
+            ),
           evidence: turn.evidence ?? null,
         });
       }
     }
     events.sort(
-      (a, b) => Number(b.completedAt ?? b.startedAt) - Number(a.completedAt ?? a.startedAt),
+      (a, b) =>
+        Number(b.completedAt ?? b.startedAt) -
+        Number(a.completedAt ?? a.startedAt),
     );
     const bounded = events.slice(0, Math.max(0, Math.min(limit, 500)));
     return {
@@ -324,20 +426,25 @@ export class ConversationEventCatalog {
 export class ObjectStore {
   constructor(readonly root: string) {}
   async append(object: Json): Promise<void> {
-    await mkdir(this.root, { recursive: true });
-    await appendFile(join(this.root, 'objects.jsonl'), `${JSON.stringify(object)}\n`);
+    await mkdir(this.root, {recursive: true});
+    await appendFile(
+      join(this.root, 'objects.jsonl'),
+      `${JSON.stringify(object)}\n`,
+    );
   }
   async objects(): Promise<Json[]> {
     let raw = '';
     try {
       raw = await readFile(join(this.root, 'objects.jsonl'), 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
     }
     return raw
       .split('\n')
       .filter(Boolean)
-      .flatMap((line) => {
+      .flatMap(line => {
         try {
           return [record(JSON.parse(line))];
         } catch {
@@ -349,7 +456,9 @@ export class ObjectStore {
     return limit > 0 ? (await this.objects()).reverse().slice(0, limit) : [];
   }
   async objectById(id: string): Promise<Json | null> {
-    return (await this.objects()).reverse().find((object) => object.id === id) ?? null;
+    return (
+      (await this.objects()).reverse().find(object => object.id === id) ?? null
+    );
   }
 }
 export class TaskContextStore {
@@ -372,24 +481,25 @@ export class TaskContextStore {
     };
   }
   private async state(): Promise<Json> {
-    const state = record(await json(this.path, {})),
-      tasks = record(state.tasks);
+    const state = record(await json(this.path, {}));
+    const tasks = record(state.tasks);
     if (!tasks[String(state.active_task_id)]) {
       const task = this.newTask();
       tasks[String(task.id)] = task;
       state.active_task_id = task.id;
     }
-    return { ...state, tasks };
+    return {...state, tasks};
   }
   async activeTask(autoRollover = true): Promise<Json> {
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.state(),
-        tasks = record(state.tasks);
-      let task = record(tasks[String(state.active_task_id)]),
-        rolledOver = false;
+      const state = await this.state();
+      const tasks = record(state.tasks);
+      let task = record(tasks[String(state.active_task_id)]);
+      let rolledOver = false;
       if (
         autoRollover &&
-        Date.now() - Date.parse(String(task.updated_at)) > this.idleTimeoutMinutes * 60000
+        Date.now() - Date.parse(String(task.updated_at)) >
+          this.idleTimeoutMinutes * 60000
       ) {
         state.previous_task_id = task.id;
         task = this.newTask();
@@ -398,13 +508,13 @@ export class TaskContextStore {
         rolledOver = true;
       }
       await save(this.path, state);
-      return { task, rolled_over: rolledOver };
+      return {task, rolled_over: rolledOver};
     });
   }
   async startNewTask(): Promise<Json> {
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.state(),
-        task = this.newTask();
+      const state = await this.state();
+      const task = this.newTask();
       state.previous_task_id = state.active_task_id;
       state.active_task_id = task.id;
       record(state.tasks)[String(task.id)] = task;
@@ -414,10 +524,12 @@ export class TaskContextStore {
   }
   async restorePreviousTask(): Promise<Json | null> {
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.state(),
-        tasks = record(state.tasks),
-        previous = state.previous_task_id;
-      if (!tasks[String(previous)]) return null;
+      const state = await this.state();
+      const tasks = record(state.tasks);
+      const previous = state.previous_task_id;
+      if (!tasks[String(previous)]) {
+        return null;
+      }
       state.previous_task_id = state.active_task_id;
       state.active_task_id = previous;
       const task = record(tasks[String(previous)]);
@@ -428,18 +540,29 @@ export class TaskContextStore {
   }
   async updateTask(
     id: string,
-    patch: { objectId?: string; prompt?: string; answer?: string; destinationId?: string | null },
+    patch: {
+      objectId?: string;
+      prompt?: string;
+      answer?: string;
+      destinationId?: string | null;
+    },
   ): Promise<Json> {
     return withFileLock(`${this.path}.lock`, async () => {
-      const state = await this.state(),
-        tasks = record(state.tasks),
-        task = record(tasks[id] ?? { ...this.newTask(), id }),
-        objects = new Set(array<string>(task.object_ids));
-      if (patch.objectId) objects.add(patch.objectId);
-      if (patch.destinationId) objects.add(patch.destinationId);
+      const state = await this.state();
+      const tasks = record(state.tasks);
+      const task = record(tasks[id] ?? {...this.newTask(), id});
+      const objects = new Set(array<string>(task.object_ids));
+      if (patch.objectId) {
+        objects.add(patch.objectId);
+      }
+      if (patch.destinationId) {
+        objects.add(patch.destinationId);
+      }
       task.object_ids = [...objects];
-      if (patch.destinationId !== undefined) task.destination_id = patch.destinationId;
-      if (patch.prompt !== undefined)
+      if (patch.destinationId !== undefined) {
+        task.destination_id = patch.destinationId;
+      }
+      if (patch.prompt !== undefined) {
         task.messages = [
           ...array(task.messages),
           {
@@ -449,6 +572,7 @@ export class TaskContextStore {
             created_at: new Date().toISOString(),
           },
         ];
+      }
       task.updated_at = new Date().toISOString();
       tasks[id] = task;
       state.active_task_id = id;
@@ -460,10 +584,12 @@ export class TaskContextStore {
     return (record((await this.state()).tasks)[id] as Json) ?? null;
   }
   async taskObjects(store: ObjectStore, id: string): Promise<Json[]> {
-    const task = await this.getTask(id),
-      objects = await Promise.all(
-        array<string>(task?.object_ids).map((objectId) => store.objectById(objectId)),
-      );
+    const task = await this.getTask(id);
+    const objects = await Promise.all(
+      array<string>(task?.object_ids).map(objectId =>
+        store.objectById(objectId),
+      ),
+    );
     return objects.filter((item): item is Json => !!item);
   }
 }
@@ -473,7 +599,9 @@ export class ProvenanceIndex {
     this.path = join(root, 'provenance-executions.jsonl');
   }
   async recordExecution(plan: Json, receipt: Json): Promise<Json> {
-    if (!receipt.id && !receipt.receiptId) throw new Error('Execution receipt id required');
+    if (!receipt.id && !receipt.receiptId) {
+      throw new Error('Execution receipt id required');
+    }
     const value = {
       schemaVersion: 1,
       eventId: randomUUID(),
@@ -484,7 +612,7 @@ export class ProvenanceIndex {
       recipeId: plan.recipe_id ?? plan.recipeId,
       provider: plan.provider,
       status: receipt.status,
-      objects: array<Json>(record(plan.parameters).objects).map((object) => ({
+      objects: array<Json>(record(plan.parameters).objects).map(object => ({
         objectId: object.id ?? object.objectId,
         referenceLabel: object.referenceLabel,
         kind: object.kind,
@@ -493,7 +621,7 @@ export class ProvenanceIndex {
         source: object.source,
       })),
     };
-    await mkdir(this.root, { recursive: true });
+    await mkdir(this.root, {recursive: true});
     await appendFile(this.path, `${JSON.stringify(value)}\n`);
     return value;
   }
@@ -502,12 +630,14 @@ export class ProvenanceIndex {
     try {
       raw = await readFile(this.path, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
     }
     return raw
       .split('\n')
       .filter(Boolean)
-      .flatMap((line) => {
+      .flatMap(line => {
         try {
           return [record(JSON.parse(line))];
         } catch {
@@ -517,8 +647,8 @@ export class ProvenanceIndex {
   }
   async objects(limit = 200): Promise<Json[]> {
     const objects = new Map<string, Json>();
-    for (const event of await this.records())
-      for (const item of array<Json>(event.objects))
+    for (const event of await this.records()) {
+      for (const item of array<Json>(event.objects)) {
         objects.set(String(item.objectId), {
           ...item,
           lastPlanId: event.planId,
@@ -526,19 +656,26 @@ export class ProvenanceIndex {
           lastStatus: event.status,
           updatedAt: event.timestamp,
         });
+      }
+    }
     return [...objects.values()].reverse().slice(0, limit);
   }
   async trace(id: string): Promise<Json> {
-    const records = (await this.records()).filter((event) =>
-        array<Json>(event.objects).some((object) => object.objectId === id),
-      ),
-      artifacts = (await new ArtifactRegistry(this.root).list(500)).filter(
-        (artifact) =>
-          array<string>(artifact.sourceObjectIds).includes(id) || artifact.sourceId === id,
-      );
-    if (!records.length && !artifacts.length) throw new Error('Object provenance not found');
+    const records = (await this.records()).filter(event =>
+      array<Json>(event.objects).some(object => object.objectId === id),
+    );
+    const artifacts = (await new ArtifactRegistry(this.root).list(500)).filter(
+      artifact =>
+        array<string>(artifact.sourceObjectIds).includes(id) ||
+        artifact.sourceId === id,
+    );
+    if (!records.length && !artifacts.length) {
+      throw new Error('Object provenance not found');
+    }
     return {
-      object: (await this.objects(10000)).find((object) => object.objectId === id) ?? {
+      object: (await this.objects(10000)).find(
+        object => object.objectId === id,
+      ) ?? {
         objectId: id,
       },
       plans: records.reverse(),

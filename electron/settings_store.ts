@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { normalizeContextTracker } = require('./context_trackers');
+const {normalizeContextTracker} = require('./context_trackers');
 
 const CAPTURE_MODES = new Set([
   'follow_global',
@@ -10,7 +10,14 @@ const CAPTURE_MODES = new Set([
   'upload_screenshot',
   'deny',
 ]);
-const SHORTCUT_MODIFIERS = new Set(['control', 'alt', 'shift', 'super', 'command', 'commandorcontrol']);
+const SHORTCUT_MODIFIERS = new Set([
+  'control',
+  'alt',
+  'shift',
+  'super',
+  'command',
+  'commandorcontrol',
+]);
 const RESERVED_SHORTCUTS = new Set([
   'control+alt+enter',
   'control+alt+shift+m',
@@ -33,7 +40,7 @@ interface ModelProfile {
   defaultMaxTokens?: number;
   transport?: string;
   headers?: Record<string, string>;
-  models?: Record<string, unknown>[];
+  models?: Array<Record<string, unknown>>;
 }
 
 interface ScopedGrant {
@@ -48,15 +55,40 @@ interface ScopedGrant {
 }
 
 function normalizedShortcut(value: unknown): string {
-  const aliases: Record<string, string> = { ctrl: 'control', option: 'alt', cmd: 'command', cmdorctrl: 'commandorcontrol' };
-  const parts = String(value || '').split('+').map(part => part.trim().toLowerCase()).filter(Boolean);
-  if (parts.length < 2) return '';
+  const aliases: Record<string, string> = {
+    ctrl: 'control',
+    option: 'alt',
+    cmd: 'command',
+    cmdorctrl: 'commandorcontrol',
+  };
+  const parts = String(value || '')
+    .split('+')
+    .map(part => part.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length < 2) {
+    return '';
+  }
   const lastPart = parts.at(-1) || '';
   const key = aliases[lastPart] || lastPart;
   const modifiers = parts.slice(0, -1).map(part => aliases[part] || part);
-  if (!modifiers.length || modifiers.some(part => !SHORTCUT_MODIFIERS.has(part)) || SHORTCUT_MODIFIERS.has(key)) return '';
-  if (new Set(modifiers).size !== modifiers.length) return '';
-  const order = ['commandorcontrol', 'command', 'control', 'alt', 'shift', 'super'];
+  if (
+    !modifiers.length ||
+    modifiers.some(part => !SHORTCUT_MODIFIERS.has(part)) ||
+    SHORTCUT_MODIFIERS.has(key)
+  ) {
+    return '';
+  }
+  if (new Set(modifiers).size !== modifiers.length) {
+    return '';
+  }
+  const order = [
+    'commandorcontrol',
+    'command',
+    'control',
+    'alt',
+    'shift',
+    'super',
+  ];
   modifiers.sort((left, right) => order.indexOf(left) - order.indexOf(right));
   return [...modifiers, key].join('+');
 }
@@ -64,16 +96,31 @@ function normalizedShortcut(value: unknown): string {
 function normalizeAccentRgb(value: unknown, fallback: string): string {
   const text = String(value == null ? '' : value).trim();
   if (text.startsWith('#')) {
-    const digits = text.slice(1).length === 3
-      ? text.slice(1).split('').map((char) => char + char).join('')
-      : text.slice(1);
-    if (!/^[0-9a-fA-F]{6}$/.test(digits)) return fallback;
-    return [0, 2, 4].map((index) => Number.parseInt(digits.slice(index, index + 2), 16)).join(', ');
+    const digits =
+      text.slice(1).length === 3
+        ? text
+            .slice(1)
+            .split('')
+            .map(char => char + char)
+            .join('')
+        : text.slice(1);
+    if (!/^[0-9a-fA-F]{6}$/.test(digits)) {
+      return fallback;
+    }
+    return [0, 2, 4]
+      .map(index => Number.parseInt(digits.slice(index, index + 2), 16))
+      .join(', ');
   }
-  const parts = text.split(',').map((part) => part.trim());
-  if (parts.length !== 3) return fallback;
-  const channels = parts.map((part) => Number(part));
-  if (channels.some((channel) => !Number.isInteger(channel) || channel < 0 || channel > 255)) {
+  const parts = text.split(',').map(part => part.trim());
+  if (parts.length !== 3) {
+    return fallback;
+  }
+  const channels = parts.map(part => Number(part));
+  if (
+    channels.some(
+      channel => !Number.isInteger(channel) || channel < 0 || channel > 255,
+    )
+  ) {
     return fallback;
   }
   return channels.join(', ');
@@ -100,14 +147,22 @@ function defaultSettings() {
       keep_current_app_focus: true,
       dashboard_focus_after_action: false,
       mouse_side_button: 'none',
-      disabled_apps: ['blender', 'krita', 'photoshop', 'premiere', 'davinci resolve', 'unity', 'unreal'],
+      disabled_apps: [
+        'blender',
+        'krita',
+        'photoshop',
+        'premiere',
+        'davinci resolve',
+        'unity',
+        'unreal',
+      ],
       cooldown_ms: 900,
       gesture_arm_delay_ms: 180,
       gesture_timeout_ms: 5000,
       multi_stroke_submit_ms: 2500,
       gesture_interaction_mode: 'exclusive_overlay',
     },
-    interaction: { proactive: true },
+    interaction: {proactive: true},
     agents: {
       preferred: 'pi',
       profiles: {},
@@ -183,55 +238,105 @@ function defaultSettings() {
       burst_window_ms: 120000,
       dedupe_window_ms: 5000,
     },
-    context_trackers: [] as ReturnType<typeof normalizeContextTracker>[],
+    context_trackers: [] as Array<ReturnType<typeof normalizeContextTracker>>,
     recipe_enabled: {},
   };
 }
 
-function validateModels(value: ReturnType<typeof defaultSettings>['models'], defaults: ReturnType<typeof defaultSettings>) {
-  const models = { ...defaults.models, ...(value || {}) };
-  if (models.schemaVersion !== 1 || !Array.isArray(models.profiles) || models.profiles.length > 32) {
+function validateModels(
+  value: ReturnType<typeof defaultSettings>['models'],
+  defaults: ReturnType<typeof defaultSettings>,
+) {
+  const models = {...defaults.models, ...(value || {})};
+  if (
+    models.schemaVersion !== 1 ||
+    !Array.isArray(models.profiles) ||
+    models.profiles.length > 32
+  ) {
     throw new Error('models schemaVersion or profiles is unsupported');
   }
   const profileIds = new Set();
   const capabilityValues = new Set(['yes', 'no', 'unknown']);
   const overrideValues = new Set(['auto', 'yes', 'no']);
-  const normalizedProfiles = models.profiles.map((raw) => {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.schemaVersion !== 1) {
+  const normalizedProfiles = models.profiles.map(raw => {
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      Array.isArray(raw) ||
+      raw.schemaVersion !== 1
+    ) {
       throw new Error('model profile schemaVersion is unsupported');
     }
     for (const key of Object.keys(raw)) {
-      const normalizedKey = String(key).replace(/[^a-z0-9]/gi, '').toLowerCase();
-      const containsSecret = ['apikey', 'token', 'secret', 'credential', 'password', 'authorization']
-        .some((token) => normalizedKey.includes(token));
-      if (containsSecret && !['credentialref', 'defaultmaxtokens'].includes(normalizedKey)) {
-        throw new Error('credential values must not be stored in model profiles');
+      const normalizedKey = String(key)
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase();
+      const containsSecret = [
+        'apikey',
+        'token',
+        'secret',
+        'credential',
+        'password',
+        'authorization',
+      ].some(token => normalizedKey.includes(token));
+      if (
+        containsSecret &&
+        !['credentialref', 'defaultmaxtokens'].includes(normalizedKey)
+      ) {
+        throw new Error(
+          'credential values must not be stored in model profiles',
+        );
       }
     }
-    const id = String(raw.id || '').trim().toLowerCase();
+    const id = String(raw.id || '')
+      .trim()
+      .toLowerCase();
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id) || profileIds.has(id)) {
       throw new Error('model profile id is invalid or duplicated');
     }
     profileIds.add(id);
-    const provider = String(raw.provider || '').trim().toLowerCase();
+    const provider = String(raw.provider || '')
+      .trim()
+      .toLowerCase();
     const model = String(raw.model || '').trim();
-    const apiMode = String(raw.apiMode || '').trim().toLowerCase();
-    if (!provider || !model || !['chat-completions', 'responses', 'messages', 'local'].includes(apiMode)) {
+    const apiMode = String(raw.apiMode || '')
+      .trim()
+      .toLowerCase();
+    if (
+      !provider ||
+      !model ||
+      !['chat-completions', 'responses', 'messages', 'local'].includes(apiMode)
+    ) {
       throw new Error('model profile provider, model, or apiMode is invalid');
     }
-    const inputOverrides = raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {};
-    const inputResolved = raw.resolved && typeof raw.resolved === 'object' ? raw.resolved : {};
-    const overrides = Object.fromEntries(['audioInput', 'toolCalls'].map((name) => {
-      const resolved = String(inputOverrides[name] || 'auto').trim().toLowerCase();
-      if (!overrideValues.has(resolved)) throw new Error(`model profile override ${name} is invalid`);
-      return [name, resolved];
-    }));
-    const resolved = Object.fromEntries(['audioInput', 'toolCalls'].map((name) => {
-      const capability = String(inputResolved[name] || 'unknown').trim().toLowerCase();
-      if (!capabilityValues.has(capability)) throw new Error(`model profile resolved ${name} is invalid`);
-      return [name, capability];
-    }));
-    resolved.source = String(inputResolved.source || 'unknown').trim() || 'unknown';
+    const inputOverrides =
+      raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {};
+    const inputResolved =
+      raw.resolved && typeof raw.resolved === 'object' ? raw.resolved : {};
+    const overrides = Object.fromEntries(
+      ['audioInput', 'toolCalls'].map(name => {
+        const resolved = String(inputOverrides[name] || 'auto')
+          .trim()
+          .toLowerCase();
+        if (!overrideValues.has(resolved)) {
+          throw new Error(`model profile override ${name} is invalid`);
+        }
+        return [name, resolved];
+      }),
+    );
+    const resolved = Object.fromEntries(
+      ['audioInput', 'toolCalls'].map(name => {
+        const capability = String(inputResolved[name] || 'unknown')
+          .trim()
+          .toLowerCase();
+        if (!capabilityValues.has(capability)) {
+          throw new Error(`model profile resolved ${name} is invalid`);
+        }
+        return [name, capability];
+      }),
+    );
+    resolved.source =
+      String(inputResolved.source || 'unknown').trim() || 'unknown';
     resolved.evidence = String(inputResolved.evidence || '').trim();
     resolved.checkedAt = String(inputResolved.checkedAt || '').trim();
     return {
@@ -244,67 +349,123 @@ function validateModels(value: ReturnType<typeof defaultSettings>['models'], def
       apiMode,
       credentialRef: String(raw.credentialRef || '').trim(),
       enabled: raw.enabled !== false,
-      ...(raw.defaultContextWindow !== undefined ? { defaultContextWindow: Number(raw.defaultContextWindow) } : {}),
-      ...(raw.defaultMaxTokens !== undefined ? { defaultMaxTokens: Number(raw.defaultMaxTokens) } : {}),
-      ...(raw.transport !== undefined ? { transport: String(raw.transport) } : {}),
-      ...(raw.headers && typeof raw.headers === 'object' ? { headers: { ...raw.headers } } : {}),
-      ...(Array.isArray(raw.models) ? { models: raw.models.map((entry) => ({ ...entry })) } : {}),
+      ...(raw.defaultContextWindow !== undefined
+        ? {defaultContextWindow: Number(raw.defaultContextWindow)}
+        : {}),
+      ...(raw.defaultMaxTokens !== undefined
+        ? {defaultMaxTokens: Number(raw.defaultMaxTokens)}
+        : {}),
+      ...(raw.transport !== undefined
+        ? {transport: String(raw.transport)}
+        : {}),
+      ...(raw.headers && typeof raw.headers === 'object'
+        ? {headers: {...raw.headers}}
+        : {}),
+      ...(Array.isArray(raw.models)
+        ? {models: raw.models.map(entry => ({...entry}))}
+        : {}),
       overrides,
       resolved,
     };
   });
-  const defaultProfileId = models.defaultProfileId == null || models.defaultProfileId === ''
-    ? null
-    : String(models.defaultProfileId).trim().toLowerCase();
+  const defaultProfileId =
+    models.defaultProfileId == null || models.defaultProfileId === ''
+      ? null
+      : String(models.defaultProfileId).trim().toLowerCase();
   if (defaultProfileId !== null && !profileIds.has(defaultProfileId)) {
-    throw new Error('models.defaultProfileId must reference an existing profile');
+    throw new Error(
+      'models.defaultProfileId must reference an existing profile',
+    );
   }
-  return { schemaVersion: 1, defaultProfileId, profiles: normalizedProfiles };
+  return {schemaVersion: 1, defaultProfileId, profiles: normalizedProfiles};
 }
 
-function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<typeof defaultSettings> {
-  if (!settings || typeof settings !== 'object' || settings.schema_version !== 1) {
+function validate(
+  settings: ReturnType<typeof defaultSettings>,
+): ReturnType<typeof defaultSettings> {
+  if (
+    !settings ||
+    typeof settings !== 'object' ||
+    settings.schema_version !== 1
+  ) {
     throw new Error('settings schema_version is unsupported');
   }
   const defaults = defaultSettings();
-  const general = { ...defaults.general, ...(settings.general || {}) };
+  const general = {...defaults.general, ...(settings.general || {})};
   general.launch_at_login = general.launch_at_login === true;
   general.keep_running = general.keep_running !== false;
-  general.update_channel = String(general.update_channel || '').trim().toLowerCase();
+  general.update_channel = String(general.update_channel || '')
+    .trim()
+    .toLowerCase();
   if (!['stable', 'preview'].includes(general.update_channel)) {
     throw new Error('general.update_channel is unsupported');
   }
-  const notifications = { ...defaults.notifications, ...(settings.notifications || {}) };
+  const notifications = {
+    ...defaults.notifications,
+    ...(settings.notifications || {}),
+  };
   notifications.completion = notifications.completion !== false;
   notifications.failure = notifications.failure !== false;
   const rawActivation = settings.activation || {};
-  const activation = { ...defaults.activation, ...rawActivation };
+  const activation = {...defaults.activation, ...rawActivation};
   if (!Object.prototype.hasOwnProperty.call(rawActivation, 'wake_mode')) {
     activation.wake_mode = activation.wiggle_enabled
-      ? (activation.fallback_hotkey_enabled ? 'wiggle_hotkey' : 'wiggle')
+      ? activation.fallback_hotkey_enabled
+        ? 'wiggle_hotkey'
+        : 'wiggle'
       : 'hotkey';
   }
-  activation.wake_mode = String(activation.wake_mode || '').trim().toLowerCase();
-  if (!['wiggle', 'wiggle_hotkey', 'hotkey', 'mouse_button'].includes(activation.wake_mode)) {
+  activation.wake_mode = String(activation.wake_mode || '')
+    .trim()
+    .toLowerCase();
+  if (
+    !['wiggle', 'wiggle_hotkey', 'hotkey', 'mouse_button'].includes(
+      activation.wake_mode,
+    )
+  ) {
     throw new Error('activation.wake_mode is unsupported');
   }
-  activation.mouse_side_button = String(activation.mouse_side_button || '').trim().toLowerCase();
-  if (!['none', 'xbutton1', 'xbutton2', 'middle_hold'].includes(activation.mouse_side_button)) {
+  activation.mouse_side_button = String(activation.mouse_side_button || '')
+    .trim()
+    .toLowerCase();
+  if (
+    !['none', 'xbutton1', 'xbutton2', 'middle_hold'].includes(
+      activation.mouse_side_button,
+    )
+  ) {
     throw new Error('activation.mouse_side_button is unsupported');
   }
-  if (activation.wake_mode === 'mouse_button' && activation.mouse_side_button === 'none') {
-    throw new Error('activation.mouse_side_button must be bound for mouse_button wake mode');
+  if (
+    activation.wake_mode === 'mouse_button' &&
+    activation.mouse_side_button === 'none'
+  ) {
+    throw new Error(
+      'activation.mouse_side_button must be bound for mouse_button wake mode',
+    );
   }
   activation.gesture_interaction_mode = String(
-    activation.gesture_interaction_mode || defaults.activation.gesture_interaction_mode,
-  ).trim().toLowerCase();
-  if (!['pass_through', 'exclusive_overlay'].includes(activation.gesture_interaction_mode)) {
+    activation.gesture_interaction_mode ||
+      defaults.activation.gesture_interaction_mode,
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    !['pass_through', 'exclusive_overlay'].includes(
+      activation.gesture_interaction_mode,
+    )
+  ) {
     throw new Error('activation.gesture_interaction_mode is unsupported');
   }
-  activation.wiggle_enabled = ['wiggle', 'wiggle_hotkey'].includes(activation.wake_mode);
-  activation.fallback_hotkey_enabled = ['wiggle_hotkey', 'hotkey'].includes(activation.wake_mode);
-  activation.keep_current_app_focus = activation.keep_current_app_focus !== false;
-  activation.dashboard_focus_after_action = activation.dashboard_focus_after_action === true;
+  activation.wiggle_enabled = ['wiggle', 'wiggle_hotkey'].includes(
+    activation.wake_mode,
+  );
+  activation.fallback_hotkey_enabled = ['wiggle_hotkey', 'hotkey'].includes(
+    activation.wake_mode,
+  );
+  activation.keep_current_app_focus =
+    activation.keep_current_app_focus !== false;
+  activation.dashboard_focus_after_action =
+    activation.dashboard_focus_after_action === true;
   for (const [name, minimum, maximum] of [
     ['gesture_arm_delay_ms', 60, 600],
     ['gesture_timeout_ms', 1000, 15000],
@@ -312,14 +473,17 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
   ] as const) {
     const value = Number(activation[name]);
     if (!Number.isFinite(value) || value < minimum || value > maximum) {
-      throw new Error(`activation.${name} must be between ${minimum} and ${maximum}`);
+      throw new Error(
+        `activation.${name} must be between ${minimum} and ${maximum}`,
+      );
     }
     activation[name] = value;
   }
-  const interaction = { proactive: settings.interaction?.proactive !== false };
-  const privacy = { ...defaults.privacy, ...(settings.privacy || {}) };
+  const interaction = {proactive: settings.interaction?.proactive !== false};
+  const privacy = {...defaults.privacy, ...(settings.privacy || {})};
   privacy.screen_memory_enabled = privacy.screen_memory_enabled === true;
-  privacy.background_learning_enabled = privacy.background_learning_enabled === true;
+  privacy.background_learning_enabled =
+    privacy.background_learning_enabled === true;
   privacy.anonymous_usage = privacy.anonymous_usage === true;
   privacy.retain_captures_days = Math.max(
     0,
@@ -331,46 +495,62 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
   );
   privacy.retain_audit_days = Math.max(
     1,
-    Math.min(3650, Number(privacy.retain_audit_days) || defaults.privacy.retain_audit_days),
+    Math.min(
+      3650,
+      Number(privacy.retain_audit_days) || defaults.privacy.retain_audit_days,
+    ),
   );
   if (!CAPTURE_MODES.has(privacy.default_capture_mode)) {
-    throw new Error(`unsupported capture mode: ${privacy.default_capture_mode || '<empty>'}`);
+    throw new Error(
+      `unsupported capture mode: ${privacy.default_capture_mode || '<empty>'}`,
+    );
   }
   if (
-    !privacy.app_capture_modes
-    || typeof privacy.app_capture_modes !== 'object'
-    || Array.isArray(privacy.app_capture_modes)
+    !privacy.app_capture_modes ||
+    typeof privacy.app_capture_modes !== 'object' ||
+    Array.isArray(privacy.app_capture_modes)
   ) {
     throw new Error('privacy.app_capture_modes must be an object');
   }
   privacy.app_capture_modes = Object.fromEntries(
     Object.entries(privacy.app_capture_modes).map(([pattern, mode]) => {
       const cleanPattern = String(pattern || '').trim();
-      const cleanMode = String(mode || '').trim().toLowerCase();
-      if (!cleanPattern) throw new Error('capture policy app pattern is empty');
-      if (!CAPTURE_MODES.has(cleanMode)) throw new Error(`unsupported capture mode: ${cleanMode || '<empty>'}`);
+      const cleanMode = String(mode || '')
+        .trim()
+        .toLowerCase();
+      if (!cleanPattern) {
+        throw new Error('capture policy app pattern is empty');
+      }
+      if (!CAPTURE_MODES.has(cleanMode)) {
+        throw new Error(`unsupported capture mode: ${cleanMode || '<empty>'}`);
+      }
       return [cleanPattern, cleanMode];
     }),
   );
-  const permissions = { ...defaults.permissions, ...(settings.permissions || {}) };
+  const permissions = {
+    ...defaults.permissions,
+    ...(settings.permissions || {}),
+  };
   if (!Array.isArray(permissions.scoped_grants)) {
     throw new Error('scoped permission grants must be a list');
   }
-  permissions.scoped_grants = permissions.scoped_grants.map((raw) => {
+  permissions.scoped_grants = permissions.scoped_grants.map(raw => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       throw new Error('scoped permission grant must be an object');
     }
-    const decision = String(raw.decision || '').trim().toLowerCase();
+    const decision = String(raw.decision || '')
+      .trim()
+      .toLowerCase();
     if (!['allow', 'confirm', 'deny'].includes(decision)) {
-      throw new Error(`invalid scoped permission decision: ${decision || '<empty>'}`);
+      throw new Error(
+        `invalid scoped permission decision: ${decision || '<empty>'}`,
+      );
     }
     const expiresAt = String(raw.expires_at || raw.expiresAt || '').trim();
     if (
-      expiresAt
-      && (
-        Number.isNaN(Date.parse(expiresAt))
-        || !/(?:z|[+-]\d{2}:\d{2})$/i.test(expiresAt)
-      )
+      expiresAt &&
+      (Number.isNaN(Date.parse(expiresAt)) ||
+        !/(?:z|[+-]\d{2}:\d{2})$/i.test(expiresAt))
     ) {
       throw new Error('invalid scoped permission expiry');
     }
@@ -380,12 +560,20 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
       recipe: String(raw.recipe || '*').trim() || '*',
       app: String(raw.app || '').trim(),
       project: String(raw.project || '').trim(),
-      risk: String(raw.risk || '*').trim().toLowerCase() || '*',
+      risk:
+        String(raw.risk || '*')
+          .trim()
+          .toLowerCase() || '*',
       expires_at: expiresAt,
     };
   });
   const rawShortcuts = settings.shortcuts || {};
-  const shortcuts = Object.fromEntries(Object.entries(defaults.shortcuts).map(([key, value]) => [key, (rawShortcuts as Record<string, unknown>)[key] ?? value])) as typeof defaults.shortcuts;
+  const shortcuts = Object.fromEntries(
+    Object.entries(defaults.shortcuts).map(([key, value]) => [
+      key,
+      (rawShortcuts as Record<string, unknown>)[key] ?? value,
+    ]),
+  ) as typeof defaults.shortcuts;
   if (!Object.prototype.hasOwnProperty.call(rawShortcuts, 'wake')) {
     shortcuts.wake = activation.fallback_hotkey || defaults.shortcuts.wake;
   }
@@ -397,34 +585,59 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     }
     mutableShortcuts[name] = value.trim();
     const normalized = normalizedShortcut(mutableShortcuts[name]);
-    if (!normalized) throw new Error(`shortcut ${name} is invalid`);
-    if (RESERVED_SHORTCUTS.has(normalized)) throw new Error(`reserved shortcut ${mutableShortcuts[name]}`);
+    if (!normalized) {
+      throw new Error(`shortcut ${name} is invalid`);
+    }
+    if (RESERVED_SHORTCUTS.has(normalized)) {
+      throw new Error(`reserved shortcut ${mutableShortcuts[name]}`);
+    }
     if (normalizedShortcuts.has(normalized)) {
-      throw new Error(`duplicate shortcut ${mutableShortcuts[name]} for ${normalizedShortcuts.get(normalized)} and ${name}`);
+      throw new Error(
+        `duplicate shortcut ${mutableShortcuts[name]} for ${normalizedShortcuts.get(normalized)} and ${name}`,
+      );
     }
     normalizedShortcuts.set(normalized, name);
   }
   activation.fallback_hotkey = shortcuts.wake;
-  const rawAppearance = settings.appearance && typeof settings.appearance === 'object'
-    ? settings.appearance
-    : {};
-  const appearance = { ...defaults.appearance, ...rawAppearance };
-  if (!Object.prototype.hasOwnProperty.call(rawAppearance, 'gesture_line_style')) {
+  const rawAppearance =
+    settings.appearance && typeof settings.appearance === 'object'
+      ? settings.appearance
+      : {};
+  const appearance = {...defaults.appearance, ...rawAppearance};
+  if (
+    !Object.prototype.hasOwnProperty.call(rawAppearance, 'gesture_line_style')
+  ) {
     appearance.gesture_line_style = defaults.appearance.gesture_line_style;
-    appearance.gesture_line_width_dip = defaults.appearance.gesture_line_width_dip;
+    appearance.gesture_line_width_dip =
+      defaults.appearance.gesture_line_width_dip;
   }
-  appearance.theme = String(appearance.theme || '').trim().toLowerCase();
-  appearance.material = String(appearance.material || '').trim().toLowerCase();
-  appearance.selection_visual = String(appearance.selection_visual || '').trim().toLowerCase();
-  appearance.gesture_line_style = String(appearance.gesture_line_style || '').trim().toLowerCase();
-  appearance.accent_rgb = normalizeAccentRgb(appearance.accent_rgb, defaults.appearance.accent_rgb);
+  appearance.theme = String(appearance.theme || '')
+    .trim()
+    .toLowerCase();
+  appearance.material = String(appearance.material || '')
+    .trim()
+    .toLowerCase();
+  appearance.selection_visual = String(appearance.selection_visual || '')
+    .trim()
+    .toLowerCase();
+  appearance.gesture_line_style = String(appearance.gesture_line_style || '')
+    .trim()
+    .toLowerCase();
+  appearance.accent_rgb = normalizeAccentRgb(
+    appearance.accent_rgb,
+    defaults.appearance.accent_rgb,
+  );
   if (!['system', 'light', 'dark'].includes(appearance.theme)) {
     throw new Error('appearance.theme is unsupported');
   }
   if (!['auto', 'translucent', 'solid'].includes(appearance.material)) {
     throw new Error('appearance.material is unsupported');
   }
-  if (!['sweep_band', 'soft_glow', 'outline'].includes(appearance.selection_visual)) {
+  if (
+    !['sweep_band', 'soft_glow', 'outline'].includes(
+      appearance.selection_visual,
+    )
+  ) {
     throw new Error('appearance.selection_visual is unsupported');
   }
   if (!['demo6_band', 'thin'].includes(appearance.gesture_line_style)) {
@@ -443,57 +656,103 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     capsule_inline_gap_dip: [4, 96],
     gesture_line_width_dip: [3, 40],
   };
-  const mutableAppearance = appearance as unknown as Record<string, string | number>;
+  const mutableAppearance = appearance as unknown as Record<
+    string,
+    string | number
+  >;
   for (const [name, [minimum, maximum]] of Object.entries(appearanceRanges)) {
     const value = Number(mutableAppearance[name]);
     if (!Number.isFinite(value) || value < minimum || value > maximum) {
-      throw new Error(`appearance.${name} must be between ${minimum} and ${maximum}`);
+      throw new Error(
+        `appearance.${name} must be between ${minimum} and ${maximum}`,
+      );
     }
     mutableAppearance[name] = value;
   }
   if (appearance.sweep_min_height_dip > appearance.sweep_max_height_dip) {
     throw new Error('appearance sweep minimum must not exceed maximum');
   }
-  if (
-    appearance.capsule_max_width_dip < appearance.capsule_text_width_dip
-  ) {
+  if (appearance.capsule_max_width_dip < appearance.capsule_text_width_dip) {
     throw new Error('appearance capsule maximum width is too small');
   }
-  const accessibility = { ...defaults.accessibility, ...(settings.accessibility || {}) };
+  const accessibility = {
+    ...defaults.accessibility,
+    ...(settings.accessibility || {}),
+  };
   accessibility.reduce_motion = accessibility.reduce_motion === true;
-  accessibility.reduce_transparency = accessibility.reduce_transparency === true;
-  accessibility.high_contrast_controls = accessibility.high_contrast_controls === true;
-  const connections = { ...defaults.connections, ...(settings.connections || {}) };
-  connections.browser_devtools_enabled = connections.browser_devtools_enabled !== false;
-  if (!Array.isArray(connections.browser_devtools_endpoints) || connections.browser_devtools_endpoints.length > 8) {
-    throw new Error('connections.browser_devtools_endpoints must be a bounded list');
+  accessibility.reduce_transparency =
+    accessibility.reduce_transparency === true;
+  accessibility.high_contrast_controls =
+    accessibility.high_contrast_controls === true;
+  const connections = {
+    ...defaults.connections,
+    ...(settings.connections || {}),
+  };
+  connections.browser_devtools_enabled =
+    connections.browser_devtools_enabled !== false;
+  if (
+    !Array.isArray(connections.browser_devtools_endpoints) ||
+    connections.browser_devtools_endpoints.length > 8
+  ) {
+    throw new Error(
+      'connections.browser_devtools_endpoints must be a bounded list',
+    );
   }
   const seenDevToolsEndpoints = new Set();
-  connections.browser_devtools_endpoints = connections.browser_devtools_endpoints.map((raw) => {
-    let endpoint;
-    try {
-      endpoint = new URL(String(raw || '').trim());
-    } catch {
-      throw new Error('browser DevTools endpoint is invalid');
-    }
-    if (!['http:', 'https:'].includes(endpoint.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)) {
-      throw new Error('browser DevTools endpoints must use a loopback host');
-    }
-    const port = Number(endpoint.port);
-    if (!Number.isInteger(port) || port < 1024 || port > 65535 || !['', '/'].includes(endpoint.pathname) || endpoint.search || endpoint.hash) {
-      throw new Error('browser DevTools endpoint must be an origin with an explicit user port');
-    }
-    const canonical = `${endpoint.protocol}//${endpoint.hostname}:${port}`;
-    if (seenDevToolsEndpoints.has(canonical)) return null;
-    seenDevToolsEndpoints.add(canonical);
-    return canonical;
-  }).filter((value): value is string => Boolean(value));
-  const agents = { ...defaults.agents, ...(settings.agents || {}) };
-  agents.delivery_mode = String(agents.delivery_mode || '').trim().toLowerCase();
-  agents.cwd_match = String(agents.cwd_match || '').trim().toLowerCase();
-  agents.image_policy = String(agents.image_policy || '').trim().toLowerCase();
+  connections.browser_devtools_endpoints =
+    connections.browser_devtools_endpoints
+      .map(raw => {
+        let endpoint;
+        try {
+          endpoint = new URL(String(raw || '').trim());
+        } catch {
+          throw new Error('browser DevTools endpoint is invalid');
+        }
+        if (
+          !['http:', 'https:'].includes(endpoint.protocol) ||
+          !['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)
+        ) {
+          throw new Error(
+            'browser DevTools endpoints must use a loopback host',
+          );
+        }
+        const port = Number(endpoint.port);
+        if (
+          !Number.isInteger(port) ||
+          port < 1024 ||
+          port > 65535 ||
+          !['', '/'].includes(endpoint.pathname) ||
+          endpoint.search ||
+          endpoint.hash
+        ) {
+          throw new Error(
+            'browser DevTools endpoint must be an origin with an explicit user port',
+          );
+        }
+        const canonical = `${endpoint.protocol}//${endpoint.hostname}:${port}`;
+        if (seenDevToolsEndpoints.has(canonical)) {
+          return null;
+        }
+        seenDevToolsEndpoints.add(canonical);
+        return canonical;
+      })
+      .filter((value): value is string => Boolean(value));
+  const agents = {...defaults.agents, ...(settings.agents || {})};
+  agents.delivery_mode = String(agents.delivery_mode || '')
+    .trim()
+    .toLowerCase();
+  agents.cwd_match = String(agents.cwd_match || '')
+    .trim()
+    .toLowerCase();
+  agents.image_policy = String(agents.image_policy || '')
+    .trim()
+    .toLowerCase();
   agents.auto_attach = agents.auto_attach !== false;
-  if (!['active_session', 'managed_session', 'clipboard'].includes(agents.delivery_mode)) {
+  if (
+    !['active_session', 'managed_session', 'clipboard'].includes(
+      agents.delivery_mode,
+    )
+  ) {
     throw new Error('agents.delivery_mode is unsupported');
   }
   if (!['strict', 'subtree', 'confirm'].includes(agents.cwd_match)) {
@@ -502,25 +761,40 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
   if (!['vision_only', 'never', 'confirm'].includes(agents.image_policy)) {
     throw new Error('agents.image_policy is unsupported');
   }
-  if (!agents.session_bindings || typeof agents.session_bindings !== 'object' || Array.isArray(agents.session_bindings)) {
+  if (
+    !agents.session_bindings ||
+    typeof agents.session_bindings !== 'object' ||
+    Array.isArray(agents.session_bindings)
+  ) {
     throw new Error('agents.session_bindings must be an object');
   }
-  agents.session_bindings = Object.fromEntries(Object.entries(agents.session_bindings).map(([provider, sessionId]) => {
-    const cleanProvider = String(provider || '').trim().toLowerCase();
-    const cleanSession = String(sessionId || '').trim();
-    if (!cleanProvider || !cleanSession || cleanSession.length > 256) {
-      throw new Error('agents.session_bindings contains an invalid entry');
-    }
-    return [cleanProvider, cleanSession];
-  }));
-  const rawContextTrackers = settings.context_trackers === undefined
-    ? defaults.context_trackers
-    : settings.context_trackers;
+  agents.session_bindings = Object.fromEntries(
+    Object.entries(agents.session_bindings).map(([provider, sessionId]) => {
+      const cleanProvider = String(provider || '')
+        .trim()
+        .toLowerCase();
+      const cleanSession = String(sessionId || '').trim();
+      if (!cleanProvider || !cleanSession || cleanSession.length > 256) {
+        throw new Error('agents.session_bindings contains an invalid entry');
+      }
+      return [cleanProvider, cleanSession];
+    }),
+  );
+  const rawContextTrackers =
+    settings.context_trackers === undefined
+      ? defaults.context_trackers
+      : settings.context_trackers;
   if (!Array.isArray(rawContextTrackers) || rawContextTrackers.length > 100) {
     throw new Error('context_trackers must be a bounded list');
   }
-  const contextTrackers = rawContextTrackers.map((tracker: unknown) => normalizeContextTracker(tracker));
-  if (new Set(contextTrackers.map((tracker: { trackerId: string }) => tracker.trackerId)).size !== contextTrackers.length) {
+  const contextTrackers = rawContextTrackers.map((tracker: unknown) =>
+    normalizeContextTracker(tracker),
+  );
+  if (
+    new Set(
+      contextTrackers.map((tracker: {trackerId: string}) => tracker.trackerId),
+    ).size !== contextTrackers.length
+  ) {
     throw new Error('context_trackers contains duplicate trackerId values');
   }
   return {
@@ -538,9 +812,9 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     appearance,
     accessibility,
     connections,
-    stash: { ...defaults.stash, ...(settings.stash || {}) },
+    stash: {...defaults.stash, ...(settings.stash || {})},
     context_trackers: contextTrackers,
-    recipe_enabled: { ...(settings.recipe_enabled || {}) },
+    recipe_enabled: {...(settings.recipe_enabled || {})},
   };
 }
 
@@ -552,23 +826,33 @@ class ElectronSettingsStore {
   }
 
   writeValidated(validated: ReturnType<typeof defaultSettings>): string {
-    fs.mkdirSync(path.dirname(this.path), { recursive: true });
+    fs.mkdirSync(path.dirname(this.path), {recursive: true});
     const tempPath = `${this.path}.tmp`;
-    fs.writeFileSync(tempPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(
+      tempPath,
+      `${JSON.stringify(validated, null, 2)}\n`,
+      'utf8',
+    );
     fs.renameSync(tempPath, this.path);
     return this.path;
   }
 
   load(): ReturnType<typeof defaultSettings> {
-    if (!fs.existsSync(this.path)) return defaultSettings();
+    if (!fs.existsSync(this.path)) {
+      return defaultSettings();
+    }
     let parsed = null;
     try {
       parsed = JSON.parse(fs.readFileSync(this.path, 'utf8'));
     } catch (error) {
-        throw new Error(`settings JSON is invalid: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `settings JSON is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const validated = validate(parsed);
-    if (JSON.stringify(parsed) !== JSON.stringify(validated)) this.writeValidated(validated);
+    if (JSON.stringify(parsed) !== JSON.stringify(validated)) {
+      this.writeValidated(validated);
+    }
     return validated;
   }
 
@@ -578,4 +862,4 @@ class ElectronSettingsStore {
   }
 }
 
-module.exports = { ElectronSettingsStore, defaultSettings, validate };
+module.exports = {ElectronSettingsStore, defaultSettings, validate};

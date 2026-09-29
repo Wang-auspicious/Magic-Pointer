@@ -1,4 +1,9 @@
-const ALLOWED_TRAVEL_MODES = new Set(['driving', 'walking', 'bicycling', 'transit']);
+const ALLOWED_TRAVEL_MODES = new Set([
+  'driving',
+  'walking',
+  'bicycling',
+  'transit',
+]);
 const MAX_LOCATION_LENGTH = 240;
 const MAX_URL_LENGTH = 2048;
 
@@ -10,21 +15,27 @@ type DirectionsPayload = {
 
 function normalizeLocation(value: unknown): string | null {
   const withoutControls = [...String(value || '')]
-    .map((character) => {
+    .map(character => {
       const code = character.charCodeAt(0);
       return code <= 0x1f || code === 0x7f ? ' ' : character;
     })
     .join('');
   const text = withoutControls.replace(/\s+/g, ' ').trim();
-  if (!text || text.length > MAX_LOCATION_LENGTH) return null;
+  if (!text || text.length > MAX_LOCATION_LENGTH) {
+    return null;
+  }
   return text;
 }
 
-function buildGoogleMapsDirectionsUrl(payload: DirectionsPayload = {}): string | null {
+function buildGoogleMapsDirectionsUrl(
+  payload: DirectionsPayload = {},
+): string | null {
   const origin = normalizeLocation(payload.origin);
   const destination = normalizeLocation(payload.destination);
   const travelMode = String(payload.travelMode || 'driving');
-  if (!origin || !destination || !ALLOWED_TRAVEL_MODES.has(travelMode)) return null;
+  if (!origin || !destination || !ALLOWED_TRAVEL_MODES.has(travelMode)) {
+    return null;
+  }
   const url = new URL('https://www.google.com/maps/dir/');
   url.searchParams.set('api', '1');
   url.searchParams.set('origin', origin);
@@ -45,7 +56,9 @@ function isAllowedGoogleMapsDirectionsUrl(value: unknown): boolean {
       Boolean(normalizeLocation(url.searchParams.get('origin'))) &&
       Boolean(normalizeLocation(url.searchParams.get('destination'))) &&
       ALLOWED_TRAVEL_MODES.has(url.searchParams.get('travelmode') || '') &&
-      keys.every((key) => ['api', 'origin', 'destination', 'travelmode'].includes(key)) &&
+      keys.every(key =>
+        ['api', 'origin', 'destination', 'travelmode'].includes(key),
+      ) &&
       url.toString().length <= MAX_URL_LENGTH
     );
   } catch (_) {

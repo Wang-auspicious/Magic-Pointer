@@ -1,11 +1,12 @@
 {
-  "printWidth": 100,
+  "printWidth": 80,
+  "bracketSpacing": false,
   "singleQuote": true,
   "trailingComma": "all",
-  "arrowParens": "always",
+  "arrowParens": "avoid",
   "endOfLine": "lf",
   "overrides": [
-    { "files": "*.md", "options": { "proseWrap": "preserve" } },
-    { "files": "*.yml", "options": { "singleQuote": false } }
+    {"files": "*.md", "options": {"proseWrap": "preserve"}},
+    {"files": "*.yml", "options": {"singleQuote": false}}
   ]
 }

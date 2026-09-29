@@ -1,10 +1,12 @@
-
-const { app, BrowserWindow } = require('electron');
+const {app, BrowserWindow} = require('electron');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 
-app.setPath('userData', path.join(ROOT, 'data', 'runtime', 'probe-studio-flow-profile'));
+app.setPath(
+  'userData',
+  path.join(ROOT, 'data', 'runtime', 'probe-studio-flow-profile'),
+);
 app.disableHardwareAcceleration();
 
 app.whenReady().then(async () => {
@@ -12,15 +14,26 @@ app.whenReady().then(async () => {
     width: 1500,
     height: 1000,
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      offscreen: true,
+    },
   });
   const errors: string[] = [];
-  window.webContents.on('console-message', (_event: unknown, level: number, message: string) => {
-    if (level >= 2) errors.push(String(message).slice(0, 300));
-  });
+  window.webContents.on(
+    'console-message',
+    (_event: unknown, level: number, message: string) => {
+      if (level >= 2) {
+        errors.push(String(message).slice(0, 300));
+      }
+    },
+  );
   try {
-    await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'studio.html'));
-    await new Promise((r) => setTimeout(r, 900));
+    await window.loadFile(
+      path.join(ROOT, 'electron', 'renderer', 'studio.html'),
+    );
+    await new Promise(r => setTimeout(r, 900));
     await window.webContents.executeJavaScript(`
       window.__sent = [];
       window.magicPointerDashboard = {
@@ -42,7 +55,7 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript(
       `document.getElementById('composer-workspace').click()`,
     );
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 400));
     const chipLabel = await window.webContents.executeJavaScript(
       `document.getElementById('composer-workspace-label').textContent`,
     );
@@ -57,16 +70,22 @@ app.whenReady().then(async () => {
         return 'submitted';
       })()
     `);
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 600));
     const sent = await window.webContents.executeJavaScript(`window.__sent`);
     process.stdout.write(
       `chipLabel=${chipLabel}\nsentCount=${sent.length}\n` +
-      (sent[0] ? `workspaceRoot=${JSON.stringify(sent[0].workspaceRoot)}\nquestion=${JSON.stringify(sent[0].question)}\n` : ''),
+        (sent[0]
+          ? `workspaceRoot=${JSON.stringify(sent[0].workspaceRoot)}\nquestion=${JSON.stringify(sent[0].question)}\n`
+          : ''),
     );
     process.stdout.write(`console_errors=${errors.length}\n`);
-    for (const error of errors.slice(0, 8)) process.stdout.write(`  ${error}\n`);
+    for (const error of errors.slice(0, 8)) {
+      process.stdout.write(`  ${error}\n`);
+    }
   } catch (error) {
-    process.stderr.write(`probe failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `probe failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exitCode = 1;
   } finally {
     app.quit();

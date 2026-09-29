@@ -7,7 +7,7 @@ class ActivationGate {
   constructor({
     debounceMs = 600,
     repeatQuietMs = 300,
-  }: { debounceMs?: number; repeatQuietMs?: number } = {}) {
+  }: {debounceMs?: number; repeatQuietMs?: number} = {}) {
     this.debounceMs = debounceMs;
     this.repeatQuietMs = repeatQuietMs;
     this.lastAcceptedAt = Number.NEGATIVE_INFINITY;
@@ -26,15 +26,21 @@ class ActivationGate {
     const quietFor = now - this.lastEventAt;
     this.lastEventAt = now;
     if (isActivationBusy) {
-      if (now - this.lastAcceptedAt < this.debounceMs || quietFor < this.repeatQuietMs)
+      if (
+        now - this.lastAcceptedAt < this.debounceMs ||
+        quietFor < this.repeatQuietMs
+      ) {
         return 'ignore';
+      }
       this.lastAcceptedAt = now;
       return 'dismiss';
     }
-    if (now - this.lastAcceptedAt < this.debounceMs) return 'ignore';
+    if (now - this.lastAcceptedAt < this.debounceMs) {
+      return 'ignore';
+    }
     this.lastAcceptedAt = now;
     return hasVisibleSurface ? 'dismiss' : 'activate';
   }
 }
 
-module.exports = { ActivationGate };
+module.exports = {ActivationGate};

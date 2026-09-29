@@ -1,4 +1,3 @@
-
 type MarkName = 'spark' | 'incognito' | 'reflectBroadcast';
 
 interface MarkOptions {
@@ -15,7 +14,7 @@ const MARKS = {
 };
 
 function kebabName(mark: MarkName): string {
-  return mark.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+  return mark.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
 }
 
 function names(): MarkName[] {
@@ -23,11 +22,16 @@ function names(): MarkName[] {
 }
 
 function svg(name: string, options: MarkOptions = {}): string {
-  if (!Object.hasOwn(MARKS, name)) return '';
+  if (!Object.hasOwn(MARKS, name)) {
+    return '';
+  }
   const mark = name as MarkName;
   const source = MARKS[mark];
-  const className = typeof options.className === 'string' ? options.className : '';
-  const merged = className ? `${kebabName(mark)} ${className}` : kebabName(mark);
+  const className =
+    typeof options.className === 'string' ? options.className : '';
+  const merged = className
+    ? `${kebabName(mark)} ${className}`
+    : kebabName(mark);
   const tagEnd = source.indexOf('>');
   const head = source.slice(0, tagEnd);
   const open = head.indexOf('class="');
@@ -41,17 +45,24 @@ function svg(name: string, options: MarkOptions = {}): string {
 
 function spark(state: 'idle' | 'thinking' | 'writing' = 'idle'): string {
   const still = svg('spark');
-  if (state === 'idle') return still;
+  if (state === 'idle') {
+    return still;
+  }
   const frames = state === 'thinking' ? 9 : 8;
-  return `<span class="mp-spark-animation" data-cds="Spark" aria-hidden="true">${still}<span data-cds-spark-strip="true" style="height:${frames * 100}%;mask-image:url('assets/activity/spark-${state}.svg');--spark-end:-${100 * (frames - 1) / frames}%;animation:mp-spark-frames ${90 * frames}ms steps(${frames}, jump-none) infinite"></span></span>`;
+  return `<span class="mp-spark-animation" data-cds="Spark" aria-hidden="true">${still}<span data-cds-spark-strip="true" style="height:${frames * 100}%;mask-image:url('assets/activity/spark-${state}.svg');--spark-end:-${(100 * (frames - 1)) / frames}%;animation:mp-spark-frames ${90 * frames}ms steps(${frames}, jump-none) infinite"></span></span>`;
 }
 
-const ActivityMarks = { MARKS, names, svg, spark };
-if (typeof module !== 'undefined' && module.exports) module.exports = ActivityMarks;
+const ActivityMarks = {MARKS, names, svg, spark};
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = ActivityMarks;
+}
 if (typeof globalThis !== 'undefined') {
-  (globalThis as typeof globalThis & { ActivityMarks?: typeof ActivityMarks }).ActivityMarks =
-    ActivityMarks;
+  (
+    globalThis as typeof globalThis & {ActivityMarks?: typeof ActivityMarks}
+  ).ActivityMarks = ActivityMarks;
 }
 if (typeof document !== 'undefined') {
-  document.querySelectorAll('.mp-account-mark').forEach(node => { node.innerHTML = spark(); });
+  document.querySelectorAll('.mp-account-mark').forEach(node => {
+    node.innerHTML = spark();
+  });
 }

@@ -11,7 +11,7 @@ class MouseActivationDetector {
   middleDownAt: number | null;
   middleTriggered: boolean;
 
-  constructor({ middleHoldMs = 450 }: { middleHoldMs?: number } = {}) {
+  constructor({middleHoldMs = 450}: {middleHoldMs?: number} = {}) {
     this.middleHoldMs = middleHoldMs;
     this.lastButtons = 0;
     this.middleDownAt = null;
@@ -38,7 +38,9 @@ class MouseActivationDetector {
     this.lastButtons = current;
     if (mode === 'xbutton1' || mode === 'xbutton2') {
       const mask = BUTTON_MASKS[mode];
-      return (current & mask) !== 0 && (previous & mask) === 0 ? `mouse-button-${mode}` : null;
+      return (current & mask) !== 0 && (previous & mask) === 0
+        ? `mouse-button-${mode}`
+        : null;
     }
     if (mode !== 'middle_hold') {
       this.middleDownAt = null;
@@ -68,4 +70,4 @@ class MouseActivationDetector {
   }
 }
 
-module.exports = { BUTTON_MASKS, MouseActivationDetector };
+module.exports = {BUTTON_MASKS, MouseActivationDetector};

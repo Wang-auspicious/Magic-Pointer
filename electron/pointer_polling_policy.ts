@@ -35,16 +35,22 @@ function pointerPollingPolicy({
     .trim()
     .toLowerCase();
   const normalizedOverride = String(mouseShakeOverride || '').trim();
-  const configuredWiggle = WIGGLE_WAKE_MODES.has(normalizedWakeMode) && wiggleEnabled !== false;
+  const configuredWiggle =
+    WIGGLE_WAKE_MODES.has(normalizedWakeMode) && wiggleEnabled !== false;
   const detectWiggle =
-    normalizedOverride === '1' ? true : normalizedOverride === '0' ? false : configuredWiggle;
+    normalizedOverride === '1'
+      ? true
+      : normalizedOverride === '0'
+        ? false
+        : configuredWiggle;
   const normalizedSideButton = String(mouseSideButton || '')
     .trim()
     .toLowerCase();
   const episodeContinuation =
     episodeActive === true &&
     ['xbutton1', 'xbutton2', 'middle_hold'].includes(normalizedSideButton);
-  const detectMouseButton = normalizedWakeMode === 'mouse_button' || episodeContinuation;
+  const detectMouseButton =
+    normalizedWakeMode === 'mouse_button' || episodeContinuation;
 
   return {
     shouldPoll: detectWiggle || detectMouseButton,
@@ -61,4 +67,4 @@ function disabledPolicy(): PointerPollingPolicy {
   };
 }
 
-module.exports = { pointerPollingPolicy };
+module.exports = {pointerPollingPolicy};

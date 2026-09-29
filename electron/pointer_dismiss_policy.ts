@@ -13,10 +13,12 @@ function shouldDismissFromGlobalPointer({
   hasVisibleTemporarySurface = false,
   interactiveOverlayOwnsPointer = false,
 }: PointerDismissInput = {}): boolean {
-  if (!hasVisibleTemporarySurface || interactiveOverlayOwnsPointer) return false;
+  if (!hasVisibleTemporarySurface || interactiveOverlayOwnsPointer) {
+    return false;
+  }
   const rightButtonPressed = (Number(currentButtons) & 2) !== 0;
   const rightButtonWasPressed = (Number(previousButtons) & 2) !== 0;
   return rightButtonPressed && !rightButtonWasPressed;
 }
 
-module.exports = { shouldDismissFromGlobalPointer };
+module.exports = {shouldDismissFromGlobalPointer};

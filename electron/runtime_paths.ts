@@ -9,4 +9,4 @@ function projectRoot(runtimeDirectory: string = __dirname): string {
     : path.resolve(runtimeDirectory, '..');
 }
 
-module.exports = { projectRoot };
+module.exports = {projectRoot};
