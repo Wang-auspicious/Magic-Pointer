@@ -20,16 +20,103 @@ import {
   modelPlugins,
 } from './agent_plugins';
 import {registerCodingTools} from './agent_files';
+import {RuntimeActivitySink} from './agent_activity';
 import {EventSession} from './session';
 import {ToolRegistry} from './tools';
 import {streamModel} from './model';
-import {initialToolNames, registerToolResultReader} from './agent_services';
+import {
+  initialToolNames,
+  registerToolResultReader,
+  registerWebTools,
+} from './agent_services';
 
 const active = new Set(['starting', 'running', 'awaiting_user']);
 const MAX_ACTIVE_AGENTS = 4;
 const MAX_VISIBLE_STEPS = 80;
+const MAX_TRACE_TEXT_CHARS = 1200;
+const MAX_TRACE_RESULT_CHARS = 1600;
+const MAX_PARENT_SUMMARY_CHARS = 1600;
+const MAX_PARENT_SOURCES = 8;
 const str = (value: unknown) => String(value ?? '');
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export function projectAgentTrajectory(
+  previous: Data[],
+  current: Data[],
+  model: string | undefined,
+): Data[] {
+  const previousSeq = previous.reduce(
+    (latest, row) => Math.max(latest, Number(row.seq) || 0),
+    0,
+  );
+  const rows = current
+    .filter(row => row.kind === 'message' || row.kind === 'tool')
+    .slice(-MAX_VISIBLE_STEPS)
+    .map(row => ({
+      ...row,
+      seq: previousSeq + Number(row.seq),
+      model,
+      ...(row.text !== undefined
+        ? {
+            text:
+              row.kind === 'message'
+                ? str(row.text).slice(-MAX_TRACE_TEXT_CHARS)
+                : str(row.text).slice(0, MAX_TRACE_TEXT_CHARS),
+          }
+        : {}),
+      ...(row.reasoning !== undefined
+        ? {reasoning: str(row.reasoning).slice(-MAX_TRACE_TEXT_CHARS)}
+        : {}),
+      ...(row.result !== undefined
+        ? {result: str(row.result).slice(0, MAX_TRACE_RESULT_CHARS)}
+        : {}),
+    }));
+  return [...previous, ...rows].slice(-MAX_VISIBLE_STEPS);
+}
+
+function sourceUrls(text: string): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(/https?:\/\/[^\s<>()[\]]+/g)) {
+    const raw = match[0].replace(/[.,;:!?]+$/, '');
+    try {
+      const url = new URL(raw);
+      url.hash = '';
+      const source = url.toString();
+      if (!seen.has(source)) {
+        seen.add(source);
+        urls.push(source);
+      }
+    } catch {}
+    if (urls.length >= MAX_PARENT_SOURCES) {
+      break;
+    }
+  }
+  return urls;
+}
+
+function compactParentNotice(
+  id: string,
+  status: string,
+  summary: string,
+  sources: string[],
+  earlierSources: Set<string>,
+): string {
+  const concise = summary
+    .replace(/https?:\/\/[^\s<>()[\]]+/g, '[source URL in saved result]')
+    .slice(0, MAX_PARENT_SUMMARY_CHARS);
+  const fresh = sources.filter(url => !earlierSources.has(url));
+  const repeated = sources.length - fresh.length;
+  return [
+    `[Agent ${id} ${status}]`,
+    concise,
+    ...(fresh.length ? [`Sources: ${fresh.join(' · ')}`] : []),
+    ...(repeated
+      ? [`${repeated} source URL(s) already reported by another worker.`]
+      : []),
+    `Full result: AgentStatus(id="${id}", include_output=true).`,
+  ].join('\n');
+}
 
 function agentSummary(status: Data): Data {
   const summary = str(status.summary);
@@ -256,6 +343,9 @@ async function launch(payload: BackgroundPayload): Promise<Data> {
     background: true,
     stepCount: Number(previous?.stepCount) || 0,
     steps: [],
+    trajectory: Array.isArray(previous?.trajectory)
+      ? previous.trajectory.slice(-MAX_VISIBLE_STEPS)
+      : [],
     currentTool: '',
     startedAt: Date.now(),
     model: payload.config?.model,
@@ -314,7 +404,7 @@ export function registerSubagentTools(
   registry.register({
     name: 'Agent',
     description:
-      'Delegate one independent task with a concrete deliverable and only the context it needs. Use separate file ownership for parallel edits. Up to four children run at once; identical active tasks are reused. readonly=true limits reads. Completion arrives in the parent inbox; use AgentWait instead of repeatedly polling AgentStatus. Resume an existing child for follow-up work.',
+      'Delegate one independent task with a concrete deliverable and only the context it needs. For web research, divide workers by distinct entities or domains; ask each for verified entity identity, conclusion, source URL and a brief source excerpt, not a keyword match alone. Use separate file ownership for parallel edits. Up to four children run at once; identical active tasks are reused. readonly=true limits reads. Completion arrives as a compact parent inbox notice; inspect full output with AgentStatus(include_output=true), and use AgentWait instead of model polling. Resume an existing child for follow-up work.',
     input_schema: {
       type: 'object',
       properties: {
@@ -586,6 +676,10 @@ export async function runBackgroundAgent(
   const session = await ownedChild(userDataDir, payload.parentId, sessionId);
   const parent = await EventSession.open(userDataDir, payload.parentId, false);
   let state = (await readAgentStatus(userDataDir, sessionId))!;
+  const previousTrajectory = Array.isArray(state.trajectory)
+    ? state.trajectory.map(asObject)
+    : [];
+  const activity = new RuntimeActivitySink(() => {});
   let pendingWrite = Promise.resolve();
   let lastPublish = 0;
   const started = Number(state.startedAt);
@@ -616,6 +710,12 @@ export async function runBackgroundAgent(
       ...patch,
       elapsedMs: Date.now() - started,
       steps: structuredClone(steps),
+      trajectory: projectAgentTrajectory(
+        previousTrajectory,
+        activity.trajectory,
+        payload.config?.model ||
+          (typeof state.model === 'string' ? state.model : undefined),
+      ),
       stepCount,
     };
     const snapshot = state;
@@ -625,6 +725,7 @@ export async function runBackgroundAgent(
     lastPublish = Date.now();
   };
   const onEvent = (event: AgentEvent) => {
+    activity.onEvent(event);
     if (event.kind === 'turn_started') {
       publish({
         status: 'running',
@@ -703,6 +804,11 @@ export async function runBackgroundAgent(
               registerToolResultReader(ctx.get('tools'), session),
           },
           {
+            name: 'web-tools',
+            apply: (ctx: import('./agent_plugins').PluginContext) =>
+              registerWebTools(ctx.get('tools')),
+          },
+          {
             name: 'harness-tools',
             apply: (ctx: import('./agent_plugins').PluginContext) =>
               registerAgentTools(ctx.get('tools'), session),
@@ -749,7 +855,7 @@ export async function runBackgroundAgent(
               ? ['read']
               : ['read', 'reversible_write', 'local_irreversible'],
             system:
-              'You are a Magic Pointer coding subagent. Complete the assigned task independently in the workspace. Read before editing, verify actual results, and return a concise factual report with paths and remaining limitations. Never claim work or checks you did not perform.',
+              'You are a Magic Pointer subagent. Complete the assigned task independently in the workspace. Read before editing, verify actual results, and return a concise factual report with paths and remaining limitations. For web research, verify each target entity against source content, then report the conclusion, URL and a brief evidence excerpt; avoid duplicate entities and sources. Never claim work or checks you did not perform.',
           };
           common.system += '\n\n' + (await prompt.build(common));
           result = await runAgent(common);
@@ -782,14 +888,37 @@ export async function runBackgroundAgent(
       });
       await pendingWrite;
       if (result.reason !== 'awaiting_user') {
-        await parent.append('subagent/finished', {
+        const sources = sourceUrls(summary);
+        const finished = await parent.append('subagent/finished', {
           childSessionId: sessionId,
           status,
           receiptStatus,
           summary,
+          sources,
         });
+        await parent.refresh();
+        const earlierSources = new Set(
+          parent.events
+            .filter(
+              event =>
+                event.type === 'subagent/finished' && event.seq < finished.seq,
+            )
+            .flatMap(event =>
+              Array.isArray(event.data.sources)
+                ? event.data.sources.filter(
+                    (value): value is string => typeof value === 'string',
+                  )
+                : sourceUrls(str(event.data.summary)),
+            ),
+        );
         await parent.enqueue(
-          `[Agent ${sessionId} ${status}]\n${summary}`,
+          compactParentNotice(
+            sessionId,
+            status,
+            summary,
+            sources,
+            earlierSources,
+          ),
           'next-step',
           undefined,
           `agent-result-${sessionId}-${session.events.length}`,
