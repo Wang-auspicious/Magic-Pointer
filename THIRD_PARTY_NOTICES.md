@@ -6,6 +6,16 @@ The personal activity recorder independently implements local activity aggregati
 searchable screen samples and daily summaries, informed by Screenpipe's product
 and data-flow ideas (screenpipe/screenpipe, reviewed at 8752574c5a5a04d921c16a9c84b9e223faff3cbb).
 It includes no Screenpipe source code or runtime dependency.
+The optional Screenpipe connection independently implements its public loopback
+OCR endpoints; the reviewed 2026-09-30 checkout was `46fe476` and carries
+commercial-use restrictions. No Screenpipe implementation is embedded.
+Work-review evidence grouping also draws on the public design of
+`Rion-Wu-tech/wechat-intelligence-hub` at `a868489` (AGPL-3.0-only / commercial
+license). It is independently implemented and includes none of that project's
+source code or database-decryption components. OCR matches remain unverified
+clues, not confirmed promises or unanswered messages.
+The optional Exa Search adapter independently calls the documented Search API;
+it does not embed Exa SDK code or delegate execution to Exa Agent Ultra.
 The session overview and ledger independently follow the Input/Model/Tools lane
 and event inspection concepts in deepseek-harness's `packages/client/ui-trajectory`.
 Both features use Magic Pointer's own persistence, runtime and native host.

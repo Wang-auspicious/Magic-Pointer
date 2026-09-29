@@ -41,9 +41,11 @@ public static class PersonalActivityHost {
         public readonly long[] Keys = new long[512];
         public readonly long[] Injected = new long[512];
         public readonly Dictionary<string, AppTotal> Apps = new Dictionary<string, AppTotal>();
+        public readonly List<WindowInterval> Intervals = new List<WindowInterval>();
         public long Active, Idle, Locked, Unavailable;
     }
     sealed class AppTotal { public string appId, label; public long activeMs, activations; }
+    sealed class WindowInterval { public string from, to, appId, label, windowTitle; public long activeMs; }
     sealed class Foreground { public long hwnd; public uint pid; public string appId, label, title; public int[] bounds; }
     sealed class Change { public long Tick; public IntPtr Hwnd; public int SessionEvent; }
     sealed class Command { public string Name, Id; public Exception Error; }
@@ -224,7 +226,17 @@ public static class PersonalActivityHost {
             long elapsed=end-from;
             lock(Gate) {
                 Bucket bucket=GetBucket(start); DateTime finish=Wall(end); if(finish>bucket.To)bucket.To=finish;
-                if(state=="active") { bucket.Active+=elapsed; if(Current!=null)App(bucket,Current).activeMs+=elapsed; }
+                if(state=="active") {
+                    bucket.Active+=elapsed;
+                    if(Current!=null) {
+                        App(bucket,Current).activeMs+=elapsed;
+                        WindowInterval interval=bucket.Intervals.Count>0?bucket.Intervals[bucket.Intervals.Count-1]:null;
+                        string begin=Iso(start), stop=Iso(finish);
+                        if(interval!=null && interval.to==begin && interval.appId==Current.appId && interval.windowTitle==Current.title) {
+                            interval.to=stop; interval.activeMs+=elapsed;
+                        } else bucket.Intervals.Add(new WindowInterval { from=begin,to=stop,appId=Current.appId,label=Current.label,windowTitle=Current.title,activeMs=elapsed });
+                    }
+                }
                 else if(state=="idle")bucket.Idle+=elapsed;
                 else if(state=="locked")bucket.Locked+=elapsed;
                 else bucket.Unavailable+=elapsed;
@@ -267,6 +279,9 @@ public static class PersonalActivityHost {
             Activate(hwnd,at);
         }
         Advance(at);
+        if(Current!=null && Current.hwnd==hwnd.ToInt64() && !Locked) {
+            StringBuilder title=new StringBuilder(1024); GetWindowText(hwnd,title,title.Capacity); Current.title=title.ToString();
+        }
     }
     static string KeyName(int key) {
         int vk=key&255; bool extended=key>=256;
@@ -305,6 +320,7 @@ public static class PersonalActivityHost {
             Emit(new { type="batch", runId=RunId, sequence=++Sequence, at=Iso(bucket.From), from=Iso(bucket.From), to=Iso(finish),
                 keyboard=Histogram(bucket.Keys), injectedKeyboard=Histogram(bucket.Injected), applications=new List<AppTotal>(bucket.Apps.Values),
                 coverage=new { activeMs=bucket.Active,idleMs=bucket.Idle,lockedMs=bucket.Locked,unavailableMs=bucket.Unavailable },
+                intervals=bucket.Intervals,
                 foreground=foreground,state=State,usedBackend=Backend });
         }
     }

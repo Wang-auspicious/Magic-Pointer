@@ -3676,14 +3676,28 @@ function initializePersonalActivity() {
         ...new Set(roots.filter((root: string) => fs.existsSync(root))),
       ],
       onError: (error: unknown) => log(`personal activity: ${String(error)}`),
+      openThreads: (date: string) =>
+        conversations()
+          .list()
+          .filter((conversation: any) => {
+            const at = new Date(conversation.updatedAt);
+            const localDate = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+            return localDate === date && conversation.hasPendingWork;
+          })
+          .slice(0, 8)
+          .map((conversation: any) => ({
+            text: `${conversation.title || '未命名对话'} · ${conversation.lastFailed ? '上次执行失败' : conversation.lastOutcome === 'interrupted' ? '已中断' : conversation.lastPendingInputKind ? '待答复' : '尚未完成'}`,
+            conversationId: conversation.id,
+            evidence: [],
+          })),
       onReport: (report: {date: string}) => {
         const {Notification} = require('electron');
         if (!Notification.isSupported()) {
           return;
         }
         const notification = new Notification({
-          title: '今天的小结已准备好',
-          body: `${report.date} 的应用活动、按键和文件足迹已保存在本机。`,
+          title: '工作回顾已准备好',
+          body: `${report.date} 的工作片段、文件变化和可继续的对话已整理到本机。`,
         });
         notification.on('click', () =>
           showDashboard({view: 'personal'}, {activate: true}),
@@ -3732,7 +3746,12 @@ ipcMain.handle(
     }
     try {
       const patch: Record<string, unknown> = {};
-      for (const key of ['enabled', 'paused', 'screenEnabled']) {
+      for (const key of [
+        'enabled',
+        'paused',
+        'screenEnabled',
+        'screenpipeEnabled',
+      ]) {
         if (typeof raw[key] === 'boolean') {
           patch[key] = raw[key];
         }

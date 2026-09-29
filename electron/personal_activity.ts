@@ -9,6 +9,12 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import {dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {
+  organizeActivityEvidence,
+  type ActivityBrief,
+  type ActivitySegment,
+  type ActivityWorkItem,
+} from './activity_sources';
 
 export interface ActivityCoverage {
   activeMs: number;
@@ -31,6 +37,15 @@ export interface PersonalActivityBatch {
   applications: ApplicationActivity[];
   coverage: ActivityCoverage;
   usedBackend: string;
+  intervals?: ActivityWindowInterval[];
+}
+export interface ActivityWindowInterval {
+  from: string;
+  to: string;
+  appId: string;
+  label: string;
+  windowTitle: string;
+  activeMs: number;
 }
 export interface ActivityGap {
   from: string;
@@ -41,6 +56,7 @@ export interface PersonalActivitySettings {
   enabled: boolean;
   paused: boolean;
   screenEnabled: boolean;
+  screenpipeEnabled?: boolean;
   reportTime: string;
   retentionDays: number;
   roots: string[];
@@ -73,6 +89,9 @@ export interface PersonalActivityDay {
   coverage: ActivityCoverage;
   files: FileActivityChange[];
   screens: ScreenActivitySample[];
+  intervals?: ActivityWindowInterval[];
+  segments?: ActivitySegment[];
+  workItems?: ActivityWorkItem[];
   screenCount: number;
   fileCounts: Record<FileActivityChange['kind'], number>;
   detailsCleared?: boolean;
@@ -108,7 +127,7 @@ export interface PersonalActivityFacts {
 }
 export type PersonalActivityDaySummary = Omit<
   PersonalActivityDay,
-  'files' | 'screens'
+  'files' | 'screens' | 'intervals'
 >;
 type ActivityTotals = Pick<
   PersonalActivityFacts,
@@ -131,6 +150,7 @@ export interface PersonalActivityReport {
   markdown: string;
   day: PersonalActivityDay | null;
   gaps: ActivityGap[];
+  brief?: ActivityBrief;
 }
 interface ActivityState extends PersonalActivitySettings {
   version: 1;
@@ -326,6 +346,7 @@ export class PersonalActivityStore {
       enabled: this.options.enabled ?? false,
       paused: false,
       screenEnabled: false,
+      screenpipeEnabled: false,
       reportTime: '21:00',
       retentionDays: 30,
       roots: [],
@@ -388,7 +409,7 @@ export class PersonalActivityStore {
   }
   private async detailRows<T>(
     date: string,
-    kind: 'screens' | 'files',
+    kind: 'screens' | 'files' | 'intervals',
   ): Promise<T[]> {
     try {
       const contents = await readFile(
@@ -426,6 +447,7 @@ export class PersonalActivityStore {
       files: [],
       fileCounts: emptyFileCounts(),
       screens: [],
+      intervals: [],
       screenCount: 0,
       roots: [],
       usedBackends: [],
@@ -435,11 +457,12 @@ export class PersonalActivityStore {
     day.firstObservedAt = day.firstObservedAt < at ? day.firstObservedAt : at;
     day.lastObservedAt = day.lastObservedAt > at ? day.lastObservedAt : at;
     day.roots = [...new Set([...day.roots, ...this.state.watchedRoots])];
-    for (const kind of ['files', 'screens'] as const) {
-      if (day[kind].length) {
+    for (const kind of ['files', 'screens', 'intervals'] as const) {
+      const rows = day[kind] ?? [];
+      if (rows.length) {
         await appendFile(
           join(this.directory, 'days', `${date}.${kind}.jsonl`),
-          day[kind].map(row => `${JSON.stringify(row)}\n`).join(''),
+          rows.map(row => `${JSON.stringify(row)}\n`).join(''),
           'utf8',
         );
       }
@@ -501,6 +524,26 @@ export class PersonalActivityStore {
         throw new Error('Activity batch must belong to one local date');
       }
       return this.changeDay(at, day => {
+        for (const interval of batch.intervals ?? []) {
+          const start = timestamp(interval.from);
+          const end = timestamp(interval.to);
+          if (start < from || end > to || end <= start) {
+            throw new Error(
+              'Window interval must be inside its activity batch',
+            );
+          }
+          (day.intervals ??= []).push({
+            from: start,
+            to: end,
+            appId: interval.appId,
+            label: interval.label,
+            windowTitle: interval.windowTitle,
+            activeMs: Math.min(
+              count(interval.activeMs),
+              Date.parse(end) - Date.parse(start),
+            ),
+          });
+        }
         day.keyboard = addKeyboard(day.keyboard, batch.keyboard);
         addApplications(day.applications, batch.applications);
         for (const field of Object.keys(day.coverage) as Array<
@@ -557,6 +600,7 @@ export class PersonalActivityStore {
         'enabled',
         'paused',
         'screenEnabled',
+        'screenpipeEnabled',
         'reportTime',
         'retentionDays',
       ] as const) {
@@ -1085,9 +1129,10 @@ export class PersonalActivityStore {
     await this.settled();
     const day = await this.readDay(date);
     if (day) {
-      [day.files, day.screens] = await Promise.all([
+      [day.files, day.screens, day.intervals] = await Promise.all([
         this.detailRows<FileActivityChange>(date, 'files'),
         this.detailRows<ScreenActivitySample>(date, 'screens'),
+        this.detailRows<ActivityWindowInterval>(date, 'intervals'),
       ]);
     }
     return day;
@@ -1100,7 +1145,12 @@ export class PersonalActivityStore {
     if (!day) {
       return null;
     }
-    const {files: _files, screens: _screens, ...summary} = day;
+    const {
+      files: _files,
+      screens: _screens,
+      intervals: _intervals,
+      ...summary
+    } = day;
     return summary;
   }
   async getFacts(): Promise<PersonalActivityFacts> {
@@ -1116,18 +1166,38 @@ export class PersonalActivityStore {
     date = localActivityDate(this.now()),
   ): Promise<PersonalActivityReport> {
     const day = await this.getDay(date);
+    const generatedAt = new Date(this.now()).toISOString();
+    const review = day ? organizeActivityEvidence(day, [], generatedAt) : null;
+    if (day && review) {
+      day.segments = review.segments;
+      day.workItems = review.workItems;
+    }
     const gaps = this.state.gaps.filter(
       gap =>
         localActivityDate(gap.from) <= date &&
         (!gap.to || localActivityDate(gap.to) >= date),
     );
     const lines = [
-      `# ${date} 日报`,
+      `# ${date} 工作回顾`,
       '',
       day
         ? `记录范围：${displayMoment(day.firstObservedAt)} 至 ${displayMoment(day.lastObservedAt)}（本地时间）。仅包含 Magic Pointer 实际运行并记录的时段。`
         : '这一天没有已记录的活动，不能补造此前记录。',
     ];
+    if (review) {
+      lines.push('', '## 工作线索', '');
+      for (const observation of review.brief.observations) {
+        lines.push(`- ${observation.text}`);
+        const refs = observation.evidence.map(
+          ref =>
+            `${ref.kind === 'screen' ? '画面' : '文件'} ${ref.index + 1} · ${displayMoment(ref.at)}`,
+        );
+        if (refs.length) {
+          lines.push(`  来源：${refs.join('；')}`);
+        }
+      }
+      lines.push('', review.brief.coverageNote, '', '## 原始记录', '');
+    }
     if (day) {
       lines.push(
         '',
@@ -1224,10 +1294,11 @@ export class PersonalActivityStore {
     }
     return {
       date,
-      generatedAt: new Date(this.now()).toISOString(),
+      generatedAt,
       markdown: lines.join('\n'),
       day,
       gaps: clone(gaps),
+      ...(review ? {brief: review.brief} : {}),
     };
   }
   pruneDetails(): Promise<void> {
@@ -1260,7 +1331,11 @@ export class PersonalActivityStore {
         await rm(join(this.directory, 'days', `${date}.screens.jsonl`), {
           force: true,
         });
+        await rm(join(this.directory, 'days', `${date}.intervals.jsonl`), {
+          force: true,
+        });
         day.screens = [];
+        day.intervals = [];
         day.files = [];
         day.detailsCleared = true;
         await save(join(this.directory, 'days', `${date}.json`), day);

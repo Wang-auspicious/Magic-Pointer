@@ -23,7 +23,7 @@
   const STUDIO_VIEWS: readonly StudioView[] = Object.freeze([
     Object.freeze({
       id: 'personal',
-      title: '我的一天',
+      title: '工作回顾',
       description: '活动、文件足迹与每天的小结。',
       eyebrow: 'PERSONAL MEMORY',
       allowsDetail: false,

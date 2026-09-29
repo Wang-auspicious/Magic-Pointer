@@ -4783,6 +4783,31 @@ const personalActivityUi = globalThis.PersonalActivityView?.mount(
   document.getElementById('personal-activity'),
   window.magicPointerDashboard?.personalActivity,
 );
+document
+  .getElementById('personal-activity')
+  ?.addEventListener('personal-activity-open-conversation', event => {
+    const id = (event as CustomEvent<{conversationId: string}>).detail
+      ?.conversationId;
+    if (id) {
+      void openConversation(id);
+    }
+  });
+document
+  .getElementById('personal-activity')
+  ?.addEventListener('personal-activity-analyze', event => {
+    const date = (event as CustomEvent<{date: string}>).detail?.date;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return;
+    }
+    startNewChat();
+    show('chat');
+    const input = document.querySelector<HTMLTextAreaElement>('.mpw-input');
+    if (input) {
+      input.value = `请用 Activity.read 回顾 ${date} 的已记录活动：按工作主题整理实际推进和产物，列出有原始证据的待核查线索，以及可继续的下一步。引用具体时间、窗口或文件；区分观察和推断，不把截图间隔当作连续工作时间，不凭聊天片段确认承诺或未回复。缺少的记录请直接说明。`;
+      input.dispatchEvent(new Event('input', {bubbles: true}));
+      input.focus();
+    }
+  });
 
 function show(view: string) {
   const current = studioShell.shellState(view);

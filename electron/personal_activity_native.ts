@@ -1,6 +1,7 @@
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {desktopRuntimeRoot, ensureNativeTool} from './runtime/desktop';
+import type {ActivityWindowInterval} from './personal_activity';
 
 export interface PersonalActivityForeground {
   hwnd: number;
@@ -35,6 +36,7 @@ export interface PersonalActivityBatch {
   foreground: PersonalActivityForeground | null;
   state: 'active' | 'idle' | 'locked' | 'unavailable';
   usedBackend: 'windows.wh-keyboard-ll+winevent';
+  intervals?: ActivityWindowInterval[];
 }
 
 export type PersonalActivityNativeStatus =

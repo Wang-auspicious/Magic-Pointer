@@ -13,6 +13,7 @@ import {
   type PersonalActivityNativeStatus,
 } from './personal_activity_native';
 import {PersonalScreenCapture} from './personal_screen_capture';
+import {readActivitySources, type ActivityBrief} from './activity_sources';
 
 interface NativePort {
   start(): Promise<void>;
@@ -30,6 +31,7 @@ interface Options {
   createNative?: (callbacks: NativeCallbacks) => NativePort;
   onReport?: (report: PersonalActivityReport) => void;
   onError?: (error: unknown) => void;
+  openThreads?: (date: string) => ActivityBrief['openThreads'];
 }
 interface ReportMark {
   generatedAt: string;
@@ -231,7 +233,7 @@ export class PersonalActivityService {
     date = localActivityDate(this.now()),
   ): Promise<PersonalActivityReport> {
     await this.pending;
-    const report = await this.store.getReport(date);
+    const report = await this.readReport(date);
     await mkdir(join(this.directory, 'reports'), {recursive: true});
     await writeFile(
       join(this.directory, 'reports', `${report.date}.md`),
@@ -243,13 +245,28 @@ export class PersonalActivityService {
 
   async snapshot(date = localActivityDate(this.now())) {
     await this.pending;
-    const [status, day, facts, days, report] = await Promise.all([
+    const [status, facts, days, report] = await Promise.all([
       this.store.getStatus(),
-      this.store.getDay(date),
       this.store.getFacts(),
       this.store.listDays(),
-      this.store.getReport(date),
+      this.readReport(date),
     ]);
+    const day = report.day;
+    const sources = day
+      ? await readActivitySources({
+          day,
+          status,
+          screenpipe: {enabled: status.screenpipeEnabled === true},
+        })
+      : null;
+    if (day && sources) {
+      day.segments = sources.view.segments;
+      day.workItems = sources.view.workItems;
+      report.brief = {
+        ...sources.view.brief,
+        openThreads: report.brief?.openThreads ?? [],
+      };
+    }
     return {
       status,
       day,
@@ -259,7 +276,22 @@ export class PersonalActivityService {
       nativeStatus: this.nativeStatus,
       nativeError: this.nativeError,
       screenError: this.screenError,
+      sources: sources ? {screenpipe: sources.screenpipe} : null,
     };
+  }
+
+  private async readReport(date: string): Promise<PersonalActivityReport> {
+    const report = await this.store.getReport(date);
+    const threads = this.options.openThreads?.(date) ?? [];
+    if (report.brief) {
+      report.brief.openThreads = threads;
+    }
+    if (threads.length) {
+      report.markdown +=
+        '\n\n## 可以继续的对话\n\n' +
+        threads.map(thread => `- ${thread.text}`).join('\n');
+    }
+    return report;
   }
 
   async clearHistory(): Promise<void> {
