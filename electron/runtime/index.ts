@@ -296,6 +296,19 @@ export async function runRuntime(
           ),
           prepared.authorizeAccess,
           window => bindDesktopWindow(session, window),
+          options.onProgress
+            ? guide =>
+                options.onProgress?.('agent_cursor', {
+                  action: 'guide',
+                  id: 'guide',
+                  x: guide.x,
+                  y: guide.y,
+                  ttlMs: guide.ttlMs,
+                  captionB64: Buffer.from(guide.caption, 'utf8').toString(
+                    'base64',
+                  ),
+                })
+            : undefined,
         ),
     },
     {

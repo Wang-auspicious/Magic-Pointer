@@ -204,6 +204,7 @@ export class CursorSampleGate {
 
 export type AgentCursorCommandKind =
   | 'approach'
+  | 'guide'
   | 'mark'
   | 'move'
   | 'click'
@@ -257,6 +258,7 @@ export function normalizeAgentCursorCommand(
   const kind = stringOr(source.kind, '') as AgentCursorCommandKind;
   const known: AgentCursorCommandKind[] = [
     'approach',
+    'guide',
     'mark',
     'move',
     'click',
@@ -274,21 +276,24 @@ export function normalizeAgentCursorCommand(
     return null;
   }
   const ttlRaw = asFiniteNumber(source.ttlMs);
+  const leadMs = Math.max(0, intOr(source.leadMs, APPROACH_LEAD_MS));
+  const ttlMs = ttlRaw === null ? DEFAULT_TTL_MS : Math.round(ttlRaw);
   return {
     kind,
-    id: stringOr(source.id, kind === 'approach' ? 'primary' : ''),
+    id: stringOr(
+      source.id,
+      kind === 'approach' || kind === 'guide' ? 'primary' : '',
+    ),
     x: x === null ? 0 : x,
     y: y === null ? 0 : y,
-    leadMs: Math.max(0, intOr(source.leadMs, APPROACH_LEAD_MS)),
+    leadMs: kind === 'guide' ? clamp(leadMs, 0, FLIGHT_MAX_MS) : leadMs,
     accent: stringOr(source.accent, ACCENT_BLUE),
     caption:
       typeof source.caption === 'string' && source.caption.trim()
-        ? source.caption.trim()
+        ? source.caption.trim().slice(0, kind === 'guide' ? 64 : 200)
         : null,
     ttlMs:
-      ttlRaw === null
-        ? DEFAULT_TTL_MS
-        : Math.max(TTL_MIN_MS, Math.round(ttlRaw)),
+      kind === 'guide' ? clamp(ttlMs, 800, 4000) : Math.max(TTL_MIN_MS, ttlMs),
     glowMs: clamp(intOr(source.glowMs, GLOW_MS), GLOW_MIN_MS, GLOW_MAX_MS),
     held: Boolean(source.held),
     button: stringOr(source.button, 'left') === 'right' ? 'right' : 'left',

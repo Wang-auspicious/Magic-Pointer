@@ -126,6 +126,8 @@ interface AgentCursor {
   vy: number;
   accent: string;
   caption: string | null;
+  guide: boolean;
+  dwellMs: number;
   mode: 'idle' | 'flying' | 'dwelling' | 'clicking';
   targetX: number;
   targetY: number;
@@ -257,7 +259,7 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
       cursor.flight = null;
       if (cursor.ring) {
         cursor.mode = 'dwelling';
-        cursor.dwellUntil = now + AGENT_DWELL_MS;
+        cursor.dwellUntil = now + cursor.dwellMs;
       } else {
         cursor.mode = 'idle';
       }
@@ -268,6 +270,10 @@ function agentCursorAdvance(cursor: AgentCursor, now: number) {
     if (cursor.ring) {
       cursor.x = cursor.ring.x;
       cursor.y = cursor.ring.y;
+    }
+    if (cursor.guide && now >= cursor.dwellUntil) {
+      agentCursors.delete(cursor.id);
+      return;
     }
     if (!agentPointer.seen || now < cursor.dwellUntil) {
       return;
@@ -383,6 +389,29 @@ function drawAgentCursor(cursor: AgentCursor) {
   ctx.fillStyle = cursor.accent;
   ctx.fill();
   ctx.restore();
+  if (cursor.guide && cursor.mode === 'dwelling' && cursor.caption) {
+    ctx.save();
+    ctx.font =
+      '500 12px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif';
+    let text = cursor.caption;
+    while (text.length > 1 && ctx.measureText(text).width > 280) {
+      text = text.slice(0, -2) + '…';
+    }
+    const width = ctx.measureText(text).width + 16;
+    const left = Math.max(
+      8,
+      Math.min(cursor.x + 14, window.innerWidth - width - 8),
+    );
+    const top = Math.max(8, Math.min(cursor.y + 16, window.innerHeight - 34));
+    ctx.fillStyle = 'rgba(37, 37, 36, 0.96)';
+    ctx.beginPath();
+    ctx.roundRect(left, top, width, 26, 6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, left + 8, top + 13);
+    ctx.restore();
+  }
 }
 
 function drawAgentCursors() {
@@ -392,7 +421,9 @@ function drawAgentCursors() {
   const now = performance.now();
   for (const cursor of agentCursors.values()) {
     agentCursorAdvance(cursor, now);
-    drawAgentCursor(cursor);
+    if (agentCursors.has(cursor.id)) {
+      drawAgentCursor(cursor);
+    }
   }
 }
 
@@ -435,6 +466,8 @@ function agentCursorTarget(id: string) {
       vy: 0,
       accent: AGENT_ACCENT,
       caption: null,
+      guide: false,
+      dwellMs: AGENT_DWELL_MS,
       mode: 'idle',
       targetX: 0,
       targetY: 0,
@@ -482,7 +515,12 @@ function onAgentCursorCommand(
   if (typeof payload.caption === 'string') {
     cursor.caption = payload.caption;
   }
-  if (kind === 'approach') {
+  if (kind === 'approach' || kind === 'guide') {
+    cursor.guide = kind === 'guide';
+    cursor.dwellMs =
+      kind === 'guide'
+        ? Math.max(800, Math.min(4000, Number(payload.ttlMs) || 2500))
+        : AGENT_DWELL_MS;
     agentBeginFlight(cursor, {x, y}, 'approach', Number(payload.leadMs) || 0);
   } else if (kind === 'mark' || kind === 'move') {
     cursor.flight = null;
@@ -505,18 +543,7 @@ function onAgentCursorCommand(
     if (cursor.mode === 'dwelling') {
       cursor.dwellUntil = 0;
       cursor.ring = null;
-      if (agentPointer.seen) {
-        agentBeginFlight(
-          cursor,
-          {
-            x: agentPointer.x + AGENT_OFFSET_X,
-            y: agentPointer.y + AGENT_OFFSET_Y,
-          },
-          'return',
-        );
-      } else {
-        cursor.mode = 'idle';
-      }
+      cursor.mode = 'idle';
     }
   } else if (
     kind === 'hold' &&
@@ -529,16 +556,6 @@ function onAgentCursorCommand(
     cursor.ring = null;
     cursor.dwellUntil = 0;
     cursor.mode = 'idle';
-    if (agentPointer.seen) {
-      agentBeginFlight(
-        cursor,
-        {
-          x: agentPointer.x + AGENT_OFFSET_X,
-          y: agentPointer.y + AGENT_OFFSET_Y,
-        },
-        'return',
-      );
-    }
   }
   allocateCanvas();
   scheduleRender();

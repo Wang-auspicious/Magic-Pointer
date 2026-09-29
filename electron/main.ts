@@ -1056,14 +1056,21 @@ function handleAgentCursorProgress(record: any): void {
   }
   const leadMs = Number(fields.leadMs);
   const count = Number(fields.count);
+  const ttlMs = Number(fields.ttlMs);
+  const point =
+    process.platform === 'win32' ? screen.screenToDipPoint({x, y}) : {x, y};
+  const caption = fields.captionB64
+    ? Buffer.from(String(fields.captionB64), 'base64').toString('utf8')
+    : '';
   sendAgentCursorCommand({
     kind,
     id: String(fields.id || 'agent'),
-    x,
-    y,
+    ...point,
     ...(Number.isFinite(leadMs) ? {leadMs} : {}),
     ...(fields.button ? {button: String(fields.button)} : {}),
     ...(Number.isFinite(count) ? {count} : {}),
+    ...(Number.isFinite(ttlMs) ? {ttlMs} : {}),
+    ...(caption ? {caption} : {}),
   });
 }
 
@@ -5590,7 +5597,8 @@ function stageTargetForSession(entry: any) {
 
 function hasVisibleTemporarySurface() {
   return Boolean(
-    stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible(),
+    (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) ||
+    agentCursorSurfaces?.isVisible(),
   );
 }
 
@@ -5607,6 +5615,7 @@ function dismissTemporarySurfaces({
   invalidateSession = true,
   hideObserver = false,
 } = {}) {
+  sendAgentCursorCommand({kind: 'clear'});
   const sessionToken = activeSelectionSessionToken;
   log(
     `dismissTemporarySurfaces overlayOwnsPointerInput=${overlayOwnsPointerInput} armPresent=${Boolean(selectionGestureArm)}`,

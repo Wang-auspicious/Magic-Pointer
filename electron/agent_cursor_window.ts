@@ -25,6 +25,7 @@ interface CursorSurface {
   window: BrowserWindow | null;
   gate: CursorSampleGate;
   releaseTimer: ReturnType<typeof setTimeout> | null;
+  autoClearTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface AgentCursorSurfacesOptions {
@@ -69,6 +70,7 @@ export class AgentCursorSurfaces {
         window: null,
         gate: new CursorSampleGate(),
         releaseTimer: null,
+        autoClearTimer: null,
       };
       surface.window = this.createWindow(surface);
       this.surfaces.set(display.displayId, surface);
@@ -117,7 +119,11 @@ export class AgentCursorSurfaces {
     if (surface.releaseTimer) {
       clearTimeout(surface.releaseTimer);
     }
+    if (surface.autoClearTimer) {
+      clearTimeout(surface.autoClearTimer);
+    }
     surface.releaseTimer = null;
+    surface.autoClearTimer = null;
     const window = surface.window;
     surface.window = null;
     if (window && !window.isDestroyed()) {
@@ -170,6 +176,23 @@ export class AgentCursorSurfaces {
     }
   }
 
+  private scheduleClear(surface: CursorSurface, delayMs: number): void {
+    if (surface.autoClearTimer) {
+      clearTimeout(surface.autoClearTimer);
+    }
+    surface.autoClearTimer = setTimeout(() => {
+      surface.autoClearTimer = null;
+      const window = surface.window;
+      if (window && !window.isDestroyed()) {
+        window.webContents.send('overlay:agent-cursor', {kind: 'clear'});
+        window.hide();
+      }
+      if (![...this.surfaces.values()].some(item => item.window?.isVisible())) {
+        this.stopSampling();
+      }
+    }, delayMs);
+  }
+
   command(raw: unknown): boolean {
     const command = normalizeAgentCursorCommand(raw);
     if (!command) {
@@ -186,9 +209,17 @@ export class AgentCursorSurfaces {
         command.kind === 'release' ||
         command.kind === 'hold'
       ) {
+        if (surface.autoClearTimer) {
+          clearTimeout(surface.autoClearTimer);
+          surface.autoClearTimer = null;
+        }
         window.webContents.send('overlay:agent-cursor', command);
         if (command.kind === 'clear') {
           window.hide();
+        } else if (command.kind === 'release') {
+          this.scheduleClear(surface, 650);
+        } else {
+          this.scheduleClear(surface, 12000);
         }
         delivered = true;
         continue;
@@ -202,17 +233,45 @@ export class AgentCursorSurfaces {
       if (!routed || routed.surface.displayId !== surface.display.displayId) {
         continue;
       }
+      if (surface.autoClearTimer) {
+        clearTimeout(surface.autoClearTimer);
+        surface.autoClearTimer = null;
+      }
       if (!window.isVisible()) {
         window.showInactive();
       }
+      if (command.kind === 'guide') {
+        const pointer = screen.getCursorScreenPoint();
+        window.webContents.send('overlay:cursor', {
+          x: Math.max(
+            0,
+            Math.min(surface.bounds.width, pointer.x - surface.bounds.x),
+          ),
+          y: Math.max(
+            0,
+            Math.min(surface.bounds.height, pointer.y - surface.bounds.y),
+          ),
+        });
+      }
+      const leadMs =
+        command.kind === 'guide' ? command.leadMs || 800 : command.leadMs;
       window.webContents.send('overlay:agent-cursor', {
         ...command,
         x: routed.localX,
         y: routed.localY,
+        leadMs,
       });
+      this.scheduleClear(
+        surface,
+        command.kind === 'idle'
+          ? 650
+          : command.kind === 'click'
+            ? command.glowMs
+            : leadMs + command.ttlMs,
+      );
       delivered = true;
     }
-    if (command.kind === 'clear') {
+    if (['clear', 'guide', 'idle', 'release'].includes(command.kind)) {
       this.stopSampling();
     } else if (delivered) {
       this.startSampling();
@@ -268,6 +327,12 @@ export class AgentCursorSurfaces {
 
   surfaceBounds(): AgentSurfaceBounds[] {
     return [...this.surfaces.values()].map(surface => surface.bounds);
+  }
+
+  isVisible(): boolean {
+    return [...this.surfaces.values()].some(surface =>
+      surface.window?.isVisible(),
+    );
   }
 }
 

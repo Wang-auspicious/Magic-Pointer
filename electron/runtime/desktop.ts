@@ -1871,6 +1871,12 @@ export function registerDesktopTools(
     reason: string;
   },
   acquireTarget?: (window: DesktopWindow) => unknown | Promise<unknown>,
+  onGuide?: (guide: {
+    x: number;
+    y: number;
+    caption: string;
+    ttlMs: number;
+  }) => void,
 ): void {
   const readScope: WindowReadScope | undefined = authorizeAccess
     ? hwnd => authorizeAccess({action: 'read', windowIds: [`w-${hwnd}`]})
@@ -1931,6 +1937,71 @@ export function registerDesktopTools(
         "x/y read off the returned screenshot are 'image'; default 'screen' physical pixels",
     },
   };
+  if (onGuide) {
+    registry.register({
+      name: 'point_ui',
+      description:
+        'Visually point out one verified UI target when the user asks where it is or how to find it. Requires a current observed state and an element ref or image coordinate. Shows a short temporary label; never moves the OS mouse or clicks. This is guidance, not proof that an action succeeded.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          ...common,
+          caption: {type: 'string'},
+          ttl_ms: {type: 'integer', minimum: 800, maximum: 4000},
+        },
+        required: ['state_id'],
+        additionalProperties: false,
+      },
+      effect: 'read',
+      deferred: true,
+      is_concurrency_safe: true,
+      used_backend: 'native_desktop_visual_guide',
+      timeout_ms: 10000,
+      execute: async (args: DesktopRecord, context) => {
+        const stateId = args.snapshot_id || args.state_id;
+        const prior = session.snapshots.get(String(stateId || ''));
+        if (prior) {
+          requireWindowRead(prior.window.hwnd, readScope);
+        }
+        const snapshot = await session.requireSnapshot(stateId, context.signal);
+        requireWindowRead(snapshot.window.hwnd, readScope);
+        const point = await session.point(snapshot, args, context.signal);
+        const [left, top, right, bottom] = snapshot.window.bbox;
+        if (
+          point.x < left ||
+          point.x >= right ||
+          point.y < top ||
+          point.y >= bottom
+        ) {
+          throw new ActionFailure(
+            'stale_snapshot',
+            'point outside observed window',
+          );
+        }
+        const caption = String(args.caption || point.element?.name || '这里')
+          .trim()
+          .slice(0, 64);
+        const ttlMs = Math.max(
+          800,
+          Math.min(4000, Number(args.ttl_ms) || 2500),
+        );
+        onGuide({x: point.x, y: point.y, caption, ttlMs});
+        return {
+          stateId: snapshot.state_id,
+          windowId: `w-${snapshot.window.hwnd}`,
+          point: {x: point.x, y: point.y},
+          target: point.element
+            ? {ref: `@e${point.element.index}`, name: point.element.name}
+            : null,
+          usedBackend: point.element
+            ? 'uia_ref+visual_guide'
+            : 'revalidated_pixels+visual_guide',
+          action: 'visual_guidance_only',
+          nativeInput: false,
+        };
+      },
+    });
+  }
   const schemas: Record<string, DesktopRecord> = {
     list_apps: {},
     launch_app: {app: string},
