@@ -914,6 +914,7 @@ const ChatView = (() => {
     prompt: string,
     copyText: string,
     options: {
+      label?: string;
       output?: string | null;
       error?: boolean;
       lang?: string;
@@ -924,30 +925,38 @@ const ChatView = (() => {
       options.lang ||
       highlightLang(String(options.toolName || ''), command.full);
     const card = h('div', {class: 'mp-chat-code'});
+    // The panel header names the tool, so the row above it reads as an explanation.
     const head = h('div', {class: 'mp-chat-code-head'});
-    const line = h('span', {class: 'mp-chat-code-first'});
-    if (prompt) {
-      const mark = h('span', {
-        class: 'mp-chat-code-prompt',
-        'aria-hidden': 'true',
-      });
-      attach(mark, prompt);
-      attach(line, mark);
+    if (options.label) {
+      const label = h('span', {class: 'mp-chat-code-label'});
+      attach(label, options.label);
+      attach(head, label);
     }
-    attach(
-      line,
-      codeLineNode(command.first, highlightLines(command.first, lang)?.[0]),
-    );
     const copy = h('button', {
       type: 'button',
       class: 'mp-chat-action mp-chat-code-copy',
-      'aria-label': '复制命令',
+      'aria-label': 'Copy',
       'data-mp-chat-act': 'copy',
       'data-mp-chat-copy': String(copyText || ''),
     });
     attach(copy, icon('copy', 14));
-    attach(head, line);
     attach(head, copy);
+    if (command.first) {
+      const line = h('div', {class: 'mp-chat-code-first'});
+      if (prompt) {
+        const mark = h('span', {
+          class: 'mp-chat-code-prompt',
+          'aria-hidden': 'true',
+        });
+        attach(mark, prompt);
+        attach(line, mark);
+      }
+      attach(
+        line,
+        codeLineNode(command.first, highlightLines(command.first, lang)?.[0]),
+      );
+      attach(card, line);
+    }
     attach(card, head);
     if (command.rest) {
       const pre = h('pre');
@@ -1135,13 +1144,9 @@ const ChatView = (() => {
     ) {
       body.push(diffNode(diff));
     } else if (command !== null) {
-      if (singleLine) {
-        const tag = h('div', {class: 'mp-chat-tool-tag'});
-        attach(tag, model.name);
-        body.push(tag);
-      }
       body.push(
         commandCardNode(command, commandPrompt(model), command.full, {
+          label: singleLine ? model.name : model.title,
           output: singleLine ? model.output : null,
           error: model.state === 'error',
           toolName: model.name,
@@ -1151,9 +1156,10 @@ const ChatView = (() => {
     } else if (model.body !== null) {
       body.push(
         commandCardNode(
-          {first: model.title, rest: model.body, full: model.body},
+          {first: '', rest: model.body, full: model.body},
           '',
           model.body,
+          {label: model.title},
         ),
       );
     }
@@ -1230,7 +1236,7 @@ const ChatView = (() => {
       expandedBody.push(more);
     }
 
-    const {root} = disclosureRow({
+    const {root, row} = disclosureRow({
       leadingOverride: h(
         'span',
         {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
@@ -1248,6 +1254,7 @@ const ChatView = (() => {
     });
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'mp-chat-disclosure mp-chat-think');
+    row.setAttribute('data-thought-row', '');
     if (isLong) {
       root.setAttribute('data-long', 'true');
       root.setAttribute('data-expanded', 'false');
@@ -1484,7 +1491,7 @@ const ChatView = (() => {
       }
       byPath.set(path, {
         path,
-        name: path.split(/[\/]/).pop() || path,
+        name: path.split(/[\\/]/).pop() || path,
         added: stat ? stat.added : 0,
         removed: stat ? stat.removed : 0,
       });
@@ -1697,7 +1704,7 @@ const ChatView = (() => {
 
   type FlowItem =
     | {type: 'narration'; text: string}
-    | {type: 'reasoning'; text: string; id?: string}
+    | {type: 'reasoning'; text: string; id?: string; running?: boolean}
     | {type: 'notice'; text: string}
     | {type: 'chip'; chip: TurnChip};
 
@@ -1807,6 +1814,7 @@ const ChatView = (() => {
     _running = false,
     work?: FlowItem[],
     scope = '',
+    thoughtOnly = false,
   ): ChatNode {
     const root = h('details', {class: 'mp-chat-tool-group'});
     const summary = h('summary', {class: 'mp-chat-tool-group-header'});
@@ -1815,6 +1823,9 @@ const ChatView = (() => {
       chips.length === 1 && !work?.some(item => item.type === 'reasoning');
     if (single) {
       root.setAttribute('data-single', 'true');
+    }
+    if (thoughtOnly) {
+      root.setAttribute('data-thought-only', 'true');
     }
     const model = single
       ? toolRowModel(
@@ -1826,10 +1837,12 @@ const ChatView = (() => {
       : null;
     attach(
       label,
-      model
-        ? chips[0].displayLabel ||
+      thoughtOnly
+        ? ''
+        : model
+          ? chips[0].displayLabel ||
             [model.title, model.summary].filter(Boolean).join(' ')
-        : toolGroupLabel(chips),
+          : toolGroupLabel(chips),
     );
     if (model?.diffStat) {
       const stat = h('span', {
@@ -1854,7 +1867,7 @@ const ChatView = (() => {
     const body = h('div', {class: 'mp-chat-tool-group-body'});
     const entries: FlowItem[] =
       work || chips.map(chip => ({type: 'chip', chip}));
-    const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || ''}`;
+    const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || 'thought'}`;
     const previous = GROUP_EXPANSION.get(groupId);
     const members = entries.flatMap(entry =>
       entry.type === 'chip'
@@ -1899,7 +1912,11 @@ const ChatView = (() => {
       if (entry.type === 'reasoning') {
         attach(
           body,
-          thinkNode(entry.text, false, `${scope}:r${entry.id ?? '0'}`),
+          thinkNode(
+            entry.text,
+            entry.running === true,
+            `${scope}:r${entry.id ?? '0'}`,
+          ),
         );
         return;
       }
@@ -2174,7 +2191,13 @@ const ChatView = (() => {
     if (turn.thinking && !turn.trajectory?.some(record => record.reasoning)) {
       attach(
         bodyHost,
-        thinkNode(turn.thinking, Boolean(turn.running), `${turnScope}:head`),
+        toolGroupNode(
+          [],
+          true,
+          [{type: 'reasoning', text: turn.thinking, running: true}],
+          turnScope,
+          true,
+        ),
       );
     }
 
@@ -2183,6 +2206,11 @@ const ChatView = (() => {
     let workRun: FlowItem[] = [];
     const flushChips = () => {
       if (!chipRun.length) {
+        // A reasoning-only run still renders as a card, never as loose text.
+        if (workRun.some(entry => entry.type === 'reasoning')) {
+          attach(bodyHost, toolGroupNode([], false, workRun, turnScope, true));
+        }
+        workRun = [];
         return;
       }
       attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
@@ -2205,14 +2233,8 @@ const ChatView = (() => {
         }
       }
       if (item.type === 'reasoning') {
-        if (chipRun.length) {
-          workRun.push(item);
-        } else {
-          attach(
-            bodyHost,
-            thinkNode(item.text, false, `${turnScope}:r${item.id ?? '0'}`),
-          );
-        }
+        // A thought is a row in the same card as the tools around it.
+        workRun.push(item);
       } else if (item.type === 'narration') {
         flushChips();
         attach(bodyHost, narrationNode(item.text));
