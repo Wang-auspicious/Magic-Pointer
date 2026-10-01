@@ -310,32 +310,32 @@ const ChatView = (() => {
     pwsh: 'Ran',
     search: 'Searched',
     list_dir: 'Listed files in working directory',
-    Tools: '加载工具',
-    'ToolResult.read': '读取执行详情',
-    'Browser.navigate': '打开网页',
-    list_apps: '查找应用窗口',
-    list_windows: '列出窗口',
-    get_focused: '查看当前窗口',
-    launch_app: '打开应用',
-    activate_window: '切换窗口',
-    get_app_state: '观察窗口',
-    observe_ui: '观察界面',
-    find_roots: '查找窗口',
-    search_ui: '查找控件',
-    inspect_ui: '查看控件',
-    expand_ui: '展开控件',
-    read_text: '读取界面文字',
-    click: '点击控件',
-    type_text: '输入文字',
-    press_key: '按键',
-    scroll: '滚动页面',
-    drag: '拖动',
-    set_value: '填写控件',
-    select_text: '选择文字',
-    perform_secondary_action: '操作控件',
-    act_ui: '执行桌面步骤',
-    wait_for: '等待界面结果',
-    turn_ended: '结束桌面操作',
+    Tools: 'Loaded tools',
+    'ToolResult.read': 'Read execution detail',
+    'Browser.navigate': 'Opened page',
+    list_apps: 'Found app windows',
+    list_windows: 'Listed windows',
+    get_focused: 'Checked current window',
+    launch_app: 'Launched app',
+    activate_window: 'Switched window',
+    get_app_state: 'Observed window',
+    observe_ui: 'Observed interface',
+    find_roots: 'Found windows',
+    search_ui: 'Searched controls',
+    inspect_ui: 'Inspected control',
+    expand_ui: 'Expanded control',
+    read_text: 'Read interface text',
+    click: 'Clicked control',
+    type_text: 'Typed text',
+    press_key: 'Pressed key',
+    scroll: 'Scrolled',
+    drag: 'Dragged',
+    set_value: 'Filled control',
+    select_text: 'Selected text',
+    perform_secondary_action: 'Ran control action',
+    act_ui: 'Ran desktop step',
+    wait_for: 'Waited for interface',
+    turn_ended: 'Ended desktop turn',
   };
   const DESKTOP_TOOLS = new Set([
     'list_apps',
@@ -729,7 +729,7 @@ const ChatView = (() => {
       try {
         const args = JSON.parse(argsRaw);
         if (Array.isArray(args.names)) {
-          summary = args.names.join('、');
+          summary = args.names.join(', ');
         }
       } catch {}
     }
@@ -1076,11 +1076,11 @@ const ChatView = (() => {
     const summaryText = model.summary;
     const status =
       model.state === 'running'
-        ? '运行中'
+        ? 'Running'
         : model.state === 'error'
-          ? '失败'
+          ? 'Failed'
           : model.state === 'stopped'
-            ? '已停止'
+            ? 'Stopped'
             : '';
 
     if (status) {
@@ -1299,16 +1299,16 @@ const ChatView = (() => {
     }
     const delta = Math.max(0, now - ms);
     if (delta < 45 * 1000) {
-      return '刚刚';
+      return 'just now';
     }
     if (delta < HOUR_MS) {
-      return `${Math.round(delta / MINUTE_MS)} 分钟前`;
+      return `${Math.round(delta / MINUTE_MS)} minutes ago`;
     }
     if (delta < DAY_MS) {
-      return `${Math.round(delta / HOUR_MS)} 小时前`;
+      return `${Math.round(delta / HOUR_MS)} hours ago`;
     }
     if (delta < 7 * DAY_MS) {
-      return `${Math.round(delta / DAY_MS)} 天前`;
+      return `${Math.round(delta / DAY_MS)} days ago`;
     }
     return formatClock(ms);
   }
@@ -1437,62 +1437,145 @@ const ChatView = (() => {
     return root;
   }
 
-  function artifactCardNode(
-    items: Array<Record<string, unknown>>,
+  interface DeliveredFile {
+    path: string;
+    name: string;
+    added: number;
+    removed: number;
+  }
+
+  const FILE_WRITE_TOOLS = new Set([
+    'Write',
+    'write_file',
+    'write',
+    'Edit',
+    'edit_file',
+    'edit',
+    'MultiEdit',
+  ]);
+
+  // A result is a file the agent actually wrote, not a claim about one.
+  function deliveredFiles(
+    trajectory: Array<Record<string, unknown>> | undefined,
+  ): DeliveredFile[] {
+    const byPath = new Map<string, DeliveredFile>();
+    for (const record of trajectory || []) {
+      if (
+        record.kind !== 'tool' ||
+        !FILE_WRITE_TOOLS.has(String(record.name))
+      ) {
+        continue;
+      }
+      if (record.result == null || record.isError) {
+        continue;
+      }
+      const stat = deriveDiffStat(
+        String(record.name),
+        String(record.text || ''),
+      );
+      const model = toolRowModel(
+        String(record.name),
+        String(record.text || ''),
+        {text: String(record.result)},
+      );
+      const path = (model.filePath || '').trim();
+      if (!path) {
+        continue;
+      }
+      byPath.set(path, {
+        path,
+        name: path.split(/[\/]/).pop() || path,
+        added: stat ? stat.added : 0,
+        removed: stat ? stat.removed : 0,
+      });
+    }
+    return [...byPath.values()];
+  }
+
+  function fileResultsNode(
+    files: DeliveredFile[],
+    artifacts: Array<Record<string, unknown>>,
     conversationId: string,
+    at: number | undefined,
   ): ChatNode | null {
-    const usable = items.filter(
+    const artifact = artifacts.find(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
     );
-    if (!usable.length) {
+    if (!files.length && !artifact) {
       return null;
     }
-    const card = h('div', {class: 'mp-chat-artifact-card'});
-    for (const item of usable) {
-      const artifactId = String(item.artifactId || '');
-      const name = String(item.title || item.name || '').trim() || '未命名草稿';
-      const kind = String(item.kind || '').trim();
+    const card = h('div', {class: 'mp-chat-files'});
+    const head = h('div', {class: 'mp-chat-files-head'});
+    const title = h('span', {class: 'mp-chat-files-title'});
+    const label = artifact
+      ? String(artifact.title || artifact.name || '').trim()
+      : '';
+    attach(
+      title,
+      label
+        ? `Published artifact ${label}`
+        : `Created ${files.length === 1 ? files[0].name : `${files.length} files`}`,
+    );
+    attach(head, title);
+    if (artifact) {
+      const open = h('button', {
+        type: 'button',
+        class: 'mp-chat-files-open',
+        'data-mp-chat-act': 'open-artifact',
+        'data-artifact-id': String(artifact.artifactId || ''),
+        'data-artifact-conversation': conversationId,
+      });
+      attach(open, 'Open');
+      attach(head, open);
+    }
+    attach(card, head);
+
+    for (const file of files) {
       const row = h('button', {
         type: 'button',
-        class: 'mp-chat-artifact-row',
-        'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': artifactId,
-        'data-artifact-conversation': conversationId,
-        'aria-label': `打开 ${name}`,
+        class: 'mp-chat-file-row',
+        'data-mp-chat-act': 'open-file',
+        'data-file-path': file.path,
       });
       const mark = h('span', {
-        class: 'mp-chat-artifact-mark',
+        class: 'mp-chat-file-mark',
         'aria-hidden': 'true',
       });
       attach(mark, icon('browse', 14));
       attach(row, mark);
-      const copy = h('span', {class: 'mp-chat-artifact-copy'});
-      const title = h('span', {class: 'mp-chat-artifact-label'});
-      attach(title, name);
-      attach(copy, title);
-      const meta = h('span', {class: 'mp-chat-artifact-meta'});
-      const kinds: Record<string, string> = {
-        text: '文本',
-        code: '代码',
-        document_patch: '文档修改',
-        image: '图片',
-        file: '文件',
-      };
-      attach(
-        meta,
-        [kinds[kind] || kind || '草稿', item.state === 'edited' ? '已更新' : '']
-          .filter(Boolean)
-          .join(' · '),
-      );
-      attach(copy, meta);
-      attach(row, copy);
+      const name = h('span', {class: 'mp-chat-file-name'});
+      attach(name, file.name);
+      attach(row, name);
+      if (file.added > 0 || file.removed > 0) {
+        const stat = h('span', {
+          class: 'mp-chat-diff-stat',
+          'aria-hidden': 'true',
+        });
+        if (file.added > 0) {
+          const add = h('span', {class: 'mp-chat-diff-add'});
+          attach(add, `+${file.added}`);
+          attach(stat, add);
+        }
+        if (file.removed > 0) {
+          const del = h('span', {class: 'mp-chat-diff-del'});
+          attach(del, `−${file.removed}`);
+          attach(stat, del);
+        }
+        attach(row, stat);
+      }
       const chev = h('span', {
-        class: 'mp-chat-artifact-chev',
+        class: 'mp-chat-file-chev',
         'aria-hidden': 'true',
       });
       attach(chev, icon('chev', 14));
       attach(row, chev);
       attach(card, row);
+    }
+
+    if (typeof at === 'number' && at > 0) {
+      const foot = h('div', {class: 'mp-chat-files-foot'});
+      attach(foot, relativeTime(at));
+      attach(card, foot);
     }
     return card;
   }
@@ -1915,7 +1998,11 @@ const ChatView = (() => {
         ),
       ].slice(0, 3);
       const failed = failedCount(chips);
-      return `${labels.join('、')} · ${chips.length} 步${failed ? `（${failed} 步失败）` : ''}`;
+      return (
+        labels.join(', ') +
+        `, ${chips.length} step${chips.length === 1 ? '' : 's'}` +
+        (failed ? ` (${failed} failed)` : '')
+      );
     }
     const counts = new Map<ToolVariant, number>();
     const failures = new Map<ToolVariant, number>();
@@ -2193,12 +2280,14 @@ const ChatView = (() => {
       );
     }
     const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
-    const artifactCard = artifactCardNode(
+    const results = fileResultsNode(
+      deliveredFiles(turn.trajectory),
       artifacts,
       String(turn.conversationId || ''),
+      turn.at,
     );
-    if (artifactCard) {
-      attach(root, artifactCard);
+    if (results) {
+      attach(root, results);
     }
     items.push(root);
     return items;
@@ -2898,6 +2987,12 @@ const ChatView = (() => {
             detail: {artifactId, conversationId},
           }),
         );
+      } else if (kind === 'open-file') {
+        const path = act.getAttribute('data-file-path') || '';
+        if (!path) {
+          return;
+        }
+        DOC.dispatchEvent(new CustomEvent('mp:open-file', {detail: {path}}));
       } else if (kind === 'branch') {
         const conversationId =
           act.getAttribute('data-mp-chat-branch-conversation') || '';
@@ -2937,13 +3032,12 @@ const ChatView = (() => {
     turnStatusNode,
     turnErrorNode,
     thinkNode,
-    toolRowNode,
     toolRowModel,
+    toolRowNode,
     liveActivityNode,
     createLiveTurn,
     createConversationView,
     permissionAnswerNode,
-    artifactCardNode,
     formatRunMeta,
     stateDot,
     bindDelegation,

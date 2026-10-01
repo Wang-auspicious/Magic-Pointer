@@ -3133,3 +3133,47 @@
     width: 100%;
   }
 }
+
+/* Conversation "more" menu. Claude-style: grouped rows with shortcut hints. */
+.mp-thread-menu {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  width: 244px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 12px;
+  background: var(--mp-panel);
+  box-shadow: 0 8px 24px #0000001f, 0 2px 6px #00000014;
+  color: var(--mp-text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+.mp-thread-menu > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 9px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mp-thread-menu > button:hover:not(:disabled),
+.mp-thread-menu > button:focus-visible { background: var(--mp-hover); color: var(--mp-text); }
+.mp-thread-menu > button:disabled { opacity: 0.4; cursor: default; }
+.mp-thread-menu > button.is-danger { color: var(--mp-danger, #B42318); }
+.mp-thread-menu > hr { height: 1px; margin: 4px 6px; border: 0; background: var(--mp-rule); }
+.mp-thread-menu kbd {
+  margin-left: auto;
+  color: var(--mp-text-muted);
+  font-family: var(--mp-font-ui);
+  font-size: 12.5px;
+}
+:root[data-theme="dark"] .mp-thread-menu { box-shadow: 0 10px 30px #00000066, 0 2px 8px #0000004d; }

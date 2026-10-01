@@ -5540,6 +5540,28 @@ document.addEventListener('mp:open-artifact', (event: Event) => {
   void openArtifactEditor(conversationId, artifactId);
 });
 
+document.addEventListener('mp:open-file', (event: Event) => {
+  const detail = (event as CustomEvent<{path?: string}>).detail;
+  const raw = String(detail?.path || '').trim();
+  const root = String(activeProjectRoot || '').replace(/[\\/]+$/, '');
+  if (!raw) {
+    return;
+  }
+  const absolute = /^[a-z]:[\\/]/i.test(raw) || raw.startsWith('\\\\');
+  const relative =
+    absolute && root && raw.toLowerCase().startsWith(root.toLowerCase())
+      ? raw.slice(root.length).replace(/^[\\/]+/, '')
+      : raw;
+  if (relative.split(/[\\/]/).includes('..')) {
+    return;
+  }
+  if (!activeProjectRoot) {
+    void openProjectFromPicker();
+    return;
+  }
+  void selectProjectFile(relative);
+});
+
 document.addEventListener('mp:branch-conversation', (event: Event) => {
   const detail = (
     event as CustomEvent<{conversationId?: string; turnIndex?: number}>
@@ -5618,11 +5640,18 @@ function openThreadMenu(button: HTMLElement) {
   const make = (
     label: string,
     run: () => void,
-    options: {danger?: boolean; disabled?: boolean} = {},
+    options: {danger?: boolean; disabled?: boolean; shortcut?: string} = {},
   ) => {
     const item = document.createElement('button');
     item.type = 'button';
-    item.textContent = label;
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.append(text);
+    if (options.shortcut) {
+      const hint = document.createElement('kbd');
+      hint.textContent = options.shortcut;
+      item.append(hint);
+    }
     item.disabled = options.disabled === true;
     item.classList.toggle('is-danger', options.danger === true);
     item.addEventListener('click', event => {
@@ -5632,10 +5661,19 @@ function openThreadMenu(button: HTMLElement) {
     });
     return item;
   };
+  const divider = () => document.createElement('hr');
   const unavailable = !activeConversationId;
   menu.append(
-    make('Conversation', () => setConversationTab('chat')),
-    make('对话记录', () => setConversationTab('trajectory')),
+    make(
+      'Files',
+      () => {
+        document
+          .getElementById('inspector-toggle')
+          ?.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+      },
+      {shortcut: 'Ctrl+Shift+F'},
+    ),
+    divider(),
     make('Open project folder', () => {
       if (activeProjectRoot) {
         void Data.openProjectPath(activeProjectRoot, '');
@@ -5644,20 +5682,7 @@ function openThreadMenu(button: HTMLElement) {
       }
     }),
     make(
-      'Task materials & Figma',
-      () => {
-        const popover = document.getElementById('magic-brain-popover');
-        if (!popover) {
-          return;
-        }
-        popover.hidden = false;
-        void renderMagicBrain(true);
-        void refreshFigmaConnection();
-      },
-      {disabled: unavailable},
-    ),
-    make(
-      '重命名',
+      'Rename',
       () => {
         if (activeConversationId) {
           openRenameDialog(
@@ -5666,10 +5691,13 @@ function openThreadMenu(button: HTMLElement) {
           );
         }
       },
-      {disabled: unavailable},
+      {disabled: unavailable, shortcut: 'R'},
     ),
+    make('Transcript view', () => setConversationTab('trajectory'), {
+      disabled: unavailable,
+    }),
     make(
-      '从当前结果分支',
+      'Fork',
       () => {
         if (!activeConversationId || activeConversationTurnCount < 1) {
           return;
@@ -5685,10 +5713,10 @@ function openThreadMenu(button: HTMLElement) {
           await openConversation(result.conversation.id);
         });
       },
-      {disabled: unavailable || activeConversationTurnCount < 1},
+      {disabled: unavailable || activeConversationTurnCount < 1, shortcut: 'F'},
     ),
     make(
-      '导出 Session log',
+      'Export session log',
       () => {
         if (activeConversationId) {
           void Data.exportConversation(activeConversationId);
@@ -5696,8 +5724,9 @@ function openThreadMenu(button: HTMLElement) {
       },
       {disabled: unavailable},
     ),
+    divider(),
     make(
-      '删除对话',
+      'Delete',
       () => {
         if (!activeConversationId) {
           return;
@@ -5706,7 +5735,7 @@ function openThreadMenu(button: HTMLElement) {
         startNewChat();
         void Data.deleteConversation(id).then(() => renderSidebar());
       },
-      {danger: true, disabled: unavailable},
+      {danger: true, disabled: unavailable, shortcut: 'D'},
     ),
   );
   document.body.appendChild(menu);

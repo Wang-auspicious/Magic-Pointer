@@ -572,69 +572,75 @@
 .mp-chat-todo-item[data-state="completed"] .mp-chat-todo-label { text-decoration: line-through; }
 .mp-chat-todo-item[data-state="in_progress"] .mp-chat-todo-check { color: var(--mp-clay); border-color: var(--mp-clay); }
 
-.mp-chat-artifact-card {
+/* Delivered file results. Only real files the agent wrote reach this card. */
+.mp-chat-files {
   width: 100%;
   overflow: hidden;
-  margin-top: 6px;
+  margin-top: 10px;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r7);
   background: var(--mp-panel);
 }
-
-.mp-chat-artifact-card > * + * {
-  border-top: 1px solid var(--mp-rule);
+.mp-chat-files-head {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 0 14px;
+  border-bottom: 1px solid var(--mp-rule);
 }
-
-.mp-chat-artifact-label {
+.mp-chat-files-title {
   min-width: 0;
   overflow: hidden;
   color: var(--mp-text);
-  font-size: 14px;
+  font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.mp-chat-artifact-row {
+.mp-chat-files-open {
+  margin-left: auto;
+  padding: 3px 12px 4px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r5);
+  background: var(--mp-panel);
+  color: var(--mp-text-secondary);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 19px;
+  cursor: pointer;
+}
+.mp-chat-files-open:hover { color: var(--mp-text); background: var(--mp-hover); }
+.mp-chat-file-row {
   display: flex;
   width: 100%;
-  min-height: 58px;
+  min-height: 38px;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 0 12px 0 14px;
+  border: 0;
+  background: transparent;
   color: var(--mp-text-secondary);
-  font-size: 14px;
-  cursor: pointer;
+  font: inherit;
+  font-size: 14.5px;
   text-align: left;
-  transition: background-color var(--mp-dur-fast);
+  cursor: pointer;
 }
-
-.mp-chat-artifact-row:hover {
-  background: var(--mp-hover);
-}
-
-.mp-chat-artifact-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
-
-.mp-chat-artifact-mark {
-  display: inline-flex;
-  flex: none;
-  color: var(--mp-text-muted);
-}
-
-.mp-chat-artifact-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--mp-text-muted);
-}
-
-.mp-chat-artifact-chev {
+.mp-chat-file-row + .mp-chat-file-row { border-top: 1px solid var(--mp-rule); }
+.mp-chat-file-row:hover { background: var(--mp-hover); color: var(--mp-text); }
+.mp-chat-file-mark { display: inline-flex; flex: none; color: var(--mp-text-muted); }
+.mp-chat-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-chat-file-chev {
   display: inline-flex;
   flex: none;
   margin-left: auto;
   color: var(--mp-text-muted);
   transform: rotate(-90deg);
+}
+.mp-chat-files-foot {
+  padding: 7px 14px 8px;
+  border-top: 1px solid var(--mp-rule);
+  color: var(--mp-text-muted);
+  font-size: 12.5px;
 }
 
 .mp-chat-tool-tag {
@@ -1352,8 +1358,7 @@
   display: inline-block;
   width: 100%;
   height: 100%;
-  overflow: hidden;
-  color: var(--mp-clay, #d97757);
+  color: var(--mp-text-muted);
 }
 
 .mp-chat-run-meta-mark svg,
@@ -1361,26 +1366,19 @@
   display: block;
   width: 100%;
   height: 100%;
-  fill: var(--mp-clay);
 }
-.mp-spark-animation > .spark { display: none; }
-.mp-spark-animation > [data-cds-spark-strip] {
-  display: block;
-  position: absolute;
-  top: 0;
-  inset-inline: 0;
-  background: currentColor;
-  mask-size: 100% 100%;
-  mask-repeat: no-repeat;
+.mp-spark-animation .spark-arc {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: mp-spark-spin var(--spark-duration, 1000ms) linear infinite;
 }
-@keyframes mp-spark-frames {
-  from { transform: translateY(0); }
-  to { transform: translateY(var(--spark-end)); }
+.mp-spark-animation[data-state='writing'] .spark-arc { animation-direction: reverse; }
+@keyframes mp-spark-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mp-spark-animation > [data-cds-spark-strip] { display: none; }
-  .mp-spark-animation > .spark { display: block; }
+  .mp-spark-animation .spark-arc { animation: none; }
 
   .mp-chat-disclosure[data-open='true'] > .mp-chat-body-wrap { animation: none; }
 
@@ -1943,12 +1941,23 @@
   border-radius: var(--mp-r8);
 }
 
+/* Context and mode switchers stay compact; only the slash menu is a panel. */
+.mpw-perm-menu,
+.mp-usage-popover {
+  width: min(268px, calc(100vw - 24px));
+  max-height: 320px;
+  padding: 5px;
+  border-radius: 12px;
+  font-size: 13.5px;
+}
+
 .mp-usage-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 4px 6px 2px;
   color: var(--mp-text-secondary);
-  font-size: 15px;
+  font-size: 13.5px;
 }
 
 .mp-usage-head-value {
@@ -1958,8 +1967,8 @@
 }
 
 .mp-usage-chev {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: none;
   color: var(--mp-text-muted);
   transform: rotate(-90deg);
@@ -2208,10 +2217,11 @@
 
 .mpw-perm-menu,
 .mpw-model-menu {
-  min-width: 200px;
-  max-width: min(408px, calc(100vw - 24px));
+  min-width: 184px;
+  max-width: min(268px, calc(100vw - 24px));
   padding: 4px;
 }
+.mpw-perm-menu > button { padding: 5px 8px 6px; font-size: 13.5px; line-height: 19px; }
 
 .mpw-model-menu {
   width: 244px;
