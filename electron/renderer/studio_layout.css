@@ -2396,9 +2396,9 @@
   position: relative;
   z-index: 1;
   display: grid;
-  width: min(960px, calc(100vw - 48px));
-  height: min(740px, calc(100vh - 80px));
-  grid-template-columns: 230px minmax(0, 1fr);
+  width: min(1010px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 80px));
+  grid-template-columns: 248px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r-sheet);
@@ -2417,17 +2417,19 @@
 .mpw-settings-nav-title,
 .mp-directory-titlebar h2 {
   margin: 0 0 12px;
-  font-size: 16px;
-  font-weight: var(--mp-weight-medium);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--mp-text-muted);
 }
 
 .mpw-settings-search,
 .mp-directory-search {
   display: flex;
-  height: 30px;
+  height: 34px;
   align-items: center;
-  gap: 7px;
-  padding: 0 8px;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 0 10px;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r5);
   background: var(--mp-panel);
@@ -2595,7 +2597,7 @@
 }
 
 .mpw-settings-options {
-  padding: 0 28px 32px;
+  padding: 0 32px 40px;
 }
 
 .mpw-settings-nav-list {
@@ -2609,22 +2611,23 @@
 }
 
 .settings-nav-group h2 {
-  margin: 0 8px 4px;
+  margin: 0 10px 6px;
   color: var(--mp-text-muted);
-  font-size: 11px;
-  font-weight: var(--mp-weight-medium);
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .settings-nav-item,
 .mp-customize-directory {
   display: flex;
   width: 100%;
-  min-height: 30px;
+  min-height: 36px;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px;
+  gap: 11px;
+  padding: 0 10px;
   border-radius: var(--mp-r5);
   color: var(--mp-text-secondary);
+  font-size: 15px;
   text-align: left;
 }
 
@@ -2637,7 +2640,7 @@
 
 .settings-nav-item svg,
 .mp-customize-directory svg {
-  width: 16px;
+  width: 18px;
   height: 16px;
   flex: none;
 }
@@ -2655,15 +2658,14 @@
 }
 
 .mp-settings-page-head {
-  padding: 4px 0 22px;
-  border-bottom: 1px solid var(--mp-rule);
+  padding: 4px 0 20px;
 }
 
 .mp-settings-page-head h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 26px;
   font-weight: var(--mp-weight-medium);
-  line-height: 28px;
+  line-height: 34px;
 }
 
 .mp-settings-page-head p {
@@ -2681,14 +2683,16 @@
 }
 
 .mp-settings-section h3 {
-  margin: 0 0 6px;
-  color: var(--mp-text-muted);
-  font-size: 12px;
+  margin: 0 0 10px;
+  color: var(--mp-text-secondary);
+  font-size: 14px;
   font-weight: var(--mp-weight-medium);
 }
 
 .mp-settings-list {
-  border-top: 1px solid var(--mp-rule);
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r7);
+  overflow: hidden;
 }
 
 .mp-settings-row {
@@ -2698,7 +2702,7 @@
   min-height: 54px;
   align-items: center;
   gap: 24px;
-  padding: 8px 0;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--mp-rule);
 }
 

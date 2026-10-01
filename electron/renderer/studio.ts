@@ -356,6 +356,7 @@ function setActiveProject(root: unknown) {
   activeProjectRoot = String(root || '').trim();
   projectEnvironment = null;
   activeTerminalRelativeDirectory = '';
+  invalidateProjectCache();
   try {
     if (activeProjectRoot) {
       localStorage.setItem('mp:active-project-root', activeProjectRoot);
@@ -1917,14 +1918,28 @@ function workspaceMenuRow(
   return row;
 }
 
+// The folder menu must open with no wait, so the list is kept warm and only
+// refreshed when a project is actually added or opened.
+let cachedProjects: MagicPointerProject[] | null = null;
+
+function invalidateProjectCache(): void {
+  cachedProjects = null;
+}
+
+async function warmProjects(): Promise<MagicPointerProject[]> {
+  if (cachedProjects) {
+    return cachedProjects;
+  }
+  cachedProjects = await Data.projects().catch(() => [] as MagicPointerProject[]);
+  return cachedProjects;
+}
+
 async function openWorkspaceMenu() {
   const menu = document.getElementById('composer-workspace-menu');
   if (!menu) {
     return;
   }
-  const projects = await Data.projects().catch(
-    () => [] as MagicPointerProject[],
-  );
+  const projects = await warmProjects();
   const rows: HTMLElement[] = [];
   const close = () => {
     closeAnchoredPopover('composer-workspace-menu', 'composer-workspace');
@@ -1977,6 +1992,7 @@ async function openWorkspaceMenu() {
   rows.push(
     workspaceMenuRow('mp-workspace-menu-row', 'Open folder…', () => {
       close();
+      invalidateProjectCache();
       void openProjectFromPicker();
     }),
   );

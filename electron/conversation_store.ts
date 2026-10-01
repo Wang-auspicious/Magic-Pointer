@@ -523,6 +523,14 @@ function createConversationStore(
     fs.renameSync(tmp, projectsFile);
   }
 
+  function isGitProjectRoot(root: string): boolean {
+    try {
+      return fs.existsSync(path.join(root, '.git'));
+    } catch {
+      return false;
+    }
+  }
+
   function registerProject(rawRoot: unknown): ProjectRecord | null {
     const input = String(rawRoot || '').trim();
     if (!input) {
@@ -590,7 +598,9 @@ function createConversationStore(
     if (imported) {
       persistProjects();
     }
+    // A folder is a project only when git recognises it. One stat per project.
     return [...projects]
+      .filter(project => isGitProjectRoot(project.root))
       .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
       .map(project => ({...project}));
   }
