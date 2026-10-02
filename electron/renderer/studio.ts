@@ -382,6 +382,9 @@ function setActiveProject(root: unknown) {
   }
   renderProjectContext();
   void warmProjects();
+  if (activeProjectRoot) {
+    void warmComposerEnvironment(activeProjectRoot);
+  }
   renderTerminalPrompt();
   if (
     document.getElementById('project-inspector') &&
@@ -543,6 +546,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
       contextKey,
     };
   }
+  await warmComposerEnvironment(base);
   const identity = currentComposerWorktreeId();
   const result = await Data.projectWorktree({
     action: 'create',
@@ -634,7 +638,7 @@ function currentComposerBranch(): string {
     normalizedProjectRoot(projectEnvironment.root) === key
       ? projectEnvironment.branch
       : '') ||
-    'main'
+    ''
   );
 }
 
@@ -646,19 +650,60 @@ function renderComposerBranch(): void {
   if (!button || !label) {
     return;
   }
+  const branch = currentComposerBranch();
   button.hidden = !activeProjectRoot;
-  label.textContent = currentComposerBranch();
-  button.title = `当前分支：${currentComposerBranch()}`;
+  label.textContent = branch || '当前分支';
+  button.title = branch ? `当前分支：${branch}` : '使用当前 Git 分支';
+}
+
+let composerEnvironmentRequest = 0;
+
+async function warmComposerEnvironment(root: string): Promise<void> {
+  const normalized = normalizedProjectRoot(root);
+  if (!normalized || normalized !== normalizedProjectRoot(activeProjectRoot)) {
+    return;
+  }
+  if (
+    projectEnvironment?.ok &&
+    normalizedProjectRoot(projectEnvironment.root) === normalized
+  ) {
+    renderComposerBranch();
+    return;
+  }
+  const request = ++composerEnvironmentRequest;
+  const response = await Data.projectEnvironment(root, activeConversationId);
+  if (
+    request !== composerEnvironmentRequest ||
+    normalized !== normalizedProjectRoot(activeProjectRoot)
+  ) {
+    return;
+  }
+  if (response?.ok && response.root) {
+    projectEnvironment = response;
+    const stored = composerBranches.get(normalized);
+    if (
+      stored &&
+      Array.isArray(response.branches) &&
+      response.branches.length > 0 &&
+      !response.branches.includes(stored)
+    ) {
+      composerBranches.delete(normalized);
+      persistComposerBranches();
+    }
+    renderComposerBranch();
+  }
 }
 
 async function loadComposerBranchesForProject(): Promise<string[]> {
   if (!activeProjectRoot) {
     return [];
   }
-  const response = await Data.projectEnvironment(
-    activeProjectRoot,
-    activeConversationId,
-  );
+  const response =
+    projectEnvironment?.ok &&
+    normalizedProjectRoot(projectEnvironment.root) ===
+      normalizedProjectRoot(activeProjectRoot)
+      ? projectEnvironment
+      : await Data.projectEnvironment(activeProjectRoot, activeConversationId);
   if (
     response?.ok &&
     response.root &&
@@ -666,6 +711,17 @@ async function loadComposerBranchesForProject(): Promise<string[]> {
       normalizedProjectRoot(activeProjectRoot)
   ) {
     projectEnvironment = response;
+    const key = normalizedProjectRoot(activeProjectRoot);
+    const stored = composerBranches.get(key);
+    if (
+      stored &&
+      Array.isArray(response.branches) &&
+      response.branches.length > 0 &&
+      !response.branches.includes(stored)
+    ) {
+      composerBranches.delete(key);
+      persistComposerBranches();
+    }
   }
   const branches = Array.isArray(response?.branches)
     ? response.branches
