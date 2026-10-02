@@ -850,6 +850,7 @@ declare global {
         permissionPreset?: string;
         requestId?: string;
         workspaceRoot?: string;
+        executionWorkspaceRoot?: string;
         effort?: string;
         permissionGrant?: string;
         permissionDeny?: string;
@@ -1130,6 +1131,7 @@ declare global {
       projectRoot: string;
       conversationId?: string;
       path?: string;
+      baseBranch?: string;
     }): Promise<{ok?: boolean; path?: string; branch?: string; error?: string}>;
     showProjectContextMenu(
       projectRoot: string,
@@ -1210,6 +1212,7 @@ declare global {
       permission?: {grant?: string; deny?: string; once?: string},
       attachments?: string[],
       taskInput?: MagicPointerTaskInput,
+      executionWorkspaceRoot?: string,
     ): Promise<Record<string, any>>;
     respondConversation(
       payload: MagicPointerInputResponse,
@@ -1348,6 +1351,7 @@ declare global {
     name?: string;
     isGit?: boolean;
     branch?: string;
+    branches?: string[];
     upstream?: string;
     ahead?: number;
     behind?: number;
@@ -1669,6 +1673,7 @@ const Data: MagicPointerDataApi = {
     projectRoot: string;
     conversationId?: string;
     path?: string;
+    baseBranch?: string;
   }) {
     const projects = bridge()?.projects;
     if (!hasBridge() || !projects?.worktree) {
@@ -1837,6 +1842,7 @@ const Data: MagicPointerDataApi = {
     permission?: {grant?: string; deny?: string; once?: string},
     attachments: string[] = [],
     taskInput?: MagicPointerTaskInput,
+    executionWorkspaceRoot?: string,
   ): Promise<Record<string, any>> {
     if (!hasBridge()) {
       return {ok: false, error: '请在 Magic Pointer 应用里发送。'};
@@ -1849,6 +1855,7 @@ const Data: MagicPointerDataApi = {
       permissionPreset: permissionPreset || 'workspace-write',
       requestId,
       workspaceRoot,
+      executionWorkspaceRoot,
       effort: effort || 'high',
       permissionGrant: permission?.grant,
       permissionDeny: permission?.deny,

@@ -2009,10 +2009,11 @@ ipcMain.handle(
 );
 
 function knownProjectRoot(rawRoot: unknown): string | null {
-  const requested = path.resolve(String(rawRoot || '').trim());
-  if (!String(rawRoot || '').trim()) {
+  const raw = String(rawRoot || '').trim();
+  if (!raw) {
     return null;
   }
+  const requested = path.resolve(raw);
   const match = conversations()
     .listProjects()
     .find(
@@ -2023,11 +2024,54 @@ function knownProjectRoot(rawRoot: unknown): string | null {
   if (match) {
     return path.resolve(String(match.root || ''));
   }
-  const managed = path.join(FABRIC_DATA_DIR, 'worktrees') + path.sep;
-  if ((requested + path.sep).startsWith(managed) && fs.existsSync(requested)) {
+  if (
+    isManagedWorktreePath(FABRIC_DATA_DIR, requested) &&
+    fs.existsSync(path.join(requested, '.git'))
+  ) {
     return requested;
   }
   return null;
+}
+
+function samePath(left: unknown, right: unknown): boolean {
+  const normalize = (value: unknown) =>
+    path
+      .resolve(String(value || '').trim())
+      .replace(/[\\/]+$/, '')
+      .toLocaleLowerCase();
+  return Boolean(left && right) && normalize(left) === normalize(right);
+}
+
+interface GitWorktreeEntry {
+  path: string;
+  branch: string;
+}
+
+function parseGitWorktreeList(output: string): GitWorktreeEntry[] {
+  const entries: GitWorktreeEntry[] = [];
+  let current: GitWorktreeEntry | null = null;
+  for (const line of String(output || '').split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      if (current) {
+        entries.push(current);
+      }
+      current = {path: line.slice('worktree '.length).trim(), branch: ''};
+      continue;
+    }
+    if (current && line.startsWith('branch refs/heads/')) {
+      current.branch = line.slice('branch refs/heads/'.length).trim();
+    }
+  }
+  if (current) {
+    entries.push(current);
+  }
+  return entries.filter(entry => entry.path);
+}
+
+async function gitWorktreeEntries(root: string): Promise<GitWorktreeEntry[]> {
+  return parseGitWorktreeList(
+    await runGitCapture(root, ['worktree', 'list', '--porcelain']),
+  );
 }
 
 function runGitCapture(
@@ -2068,6 +2112,26 @@ function runGitCapture(
   });
 }
 
+async function canonicalProjectRoot(rawRoot: unknown): Promise<string> {
+  const raw = String(rawRoot || '').trim();
+  if (!raw) {
+    return '';
+  }
+  const resolved = path.resolve(raw);
+  if (!isManagedWorktreePath(FABRIC_DATA_DIR, resolved)) {
+    return resolved;
+  }
+  const commonDir = await runGitCapture(resolved, [
+    'rev-parse',
+    '--git-common-dir',
+  ]);
+  if (!commonDir) {
+    return resolved;
+  }
+  const candidate = path.dirname(path.resolve(resolved, commonDir));
+  return conversations().registerProject(candidate)?.root || resolved;
+}
+
 ipcMain.handle(
   'projects:worktree',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
@@ -2077,6 +2141,9 @@ ipcMain.handle(
     const root = knownProjectRoot(raw?.projectRoot);
     if (!root) {
       return {ok: false, error: '请先打开项目。'};
+    }
+    if (isManagedWorktreePath(FABRIC_DATA_DIR, root)) {
+      return {ok: false, error: '请使用原始 git 项目作为 worktree 基准。'};
     }
     const action = String(raw?.action || '');
     if (action !== 'create' && action !== 'remove') {
@@ -2100,6 +2167,12 @@ ipcMain.handle(
         return {ok: false, error: 'worktree_outside_managed_dir'};
       }
       const resolved = path.resolve(target);
+      const entry = (await gitWorktreeEntries(root)).find(item =>
+        samePath(item.path, resolved),
+      );
+      if (!entry) {
+        return {ok: false, error: '这个路径不是当前项目管理的 worktree。'};
+      }
       const failure = await runGitCaptureCapturingError(
         root,
         worktreeRemoveArgs(resolved),
@@ -2112,16 +2185,47 @@ ipcMain.handle(
       return {ok: true};
     }
 
-    const slug = worktreeSlug(String(raw?.conversationId || ''));
+    const conversationKey = String(raw?.conversationId || '').trim();
+    if (!conversationKey) {
+      return {ok: false, error: '需要当前会话标识才能创建 worktree。'};
+    }
+    const slug = worktreeSlug(conversationKey);
     const target = worktreePathFor(FABRIC_DATA_DIR, root, slug);
     const branch = `mp/${slug}`;
+    const requestedBaseBranch = String(raw?.baseBranch || '').trim();
+    const baseBranch = requestedBaseBranch || 'HEAD';
+    if (requestedBaseBranch) {
+      const branchRef = await runGitCapture(root, [
+        'rev-parse',
+        '--verify',
+        `refs/heads/${requestedBaseBranch}`,
+      ]);
+      if (!branchRef) {
+        return {ok: false, error: '所选分支不存在，无法创建 worktree。'};
+      }
+    }
+    const entries = await gitWorktreeEntries(root);
     if (fs.existsSync(target)) {
+      const existing = entries.find(item => samePath(item.path, target));
+      if (!existing || existing.branch !== branch) {
+        return {
+          ok: false,
+          error: 'worktree 目标路径已被其他内容占用，请先清理后重试。',
+        };
+      }
       return {ok: true, path: target, branch};
+    }
+    const branchOwner = entries.find(item => item.branch === branch);
+    if (branchOwner) {
+      return {
+        ok: false,
+        error: `worktree 分支已在 ${branchOwner.path} 使用，请先清理后重试。`,
+      };
     }
     fs.mkdirSync(path.dirname(target), {recursive: true});
     let failure = await runGitCaptureCapturingError(
       root,
-      worktreeAddArgs(target, branch),
+      worktreeAddArgs(target, branch, baseBranch),
     );
     if (failure !== null) {
       failure = await runGitCaptureCapturingError(
@@ -2200,27 +2304,44 @@ ipcMain.handle(
     if (!root) {
       return {ok: false, error: '请先打开项目。'};
     }
-    const [branchOutput, unstagedNumstat, stagedNumstat, remoteUrl] =
-      await Promise.all([
-        runGitCapture(root, ['status', '--porcelain=v1', '--branch', '-z']),
-        runGitCapture(root, ['diff', '--numstat']),
-        runGitCapture(root, ['diff', '--cached', '--numstat']),
-        runGitCapture(root, ['remote', 'get-url', 'origin']),
-      ]);
+    const [
+      branchOutput,
+      unstagedNumstat,
+      stagedNumstat,
+      remoteUrl,
+      branchListOutput,
+    ] = await Promise.all([
+      runGitCapture(root, ['status', '--porcelain=v1', '--branch', '-z']),
+      runGitCapture(root, ['diff', '--numstat']),
+      runGitCapture(root, ['diff', '--cached', '--numstat']),
+      runGitCapture(root, ['remote', 'get-url', 'origin']),
+      runGitCapture(root, [
+        'for-each-ref',
+        '--format=%(refname:short)',
+        'refs/heads',
+      ]),
+    ]);
     const conversationId = String(raw?.conversationId || '').slice(0, 120);
     const conversation = conversationId
       ? conversations().get(conversationId)
       : null;
+    const parsed = parseGitEnvironment({
+      root,
+      branchOutput,
+      numstatOutput: [unstagedNumstat, stagedNumstat]
+        .filter(Boolean)
+        .join('\n'),
+      remoteUrl,
+    });
+    const branches = [parsed.branch, ...branchListOutput.split(/\r?\n/)]
+      .map(value => String(value || '').trim())
+      .filter(
+        (branch, index, values) => branch && values.indexOf(branch) === index,
+      );
     return {
       ok: true,
-      ...parseGitEnvironment({
-        root,
-        branchOutput,
-        numstatOutput: [unstagedNumstat, stagedNumstat]
-          .filter(Boolean)
-          .join('\n'),
-        remoteUrl,
-      }),
+      ...parsed,
+      branches,
       sources: sourceLinksFromConversation(conversation),
     };
   },
@@ -3419,6 +3540,9 @@ async function sendConversation(
       .trim()
       .slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
+  const executionWorkspaceRoot = String(
+    raw?.executionWorkspaceRoot || '',
+  ).trim();
   const attachments = Array.isArray(raw?.attachments)
     ? [
         ...new Set(
@@ -3464,11 +3588,66 @@ async function sendConversation(
       ...(denyNow ? [denyNow] : []),
     ]),
   ];
-  // without one, a thread that already has a root keeps it (no global bleed).
-  const effectiveWorkspaceRoot = resolveConversationWorkspace(
-    workspaceRoot,
+  // A conversation is bound to its registered project root. A worktree is an
+  // execution detail for this turn and never replaces that durable binding.
+  const threadWorkspaceRoot = await canonicalProjectRoot(
     existing?.workspaceRoot,
   );
+  if (
+    threadWorkspaceRoot &&
+    workspaceRoot &&
+    !samePath(threadWorkspaceRoot, workspaceRoot)
+  ) {
+    return {ok: false, error: '这条对话已绑定其他项目，请先切换项目。'};
+  }
+  const requestedWorkspaceRoot = await canonicalProjectRoot(
+    resolveConversationWorkspace(workspaceRoot, threadWorkspaceRoot),
+  );
+  const effectiveWorkspaceRoot = requestedWorkspaceRoot
+    ? knownProjectRoot(requestedWorkspaceRoot)
+    : '';
+  if (requestedWorkspaceRoot && !effectiveWorkspaceRoot) {
+    return {ok: false, error: '请选择已识别的 git 项目文件夹。'};
+  }
+  const projectRoot = effectiveWorkspaceRoot || '';
+  const effectiveExecutionWorkspaceRoot =
+    executionWorkspaceRoot || effectiveWorkspaceRoot || '';
+  if (effectiveExecutionWorkspaceRoot && !effectiveWorkspaceRoot) {
+    return {ok: false, error: 'worktree 必须依附于 git 项目。'};
+  }
+  if (
+    effectiveExecutionWorkspaceRoot &&
+    !samePath(effectiveExecutionWorkspaceRoot, effectiveWorkspaceRoot)
+  ) {
+    if (
+      !isManagedWorktreePath(
+        FABRIC_DATA_DIR,
+        effectiveExecutionWorkspaceRoot,
+      ) ||
+      !fs.existsSync(path.join(effectiveExecutionWorkspaceRoot, '.git'))
+    ) {
+      return {ok: false, error: '执行目录不是当前项目的受管 worktree。'};
+    }
+    const [baseCommonDir, executionCommonDir] = await Promise.all([
+      runGitCapture(projectRoot, ['rev-parse', '--git-common-dir']),
+      runGitCapture(effectiveExecutionWorkspaceRoot, [
+        'rev-parse',
+        '--git-common-dir',
+      ]),
+    ]);
+    const normalizeGitDir = (root: string, value: string) =>
+      path.resolve(root, String(value || '').trim());
+    if (
+      !baseCommonDir ||
+      !executionCommonDir ||
+      !samePath(
+        normalizeGitDir(projectRoot, baseCommonDir),
+        normalizeGitDir(effectiveExecutionWorkspaceRoot, executionCommonDir),
+      )
+    ) {
+      return {ok: false, error: '执行 worktree 不属于当前项目。'};
+    }
+  }
   const effectiveAgentSessionId = studioConversationSessionId({
     existing: existing?.agentSessionId,
     conversationId,
@@ -3539,7 +3718,7 @@ async function sendConversation(
         (connection: {taskId: string}) =>
           connection.taskId === effectiveAgentSessionId,
       ),
-    workspaceRoot: effectiveWorkspaceRoot || '',
+    workspaceRoot: effectiveExecutionWorkspaceRoot || '',
     ...(threadGrants.length ? {permissionGrants: threadGrants} : {}),
     ...(threadDenials.length ? {permissionDenials: threadDenials} : {}),
     ...(onceNow ? {permissionGrantOnce: [onceNow]} : {}),

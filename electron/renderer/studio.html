@@ -287,10 +287,17 @@
                   <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-workspace-label">Select folder…</span>
                 </button>
                 <div class="mp-workspace-menu" id="composer-workspace-menu" hidden role="menu" aria-label="选择工作目录"></div>
+                <button type="button" class="mp-composer-branch" id="composer-branch" aria-label="Select a branch" aria-haspopup="menu" aria-expanded="false" hidden>
+                  <svg aria-hidden="true"><use href="#ic-branch" /></svg><span id="composer-branch-label">main</span><svg class="mp-composer-branch-chevron" aria-hidden="true"><use href="#ic-chev" /></svg>
+                </button>
+                <div class="mp-branch-menu" id="composer-branch-menu" hidden role="menu" aria-label="选择分支"></div>
                 <button type="button" class="mp-composer-worktree" id="composer-worktree" role="checkbox" aria-checked="false"
                   aria-label="在独立的 git worktree 中工作" title="在独立的 git worktree 中工作" hidden>
                   <span class="mp-worktree-box" aria-hidden="true"><svg aria-hidden="true"><use href="#ic-check" /></svg></span>
                   <span>Worktree</span>
+                </button>
+                <button type="button" class="mp-composer-folder-add" id="composer-context-folder-add" aria-label="Open another folder" title="Open another folder">
+                  <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
                 </button>
               </div>
               <form class="mpw-input-form mp-compact-composer" id="composer-form">
@@ -319,8 +326,6 @@
                         </div>
                         <button type="button" class="mpw-add mp-composer-secondary" id="composer-mention" aria-label="提及上下文" title="提及文件或上下文">
                           <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
-                        </button>
-                          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE0AB;</span>
                         </button>
                         <button type="button" class="mpw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
                           <svg class="mpw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>

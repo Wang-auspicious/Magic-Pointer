@@ -4,6 +4,19 @@ import path from 'node:path';
 
 const SLUG_MAX = 24;
 
+function worktreeContextKey(
+  repoRoot: unknown,
+  conversationId: unknown,
+): string {
+  const root = String(repoRoot ?? '')
+    .trim()
+    .replace(/[\\/]+$/, '')
+    .replace(/\\/g, '/')
+    .toLocaleLowerCase();
+  const conversation = String(conversationId ?? '').trim();
+  return `${root}\u0000${conversation}`;
+}
+
 function worktreeSlug(conversationId: unknown, nowMs = Date.now()): string {
   const cleaned = String(conversationId ?? '')
     .replace(/[^a-zA-Z0-9-]/g, '')
@@ -51,6 +64,7 @@ function worktreeRemoveArgs(target: string): string[] {
 
 export {
   isManagedWorktreePath,
+  worktreeContextKey,
   worktreeAddArgs,
   worktreePathFor,
   worktreeRemoveArgs,

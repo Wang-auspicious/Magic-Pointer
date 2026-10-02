@@ -366,6 +366,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         projectRoot?: unknown;
         conversationId?: unknown;
         path?: unknown;
+        baseBranch?: unknown;
       } = {},
     ) =>
       ipcRenderer.invoke('projects:worktree', {
@@ -379,6 +380,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         path: String(payload?.path || '')
           .trim()
           .slice(0, 1000),
+        baseBranch: String(payload?.baseBranch || '')
+          .trim()
+          .slice(0, 200),
       }),
     contextMenu: (projectRoot: unknown, relativePath: unknown, kind: unknown) =>
       ipcRenderer.invoke('projects:context-menu', {
@@ -479,6 +483,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       permissionPreset?: unknown;
       requestId?: unknown;
       workspaceRoot?: unknown;
+      executionWorkspaceRoot?: unknown;
       effort?: unknown;
       permissionGrant?: unknown;
       permissionDeny?: unknown;
@@ -506,6 +511,15 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         ...(String(payload?.workspaceRoot || '').trim()
           ? {
               workspaceRoot: String(payload?.workspaceRoot || '')
+                .trim()
+                .slice(0, 500),
+            }
+          : {}),
+        ...(String(payload?.executionWorkspaceRoot || '').trim()
+          ? {
+              executionWorkspaceRoot: String(
+                payload?.executionWorkspaceRoot || '',
+              )
                 .trim()
                 .slice(0, 500),
             }

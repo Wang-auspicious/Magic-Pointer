@@ -741,7 +741,13 @@ const ChatView = (() => {
                 typeof parsed.description === 'string'
                   ? parsed.description.trim()
                   : '';
-              return description ? firstLine(description) : '';
+              const command =
+                typeof parsed.command === 'string'
+                  ? parsed.command.trim()
+                  : typeof parsed.cmd === 'string'
+                    ? parsed.cmd.trim()
+                    : '';
+              return firstLine(description || command);
             } catch {
               return '';
             }
@@ -924,7 +930,14 @@ const ChatView = (() => {
 
   function codeBodyNode(text: string, lang: string): ChatNode {
     const lines = text.split('\n');
-    const highlighted = highlightLines(text, lang);
+    const trimmed = text.trimStart();
+    const outputLang =
+      lang === 'plain' &&
+      (trimmed.startsWith('{') || trimmed.startsWith('[')) &&
+      /["'][^"']+["']\s*:/u.test(trimmed)
+        ? 'json'
+        : lang;
+    const highlighted = highlightLines(text, outputLang);
     const code = h('code');
     lines.forEach((line, index) => {
       if (index > 0) {

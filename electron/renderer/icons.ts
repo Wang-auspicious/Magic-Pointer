@@ -87,6 +87,7 @@ document.body.insertAdjacentHTML(
 <symbol id="ic-triangle-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
 <symbol id="ic-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M8 12h3a7 7 0 0 0 7-3"/></symbol>
 <symbol id="ic-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/></symbol>
+<symbol id="ic-sort" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14M5 8l3-3 3 3M16 19V5M13 16l3 3 3-3"/></symbol>
 <symbol id="ic-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l-.8 6.2 3.3 3.3H6.5l3.3-3.3z"/><path d="M12 12.5V21"/></symbol>
 <!-- Lucide 官方路径(lucide-static 0.525.0,ISC)。Studio 所有普通线性图标
      使用 1.5px 描边；只保留当前产品表面真实消费的图标。 -->

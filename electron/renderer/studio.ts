@@ -381,6 +381,7 @@ function setActiveProject(root: unknown) {
     /* storage unavailable */
   }
   renderProjectContext();
+  void warmProjects();
   renderTerminalPrompt();
   if (
     document.getElementById('project-inspector') &&
@@ -394,42 +395,97 @@ interface ComposerWorktree {
   path: string;
   branch: string;
   base: string;
-}
-let composerWorktree: ComposerWorktree | null = null;
-let composerWorktreeEnabled = false;
-try {
-  const stored = JSON.parse(
-    localStorage.getItem('mp:composer-worktree') || 'null',
-  ) as ComposerWorktree | null;
-  if (stored?.path && stored?.base) {
-    composerWorktree = stored;
-  }
-  composerWorktreeEnabled =
-    localStorage.getItem('mp:composer-worktree-enabled') === 'true' ||
-    (localStorage.getItem('mp:composer-worktree-enabled') === null &&
-      Boolean(composerWorktree));
-} catch {
-  /* storage unavailable */
+  conversationId: string;
 }
 
-function persistComposerWorktree() {
+const COMPOSER_WORKTREE_STATE_KEY = 'mp:composer-worktrees:v2';
+const composerWorktrees = new Map<string, ComposerWorktree>();
+const composerWorktreeEnabledKeys = new Set<string>();
+let newChatWorktreeId = `new-${Date.now().toString(36)}-${Math.random()
+  .toString(36)
+  .slice(2, 8)}`;
+
+function composerWorktreeKey(base: unknown, conversationId: unknown): string {
+  const normalized = normalizedProjectRoot(base);
+  const identity = String(conversationId || '').trim();
+  return `${normalized}\u0000${identity}`;
+}
+
+function currentComposerWorktreeId(): string {
+  return activeConversationId || newChatWorktreeId;
+}
+
+function currentComposerWorktreeKey(): string {
+  return composerWorktreeKey(activeProjectRoot, currentComposerWorktreeId());
+}
+
+function currentComposerWorktreeEnabled(): boolean {
+  return composerWorktreeEnabledKeys.has(currentComposerWorktreeKey());
+}
+
+function loadComposerWorktreeState(): void {
   try {
-    localStorage.setItem(
-      'mp:composer-worktree-enabled',
-      String(composerWorktreeEnabled),
-    );
-    if (composerWorktree) {
-      localStorage.setItem(
-        'mp:composer-worktree',
-        JSON.stringify(composerWorktree),
-      );
-    } else {
-      localStorage.removeItem('mp:composer-worktree');
+    const raw = localStorage.getItem(COMPOSER_WORKTREE_STATE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as {
+        records?: unknown;
+        enabled?: unknown;
+      };
+      if (Array.isArray(parsed.records)) {
+        for (const item of parsed.records) {
+          const record = item as Partial<ComposerWorktree>;
+          if (
+            typeof record.path === 'string' &&
+            typeof record.base === 'string' &&
+            typeof record.branch === 'string' &&
+            typeof record.conversationId === 'string' &&
+            record.path &&
+            record.base &&
+            record.conversationId
+          ) {
+            composerWorktrees.set(
+              composerWorktreeKey(record.base, record.conversationId),
+              {
+                path: record.path,
+                branch: record.branch,
+                base: record.base,
+                conversationId: record.conversationId,
+              },
+            );
+          }
+        }
+      }
+      if (Array.isArray(parsed.enabled)) {
+        for (const item of parsed.enabled) {
+          if (typeof item === 'string' && item) {
+            composerWorktreeEnabledKeys.add(item);
+          }
+        }
+      }
+      return;
     }
+    // Do not resurrect the old single global record: it had no conversation
+    // identity and could silently attach a new chat to an unrelated task.
   } catch {
     /* storage unavailable */
   }
 }
+
+function persistComposerWorktrees(): void {
+  try {
+    localStorage.setItem(
+      COMPOSER_WORKTREE_STATE_KEY,
+      JSON.stringify({
+        records: [...composerWorktrees.values()].slice(-64),
+        enabled: [...composerWorktreeEnabledKeys].slice(-64),
+      }),
+    );
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+loadComposerWorktreeState();
 
 function renderComposerWorktree() {
   const button = document.getElementById(
@@ -439,9 +495,10 @@ function renderComposerWorktree() {
     return;
   }
   button.hidden = !activeProjectRoot;
-  button.setAttribute('aria-checked', String(composerWorktreeEnabled));
+  const enabled = currentComposerWorktreeEnabled();
+  button.setAttribute('aria-checked', String(enabled));
   button.disabled = false;
-  button.title = composerWorktreeEnabled
+  button.title = enabled
     ? 'Work in an isolated copy of your repository so you can keep working without conflicts.'
     : 'Work in an isolated copy of your repository to work on multiple tasks at the same time.';
 }
@@ -459,59 +516,271 @@ document
     if (!activeProjectRoot) {
       return;
     }
-    composerWorktreeEnabled = !composerWorktreeEnabled;
-    (event.currentTarget as HTMLElement).removeAttribute('data-error');
-    if (
-      !composerWorktreeEnabled &&
-      composerWorktree &&
-      normalizedProjectRoot(activeProjectRoot) ===
-        normalizedProjectRoot(composerWorktree.path)
-    ) {
-      setActiveProject(composerWorktree.base);
+    const key = currentComposerWorktreeKey();
+    if (composerWorktreeEnabledKeys.has(key)) {
+      composerWorktreeEnabledKeys.delete(key);
+    } else {
+      composerWorktreeEnabledKeys.add(key);
     }
-    persistComposerWorktree();
+    (event.currentTarget as HTMLElement).removeAttribute('data-error');
+    persistComposerWorktrees();
     renderComposerWorktree();
   });
 
-async function prepareComposerWorktree(): Promise<string> {
+interface PreparedComposerWorkspace {
+  projectRoot: string;
+  executionWorkspaceRoot: string;
+  contextKey: string;
+}
+
+async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   const base = activeProjectRoot;
-  if (!composerWorktreeEnabled || !base) {
-    return base;
+  const contextKey = currentComposerWorktreeKey();
+  if (!base || !currentComposerWorktreeEnabled()) {
+    return {
+      projectRoot: base,
+      executionWorkspaceRoot: base,
+      contextKey,
+    };
   }
-  if (
-    composerWorktree &&
-    [composerWorktree.base, composerWorktree.path].some(
-      root => normalizedProjectRoot(root) === normalizedProjectRoot(base),
-    )
-  ) {
-    setActiveProject(composerWorktree.path);
-    return composerWorktree.path;
-  }
+  const identity = currentComposerWorktreeId();
   const result = await Data.projectWorktree({
     action: 'create',
     projectRoot: base,
-    conversationId: activeConversationId || '',
+    conversationId: identity,
+    baseBranch: currentComposerBranch(),
   });
   if (!result?.ok || !result.path) {
     const message = String(result?.error || '无法创建 worktree。');
     failComposerWorktree(document.getElementById('composer-worktree'), message);
     throw new Error(message);
   }
-  composerWorktree = {
+  const record: ComposerWorktree = {
     path: result.path,
     branch: result.branch || 'worktree',
     base,
+    conversationId: identity,
   };
-  persistComposerWorktree();
-  if (!composerWorktreeEnabled) {
-    return base;
-  }
-  setActiveProject(result.path);
-  return result.path;
+  composerWorktrees.set(contextKey, record);
+  persistComposerWorktrees();
+  return {
+    projectRoot: base,
+    executionWorkspaceRoot: result.path,
+    contextKey,
+  };
 }
+
+function adoptComposerWorktreeConversation(
+  contextKey: string,
+  projectRoot: string,
+  conversationId: string,
+): void {
+  if (!conversationId) {
+    return;
+  }
+  const record = composerWorktrees.get(contextKey);
+  const nextKey = composerWorktreeKey(projectRoot, conversationId);
+  if (record) {
+    composerWorktrees.delete(contextKey);
+    composerWorktrees.set(nextKey, {
+      ...record,
+      base: projectRoot,
+      conversationId,
+    });
+  }
+  if (composerWorktreeEnabledKeys.delete(contextKey)) {
+    composerWorktreeEnabledKeys.add(nextKey);
+  }
+  persistComposerWorktrees();
+}
+
+const COMPOSER_BRANCH_STORAGE_KEY = 'mp:composer-branches:v1';
+const composerBranches = new Map<string, string>();
+let branchMenuSearch = '';
+
+function loadComposerBranches(): void {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(COMPOSER_BRANCH_STORAGE_KEY) || '{}',
+    ) as Record<string, unknown>;
+    for (const [root, branch] of Object.entries(parsed)) {
+      if (root && typeof branch === 'string' && branch.trim()) {
+        composerBranches.set(root, branch.trim());
+      }
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function persistComposerBranches(): void {
+  try {
+    localStorage.setItem(
+      COMPOSER_BRANCH_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(composerBranches)),
+    );
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+loadComposerBranches();
+
+function currentComposerBranch(): string {
+  const key = normalizedProjectRoot(activeProjectRoot);
+  return (
+    composerBranches.get(key) ||
+    (projectEnvironment?.root &&
+    normalizedProjectRoot(projectEnvironment.root) === key
+      ? projectEnvironment.branch
+      : '') ||
+    'main'
+  );
+}
+
+function renderComposerBranch(): void {
+  const button = document.getElementById(
+    'composer-branch',
+  ) as HTMLButtonElement | null;
+  const label = document.getElementById('composer-branch-label');
+  if (!button || !label) {
+    return;
+  }
+  button.hidden = !activeProjectRoot;
+  label.textContent = currentComposerBranch();
+  button.title = `当前分支：${currentComposerBranch()}`;
+}
+
+async function loadComposerBranchesForProject(): Promise<string[]> {
+  if (!activeProjectRoot) {
+    return [];
+  }
+  const response = await Data.projectEnvironment(
+    activeProjectRoot,
+    activeConversationId,
+  );
+  if (
+    response?.ok &&
+    response.root &&
+    normalizedProjectRoot(response.root) ===
+      normalizedProjectRoot(activeProjectRoot)
+  ) {
+    projectEnvironment = response;
+  }
+  const branches = Array.isArray(response?.branches)
+    ? response.branches
+        .map(branch => String(branch || '').trim())
+        .filter(Boolean)
+    : [];
+  const selected = currentComposerBranch();
+  return [...new Set([selected, ...branches])];
+}
+
+function renderComposerBranchMenu(branches: string[]): void {
+  const menu = document.getElementById('composer-branch-menu');
+  if (!menu) {
+    return;
+  }
+  const query = branchMenuSearch.trim().toLocaleLowerCase();
+  const filtered = branches.filter(
+    branch => !query || branch.toLocaleLowerCase().includes(query),
+  );
+  const search = document.createElement('label');
+  search.className = 'mp-branch-menu-search';
+  search.innerHTML = '<svg aria-hidden="true"><use href="#ic-search" /></svg>';
+  const input = document.createElement('input');
+  input.type = 'search';
+  input.placeholder = 'Search branches…';
+  input.value = branchMenuSearch;
+  input.setAttribute('aria-label', 'Search branches');
+  search.append(input);
+  const list = document.createElement('div');
+  list.className = 'mp-branch-menu-list';
+  for (const branch of filtered) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'mp-branch-menu-row';
+    row.setAttribute('role', 'menuitemradio');
+    row.setAttribute(
+      'aria-checked',
+      String(branch === currentComposerBranch()),
+    );
+    const name = document.createElement('span');
+    name.textContent = branch;
+    row.append(name);
+    if (branch === currentComposerBranch()) {
+      const check = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'svg',
+      );
+      check.setAttribute('aria-hidden', 'true');
+      check.innerHTML = '<use href="#ic-check" />';
+      row.append(check);
+    }
+    row.addEventListener('click', () => {
+      if (!activeProjectRoot) {
+        return;
+      }
+      composerBranches.set(normalizedProjectRoot(activeProjectRoot), branch);
+      persistComposerBranches();
+      renderComposerBranch();
+      closeAnchoredPopover('composer-branch-menu', 'composer-branch');
+    });
+    list.append(row);
+  }
+  if (!filtered.length) {
+    const empty = document.createElement('div');
+    empty.className = 'mp-workspace-menu-section';
+    empty.textContent = 'No matching branches';
+    list.append(empty);
+  }
+  menu.replaceChildren(list, search);
+  input.addEventListener('input', () => {
+    branchMenuSearch = input.value;
+    renderComposerBranchMenu(branches);
+    const next = menu.querySelector<HTMLInputElement>('input');
+    next?.focus();
+    next?.setSelectionRange(next.value.length, next.value.length);
+  });
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+async function openComposerBranchMenu(): Promise<void> {
+  const menu = document.getElementById('composer-branch-menu');
+  if (!menu || !activeProjectRoot) {
+    return;
+  }
+  branchMenuSearch = '';
+  const branches = await loadComposerBranchesForProject();
+  renderComposerBranchMenu(branches);
+  positionAnchoredPopover('composer-branch-menu', 'composer-branch');
+}
+
+document.getElementById('composer-branch')?.addEventListener('click', event => {
+  event.stopPropagation();
+  const button = event.currentTarget as HTMLButtonElement;
+  const menu = document.getElementById('composer-branch-menu');
+  if (!menu) {
+    return;
+  }
+  if (!menu.hidden) {
+    closeAnchoredPopover('composer-branch-menu', 'composer-branch');
+    return;
+  }
+  button.setAttribute('aria-expanded', 'true');
+  void openComposerBranchMenu();
+});
+
+document
+  .getElementById('composer-context-folder-add')
+  ?.addEventListener('click', () => {
+    void openProjectFromPicker();
+  });
 
 function renderProjectContext() {
   renderComposerWorktree();
+  renderComposerBranch();
   const headerLabel = document.getElementById('chat-project-label');
   const locationLabel = document.getElementById('header-location-label');
   const workspaceLabel = document.getElementById('composer-workspace-label');
@@ -522,7 +791,9 @@ function renderProjectContext() {
   const hasProject = Boolean(activeProjectRoot);
   const homeVisible = !document.getElementById('studio-home')?.hidden;
   if (contextRow) {
-    contextRow.hidden = hasProject && !homeVisible;
+    // Keep the runtime context visible in chat so the selected project and
+    // worktree state are always inspectable and switchable.
+    contextRow.hidden = false;
   }
   if (repositoryRow && (!hasProject || homeVisible || !activeConversationId)) {
     repositoryRow.hidden = true;
@@ -746,6 +1017,8 @@ const STUDIO_POPOVERS = [
   ['composer-model-menu', 'composer-model'],
   ['composer-effort-menu', 'composer-effort'],
   ['composer-attach-menu', 'composer-add'],
+  ['composer-workspace-menu', 'composer-workspace'],
+  ['composer-branch-menu', 'composer-branch'],
   ['composer-usage-popover', 'composer-context'],
   ['account-menu', 'account-footer'],
 ] as const;
@@ -1642,6 +1915,7 @@ async function renderSidebar() {
     Data.conversations(),
     Data.projects(),
   ]);
+  cachedProjects = projects;
   const registeredRoots = new Set(
     projects.map(project => normalizedProjectRoot(project.root)),
   );
@@ -2356,13 +2630,100 @@ let usageDetailsOpen = false;
 let composerQuotaKey = '';
 let composerQuotaRequestKey = '';
 
+const COMPOSER_QUOTA_STORAGE_KEY = 'mp:composer-quota:v1';
+
+interface StoredComposerQuota {
+  entries?: Record<string, MagicPointerQuotaReport>;
+  key?: string;
+  report?: MagicPointerQuotaReport;
+}
+
+function readStoredComposerQuota(key: string): MagicPointerQuotaReport | null {
+  try {
+    const raw = localStorage.getItem(COMPOSER_QUOTA_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const stored = JSON.parse(raw) as Partial<StoredComposerQuota>;
+    const candidate =
+      stored.entries?.[key] || (stored.key === key ? stored.report : null);
+    if (!candidate || typeof candidate !== 'object') {
+      return null;
+    }
+    const rows = Array.isArray(candidate.rows)
+      ? candidate.rows.filter(
+          row => row && typeof row === 'object' && typeof row.id === 'string',
+        )
+      : [];
+    return {
+      adapter:
+        typeof candidate.adapter === 'string' || candidate.adapter === null
+          ? candidate.adapter
+          : null,
+      label: typeof candidate.label === 'string' ? candidate.label : '',
+      rows: rows.map(row => ({
+        id: typeof row.id === 'string' ? row.id : '',
+        label: typeof row.label === 'string' ? row.label : '',
+        value: typeof row.value === 'string' ? row.value : '',
+        percent:
+          typeof row.percent === 'number' && Number.isFinite(row.percent)
+            ? row.percent
+            : null,
+        detail: typeof row.detail === 'string' ? row.detail : '',
+      })),
+      error: typeof candidate.error === 'string' ? candidate.error : '',
+      source:
+        typeof candidate.source === 'string' ? candidate.source : '',
+      fetchedAt:
+        typeof candidate.fetchedAt === 'number' &&
+        Number.isFinite(candidate.fetchedAt)
+          ? candidate.fetchedAt
+          : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storeComposerQuota(
+  key: string,
+  report: MagicPointerQuotaReport,
+): void {
+  try {
+    let entries: Record<string, MagicPointerQuotaReport> = {};
+    const raw = localStorage.getItem(COMPOSER_QUOTA_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as StoredComposerQuota;
+      if (parsed.entries && typeof parsed.entries === 'object') {
+        entries = parsed.entries;
+      } else if (parsed.key && parsed.report) {
+        entries[parsed.key] = parsed.report;
+      }
+    }
+    entries[key] = {
+      adapter: report.adapter,
+      label: report.label,
+      rows: report.rows,
+      error: report.error,
+      source: report.source,
+      fetchedAt: report.fetchedAt,
+    };
+    const stored: StoredComposerQuota = {entries};
+    localStorage.setItem(COMPOSER_QUOTA_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    /* A read-only browser store must not block the usage meter. */
+  }
+}
+
 function syncComposerQuotaIdentity(): string {
   const key = [
     modelCatalog?.currentProfileId || '',
     modelCatalog?.provider || '',
   ].join(':');
   if (composerQuotaKey !== key) {
-    composerQuota = null;
+    // Never carry an in-memory balance across profiles or providers. A
+    // matching persisted report is safe to paint while the fresh request runs.
+    composerQuota = readStoredComposerQuota(key);
     composerQuotaPending = false;
     composerQuotaRequestKey = '';
     composerQuotaKey = key;
@@ -2391,6 +2752,7 @@ function ensureComposerQuota(force = false) {
     }
     if (report) {
       composerQuota = report;
+      storeComposerQuota(key, report);
     }
     renderUsageMeter(usageMeterTurns);
     if (report?.stale && !force) {
@@ -3065,7 +3427,7 @@ function setStudioHomeVisible(visible: boolean) {
     trajectory.hidden = visible || activeConversationTab !== 'trajectory';
   }
   if (contextRow) {
-    contextRow.hidden = !visible && Boolean(activeProjectRoot);
+    contextRow.hidden = false;
   }
   if (textarea) {
     applyComposerPlaceholder(textarea);
@@ -9890,7 +10252,7 @@ function renderComposerModel() {
   const btn = document.getElementById('composer-model');
   const current = modelCatalog?.current || '';
   syncComposerQuotaIdentity();
-  if (!document.getElementById('composer-usage-popover')?.hidden) {
+  if (modelCatalog) {
     ensureComposerQuota();
   }
   if (label) {
@@ -11193,17 +11555,18 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     syncConversationPendingInput([]);
     renderConversationProgress({phase: 'runtime_boot', fields: {}});
     try {
-      const workspaceRoot = await prepareComposerWorktree();
+      const workspace = await prepareComposerWorktree();
       const response = await Data.sendConversation(
         conversationId,
         question,
         permissionPreset,
         requestId,
-        workspaceRoot,
+        workspace.projectRoot,
         effort,
         permissionChoice,
         attachmentPaths,
         taskInput,
+        workspace.executionWorkspaceRoot,
       );
       if (pendingConversation !== submittedConversation) {
         await renderSidebar();
@@ -11212,6 +11575,11 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       pendingPermissionChoice = null;
       if (response?.conversationId) {
         activeConversationId = String(response.conversationId);
+        adoptComposerWorktreeConversation(
+          workspace.contextKey,
+          workspace.projectRoot,
+          activeConversationId,
+        );
       }
       if (!response?.ok || !response.conversationId) {
         if (response?.conversationId) {
@@ -11326,6 +11694,9 @@ function detachPendingConversation() {
 }
 
 function startNewChat() {
+  newChatWorktreeId = `new-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
   conversationOpenGeneration += 1;
   detachPendingConversation();
   clearWorkspaceResources();
@@ -11340,6 +11711,9 @@ function startNewChat() {
     }
   }
   activeConversationId = null;
+  newChatWorktreeId = `new-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
   activeConversationView = null;
   activeConversationRecord = null;
   activeConversationTurns = [];

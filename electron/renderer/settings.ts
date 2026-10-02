@@ -135,7 +135,45 @@ function renderMemoryLibrary() {
   </div></section>`;
 }
 
+function renderPluginsPage(page: any) {
+  const status = settingsModel.modelInfoValue('plugins', activeModelStatus);
+  const pluginRow = page.sections[0]?.rows?.[0];
+  const description =
+    pluginRow?.description || 'Local plugins become active after approval.';
+  return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}">
+    <header class="mp-settings-page-head mp-settings-plugin-head">
+      <div><h2>${escSetting(page.title)}</h2></div>
+    </header>
+    <div class="mp-settings-plugin-toolbar">
+      <label class="mp-settings-plugin-search">
+        ${settingIcon('ic-search')}<input type="search" placeholder="Search skills and plugins" aria-label="Search skills and plugins" />
+      </label>
+      <button type="button" class="mp-settings-plugin-add">Add${settingIcon('ic-chev')}</button>
+    </div>
+    <div class="mp-settings-plugin-tabs" role="tablist" aria-label="Plugin scope">
+      <button type="button" class="is-on" role="tab" aria-selected="true">Your plugins</button>
+      <button type="button" role="tab" aria-selected="false">Discover</button>
+    </div>
+    <div class="mp-settings-plugin-filters">
+      <span></span>
+      <div><button type="button">${settingIcon('ic-sliders')}Filter${settingIcon('ic-chev')}</button><button type="button">${settingIcon('ic-sort')}Sort · Last edited${settingIcon('ic-chev')}</button></div>
+    </div>
+    <div class="mp-settings-plugin-list">
+      <h3>Personal plugins</h3>
+      <article class="mp-settings-plugin-row">
+        <span class="mp-settings-plugin-mark">${settingIcon(page.icon || 'ic-plug')}</span>
+        <span class="mp-settings-plugin-copy"><strong>${escSetting(pluginRow?.label || 'Personal plugins')}</strong><small>${escSetting(description)}</small></span>
+        <span class="mp-settings-plugin-meta">${escSetting(status)}</span>
+        <button type="button" class="mp-settings-plugin-more" aria-label="More plugin actions">${settingIcon('ic-dots-vertical')}</button>
+      </article>
+    </div>
+  </section>`;
+}
+
 function renderSettingsPage(page: any) {
+  if (page.id === 'plugins') {
+    return renderPluginsPage(page);
+  }
   return `<section class="mp-settings-page" data-page="${escSetting(page.id)}">
     <header class="mp-settings-page-head">
       <div><h2>${escSetting(page.title)}</h2><p>${escSetting(page.description)}</p></div>
@@ -362,6 +400,28 @@ function parseSettingValue(element: HTMLInputElement | HTMLSelectElement) {
 
 document.addEventListener('click', event => {
   const target = event.target as HTMLElement;
+  const pluginTab = target.closest<HTMLButtonElement>(
+    '.mp-settings-plugin-tabs [role="tab"]',
+  );
+  if (pluginTab) {
+    const tabs = pluginTab.parentElement;
+    tabs?.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach(tab => {
+      const selected = tab === pluginTab;
+      tab.classList.toggle('is-on', selected);
+      tab.setAttribute('aria-selected', String(selected));
+    });
+    const list = document.querySelector<HTMLElement>(
+      '.mp-settings-plugin-list',
+    );
+    if (list) {
+      list.hidden = pluginTab.textContent?.trim() !== 'Your plugins';
+    }
+    return;
+  }
+  if (target.closest('.mp-settings-plugin-add')) {
+    document.querySelector<HTMLElement>('[data-directory-open]')?.click();
+    return;
+  }
   const nav = target.closest<HTMLElement>('[data-settings-page]');
   if (nav) {
     activeSettingsPage = nav.dataset.settingsPage || 'general';
@@ -382,6 +442,20 @@ document.addEventListener('click', event => {
 });
 
 document.addEventListener('input', event => {
+  const pluginSearch = (event.target as HTMLElement).closest<HTMLInputElement>(
+    '.mp-settings-plugin-search input',
+  );
+  if (pluginSearch) {
+    const query = pluginSearch.value.trim().toLocaleLowerCase();
+    document
+      .querySelectorAll<HTMLElement>('.mp-settings-plugin-row')
+      .forEach(row => {
+        row.hidden =
+          Boolean(query) &&
+          !row.textContent?.toLocaleLowerCase().includes(query);
+      });
+    return;
+  }
   const search = (event.target as HTMLElement).closest<HTMLInputElement>(
     '#settings-search',
   );

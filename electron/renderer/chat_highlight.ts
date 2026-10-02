@@ -15,7 +15,7 @@ interface ChatSpan {
   token: ChatTokenName;
 }
 
-type ChatLanguage = 'powershell' | 'shell' | 'plain';
+type ChatLanguage = 'powershell' | 'shell' | 'json' | 'plain';
 
 const ChatHighlight = (() => {
   const TAB = 9;
@@ -494,6 +494,76 @@ const ChatHighlight = (() => {
     return merge(spans);
   }
 
+  function scanJsonLine(line: string): ChatSpan[] {
+    const spans: ChatSpan[] = [];
+    let index = 0;
+    while (index < line.length) {
+      const code = line.charCodeAt(index);
+      if (isSpaceCode(code)) {
+        const start = index;
+        while (index < line.length && isSpaceCode(line.charCodeAt(index))) {
+          index += 1;
+        }
+        spans.push({text: line.slice(start, index), token: 'plain'});
+        continue;
+      }
+      if (code === DQUOTE) {
+        const start = index;
+        index += 1;
+        while (index < line.length) {
+          const current = line.charCodeAt(index);
+          if (current === BACKSLASH) {
+            index += Math.min(2, line.length - index);
+            continue;
+          }
+          index += 1;
+          if (current === DQUOTE) {
+            break;
+          }
+        }
+        let next = index;
+        while (next < line.length && isSpaceCode(line.charCodeAt(next))) {
+          next += 1;
+        }
+        spans.push({
+          text: line.slice(start, index),
+          token: line.charCodeAt(next) === COLON ? 'command' : 'string',
+        });
+        continue;
+      }
+      if ((code >= ZERO && code <= NINE) || code === DASH || code === DOT) {
+        const start = index;
+        index += 1;
+        while (index < line.length && /[0-9eE+.-]/u.test(line[index])) {
+          index += 1;
+        }
+        spans.push({text: line.slice(start, index), token: 'number'});
+        continue;
+      }
+      const wordStart = index;
+      while (index < line.length && /[A-Za-z]/u.test(line[index])) {
+        index += 1;
+      }
+      if (index > wordStart) {
+        const word = line.slice(wordStart, index);
+        spans.push({
+          text: word,
+          token:
+            word === 'true' || word === 'false' || word === 'null'
+              ? 'keyword'
+              : 'plain',
+        });
+        continue;
+      }
+      spans.push({
+        text: line[index],
+        token: '{}[],:'.includes(line[index]) ? 'operator' : 'plain',
+      });
+      index += 1;
+    }
+    return spans.length ? merge(spans) : [{text: '', token: 'plain'}];
+  }
+
   function merge(spans: ChatSpan[]): ChatSpan[] {
     const merged: ChatSpan[] = [];
     for (const span of spans) {
@@ -517,7 +587,7 @@ const ChatHighlight = (() => {
 
   function languageOf(lang: string): ChatLanguage {
     const name = typeof lang === 'string' ? lang.trim().toLowerCase() : '';
-    if (name === 'powershell' || name === 'shell') {
+    if (name === 'powershell' || name === 'shell' || name === 'json') {
       return name;
     }
     return 'plain';
@@ -534,7 +604,9 @@ const ChatHighlight = (() => {
       return lines.map(raw => {
         const line =
           raw.charCodeAt(raw.length - 1) === CR ? raw.slice(0, -1) : raw;
-        return scanLine(line, language);
+        return language === 'json'
+          ? scanJsonLine(line)
+          : scanLine(line, language);
       });
     } catch {
       return plainLines(lines);

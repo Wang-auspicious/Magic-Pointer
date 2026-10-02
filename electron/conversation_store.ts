@@ -525,10 +525,47 @@ function createConversationStore(
 
   function isGitProjectRoot(root: string): boolean {
     try {
-      return fs.existsSync(path.join(root, '.git'));
+      const project = path.resolve(String(root || '').trim());
+      if (!project || !fs.statSync(project).isDirectory()) {
+        return false;
+      }
+      // A linked git worktree has a .git file while a normal checkout has a
+      // .git directory. Both are real git roots and are intentionally
+      // accepted here.
+      return (
+        fs.statSync(path.join(project, '.git')).isFile() ||
+        fs.statSync(path.join(project, '.git')).isDirectory()
+      );
     } catch {
       return false;
     }
+  }
+
+  function isManagedWorktreeRoot(root: unknown): boolean {
+    const project = normalizedProjectRoot(root);
+    if (!project) {
+      return false;
+    }
+    const managedRoot = path.resolve(path.dirname(baseDir), 'worktrees');
+    const relative = path.relative(managedRoot, project);
+    return Boolean(
+      relative &&
+      relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative),
+    );
+  }
+
+  function normalizedProjectRoot(rawRoot: unknown): string {
+    const input = String(rawRoot || '').trim();
+    return input ? path.resolve(input) : '';
+  }
+
+  function projectKey(rawRoot: unknown): string {
+    return normalizedProjectRoot(rawRoot)
+      .replace(/[\\/]+$/, '')
+      .replace(/\\/g, '/')
+      .toLocaleLowerCase();
   }
 
   function registerProject(rawRoot: unknown): ProjectRecord | null {
@@ -536,15 +573,14 @@ function createConversationStore(
     if (!input) {
       return null;
     }
-    const root = input;
-    const key = root.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase();
+    const root = normalizedProjectRoot(input);
+    if (isManagedWorktreeRoot(root) || !isGitProjectRoot(root)) {
+      return null;
+    }
+    const key = projectKey(root);
     const projects = loadProjects();
     const existing = projects.find(project => {
-      const candidate = project.root
-        .replace(/\\/g, '/')
-        .replace(/\/$/, '')
-        .toLocaleLowerCase();
-      return candidate === key;
+      return projectKey(project.root) === key;
     });
     const openedAt = now();
     if (existing) {
@@ -565,34 +601,26 @@ function createConversationStore(
 
   function listProjects(): ProjectRecord[] {
     const projects = loadProjects();
+    const known = new Set(
+      projects.map(project => projectKey(project.root)).filter(Boolean),
+    );
     let imported = false;
     for (const conversation of load()) {
-      const root = String(conversation.workspaceRoot || '').trim();
-      if (!root) {
+      const root = normalizedProjectRoot(conversation.workspaceRoot);
+      if (!root || isManagedWorktreeRoot(root) || !isGitProjectRoot(root)) {
         continue;
       }
-      const normalized = root;
-      const key = normalized
-        .replace(/\\/g, '/')
-        .replace(/\/$/, '')
-        .toLocaleLowerCase();
-      if (
-        projects.some(project => {
-          const candidate = project.root
-            .replace(/\\/g, '/')
-            .replace(/\/$/, '')
-            .toLocaleLowerCase();
-          return candidate === key;
-        })
-      ) {
+      const key = projectKey(root);
+      if (!key || known.has(key)) {
         continue;
       }
       projects.push({
-        root: normalized,
-        name: path.basename(path.normalize(normalized)) || normalized,
+        root,
+        name: path.basename(path.normalize(root)) || root,
         addedAt: conversation.createdAt,
         lastOpenedAt: conversation.updatedAt,
       });
+      known.add(key);
       imported = true;
     }
     if (imported) {
@@ -600,7 +628,16 @@ function createConversationStore(
     }
     // A folder is a project only when git recognises it. One stat per project.
     return [...projects]
-      .filter(project => isGitProjectRoot(project.root))
+      .map(project => ({
+        ...project,
+        root: normalizedProjectRoot(project.root),
+      }))
+      .filter(
+        project =>
+          project.root &&
+          !isManagedWorktreeRoot(project.root) &&
+          isGitProjectRoot(project.root),
+      )
       .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
       .map(project => ({...project}));
   }
@@ -698,8 +735,10 @@ function createConversationStore(
       target.turns.push(entry);
       const explicitRoot = String(turn.workspaceRoot || '').trim();
       if (explicitRoot) {
-        target.workspaceRoot =
-          registerProject(explicitRoot)?.root || explicitRoot;
+        const registered = registerProject(explicitRoot);
+        if (registered) {
+          target.workspaceRoot = registered.root;
+        }
       }
       const agentSessionId = String(turn.agentSessionId || '').trim();
       if (agentSessionId) {
