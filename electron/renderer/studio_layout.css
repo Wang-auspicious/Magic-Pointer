@@ -1497,6 +1497,17 @@
   font-weight: var(--mp-weight-medium);
 }
 
+#workspace-resource-tabs-host {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0 8px;
+  overflow: hidden;
+}
+
+#workspace-resource-tabs-host[hidden] {
+  display: none;
+}
+
 .mp-inspector-actions {
   display: flex;
   align-items: center;

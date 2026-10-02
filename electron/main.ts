@@ -1,3 +1,5 @@
+import {BrowserViewRegistry} from './browser_view_registry';
+
 const {
   app,
   BrowserWindow,
@@ -208,8 +210,9 @@ function normalizeConversationEffort(value: unknown): string {
 let overlayWindow: InstanceType<typeof BrowserWindow> | null = null;
 let agentCursorSurfaces: InstanceType<typeof AgentCursorSurfaces> | null = null;
 let dashboardWindow: InstanceType<typeof BrowserWindow> | null = null;
-let dashboardBrowserView: InstanceType<typeof WebContentsView> | null = null;
-let dashboardBrowserProjectRoot = '';
+type DashboardBrowserView = InstanceType<typeof WebContentsView>;
+const dashboardBrowserRegistry =
+  new BrowserViewRegistry<DashboardBrowserView>();
 const projectTerminal = new ProjectTerminal();
 let projectTerminalDirectory = '';
 let projectTerminalGeneration = 0;
@@ -1346,6 +1349,8 @@ type StageUpdatePayload = {
       text?: string;
       detail?: string;
       actions?: unknown[];
+      artifacts?: unknown[];
+      artifactIds?: unknown[];
     };
   };
 };
@@ -1586,6 +1591,63 @@ function answerTextFrom(
   return String(r.answer || r.prompt || r.text || r.detail || '').trim();
 }
 
+function deliveredArtifacts(
+  result: Record<string, unknown> = {},
+): Array<Record<string, unknown>> {
+  const byId = new Map<string, Record<string, unknown>>();
+  const add = (raw: unknown, fallbackName = '') => {
+    const item =
+      raw && typeof raw === 'object'
+        ? (raw as Record<string, unknown>)
+        : {artifactId: raw};
+    const artifactId = String(
+      item.artifactId || item.artifact_id || item.id || '',
+    ).trim();
+    if (!artifactId) {
+      return;
+    }
+    const name = String(
+      item.name || item.title || item.label || fallbackName || artifactId,
+    ).trim();
+    const delivered: Record<string, unknown> = {
+      artifactId,
+      name,
+      kind: String(item.kind || 'file'),
+    };
+    for (const key of ['title', 'path', 'src', 'summary'] as const) {
+      if (item[key]) {
+        delivered[key] = String(item[key]);
+      }
+    }
+    for (const key of ['revision', 'added', 'removed'] as const) {
+      if (Number.isFinite(Number(item[key]))) {
+        delivered[key] = Number(item[key]);
+      }
+    }
+    byId.set(artifactId, delivered);
+  };
+  const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+  artifacts.forEach(item => add(item));
+  const artifactIds = Array.isArray(result.artifactIds)
+    ? result.artifactIds
+    : [];
+  artifactIds.forEach(item => add(item));
+  const receipts = Array.isArray(result.receipts) ? result.receipts : [];
+  receipts.forEach(raw => {
+    const receipt = raw as Record<string, unknown>;
+    const ids = Array.isArray(receipt.artifactIds) ? receipt.artifactIds : [];
+    ids.forEach(item => add(item));
+  });
+  const actions = Array.isArray(result.actions) ? result.actions : [];
+  actions.forEach(raw => {
+    const item = raw as Record<string, unknown>;
+    if (item.artifactId || item.artifact_id) {
+      add(item, String(item.label || item.artifact || ''));
+    }
+  });
+  return [...byId.values()].slice(0, 24);
+}
+
 type SelectionLiveProgress = {
   answer: string;
   thinking: string;
@@ -1817,14 +1879,7 @@ function recordConversationTurn(
               verificationPending,
             taskContext: eventResult.taskContext,
             pendingInput: eventResult.pendingInput || null,
-            artifacts: Array.isArray(eventResult?.actions)
-              ? eventResult.actions
-                  .filter((a: any) => a?.artifact)
-                  .map((a: any) => ({
-                    name: a.label || a.artifact,
-                    kind: 'file',
-                  }))
-              : undefined,
+            artifacts: deliveredArtifacts(eventResult),
             events: eventResult?.events,
             trajectory: eventResult?.trajectory,
             activities: eventResult?.activities,
@@ -1855,11 +1910,7 @@ function recordConversationTurn(
               : type === 'COMPLETE'
                 ? '已完成'
                 : String(result.route?.tier || ''),
-          artifacts: Array.isArray(result.actions)
-            ? result.actions
-                .filter((a: any) => a?.artifact)
-                .map((a: any) => ({name: a.label || a.artifact, kind: 'file'}))
-            : [],
+          artifacts: deliveredArtifacts(result as Record<string, unknown>),
           evidence,
           object: {
             app: object.app || '',
@@ -2459,11 +2510,57 @@ function normalizedBrowserBounds(raw: any = {}): {
   return {x, y, width, height};
 }
 
+let dashboardBrowserBounds: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null = null;
+
+function browserResourceKey(root: string, relativePath: string, url: string) {
+  if (relativePath && root) {
+    return `file:${path
+      .resolve(root)
+      .replace(/\\/g, '/')
+      .toLocaleLowerCase()}:${relativePath
+      .replace(/\\/g, '/')
+      .toLocaleLowerCase()}`;
+  }
+  return `browser:${url}`;
+}
+
+function setDashboardBrowserVisibility(activeKey: string): void {
+  dashboardBrowserRegistry.snapshot().forEach((entry: any) => {
+    try {
+      entry.view.setVisible(entry.key === activeKey);
+      if (entry.key === activeKey && dashboardBrowserBounds) {
+        entry.view.setBounds(dashboardBrowserBounds);
+      }
+    } catch (_) {}
+  });
+}
+
+function browserTabState(entry: any): Record<string, unknown> {
+  const webContents = entry.view.webContents;
+  const live = !webContents.isDestroyed();
+  return {
+    id: entry.key,
+    key: entry.key,
+    kind: entry.relativePath ? 'file' : 'browser',
+    title: live ? webContents.getTitle() || entry.url : entry.url,
+    url: live ? webContents.getURL() || entry.url : entry.url,
+    root: entry.projectRoot,
+    relativePath: entry.relativePath,
+    active: entry.active,
+  };
+}
+
 function emitBrowserViewState(extra: Record<string, unknown> = {}) {
   if (!dashboardWindow || dashboardWindow.isDestroyed()) {
     return;
   }
-  const webContents = dashboardBrowserView?.webContents;
+  const active = dashboardBrowserRegistry.active;
+  const webContents = active?.view.webContents;
   dashboardWindow.webContents.send('browser:view-state', {
     url: webContents && !webContents.isDestroyed() ? webContents.getURL() : '',
     title:
@@ -2481,17 +2578,13 @@ function emitBrowserViewState(extra: Record<string, unknown> = {}) {
     loading: Boolean(
       webContents && !webContents.isDestroyed() && webContents.isLoading(),
     ),
+    activeKey: active?.key || '',
+    tabs: dashboardBrowserRegistry.snapshot().map(browserTabState),
     ...extra,
   });
 }
 
-function destroyDashboardBrowserView() {
-  const view = dashboardBrowserView;
-  dashboardBrowserView = null;
-  dashboardBrowserProjectRoot = '';
-  if (!view) {
-    return;
-  }
+function destroyDashboardBrowserView(view: DashboardBrowserView): void {
   try {
     dashboardWindow?.contentView.removeChildView(view);
   } catch (_) {}
@@ -2502,10 +2595,12 @@ function destroyDashboardBrowserView() {
   } catch (_) {}
 }
 
-function ensureDashboardBrowserView() {
-  if (dashboardBrowserView && !dashboardBrowserView.webContents.isDestroyed()) {
-    return dashboardBrowserView;
-  }
+function destroyDashboardBrowserViews(): void {
+  dashboardBrowserRegistry.closeAll(destroyDashboardBrowserView);
+  dashboardBrowserBounds = null;
+}
+
+function createDashboardBrowserView(key: string, projectRoot: string) {
   if (!dashboardWindow || dashboardWindow.isDestroyed()) {
     throw new Error('dashboard_unavailable');
   }
@@ -2520,7 +2615,6 @@ function ensureDashboardBrowserView() {
   });
   dashboardWindow.contentView.addChildView(view);
   securityHardening.registerBrowserContents(view.webContents);
-  dashboardBrowserView = view;
   view.setBackgroundColor(
     nativeTheme.shouldUseDarkColors ? '#292927' : '#f7f6f2',
   );
@@ -2531,7 +2625,7 @@ function ensureDashboardBrowserView() {
     return {action: 'deny'};
   });
   view.webContents.on('will-navigate', (event: Electron.Event, url: string) => {
-    if (!isProjectBrowserNavigationAllowed(url, dashboardBrowserProjectRoot)) {
+    if (!isProjectBrowserNavigationAllowed(url, projectRoot)) {
       event.preventDefault();
     }
   });
@@ -2598,9 +2692,14 @@ function ensureDashboardBrowserView() {
     });
   });
   view.webContents.on('destroyed', () => {
-    if (dashboardBrowserView === view) {
-      dashboardBrowserView = null;
+    const entry = dashboardBrowserRegistry
+      .snapshot()
+      .find((item: any) => item.key === key);
+    if (entry) {
+      dashboardBrowserRegistry.close(key, destroyDashboardBrowserView);
     }
+    setDashboardBrowserVisibility(dashboardBrowserRegistry.active?.key || '');
+    emitBrowserViewState();
   });
   return view;
 }
@@ -2620,13 +2719,30 @@ ipcMain.handle(
           : root
             ? normalizeProjectBrowserUrl(requested, root)
             : normalizeBrowserUrl(requested);
-      const view = ensureDashboardBrowserView();
-      dashboardBrowserProjectRoot = root;
-      view.setBounds(normalizedBrowserBounds(raw?.bounds));
-      view.setVisible(true);
-      await view.webContents.loadURL(url);
+      const key =
+        String(raw?.resourceKey || '').trim() ||
+        browserResourceKey(root, String(raw?.path || ''), url);
+      const opened = dashboardBrowserRegistry.open(
+        {
+          key,
+          projectRoot: root,
+          relativePath: String(raw?.path || ''),
+          url,
+        },
+        () => createDashboardBrowserView(key, root),
+      );
+      dashboardBrowserBounds = normalizedBrowserBounds(raw?.bounds);
+      opened.entry.view.setBounds(dashboardBrowserBounds);
+      setDashboardBrowserVisibility(key);
+      if (!opened.reused) {
+        await opened.entry.view.webContents.loadURL(url);
+      }
       emitBrowserViewState();
-      return {ok: true, url: view.webContents.getURL() || url};
+      return {
+        ok: true,
+        url: opened.entry.view.webContents.getURL() || url,
+        key,
+      };
     } catch (error) {
       return {
         ok: false,
@@ -2642,14 +2758,14 @@ ipcMain.handle(
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_browser_sender'};
     }
-    if (
-      !dashboardBrowserView ||
-      dashboardBrowserView.webContents.isDestroyed()
-    ) {
+    const active = dashboardBrowserRegistry.active;
+    if (!active || active.view.webContents.isDestroyed()) {
       return {ok: false, error: 'browser_view_closed'};
     }
-    dashboardBrowserView.setBounds(normalizedBrowserBounds(raw?.bounds));
-    dashboardBrowserView.setVisible(true);
+    dashboardBrowserBounds = normalizedBrowserBounds(raw?.bounds);
+    active.view.setBounds(dashboardBrowserBounds);
+    setDashboardBrowserVisibility(active.key);
+    emitBrowserViewState();
     return {ok: true};
   },
 );
@@ -2660,12 +2776,43 @@ ipcMain.handle(
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_browser_sender'};
     }
-    const view = dashboardBrowserView;
     const command = String(raw?.command || '');
+    const requestedKey = String(raw?.key || '');
+    if (command === 'activate') {
+      const entry = dashboardBrowserRegistry.activate(requestedKey);
+      if (!entry) {
+        return {ok: false, error: 'browser_tab_not_found'};
+      }
+      setDashboardBrowserVisibility(entry.key);
+      emitBrowserViewState();
+      return {ok: true, state: browserTabState(entry)};
+    }
     if (command === 'close') {
-      destroyDashboardBrowserView();
+      const active = dashboardBrowserRegistry.active;
+      if (active) {
+        dashboardBrowserRegistry.close(active.key, destroyDashboardBrowserView);
+        const next = dashboardBrowserRegistry.active;
+        if (next) {
+          setDashboardBrowserVisibility(next.key);
+        }
+      }
+      emitBrowserViewState();
       return {ok: true};
     }
+    if (command === 'close-tab') {
+      const key = requestedKey || dashboardBrowserRegistry.active?.key || '';
+      if (key) {
+        dashboardBrowserRegistry.close(key, destroyDashboardBrowserView);
+      }
+      const next = dashboardBrowserRegistry.active;
+      if (next) {
+        setDashboardBrowserVisibility(next.key);
+      }
+      emitBrowserViewState();
+      return {ok: true};
+    }
+    const active = dashboardBrowserRegistry.active;
+    const view = active?.view;
     if (!view || view.webContents.isDestroyed()) {
       return {ok: false, error: 'browser_view_closed'};
     }
@@ -2690,6 +2837,9 @@ ipcMain.handle(
         await shell.openExternal(view.webContents.getURL());
       } else {
         return {ok: false, error: 'unknown_browser_command'};
+      }
+      if (command !== 'hide' && active) {
+        setDashboardBrowserVisibility(active.key);
       }
       emitBrowserViewState();
       return {ok: true};
@@ -4943,7 +5093,7 @@ function createDashboardWindow(initialView = 'chat') {
     }
   });
   dashboardWindow.on('closed', () => {
-    destroyDashboardBrowserView();
+    destroyDashboardBrowserViews();
     projectTerminal.stop();
     dashboardWindow = null;
   });

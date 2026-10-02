@@ -412,6 +412,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       bounds: UnknownRecord = {},
       projectRoot = '',
       relativePath = '',
+      resourceKey = '',
     ) =>
       ipcRenderer.invoke('browser:view-open', {
         url: String(url || '')
@@ -420,14 +421,20 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         bounds,
         projectRoot,
         path: relativePath,
+        resourceKey: String(resourceKey || '')
+          .trim()
+          .slice(0, 500),
       }),
     resize: (bounds: UnknownRecord = {}) =>
       ipcRenderer.invoke('browser:view-resize', {bounds}),
-    command: (command: unknown) =>
+    command: (command: unknown, key: unknown = '') =>
       ipcRenderer.invoke('browser:view-command', {
         command: String(command || '')
           .trim()
           .slice(0, 40),
+        key: String(key || '')
+          .trim()
+          .slice(0, 500),
       }),
     onState: (callback: PayloadCallback) =>
       onPayload('browser:view-state', callback),

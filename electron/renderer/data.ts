@@ -216,6 +216,22 @@ declare global {
       host: HTMLElement,
       preview: MagicPointerProjectPreview,
     ): void;
+    renderWorkspaceResourceTabs?(
+      host: HTMLElement,
+      state: {
+        activeId: string;
+        tabs: Array<{
+          id: string;
+          kind: string;
+          title: string;
+          resourceKey: string;
+          active: boolean;
+          closable: boolean;
+        }>;
+      },
+      onSelect: (tabId: string) => void,
+      onClose: (tabId: string) => void,
+    ): void;
   };
 
   interface MagicPointerProject {
@@ -750,8 +766,10 @@ declare global {
         bounds: {x: number; y: number; width: number; height: number},
         projectRoot?: string,
         relativePath?: string,
+        resourceKey?: string,
       ): Promise<{
         ok?: boolean;
+        key?: string;
         state?: MagicPointerBrowserViewState;
         error?: string;
       }>;
@@ -769,7 +787,10 @@ declare global {
           | 'stop'
           | 'external'
           | 'close'
+          | 'close-tab'
+          | 'activate'
           | 'hide',
+        key?: string,
       ): Promise<{
         ok?: boolean;
         state?: MagicPointerBrowserViewState;
@@ -1125,8 +1146,10 @@ declare global {
       bounds: {x: number; y: number; width: number; height: number},
       projectRoot?: string,
       relativePath?: string,
+      resourceKey?: string,
     ): Promise<{
       ok?: boolean;
+      key?: string;
       state?: MagicPointerBrowserViewState;
       error?: string;
     }>;
@@ -1138,7 +1161,16 @@ declare global {
     }): Promise<{ok?: boolean; error?: string}>;
     browserViewCommand(
       command:
-        'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close' | 'hide',
+        | 'back'
+        | 'forward'
+        | 'reload'
+        | 'stop'
+        | 'external'
+        | 'close'
+        | 'close-tab'
+        | 'activate'
+        | 'hide',
+      key?: string,
     ): Promise<{
       ok?: boolean;
       state?: MagicPointerBrowserViewState;
@@ -1336,6 +1368,17 @@ declare global {
     canGoBack?: boolean;
     canGoForward?: boolean;
     error?: string;
+    activeKey?: string;
+    tabs?: Array<{
+      id: string;
+      key: string;
+      kind: 'file' | 'browser';
+      title: string;
+      url: string;
+      root?: string;
+      relativePath?: string;
+      active: boolean;
+    }>;
   }
 
   interface MagicPointerOverlayApi {
@@ -1651,12 +1694,19 @@ const Data: MagicPointerDataApi = {
     bounds: {x: number; y: number; width: number; height: number},
     projectRoot?: string,
     relativePath?: string,
+    resourceKey?: string,
   ) {
     const browserView = bridge()?.browserView;
     if (!hasBridge() || !browserView?.open) {
       return {ok: false, error: '内置浏览器不可用。'};
     }
-    return browserView.open(url, bounds, projectRoot, relativePath);
+    return browserView.open(
+      url,
+      bounds,
+      projectRoot,
+      relativePath,
+      resourceKey,
+    );
   },
 
   async resizeBrowserView(bounds: {
@@ -1674,13 +1724,22 @@ const Data: MagicPointerDataApi = {
 
   async browserViewCommand(
     command:
-      'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close' | 'hide',
+      | 'back'
+      | 'forward'
+      | 'reload'
+      | 'stop'
+      | 'external'
+      | 'close'
+      | 'close-tab'
+      | 'activate'
+      | 'hide',
+    key = '',
   ) {
     const browserView = bridge()?.browserView;
     if (!hasBridge() || !browserView?.command) {
       return {ok: false, error: '内置浏览器不可用。'};
     }
-    return browserView.command(command);
+    return browserView.command(command, key);
   },
 
   onBrowserViewState(callback: (state: MagicPointerBrowserViewState) => void) {

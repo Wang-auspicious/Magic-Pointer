@@ -352,6 +352,20 @@ function normalizedProjectRoot(root: unknown): string {
     .toLocaleLowerCase();
 }
 
+function normalizedBrowserResourceKey(rawUrl: string): string {
+  const raw = String(rawUrl || '').trim();
+  try {
+    const url = new URL(
+      /^[a-z][a-z\d+.-]*:/i.test(raw) ? raw : `https://${raw}`,
+    );
+    url.username = '';
+    url.password = '';
+    return `browser:${url.toString()}`;
+  } catch {
+    return `browser:${raw}`;
+  }
+}
+
 function setActiveProject(root: unknown) {
   activeProjectRoot = String(root || '').trim();
   projectEnvironment = null;
@@ -1930,7 +1944,9 @@ async function warmProjects(): Promise<MagicPointerProject[]> {
   if (cachedProjects) {
     return cachedProjects;
   }
-  cachedProjects = await Data.projects().catch(() => [] as MagicPointerProject[]);
+  cachedProjects = await Data.projects().catch(
+    () => [] as MagicPointerProject[],
+  );
   return cachedProjects;
 }
 
@@ -3310,6 +3326,10 @@ async function openConversation(id: string) {
     pendingPermissionChoice = null;
     composerPlan = null;
     renderPlanCard();
+    clearWorkspaceResources();
+    if (inspectorState.open) {
+      setInspector(false);
+    }
   }
   if (
     artifactEditor.state().conversationId &&
@@ -3325,6 +3345,7 @@ async function openConversation(id: string) {
     repositoryContextDismissedFor = '';
   }
   activeConversationId = c.id;
+  restoreWorkspaceResourceSnapshot();
   void refreshBackgroundAgentTasks(c.id);
   activeConversationRecord = c;
   void renderConversationRecovery(c.id);
@@ -3613,6 +3634,7 @@ async function refreshOpenConversation(
     renderConversationActivity();
   }
   if (!change.liveProgress) {
+    finishWorkspaceResourceRun();
     void renderConversationRecovery(conversation.id);
     syncConversationPendingInput(conversation.turns || []);
     renderUsageMeter(conversation.turns || []);
@@ -4414,12 +4436,26 @@ function renderArtifactEditor() {
   renderArtifactPatchPreview(state);
 }
 
-async function openArtifactEditor(conversationId: string, artifactId: string) {
+async function openArtifactEditor(
+  conversationId: string,
+  artifactId: string,
+  options: {fromResourceTab?: boolean; auto?: boolean} = {},
+) {
   if (!conversationId || !artifactId) {
     return;
   }
   if (activeConversationId !== conversationId) {
     await openConversation(conversationId);
+  }
+  if (!options.fromResourceTab) {
+    openWorkspaceResource({
+      kind: 'artifact',
+      title: 'Artifact',
+      resourceKey: `artifact:${conversationId}:${artifactId}`,
+      conversationId,
+      artifactId,
+      auto: options.auto,
+    });
   }
   inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
     type: 'select-content',
@@ -5786,6 +5822,246 @@ let selectedProjectFileMarkdown = false;
 let projectFileCodeView = false;
 let activeInspectorTab = 'files';
 let focusedSubagentId = '';
+
+type WorkspaceResourceKind =
+  'file' | 'artifact' | 'browser' | 'terminal' | 'transcript';
+
+interface WorkspaceResourceTab {
+  id: string;
+  kind: WorkspaceResourceKind;
+  title: string;
+  resourceKey: string;
+  active: boolean;
+  closable: boolean;
+  path?: string;
+  url?: string;
+  conversationId?: string;
+  artifactId?: string;
+  taskId?: string;
+}
+
+let workspaceResourceTabs: WorkspaceResourceTab[] = [];
+let workspaceResourceSequence = 0;
+let workspaceAutoOpenedResourceKey = '';
+const workspaceResourceSnapshots = new Map<string, WorkspaceResourceTab[]>();
+
+function workspaceResourceScopeKey(): string {
+  if (activeConversationId) {
+    return `conversation:${activeConversationId}`;
+  }
+  const project = normalizedProjectRoot(activeProjectRoot);
+  return project ? `project:${project}` : '';
+}
+
+function saveWorkspaceResourceSnapshot(): void {
+  const scope = workspaceResourceScopeKey();
+  if (!scope) {
+    return;
+  }
+  workspaceResourceSnapshots.set(
+    scope,
+    workspaceResourceTabs.map(tab => ({...tab, active: tab.active})),
+  );
+}
+
+function restoreWorkspaceResourceSnapshot(): void {
+  const scope = workspaceResourceScopeKey();
+  const snapshot = scope ? workspaceResourceSnapshots.get(scope) : null;
+  workspaceResourceTabs = snapshot
+    ? snapshot.map(tab => ({...tab, active: tab.active}))
+    : [];
+  workspaceAutoOpenedResourceKey = '';
+  renderWorkspaceResourceTabs();
+}
+
+function workspaceResourceState() {
+  const active = workspaceResourceTabs.find(tab => tab.active);
+  return {
+    activeId: active?.id || '',
+    tabs: workspaceResourceTabs.map(tab => ({
+      id: tab.id,
+      kind: tab.kind,
+      title: tab.title,
+      resourceKey: tab.resourceKey,
+      active: tab.active,
+      closable: tab.closable,
+    })),
+  };
+}
+
+function renderWorkspaceResourceTabs() {
+  const host = document.getElementById('workspace-resource-tabs-host');
+  if (!host || !ProjectPreviewView.renderWorkspaceResourceTabs) {
+    return;
+  }
+  host.hidden = workspaceResourceTabs.length === 0;
+  if (host.hidden) {
+    host.replaceChildren();
+    return;
+  }
+  ProjectPreviewView.renderWorkspaceResourceTabs(
+    host,
+    workspaceResourceState(),
+    tabId => activateWorkspaceResource(tabId),
+    tabId => closeWorkspaceResource(tabId),
+  );
+}
+
+function resourcePanelFor(kind: WorkspaceResourceKind): string {
+  switch (kind) {
+    case 'artifact':
+      return 'artifact';
+    case 'browser':
+      return 'browser';
+    case 'terminal':
+      return 'terminal';
+    case 'transcript':
+      return 'tasks';
+    default:
+      return 'files';
+  }
+}
+
+function openWorkspaceResource(request: {
+  kind: WorkspaceResourceKind;
+  title: string;
+  resourceKey: string;
+  path?: string;
+  url?: string;
+  conversationId?: string;
+  artifactId?: string;
+  taskId?: string;
+  auto?: boolean;
+}): void {
+  const resourceKey = String(request.resourceKey || '').trim();
+  if (!resourceKey) {
+    return;
+  }
+  const existing = workspaceResourceTabs.find(
+    tab => tab.resourceKey === resourceKey,
+  );
+  const id =
+    existing?.id || `workspace-resource-${++workspaceResourceSequence}`;
+  workspaceResourceTabs = workspaceResourceTabs
+    .map(tab => ({...tab, active: tab.id === id}))
+    .filter(tab => tab.id !== id);
+  workspaceResourceTabs.push({
+    ...(existing || {}),
+    id,
+    kind: request.kind,
+    title: String(request.title || resourceKey),
+    resourceKey,
+    active: true,
+    closable: true,
+    ...(request.path ? {path: request.path} : {}),
+    ...(request.url ? {url: request.url} : {}),
+    ...(request.conversationId ? {conversationId: request.conversationId} : {}),
+    ...(request.artifactId ? {artifactId: request.artifactId} : {}),
+    ...(request.taskId ? {taskId: request.taskId} : {}),
+  });
+  workspaceAutoOpenedResourceKey = request.auto ? resourceKey : '';
+  renderWorkspaceResourceTabs();
+  setInspector(true, resourcePanelFor(request.kind));
+}
+
+function activateWorkspaceResource(tabId: string): void {
+  const target = workspaceResourceTabs.find(tab => tab.id === tabId);
+  if (!target) {
+    return;
+  }
+  workspaceResourceTabs = workspaceResourceTabs.map(tab => ({
+    ...tab,
+    active: tab.id === tabId,
+  }));
+  workspaceAutoOpenedResourceKey = '';
+  renderWorkspaceResourceTabs();
+  setInspector(true, resourcePanelFor(target.kind));
+  if (target.kind === 'file' && target.path) {
+    void selectProjectFile(target.path, {
+      fromResourceTab: true,
+      resourceKey: target.resourceKey,
+    });
+  } else if (target.kind === 'browser') {
+    const input = document.getElementById(
+      'project-browser-url',
+    ) as HTMLInputElement | null;
+    if (input && target.url) {
+      input.value = target.url;
+    }
+    void openProjectBrowser(target.url || '', target.path || '', {
+      fromResourceTab: true,
+      resourceKey: target.resourceKey,
+    });
+  } else if (
+    target.kind === 'artifact' &&
+    target.conversationId &&
+    target.artifactId
+  ) {
+    void openArtifactEditor(target.conversationId, target.artifactId, {
+      fromResourceTab: true,
+    });
+  } else if (target.kind === 'transcript' && target.taskId) {
+    focusedSubagentId = target.taskId;
+    renderProjectTasks();
+  }
+}
+
+function closeWorkspaceResource(tabId: string): void {
+  const closed = workspaceResourceTabs.find(tab => tab.id === tabId);
+  if (!closed) {
+    return;
+  }
+  const wasActive = closed.active;
+  workspaceResourceTabs = workspaceResourceTabs.filter(tab => tab.id !== tabId);
+  if (closed.kind === 'browser') {
+    void Data.browserViewCommand('close-tab', closed.resourceKey);
+  }
+  if (workspaceResourceTabs.length && wasActive) {
+    workspaceResourceTabs = workspaceResourceTabs.map((tab, index, list) => ({
+      ...tab,
+      active: index === list.length - 1,
+    }));
+  }
+  if (!workspaceResourceTabs.length) {
+    workspaceAutoOpenedResourceKey = '';
+    setInspector(false);
+  } else {
+    renderWorkspaceResourceTabs();
+    const active = workspaceResourceTabs.find(tab => tab.active);
+    if (active) {
+      activateWorkspaceResource(active.id);
+    }
+  }
+}
+
+function clearWorkspaceResources(): void {
+  saveWorkspaceResourceSnapshot();
+  const hadTerminal = workspaceResourceTabs.some(
+    tab => tab.kind === 'terminal',
+  );
+  workspaceResourceTabs
+    .filter(tab => tab.kind === 'browser')
+    .forEach(tab => {
+      void Data.browserViewCommand('close-tab', tab.resourceKey);
+    });
+  workspaceResourceTabs = [];
+  workspaceAutoOpenedResourceKey = '';
+  if (hadTerminal) {
+    void Data.stopProjectTerminal();
+  }
+  renderWorkspaceResourceTabs();
+}
+
+function finishWorkspaceResourceRun(): void {
+  if (!workspaceAutoOpenedResourceKey) {
+    return;
+  }
+  const active = workspaceResourceTabs.find(tab => tab.active);
+  if (active?.resourceKey === workspaceAutoOpenedResourceKey) {
+    setInspector(false);
+  }
+  workspaceAutoOpenedResourceKey = '';
+}
 interface InspectorState {
   open: boolean;
   maximized: boolean;
@@ -5967,13 +6243,35 @@ function renderSelectedProjectFile() {
   }
 }
 
-async function selectProjectFile(relativePath: string) {
+async function selectProjectFile(
+  relativePath: string,
+  options: {fromResourceTab?: boolean; resourceKey?: string} = {},
+) {
   const request = ++projectFileRequest;
   const root = activeProjectRoot;
-  if (/\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(relativePath)) {
+  const browserFile = /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(
+    relativePath,
+  );
+  const resourceKey =
+    options.resourceKey ||
+    `file:${normalizedProjectRoot(root)}:${relativePath
+      .replace(/\\/g, '/')
+      .toLocaleLowerCase()}`;
+  if (!options.fromResourceTab) {
+    openWorkspaceResource({
+      kind: browserFile ? 'browser' : 'file',
+      title: relativePath.split(/[\\/]/).at(-1) || relativePath,
+      resourceKey,
+      path: relativePath,
+    });
+  }
+  if (browserFile) {
     selectedProjectFile = relativePath;
     setInspector(true, 'browser');
-    await openProjectBrowser('', relativePath);
+    await openProjectBrowser('', relativePath, {
+      fromResourceTab: true,
+      resourceKey,
+    });
     return;
   }
   const response = await Data.readProjectFile(root, relativePath);
@@ -6049,7 +6347,7 @@ function magicBrainMaterialNodes(startIndex = 0): HTMLButtonElement[] {
   });
 }
 
-async function renderMagicBrain(force = false) {
+async function _renderMagicBrain(force = false) {
   const popover = document.getElementById('magic-brain-popover');
   if (!popover) {
     return;
@@ -6289,6 +6587,34 @@ function projectBrowserBounds() {
 
 function renderBrowserViewState(state: MagicPointerBrowserViewState) {
   latestBrowserViewState = {...latestBrowserViewState, ...state};
+  if (Array.isArray(state.tabs)) {
+    const syncActive = inspectorState.open && activeInspectorTab === 'browser';
+    const browserTabs = new Map(state.tabs.map(tab => [tab.key, tab]));
+    workspaceResourceTabs = workspaceResourceTabs
+      .filter(tab => tab.kind !== 'browser' || browserTabs.has(tab.resourceKey))
+      .map(tab => {
+        const browser = browserTabs.get(tab.resourceKey);
+        if (!browser) {
+          return tab;
+        }
+        return {
+          ...tab,
+          title: browser.title || tab.title,
+          url: browser.url || tab.url,
+          active:
+            syncActive && state.activeKey
+              ? browser.key === state.activeKey
+              : browser.active,
+        };
+      });
+    if (syncActive && state.activeKey) {
+      workspaceResourceTabs = workspaceResourceTabs.map(tab => ({
+        ...tab,
+        active: tab.kind === 'browser' && tab.resourceKey === state.activeKey,
+      }));
+    }
+    renderWorkspaceResourceTabs();
+  }
   const input = document.getElementById(
     'project-browser-url',
   ) as HTMLInputElement | null;
@@ -6319,7 +6645,29 @@ function renderBrowserViewState(state: MagicPointerBrowserViewState) {
   }
 }
 
-async function openProjectBrowser(rawUrl: string, relativePath = '') {
+async function openProjectBrowser(
+  rawUrl: string,
+  relativePath = '',
+  options: {fromResourceTab?: boolean; resourceKey?: string} = {},
+) {
+  const localResourceKey =
+    options.resourceKey ||
+    (relativePath
+      ? `file:${normalizedProjectRoot(activeProjectRoot)}:${relativePath
+          .replace(/\\/g, '/')
+          .toLocaleLowerCase()}`
+      : normalizedBrowserResourceKey(rawUrl));
+  if (!options.fromResourceTab) {
+    const browserTitle = relativePath
+      ? relativePath.split(/[\\/]/).at(-1) || relativePath
+      : rawUrl.replace(/^https?:\/\//i, '').split('/')[0] || 'Browser';
+    openWorkspaceResource({
+      kind: 'browser',
+      title: browserTitle,
+      resourceKey: localResourceKey,
+      ...(relativePath ? {path: relativePath} : {url: rawUrl}),
+    });
+  }
   const bounds = projectBrowserBounds();
   if (!bounds) {
     return;
@@ -6330,7 +6678,22 @@ async function openProjectBrowser(rawUrl: string, relativePath = '') {
     bounds,
     activeProjectRoot,
     relativePath,
+    options.resourceKey,
   );
+  if (
+    response?.ok &&
+    response.key &&
+    response.key !== localResourceKey &&
+    !options.fromResourceTab
+  ) {
+    const resource = workspaceResourceTabs.find(
+      tab => tab.resourceKey === localResourceKey,
+    );
+    if (resource) {
+      resource.resourceKey = response.key;
+      renderWorkspaceResourceTabs();
+    }
+  }
   browserViewVisible = response?.ok === true;
   if (empty) {
     empty.hidden = browserViewVisible;
@@ -6972,6 +7335,12 @@ document.addEventListener('mp:open-subagent', event => {
     task => task.id === requestedId || task.parentCallId === parentCallId,
   );
   focusedSubagentId = matchingTask?.id || requestedId;
+  openWorkspaceResource({
+    kind: 'transcript',
+    title: matchingTask?.description || 'Transcript',
+    resourceKey: `transcript:${focusedSubagentId || parentCallId || requestedId}`,
+    taskId: focusedSubagentId || undefined,
+  });
   if (matchingTask) {
     const view = backgroundTaskView();
     view.cleared.delete(matchingTask.id);
@@ -7192,9 +7561,14 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
 }
 
 document.getElementById('inspector-toggle')?.addEventListener('click', () => {
+  const activeResource = workspaceResourceTabs.find(tab => tab.active);
   setInspector(
     shell.dataset.inspector !== 'open',
-    activeProjectRoot ? 'files' : 'materials',
+    activeResource
+      ? resourcePanelFor(activeResource.kind)
+      : activeProjectRoot
+        ? 'files'
+        : 'materials',
   );
 });
 document
@@ -7207,10 +7581,12 @@ const executionActivity = document.getElementById('conversation-activity');
 if (executionActivity) {
   ChatView.bindDelegation(executionActivity);
 }
-document
-  .getElementById('inspector-close')
-  ?.addEventListener('click', () => setInspector(false));
+document.getElementById('inspector-close')?.addEventListener('click', () => {
+  workspaceAutoOpenedResourceKey = '';
+  setInspector(false);
+});
 document.getElementById('inspector-maximize')?.addEventListener('click', () => {
+  workspaceAutoOpenedResourceKey = '';
   inspectorState = inspectorStatePolicy.reduceInspectorState(
     inspectorState,
     inspectorState.maximized
@@ -7219,6 +7595,19 @@ document.getElementById('inspector-maximize')?.addEventListener('click', () => {
   );
   syncInspectorGeometry();
 });
+document
+  .getElementById('project-inspector')
+  ?.addEventListener('pointerdown', event => {
+    const target = event.target as Element | null;
+    if (
+      target?.closest(
+        '#inspector-close, #inspector-maximize, #inspector-resize-handle, .mpw-workspace-tab',
+      )
+    ) {
+      return;
+    }
+    workspaceAutoOpenedResourceKey = '';
+  });
 
 document
   .getElementById('inspector-resize-handle')
@@ -7226,6 +7615,7 @@ document
     if (inspectorState.maximized) {
       return;
     }
+    workspaceAutoOpenedResourceKey = '';
     const handle = event.currentTarget as HTMLElement;
     const startX = event.clientX;
     const startWidth = inspectorState.width;
@@ -7307,7 +7697,11 @@ document
       }
       if (result.action === 'terminal-here') {
         activeTerminalRelativeDirectory = relativePath;
-        setBottomPanel(true);
+        openWorkspaceResource({
+          kind: 'terminal',
+          title: relativePath ? `PowerShell · ${relativePath}` : 'PowerShell',
+          resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}`,
+        });
         renderTerminalPrompt();
       }
     });
@@ -7527,6 +7921,13 @@ async function runTerminalCommand(command: string, output: HTMLElement) {
   if (!command || !activeProjectRoot) {
     return;
   }
+  openWorkspaceResource({
+    kind: 'terminal',
+    title: activeTerminalRelativeDirectory
+      ? `PowerShell · ${activeTerminalRelativeDirectory}`
+      : 'PowerShell',
+    resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}`,
+  });
   try {
     const started = await Data.startProjectTerminal(
       activeProjectRoot,
@@ -7767,6 +8168,7 @@ document.addEventListener('click', e => {
 
   const inspectorTarget = target.closest<HTMLElement>('[data-inspector-tab]');
   if (inspectorTarget) {
+    workspaceAutoOpenedResourceKey = '';
     show('chat');
     setInspector(true, inspectorTarget.dataset.inspectorTab || 'files');
     return;
@@ -10926,6 +11328,10 @@ function detachPendingConversation() {
 function startNewChat() {
   conversationOpenGeneration += 1;
   detachPendingConversation();
+  clearWorkspaceResources();
+  if (inspectorState.open) {
+    setInspector(false);
+  }
   if (artifactEditor.state().artifactId) {
     artifactEditor.clear();
     renderArtifactEditor();

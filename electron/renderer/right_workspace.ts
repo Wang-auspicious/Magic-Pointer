@@ -26,6 +26,23 @@
         truncated: boolean;
       };
 
+  type WorkspaceResourceKind =
+    'file' | 'artifact' | 'browser' | 'terminal' | 'transcript';
+
+  interface WorkspaceResourceTab {
+    id: string;
+    kind: WorkspaceResourceKind;
+    title: string;
+    resourceKey: string;
+    active: boolean;
+    closable: boolean;
+  }
+
+  interface WorkspaceResourceState {
+    activeId: string;
+    tabs: WorkspaceResourceTab[];
+  }
+
   function element<K extends keyof HTMLElementTagNameMap>(
     tag: K,
     className?: string,
@@ -35,6 +52,43 @@
       node.className = className;
     }
     return node;
+  }
+
+  function renderWorkspaceResourceTabs(
+    host: HTMLElement,
+    state: WorkspaceResourceState,
+    onSelect: (tabId: string) => void,
+    onClose: (tabId: string) => void,
+  ): void {
+    const strip = element('nav', 'mpw-workspace-tabs');
+    strip.setAttribute('aria-label', '工作区资源标签');
+    state.tabs.forEach(tab => {
+      const item = element('div', 'mpw-workspace-tab');
+      item.dataset.tabId = tab.id;
+      item.dataset.kind = tab.kind;
+      item.classList.toggle('is-active', tab.id === state.activeId);
+      const select = element('button', 'mpw-workspace-tab-select');
+      select.type = 'button';
+      select.textContent = tab.title;
+      select.title = tab.title;
+      select.setAttribute('aria-selected', String(tab.id === state.activeId));
+      select.addEventListener('click', () => onSelect(tab.id));
+      item.append(select);
+      if (tab.closable) {
+        const close = element('button', 'mpw-workspace-tab-close');
+        close.type = 'button';
+        close.textContent = '×';
+        close.title = `关闭 ${tab.title}`;
+        close.setAttribute('aria-label', `关闭 ${tab.title}`);
+        close.addEventListener('click', event => {
+          event.stopPropagation();
+          onClose(tab.id);
+        });
+        item.append(close);
+      }
+      strip.append(item);
+    });
+    host.replaceChildren(strip);
   }
 
   function table(rows: string[][]): HTMLTableElement {
@@ -149,7 +203,7 @@
     }
   }
 
-  const api = {renderProjectPreview};
+  const api = {renderProjectPreview, renderWorkspaceResourceTabs};
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   }

@@ -94,3 +94,89 @@
   color: var(--mp-text-muted);
   font-size: 11px;
 }
+
+.mpw-workspace-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.mpw-workspace-tab {
+  display: flex;
+  min-width: 0;
+  max-width: 180px;
+  align-items: center;
+  border-radius: 5px 5px 0 0;
+  color: var(--mp-text-muted);
+}
+
+.mpw-workspace-tab.is-active {
+  color: var(--mp-text);
+  background: var(--mp-panel);
+  box-shadow: inset 0 -1px 0 var(--mp-focus);
+}
+
+.mpw-workspace-tab-select,
+.mpw-workspace-tab-close {
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 12px/26px var(--mp-font);
+  cursor: pointer;
+}
+
+.mpw-workspace-tab-select {
+  min-width: 0;
+  max-width: 152px;
+  padding: 0 6px 0 9px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mpw-workspace-tab-close {
+  width: 22px;
+  padding: 0;
+  color: var(--mp-text-muted);
+  font-size: 15px;
+}
+
+.mpw-workspace-tab-select:hover,
+.mpw-workspace-tab-close:hover {
+  color: var(--mp-text);
+  background: var(--mp-hover);
+}
+
+.mpw-workspace-tab[data-kind="artifact"] .mpw-workspace-tab-select::before {
+  content: "◆";
+  margin-right: 5px;
+  color: var(--mp-clay);
+  font-size: 9px;
+}
+
+.mpw-workspace-tab[data-kind="browser"] .mpw-workspace-tab-select::before {
+  content: "◎";
+  margin-right: 5px;
+  color: var(--mp-focus);
+  font-size: 11px;
+}
+
+.mpw-workspace-tab[data-kind="terminal"] .mpw-workspace-tab-select::before {
+  content: ">_";
+  margin-right: 5px;
+  color: var(--mp-text-muted);
+  font: 10px/1 var(--mp-font-mono);
+}
+
+.mpw-workspace-tab[data-kind="transcript"] .mpw-workspace-tab-select::before {
+  content: "☷";
+  margin-right: 5px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+}

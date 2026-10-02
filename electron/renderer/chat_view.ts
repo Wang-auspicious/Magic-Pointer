@@ -1622,6 +1622,54 @@ const ChatView = (() => {
     }
     attach(card, head);
 
+    if (!files.length && artifact) {
+      const row = h('button', {
+        type: 'button',
+        class: 'mp-chat-file-row',
+        'data-mp-chat-act': 'open-artifact',
+        'data-artifact-id': String(artifact.artifactId || ''),
+        'data-artifact-conversation': conversationId,
+      });
+      const mark = h('span', {
+        class: 'mp-chat-file-mark',
+        'aria-hidden': 'true',
+      });
+      attach(mark, icon('browse', 14));
+      attach(row, mark);
+      const name = h('span', {class: 'mp-chat-file-name'});
+      const artifactName = String(
+        artifact.name || artifact.path || artifact.artifactId || 'artifact',
+      );
+      attach(name, artifactName.split(/[\\/]/).pop() || artifactName);
+      attach(row, name);
+      const added = Number(artifact.added || 0);
+      const removed = Number(artifact.removed || 0);
+      if (added > 0 || removed > 0) {
+        const stat = h('span', {
+          class: 'mp-chat-diff-stat',
+          'aria-hidden': 'true',
+        });
+        if (added > 0) {
+          const add = h('span', {class: 'mp-chat-diff-add'});
+          attach(add, `+${added}`);
+          attach(stat, add);
+        }
+        if (removed > 0) {
+          const del = h('span', {class: 'mp-chat-diff-del'});
+          attach(del, `−${removed}`);
+          attach(stat, del);
+        }
+        attach(row, stat);
+      }
+      const chev = h('span', {
+        class: 'mp-chat-file-chev',
+        'aria-hidden': 'true',
+      });
+      attach(chev, icon('chev', 14));
+      attach(row, chev);
+      attach(card, row);
+    }
+
     for (const file of files) {
       const row = h('button', {
         type: 'button',
