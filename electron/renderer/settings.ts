@@ -7,6 +7,7 @@ type SettingsApi = {
   saveFabricSettings?: (patch: unknown) => Promise<any>;
   setTheme?: (theme: unknown) => void;
   conversations?: {memories?: () => Promise<any[]>};
+  extensions?: {inventory?: () => Promise<any>};
 };
 
 type SettingsModelApi = {
@@ -20,6 +21,7 @@ const settingsModel = (globalThis as any).SettingsModel as SettingsModelApi;
 let canonicalSettings: Record<string, any> = {};
 let activeModelStatus: Record<string, any> = {};
 let learnedMemories: Array<Record<string, any>> = [];
+let pluginInventory: Array<Record<string, any>> = [];
 let activeSettingsPage = 'general';
 let settingsQuery = '';
 let settingsSaveQueue: Promise<void> = Promise.resolve();
@@ -136,10 +138,24 @@ function renderMemoryLibrary() {
 }
 
 function renderPluginsPage(page: any) {
-  const status = settingsModel.modelInfoValue('plugins', activeModelStatus);
   const pluginRow = page.sections[0]?.rows?.[0];
   const description =
     pluginRow?.description || 'Local plugins become active after approval.';
+  const rows = pluginInventory.length
+    ? pluginInventory
+        .map(
+          item => `<article class="mp-settings-plugin-row">
+        <span class="mp-settings-plugin-mark">${settingIcon('ic-plug')}</span>
+        <span class="mp-settings-plugin-copy"><strong>${escSetting(item.name || item.id || 'Unnamed plugin')}</strong><small>${escSetting(item.description || 'Local Harness plugin')}</small></span>
+        <span class="mp-settings-plugin-meta">${escSetting(item.status || item.source || 'Local')}</span>
+        <button type="button" class="mp-settings-plugin-more" aria-label="More plugin actions">${settingIcon('ic-dots-vertical')}</button>
+      </article>`,
+        )
+        .join('')
+    : `<div class="mp-settings-plugin-empty">No installed plugins.<small>${escSetting(description)}</small></div>`;
+  const heading = pluginInventory.length
+    ? `Personal plugins <span>· ${pluginInventory.length}</span>`
+    : 'Personal plugins';
   return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}">
     <header class="mp-settings-page-head mp-settings-plugin-head">
       <div><h2>${escSetting(page.title)}</h2></div>
@@ -159,13 +175,8 @@ function renderPluginsPage(page: any) {
       <div><button type="button">${settingIcon('ic-sliders')}Filter${settingIcon('ic-chev')}</button><button type="button">${settingIcon('ic-sort')}Sort · Last edited${settingIcon('ic-chev')}</button></div>
     </div>
     <div class="mp-settings-plugin-list">
-      <h3>Personal plugins</h3>
-      <article class="mp-settings-plugin-row">
-        <span class="mp-settings-plugin-mark">${settingIcon(page.icon || 'ic-plug')}</span>
-        <span class="mp-settings-plugin-copy"><strong>${escSetting(pluginRow?.label || 'Personal plugins')}</strong><small>${escSetting(description)}</small></span>
-        <span class="mp-settings-plugin-meta">${escSetting(status)}</span>
-        <button type="button" class="mp-settings-plugin-more" aria-label="More plugin actions">${settingIcon('ic-dots-vertical')}</button>
-      </article>
+      <h3>${heading}</h3>
+      ${rows}
     </div>
   </section>`;
 }
@@ -495,11 +506,14 @@ async function hydrateSettings() {
     const memoryPromise = api.conversations?.memories
       ? api.conversations.memories()
       : Promise.resolve([]);
-    const [response, memories] = await Promise.all([
+    const [response, memories, inventory] = await Promise.all([
       api.getFabricSettings(),
       memoryPromise,
+      api.extensions?.inventory ? api.extensions.inventory() : Promise.resolve(null),
     ]);
     learnedMemories = Array.isArray(memories) ? memories : [];
+    const items = inventory?.plugins?.items || inventory?.items;
+    pluginInventory = Array.isArray(items) ? items : [];
     if (response?.ok && response.settings) {
       hydrateCanonical(response.settings, response.modelStatus);
     } else {
