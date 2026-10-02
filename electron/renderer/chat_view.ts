@@ -710,8 +710,21 @@ const ChatView = (() => {
             ? 'error'
             : 'ok';
     const base = argsRaw === '' ? name : deriveSummary(variant, argsRaw);
+    const errorUrl =
+      state === 'error' && name === 'Browser.navigate'
+        ? (() => {
+            try {
+              const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
+              return typeof parsed.url === 'string' ? parsed.url : '';
+            } catch {
+              return '';
+            }
+          })()
+        : '';
     const title = isBlockedResult(result)
       ? 'Blocked'
+      : errorUrl
+        ? `Failed to fetch ${errorUrl}`
       : SUBAGENT_TOOLS.has(name)
         ? state === 'running'
           ? 'Running subagent'
@@ -1148,23 +1161,30 @@ const ChatView = (() => {
         commandCardNode(command, commandPrompt(model), command.full, {
           label:
             model.variant === 'bash'
-              ? 'Bash'
+              ? model.name === 'pwsh'
+                ? 'PowerShell'
+                : 'Bash'
               : singleLine
                 ? model.name
                 : model.title,
-          output: singleLine ? model.output : null,
+          output: model.output,
           error: model.state === 'error',
           toolName: model.name,
         }),
       );
-      outputInCard = singleLine && model.output !== null;
+      outputInCard = model.output !== null;
     } else if (model.body !== null) {
       body.push(
         commandCardNode(
           {first: '', rest: model.body, full: model.body},
           '',
           model.body,
-          {label: model.title},
+          {
+            label:
+              model.state === 'error' || model.variant === 'code'
+                ? undefined
+                : model.title,
+          },
         ),
       );
     }
@@ -1872,7 +1892,14 @@ const ChatView = (() => {
     const body = h('div', {class: 'mp-chat-tool-group-body'});
     const entries: FlowItem[] =
       work || chips.map(chip => ({type: 'chip', chip}));
-    const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || 'thought'}`;
+    const firstReasoning = entries.find(
+      (entry): entry is Extract<FlowItem, {type: 'reasoning'}> =>
+        entry.type === 'reasoning',
+    );
+    const fallbackId = firstReasoning
+      ? `thought:${firstReasoning.id ?? '0'}`
+      : 'thought';
+    const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || fallbackId}`;
     const previous = GROUP_EXPANSION.get(groupId);
     const members = entries.flatMap(entry =>
       entry.type === 'chip'
@@ -2009,21 +2036,6 @@ const ChatView = (() => {
       return (
         `Running ${active}` +
         (completed.length ? ` · ${toolGroupLabel(completed)}` : '')
-      );
-    }
-    if (chips.some(chip => DESKTOP_TOOLS.has(chip.name))) {
-      const labels = [
-        ...new Set(
-          chips
-            .filter(chip => DESKTOP_TOOLS.has(chip.name))
-            .map(chip => TOOL_TITLES[chip.name]),
-        ),
-      ].slice(0, 3);
-      const failed = failedCount(chips);
-      return (
-        labels.join(', ') +
-        `, ${chips.length} step${chips.length === 1 ? '' : 's'}` +
-        (failed ? ` (${failed} failed)` : '')
       );
     }
     const counts = new Map<ToolVariant, number>();
