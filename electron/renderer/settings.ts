@@ -42,6 +42,30 @@ function escSetting(value: unknown) {
 }
 
 function settingIcon(id: string) {
+  const iconName: Record<string, string> = {
+    'ic-window': 'computer',
+    'ic-cursor': 'cursor',
+    'ic-spark': 'agent',
+    'ic-plug': 'plugin',
+    'ic-globe': 'connectors',
+    'ic-eye': 'eye',
+    'ic-shield': 'lock-shield',
+    'ic-memory': 'memory',
+    'ic-stash': 'box',
+    'ic-img': 'palette',
+    'ic-refresh': 'arrow-clockwise',
+    'ic-term': 'command-line',
+    'ic-search': 'search',
+    'ic-chev': 'caret-down',
+    'ic-dots-vertical': 'dots-vertical',
+    'ic-sliders': 'filter',
+    'ic-sort': 'sort',
+  };
+  const name = iconName[id] || id;
+  const icons = (globalThis as any).CdsIcons;
+  if (icons && typeof icons.html === 'function') {
+    return icons.html(name, id === 'ic-search' ? 'small' : 'large');
+  }
   return `<svg aria-hidden="true"><use href="#${escSetting(id)}"/></svg>`;
 }
 
@@ -159,13 +183,11 @@ function renderPluginsPage(page: any) {
   return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}">
     <header class="mp-settings-page-head mp-settings-plugin-head">
       <div><h2>${escSetting(page.title)}</h2></div>
-    </header>
-    <div class="mp-settings-plugin-toolbar">
       <label class="mp-settings-plugin-search">
         ${settingIcon('ic-search')}<input type="search" placeholder="Search skills and plugins" aria-label="Search skills and plugins" />
       </label>
       <button type="button" class="mp-settings-plugin-add">Add${settingIcon('ic-chev')}</button>
-    </div>
+    </header>
     <div class="mp-settings-plugin-tabs" role="tablist" aria-label="Plugin scope">
       <button type="button" class="is-on" role="tab" aria-selected="true">Your plugins</button>
       <button type="button" role="tab" aria-selected="false">Discover</button>
