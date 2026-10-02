@@ -407,6 +407,11 @@
   margin-left: 3px;
 }
 
+.mp-chat-tool-group[open] > .mp-chat-tool-group-header::after {
+  transform: rotate(45deg);
+  margin-left: 3px;
+}
+
 .mp-chat-leading {
   position: relative;
   display: inline-flex;
@@ -507,6 +512,15 @@
 
 .mp-chat-tool-group[data-single='true'] > .mp-chat-tool-group-header {
   justify-content: flex-start;
+}
+.mp-chat-tool-group[data-single='true'] > .mp-chat-tool-group-header .mp-chat-title {
+  color: var(--mp-text-muted);
+}
+.mp-chat-tool-group[data-single='true'] > .mp-chat-tool-group-header .mp-chat-summary {
+  color: var(--mp-text);
+}
+.mp-chat-tool-group[data-error-title='true'] > .mp-chat-tool-group-header .mp-chat-title {
+  color: #8e2626;
 }
 .mp-chat-tool-group[data-single='true'] > .mp-chat-tool-group-body > .mp-chat-tool > .mp-chat-disclosure > .mp-chat-row {
   display: none;
@@ -772,6 +786,7 @@
 }
 
 .mp-chat-code-copy {
+  margin-left: auto;
   color: var(--mp-text-muted);
   opacity: 1;
   transition: color var(--mp-dur-fast);
@@ -815,13 +830,36 @@
   color: #cd2054;
 }
 
-.mp-chat-error-summary,
-.mp-chat-tool[data-state="error"] {
-  color: var(--mp-danger);
+.mp-chat-tool[data-error-title='true'] > .mp-chat-disclosure > .mp-chat-row .mp-chat-title {
+  color: #8e2626;
 }
 
-.mp-chat-tool[data-state='error'] > .mp-chat-disclosure > .mp-chat-row .mp-chat-title {
+.mp-chat-browser-error {
+  padding: 8px 10px 10px;
+  color: var(--mp-text);
+  font-family: var(--mp-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.mp-chat-browser-error-message {
   color: #8e2626;
+  white-space: pre-wrap;
+}
+
+.mp-chat-browser-error-field {
+  display: flex;
+  gap: 6px;
+}
+
+.mp-chat-browser-error-label {
+  color: var(--mp-text-muted);
+}
+
+.mp-chat-browser-error-value {
+  color: var(--mp-text);
 }
 
 .mp-chat-disclosure-body {
@@ -909,7 +947,8 @@
 }
 
 .mp-chat-think .mp-chat-title,
-.mp-chat-think .mp-chat-summary {
+.mp-chat-think .mp-chat-summary,
+.mp-chat-think .mp-chat-sep {
   color: var(--mp-text-muted);
 }
 

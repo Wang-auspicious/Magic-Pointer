@@ -689,6 +689,7 @@ const ChatView = (() => {
     body: string | null;
     output: string | null;
     errorSummary: string | null;
+    errorTitle: boolean;
     state: ToolState;
     callId: string;
     diffStat: DiffStat | null;
@@ -724,19 +725,34 @@ const ChatView = (() => {
     const title = isBlockedResult(result)
       ? 'Blocked'
       : errorUrl
-        ? `Failed to fetch ${errorUrl}`
-      : SUBAGENT_TOOLS.has(name)
-        ? state === 'running'
-          ? 'Running subagent'
-          : 'Subagent'
-        : (TOOL_TITLES[name] ??
-          (variant === 'others' ? name : VARIANT_TITLES[variant]));
+        ? 'Failed to fetch'
+        : SUBAGENT_TOOLS.has(name)
+          ? state === 'running'
+            ? 'Running subagent'
+            : 'Subagent'
+          : (TOOL_TITLES[name] ??
+            (variant === 'others' ? name : VARIANT_TITLES[variant]));
+    const descriptiveBase =
+      variant === 'bash'
+        ? (() => {
+            try {
+              const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
+              const description =
+                typeof parsed.description === 'string'
+                  ? parsed.description.trim()
+                  : '';
+              return description ? firstLine(description) : '';
+            } catch {
+              return '';
+            }
+          })()
+        : base;
     let summary =
       name === 'list_dir' ||
       isQuestionTool(name) ||
       ['Todo', 'TodoWrite', 'todo_write'].includes(name)
         ? ''
-        : base;
+        : descriptiveBase;
     if (name === 'Tools') {
       try {
         const args = JSON.parse(argsRaw);
@@ -773,6 +789,7 @@ const ChatView = (() => {
       body: deriveBody(variant, argsRaw),
       output,
       errorSummary,
+      errorTitle: Boolean(errorUrl),
       state,
       callId,
       diffStat: deriveDiffStat(name, argsRaw),
@@ -1086,10 +1103,51 @@ const ChatView = (() => {
     return list;
   }
 
+  function browserErrorNode(model: ToolRowModel): ChatNode {
+    const root = h('div', {class: 'mp-chat-browser-error'});
+    const raw = String(model.output || '').trim();
+    const lines = raw.split(/\r?\n/u);
+    const messageLines = lines.filter(
+      line => !/^(?:url|prompt):\s*/iu.test(line.trim()),
+    );
+    const message = h('div', {class: 'mp-chat-browser-error-message'});
+    attach(message, messageLines.join('\n').trim());
+    attach(root, message);
+
+    let args: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(model.argsRaw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* Keep the raw error when the tool arguments are unavailable. */
+    }
+    for (const key of ['url', 'prompt'] as const) {
+      const fromArgs = typeof args[key] === 'string' ? args[key] : '';
+      const fromOutput = lines.find(line =>
+        line.trim().toLowerCase().startsWith(`${key}:`),
+      );
+      const value =
+        fromArgs || (fromOutput ? fromOutput.slice(key.length + 1).trim() : '');
+      if (!value) {
+        continue;
+      }
+      const row = h('div', {class: 'mp-chat-browser-error-field'});
+      attach(row, h('span', {class: 'mp-chat-browser-error-label'}, `${key}:`));
+      attach(row, h('span', {class: 'mp-chat-browser-error-value'}, value));
+      attach(root, row);
+    }
+    return root;
+  }
+
   function toolRowNode(model: ToolRowModel, scope = ''): ChatNode {
     const root = h('div', {class: 'mp-chat-tool'});
     root.setAttribute('data-tool', '');
     root.setAttribute('data-state', model.state);
+    if (model.errorTitle) {
+      root.setAttribute('data-error-title', 'true');
+    }
     if (model.callId) {
       root.setAttribute('data-call-id', model.callId);
     }
@@ -1172,6 +1230,9 @@ const ChatView = (() => {
         }),
       );
       outputInCard = model.output !== null;
+    } else if (model.errorTitle) {
+      body.push(browserErrorNode(model));
+      outputInCard = true;
     } else if (model.body !== null) {
       body.push(
         commandCardNode(
@@ -1180,7 +1241,7 @@ const ChatView = (() => {
           model.body,
           {
             label:
-              model.state === 'error' || model.variant === 'code'
+              model.variant === 'code' && model.name === 'Browser.navigate'
                 ? undefined
                 : model.title,
           },
@@ -1859,15 +1920,25 @@ const ChatView = (() => {
           chips[0].callId,
         )
       : null;
-    attach(
-      label,
-      thoughtOnly
-        ? ''
-        : model
-          ? chips[0].displayLabel ||
-            [model.title, model.summary].filter(Boolean).join(' ')
-          : toolGroupLabel(chips),
-    );
+    if (model?.errorTitle) {
+      root.setAttribute('data-error-title', 'true');
+    }
+    if (!thoughtOnly) {
+      if (model) {
+        const displayLabel = chips[0].displayLabel?.trim();
+        if (displayLabel) {
+          attach(label, displayLabel);
+        } else {
+          attach(label, h('span', {class: 'mp-chat-title'}, model.title));
+          if (model.summary) {
+            attach(label, h('span', {class: 'mp-chat-tool-sep'}, ' '));
+            attach(label, h('span', {class: 'mp-chat-summary'}, model.summary));
+          }
+        }
+      } else {
+        attach(label, toolGroupLabel(chips));
+      }
+    }
     if (model?.diffStat) {
       const stat = h('span', {
         class: 'mp-chat-diff-stat',
