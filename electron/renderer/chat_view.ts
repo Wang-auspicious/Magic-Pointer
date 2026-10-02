@@ -779,6 +779,16 @@ const ChatView = (() => {
         output = JSON.stringify(decoded, null, 2);
       } catch {}
     }
+    if (output) {
+      output = output
+        .split(/\r?\n/)
+        .filter(
+          line =>
+            !/的目标：(?:已执行，待核对|执行失败)\s*$/u.test(line.trim()),
+        )
+        .join('\n')
+        .trim();
+    }
     const rawError =
       state === 'error' && output !== null ? firstLine(output) : null;
     const errorSummary =
@@ -1601,7 +1611,6 @@ const ChatView = (() => {
     files: DeliveredFile[],
     artifacts: Array<Record<string, unknown>>,
     conversationId: string,
-    at: number | undefined,
   ): ChatNode | null {
     const artifact = artifacts.find(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
@@ -1683,7 +1692,20 @@ const ChatView = (() => {
       attach(card, row);
     }
 
-    for (const file of files) {
+    const artifactNames = new Set(
+      artifact
+        ? [
+            String(artifact.name || artifact.path || '')
+              .split(/[\\/]/)
+              .pop()
+              ?.toLocaleLowerCase() || '',
+          ]
+        : [],
+    );
+    const visibleFiles = files.filter(
+      item => !artifactNames.has(item.name.toLocaleLowerCase()),
+    );
+    const fileRow = (file: DeliveredFile): ChatNode => {
       const row = h('button', {
         type: 'button',
         class: 'mp-chat-file-row',
@@ -1722,14 +1744,59 @@ const ChatView = (() => {
       });
       attach(chev, icon('chev', 14));
       attach(row, chev);
-      attach(card, row);
+      return row;
+    };
+    if (visibleFiles.length) {
+      attach(card, fileRow(visibleFiles[0]));
+    }
+    if (visibleFiles.length > 1) {
+      const more = h('details', {class: 'mp-chat-files-more'});
+      const summary = h('summary', {class: 'mp-chat-files-more-summary'});
+      attach(
+        summary,
+        `Show ${visibleFiles.length - 1} more file${visibleFiles.length === 2 ? '' : 's'}`,
+      );
+      const rest = h('div', {class: 'mp-chat-files-more-list'});
+      visibleFiles.slice(1).forEach(file => attach(rest, fileRow(file)));
+      attach(more, summary);
+      attach(more, rest);
+      attach(card, more);
     }
 
-    if (typeof at === 'number' && at > 0) {
-      const foot = h('div', {class: 'mp-chat-files-foot'});
-      attach(foot, relativeTime(at));
-      attach(card, foot);
+    return card;
+  }
+
+  // Compatibility surface for the standalone draft preview and older callers.
+  // The live conversation uses fileResultsNode so files and artifacts share one
+  // delivery card, while a draft-only caller still gets one coherent target.
+  function artifactCardNode(
+    items: Array<Record<string, unknown>>,
+    conversationId: string,
+  ): ChatNode | null {
+    const artifact = items.find(
+      item => item && typeof item === 'object' && String(item.artifactId || ''),
+    );
+    if (!artifact) {
+      return null;
     }
+    const name =
+      String(artifact.title || artifact.name || 'Draft artifact').trim() ||
+      'Draft artifact';
+    const card = h('div', {class: 'mp-chat-files'});
+    const head = h('div', {class: 'mp-chat-files-head'});
+    attach(head, h('span', {class: 'mp-chat-files-title'}, `Draft ${name}`));
+    attach(card, head);
+    const row = h('button', {
+      type: 'button',
+      class: 'mp-chat-file-row',
+      'data-mp-chat-act': 'open-artifact',
+      'data-artifact-id': String(artifact.artifactId),
+      'data-artifact-conversation': conversationId,
+    });
+    attach(row, h('span', {class: 'mp-chat-file-mark'}, icon('browse', 14)));
+    attach(row, h('span', {class: 'mp-chat-file-name'}, name));
+    attach(row, h('span', {class: 'mp-chat-file-chev'}, icon('chev', 14)));
+    attach(card, row);
     return card;
   }
 
@@ -1849,10 +1916,16 @@ const ChatView = (() => {
   }
 
   type FlowItem =
-    | {type: 'narration'; text: string}
-    | {type: 'reasoning'; text: string; id?: string; running?: boolean}
-    | {type: 'notice'; text: string}
-    | {type: 'chip'; chip: TurnChip};
+    | {type: 'narration'; text: string; turn?: string}
+    | {
+        type: 'reasoning';
+        text: string;
+        id?: string;
+        running?: boolean;
+        turn?: string;
+      }
+    | {type: 'notice'; text: string; turn?: string}
+    | {type: 'chip'; chip: TurnChip; turn?: string};
 
   function narrationNode(text: string): ChatNode {
     const root = h('div', {class: 'mp-chat-narration'});
@@ -2027,6 +2100,8 @@ const ChatView = (() => {
       (entry): entry is Extract<FlowItem, {type: 'reasoning'}> =>
         entry.type === 'reasoning',
     );
+    const reasoningId = (entry: {id?: string}): string =>
+      entry.id === 'head' ? `${scope}:head` : `${scope}:r${entry.id ?? '0'}`;
     const fallbackId = firstReasoning
       ? `thought:${firstReasoning.id ?? '0'}`
       : 'thought';
@@ -2036,7 +2111,7 @@ const ChatView = (() => {
       entry.type === 'chip'
         ? [`group:${scope ? `${scope}:` : ''}${entry.chip.callId || ''}`]
         : entry.type === 'reasoning'
-          ? [`think:${scope}:r${entry.id ?? '0'}`]
+          ? [`think:${reasoningId(entry)}`]
           : [],
     );
     const previousMembers = new Set(previous?.members || []);
@@ -2052,14 +2127,17 @@ const ChatView = (() => {
     if (!single) {
       for (const id of members) {
         const source = GROUP_EXPANSION.get(id);
+        const childToolIds = source?.members.filter(memberId =>
+          memberId.startsWith('group:'),
+        );
         if (
           source?.open &&
-          source.members.length === 1 &&
+          childToolIds?.length === 1 &&
           (!previousMembers.has(id) || previousMembers.size === 1)
         ) {
           rememberExpansion(
             ROW_EXPANSION,
-            `tool:${id.slice('group:'.length)}`,
+            `tool:${childToolIds[0].slice('group:'.length)}`,
             true,
           );
         }
@@ -2079,9 +2157,13 @@ const ChatView = (() => {
           thinkNode(
             entry.text,
             entry.running === true,
-            `${scope}:r${entry.id ?? '0'}`,
+            reasoningId(entry),
           ),
         );
+        return;
+      }
+      if (entry.type === 'narration') {
+        attach(body, narrationNode(entry.text));
         return;
       }
       if (entry.type !== 'chip') {
@@ -2217,6 +2299,19 @@ const ChatView = (() => {
       : time;
   }
 
+  function cleanDeliveryText(value: string): string {
+    return value
+      .split(/\r?\n/)
+      .filter(
+        line =>
+          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(
+            line,
+          ),
+      )
+      .join('\n')
+      .trim();
+  }
+
   function runMetaNode(meta: string): ChatNode {
     const root = h('div', {class: 'mp-chat-run-meta', role: 'status'});
     const mark = sparkMark(false);
@@ -2234,15 +2329,33 @@ const ChatView = (() => {
         record &&
         typeof record === 'object' &&
         (record.kind === 'message' ||
+          record.kind === 'think' ||
           record.kind === 'notice' ||
           record.kind === 'tool'),
     );
     if (!usable.length) {
       return null;
     }
-    const answerText = String(turn.answer || '').trim();
+    const answerText = cleanDeliveryText(String(turn.answer || ''));
     const items: FlowItem[] = [];
     for (const [index, record] of usable.entries()) {
+      const turn =
+        record.turn === undefined || record.turn === null
+          ? undefined
+          : String(record.turn);
+      if (record.kind === 'think') {
+        const text = String(record.text || record.reasoning || '').trim();
+        if (text) {
+          items.push({
+            type: 'reasoning',
+            text,
+            id: String(record.callId || record.turn || index),
+            running: record.state === 'running',
+            turn,
+          });
+        }
+        continue;
+      }
       if (record.kind === 'message') {
         const reasoning = String(record.reasoning || '').trim();
         if (reasoning) {
@@ -2250,13 +2363,18 @@ const ChatView = (() => {
             type: 'reasoning',
             text: reasoning,
             id: String(record.callId || record.turn || index),
+            turn,
           });
         }
         const text = String(record.text || '').trim();
         if (!text || (answerText && text === answerText)) {
           continue;
         }
-        items.push({type: 'narration', text});
+        items.push({
+          type: 'narration',
+          text,
+          turn,
+        });
         continue;
       }
       if (record.kind === 'notice') {
@@ -2289,6 +2407,7 @@ const ChatView = (() => {
                 ? undefined
                 : {text: '', isError: false},
         },
+        turn,
       });
     }
     return items;
@@ -2323,6 +2442,10 @@ const ChatView = (() => {
                 }
               : undefined,
         },
+        turn:
+          event.turn === undefined || event.turn === null
+            ? undefined
+            : String(event.turn),
       });
     }
     return items;
@@ -2337,13 +2460,18 @@ const ChatView = (() => {
     const root = h('div', {class: 'mp-chat-assistant'});
     const bodyHost = h('div', {class: 'mp-chat-assistant-body'});
 
-    if (turn.thinking && !turn.trajectory?.some(record => record.reasoning)) {
+    if (
+      turn.thinking &&
+      !turn.trajectory?.some(
+        record => record.reasoning || record.kind === 'think',
+      )
+    ) {
       attach(
         bodyHost,
         toolGroupNode(
           [],
           true,
-          [{type: 'reasoning', text: turn.thinking, running: true}],
+          [{type: 'reasoning', text: turn.thinking, id: 'head', running: true}],
           turnScope,
           true,
         ),
@@ -2353,20 +2481,43 @@ const ChatView = (() => {
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
     let chipRun: TurnChip[] = [];
     let workRun: FlowItem[] = [];
+    let workTurn: string | undefined;
     const flushChips = () => {
       if (!chipRun.length) {
-        // A reasoning-only run still renders as a card, never as loose text.
-        if (workRun.some(entry => entry.type === 'reasoning')) {
+        const hasReasoning = workRun.some(entry => entry.type === 'reasoning');
+        if (hasReasoning) {
+          // A reasoning-only run still renders as a card, never as loose text.
           attach(bodyHost, toolGroupNode([], false, workRun, turnScope, true));
+        } else {
+          workRun
+            .filter(
+              (entry): entry is Extract<FlowItem, {type: 'narration'}> =>
+                entry.type === 'narration',
+            )
+            .forEach(entry => attach(bodyHost, narrationNode(entry.text)));
         }
         workRun = [];
+        workTurn = undefined;
         return;
       }
       attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
       chipRun = [];
       workRun = [];
+      workTurn = undefined;
     };
     for (const item of flow) {
+      if (
+        item.type !== 'notice' &&
+        item.turn !== undefined &&
+        workTurn !== undefined &&
+        item.turn !== workTurn &&
+        (chipRun.length || workRun.length)
+      ) {
+        flushChips();
+      }
+      if (item.type !== 'notice' && item.turn !== undefined) {
+        workTurn = item.turn;
+      }
       if (options.taskPanel && item.type === 'chip') {
         if (PLAN_TOOLS.has(item.chip.name)) {
           if (item.chip.result?.isError) {
@@ -2385,8 +2536,7 @@ const ChatView = (() => {
         // A thought is a row in the same card as the tools around it.
         workRun.push(item);
       } else if (item.type === 'narration') {
-        flushChips();
-        attach(bodyHost, narrationNode(item.text));
+        workRun.push(item);
       } else if (item.type === 'notice') {
         flushChips();
         attach(bodyHost, noticeNode(item.text));
@@ -2405,8 +2555,9 @@ const ChatView = (() => {
       .map(record => Number(record.completedAt) || 0)
       .filter(value => value > 0);
     const totalTokens = Number(turn.modelUsage?.totalTokens) || 0;
-    if (turn.answer) {
-      attach(bodyHost, markdownRenderer.render(turn.answer));
+    const deliveryText = cleanDeliveryText(String(turn.answer || ''));
+    if (deliveryText) {
+      attach(bodyHost, markdownRenderer.render(deliveryText));
     }
 
     // A turn waiting on the user has not finished; its footer comes with the reply.
@@ -2434,11 +2585,11 @@ const ChatView = (() => {
     }
 
     attach(root, bodyHost);
-    if (turn.answer) {
+    if (deliveryText) {
       attach(
         root,
         messageActions(
-          turn.answer,
+          deliveryText,
           turn.conversationId && Number.isInteger(turn.turnIndex)
             ? {
                 conversationId: turn.conversationId,
@@ -2455,7 +2606,6 @@ const ChatView = (() => {
       deliveredFiles(turn.trajectory),
       artifacts,
       String(turn.conversationId || ''),
-      turn.at,
     );
     if (results) {
       attach(root, results);
@@ -2618,30 +2768,51 @@ const ChatView = (() => {
               entry = {node: make() as HTMLElement, signature};
               traceNodes.set(key, entry);
             } else if (entry.signature !== signature) {
-              if (key.startsWith('message:') || key.startsWith('reasoning:')) {
-                if (key.startsWith('reasoning:')) {
-                  const target = entry.node.querySelector<HTMLElement>(
+              if (key.startsWith('thought:')) {
+                const currentThought = entry.node.querySelector<HTMLElement>(
+                  '.mp-chat-think',
+                );
+                const nextWork = (
+                  value as {work?: FlowItem[]}
+                ).work?.find(
+                  (item): item is Extract<FlowItem, {type: 'reasoning'}> =>
+                    item.type === 'reasoning',
+                );
+                if (currentThought && nextWork) {
+                  const target = currentThought.querySelector<HTMLElement>(
                     '.mp-chat-think-body',
-                  )!;
-                  appendText(target, target.textContent || '', String(value));
-                  entry.node.querySelector('.mp-chat-summary')!.textContent =
-                    latestLine(String(value));
+                  );
+                  if (target) {
+                    appendText(target, target.textContent || '', nextWork.text);
+                  }
+                  updateThinkingState(
+                    currentThought,
+                    nextWork.text,
+                    nextWork.running === true,
+                  );
                 } else {
-                  updateLiveMarkdown(entry.node, String(value));
+                  const replacement = make() as HTMLElement;
+                  entry.node.replaceChildren(
+                    ...Array.from(replacement.childNodes),
+                  );
                 }
               } else {
                 const replacement = make() as HTMLElement;
                 entry.node.replaceChildren(
                   ...Array.from(replacement.childNodes),
                 );
-                const state = replacement.getAttribute('data-state');
-                if (state !== null) {
-                  entry.node.setAttribute('data-state', state);
-                }
-                if (replacement.getAttribute('data-single') === 'true') {
-                  entry.node.setAttribute('data-single', 'true');
-                } else {
-                  entry.node.removeAttribute('data-single');
+                for (const attribute of [
+                  'data-state',
+                  'data-single',
+                  'data-thought-only',
+                  'data-error-title',
+                ]) {
+                  const value = replacement.getAttribute(attribute);
+                  if (value === null) {
+                    entry.node.removeAttribute(attribute);
+                  } else {
+                    entry.node.setAttribute(attribute, value);
+                  }
                 }
               }
               entry.signature = signature;
@@ -2649,17 +2820,73 @@ const ChatView = (() => {
             desired.push(entry.node);
           };
           let chips: TurnChip[] = [];
+          let work: FlowItem[] = [];
+          let workTurn: string | undefined;
+          let runSequence = 0;
           const flush = () => {
-            if (!chips.length) {
+            if (!chips.length && !work.length) {
               return;
             }
             const current = chips;
-            render(`tools:${current[0].callId}`, current, () =>
-              toolGroupNode(current, true, undefined, scope),
+            const currentWork = work;
+            const key = current.length
+              ? `tools:${current[0].callId || workTurn || ++runSequence}`
+              : `thought:${workTurn || ++runSequence}`;
+            const hasReasoning = currentWork.some(
+              item => item.type === 'reasoning',
             );
+            if (current.length || hasReasoning) {
+              render(key, {chips: current, work: currentWork}, () =>
+                toolGroupNode(
+                  current,
+                  true,
+                  currentWork,
+                  scope,
+                  !current.length,
+                ),
+              );
+            } else {
+              currentWork
+                .filter(
+                  (item): item is Extract<FlowItem, {type: 'narration'}> =>
+                    item.type === 'narration',
+                )
+                .forEach((item, index) =>
+                  render(
+                    `message:${workTurn || runSequence}:${index}`,
+                    item.text,
+                    () => liveMarkdownNode(item.text),
+                  ),
+                );
+            }
             chips = [];
+            work = [];
+            workTurn = undefined;
           };
           snapshot.trajectory.forEach((record, index) => {
+            const turn =
+              record.turn === undefined || record.turn === null
+                ? undefined
+                : String(record.turn);
+            if (
+              turn !== undefined &&
+              workTurn !== undefined &&
+              turn !== workTurn &&
+              (chips.length || work.length)
+            ) {
+              flush();
+            }
+            if (
+              record.kind === 'message' &&
+              turn !== undefined &&
+              workTurn === undefined &&
+              chips.length
+            ) {
+              flush();
+            }
+            if (turn !== undefined) {
+              workTurn = turn;
+            }
             if (record.kind === 'tool') {
               if (options.taskPanel && PLAN_TOOLS.has(String(record.name))) {
                 if (record.isError) {
@@ -2681,8 +2908,20 @@ const ChatView = (() => {
                   record.result == null
                     ? undefined
                     : {
-                        text: String(record.result),
-                        isError: Boolean(record.isError),
+                        // A failed capability is kept in the settled transcript.
+                        // While the loop is still running, keep the live card
+                        // neutral so a recoverable attempt is not presented as
+                        // the turn's final failure.
+                        text:
+                          options.taskPanel &&
+                          (record.isError || record.state === 'error')
+                            ? ''
+                            : String(record.result),
+                        isError:
+                          options.taskPanel &&
+                          (record.isError || record.state === 'error')
+                            ? false
+                            : Boolean(record.isError),
                       },
               };
               if (SUBAGENT_TOOLS.has(chip.name)) {
@@ -2709,29 +2948,31 @@ const ChatView = (() => {
                 }
               } else {
                 chips.push(chip);
+                work.push({type: 'chip', chip, turn});
               }
-            } else if (record.kind === 'message') {
+            } else if (record.kind === 'message' || record.kind === 'think') {
               if (!record.text && !record.reasoning) {
                 return;
               }
-              flush();
-              const key = String(record.turn || index);
-              if (record.reasoning) {
+              const reasoning = String(
+                record.reasoning || (record.kind === 'think' ? record.text : ''),
+              );
+              if (reasoning) {
                 const running = record.state === 'running' && !record.text;
-                const thinkId = `${scope}:r${record.callId || record.turn || index}`;
-                render(`reasoning:${key}`, String(record.reasoning), () =>
-                  thinkNode(String(record.reasoning), running, thinkId),
-                );
-                updateThinkingState(
-                  traceNodes.get(`reasoning:${key}`)!.node,
-                  String(record.reasoning),
+                work.push({
+                  type: 'reasoning',
+                  text: reasoning,
+                  id: String(record.callId || record.turn || index),
                   running,
-                );
+                  turn,
+                });
               }
               if (record.text) {
-                render(`message:${key}`, String(record.text), () =>
-                  liveMarkdownNode(String(record.text)),
-                );
+                work.push({
+                  type: 'narration',
+                  text: String(record.text),
+                  turn,
+                });
               }
             } else if (record.kind === 'notice') {
               flush();
@@ -3200,6 +3441,7 @@ const ChatView = (() => {
   return {
     userNode,
     assistantTurnNode,
+    artifactCardNode,
     turnStatusNode,
     turnErrorNode,
     thinkNode,

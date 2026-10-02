@@ -2,6 +2,8 @@ declare global {
   interface MagicPointerSessionLogInput {
     scope: string;
     turns: MagicPointerTurn[];
+    workspaceBranch?: string;
+    worktreeBranch?: string;
     waiting?: boolean;
     running?: boolean;
     onLocate?: (turnIndex: number, callId?: string) => void;
@@ -55,6 +57,7 @@ declare global {
     input: MagicPointerSessionLogInput;
     root: HTMLElement;
     summary: HTMLElement;
+    scopeLabel: HTMLElement;
     state: HTMLElement;
     mode: HTMLSelectElement;
     search: HTMLInputElement;
@@ -258,20 +261,20 @@ declare global {
       state,
       title:
         kind === 'input'
-          ? '你的输入'
+          ? 'You'
           : kind === 'model'
-            ? '模型生成'
-            : '上下文',
+            ? 'Model'
+            : 'Context',
       preview: short(str(row.text)),
       status:
         state === 'running'
-          ? '进行中'
+          ? 'Running'
           : state === 'error'
-            ? '失败'
+            ? 'Failed'
             : state === 'stopped'
-              ? '已停止'
+              ? 'Stopped'
               : state === 'waiting'
-                ? '等待中'
+                ? 'Waiting'
                 : '',
       body: str(row.text),
       args: '',
@@ -320,34 +323,34 @@ declare global {
         obj(result.verification).verified === true ||
         obj(result.verification).matched === true
       ) {
-        entry.status = '已核验';
+        entry.status = 'Verified';
       }
       if (result.awaitingUserInput === true) {
         entry.state = 'waiting';
-        entry.status = '等你处理';
+        entry.status = 'Needs input';
       }
     } else if (kind === 'model') {
       entry.title =
         rawKind === 'think'
-          ? '模型思考'
+          ? 'Thought'
           : state === 'running'
-            ? '正在生成'
-            : '模型生成';
+            ? 'Generating'
+            : 'Model output';
       entry.body = [str(row.reasoning), str(row.text)]
         .filter(Boolean)
         .join('\n\n');
       entry.preview = short(
         str(row.text) ||
           str(row.reasoning) ||
-          (state === 'running' ? '正在生成…' : '模型已返回'),
+          (state === 'running' ? 'Generating…' : 'Model returned'),
       );
     } else if (rawKind === 'request-header') {
-      entry.title = '模型请求';
+      entry.title = 'Model request';
       entry.preview =
-        str(row.modelId || row.model || row.usedBackend) || '上下文已提交';
+        str(row.modelId || row.model || row.usedBackend) || 'Context submitted';
       entry.body = JSON.stringify(row, null, 2);
     } else if (rawKind === 'compacted') {
-      entry.title = '整理上下文';
+      entry.title = 'Context compacted';
     }
     return entry;
   }
@@ -414,12 +417,12 @@ declare global {
         const childStart = actualTime(snapshot.startedAt);
         const childStatus = str(snapshot.status || result.status);
         const childStatusLabel: Record<string, string> = {
-          starting: '启动中',
-          running: '进行中',
-          awaiting_user: '待答复',
-          completed: '已完成',
-          failed: '失败',
-          stopped: '已停止',
+          starting: 'Starting',
+          running: 'Running',
+          awaiting_user: 'Needs input',
+          completed: 'Completed',
+          failed: 'Failed',
+          stopped: 'Stopped',
         };
         const childEnd = actualTime(snapshot.completedAt);
         const description = short(
@@ -435,7 +438,7 @@ declare global {
           order: order++,
           title: description,
           preview: [
-            childStatusLabel[childStatus] || childStatus || '已派发',
+            childStatusLabel[childStatus] || childStatus || 'Dispatched',
             childTokens === undefined ? '' : `${childTokens} tokens`,
           ]
             .filter(Boolean)
@@ -488,8 +491,8 @@ declare global {
             title: description,
             preview:
               childStatus === 'completed'
-                ? '子任务已返回'
-                : `子任务结束 · ${childStatus}`,
+                ? 'Subtask returned'
+                : `Subtask ended · ${childStatus}`,
             state: childState(childStatus),
             status: childStatus,
             body: str(snapshot.summary || result.summary),
@@ -594,7 +597,7 @@ declare global {
     const meta = [
       record.status,
       record.startedAt === undefined
-        ? '实际时间未记录'
+        ? 'Time unavailable'
         : clock(record.startedAt),
       record.durationMs === undefined ? '' : duration(record.durationMs),
       record.backend,
@@ -627,9 +630,9 @@ declare global {
       );
     }
     for (const [name, value] of [
-      ['内容', record.body],
-      ['输入', record.args],
-      ['结果', record.output],
+      ['Content', record.body],
+      ['Input', record.args],
+      ['Output', record.output],
     ]) {
       if (!value) {
         continue;
@@ -642,7 +645,7 @@ declare global {
         el(
           'div',
           'mp-trace-detail-label',
-          '子任务最近工具记录 · 单步开始时间未记录',
+          'Recent subtask tool steps · start time unavailable',
         ),
       );
       children.push(
@@ -848,7 +851,7 @@ declare global {
           entry.title,
           entry.preview,
           entry.startedAt === undefined
-            ? '实际时间未记录'
+            ? 'Time unavailable'
             : clock(entry.startedAt),
           entry.durationMs === undefined ? '' : duration(entry.durationMs),
           entry.model || '',
@@ -871,7 +874,7 @@ declare global {
       setText(title, entry.title);
       setText(
         preview,
-        entry.preview || (entry.kind === 'fork' ? '子任务已派发' : '—'),
+        entry.preview || (entry.kind === 'fork' ? 'Subtask dispatched' : '—'),
       );
       if (!title.isConnected) {
         contentHost.append(title, preview);
@@ -893,7 +896,7 @@ declare global {
         meta.querySelector<HTMLElement>('.mp-trace-clock') ||
         el('span', 'mp-trace-clock');
       setText(modelNode, entry.model || '—');
-      modelNode.title = entry.model || '模型未记录';
+      modelNode.title = entry.model || 'Model unavailable';
       setText(
         tokensNode,
         entry.tokens === undefined ? '—' : entry.tokens.toLocaleString('en-US'),
@@ -929,10 +932,10 @@ declare global {
       view.selected = null;
       view.detailVersion = '';
     }
-    view.hint.textContent = `按真实时间排列 · 点击展开，Shift+点击另一行选取范围${display.some(entry => entry.startedAt === undefined) ? ' · 未记录时间的事件列在末尾' : ''}`;
+    view.hint.textContent = `Ordered by event sequence · click to inspect, Shift-click another row to select a range${display.some(entry => entry.startedAt === undefined) ? ' · untimed events are last' : ''}`;
     if (view.mode.value === 'sequence') {
       view.hint.textContent =
-        '按原始事件顺序排列 · 点击展开，Shift+点击另一行选取范围';
+        'Ordered by event sequence · click to inspect, Shift-click another row to select a range';
     }
     filter(view);
     showDetail(view);
@@ -940,47 +943,46 @@ declare global {
 
   function create(host: HTMLElement, input: MagicPointerSessionLogInput): View {
     const root = el('section', 'mp-trace-root');
-    root.setAttribute('aria-label', '完整会话轨迹');
+    root.setAttribute('aria-label', 'Conversation history');
     const header = el('header', 'mp-trace-header');
     const heading = el('div', 'mp-trace-heading');
     const summary = el('span', 'mp-trace-summary');
+    const scopeLabel = el('span', 'mp-trace-scope');
     const state = el('span', 'mp-trace-state');
-    heading.append(el('strong', '', '会话轨迹'), state);
-    header.append(heading, summary);
+    heading.append(el('strong', '', 'Conversation history'), state);
+    header.append(heading, summary, scopeLabel);
     const controls = el('div', 'mp-trace-controls');
     const mode = el('select', 'mp-trace-mode');
-    mode.setAttribute('aria-label', '轨迹排列方式');
-    for (const [value, title] of [
-      ['time', '实际时间'],
-      ['sequence', '事件顺序'],
-    ]) {
+    mode.setAttribute('aria-label', 'Event order');
+    for (const [value, title] of [['sequence', 'Event order']]) {
       const option = el('option', '', title);
       option.value = value;
       mode.append(option);
     }
-    const reset = el('button', 'mp-trace-control', '显示全部');
+    mode.hidden = true;
+    const reset = el('button', 'mp-trace-control', 'Show all');
     reset.type = 'button';
     reset.hidden = true;
     const shrink = el('button', 'mp-trace-control', '−');
     shrink.type = 'button';
-    shrink.setAttribute('aria-label', '收紧轨迹');
+    shrink.setAttribute('aria-label', 'Reduce row size');
     const expand = el('button', 'mp-trace-control', '+');
     expand.type = 'button';
-    expand.setAttribute('aria-label', '展开轨迹');
+    expand.setAttribute('aria-label', 'Increase row size');
     controls.append(mode, reset, shrink, expand);
     const hint = el('p', 'mp-trace-hint');
     const search = el('input', 'mp-trace-search') as HTMLInputElement;
     search.type = 'search';
-    search.placeholder = '搜索会话、文件或操作';
+    search.placeholder = 'Search the conversation, files, or actions';
     search.dataset.sessionSearch = '';
-    search.setAttribute('aria-label', '搜索轨迹事件');
+    search.setAttribute('aria-label', 'Search conversation events');
     const columnHead = el('div', 'mp-trace-column-head');
-    for (const title of ['', '事件', '内容', '模型 / tokens', '耗时', '时间']) {
+    for (const title of ['', 'Event', 'Content', 'Model / tokens', 'Duration', 'Time']) {
       columnHead.append(el('span', '', title));
     }
     const list = el('div', 'mp-trace-list');
     list.setAttribute('role', 'group');
-    list.setAttribute('aria-label', '按实际时间排列的会话事件');
+    list.setAttribute('aria-label', 'Conversation events in sequence');
     const paths = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     paths.classList.add('mp-trace-paths');
     paths.setAttribute('aria-hidden', 'true');
@@ -994,6 +996,7 @@ declare global {
       input,
       root,
       summary,
+      scopeLabel,
       state,
       mode,
       search,
@@ -1082,20 +1085,31 @@ declare global {
       setText(
         view.summary,
         [
-          `${input.turns.length} 次提问`,
-          `${tools} 次操作`,
-          view.branches.length ? `${view.branches.length} 个子任务` : '',
+          `${input.turns.length} turn${input.turns.length === 1 ? '' : 's'}`,
+          `${tools} action${tools === 1 ? '' : 's'}`,
+          view.branches.length
+            ? `${view.branches.length} subtask${view.branches.length === 1 ? '' : 's'}`
+            : '',
           tokens
             ? `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
             : '',
-          failures ? `${failures} 项失败` : '',
+          failures ? `${failures} failed` : '',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      );
+      setText(
+        view.scopeLabel,
+        [
+          input.workspaceBranch ? `Git ${input.workspaceBranch}` : '',
+          input.worktreeBranch ? `Worktree ${input.worktreeBranch}` : '',
         ]
           .filter(Boolean)
           .join(' · '),
       );
       setText(
         view.state,
-        input.waiting ? '等你回复' : input.running ? '进行中' : '',
+        input.waiting ? 'Needs input' : input.running ? 'Running' : '',
       );
       renderRows(view);
       if (
