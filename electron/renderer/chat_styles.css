@@ -490,7 +490,7 @@
   gap: 7px;
   padding: 0 2px;
   border-radius: var(--mp-r4);
-  color: var(--mp-text-secondary);
+  color: var(--mp-text-muted);
   font-size: 14px;
   line-height: 20px;
   list-style: none;

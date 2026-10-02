@@ -1910,6 +1910,7 @@ const ChatView = (() => {
     );
     const previousMembers = new Set(previous?.members || []);
     const open =
+      thoughtOnly ||
       previous?.open === true ||
       members.some(
         id =>
