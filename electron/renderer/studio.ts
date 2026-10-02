@@ -497,13 +497,16 @@ function renderComposerWorktree() {
   if (!button) {
     return;
   }
-  button.hidden = !activeProjectRoot;
+  button.hidden = !activeProjectRoot || projectEnvironment?.isGit !== true;
   const enabled = currentComposerWorktreeEnabled();
+  const record = composerWorktrees.get(currentComposerWorktreeKey());
   button.setAttribute('aria-checked', String(enabled));
   button.disabled = false;
-  button.title = enabled
-    ? 'Work in an isolated copy of your repository so you can keep working without conflicts.'
-    : 'Work in an isolated copy of your repository to work on multiple tasks at the same time.';
+  button.title = record
+    ? `Worktree active · ${record.branch} · ${record.path}`
+    : enabled
+      ? 'The next send uses an isolated worktree for this conversation.'
+      : 'Send this conversation from an isolated worktree.';
 }
 
 function failComposerWorktree(button: HTMLElement | null, message: string) {
@@ -651,9 +654,9 @@ function renderComposerBranch(): void {
     return;
   }
   const branch = currentComposerBranch();
-  button.hidden = !activeProjectRoot;
-  label.textContent = branch || '当前分支';
-  button.title = branch ? `当前分支：${branch}` : '使用当前 Git 分支';
+  button.hidden = !activeProjectRoot || projectEnvironment?.isGit !== true;
+  label.textContent = branch || 'Current branch';
+  button.title = branch ? `Current branch: ${branch}` : 'Use the current Git branch';
 }
 
 let composerEnvironmentRequest = 0;
@@ -668,6 +671,7 @@ async function warmComposerEnvironment(root: string): Promise<void> {
     normalizedProjectRoot(projectEnvironment.root) === normalized
   ) {
     renderComposerBranch();
+    renderComposerWorktree();
     return;
   }
   const request = ++composerEnvironmentRequest;
@@ -691,6 +695,7 @@ async function warmComposerEnvironment(root: string): Promise<void> {
       persistComposerBranches();
     }
     renderComposerBranch();
+    renderComposerWorktree();
   }
 }
 
@@ -859,7 +864,7 @@ function renderProjectContext() {
     designStatus.classList.toggle('is-offline', !hasProject);
     const text = designStatus.lastChild;
     if (text?.nodeType === Node.TEXT_NODE) {
-      text.textContent = hasProject ? '已连接项目' : '等待打开项目';
+      text.textContent = hasProject ? 'Project connected' : 'Waiting for a project';
     }
   }
   if (!headerLabel) {
@@ -905,12 +910,15 @@ function applyRepositoryContextBar(
   }
   const homeVisible = !document.getElementById('studio-home')?.hidden;
   const changes = Number(response?.changedFiles || 0);
+  const ahead = Number(response?.ahead || 0);
+  const hasReviewableChanges = changes > 0 || ahead > 0;
   const visible = Boolean(
     activeConversationId &&
     activeProjectRoot &&
     !homeVisible &&
     response?.ok &&
     response?.isGit &&
+    hasReviewableChanges &&
     repositoryContextDismissedFor !== repositoryContextKey(),
   );
   row.hidden = !visible;
@@ -947,9 +955,10 @@ function applyRepositoryContextBar(
     deleted.textContent = `−${Number(response.deletedLines || 0).toLocaleString('en-US')}`;
   }
   if (createPr) {
-    createPr.disabled = changes <= 0 && !response.pullRequestUrl;
+    createPr.disabled = !hasReviewableChanges;
+    createPr.textContent = changes > 0 ? 'Review changes' : 'Open compare';
     createPr.title = response.pullRequestUrl
-      ? 'Open pull request comparison'
+      ? 'Open the branch comparison'
       : 'Review changes before creating a pull request';
   }
 }
@@ -2680,6 +2689,7 @@ function quotedSelection(text: string): string {
 })();
 
 let composerQuota: MagicPointerQuotaReport | null = null;
+let composerQuotaError = '';
 let composerQuotaPending = false;
 let usageMeterTurns: MagicPointerTurn[] = [];
 let usageDetailsOpen = false;
@@ -2782,6 +2792,7 @@ function syncComposerQuotaIdentity(): string {
     composerQuota = readStoredComposerQuota(key);
     composerQuotaPending = false;
     composerQuotaRequestKey = '';
+    composerQuotaError = '';
     composerQuotaKey = key;
   }
   return key;
@@ -2797,7 +2808,7 @@ function ensureComposerQuota(force = false) {
   }
   composerQuotaPending = true;
   composerQuotaRequestKey = key;
-  void Data.modelQuota({force}).then(report => {
+  void Data.modelQuota({force}).then(result => {
     if (composerQuotaRequestKey !== key) {
       return;
     }
@@ -2806,12 +2817,14 @@ function ensureComposerQuota(force = false) {
     if (key !== syncComposerQuotaIdentity()) {
       return;
     }
-    if (report) {
-      composerQuota = report;
-      storeComposerQuota(key, report);
+    composerQuotaError = result.error || '';
+    if (result.report) {
+      composerQuota = result.report;
+      composerQuotaError = result.report.error || composerQuotaError;
+      storeComposerQuota(key, result.report);
     }
     renderUsageMeter(usageMeterTurns);
-    if (report?.stale && !force) {
+    if (result.report?.stale && !force) {
       ensureComposerQuota(true);
     }
   });
@@ -2976,21 +2989,20 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   if (!button || !label || !popover) {
     return;
   }
-  const inputTokens = turns.reduce(
-    (total, turn) =>
+  const usageForTurn = (turn: MagicPointerTurn) =>
+    latestContextUsage([turn]) || turn.modelUsage;
+  const totalTokens = turns.reduce((total, turn) => {
+    const usage = usageForTurn(turn);
+    const reported = Number(usage?.totalTokens);
+    if (Number.isFinite(reported) && reported >= 0) {
+      return total + Math.round(reported);
+    }
+    return (
       total +
-      (Number((latestContextUsage([turn]) || turn.modelUsage)?.inputTokens) ||
-        0),
-    0,
-  );
-  const outputTokens = turns.reduce(
-    (total, turn) =>
-      total +
-      (Number((latestContextUsage([turn]) || turn.modelUsage)?.outputTokens) ||
-        0),
-    0,
-  );
-  const totalTokens = inputTokens + outputTokens;
+      (Number(usage?.inputTokens) || 0) +
+      (Number(usage?.outputTokens) || 0)
+    );
+  }, 0);
   const currentModel = modelCatalog?.groups
     ?.flatMap(group => group.models || [])
     .find(
@@ -3000,11 +3012,13 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
           entry.profileId === modelCatalog.currentProfileId),
     );
   const latestUsage = latestContextUsage(turns);
-  const contextWindow =
+  const contextWindow = Math.max(
+    0,
     Number(latestUsage?.contextWindow) ||
-    Number(currentModel?.contextWindow) ||
-    0;
-  const contextTokens = Number(latestUsage?.contextTokens) || 0;
+      Number(currentModel?.contextWindow) ||
+      0,
+  );
+  const contextTokens = Math.max(0, Number(latestUsage?.contextTokens) || 0);
   const measured = latestUsage?.contextEstimated === 0 || turns.length === 0;
   const known =
     typeof latestUsage?.contextTokens === 'number' || turns.length === 0;
@@ -3121,8 +3135,8 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
         'div',
         'mp-usage-note',
         measured
-          ? '总量为服务端计量；各项占比为本地估算。'
-          : '本地估算 · 收到服务端用量后更新。',
+          ? 'Total is measured by the service; category shares are local estimates.'
+          : 'Local estimate · updates when service usage arrives.',
       ),
     );
   }
@@ -3132,7 +3146,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     el(
       'span',
       'mp-usage-section-label',
-      `本会话累计 · ${totalTokens.toLocaleString()} tokens`,
+      `Session total · ${totalTokens.toLocaleString()} tokens`,
     ),
   );
   const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -3251,6 +3265,9 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
         `额度更新于 ${new Date(composerQuota.fetchedAt).toLocaleTimeString()} · ${composerQuota.source}`,
       ),
     );
+  } else if (composerQuotaError) {
+    popover.append(el('div', 'mp-usage-divider'));
+    popover.append(el('div', 'mp-usage-section', `Usage unavailable · ${composerQuotaError}`));
   } else {
     popover.append(el('div', 'mp-usage-divider'));
     popover.append(
@@ -5135,6 +5152,9 @@ function renderConversationActivity(): void {
   const input: MagicPointerSessionLogInput = {
     scope: activeConversationId || pendingConversation?.conversationId || 'new',
     turns,
+    workspaceBranch: currentComposerBranch() || undefined,
+    worktreeBranch:
+      composerWorktrees.get(currentComposerWorktreeKey())?.branch || undefined,
     waiting: Boolean(
       turn?.pendingInput &&
       !turn.liveProgress &&
@@ -6235,6 +6255,7 @@ const expandedProjectDirectories = new Set<string>(['']);
 let selectedProjectFile = '';
 let selectedProjectFileText = '';
 let selectedProjectPreview: MagicPointerProjectPreview | null = null;
+let projectFileTreeFilter = '';
 let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
 let projectFileCodeView = false;
@@ -6379,7 +6400,12 @@ function openWorkspaceResource(request: {
   });
   workspaceAutoOpenedResourceKey = request.auto ? resourceKey : '';
   renderWorkspaceResourceTabs();
-  setInspector(true, resourcePanelFor(request.kind));
+  setInspector(
+    true,
+    request.kind === 'transcript' && request.conversationId
+      ? 'activity'
+      : resourcePanelFor(request.kind),
+  );
 }
 
 function activateWorkspaceResource(tabId: string): void {
@@ -6393,7 +6419,12 @@ function activateWorkspaceResource(tabId: string): void {
   }));
   workspaceAutoOpenedResourceKey = '';
   renderWorkspaceResourceTabs();
-  setInspector(true, resourcePanelFor(target.kind));
+  setInspector(
+    true,
+    target.kind === 'transcript' && target.conversationId
+      ? 'activity'
+      : resourcePanelFor(target.kind),
+  );
   if (target.kind === 'file' && target.path) {
     void selectProjectFile(target.path, {
       fromResourceTab: true,
@@ -6421,6 +6452,9 @@ function activateWorkspaceResource(tabId: string): void {
   } else if (target.kind === 'transcript' && target.taskId) {
     focusedSubagentId = target.taskId;
     renderProjectTasks();
+  } else if (target.kind === 'transcript' && target.conversationId) {
+    setConversationTab('trajectory');
+    renderConversationActivity();
   }
 }
 
@@ -6538,12 +6572,7 @@ function renderProjectFileTree() {
   if (!host) {
     return;
   }
-  const query =
-    (
-      document.getElementById('file-tree-filter') as HTMLInputElement | null
-    )?.value
-      .trim()
-      .toLocaleLowerCase() || '';
+  const query = projectFileTreeFilter.trim().toLocaleLowerCase();
   const buildLevel = (directory: string, depth: number): Node[] => {
     const nodes: Node[] = [];
     for (const entry of projectTreeCache.get(directory) || []) {
@@ -6618,6 +6647,13 @@ async function refreshProjectInspector() {
   expandedProjectDirectories.add('');
   selectedProjectFile = '';
   selectedProjectFileText = '';
+  projectFileTreeFilter = '';
+  const fileTreeFilter = document.getElementById(
+    'file-tree-filter',
+  ) as HTMLInputElement | null;
+  if (fileTreeFilter) {
+    fileTreeFilter.value = '';
+  }
   selectedProjectFileMarkdown = false;
   projectFileCodeView = false;
   const preview = document.getElementById('project-file-preview');
@@ -7150,7 +7186,10 @@ document
   ?.addEventListener('click', () => setInspector(true, 'changes'));
 document.getElementById('composer-create-pr')?.addEventListener('click', () => {
   const url = projectEnvironment?.pullRequestUrl || '';
-  if (url) {
+  const changedFiles = Number(projectEnvironment?.changedFiles || 0);
+  if (changedFiles > 0) {
+    setInspector(true, 'changes');
+  } else if (url && Number(projectEnvironment?.ahead || 0) > 0) {
     void Data.openProjectUrl(url);
   } else {
     setInspector(true, 'changes');
@@ -8118,7 +8157,7 @@ document
         openWorkspaceResource({
           kind: 'terminal',
           title: relativePath ? `PowerShell · ${relativePath}` : 'PowerShell',
-          resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}`,
+          resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}:${activeTerminalRelativeDirectory}`,
         });
         renderTerminalPrompt();
       }
@@ -8223,7 +8262,11 @@ document
 })();
 document
   .getElementById('file-tree-filter')
-  ?.addEventListener('input', renderProjectFileTree);
+  ?.addEventListener('input', event => {
+    event.stopPropagation();
+    projectFileTreeFilter = (event.currentTarget as HTMLInputElement).value;
+    renderProjectFileTree();
+  });
 document.getElementById('project-file-back')?.addEventListener('click', () => {
   const preview = document.getElementById('project-file-preview');
   if (preview) {
@@ -8328,14 +8371,14 @@ function renderTerminalPrompt() {
     : '';
   for (const id of ['project-terminal-output', 'bottom-terminal-output']) {
     const output = document.getElementById(id);
-    const label = output?.querySelector('span');
+    const label = output?.querySelector('.mp-terminal-label');
     if (label) {
-      label.textContent = `PowerShell · 当前项目${suffix}`;
+      label.textContent = `PowerShell · Current project${suffix}`;
     }
   }
 }
 
-async function runTerminalCommand(command: string, output: HTMLElement) {
+async function runTerminalCommand(command: string) {
   if (!command || !activeProjectRoot) {
     return;
   }
@@ -8344,7 +8387,7 @@ async function runTerminalCommand(command: string, output: HTMLElement) {
     title: activeTerminalRelativeDirectory
       ? `PowerShell · ${activeTerminalRelativeDirectory}`
       : 'PowerShell',
-    resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}`,
+    resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}:${activeTerminalRelativeDirectory}`,
   });
   try {
     const started = await Data.startProjectTerminal(
@@ -8360,7 +8403,9 @@ async function runTerminalCommand(command: string, output: HTMLElement) {
       throw new Error(written.error || '终端输入失败。');
     }
   } catch (error) {
-    output.textContent += `\n${error instanceof Error ? error.message : String(error)}\n`;
+    appendTerminalOutput(
+      `\n${error instanceof Error ? error.message : String(error)}\n`,
+    );
   }
 }
 
@@ -8370,16 +8415,22 @@ function appendTerminalOutput(text: string) {
     if (!output) {
       continue;
     }
-    output.textContent = ((output.textContent || '') + text).slice(-512 * 1024);
+    let log = output.querySelector<HTMLPreElement>('.mp-terminal-log');
+    if (!log) {
+      log = document.createElement('pre');
+      log.className = 'mp-terminal-log';
+      output.append(log);
+    }
+    log.textContent = `${(log.textContent || '') + text}`.slice(-512 * 1024);
     output.scrollTop = output.scrollHeight;
   }
 }
 
 Data.onProjectTerminalEvent(event => {
   appendTerminalOutput(
-    event.type === 'output'
+      event.type === 'output'
       ? event.text
-      : `\n终端已退出 (${event.code ?? '已停止'})\n`,
+      : `\nTerminal exited (${event.code ?? 'stopped'})\n`,
   );
 });
 
@@ -8410,7 +8461,7 @@ for (const pair of [
       return;
     }
     input!.value = '';
-    void runTerminalCommand(command, output);
+    void runTerminalCommand(command);
   });
 }
 
@@ -8730,11 +8781,18 @@ document.addEventListener('click', e => {
     '[data-conversation-tab]',
   );
   if (conversationTab) {
-    setConversationTab(
-      conversationTab.dataset.conversationTab === 'trajectory'
-        ? 'trajectory'
-        : 'chat',
-    );
+    const trajectory =
+      conversationTab.dataset.conversationTab === 'trajectory';
+    if (trajectory && activeConversationId) {
+      openWorkspaceResource({
+        kind: 'transcript',
+        title: 'Conversation history',
+        resourceKey: `conversation-history:${activeConversationId}`,
+        conversationId: activeConversationId,
+      });
+    } else {
+      setConversationTab(trajectory ? 'trajectory' : 'chat');
+    }
     return;
   }
 
@@ -9399,7 +9457,18 @@ function bindEffortChip() {
     });
 }
 
-let composerPreset = 'workspace-write';
+const COMPOSER_PRESET_KEY = 'mp:composer-permission-preset:v1';
+let composerPreset = (() => {
+  try {
+    const stored = localStorage.getItem(COMPOSER_PRESET_KEY);
+    return stored &&
+      ['auto', 'read-only', 'workspace-write', 'plan', 'danger-full-access'].includes(stored)
+      ? stored
+      : 'auto';
+  } catch {
+    return 'auto';
+  }
+})();
 let composerAttachments: string[] = [];
 
 function normalizedTaskContext(value: unknown): MagicPointerTaskContext | null {
@@ -9455,6 +9524,7 @@ function setActiveTaskContext(value: unknown, resetSelection = false) {
     )[next.permissionMode];
     if (preset) {
       composerPreset = preset;
+      persistComposerPreset();
       renderPermissionChip();
     }
   }
@@ -9795,6 +9865,14 @@ function renderPermissionChip() {
   }
 }
 
+function persistComposerPreset(): void {
+  try {
+    localStorage.setItem(COMPOSER_PRESET_KEY, composerPreset);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 function closePermissionMenu() {
   closeAnchoredPopover('composer-permission-menu', 'composer-permission');
 }
@@ -9908,6 +9986,7 @@ function confirmFullAccess() {
   });
   enable.addEventListener('click', () => {
     composerPreset = 'danger-full-access';
+    persistComposerPreset();
     renderPermissionChip();
     overlay.remove();
   });
@@ -9950,6 +10029,7 @@ function bindPermissionChip() {
         return;
       }
       composerPreset = value;
+      persistComposerPreset();
       renderPermissionChip();
     });
 }
@@ -10755,15 +10835,8 @@ function openAccountSubmenu(kind: string) {
   const rows =
     kind === 'language'
       ? [
-          compactMenuItem(
-            'English',
-            '',
-            () => {
-              document.documentElement.lang = 'en';
-              closeAccountMenu();
-            },
-            '✓',
-          ),
+          compactMenuItem('English', '', () => setStudioLanguage('en'), '✓'),
+          compactMenuItem('中文', '', () => setStudioLanguage('zh-CN')),
         ]
       : [
           compactMenuItem('About Magic Pointer', '', run('about')),
@@ -10780,6 +10853,24 @@ function openAccountSubmenu(kind: string) {
     .querySelectorAll('[data-account-command][aria-haspopup]')
     .forEach(row => row.setAttribute('aria-expanded', String(row === trigger)));
   rows[0].focus();
+}
+
+function setStudioLanguage(language: 'en' | 'zh-CN'): void {
+  document.documentElement.lang = language;
+  document.documentElement.dataset.language = language;
+  try {
+    localStorage.setItem('mp:language:v1', language);
+  } catch {
+    /* storage unavailable */
+  }
+  closeAccountMenu();
+}
+
+try {
+  const storedLanguage = localStorage.getItem('mp:language:v1');
+  setStudioLanguage(storedLanguage === 'zh-CN' ? 'zh-CN' : 'en');
+} catch {
+  setStudioLanguage('en');
 }
 
 function openSettingsPage(page: string) {
@@ -11652,6 +11743,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         .command;
       if (command?.type === 'permission' && command.preset) {
         composerPreset = String(command.preset);
+        persistComposerPreset();
         renderPermissionChip();
       } else if (command?.type === 'model') {
         await refreshComposerModel();

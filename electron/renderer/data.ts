@@ -641,6 +641,11 @@ declare global {
     fetchedAt: number;
   }
 
+  interface MagicPointerQuotaResult {
+    report: MagicPointerQuotaReport | null;
+    error: string;
+  }
+
   interface MagicPointerUpdateState {
     state: string;
     checkedAt?: number;
@@ -1275,9 +1280,7 @@ declare global {
       model: string,
       profileId?: string,
     ): Promise<{ok?: boolean; model?: string; error?: string}>;
-    modelQuota(options?: {
-      force?: boolean;
-    }): Promise<MagicPointerQuotaReport | null>;
+    modelQuota(options?: {force?: boolean}): Promise<MagicPointerQuotaResult>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
@@ -2061,17 +2064,26 @@ const Data: MagicPointerDataApi = {
 
   async modelQuota(
     options: {force?: boolean} = {},
-  ): Promise<MagicPointerQuotaReport | null> {
+  ): Promise<MagicPointerQuotaResult> {
     if (!hasBridge()) {
-      return null;
+      return {report: null, error: '配额通道不可用。'};
     }
     try {
       const response = await bridge()!.modelQuota?.({
         force: options.force === true,
       });
-      return response?.ok ? (response.quota ?? null) : null;
-    } catch {
-      return null;
+      if (!response?.ok) {
+        return {
+          report: null,
+          error: String(response?.error || '配额读取失败。'),
+        };
+      }
+      return {report: response.quota ?? null, error: ''};
+    } catch (error) {
+      return {
+        report: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   },
 

@@ -107,9 +107,13 @@
 
 .mpw-workspace-tab {
   display: flex;
+  position: relative;
+  flex: 0 0 156px;
   min-width: 0;
-  max-width: 180px;
+  width: 156px;
+  max-width: 156px;
   align-items: center;
+  justify-content: center;
   border-radius: 5px 5px 0 0;
   color: var(--mp-text-muted);
 }
@@ -131,16 +135,20 @@
 }
 
 .mpw-workspace-tab-select {
+  width: 100%;
   min-width: 0;
-  max-width: 152px;
-  padding: 0 6px 0 9px;
+  max-width: none;
+  padding: 0 25px 0 10px;
   overflow: hidden;
-  text-align: left;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mpw-workspace-tab-close {
+  position: absolute;
+  top: 0;
+  right: 1px;
   width: 22px;
   padding: 0;
   color: var(--mp-text-muted);

@@ -176,7 +176,7 @@
               </div>
               <nav class="mp-conversation-view" aria-label="对话视图" hidden>
                 <button class="is-on" data-conversation-tab="chat" aria-selected="true" title="对话"><svg aria-hidden="true"><use href="#ic-message" /></svg></button>
-                <button data-conversation-tab="trajectory" aria-selected="false" title="对话记录"><svg aria-hidden="true"><use href="#ic-activity" /></svg></button>
+                <button data-conversation-tab="trajectory" aria-selected="false" title="Conversation history"><svg aria-hidden="true"><use href="#ic-activity" /></svg></button>
               </nav>
               <button type="button" class="mp-thread-action" id="bottom-panel-toggle" aria-label="Toggle terminal" aria-expanded="false" title="Toggle terminal">
                 <svg class="codex-icon" aria-hidden="true"><use href="#ic-command-line" /></svg>
@@ -473,14 +473,14 @@
               </label>
               <div class="mpw-settings-nav-list" id="set-nav"></div>
               <button type="button" class="mp-customize-directory" data-directory-open>
-                <svg aria-hidden="true"><use href="#ic-plug" /></svg><span>Skills & commands</span>
+                <span class="cds-icon" data-size="large" data-glyph="&#xE0D2;" aria-hidden="true"></span><span>Skills & commands</span>
               </button>
             </nav>
             <div class="mpw-settings-content">
               <div class="mpw-settings-header">
                 <span></span>
                 <button class="mpw-settings-close" data-settings-close aria-label="关闭设置">
-                  <svg aria-hidden="true"><use href="#ic-x" /></svg>
+                  <span class="cds-icon" data-size="large" data-glyph="&#xE10F;" aria-hidden="true"></span>
                 </button>
               </div>
               <div class="mpw-settings-options" id="set-body"></div>
@@ -495,8 +495,8 @@
           <nav aria-label="底部工具"><button type="button" class="is-on">终端</button></nav>
           <button type="button" class="mp-toolbar-button" id="bottom-panel-close" aria-label="关闭底部面板"><svg class="codex-icon" aria-hidden="true"><use href="#ic-x" /></svg></button>
         </header>
-        <div class="mp-terminal-output" id="bottom-terminal-output" role="log" aria-live="polite"><span>PowerShell · 当前项目</span></div>
-        <form class="mp-terminal-form" id="bottom-terminal-form"><span>&gt;</span><input id="bottom-terminal-input" autocomplete="off" spellcheck="false" aria-label="终端命令" /><button type="submit">运行</button></form>
+        <div class="mp-terminal-output" id="bottom-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · 当前项目</span><pre class="mp-terminal-log"></pre></div>
+        <form class="mp-terminal-form" id="bottom-terminal-form"><span>&gt;</span><input id="bottom-terminal-input" autocomplete="off" spellcheck="false" aria-label="Terminal command" /><button type="submit">Run</button></form>
       </section>
     </main>
 
@@ -531,7 +531,7 @@
         <article class="mp-task-material-detail" id="task-material-detail" hidden></article>
       </section>
       <section class="mp-inspector-panel is-on" id="inspector-files" data-inspector-panel="files">
-        <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="筛选文件…" autocomplete="off" /></label>
+        <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="Filter files…" autocomplete="off" /></label>
         <div class="mp-file-tree" id="project-file-tree" role="tree" tabindex="0"><p class="mp-inspector-empty">打开项目后显示文件。</p></div>
         <article class="mp-file-preview" id="project-file-preview" hidden>
           <header>
@@ -561,9 +561,9 @@
         </div>
       </section>
       <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>
-        <div class="mp-preview-sheet-tabs"><span>PowerShell</span><button type="button" data-terminal-stop>停止终端</button></div>
-        <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span>PowerShell · 当前项目</span></div>
-        <form class="mp-terminal-form" id="project-terminal-form"><span>&gt;</span><input id="project-terminal-input" autocomplete="off" spellcheck="false" aria-label="终端命令" /><button type="submit">运行</button></form>
+        <div class="mp-preview-sheet-tabs"><span>PowerShell</span><button type="button" data-terminal-stop>Stop terminal</button></div>
+        <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · 当前项目</span><pre class="mp-terminal-log"></pre></div>
+        <form class="mp-terminal-form" id="project-terminal-form"><span>&gt;</span><input id="project-terminal-input" autocomplete="off" spellcheck="false" aria-label="Terminal command" /><button type="submit">Run</button></form>
       </section>
       <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">打开 Git 项目后显示工作树变更。</p></div></section>
       <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><section id="project-plan" hidden></section><div id="project-tasks"><p class="mp-inspector-empty">这里显示当前项目的后台与已安排任务。</p></div></section>

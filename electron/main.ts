@@ -8449,10 +8449,48 @@ function activeModelRuntimeConfig() {
   return runtime;
 }
 
+function localOpenCodeCredential(): string {
+  const roots = [
+    process.env.USERPROFILE || process.env.HOME || '',
+    process.env.LOCALAPPDATA
+      ? path.resolve(process.env.LOCALAPPDATA, '..', '..')
+      : '',
+  ].filter(Boolean);
+  for (const root of roots) {
+    const authPath = path.join(root, '.local', 'share', 'opencode', 'auth.json');
+    try {
+      const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+      const entries = parsed && typeof parsed === 'object' ? parsed : {};
+      for (const [provider, value] of Object.entries(entries)) {
+        if (!/opencode/i.test(provider)) {
+          continue;
+        }
+        const key =
+          value && typeof value === 'object'
+            ? String((value as any).key || '')
+            : '';
+        if (key.trim()) {
+          return key.trim();
+        }
+      }
+    } catch (_) {
+      /* The configured credential remains the source of truth. */
+    }
+  }
+  return '';
+}
+
 function readActiveQuota(force = false): Promise<any> {
   const runtime = activeModelRuntimeConfig();
   if (!runtime) {
-    return Promise.reject(new Error('no_active_model_profile'));
+    return Promise.resolve({
+      adapter: null,
+      label: '',
+      rows: [],
+      error: 'no_active_model_profile',
+      source: '',
+      fetchedAt: Date.now(),
+    });
   }
   const key = [
     runtime.profileId,
@@ -8460,13 +8498,19 @@ function readActiveQuota(force = false): Promise<any> {
     runtime.baseUrl,
     runtime.apiMode,
   ].join('\n');
+  const isOpenCode =
+    /opencode/i.test(String(runtime.provider || '')) ||
+    /opencode\.ai$/i.test(String(runtime.baseUrl || ''));
+  const credential = isOpenCode
+    ? localOpenCodeCredential() || String(runtime.credential || '').trim()
+    : String(runtime.credential || '').trim();
   return quotaCache.read(
     key,
     {
       provider: runtime.provider,
       baseUrl: runtime.baseUrl,
       apiMode: runtime.apiMode,
-      credential: runtime.credential,
+      credential,
     },
     force,
   );

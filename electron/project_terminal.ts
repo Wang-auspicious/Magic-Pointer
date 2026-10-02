@@ -1,6 +1,7 @@
 'use strict';
 
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process';
+import path from 'node:path';
 
 type TerminalEvent =
   | {type: 'output'; stream: 'stdout' | 'stderr'; text: string}
@@ -8,6 +9,7 @@ type TerminalEvent =
 
 class ProjectTerminal {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private workingDirectory = '';
 
   get running(): boolean {
     return this.child !== null;
@@ -17,6 +19,13 @@ class ProjectTerminal {
     workingDirectory: string,
     onEvent: (event: TerminalEvent) => void,
   ): void {
+    if (
+      this.child &&
+      this.workingDirectory &&
+      path.resolve(workingDirectory) === this.workingDirectory
+    ) {
+      return;
+    }
     this.stop();
     const child = spawn(
       'powershell.exe',
@@ -28,6 +37,7 @@ class ProjectTerminal {
       },
     );
     this.child = child;
+    this.workingDirectory = path.resolve(workingDirectory);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdin.write(
@@ -45,6 +55,7 @@ class ProjectTerminal {
     child.on('close', (code: number | null) => {
       if (this.child === child) {
         this.child = null;
+        this.workingDirectory = '';
       }
       onEvent({type: 'exit', code});
     });
@@ -64,6 +75,7 @@ class ProjectTerminal {
       return;
     }
     this.child = null;
+    this.workingDirectory = '';
     child.stdin.end();
     if (child.pid && process.platform === 'win32') {
       const killer = spawn(
