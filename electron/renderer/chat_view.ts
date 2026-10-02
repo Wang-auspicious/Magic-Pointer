@@ -1269,7 +1269,7 @@ const ChatView = (() => {
       ),
       title: running ? 'Thinking…' : 'Thought',
       collapsed: [
-        h('span', {class: 'mp-chat-think-sep', 'aria-hidden': 'true'}, ': '),
+        h('span', {class: 'mp-chat-sep', 'aria-hidden': 'true'}),
         summary,
       ],
       body: expandedBody,

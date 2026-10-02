@@ -904,18 +904,12 @@
   display: none;
 }
 
-.mp-chat-think-sep {
-  flex: 0 0 auto;
-  color: var(--mp-text-secondary);
-}
-
 .mp-chat-think .mp-chat-body-wrap {
   padding: 0 10px 10px 32px;
 }
 
 .mp-chat-think .mp-chat-title,
-.mp-chat-think .mp-chat-summary,
-.mp-chat-think-sep {
+.mp-chat-think .mp-chat-summary {
   color: var(--mp-text-muted);
 }
 
