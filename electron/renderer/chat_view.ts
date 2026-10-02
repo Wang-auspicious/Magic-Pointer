@@ -941,6 +941,7 @@ const ChatView = (() => {
     });
     attach(copy, icon('copy', 14));
     attach(head, copy);
+    attach(card, head);
     if (command.first) {
       const line = h('div', {class: 'mp-chat-code-first'});
       if (prompt) {
@@ -957,7 +958,6 @@ const ChatView = (() => {
       );
       attach(card, line);
     }
-    attach(card, head);
     if (command.rest) {
       const pre = h('pre');
       attach(pre, codeBodyNode(command.rest, lang));
@@ -1146,7 +1146,12 @@ const ChatView = (() => {
     } else if (command !== null) {
       body.push(
         commandCardNode(command, commandPrompt(model), command.full, {
-          label: singleLine ? model.name : model.title,
+          label:
+            model.variant === 'bash'
+              ? 'Bash'
+              : singleLine
+                ? model.name
+                : model.title,
           output: singleLine ? model.output : null,
           error: model.state === 'error',
           toolName: model.name,
@@ -1244,7 +1249,7 @@ const ChatView = (() => {
       ),
       title: running ? 'Thinking…' : 'Thought',
       collapsed: [
-        h('span', {class: 'mp-chat-sep', 'aria-hidden': 'true'}),
+        h('span', {class: 'mp-chat-think-sep', 'aria-hidden': 'true'}, ': '),
         summary,
       ],
       body: expandedBody,
