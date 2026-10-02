@@ -3594,6 +3594,20 @@ async function sendConversation(
     existing?.workspaceRoot,
   );
   if (
+    existing &&
+    threadWorkspaceRoot &&
+    !samePath(existing.workspaceRoot, threadWorkspaceRoot)
+  ) {
+    const rebound = conversations().setProject(
+      existing.id,
+      threadWorkspaceRoot,
+    );
+    if (rebound.ok && rebound.conversation) {
+      existing = rebound.conversation;
+      notifyConversationChanged(existing.id);
+    }
+  }
+  if (
     threadWorkspaceRoot &&
     workspaceRoot &&
     !samePath(threadWorkspaceRoot, workspaceRoot)
