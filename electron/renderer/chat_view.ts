@@ -732,7 +732,6 @@ const ChatView = (() => {
         : (TOOL_TITLES[name] ??
           (variant === 'others' ? name : VARIANT_TITLES[variant]));
     let summary =
-      variant === 'others' ||
       name === 'list_dir' ||
       isQuestionTool(name) ||
       ['Todo', 'TodoWrite', 'todo_write'].includes(name)

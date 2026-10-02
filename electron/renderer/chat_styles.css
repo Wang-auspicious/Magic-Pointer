@@ -821,7 +821,7 @@
 }
 
 .mp-chat-tool[data-state='error'] > .mp-chat-disclosure > .mp-chat-row .mp-chat-title {
-  color: var(--mp-danger);
+  color: #8e2626;
 }
 
 .mp-chat-disclosure-body {
