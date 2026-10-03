@@ -136,13 +136,6 @@ declare global {
         : ms < 3600000
           ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
           : `${(ms / 3600000).toFixed(1)}h`;
-  const clock = (ms: number) =>
-    new Date(ms).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
   const actualTime = (value: unknown): number | undefined => {
     const timestamp = num(value);
     return timestamp !== undefined && timestamp > 1e11 ? timestamp : undefined;
@@ -259,12 +252,7 @@ declare global {
       turn,
       order,
       state,
-      title:
-        kind === 'input'
-          ? 'You'
-          : kind === 'model'
-            ? 'Model'
-            : 'Context',
+      title: kind === 'input' ? 'You' : kind === 'model' ? 'Model' : 'Context',
       preview: short(str(row.text)),
       status:
         state === 'running'
@@ -564,6 +552,42 @@ declare global {
     );
   }
 
+  function fixedBranchLaneCount(input: MagicPointerSessionLogInput): number {
+    return (
+      Number(Boolean(input.workspaceBranch)) +
+      Number(Boolean(input.worktreeBranch))
+    );
+  }
+
+  function renderScope(view: View): void {
+    view.scopeLabel.replaceChildren();
+    const scopes = [
+      view.input.workspaceBranch
+        ? {kind: 'git', label: 'Git', value: view.input.workspaceBranch}
+        : null,
+      view.input.worktreeBranch
+        ? {
+            kind: 'worktree',
+            label: 'Worktree',
+            value: view.input.worktreeBranch,
+          }
+        : null,
+      view.branches.length
+        ? {
+            kind: 'subagent',
+            label: 'Subagent',
+            value: `${view.branches.length} branch${view.branches.length === 1 ? '' : 'es'}`,
+          }
+        : null,
+    ].filter(Boolean) as Array<{kind: string; label: string; value: string}>;
+    scopes.forEach(scope => {
+      const chip = el('span', 'mp-trace-scope-chip');
+      chip.dataset.scopeKind = scope.kind;
+      chip.textContent = `${scope.label} · ${scope.value}`;
+      view.scopeLabel.append(chip);
+    });
+  }
+
   function setText(node: HTMLElement, value: string): void {
     if (node.textContent !== value) {
       node.textContent = value;
@@ -587,7 +611,7 @@ declare global {
     heading.append(el('strong', '', record.title));
     const close = el('button', 'mp-trace-control', '×');
     close.type = 'button';
-    close.setAttribute('aria-label', '关闭记录详情');
+    close.setAttribute('aria-label', 'Close event details');
     close.onclick = () => {
       view.selected = null;
       filter(view);
@@ -596,9 +620,6 @@ declare global {
     heading.append(close);
     const meta = [
       record.status,
-      record.startedAt === undefined
-        ? 'Time unavailable'
-        : clock(record.startedAt),
       record.durationMs === undefined ? '' : duration(record.durationMs),
       record.backend,
       record.model,
@@ -611,7 +632,7 @@ declare global {
       el('p', 'mp-trace-detail-meta', meta),
     ];
     if (view.input.onLocate) {
-      const locate = el('button', 'mp-trace-locate', '在对话中查看');
+      const locate = el('button', 'mp-trace-locate', 'View in conversation');
       locate.type = 'button';
       locate.onclick = () =>
         view.input.onLocate?.(
@@ -752,7 +773,13 @@ declare global {
     const lastY = bounds(last);
     if (firstY !== undefined && lastY !== undefined) {
       path(`M 18 ${firstY} L 18 ${lastY}`, 'mp-trace-main-path');
+      const fixedLanes = fixedBranchLaneCount(view.input);
+      for (let lane = 1; lane <= fixedLanes; lane += 1) {
+        const x = 18 + lane * 22;
+        path(`M ${x} ${firstY} L ${x} ${lastY}`, 'mp-trace-scope-path');
+      }
     }
+    const fixedLanes = fixedBranchLaneCount(view.input);
     for (const branch of view.branches) {
       const fork = view.entries.find(entry => entry.key === branch.forkKey);
       const join = view.entries.find(entry => entry.key === branch.joinKey);
@@ -760,7 +787,7 @@ declare global {
       if (start === undefined || rows.get(branch.forkKey)?.hidden) {
         continue;
       }
-      const x = 18 + branch.lane * 22;
+      const x = 18 + (fixedLanes + branch.lane) * 22;
       const end = join && !rows.get(join.key)?.hidden ? bounds(join) : lastY;
       path(
         `M 18 ${start - 7} C 18 ${start}, ${x} ${start}, ${x} ${start + 8}${end !== undefined && end > start + 8 ? ` L ${x} ${end - 8}` : ''}`,
@@ -808,7 +835,9 @@ declare global {
   function renderRows(view: View): void {
     const display = ordered(view);
     const keys = new Set<string>();
-    const laneCount = Math.max(0, ...view.branches.map(branch => branch.lane));
+    const fixedLanes = fixedBranchLaneCount(view.input);
+    const laneCount =
+      fixedLanes + Math.max(0, ...view.branches.map(branch => branch.lane));
     const railWidth = 42 + laneCount * 22;
     view.root.style.setProperty('--trace-rail-width', `${railWidth}px`);
     const laneById = new Map(
@@ -842,7 +871,7 @@ declare global {
       }
       row.style.setProperty(
         '--trace-x',
-        `${entry.kind === 'join' ? 18 : entry.branchId ? 18 + (laneById.get(entry.branchId) || 1) * 22 : 18}px`,
+        `${entry.kind === 'join' ? 18 : entry.branchId ? 18 + (fixedLanes + (laneById.get(entry.branchId) || 1)) * 22 : 18}px`,
       );
       row.setAttribute(
         'aria-label',
@@ -850,16 +879,13 @@ declare global {
           label[entry.kind],
           entry.title,
           entry.preview,
-          entry.startedAt === undefined
-            ? 'Time unavailable'
-            : clock(entry.startedAt),
           entry.durationMs === undefined ? '' : duration(entry.durationMs),
           entry.model || '',
           entry.tokens === undefined ? '' : `${entry.tokens} tokens`,
           entry.status,
         ]
           .filter(Boolean)
-          .join('，'),
+          .join(' · '),
       );
       const gutter = row.children[0] as HTMLElement;
       gutter.dataset.marker = entry.kind;
@@ -892,9 +918,6 @@ declare global {
       const durationNode =
         meta.querySelector<HTMLElement>('.mp-trace-duration') ||
         el('span', 'mp-trace-duration');
-      const clockNode =
-        meta.querySelector<HTMLElement>('.mp-trace-clock') ||
-        el('span', 'mp-trace-clock');
       setText(modelNode, entry.model || '—');
       modelNode.title = entry.model || 'Model unavailable';
       setText(
@@ -908,12 +931,8 @@ declare global {
         durationNode,
         entry.durationMs === undefined ? '—' : duration(entry.durationMs),
       );
-      setText(
-        clockNode,
-        entry.startedAt === undefined ? '—' : clock(entry.startedAt),
-      );
       if (!durationNode.isConnected) {
-        meta.append(modelStats, durationNode, clockNode);
+        meta.append(modelStats, durationNode);
       }
       if (entry.callId) {
         row.dataset.callId = entry.callId;
@@ -932,11 +951,8 @@ declare global {
       view.selected = null;
       view.detailVersion = '';
     }
-    view.hint.textContent = `Ordered by event sequence · click to inspect, Shift-click another row to select a range${display.some(entry => entry.startedAt === undefined) ? ' · untimed events are last' : ''}`;
-    if (view.mode.value === 'sequence') {
-      view.hint.textContent =
-        'Ordered by event sequence · click to inspect, Shift-click another row to select a range';
-    }
+    view.hint.textContent =
+      'Event sequence · click to inspect · Shift-click to select a range';
     filter(view);
     showDetail(view);
   }
@@ -977,7 +993,13 @@ declare global {
     search.dataset.sessionSearch = '';
     search.setAttribute('aria-label', 'Search conversation events');
     const columnHead = el('div', 'mp-trace-column-head');
-    for (const title of ['', 'Event', 'Content', 'Model / tokens', 'Duration', 'Time']) {
+    for (const title of [
+      '',
+      'Event',
+      'Content',
+      'Model / tokens',
+      'Duration',
+    ]) {
       columnHead.append(el('span', '', title));
     }
     const list = el('div', 'mp-trace-list');
@@ -989,7 +1011,7 @@ declare global {
     list.append(paths);
     const detail = el('section', 'mp-trace-detail');
     detail.hidden = true;
-    detail.setAttribute('aria-label', '轨迹事件详情');
+    detail.setAttribute('aria-label', 'Trace event details');
     root.append(header, controls, hint, search, columnHead, list, detail);
     host.replaceChildren(root);
     const view: View = {
@@ -1098,15 +1120,7 @@ declare global {
           .filter(Boolean)
           .join(' · '),
       );
-      setText(
-        view.scopeLabel,
-        [
-          input.workspaceBranch ? `Git ${input.workspaceBranch}` : '',
-          input.worktreeBranch ? `Worktree ${input.worktreeBranch}` : '',
-        ]
-          .filter(Boolean)
-          .join(' · '),
-      );
+      renderScope(view);
       setText(
         view.state,
         input.waiting ? 'Needs input' : input.running ? 'Running' : '',
