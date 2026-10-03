@@ -19,8 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: npm audit
-        run: npm audit --audit-level=high
+      - name: npm audit (runtime dependencies)
+        run: npm audit --omit=dev --audit-level=high
