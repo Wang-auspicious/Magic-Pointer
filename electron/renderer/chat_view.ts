@@ -2277,15 +2277,22 @@ const ChatView = (() => {
       .join(', ');
   }
 
-  function formatRunMeta(ms: number, tokens: number | null): string {
+  function formatRunMeta(
+    ms: number,
+    tokens: number | null,
+    scope = '',
+  ): string {
     const seconds = Math.max(0, Math.round(ms / 1000));
     const time =
       seconds >= 60
         ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
         : `${seconds}s`;
-    return tokens !== null && tokens > 0
-      ? `${time} · ${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
-      : time;
+    const value =
+      tokens !== null && tokens > 0
+        ? `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
+        : '';
+    const body = value ? `${time} · ${value}` : time;
+    return scope ? `${scope} · ${body}` : body;
   }
 
   function cleanDeliveryText(value: string): string {
@@ -2537,6 +2544,13 @@ const ChatView = (() => {
     flushChips();
 
     const records = Array.isArray(turn.trajectory) ? turn.trajectory : [];
+    const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
+    const delivered = deliveredFiles(turn.trajectory);
+    const hasDeliveredResult =
+      delivered.length > 0 ||
+      artifacts.some(
+        item => item && typeof item === 'object' && String(item.artifactId || ''),
+      );
     const times = records
       .map(record => Number(record.startedAt) || 0)
       .filter(value => value > 0);
@@ -2561,7 +2575,7 @@ const ChatView = (() => {
           : Math.max(0, Math.max(...doneTimes) - Math.min(...times));
       attach(
         bodyHost,
-        runMetaNode(formatRunMeta(elapsed, totalTokens || null)),
+        runMetaNode(formatRunMeta(elapsed, totalTokens || null, 'Run total')),
       );
     }
 
@@ -2585,14 +2599,13 @@ const ChatView = (() => {
                 turnIndex: Number(turn.turnIndex),
               }
             : undefined,
-          undefined,
+          hasDeliveredResult ? undefined : turn.at,
           {align: 'assistant'},
         ),
       );
     }
-    const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
     const results = fileResultsNode(
-      deliveredFiles(turn.trajectory),
+      delivered,
       artifacts,
       String(turn.conversationId || ''),
     );

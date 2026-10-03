@@ -368,7 +368,7 @@ declare global {
     };
     thinkNode(reasoning: string, running?: boolean): Element;
     permissionAnswerNode(answer: {decision?: string; rule?: string}): Element;
-    formatRunMeta(ms: number, tokens: number | null): string;
+    formatRunMeta(ms: number, tokens: number | null, scope?: string): string;
   }
   const ChatView: MagicPointerChatViewApi;
 
