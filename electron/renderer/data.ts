@@ -103,6 +103,7 @@ declare global {
       }>;
       kind?: string;
       tool?: string;
+      permissionMode?: string;
       prefix?: string;
     };
     [key: string]: unknown;

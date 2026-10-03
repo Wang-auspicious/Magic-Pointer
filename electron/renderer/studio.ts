@@ -3978,6 +3978,7 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
     pendingPermissionAsk = {
       requestId: pending.requestId || pendingToolRequestId(last),
       tool: String(pending.tool),
+      permissionMode: pending.permissionMode,
       prefix: String(pending.prefix || '').trim() || undefined,
       actionPreview: pending.actionPreview,
       action: pending.action,
@@ -10154,6 +10155,7 @@ function renderPlanCard() {
 let pendingPermissionAsk: {
   requestId?: string;
   tool: string;
+  permissionMode?: string;
   prefix?: string;
   actionPreview?: string;
   action?: {tool?: string; arguments?: Record<string, unknown>};
