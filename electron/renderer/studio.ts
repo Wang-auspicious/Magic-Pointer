@@ -8403,6 +8403,21 @@ document
   });
 
 let activeTerminalRelativeDirectory = '';
+let terminalUsesPty = false;
+
+const terminalEscapeSequence = new RegExp(
+  String.raw`\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])`,
+  'g',
+);
+
+function terminalOutputText(text: string): string {
+  return text
+    .replace(terminalEscapeSequence, '')
+    .split('\u0007')
+    .join('')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '');
+}
 
 function renderTerminalPrompt() {
   const suffix = activeTerminalRelativeDirectory
@@ -8436,7 +8451,10 @@ async function runTerminalCommand(command: string) {
     if (!started.ok) {
       throw new Error(started.error || '终端启动失败。');
     }
-    appendTerminalOutput(`\n> ${command}\n`);
+    terminalUsesPty = Boolean(started.pty);
+    if (!terminalUsesPty) {
+      appendTerminalOutput(`\n> ${command}\n`);
+    }
     const written = await Data.writeProjectTerminal(command);
     if (!written.ok) {
       throw new Error(written.error || '终端输入失败。');
@@ -8460,7 +8478,9 @@ function appendTerminalOutput(text: string) {
       log.className = 'mp-terminal-log';
       output.append(log);
     }
-    log.textContent = `${(log.textContent || '') + text}`.slice(-512 * 1024);
+    log.textContent = `${(log.textContent || '') + terminalOutputText(text)}`.slice(
+      -512 * 1024,
+    );
     output.scrollTop = output.scrollHeight;
   }
 }

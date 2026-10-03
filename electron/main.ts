@@ -2986,11 +2986,15 @@ ipcMain.handle(
     try {
       const directory = projectPath(root, String(raw.path || ''));
       if (projectTerminal.running && projectTerminalDirectory === directory) {
-        return {ok: true, reused: true};
+        return {
+          ok: true,
+          reused: true,
+          pty: projectTerminal.usingPty,
+        };
       }
       const generation = ++projectTerminalGeneration;
       projectTerminalDirectory = directory;
-      projectTerminal.start(
+      const pty = projectTerminal.start(
         directory,
         (update: import('./project_terminal').TerminalEvent) => {
           if (
@@ -3002,7 +3006,7 @@ ipcMain.handle(
           event.sender.send('projects:terminal-event', update);
         },
       );
-      return {ok: true};
+      return {ok: true, pty};
     } catch (error) {
       return {
         ok: false,

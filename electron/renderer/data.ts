@@ -696,7 +696,7 @@ declare global {
       startTerminal(
         projectRoot: string,
         relativePath?: string,
-      ): Promise<{ok?: boolean; error?: string}>;
+      ): Promise<{ok?: boolean; error?: string; pty?: boolean}>;
       writeTerminal(input: string): Promise<{ok?: boolean; error?: string}>;
       stopTerminal(): Promise<{ok?: boolean; error?: string}>;
       onTerminalEvent(
@@ -1114,7 +1114,7 @@ declare global {
     startProjectTerminal(
       projectRoot: string,
       relativePath?: string,
-    ): Promise<{ok?: boolean; error?: string}>;
+    ): Promise<{ok?: boolean; error?: string; pty?: boolean}>;
     writeProjectTerminal(
       input: string,
     ): Promise<{ok?: boolean; error?: string}>;
