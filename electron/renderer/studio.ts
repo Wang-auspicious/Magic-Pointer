@@ -10927,6 +10927,7 @@ function setStudioLanguage(language: 'en' | 'zh-CN'): void {
     /* storage unavailable */
   }
   closeAccountMenu();
+  renderConversationActivity();
 }
 
 try {

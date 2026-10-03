@@ -90,14 +90,6 @@ declare global {
     'budget_exhausted',
     'invariant_failed',
   ]);
-  const label: Record<Kind, string> = {
-    input: 'YOU',
-    model: 'GEN',
-    tool: 'TOOL',
-    context: 'CTX',
-    fork: 'FORK',
-    join: 'JOIN',
-  };
   const el = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
     cls: string,
@@ -120,6 +112,34 @@ declare global {
       : value == null
         ? ''
         : JSON.stringify(value);
+  const isChinese = (): boolean =>
+    document.documentElement.dataset.language === 'zh-CN';
+  const locale = (english: string, chinese: string): string =>
+    isChinese() ? chinese : english;
+  const kindLabel = (kind: Kind): string =>
+    ({
+      input: locale('YOU', '你'),
+      model: locale('GEN', '生成'),
+      tool: locale('TOOL', '工具'),
+      context: locale('CTX', '上下文'),
+      fork: locale('FORK', '分支'),
+      join: locale('JOIN', '汇合'),
+    })[kind];
+  const statusLabel = (status: string): string =>
+    ({
+      starting: locale('Starting', '启动中'),
+      running: locale('Running', '运行中'),
+      awaiting_user: locale('Needs input', '需要输入'),
+      completed: locale('Completed', '已完成'),
+      failed: locale('Failed', '失败'),
+      stopped: locale('Stopped', '已停止'),
+      Running: locale('Running', '运行中'),
+      Failed: locale('Failed', '失败'),
+      Stopped: locale('Stopped', '已停止'),
+      Waiting: locale('Waiting', '等待输入'),
+      Verified: locale('Verified', '已核验'),
+      'Needs input': locale('Needs input', '需要输入'),
+    })[status] || status;
   const num = (value: unknown): number | undefined =>
     typeof value === 'number' && Number.isFinite(value) ? value : undefined;
   const short = (value: string, max = 170) => {
@@ -252,7 +272,12 @@ declare global {
       turn,
       order,
       state,
-      title: kind === 'input' ? 'You' : kind === 'model' ? 'Model' : 'Context',
+      title:
+        kind === 'input'
+          ? locale('You', '你')
+          : kind === 'model'
+            ? locale('Model', '模型')
+            : locale('Context', '上下文'),
       preview: short(str(row.text)),
       status:
         state === 'running'
@@ -320,25 +345,28 @@ declare global {
     } else if (kind === 'model') {
       entry.title =
         rawKind === 'think'
-          ? 'Thought'
+          ? locale('Thought', '思考')
           : state === 'running'
-            ? 'Generating'
-            : 'Model output';
+            ? locale('Generating', '生成中')
+            : locale('Model output', '模型输出');
       entry.body = [str(row.reasoning), str(row.text)]
         .filter(Boolean)
         .join('\n\n');
       entry.preview = short(
         str(row.text) ||
           str(row.reasoning) ||
-          (state === 'running' ? 'Generating…' : 'Model returned'),
+          (state === 'running'
+            ? locale('Generating…', '生成中…')
+            : locale('Model returned', '模型已返回')),
       );
     } else if (rawKind === 'request-header') {
-      entry.title = 'Model request';
+      entry.title = locale('Model request', '模型请求');
       entry.preview =
-        str(row.modelId || row.model || row.usedBackend) || 'Context submitted';
+        str(row.modelId || row.model || row.usedBackend) ||
+        locale('Context submitted', '上下文已提交');
       entry.body = JSON.stringify(row, null, 2);
     } else if (rawKind === 'compacted') {
-      entry.title = 'Context compacted';
+      entry.title = locale('Context compacted', '上下文已压缩');
     }
     return entry;
   }
@@ -405,12 +433,12 @@ declare global {
         const childStart = actualTime(snapshot.startedAt);
         const childStatus = str(snapshot.status || result.status);
         const childStatusLabel: Record<string, string> = {
-          starting: 'Starting',
-          running: 'Running',
-          awaiting_user: 'Needs input',
-          completed: 'Completed',
-          failed: 'Failed',
-          stopped: 'Stopped',
+          starting: locale('Starting', '启动中'),
+          running: locale('Running', '运行中'),
+          awaiting_user: locale('Needs input', '需要输入'),
+          completed: locale('Completed', '已完成'),
+          failed: locale('Failed', '失败'),
+          stopped: locale('Stopped', '已停止'),
         };
         const childEnd = actualTime(snapshot.completedAt);
         const description = short(
@@ -426,7 +454,9 @@ declare global {
           order: order++,
           title: description,
           preview: [
-            childStatusLabel[childStatus] || childStatus || 'Dispatched',
+            childStatusLabel[childStatus] ||
+              statusLabel(childStatus) ||
+              locale('Dispatched', '已派发'),
             childTokens === undefined ? '' : `${childTokens} tokens`,
           ]
             .filter(Boolean)
@@ -479,8 +509,8 @@ declare global {
             title: description,
             preview:
               childStatus === 'completed'
-                ? 'Subtask returned'
-                : `Subtask ended · ${childStatus}`,
+                ? locale('Subtask returned', '子任务已返回')
+                : `${locale('Subtask ended', '子任务结束')} · ${statusLabel(childStatus)}`,
             state: childState(childStatus),
             status: childStatus,
             body: str(snapshot.summary || result.summary),
@@ -583,7 +613,21 @@ declare global {
     scopes.forEach(scope => {
       const chip = el('span', 'mp-trace-scope-chip');
       chip.dataset.scopeKind = scope.kind;
-      chip.textContent = `${scope.label} · ${scope.value}`;
+      const translated =
+        scope.kind === 'worktree'
+          ? locale('Worktree', '工作树')
+          : scope.kind === 'subagent'
+            ? locale('Subagent', '子代理')
+            : scope.label;
+      const branchCount =
+        scope.kind === 'subagent'
+          ? `${view.branches.length} ${
+              view.branches.length === 1
+                ? locale('branch', '分支')
+                : locale('branches', '分支')
+            }`
+          : scope.value;
+      chip.textContent = `${translated} · ${branchCount}`;
       view.scopeLabel.append(chip);
     });
   }
@@ -602,7 +646,7 @@ declare global {
       view.detailVersion = '';
       return;
     }
-    const version = JSON.stringify(record);
+    const version = `${isChinese() ? 'zh' : 'en'}:${JSON.stringify(record)}`;
     if (version === view.detailVersion) {
       return;
     }
@@ -611,7 +655,10 @@ declare global {
     heading.append(el('strong', '', record.title));
     const close = el('button', 'mp-trace-control', '×');
     close.type = 'button';
-    close.setAttribute('aria-label', 'Close event details');
+    close.setAttribute(
+      'aria-label',
+      locale('Close event details', '关闭事件详情'),
+    );
     close.onclick = () => {
       view.selected = null;
       filter(view);
@@ -619,7 +666,7 @@ declare global {
     };
     heading.append(close);
     const meta = [
-      record.status,
+      statusLabel(record.status),
       record.durationMs === undefined ? '' : duration(record.durationMs),
       record.backend,
       record.model,
@@ -632,7 +679,11 @@ declare global {
       el('p', 'mp-trace-detail-meta', meta),
     ];
     if (view.input.onLocate) {
-      const locate = el('button', 'mp-trace-locate', 'View in conversation');
+      const locate = el(
+        'button',
+        'mp-trace-locate',
+        locale('View in conversation', '在对话中查看'),
+      );
       locate.type = 'button';
       locate.onclick = () =>
         view.input.onLocate?.(
@@ -646,14 +697,17 @@ declare global {
         el(
           'p',
           'mp-trace-detail-meta',
-          `首字 ${duration(record.firstTokenMs)} · 后续 ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
+          locale(
+            `First token ${duration(record.firstTokenMs)} · remainder ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
+            `首字 ${duration(record.firstTokenMs)} · 后续 ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
+          ),
         ),
       );
     }
     for (const [name, value] of [
-      ['Content', record.body],
-      ['Input', record.args],
-      ['Output', record.output],
+      [locale('Content', '内容'), record.body],
+      [locale('Input', '输入'), record.args],
+      [locale('Output', '输出'), record.output],
     ]) {
       if (!value) {
         continue;
@@ -666,7 +720,10 @@ declare global {
         el(
           'div',
           'mp-trace-detail-label',
-          'Recent subtask tool steps · start time unavailable',
+          locale(
+            'Recent subtask tool steps · start time unavailable',
+            '最近的子任务工具步骤 · 开始时间不可用',
+          ),
         ),
       );
       children.push(
@@ -876,20 +933,20 @@ declare global {
       row.setAttribute(
         'aria-label',
         [
-          label[entry.kind],
+          kindLabel(entry.kind),
           entry.title,
           entry.preview,
           entry.durationMs === undefined ? '' : duration(entry.durationMs),
           entry.model || '',
           entry.tokens === undefined ? '' : `${entry.tokens} tokens`,
-          entry.status,
+          statusLabel(entry.status),
         ]
           .filter(Boolean)
           .join(' · '),
       );
       const gutter = row.children[0] as HTMLElement;
       gutter.dataset.marker = entry.kind;
-      setText(row.children[1] as HTMLElement, label[entry.kind]);
+      setText(row.children[1] as HTMLElement, kindLabel(entry.kind));
       const contentHost = row.children[2] as HTMLElement;
       const title =
         contentHost.querySelector<HTMLElement>('.mp-trace-title') ||
@@ -900,7 +957,10 @@ declare global {
       setText(title, entry.title);
       setText(
         preview,
-        entry.preview || (entry.kind === 'fork' ? 'Subtask dispatched' : '—'),
+        entry.preview ||
+          (entry.kind === 'fork'
+            ? locale('Subtask dispatched', '子任务已派发')
+            : '—'),
       );
       if (!title.isConnected) {
         contentHost.append(title, preview);
@@ -919,7 +979,8 @@ declare global {
         meta.querySelector<HTMLElement>('.mp-trace-duration') ||
         el('span', 'mp-trace-duration');
       setText(modelNode, entry.model || '—');
-      modelNode.title = entry.model || 'Model unavailable';
+      modelNode.title =
+        entry.model || locale('Model unavailable', '模型不可用');
       setText(
         tokensNode,
         entry.tokens === undefined ? '—' : entry.tokens.toLocaleString('en-US'),
@@ -951,67 +1012,90 @@ declare global {
       view.selected = null;
       view.detailVersion = '';
     }
-    view.hint.textContent =
-      'Event sequence · click to inspect · Shift-click to select a range';
+    view.hint.textContent = locale(
+      'Event sequence · click to inspect · Shift-click to select a range',
+      '事件顺序 · 点击查看详情 · Shift-点击选择范围',
+    );
     filter(view);
     showDetail(view);
   }
 
   function create(host: HTMLElement, input: MagicPointerSessionLogInput): View {
     const root = el('section', 'mp-trace-root');
-    root.setAttribute('aria-label', 'Conversation history');
+    root.setAttribute('aria-label', locale('Conversation history', '对话历史'));
     const header = el('header', 'mp-trace-header');
     const heading = el('div', 'mp-trace-heading');
     const summary = el('span', 'mp-trace-summary');
     const scopeLabel = el('span', 'mp-trace-scope');
     const state = el('span', 'mp-trace-state');
-    heading.append(el('strong', '', 'Conversation history'), state);
+    heading.append(
+      el('strong', '', locale('Conversation history', '对话历史')),
+      state,
+    );
     header.append(heading, summary, scopeLabel);
     const controls = el('div', 'mp-trace-controls');
     const mode = el('select', 'mp-trace-mode');
-    mode.setAttribute('aria-label', 'Event order');
-    for (const [value, title] of [['sequence', 'Event order']]) {
+    mode.setAttribute('aria-label', locale('Event order', '事件顺序'));
+    for (const [value, title] of [
+      ['sequence', locale('Event order', '事件顺序')],
+    ]) {
       const option = el('option', '', title);
       option.value = value;
       mode.append(option);
     }
     mode.hidden = true;
-    const reset = el('button', 'mp-trace-control', 'Show all');
+    const reset = el(
+      'button',
+      'mp-trace-control',
+      locale('Show all', '显示全部'),
+    );
     reset.type = 'button';
     reset.hidden = true;
     const shrink = el('button', 'mp-trace-control', '−');
     shrink.type = 'button';
-    shrink.setAttribute('aria-label', 'Reduce row size');
+    shrink.setAttribute('aria-label', locale('Reduce row size', '缩小行高'));
     const expand = el('button', 'mp-trace-control', '+');
     expand.type = 'button';
-    expand.setAttribute('aria-label', 'Increase row size');
+    expand.setAttribute('aria-label', locale('Increase row size', '放大行高'));
     controls.append(mode, reset, shrink, expand);
     const hint = el('p', 'mp-trace-hint');
     const search = el('input', 'mp-trace-search') as HTMLInputElement;
     search.type = 'search';
-    search.placeholder = 'Search the conversation, files, or actions';
+    search.placeholder = locale(
+      'Search the conversation, files, or actions',
+      '搜索对话、文件或操作',
+    );
     search.dataset.sessionSearch = '';
-    search.setAttribute('aria-label', 'Search conversation events');
+    search.setAttribute(
+      'aria-label',
+      locale('Search conversation events', '搜索对话事件'),
+    );
     const columnHead = el('div', 'mp-trace-column-head');
     for (const title of [
       '',
-      'Event',
-      'Content',
-      'Model / tokens',
-      'Duration',
+      locale('Event', '事件'),
+      locale('Content', '内容'),
+      locale('Model / tokens', '模型 / tokens'),
+      locale('Duration', '耗时'),
     ]) {
       columnHead.append(el('span', '', title));
     }
     const list = el('div', 'mp-trace-list');
     list.setAttribute('role', 'group');
-    list.setAttribute('aria-label', 'Conversation events in sequence');
+    list.setAttribute(
+      'aria-label',
+      locale('Conversation events in sequence', '按顺序排列的对话事件'),
+    );
     const paths = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     paths.classList.add('mp-trace-paths');
     paths.setAttribute('aria-hidden', 'true');
     list.append(paths);
     const detail = el('section', 'mp-trace-detail');
     detail.hidden = true;
-    detail.setAttribute('aria-label', 'Trace event details');
+    detail.setAttribute(
+      'aria-label',
+      locale('Trace event details', '轨迹事件详情'),
+    );
     root.append(header, controls, hint, search, columnHead, list, detail);
     host.replaceChildren(root);
     const view: View = {
@@ -1072,6 +1156,70 @@ declare global {
     return view;
   }
 
+  function refreshChrome(view: View): void {
+    view.root.setAttribute(
+      'aria-label',
+      locale('Conversation history', '对话历史'),
+    );
+    const heading = view.root.querySelector<HTMLElement>(
+      '.mp-trace-heading strong',
+    );
+    if (heading) {
+      heading.textContent = locale('Conversation history', '对话历史');
+    }
+    view.mode.setAttribute('aria-label', locale('Event order', '事件顺序'));
+    const option = view.mode.querySelector<HTMLOptionElement>('option');
+    if (option) {
+      option.textContent = locale('Event order', '事件顺序');
+    }
+    view.reset.textContent = locale('Show all', '显示全部');
+    const shrink = view.root.querySelector<HTMLButtonElement>(
+      '[aria-label="Reduce row size"], [aria-label="缩小行高"]',
+    );
+    if (shrink) {
+      shrink.setAttribute('aria-label', locale('Reduce row size', '缩小行高'));
+    }
+    const expand = view.root.querySelector<HTMLButtonElement>(
+      '[aria-label="Increase row size"], [aria-label="放大行高"]',
+    );
+    if (expand) {
+      expand.setAttribute(
+        'aria-label',
+        locale('Increase row size', '放大行高'),
+      );
+    }
+    view.search.placeholder = locale(
+      'Search the conversation, files, or actions',
+      '搜索对话、文件或操作',
+    );
+    view.search.setAttribute(
+      'aria-label',
+      locale('Search conversation events', '搜索对话事件'),
+    );
+    view.list.setAttribute(
+      'aria-label',
+      locale('Conversation events in sequence', '按顺序排列的对话事件'),
+    );
+    view.detail.setAttribute(
+      'aria-label',
+      locale('Trace event details', '轨迹事件详情'),
+    );
+    const columns = view.root.querySelectorAll<HTMLElement>(
+      '.mp-trace-column-head > span',
+    );
+    [
+      '',
+      locale('Event', '事件'),
+      locale('Content', '内容'),
+      locale('Model / tokens', '模型 / tokens'),
+      locale('Duration', '耗时'),
+    ].forEach((value, index) => {
+      if (columns[index]) {
+        columns[index].textContent = value;
+      }
+    });
+  }
+
   globalThis.ExecutionView = {
     render(host, input) {
       let view = views.get(host);
@@ -1084,6 +1232,7 @@ declare global {
         views.set(host, view);
       }
       view.input = input;
+      refreshChrome(view);
       const oldCount = view.entries.length;
       const projected = project(input);
       view.entries = projected.entries;
@@ -1107,15 +1256,24 @@ declare global {
       setText(
         view.summary,
         [
-          `${input.turns.length} turn${input.turns.length === 1 ? '' : 's'}`,
-          `${tools} action${tools === 1 ? '' : 's'}`,
+          locale(
+            `${input.turns.length} turn${input.turns.length === 1 ? '' : 's'}`,
+            `${input.turns.length} 回合`,
+          ),
+          locale(`${tools} action${tools === 1 ? '' : 's'}`, `${tools} 个操作`),
           view.branches.length
-            ? `${view.branches.length} subtask${view.branches.length === 1 ? '' : 's'}`
+            ? locale(
+                `${view.branches.length} subtask${view.branches.length === 1 ? '' : 's'}`,
+                `${view.branches.length} 个子任务`,
+              )
             : '',
           tokens
-            ? `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
+            ? locale(
+                `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`,
+                `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`,
+              )
             : '',
-          failures ? `${failures} failed` : '',
+          failures ? locale(`${failures} failed`, `${failures} 失败`) : '',
         ]
           .filter(Boolean)
           .join(' · '),
@@ -1123,7 +1281,11 @@ declare global {
       renderScope(view);
       setText(
         view.state,
-        input.waiting ? 'Needs input' : input.running ? 'Running' : '',
+        input.waiting
+          ? locale('Needs input', '需要输入')
+          : input.running
+            ? locale('Running', '运行中')
+            : '',
       );
       renderRows(view);
       if (
