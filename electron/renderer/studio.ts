@@ -550,6 +550,17 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
     };
   }
   await warmComposerEnvironment(base);
+  if (
+    base !== activeProjectRoot ||
+    contextKey !== currentComposerWorktreeKey() ||
+    !currentComposerWorktreeEnabled()
+  ) {
+    return {
+      projectRoot: base,
+      executionWorkspaceRoot: base,
+      contextKey,
+    };
+  }
   const identity = currentComposerWorktreeId();
   const result = await Data.projectWorktree({
     action: 'create',
@@ -570,6 +581,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   };
   composerWorktrees.set(contextKey, record);
   persistComposerWorktrees();
+  renderComposerWorktree();
   return {
     projectRoot: base,
     executionWorkspaceRoot: result.path,
