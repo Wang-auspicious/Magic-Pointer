@@ -3507,7 +3507,6 @@ async function toggleFigmaConnection() {
 document.getElementById('figma-connect')?.addEventListener('click', () => {
   void toggleFigmaConnection();
 });
-const chatCardNodes = new Map<string, HTMLElement>();
 
 function setStudioHomeVisible(visible: boolean) {
   const home = document.getElementById('studio-home');
@@ -3891,8 +3890,6 @@ async function openConversation(id: string) {
   if (!stream) {
     return;
   }
-  LiveCards.reset();
-  chatCardNodes.clear();
   const turns = c.turns || [];
   activeConversationTurns = turns as Array<Record<string, unknown>>;
   composerPlan = PlanList.project(turns);
@@ -3920,26 +3917,6 @@ async function openConversation(id: string) {
   flow.className = 'mp-chat-flow';
   activeConversationView = ChatView.createConversationView(flow);
   activeConversationView.update(c);
-  for (const [turnIndex, t] of turns.entries()) {
-    const host = flow.querySelector<HTMLElement>(
-      `.mp-chat-flow-item[data-turn-index="${turnIndex}"]`,
-    )!;
-    const proxy = LiveCards.track(
-      CardModel.normalizeCard({
-        id: `${t.at || 0}-a`,
-        kind: 'prose',
-        state: t.failed ? 'failed' : 'done',
-        answer: t.answer || '',
-        error: t.failed ? String(t.error || '这次没能完成。') : '',
-        steps: (t.trace || []).map(x =>
-          typeof x === 'string'
-            ? {label: x, state: 'done'}
-            : {label: x.label, note: x.note || '', state: 'done'},
-        ),
-      }),
-    );
-    chatCardNodes.set(proxy.id, host);
-  }
   stream.replaceChildren(flow);
   syncConversationPendingInput(turns);
   stream.scrollTop = stream.scrollHeight;
@@ -4112,28 +4089,6 @@ async function refreshOpenConversation(
     renderProjectTasks();
     renderConversationActivity();
   }
-}
-
-function renderChatCardNode(card: MagicPointerCard): HTMLElement {
-  const host = document.createElement('div');
-  host.className = 'mp-chat-assistant';
-  for (const node of ChatView.assistantTurnNode({
-    answer: card.answer,
-    failed: card.state === 'failed',
-    running: card.state === 'running',
-    trace: (card.steps || []).map(x =>
-      typeof x === 'string'
-        ? x
-        : {
-            label: String((x as {label?: unknown}).label || ''),
-            note: String((x as {note?: unknown}).note || ''),
-          },
-    ),
-    at: card.startedAt ?? undefined,
-  })) {
-    host.appendChild(node);
-  }
-  return host;
 }
 
 interface ArtifactEntry {
@@ -12261,17 +12216,3 @@ window.magicPointerDashboard?.onShow?.(payload => {
   }
 });
 
-if (window.magicPointerDashboard?.onCardPatch) {
-  window.magicPointerDashboard.onCardPatch(payload => {
-    if (!payload?.cardId) {
-      return;
-    }
-    const updated = LiveCards.patch(payload.cardId, payload.patch || {});
-    const host = chatCardNodes.get(payload.cardId);
-    if (host && updated) {
-      const replacement = renderChatCardNode(updated);
-      host.replaceWith(replacement);
-      chatCardNodes.set(payload.cardId, replacement);
-    }
-  });
-}
