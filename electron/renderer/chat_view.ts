@@ -1631,17 +1631,6 @@ const ChatView = (() => {
         : `Created ${files.length === 1 ? files[0].name : `${files.length} files`}`,
     );
     attach(head, title);
-    if (artifact) {
-      const open = h('button', {
-        type: 'button',
-        class: 'mp-chat-files-open',
-        'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': String(artifact.artifactId || ''),
-        'data-artifact-conversation': conversationId,
-      });
-      attach(open, 'Open');
-      attach(head, open);
-    }
     attach(card, head);
 
     if (!files.length && artifact) {
@@ -2596,7 +2585,7 @@ const ChatView = (() => {
                 turnIndex: Number(turn.turnIndex),
               }
             : undefined,
-          turn.at,
+          undefined,
           {align: 'assistant'},
         ),
       );
