@@ -8450,14 +8450,24 @@ function activeModelRuntimeConfig() {
 }
 
 function localOpenCodeCredential(): string {
-  const roots = [
-    process.env.USERPROFILE || process.env.HOME || '',
-    process.env.LOCALAPPDATA
-      ? path.resolve(process.env.LOCALAPPDATA, '..', '..')
-      : '',
-  ].filter(Boolean);
+  const roots = new Set<string>(
+    [
+      FABRIC_DATA_DIR,
+      app.getPath('userData'),
+      process.env.USERPROFILE || process.env.HOME || '',
+      process.env.APPDATA || '',
+      process.env.LOCALAPPDATA || '',
+    ]
+      .filter(Boolean)
+      .map(root => path.resolve(root)),
+  );
+  const authPaths = new Set<string>();
   for (const root of roots) {
-    const authPath = path.join(root, '.local', 'share', 'opencode', 'auth.json');
+    authPaths.add(path.join(root, '.local', 'share', 'opencode', 'auth.json'));
+    authPaths.add(path.join(root, '.config', 'opencode', 'auth.json'));
+    authPaths.add(path.join(root, 'opencode', 'auth.json'));
+  }
+  for (const authPath of authPaths) {
     try {
       const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8'));
       const entries = parsed && typeof parsed === 'object' ? parsed : {};

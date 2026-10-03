@@ -68,12 +68,12 @@ function resetDetail(resetsAt: unknown, now: number): string {
   }
   const minutes = Math.max(0, Math.round((at - now) / 60000));
   if (minutes < 60) {
-    return `${minutes} 分钟后重置`;
+    return `${minutes} minutes until reset`;
   }
   if (minutes < 60 * 48) {
-    return `${Math.round(minutes / 60)} 小时后重置`;
+    return `${Math.round(minutes / 60)} hours until reset`;
   }
-  return `${new Date(at).toLocaleDateString()} 重置`;
+  return `${new Date(at).toLocaleDateString('en-US')} until reset`;
 }
 
 const QUOTA_ADAPTERS: QuotaAdapter[] = [
@@ -231,9 +231,9 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
         return [];
       }
       const windows: Array<[string, string]> = [
-        ['rolling', '5 小时'],
-        ['weekly', '本周'],
-        ['monthly', '本月'],
+        ['rolling', '5-hour window'],
+        ['weekly', 'Weekly'],
+        ['monthly', 'Monthly'],
       ];
       const rows: QuotaRow[] = [];
       for (const [key, label] of windows) {
@@ -326,10 +326,13 @@ async function probeQuota(input: ProbeInput): Promise<UnknownRecord> {
     };
   }
   const doFetch = input.fetchImpl || fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
     const response = await doFetch(url, {
       method: 'GET',
       headers: adapter.headers(credential),
+      signal: controller.signal,
     });
     if (!response || response.ok !== true) {
       const status = response ? `${response.status}` : '无响应';
@@ -353,6 +356,16 @@ async function probeQuota(input: ProbeInput): Promise<UnknownRecord> {
       fetchedAt: now,
     };
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return {
+        adapter: adapter.id,
+        label: adapter.label,
+        rows: [],
+        error: 'Quota request timed out after 8 seconds',
+        source: url,
+        fetchedAt: now,
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       adapter: adapter.id,
@@ -362,6 +375,8 @@ async function probeQuota(input: ProbeInput): Promise<UnknownRecord> {
       source: url,
       fetchedAt: now,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

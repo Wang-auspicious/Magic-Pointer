@@ -2808,6 +2808,7 @@ function ensureComposerQuota(force = false) {
   }
   composerQuotaPending = true;
   composerQuotaRequestKey = key;
+  renderUsageMeter(usageMeterTurns);
   void Data.modelQuota({force}).then(result => {
     if (composerQuotaRequestKey !== key) {
       return;
