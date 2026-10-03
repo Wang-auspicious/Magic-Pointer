@@ -7,83 +7,45 @@ type TerminalEvent =
   | {type: 'output'; stream: 'stdout' | 'stderr'; text: string}
   | {type: 'exit'; code: number | null};
 
-const terminalEscapeSequence = new RegExp(
-  String.raw`\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])`,
-  'g',
-);
-const powershellEncodingCommand =
-  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding';
-
 class ProjectTerminal {
   private child: ChildProcessWithoutNullStreams | null = null;
   private workingDirectory = '';
-  private pty = false;
-  private terminalReady = false;
-  private pendingInput: string[] = [];
-  private promptBuffer = '';
-  private initializationSent = false;
 
   get running(): boolean {
     return this.child !== null;
   }
 
-  get usingPty(): boolean {
-    return this.pty;
-  }
-
   start(
     workingDirectory: string,
     onEvent: (event: TerminalEvent) => void,
-  ): boolean {
+  ): void {
     if (
       this.child &&
       this.workingDirectory &&
       path.resolve(workingDirectory) === this.workingDirectory
     ) {
-      return this.pty;
+      return;
     }
     this.stop();
-    const usePty = process.platform === 'win32';
-    const child = usePty
-      ? spawn(
-          'conhost.exe',
-          [
-            '--headless',
-            '--width',
-            '160',
-            '--height',
-            '40',
-            'powershell.exe',
-            '-NoLogo',
-            '-NoProfile',
-          ],
-          {
-            cwd: workingDirectory,
-            windowsHide: true,
-            stdio: ['pipe', 'pipe', 'pipe'],
-          },
-        )
-      : spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', '-'], {
-          cwd: workingDirectory,
-          windowsHide: true,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+    const child = spawn(
+      'powershell.exe',
+      ['-NoLogo', '-NoProfile', '-Command', '-'],
+      {
+        cwd: workingDirectory,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
     this.child = child;
     this.workingDirectory = path.resolve(workingDirectory);
-    this.pty = usePty;
-    this.terminalReady = !this.pty;
-    this.pendingInput = [];
-    this.promptBuffer = '';
-    this.initializationSent = !this.pty;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    if (!this.pty) {
-      this.sendLine(powershellEncodingCommand);
-    }
-    child.stdout.on('data', (text: string) => {
-      this.observePrompt(text);
-      onEvent({type: 'output', stream: 'stdout', text});
-    });
+    child.stdin.write(
+      '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding\n',
+    );
+    child.stdout.on('data', (text: string) =>
+      onEvent({type: 'output', stream: 'stdout', text}),
+    );
     child.stderr.on('data', (text: string) =>
       onEvent({type: 'output', stream: 'stderr', text}),
     );
@@ -94,22 +56,17 @@ class ProjectTerminal {
       if (this.child === child) {
         this.child = null;
         this.workingDirectory = '';
-        this.pty = false;
-        this.terminalReady = false;
-        this.pendingInput = [];
-        this.promptBuffer = '';
-        this.initializationSent = false;
       }
       onEvent({type: 'exit', code});
     });
-    return this.pty;
   }
 
   write(input: string): boolean {
     if (!this.child || !this.child.stdin.writable) {
       return false;
     }
-    return this.sendLine(input);
+    this.child.stdin.write(`${input.replace(/[\r\n]+$/, '')}\n`);
+    return true;
   }
 
   stop(): void {
@@ -119,11 +76,6 @@ class ProjectTerminal {
     }
     this.child = null;
     this.workingDirectory = '';
-    this.pty = false;
-    this.terminalReady = false;
-    this.pendingInput = [];
-    this.promptBuffer = '';
-    this.initializationSent = false;
     child.stdin.end();
     if (child.pid && process.platform === 'win32') {
       const killer = spawn(
@@ -136,55 +88,6 @@ class ProjectTerminal {
       child.kill();
     }
   }
-
-  private sendLine(input: string): boolean {
-    if (!this.child || !this.child.stdin.writable) {
-      return false;
-    }
-    const line = input.replace(/[\r\n]+$/, '');
-    if (this.pty && !this.terminalReady) {
-      this.pendingInput.push(line);
-      return true;
-    }
-    this.child.stdin.write(`${line}${this.pty ? '\r' : '\n'}`);
-    return true;
-  }
-
-  private flushPendingInput(): void {
-    const next = this.pendingInput.shift();
-    if (next !== undefined) {
-      this.sendLine(next);
-    }
-  }
-
-  private observePrompt(text: string): void {
-    if (!this.pty) {
-      return;
-    }
-    this.promptBuffer =
-      `${this.promptBuffer}${stripTerminalEscapes(text)}`.slice(-4096);
-    if (!/PS [^\r\n]*>\s*$/.test(this.promptBuffer)) {
-      return;
-    }
-    this.promptBuffer = '';
-    if (!this.initializationSent) {
-      this.initializationSent = true;
-      this.writeDirect(powershellEncodingCommand);
-    } else if (!this.terminalReady) {
-      this.terminalReady = true;
-      this.flushPendingInput();
-    }
-  }
-
-  private writeDirect(line: string): void {
-    if (this.child?.stdin.writable) {
-      this.child.stdin.write(`${line.replace(/[\r\n]+$/, '')}\r`);
-    }
-  }
-}
-
-function stripTerminalEscapes(text: string): string {
-  return text.replace(terminalEscapeSequence, '').split('\u0007').join('');
 }
 
 export {ProjectTerminal};

@@ -550,17 +550,6 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
     };
   }
   await warmComposerEnvironment(base);
-  if (
-    base !== activeProjectRoot ||
-    contextKey !== currentComposerWorktreeKey() ||
-    !currentComposerWorktreeEnabled()
-  ) {
-    return {
-      projectRoot: base,
-      executionWorkspaceRoot: base,
-      contextKey,
-    };
-  }
   const identity = currentComposerWorktreeId();
   const result = await Data.projectWorktree({
     action: 'create',
@@ -581,7 +570,6 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   };
   composerWorktrees.set(contextKey, record);
   persistComposerWorktrees();
-  renderComposerWorktree();
   return {
     projectRoot: base,
     executionWorkspaceRoot: result.path,
@@ -923,8 +911,6 @@ function applyRepositoryContextBar(
   const homeVisible = !document.getElementById('studio-home')?.hidden;
   const changes = Number(response?.changedFiles || 0);
   const ahead = Number(response?.ahead || 0);
-  const addedLines = Number(response?.addedLines || 0);
-  const deletedLines = Number(response?.deletedLines || 0);
   const hasReviewableChanges = changes > 0 || ahead > 0;
   const visible = Boolean(
     activeConversationId &&
@@ -949,15 +935,9 @@ function applyRepositoryContextBar(
   const branchName = document.getElementById('composer-branch-name');
   const added = document.getElementById('composer-diff-added');
   const deleted = document.getElementById('composer-diff-deleted');
-  const prSplit = row.querySelector<HTMLElement>('.mp-repository-pr-split');
   const createPr = document.getElementById(
     'composer-create-pr',
   ) as HTMLButtonElement | null;
-  const canCreatePullRequest = Boolean(
-    response.canCreatePullRequest === true &&
-      ahead > 0 &&
-      (addedLines > 0 || deletedLines > 0),
-  );
   if (repositoryName) {
     repositoryName.textContent = displayName;
   }
@@ -969,20 +949,17 @@ function applyRepositoryContextBar(
     branchName.textContent = String(response.branch || 'main');
   }
   if (added) {
-    added.textContent = `+${addedLines.toLocaleString('en-US')}`;
+    added.textContent = `+${Number(response.addedLines || 0).toLocaleString('en-US')}`;
   }
   if (deleted) {
-    deleted.textContent = `−${deletedLines.toLocaleString('en-US')}`;
-  }
-  if (prSplit) {
-    prSplit.hidden = !canCreatePullRequest;
+    deleted.textContent = `−${Number(response.deletedLines || 0).toLocaleString('en-US')}`;
   }
   if (createPr) {
-    createPr.disabled = !canCreatePullRequest;
-    createPr.textContent = 'Create PR';
-    createPr.title = canCreatePullRequest
-      ? 'Open the branch comparison for this ahead branch'
-      : 'A pull request requires an ahead branch with a non-empty diff';
+    createPr.disabled = !hasReviewableChanges;
+    createPr.textContent = changes > 0 ? 'Review changes' : 'Open compare';
+    createPr.title = response.pullRequestUrl
+      ? 'Open the branch comparison'
+      : 'Review changes before creating a pull request';
   }
 }
 
@@ -1165,18 +1142,7 @@ function positionAnchoredPopover(
     {width: popup.offsetWidth, height: popup.offsetHeight},
     {width: window.innerWidth, height: window.innerHeight},
   );
-  const leftAligned =
-    popupId === 'composer-workspace-menu' ||
-    popupId === 'composer-branch-menu';
-  popup.style.left = `${leftAligned
-    ? Math.max(
-        12,
-        Math.min(
-          triggerRect.left,
-          window.innerWidth - popup.offsetWidth - 12,
-        ),
-      )
-    : point.left}px`;
+  popup.style.left = `${point.left}px`;
   popup.style.top = `${point.top}px`;
   popup.style.removeProperty('visibility');
   if (popupId === 'composer-permission-menu') {
@@ -2842,7 +2808,6 @@ function ensureComposerQuota(force = false) {
   }
   composerQuotaPending = true;
   composerQuotaRequestKey = key;
-  renderUsageMeter(usageMeterTurns);
   void Data.modelQuota({force}).then(result => {
     if (composerQuotaRequestKey !== key) {
       return;
@@ -3507,6 +3472,7 @@ async function toggleFigmaConnection() {
 document.getElementById('figma-connect')?.addEventListener('click', () => {
   void toggleFigmaConnection();
 });
+const chatCardNodes = new Map<string, HTMLElement>();
 
 function setStudioHomeVisible(visible: boolean) {
   const home = document.getElementById('studio-home');
@@ -3890,6 +3856,8 @@ async function openConversation(id: string) {
   if (!stream) {
     return;
   }
+  LiveCards.reset();
+  chatCardNodes.clear();
   const turns = c.turns || [];
   activeConversationTurns = turns as Array<Record<string, unknown>>;
   composerPlan = PlanList.project(turns);
@@ -3917,6 +3885,26 @@ async function openConversation(id: string) {
   flow.className = 'mp-chat-flow';
   activeConversationView = ChatView.createConversationView(flow);
   activeConversationView.update(c);
+  for (const [turnIndex, t] of turns.entries()) {
+    const host = flow.querySelector<HTMLElement>(
+      `.mp-chat-flow-item[data-turn-index="${turnIndex}"]`,
+    )!;
+    const proxy = LiveCards.track(
+      CardModel.normalizeCard({
+        id: `${t.at || 0}-a`,
+        kind: 'prose',
+        state: t.failed ? 'failed' : 'done',
+        answer: t.answer || '',
+        error: t.failed ? String(t.error || '这次没能完成。') : '',
+        steps: (t.trace || []).map(x =>
+          typeof x === 'string'
+            ? {label: x, state: 'done'}
+            : {label: x.label, note: x.note || '', state: 'done'},
+        ),
+      }),
+    );
+    chatCardNodes.set(proxy.id, host);
+  }
   stream.replaceChildren(flow);
   syncConversationPendingInput(turns);
   stream.scrollTop = stream.scrollHeight;
@@ -3955,7 +3943,6 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
     pendingPermissionAsk = {
       requestId: pending.requestId || pendingToolRequestId(last),
       tool: String(pending.tool),
-      permissionMode: pending.permissionMode,
       prefix: String(pending.prefix || '').trim() || undefined,
       actionPreview: pending.actionPreview,
       action: pending.action,
@@ -4089,6 +4076,28 @@ async function refreshOpenConversation(
     renderProjectTasks();
     renderConversationActivity();
   }
+}
+
+function renderChatCardNode(card: MagicPointerCard): HTMLElement {
+  const host = document.createElement('div');
+  host.className = 'mp-chat-assistant';
+  for (const node of ChatView.assistantTurnNode({
+    answer: card.answer,
+    failed: card.state === 'failed',
+    running: card.state === 'running',
+    trace: (card.steps || []).map(x =>
+      typeof x === 'string'
+        ? x
+        : {
+            label: String((x as {label?: unknown}).label || ''),
+            note: String((x as {note?: unknown}).note || ''),
+          },
+    ),
+    at: card.startedAt ?? undefined,
+  })) {
+    host.appendChild(node);
+  }
+  return host;
 }
 
 interface ArtifactEntry {
@@ -6247,7 +6256,6 @@ let selectedProjectFile = '';
 let selectedProjectFileText = '';
 let selectedProjectPreview: MagicPointerProjectPreview | null = null;
 let projectFileTreeFilter = '';
-let projectFileSearchQuery = '';
 let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
 let projectFileCodeView = false;
@@ -6732,13 +6740,6 @@ async function selectProjectFile(
   const panel = preview.closest<HTMLElement>('.mp-inspector-panel');
   panel?.classList.add('is-previewing');
   selectedProjectFile = relativePath;
-  projectFileSearchQuery = '';
-  const fileSearchInput = document.getElementById(
-    'project-file-search-input',
-  ) as HTMLInputElement | null;
-  if (fileSearchInput) {
-    fileSearchInput.value = '';
-  }
   selectedProjectFileText = response?.ok
     ? String(response.text || '')
     : String(response?.error || '文件读取失败。');
@@ -6785,41 +6786,6 @@ async function selectProjectFile(
   }
   renderSelectedProjectFile();
   renderProjectFileTree();
-}
-
-function selectProjectFileSearchMatch(query: string): void {
-  const content = document.getElementById('project-file-content');
-  const input = document.getElementById(
-    'project-file-search-input',
-  ) as HTMLInputElement | null;
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  const needle = query.trim().toLocaleLowerCase();
-  if (content && needle) {
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode();
-    while (node) {
-      const text = node.textContent || '';
-      const index = text.toLocaleLowerCase().indexOf(needle);
-      if (index >= 0) {
-        const range = document.createRange();
-        range.setStart(node, index);
-        range.setEnd(node, index + needle.length);
-        selection?.addRange(range);
-        const matchRect = range.getBoundingClientRect();
-        const contentRect = content.getBoundingClientRect();
-        if (
-          matchRect.top < contentRect.top ||
-          matchRect.bottom > contentRect.bottom
-        ) {
-          content.scrollTop += matchRect.top - contentRect.top;
-        }
-        break;
-      }
-      node = walker.nextNode();
-    }
-  }
-  input?.focus({preventScroll: true});
 }
 
 function magicBrainMaterialNodes(startIndex = 0): HTMLButtonElement[] {
@@ -7221,13 +7187,9 @@ document
 document.getElementById('composer-create-pr')?.addEventListener('click', () => {
   const url = projectEnvironment?.pullRequestUrl || '';
   const changedFiles = Number(projectEnvironment?.changedFiles || 0);
-  const canCreatePullRequest =
-    projectEnvironment?.canCreatePullRequest === true;
-  if (!canCreatePullRequest) {
+  if (changedFiles > 0) {
     setInspector(true, 'changes');
-  } else if (changedFiles > 0) {
-    setInspector(true, 'changes');
-  } else if (url) {
+  } else if (url && Number(projectEnvironment?.ahead || 0) > 0) {
     void Data.openProjectUrl(url);
   } else {
     setInspector(true, 'changes');
@@ -8315,14 +8277,6 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   selectedProjectFileText = '';
   selectedProjectFileMarkdown = false;
   projectFileCodeView = false;
-  projectFileSearchQuery = '';
-  const searchInput = document.getElementById(
-    'project-file-search-input',
-  ) as HTMLInputElement | null;
-  if (searchInput) {
-    searchInput.value = '';
-    searchInput.hidden = true;
-  }
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
     inspectorTitle.textContent = 'Files';
@@ -8355,8 +8309,12 @@ document
 document
   .getElementById('project-file-search-input')
   ?.addEventListener('input', event => {
-    projectFileSearchQuery = (event.currentTarget as HTMLInputElement).value;
-    selectProjectFileSearchMatch(projectFileSearchQuery);
+    const query = (event.currentTarget as HTMLInputElement).value;
+    const find = (window as Window & {find?: (...args: unknown[]) => boolean})
+      .find;
+    if (query && find) {
+      find.call(window, query, false, false, true, false, true, false);
+    }
   });
 document
   .getElementById('project-browser-form')
@@ -8406,21 +8364,6 @@ document
   });
 
 let activeTerminalRelativeDirectory = '';
-let terminalUsesPty = false;
-
-const terminalEscapeSequence = new RegExp(
-  String.raw`\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])`,
-  'g',
-);
-
-function terminalOutputText(text: string): string {
-  return text
-    .replace(terminalEscapeSequence, '')
-    .split('\u0007')
-    .join('')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '');
-}
 
 function renderTerminalPrompt() {
   const suffix = activeTerminalRelativeDirectory
@@ -8454,10 +8397,7 @@ async function runTerminalCommand(command: string) {
     if (!started.ok) {
       throw new Error(started.error || '终端启动失败。');
     }
-    terminalUsesPty = Boolean(started.pty);
-    if (!terminalUsesPty) {
-      appendTerminalOutput(`\n> ${command}\n`);
-    }
+    appendTerminalOutput(`\n> ${command}\n`);
     const written = await Data.writeProjectTerminal(command);
     if (!written.ok) {
       throw new Error(written.error || '终端输入失败。');
@@ -8481,9 +8421,7 @@ function appendTerminalOutput(text: string) {
       log.className = 'mp-terminal-log';
       output.append(log);
     }
-    log.textContent = `${(log.textContent || '') + terminalOutputText(text)}`.slice(
-      -512 * 1024,
-    );
+    log.textContent = `${(log.textContent || '') + text}`.slice(-512 * 1024);
     output.scrollTop = output.scrollHeight;
   }
 }
@@ -10110,7 +10048,6 @@ function renderPlanCard() {
 let pendingPermissionAsk: {
   requestId?: string;
   tool: string;
-  permissionMode?: string;
   prefix?: string;
   actionPreview?: string;
   action?: {tool?: string; arguments?: Record<string, unknown>};
@@ -10927,7 +10864,6 @@ function setStudioLanguage(language: 'en' | 'zh-CN'): void {
     /* storage unavailable */
   }
   closeAccountMenu();
-  renderConversationActivity();
 }
 
 try {
@@ -12217,3 +12153,17 @@ window.magicPointerDashboard?.onShow?.(payload => {
   }
 });
 
+if (window.magicPointerDashboard?.onCardPatch) {
+  window.magicPointerDashboard.onCardPatch(payload => {
+    if (!payload?.cardId) {
+      return;
+    }
+    const updated = LiveCards.patch(payload.cardId, payload.patch || {});
+    const host = chatCardNodes.get(payload.cardId);
+    if (host && updated) {
+      const replacement = renderChatCardNode(updated);
+      host.replaceWith(replacement);
+      chatCardNodes.set(payload.cardId, replacement);
+    }
+  });
+}

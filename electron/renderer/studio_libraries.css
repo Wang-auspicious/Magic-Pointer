@@ -39,17 +39,16 @@
 .mp-library-top-tabs { margin-top: 0; padding-bottom: 14px; border-bottom: 1px solid var(--mp-rule); }
 .mp-library-top-tabs button { border-radius: 8px; }
 .mp-library-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 48px 12px; }
-.mp-library-empty > .cds-icon { font-size: 32px; width: 40px; height: 40px; font-weight: 400; color: var(--mp-text-secondary); }
+.mp-library-empty > .cds-icon { font-size: 48px; width: 64px; height: 64px; font-weight: 400; color: var(--mp-text-secondary); }
 .mp-library-pictogram { display: inline-flex; color: var(--mp-text); --cds-pictogram-highlight-default: #e7e6e1; }
-.mp-library-pictogram svg { width: 48px; height: 48px; }
+.mp-library-pictogram svg { width: 96px; height: 96px; }
 :root[data-theme="dark"] .mp-library-pictogram { --cds-pictogram-highlight-default: #454442; }
 .mp-artifact-empty-state { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; text-align: center; }
 .mp-library-empty h2 { max-width: 320px; margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--mp-text-secondary); }
 .mp-library-empty p { max-width: 320px; margin: 0; font-size: 13px; line-height: 16px; color: var(--mp-text-secondary); }
 .mp-library-empty > button:not(.mp-library-primary) { padding: 8px 14px; border: 1px solid var(--mp-rule); border-radius: 8px; }
-.mp-library-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.mp-library-card { display: flex; align-items: flex-start; flex-direction: column; gap: 8px; min-width: 0; padding: 16px; border: 1px solid var(--mp-rule); border-radius: 10px; background: var(--mp-panel); color: var(--mp-text); text-align: left; }
-.mp-library-card > .cds-icon { width: 32px; height: 32px; font-size: 32px; --cds-opsz: 32; }
+.mp-library-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.mp-library-card { display: flex; align-items: flex-start; flex-direction: column; gap: 10px; min-width: 0; padding: 20px; border: 1px solid var(--mp-rule); border-radius: 12px; background: var(--mp-panel); color: var(--mp-text); text-align: left; }
 button.mp-library-card:hover { background: var(--mp-hover); }
 .mp-library-card p { margin: 0; color: var(--mp-text-secondary); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .mp-library-card strong { display: block; font-weight: 500; }

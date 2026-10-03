@@ -9,7 +9,6 @@ declare global {
     key: string;
     kind?: string;
     tool?: string;
-    permissionMode?: string;
     prefix?: string;
     plan?: string;
     actionPreview?: string;
@@ -570,23 +569,10 @@ declare global {
       actions.append(approvals);
       card.append(actions);
     } else if (request.kind === 'permission') {
-      const modeLabels: Record<string, string> = {
-        accept_reversible: 'Auto',
-        safe: 'Manual',
-        default: 'Accept edits',
-        plan: 'Plan',
-        bypass: 'Full access',
-      };
       const head = element('div', 'mp-decision-heading');
       head.append(
         element('span', 'mp-decision-eyebrow', '需要你的授权'),
-        element(
-          'span',
-          'mp-decision-caption',
-          [request.tool || 'Tool', modeLabels[request.permissionMode || '']]
-            .filter(Boolean)
-            .join(' · '),
-        ),
+        element('span', 'mp-decision-caption', request.tool || 'Tool'),
       );
       const question = element(
         'p',

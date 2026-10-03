@@ -34,7 +34,6 @@
   border-spacing: 0;
   width: max-content;
   min-width: 100%;
-  border: 1px solid var(--mp-rule);
   font: 12px/1.5 var(--mp-font);
 }
 
@@ -43,8 +42,7 @@
   min-width: 80px;
   max-width: 320px;
   padding: 5px 8px;
-  border-top: 1px solid var(--mp-rule);
-  border-left: 1px solid var(--mp-rule);
+  border: 0;
   border-right: 1px solid var(--mp-rule);
   border-bottom: 1px solid var(--mp-rule);
   overflow-wrap: anywhere;

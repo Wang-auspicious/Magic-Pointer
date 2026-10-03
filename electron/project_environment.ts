@@ -23,7 +23,6 @@ interface ProjectEnvironment {
   deletedLines: number;
   remoteUrl: string;
   pullRequestUrl: string;
-  canCreatePullRequest: boolean;
 }
 
 function normalizeGitRemoteUrl(value: string): string {
@@ -129,30 +128,20 @@ function parseGitEnvironment(
       index += 1;
     }
   }
-  const ahead = Number(aheadMatch?.[1] || 0);
-  const canCreatePullRequest = Boolean(
-    remoteUrl &&
-      branchPart &&
-      ahead > 0 &&
-      (addedLines > 0 || deletedLines > 0),
-  );
   return {
     root,
     name: path.basename(root),
     isGit: Boolean(header || remoteUrl),
     branch: branchPart,
     upstream: upstreamMatch?.[1] || '',
-    ahead,
+    ahead: Number(aheadMatch?.[1] || 0),
     behind: Number(behindMatch?.[1] || 0),
     changedFiles: fileChanges.length,
     fileChanges,
     addedLines,
     deletedLines,
     remoteUrl,
-    pullRequestUrl: canCreatePullRequest
-      ? githubPullRequestUrl(remoteUrl, branchPart)
-      : '',
-    canCreatePullRequest,
+    pullRequestUrl: githubPullRequestUrl(remoteUrl, branchPart),
   };
 }
 

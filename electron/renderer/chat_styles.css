@@ -1702,9 +1702,8 @@
 .mp-workspace-menu {
   position: fixed;
   z-index: 150;
-  width: min(192px, calc(100vw - 32px));
-  min-width: 0;
-  max-width: min(240px, calc(100vw - 32px));
+  min-width: 220px;
+  max-width: min(340px, calc(100vw - 32px));
   padding: 4px;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r6);
@@ -1716,8 +1715,8 @@
   position: fixed;
   z-index: 160;
   display: flex;
-  width: min(286px, calc(100vw - 24px));
-  max-height: min(272px, calc(100vh - 120px));
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(360px, calc(100vh - 120px));
   flex-direction: column;
   overflow: hidden;
   padding: 4px;
@@ -1729,7 +1728,7 @@
 
 .mp-branch-menu-search {
   display: flex;
-  height: 28px;
+  height: 32px;
   align-items: center;
   gap: 7px;
   margin: 4px 0 0;
@@ -1762,7 +1761,7 @@
 .mp-branch-menu-row {
   display: flex;
   width: 100%;
-  min-height: 28px;
+  min-height: 32px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -1795,7 +1794,7 @@
 .mp-workspace-menu-row {
   display: flex;
   width: 100%;
-  min-height: 28px;
+  min-height: 30px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -2833,8 +2832,8 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   position: fixed;
   z-index: 190;
   width: max-content;
-  min-width: 216px;
-  max-width: min(272px, calc(100vw - 16px));
+  min-width: 264px;
+  max-width: min(320px, calc(100vw - 16px));
   max-height: calc(100vh - 52px);
   overflow-y: auto;
   padding: 4px;
@@ -2847,14 +2846,14 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-account-menu .mp-account-submenu button {
   display: flex;
   width: 100%;
-  height: 24px;
+  height: 32px;
   align-items: center;
   gap: 6px;
   padding: 0 8px;
   border-radius: 6px;
   color: var(--mp-text);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 13px;
+  line-height: 19px;
   text-align: left;
   white-space: nowrap;
 }

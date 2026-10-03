@@ -103,7 +103,6 @@ declare global {
       }>;
       kind?: string;
       tool?: string;
-      permissionMode?: string;
       prefix?: string;
     };
     [key: string]: unknown;
@@ -368,7 +367,7 @@ declare global {
     };
     thinkNode(reasoning: string, running?: boolean): Element;
     permissionAnswerNode(answer: {decision?: string; rule?: string}): Element;
-    formatRunMeta(ms: number, tokens: number | null, scope?: string): string;
+    formatRunMeta(ms: number, tokens: number | null): string;
   }
   const ChatView: MagicPointerChatViewApi;
 
@@ -697,7 +696,7 @@ declare global {
       startTerminal(
         projectRoot: string,
         relativePath?: string,
-      ): Promise<{ok?: boolean; error?: string; pty?: boolean}>;
+      ): Promise<{ok?: boolean; error?: string}>;
       writeTerminal(input: string): Promise<{ok?: boolean; error?: string}>;
       stopTerminal(): Promise<{ok?: boolean; error?: string}>;
       onTerminalEvent(
@@ -1115,7 +1114,7 @@ declare global {
     startProjectTerminal(
       projectRoot: string,
       relativePath?: string,
-    ): Promise<{ok?: boolean; error?: string; pty?: boolean}>;
+    ): Promise<{ok?: boolean; error?: string}>;
     writeProjectTerminal(
       input: string,
     ): Promise<{ok?: boolean; error?: string}>;
@@ -1365,7 +1364,6 @@ declare global {
     deletedLines?: number;
     remoteUrl?: string;
     pullRequestUrl?: string;
-    canCreatePullRequest?: boolean;
     sources?: string[];
     error?: string;
   }

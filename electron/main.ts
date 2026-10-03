@@ -2986,15 +2986,11 @@ ipcMain.handle(
     try {
       const directory = projectPath(root, String(raw.path || ''));
       if (projectTerminal.running && projectTerminalDirectory === directory) {
-        return {
-          ok: true,
-          reused: true,
-          pty: projectTerminal.usingPty,
-        };
+        return {ok: true, reused: true};
       }
       const generation = ++projectTerminalGeneration;
       projectTerminalDirectory = directory;
-      const pty = projectTerminal.start(
+      projectTerminal.start(
         directory,
         (update: import('./project_terminal').TerminalEvent) => {
           if (
@@ -3006,7 +3002,7 @@ ipcMain.handle(
           event.sender.send('projects:terminal-event', update);
         },
       );
-      return {ok: true, pty};
+      return {ok: true};
     } catch (error) {
       return {
         ok: false,
@@ -8454,24 +8450,14 @@ function activeModelRuntimeConfig() {
 }
 
 function localOpenCodeCredential(): string {
-  const roots = new Set<string>(
-    [
-      FABRIC_DATA_DIR,
-      app.getPath('userData'),
-      process.env.USERPROFILE || process.env.HOME || '',
-      process.env.APPDATA || '',
-      process.env.LOCALAPPDATA || '',
-    ]
-      .filter(Boolean)
-      .map(root => path.resolve(root)),
-  );
-  const authPaths = new Set<string>();
+  const roots = [
+    process.env.USERPROFILE || process.env.HOME || '',
+    process.env.LOCALAPPDATA
+      ? path.resolve(process.env.LOCALAPPDATA, '..', '..')
+      : '',
+  ].filter(Boolean);
   for (const root of roots) {
-    authPaths.add(path.join(root, '.local', 'share', 'opencode', 'auth.json'));
-    authPaths.add(path.join(root, '.config', 'opencode', 'auth.json'));
-    authPaths.add(path.join(root, 'opencode', 'auth.json'));
-  }
-  for (const authPath of authPaths) {
+    const authPath = path.join(root, '.local', 'share', 'opencode', 'auth.json');
     try {
       const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8'));
       const entries = parsed && typeof parsed === 'object' ? parsed : {};

@@ -356,9 +356,6 @@ export function normalizedInput(value: Data): Data {
       kind: 'permission',
       tool: text(value.tool).trim().slice(0, 64),
     });
-    if (text(value.permissionMode).trim()) {
-      pending.permissionMode = text(value.permissionMode).trim().slice(0, 32);
-    }
     if (text(value.prefix).trim()) {
       pending.prefix = text(value.prefix).trim().slice(0, 160);
     }

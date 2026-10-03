@@ -1264,9 +1264,6 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             const request = {
               kind: 'permission',
               tool: spec.name,
-              permissionMode: options.session.permissionMode(
-                options.permissionMode ?? 'default',
-              ),
               question: `Allow ${spec.name}?`,
               options: exactHistoryRead
                 ? ['仅这一次允许', '拒绝']

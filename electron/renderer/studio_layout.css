@@ -748,7 +748,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 32px;
+  height: 36px;
   padding: 0 6px;
   border-radius: var(--mp-r5);
   text-align: left;
@@ -771,7 +771,7 @@
 .mp-account-menu {
   position: fixed;
   z-index: 180;
-  width: 272px;
+  width: 240px;
   max-height: calc(100vh - 52px);
   padding: 4px;
   border: 1px solid var(--mp-rule);
@@ -1493,22 +1493,8 @@
 }
 
 .mp-inspector-title {
-  display: grid;
-  flex: 0 0 118px;
-  width: 118px;
-  height: 24px;
-  min-width: 118px;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  padding: 0 8px;
-  border-radius: var(--mp-r5);
-  background: var(--mp-panel-subtle);
   font-size: 14px;
   font-weight: var(--mp-weight-medium);
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 #workspace-resource-tabs-host {
@@ -2012,15 +1998,14 @@
 .mp-file-preview.is-markdown .mp-chat-markdown table {
   width: 100%;
   margin-inline: -2px;
-  border: 1px solid var(--mp-rule-strong);
-  border-collapse: collapse;
-  border-spacing: 0;
+  border-collapse: separate;
+  border-spacing: 2px;
 }
 
 .mp-file-preview.is-markdown .mp-chat-markdown :is(th, td) {
   padding: 4px 8px;
   background: var(--mp-markdown-cell);
-  border: 1px solid var(--mp-rule-strong);
+  border-radius: 2px;
   text-align: left;
   vertical-align: top;
 }
