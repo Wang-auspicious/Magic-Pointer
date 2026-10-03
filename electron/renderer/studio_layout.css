@@ -2012,14 +2012,15 @@
 .mp-file-preview.is-markdown .mp-chat-markdown table {
   width: 100%;
   margin-inline: -2px;
-  border-collapse: separate;
-  border-spacing: 2px;
+  border: 1px solid var(--mp-rule-strong);
+  border-collapse: collapse;
+  border-spacing: 0;
 }
 
 .mp-file-preview.is-markdown .mp-chat-markdown :is(th, td) {
   padding: 4px 8px;
   background: var(--mp-markdown-cell);
-  border-radius: 2px;
+  border: 1px solid var(--mp-rule-strong);
   text-align: left;
   vertical-align: top;
 }
