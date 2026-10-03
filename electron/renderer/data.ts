@@ -1364,6 +1364,7 @@ declare global {
     deletedLines?: number;
     remoteUrl?: string;
     pullRequestUrl?: string;
+    canCreatePullRequest?: boolean;
     sources?: string[];
     error?: string;
   }

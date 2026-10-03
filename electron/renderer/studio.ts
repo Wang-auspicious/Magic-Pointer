@@ -911,6 +911,8 @@ function applyRepositoryContextBar(
   const homeVisible = !document.getElementById('studio-home')?.hidden;
   const changes = Number(response?.changedFiles || 0);
   const ahead = Number(response?.ahead || 0);
+  const addedLines = Number(response?.addedLines || 0);
+  const deletedLines = Number(response?.deletedLines || 0);
   const hasReviewableChanges = changes > 0 || ahead > 0;
   const visible = Boolean(
     activeConversationId &&
@@ -935,9 +937,15 @@ function applyRepositoryContextBar(
   const branchName = document.getElementById('composer-branch-name');
   const added = document.getElementById('composer-diff-added');
   const deleted = document.getElementById('composer-diff-deleted');
+  const prSplit = row.querySelector<HTMLElement>('.mp-repository-pr-split');
   const createPr = document.getElementById(
     'composer-create-pr',
   ) as HTMLButtonElement | null;
+  const canCreatePullRequest = Boolean(
+    response.canCreatePullRequest === true &&
+      ahead > 0 &&
+      (addedLines > 0 || deletedLines > 0),
+  );
   if (repositoryName) {
     repositoryName.textContent = displayName;
   }
@@ -949,17 +957,20 @@ function applyRepositoryContextBar(
     branchName.textContent = String(response.branch || 'main');
   }
   if (added) {
-    added.textContent = `+${Number(response.addedLines || 0).toLocaleString('en-US')}`;
+    added.textContent = `+${addedLines.toLocaleString('en-US')}`;
   }
   if (deleted) {
-    deleted.textContent = `−${Number(response.deletedLines || 0).toLocaleString('en-US')}`;
+    deleted.textContent = `−${deletedLines.toLocaleString('en-US')}`;
+  }
+  if (prSplit) {
+    prSplit.hidden = !canCreatePullRequest;
   }
   if (createPr) {
-    createPr.disabled = !hasReviewableChanges;
-    createPr.textContent = changes > 0 ? 'Review changes' : 'Open compare';
-    createPr.title = response.pullRequestUrl
-      ? 'Open the branch comparison'
-      : 'Review changes before creating a pull request';
+    createPr.disabled = !canCreatePullRequest;
+    createPr.textContent = 'Create PR';
+    createPr.title = canCreatePullRequest
+      ? 'Open the branch comparison for this ahead branch'
+      : 'A pull request requires an ahead branch with a non-empty diff';
   }
 }
 
@@ -7199,9 +7210,13 @@ document
 document.getElementById('composer-create-pr')?.addEventListener('click', () => {
   const url = projectEnvironment?.pullRequestUrl || '';
   const changedFiles = Number(projectEnvironment?.changedFiles || 0);
-  if (changedFiles > 0) {
+  const canCreatePullRequest =
+    projectEnvironment?.canCreatePullRequest === true;
+  if (!canCreatePullRequest) {
     setInspector(true, 'changes');
-  } else if (url && Number(projectEnvironment?.ahead || 0) > 0) {
+  } else if (changedFiles > 0) {
+    setInspector(true, 'changes');
+  } else if (url) {
     void Data.openProjectUrl(url);
   } else {
     setInspector(true, 'changes');
