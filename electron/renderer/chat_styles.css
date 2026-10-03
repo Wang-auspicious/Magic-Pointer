@@ -2833,8 +2833,8 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   position: fixed;
   z-index: 190;
   width: max-content;
-  min-width: 264px;
-  max-width: min(320px, calc(100vw - 16px));
+  min-width: 216px;
+  max-width: min(272px, calc(100vw - 16px));
   max-height: calc(100vh - 52px);
   overflow-y: auto;
   padding: 4px;
@@ -2847,14 +2847,14 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-account-menu .mp-account-submenu button {
   display: flex;
   width: 100%;
-  height: 32px;
+  height: 24px;
   align-items: center;
   gap: 6px;
   padding: 0 8px;
   border-radius: 6px;
   color: var(--mp-text);
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 14px;
+  line-height: 20px;
   text-align: left;
   white-space: nowrap;
 }

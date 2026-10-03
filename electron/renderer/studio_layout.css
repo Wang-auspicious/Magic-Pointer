@@ -748,7 +748,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 36px;
+  height: 32px;
   padding: 0 6px;
   border-radius: var(--mp-r5);
   text-align: left;
@@ -771,7 +771,7 @@
 .mp-account-menu {
   position: fixed;
   z-index: 180;
-  width: 240px;
+  width: 272px;
   max-height: calc(100vh - 52px);
   padding: 4px;
   border: 1px solid var(--mp-rule);
