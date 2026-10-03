@@ -1702,8 +1702,9 @@
 .mp-workspace-menu {
   position: fixed;
   z-index: 150;
-  min-width: 220px;
-  max-width: min(340px, calc(100vw - 32px));
+  width: min(192px, calc(100vw - 32px));
+  min-width: 0;
+  max-width: min(240px, calc(100vw - 32px));
   padding: 4px;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r6);
@@ -1715,8 +1716,8 @@
   position: fixed;
   z-index: 160;
   display: flex;
-  width: min(360px, calc(100vw - 24px));
-  max-height: min(360px, calc(100vh - 120px));
+  width: min(286px, calc(100vw - 24px));
+  max-height: min(272px, calc(100vh - 120px));
   flex-direction: column;
   overflow: hidden;
   padding: 4px;
@@ -1728,7 +1729,7 @@
 
 .mp-branch-menu-search {
   display: flex;
-  height: 32px;
+  height: 28px;
   align-items: center;
   gap: 7px;
   margin: 4px 0 0;
@@ -1761,7 +1762,7 @@
 .mp-branch-menu-row {
   display: flex;
   width: 100%;
-  min-height: 32px;
+  min-height: 28px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -1794,7 +1795,7 @@
 .mp-workspace-menu-row {
   display: flex;
   width: 100%;
-  min-height: 30px;
+  min-height: 28px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;

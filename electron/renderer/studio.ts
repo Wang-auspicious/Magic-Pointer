@@ -1142,7 +1142,18 @@ function positionAnchoredPopover(
     {width: popup.offsetWidth, height: popup.offsetHeight},
     {width: window.innerWidth, height: window.innerHeight},
   );
-  popup.style.left = `${point.left}px`;
+  const leftAligned =
+    popupId === 'composer-workspace-menu' ||
+    popupId === 'composer-branch-menu';
+  popup.style.left = `${leftAligned
+    ? Math.max(
+        12,
+        Math.min(
+          triggerRect.left,
+          window.innerWidth - popup.offsetWidth - 12,
+        ),
+      )
+    : point.left}px`;
   popup.style.top = `${point.top}px`;
   popup.style.removeProperty('visibility');
   if (popupId === 'composer-permission-menu') {
