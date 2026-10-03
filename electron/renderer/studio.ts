@@ -6291,6 +6291,7 @@ let selectedProjectFile = '';
 let selectedProjectFileText = '';
 let selectedProjectPreview: MagicPointerProjectPreview | null = null;
 let projectFileTreeFilter = '';
+let projectFileSearchQuery = '';
 let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
 let projectFileCodeView = false;
@@ -6775,6 +6776,13 @@ async function selectProjectFile(
   const panel = preview.closest<HTMLElement>('.mp-inspector-panel');
   panel?.classList.add('is-previewing');
   selectedProjectFile = relativePath;
+  projectFileSearchQuery = '';
+  const fileSearchInput = document.getElementById(
+    'project-file-search-input',
+  ) as HTMLInputElement | null;
+  if (fileSearchInput) {
+    fileSearchInput.value = '';
+  }
   selectedProjectFileText = response?.ok
     ? String(response.text || '')
     : String(response?.error || '文件读取失败。');
@@ -6821,6 +6829,41 @@ async function selectProjectFile(
   }
   renderSelectedProjectFile();
   renderProjectFileTree();
+}
+
+function selectProjectFileSearchMatch(query: string): void {
+  const content = document.getElementById('project-file-content');
+  const input = document.getElementById(
+    'project-file-search-input',
+  ) as HTMLInputElement | null;
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  const needle = query.trim().toLocaleLowerCase();
+  if (content && needle) {
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const text = node.textContent || '';
+      const index = text.toLocaleLowerCase().indexOf(needle);
+      if (index >= 0) {
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + needle.length);
+        selection?.addRange(range);
+        const matchRect = range.getBoundingClientRect();
+        const contentRect = content.getBoundingClientRect();
+        if (
+          matchRect.top < contentRect.top ||
+          matchRect.bottom > contentRect.bottom
+        ) {
+          content.scrollTop += matchRect.top - contentRect.top;
+        }
+        break;
+      }
+      node = walker.nextNode();
+    }
+  }
+  input?.focus({preventScroll: true});
 }
 
 function magicBrainMaterialNodes(startIndex = 0): HTMLButtonElement[] {
@@ -8316,6 +8359,14 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   selectedProjectFileText = '';
   selectedProjectFileMarkdown = false;
   projectFileCodeView = false;
+  projectFileSearchQuery = '';
+  const searchInput = document.getElementById(
+    'project-file-search-input',
+  ) as HTMLInputElement | null;
+  if (searchInput) {
+    searchInput.value = '';
+    searchInput.hidden = true;
+  }
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
     inspectorTitle.textContent = 'Files';
@@ -8348,12 +8399,8 @@ document
 document
   .getElementById('project-file-search-input')
   ?.addEventListener('input', event => {
-    const query = (event.currentTarget as HTMLInputElement).value;
-    const find = (window as Window & {find?: (...args: unknown[]) => boolean})
-      .find;
-    if (query && find) {
-      find.call(window, query, false, false, true, false, true, false);
-    }
+    projectFileSearchQuery = (event.currentTarget as HTMLInputElement).value;
+    selectProjectFileSearchMatch(projectFileSearchQuery);
   });
 document
   .getElementById('project-browser-form')

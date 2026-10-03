@@ -1493,8 +1493,22 @@
 }
 
 .mp-inspector-title {
+  display: grid;
+  flex: 0 0 118px;
+  width: 118px;
+  height: 24px;
+  min-width: 118px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0 8px;
+  border-radius: var(--mp-r5);
+  background: var(--mp-panel-subtle);
   font-size: 14px;
   font-weight: var(--mp-weight-medium);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #workspace-resource-tabs-host {
