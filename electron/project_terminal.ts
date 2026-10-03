@@ -11,6 +11,8 @@ const terminalEscapeSequence = new RegExp(
   String.raw`\u001b(?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])`,
   'g',
 );
+const powershellEncodingCommand =
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding';
 
 class ProjectTerminal {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -19,6 +21,7 @@ class ProjectTerminal {
   private terminalReady = false;
   private pendingInput: string[] = [];
   private promptBuffer = '';
+  private initializationSent = false;
 
   get running(): boolean {
     return this.child !== null;
@@ -71,11 +74,12 @@ class ProjectTerminal {
     this.terminalReady = !this.pty;
     this.pendingInput = [];
     this.promptBuffer = '';
+    this.initializationSent = !this.pty;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    this.sendLine(
-      '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding',
-    );
+    if (!this.pty) {
+      this.sendLine(powershellEncodingCommand);
+    }
     child.stdout.on('data', (text: string) => {
       this.observePrompt(text);
       onEvent({type: 'output', stream: 'stdout', text});
@@ -94,6 +98,7 @@ class ProjectTerminal {
         this.terminalReady = false;
         this.pendingInput = [];
         this.promptBuffer = '';
+        this.initializationSent = false;
       }
       onEvent({type: 'exit', code});
     });
@@ -118,6 +123,7 @@ class ProjectTerminal {
     this.terminalReady = false;
     this.pendingInput = [];
     this.promptBuffer = '';
+    this.initializationSent = false;
     child.stdin.end();
     if (child.pid && process.platform === 'win32') {
       const killer = spawn(
@@ -140,9 +146,6 @@ class ProjectTerminal {
       this.pendingInput.push(line);
       return true;
     }
-    if (this.pty) {
-      this.terminalReady = false;
-    }
     this.child.stdin.write(`${line}${this.pty ? '\r' : '\n'}`);
     return true;
   }
@@ -164,8 +167,19 @@ class ProjectTerminal {
       return;
     }
     this.promptBuffer = '';
-    this.terminalReady = true;
-    this.flushPendingInput();
+    if (!this.initializationSent) {
+      this.initializationSent = true;
+      this.writeDirect(powershellEncodingCommand);
+    } else if (!this.terminalReady) {
+      this.terminalReady = true;
+      this.flushPendingInput();
+    }
+  }
+
+  private writeDirect(line: string): void {
+    if (this.child?.stdin.writable) {
+      this.child.stdin.write(`${line.replace(/[\r\n]+$/, '')}\r`);
+    }
   }
 }
 
