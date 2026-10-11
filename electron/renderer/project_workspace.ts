@@ -198,10 +198,10 @@ declare global {
               <p class="mp-project-instructions ${project.instructions ? '' : 'is-empty'}">${escape(project.instructions || 'Set how Magic Pointer should respond in this project.')}</p>
             </section>
             <section>
-              <div class="mp-project-section-heading"><h2>Files <span>${project.sharedFiles?.length || 0}</span></h2>${action('Add files', 'files')}</div>
+              <div class="mp-project-section-heading"><h2>Files <span>${(project.documents?.length || 0) + (project.sharedFiles?.length || 0)}</span></h2><details class="mp-project-menu"><summary class="mp-project-button">Add files</summary><div>${action('Upload files', 'files')}${action('Link local files', 'link-files')}</div></details></div>
               <p class="mp-project-context-note">Available to every chat in this project.</p>
-              <ul class="mp-project-files">${(project.sharedFiles || []).map((file, index) => `<li title="${escape(file)}"><span>${escape(fileName(file))}</span><button type="button" data-project-action="remove-file" data-file-index="${index}" aria-label="Remove ${escape(fileName(file))} from project">×</button></li>`).join('')}</ul>
-              ${project.sharedFiles?.length ? '' : '<p class="mp-project-empty">Add reference documents, notes, or images.</p>'}
+              <ul class="mp-project-files">${(project.documents || []).map(document => `<li><button class="mp-project-file-name" type="button" data-project-action="preview-file" data-document-id="${escape(document.id)}"><span>${escape(document.name)}</span><small>${document.size < 1024 ? `${document.size} B` : `${Math.ceil(document.size / 1024)} KB`}</small></button><button type="button" data-project-action="remove-document" data-document-id="${escape(document.id)}" aria-label="Remove ${escape(document.name)} from project">×</button></li>`).join('')}${(project.sharedFiles || []).map((file, index) => `<li title="${escape(file)}"><span>${escape(fileName(file))}<small>Linked file</small></span><button type="button" data-project-action="remove-file" data-file-index="${index}" aria-label="Remove ${escape(fileName(file))} from project">×</button></li>`).join('')}</ul>
+              ${project.sharedFiles?.length || project.documents?.length ? '' : '<p class="mp-project-empty">Add reference documents, notes, or images.</p>'}
             </section>
             ${project.root ? `<section class="mp-project-location"><h2>Local folder</h2><p>${escape(project.root)}</p>${action('Open folder', 'folder')}</section>` : ''}
           </aside>
@@ -229,17 +229,16 @@ declare global {
       }
     }
 
-    async function save(patch: MagicPointerProjectPatch): Promise<boolean> {
+    async function mutate(
+      operation: () => Promise<MagicPointerProjectUpdate>,
+    ): Promise<boolean> {
       if (saving) {
         return false;
       }
       saving = true;
       root.setAttribute('aria-busy', 'true');
       try {
-        const result = await options.data.updateProject(
-          ProjectScope.key(project),
-          patch,
-        );
+        const result = await operation();
         if (!result.ok || !result.project) {
           throw new Error(result.error || 'Could not save project. Try again.');
         }
@@ -259,6 +258,65 @@ declare global {
       } finally {
         saving = false;
         root.removeAttribute('aria-busy');
+      }
+    }
+
+    function save(patch: MagicPointerProjectPatch): Promise<boolean> {
+      return mutate(() =>
+        options.data.updateProject(ProjectScope.key(project), patch),
+      );
+    }
+
+    async function previewDocument(id: string): Promise<void> {
+      const document = project.documents?.find(item => item.id === id);
+      if (!document) {
+        return;
+      }
+      const projectId = ProjectScope.key(project);
+      const dialog = window.document.createElement('dialog');
+      dialog.className = 'mp-project-editor mp-project-file-preview';
+      dialog.innerHTML = `<header><h2>${escape(document.name)}</h2><button type="button" data-preview-close aria-label="Close">×</button></header><div data-preview-body>Loading file…</div><p class="mp-project-status" data-preview-error role="status"></p><footer><button type="button" class="mp-project-button" data-preview-open>Open file</button><button type="button" class="mp-project-button" data-preview-close>Close</button></footer>`;
+      root.append(dialog);
+      dialog
+        .querySelectorAll('[data-preview-close]')
+        .forEach(button =>
+          button.addEventListener('click', () => dialog.close()),
+        );
+      dialog.addEventListener('close', () => dialog.remove(), {once: true});
+      const error = dialog.querySelector<HTMLElement>('[data-preview-error]')!;
+      dialog
+        .querySelector('[data-preview-open]')!
+        .addEventListener('click', () => {
+          void options.data
+            .openProjectDocument(projectId, id)
+            .then(result => {
+              error.textContent = result.error || '';
+            })
+            .catch(reason => {
+              error.textContent = String(reason);
+            });
+        });
+      dialog.showModal();
+      try {
+        const result = await options.data.readProjectDocument(projectId, id);
+        if (!dialog.isConnected) {
+          return;
+        }
+        const body = dialog.querySelector<HTMLElement>('[data-preview-body]')!;
+        if (!result.ok || !result.kind) {
+          body.textContent =
+            'This file cannot be previewed here. Open it in its application.';
+          error.textContent = result.error || '';
+          return;
+        }
+        ProjectPreviewView.renderProjectPreview(
+          body,
+          result as MagicPointerProjectPreview,
+        );
+      } catch (reason) {
+        dialog.querySelector<HTMLElement>('[data-preview-body]')!.textContent =
+          'Could not load this file. You can open it in its application.';
+        error.textContent = String(reason);
       }
     }
 
@@ -425,7 +483,7 @@ declare global {
         confirmArchive();
       } else if (key === 'details' || key === 'instructions') {
         edit(key);
-      } else if (key === 'files') {
+      } else if (key === 'files' || key === 'link-files') {
         button.disabled = true;
         void options.data
           .pickProjectFiles(project.root)
@@ -437,14 +495,22 @@ declare global {
               status(result.error || 'Could not add files. Try again.');
               return;
             }
-            const saved = await save({
-              sharedFiles: [
-                ...new Set([
-                  ...(project.sharedFiles || []),
-                  ...(result.paths || []),
-                ]),
-              ],
-            });
+            const saved =
+              key === 'files'
+                ? await mutate(() =>
+                    options.data.addProjectDocuments(
+                      ProjectScope.key(project),
+                      result.paths || [],
+                    ),
+                  )
+                : await save({
+                    sharedFiles: [
+                      ...new Set([
+                        ...(project.sharedFiles || []),
+                        ...(result.paths || []),
+                      ]),
+                    ],
+                  });
             if (saved && root.isConnected) {
               paint();
             }
@@ -453,6 +519,19 @@ declare global {
           .finally(() => {
             button.disabled = false;
           });
+      } else if (key === 'preview-file') {
+        void previewDocument(button.dataset.documentId || '');
+      } else if (key === 'remove-document') {
+        void mutate(() =>
+          options.data.removeProjectDocument(
+            ProjectScope.key(project),
+            button.dataset.documentId || '',
+          ),
+        ).then(saved => {
+          if (saved && root.isConnected) {
+            paint();
+          }
+        });
       } else if (key === 'remove-file') {
         const index = Number(button.dataset.fileIndex);
         void save({
