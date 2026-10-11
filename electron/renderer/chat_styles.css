@@ -457,13 +457,8 @@
 }
 
 .mp-chat-title {
-  /* The reference marks a tool card `clampTitle: true` because some of its
-   * titles are whole sentences -- "Stopped running the command", "Ran a
-   * command on your computer". Those are now rendered here, so the title has
-   * to be allowed to shrink and clip instead of pushing the summary off the
-   * row. `0 1 auto` keeps the short verbs ("Read", "Ran") at their natural
-   * width and only clamps when the line runs out. */
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  max-width: 60%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -514,6 +509,18 @@
 
 .mp-chat-tool-group[data-thought-only='true'] > .mp-chat-tool-group-header {
   display: none;
+}
+
+.mp-chat-tool-group[data-thought-only='true'] > .mp-chat-tool-group-body {
+  width: 100%;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mp-chat-tool-group[data-thought-only='true'] .mp-chat-think > .mp-chat-row {
+  padding-inline: 0;
 }
 
 .mp-chat-tool-group-header,

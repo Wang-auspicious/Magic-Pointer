@@ -1891,8 +1891,7 @@ const ChatView = (() => {
       output = output
         .split(/\r?\n/)
         .filter(
-          line =>
-            !/的目标：(?:已执行，待核对|执行失败)\s*$/u.test(line.trim()),
+          line => !/的目标：(?:已执行，待核对|执行失败)\s*$/u.test(line.trim()),
         )
         .join('\n')
         .trim();
@@ -2292,7 +2291,9 @@ const ChatView = (() => {
     }
     // Test harnesses build stand-in nodes with no owner document; observing
     // those would throw, and there is nothing to keep in sync anyway.
-    if ((target as unknown as {ownerDocument?: unknown}).ownerDocument !== DOC) {
+    if (
+      (target as unknown as {ownerDocument?: unknown}).ownerDocument !== DOC
+    ) {
       return;
     }
     const cloneNode = clone as Element;
@@ -3146,6 +3147,58 @@ const ChatView = (() => {
     | {type: 'notice'; text: string; turn?: string}
     | {type: 'chip'; chip: TurnChip; turn?: string};
 
+  function trajectoryReasoning(
+    record: Record<string, unknown>,
+    index: number,
+  ): Extract<FlowItem, {type: 'reasoning'}> | null {
+    const text = String(
+      record.reasoning || (record.kind === 'think' ? record.text : '') || '',
+    ).trim();
+    if (!text) {
+      return null;
+    }
+    return {
+      type: 'reasoning',
+      text,
+      id: String(record.callId ?? record.turn ?? index),
+      running:
+        record.state === 'running' && (record.kind === 'think' || !record.text),
+      turn: record.turn == null ? undefined : String(record.turn),
+    };
+  }
+
+  function trajectoryChip(
+    record: Record<string, unknown>,
+    index: number,
+    settled: boolean,
+  ): TurnChip {
+    const interrupted =
+      record.interrupted === true ||
+      ['stopped', 'cancelled', 'interrupted'].includes(String(record.state));
+    const hasResult =
+      record.result != null ||
+      interrupted ||
+      record.state === 'error' ||
+      (settled && record.state !== 'running');
+    return {
+      name: String(record.name || 'tool'),
+      argsRaw: String(record.text || ''),
+      callId: String(record.callId ?? index),
+      groupLabel:
+        typeof record.groupLabel === 'string' ? record.groupLabel : undefined,
+      displayLabel:
+        typeof record.summary === 'string' ? record.summary : undefined,
+      subagent: record.subagent as Record<string, unknown> | undefined,
+      result: hasResult
+        ? {
+            text: String(record.result ?? ''),
+            isError: record.isError === true || record.state === 'error',
+            interrupted,
+          }
+        : undefined,
+    };
+  }
+
   function narrationNode(text: string): ChatNode {
     const root = h('div', {class: 'mp-chat-narration'});
     attach(root, markdownRenderer.render(text));
@@ -3383,11 +3436,7 @@ const ChatView = (() => {
       if (entry.type === 'reasoning') {
         attach(
           body,
-          thinkNode(
-            entry.text,
-            entry.running === true,
-            reasoningId(entry),
-          ),
+          thinkNode(entry.text, entry.running === true, reasoningId(entry)),
         );
         return;
       }
@@ -3707,29 +3756,14 @@ const ChatView = (() => {
         record.turn === undefined || record.turn === null
           ? undefined
           : String(record.turn);
+      const reasoning = trajectoryReasoning(record, index);
+      if (reasoning) {
+        items.push(reasoning);
+      }
       if (record.kind === 'think') {
-        const text = String(record.text || record.reasoning || '').trim();
-        if (text) {
-          items.push({
-            type: 'reasoning',
-            text,
-            id: String(record.callId || record.turn || index),
-            running: record.state === 'running',
-            turn,
-          });
-        }
         continue;
       }
       if (record.kind === 'message') {
-        const reasoning = String(record.reasoning || '').trim();
-        if (reasoning) {
-          items.push({
-            type: 'reasoning',
-            text: reasoning,
-            id: String(record.callId || record.turn || index),
-            turn,
-          });
-        }
         const text = String(record.text || '').trim();
         if (!text || (answerText && text === answerText)) {
           continue;
@@ -3750,27 +3784,7 @@ const ChatView = (() => {
       }
       items.push({
         type: 'chip',
-        chip: {
-          name: String(record.name || 'tool'),
-          argsRaw: String(record.text || ''),
-          callId: String(record.callId || ''),
-          subagent: record.subagent as Record<string, unknown> | undefined,
-          groupLabel:
-            typeof record.groupLabel === 'string'
-              ? record.groupLabel
-              : undefined,
-          displayLabel:
-            typeof record.summary === 'string' ? record.summary : undefined,
-          result:
-            record.result !== undefined && record.result !== null
-              ? {
-                  text: String(record.result || ''),
-                  isError: Boolean(record.isError),
-                }
-              : record.state === 'running'
-                ? undefined
-                : {text: '', isError: false},
-        },
+        chip: trajectoryChip(record, index, true),
         turn,
       });
     }
@@ -3834,8 +3848,15 @@ const ChatView = (() => {
         bodyHost,
         toolGroupNode(
           [],
-          true,
-          [{type: 'reasoning', text: turn.thinking, id: 'head', running: true}],
+          turn.running === true,
+          [
+            {
+              type: 'reasoning',
+              text: turn.thinking,
+              id: 'head',
+              running: turn.running === true,
+            },
+          ],
           turnScope,
           true,
         ),
@@ -3845,7 +3866,6 @@ const ChatView = (() => {
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
     let chipRun: TurnChip[] = [];
     let workRun: FlowItem[] = [];
-    let workTurn: string | undefined;
     const flushChips = () => {
       if (!chipRun.length) {
         const hasReasoning = workRun.some(entry => entry.type === 'reasoning');
@@ -3861,27 +3881,13 @@ const ChatView = (() => {
             .forEach(entry => attach(bodyHost, narrationNode(entry.text)));
         }
         workRun = [];
-        workTurn = undefined;
         return;
       }
       attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
       chipRun = [];
       workRun = [];
-      workTurn = undefined;
     };
     for (const item of flow) {
-      if (
-        item.type !== 'notice' &&
-        item.turn !== undefined &&
-        workTurn !== undefined &&
-        item.turn !== workTurn &&
-        (chipRun.length || workRun.length)
-      ) {
-        flushChips();
-      }
-      if (item.type !== 'notice' && item.turn !== undefined) {
-        workTurn = item.turn;
-      }
       if (options.taskPanel && item.type === 'chip') {
         if (PLAN_TOOLS.has(item.chip.name)) {
           if (item.chip.result?.isError) {
@@ -3900,7 +3906,8 @@ const ChatView = (() => {
         // A thought is a row in the same card as the tools around it.
         workRun.push(item);
       } else if (item.type === 'narration') {
-        workRun.push(item);
+        flushChips();
+        attach(bodyHost, narrationNode(item.text));
       } else if (item.type === 'notice') {
         flushChips();
         attach(bodyHost, noticeNode(item.text));
@@ -4137,12 +4144,9 @@ const ChatView = (() => {
               traceNodes.set(key, entry);
             } else if (entry.signature !== signature) {
               if (key.startsWith('thought:')) {
-                const currentThought = entry.node.querySelector<HTMLElement>(
-                  '.mp-chat-think',
-                );
-                const nextWork = (
-                  value as {work?: FlowItem[]}
-                ).work?.find(
+                const currentThought =
+                  entry.node.querySelector<HTMLElement>('.mp-chat-think');
+                const nextWork = (value as {work?: FlowItem[]}).work?.find(
                   (item): item is Extract<FlowItem, {type: 'reasoning'}> =>
                     item.type === 'reasoning',
                 );
@@ -4236,23 +4240,7 @@ const ChatView = (() => {
               record.turn === undefined || record.turn === null
                 ? undefined
                 : String(record.turn);
-            if (
-              turn !== undefined &&
-              workTurn !== undefined &&
-              turn !== workTurn &&
-              (chips.length || work.length)
-            ) {
-              flush();
-            }
-            if (
-              record.kind === 'message' &&
-              turn !== undefined &&
-              workTurn === undefined &&
-              chips.length
-            ) {
-              flush();
-            }
-            if (turn !== undefined) {
+            if (turn !== undefined && workTurn === undefined) {
               workTurn = turn;
             }
             if (record.kind === 'tool') {
@@ -4268,30 +4256,7 @@ const ChatView = (() => {
                 }
                 return;
               }
-              const chip: TurnChip = {
-                name: String(record.name || 'tool'),
-                callId: String(record.callId || index),
-                argsRaw: String(record.text || ''),
-                result:
-                  record.result == null
-                    ? undefined
-                    : {
-                        // A failed capability is kept in the settled transcript.
-                        // While the loop is still running, keep the live card
-                        // neutral so a recoverable attempt is not presented as
-                        // the turn's final failure.
-                        text:
-                          options.taskPanel &&
-                          (record.isError || record.state === 'error')
-                            ? ''
-                            : String(record.result),
-                        isError:
-                          options.taskPanel &&
-                          (record.isError || record.state === 'error')
-                            ? false
-                            : Boolean(record.isError),
-                      },
-              };
+              const chip = trajectoryChip(record, index, false);
               if (SUBAGENT_TOOLS.has(chip.name)) {
                 flush();
                 const key = `agent:${chip.callId}`;
@@ -4304,7 +4269,9 @@ const ChatView = (() => {
                   render(key, chip, () => subagentEntryNode(chip, scope));
                   return;
                 }
-                render(key, chip, () => chipNode(chip, scope));
+                render(key, {...chip, subagent: undefined}, () =>
+                  chipNode(chip, scope),
+                );
                 const child = record.subagent as
                   Record<string, unknown> | undefined;
                 const heartbeat = traceNodes
@@ -4322,25 +4289,15 @@ const ChatView = (() => {
               if (!record.text && !record.reasoning) {
                 return;
               }
-              const reasoning = String(
-                record.reasoning || (record.kind === 'think' ? record.text : ''),
-              );
+              const reasoning = trajectoryReasoning(record, index);
               if (reasoning) {
-                const running = record.state === 'running' && !record.text;
-                work.push({
-                  type: 'reasoning',
-                  text: reasoning,
-                  id: String(record.callId || record.turn || index),
-                  running,
-                  turn,
-                });
+                work.push(reasoning);
               }
-              if (record.text) {
-                work.push({
-                  type: 'narration',
-                  text: String(record.text),
-                  turn,
-                });
+              if (record.kind === 'message' && record.text) {
+                flush();
+                render(`message:${record.seq ?? index}`, record.text, () =>
+                  liveMarkdownNode(String(record.text)),
+                );
               }
             } else if (record.kind === 'notice') {
               flush();
@@ -4482,7 +4439,9 @@ const ChatView = (() => {
           const summary = thinking.querySelector('.mp-chat-summary')!;
           const derived = latestLine(nextThinking);
           const latestSummary =
-            derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
+            derived.trim() === ''
+              ? 'Thinking'
+              : stripTrailingPunctuation(derived);
           if (summary.textContent !== latestSummary) {
             summary.textContent = latestSummary;
           }
