@@ -1619,6 +1619,7 @@
 .mp-composer-environment,
 .mp-composer-workspace,
 .mp-composer-branch,
+.mp-composer-additional-folder,
 .mp-composer-folder-add {
   display: inline-flex;
   min-width: 0;
@@ -1656,6 +1657,7 @@
 
 .mp-composer-workspace,
 .mp-composer-git-context,
+.mp-composer-additional-folder,
 .mp-composer-folder-add {
   box-shadow: inset 0 0 0 1px var(--cds-fill-secondary-ring), 0 1px 2px #0000000d;
 }
@@ -1669,6 +1671,56 @@
 .mp-composer-folder-add {
   min-width: var(--cds-h-control);
   justify-content: center;
+}
+
+.mp-composer-additional-folders {
+  display: contents;
+}
+
+.mp-composer-additional-folder {
+  padding-right: 5px;
+}
+
+.mp-composer-additional-folder > span {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-composer-additional-folder > svg {
+  width: var(--cds-icon--sm);
+  height: var(--cds-icon--sm);
+  flex: none;
+}
+
+.mp-composer-additional-folder button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.mp-composer-additional-folder button svg {
+  width: var(--cds-icon--xs);
+  height: var(--cds-icon--xs);
+}
+
+.mp-composer-additional-folder button:hover:not(:disabled) {
+  background: var(--cds-fill-secondary-hover);
+}
+
+.mp-composer-additional-folder button:disabled,
+.mp-composer-folder-add:disabled {
+  color: var(--cds-text-disabled);
+  cursor: default;
+}
+
+.mp-composer-folder-error {
+  width: 100%;
+  color: var(--mp-danger);
+  font-size: 12px;
 }
 
 .mp-composer-environment:hover,

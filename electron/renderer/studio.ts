@@ -335,6 +335,7 @@ let sidebarQuery = '';
 let sidebarRecentOnly = false;
 let activeProjectRoot = '';
 let activeProjectId: string | undefined;
+let composerAdditionalFolders: string[] = [];
 let projectEnvironment: MagicPointerProjectEnvironment | null = null;
 let repositoryContextDismissedFor = '';
 let repositoryContextRequest = 0;
@@ -866,12 +867,91 @@ document.getElementById('composer-branch')?.addEventListener('click', event => {
 document
   .getElementById('composer-context-folder-add')
   ?.addEventListener('click', () => {
-    void openProjectFromPicker();
+    void addComposerFolder();
   });
+
+async function addComposerFolder(): Promise<void> {
+  if (!activeProjectRoot || studioComposerBusy) {
+    return;
+  }
+  const owner = composerLocation();
+  const root = activeProjectRoot;
+  const picked = await Data.pickWorkspace();
+  if (
+    !windowNavigation.isCurrent(owner) ||
+    activeProjectRoot !== root ||
+    studioComposerBusy
+  ) {
+    return;
+  }
+  const folder = picked.path?.trim();
+  if (!picked.ok || !folder) {
+    const note = document.getElementById('composer-folder-error');
+    if (note && picked.error) {
+      note.textContent = picked.error;
+      note.hidden = false;
+    }
+    return;
+  }
+  const key = normalizedProjectRoot(folder);
+  if (
+    key !== normalizedProjectRoot(root) &&
+    !composerAdditionalFolders.some(
+      value => normalizedProjectRoot(value) === key,
+    )
+  ) {
+    composerAdditionalFolders.push(folder);
+  }
+  captureComposerDraft();
+  renderComposerFolders();
+}
+
+function renderComposerFolders(): void {
+  const host = document.getElementById('composer-additional-folders');
+  const add = document.getElementById(
+    'composer-context-folder-add',
+  ) as HTMLButtonElement | null;
+  if (!host || !add) {
+    return;
+  }
+  add.hidden = !activeProjectRoot;
+  const running =
+    document.getElementById('composer-form')?.getAttribute('aria-busy') ===
+    'true';
+  add.disabled = running;
+  document.getElementById('composer-folder-error')?.setAttribute('hidden', '');
+  host.replaceChildren(
+    ...composerAdditionalFolders.map(folder => {
+      const pill = document.createElement('span');
+      pill.className = 'mp-composer-additional-folder';
+      pill.dataset.additionalFolder = folder;
+      pill.title = folder;
+      pill.innerHTML = icon('ic-folder');
+      const label = document.createElement('span');
+      const name = folder.split(/[\\/]/).filter(Boolean).at(-1) || folder;
+      label.textContent = name;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove ${name}`);
+      remove.innerHTML = icon('ic-x');
+      remove.disabled = running;
+      remove.addEventListener('click', () => {
+        composerAdditionalFolders = composerAdditionalFolders.filter(
+          value => value !== folder,
+        );
+        captureComposerDraft();
+        renderComposerFolders();
+      });
+      pill.append(label, remove);
+      return pill;
+    }),
+  );
+}
 
 function renderProjectContext() {
   renderComposerWorktree();
   renderComposerBranch();
+  renderComposerFolders();
   const headerLabel = document.getElementById('chat-project-label');
   const locationLabel = document.getElementById('header-location-label');
   const workspaceLabel = document.getElementById('composer-workspace-label');
@@ -2383,6 +2463,7 @@ async function openWorkspaceMenu() {
       () => {
         close();
         setActiveProject('');
+        startNewChat();
       },
       {selected: !activeProjectRoot},
     ),
@@ -3906,7 +3987,7 @@ async function openConversation(id: string) {
   );
   setActiveProject(projectRoot, c.projectId);
   show('chat');
-  restoreComposerDraft({kind: 'conversation', id: c.id});
+  restoreComposerDraft({kind: 'conversation', id: c.id}, c.additionalFolders);
   setStudioHomeVisible(false);
   document
     .querySelectorAll('#side-convos .side-item')
@@ -5524,6 +5605,11 @@ function captureComposerDraft(): void {
     composerSelectedSourceIds.size === submission.draft.sourceIds.length &&
     submission.draft.sourceIds.every(sourceId =>
       composerSelectedSourceIds.has(sourceId),
+    ) &&
+    composerAdditionalFolders.length ===
+      (submission.draft.additionalFolders?.length || 0) &&
+    composerAdditionalFolders.every(
+      (folder, index) => folder === submission.draft.additionalFolders?.[index],
     )
   ) {
     return;
@@ -5537,10 +5623,14 @@ function captureComposerDraft(): void {
     sourceIds: [...composerSelectedSourceIds],
     workspaceRoot: displayedComposer.workspaceRoot,
     projectId: displayedComposer.projectId,
+    additionalFolders: [...composerAdditionalFolders],
   });
 }
 
-function restoreComposerDraft(location: StudioComposerLocation): void {
+function restoreComposerDraft(
+  location: StudioComposerLocation,
+  additionalFolders: string[] = [],
+): void {
   const draft = windowNavigation.draft(location);
   const textarea = document.querySelector<HTMLTextAreaElement>(
     '#composer-form textarea',
@@ -5550,6 +5640,10 @@ function restoreComposerDraft(location: StudioComposerLocation): void {
     fitComposer(textarea);
   }
   composerAttachments = [...(draft?.attachments || [])];
+  composerAdditionalFolders = [
+    ...(draft?.additionalFolders ?? additionalFolders),
+  ];
+  renderComposerFolders();
   composerSelectedSourceIds.clear();
   const available = new Set(
     activeTaskContext?.sources.map(source => source.sourceId) || [],
@@ -11832,6 +11926,12 @@ function setComposerSettledState(state: 'idle' | 'error' | 'success') {
 }
 
 function setComposerRunningState(running: boolean) {
+  const folderControls = document.querySelectorAll<HTMLButtonElement>(
+    '#composer-context-folder-add, [data-additional-folder] button',
+  );
+  folderControls.forEach(button => {
+    button.disabled = running;
+  });
   const form = document.getElementById('composer-form');
   const submit = document.querySelector<HTMLButtonElement>(
     '#composer-form button[type="submit"]',
@@ -12125,6 +12225,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       sourceIds: [...composerSelectedSourceIds],
       workspaceRoot: activeProjectRoot,
       projectId: activeProjectId,
+      additionalFolders: [...composerAdditionalFolders],
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
@@ -12255,6 +12356,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         taskInput,
         workspace.executionWorkspaceRoot,
         workspace.projectId,
+        navigationDraft.additionalFolders,
       );
       if (response?.conversationId) {
         acceptSubmissionNavigation(requestId, String(response.conversationId));
@@ -12360,6 +12462,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       navigationSubmissions.delete(requestId);
       if (pendingConversation === submittedConversation) {
         detachPendingConversation();
+        void renderSidebar();
       }
     }
   });

@@ -176,6 +176,7 @@ declare global {
     lastFailed?: boolean;
     lastPendingInputKind?: string;
     workspaceRoot?: string;
+    additionalFolders?: string[];
     object?: MagicPointerObject | null;
     turns?: MagicPointerTurn[];
     [key: string]: unknown;
@@ -896,6 +897,7 @@ declare global {
         permissionPreset?: string;
         requestId?: string;
         workspaceRoot?: string;
+        additionalFolders?: string[];
         executionWorkspaceRoot?: string;
         effort?: string;
         permissionGrant?: string;
@@ -1267,6 +1269,7 @@ declare global {
       taskInput?: MagicPointerTaskInput,
       executionWorkspaceRoot?: string,
       projectId?: string,
+      additionalFolders?: string[],
     ): Promise<Record<string, any>>;
     respondConversation(
       payload: MagicPointerInputResponse,
@@ -1911,6 +1914,7 @@ const Data: MagicPointerDataApi = {
     taskInput?: MagicPointerTaskInput,
     executionWorkspaceRoot?: string,
     projectId?: string,
+    additionalFolders?: string[],
   ): Promise<Record<string, any>> {
     if (!hasBridge()) {
       return {ok: false, error: '请在 Magic Pointer 应用里发送。'};
@@ -1925,6 +1929,7 @@ const Data: MagicPointerDataApi = {
       requestId,
       workspaceRoot,
       executionWorkspaceRoot,
+      additionalFolders,
       effort: effort || 'high',
       permissionGrant: permission?.grant,
       permissionDeny: permission?.deny,

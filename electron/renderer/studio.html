@@ -307,9 +307,11 @@
                   </button>
                 </div>
                 <div class="mp-branch-menu" id="composer-branch-menu" hidden role="menu" aria-label="选择分支"></div>
-                <button type="button" class="mp-composer-folder-add" id="composer-context-folder-add" aria-label="Open another folder" title="Open another folder">
+                <span class="mp-composer-additional-folders" id="composer-additional-folders"></span>
+                <button type="button" class="mp-composer-folder-add" id="composer-context-folder-add" aria-label="Add another folder" title="Add another folder" hidden>
                   <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
                 </button>
+                <span id="composer-folder-error" class="mp-composer-folder-error" role="status" hidden></span>
               </div>
               <form class="mpw-input-form mp-compact-composer" id="composer-form">
                 <div class="mpw-input-root">

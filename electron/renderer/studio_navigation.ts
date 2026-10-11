@@ -15,6 +15,7 @@ declare global {
     attachments: string[];
     sourceIds: string[];
     workspaceRoot: string;
+    additionalFolders?: string[];
     projectId?: string;
   }
 
@@ -47,6 +48,7 @@ declare global {
       ...draft,
       attachments: [...draft.attachments],
       sourceIds: [...draft.sourceIds],
+      additionalFolders: [...(draft.additionalFolders || [])],
     };
   }
 
