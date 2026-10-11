@@ -335,11 +335,13 @@ let sidebarQuery = '';
 let sidebarRecentOnly = false;
 const expandedWorkspaces = new Map<string, boolean>();
 let activeProjectRoot = '';
+let activeProjectId: string | undefined;
 let projectEnvironment: MagicPointerProjectEnvironment | null = null;
 let repositoryContextDismissedFor = '';
 let repositoryContextRequest = 0;
 try {
   activeProjectRoot = localStorage.getItem('mp:active-project-root') || '';
+  activeProjectId = localStorage.getItem('mp:active-project-id') ?? undefined;
 } catch {
   /* storage unavailable */
 }
@@ -366,12 +368,18 @@ function normalizedBrowserResourceKey(rawUrl: string): string {
   }
 }
 
-function setActiveProject(root: unknown) {
+function setActiveProject(root: unknown, projectId?: string) {
   activeProjectRoot = String(root || '').trim();
+  activeProjectId =
+    projectId ?? ProjectScope.find(cachedProjects || [], activeProjectRoot)?.id;
   projectEnvironment = null;
   activeTerminalRelativeDirectory = '';
-  invalidateProjectCache();
   try {
+    if (activeProjectId !== undefined) {
+      localStorage.setItem('mp:active-project-id', activeProjectId);
+    } else {
+      localStorage.removeItem('mp:active-project-id');
+    }
     if (activeProjectRoot) {
       localStorage.setItem('mp:active-project-root', activeProjectRoot);
     } else {
@@ -381,7 +389,7 @@ function setActiveProject(root: unknown) {
     /* storage unavailable */
   }
   renderProjectContext();
-  void warmProjects();
+  void warmProjects().then(renderProjectContext);
   if (activeProjectRoot) {
     void warmComposerEnvironment(activeProjectRoot);
   }
@@ -535,17 +543,20 @@ document
 
 interface PreparedComposerWorkspace {
   projectRoot: string;
+  projectId?: string;
   executionWorkspaceRoot: string;
   contextKey: string;
 }
 
 async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   const base = activeProjectRoot;
+  const projectId = activeProjectId;
   const contextKey = currentComposerWorktreeKey();
   const identity = currentComposerWorktreeId();
   if (!base || !currentComposerWorktreeEnabled()) {
     return {
       projectRoot: base,
+      projectId,
       executionWorkspaceRoot: base,
       contextKey,
     };
@@ -553,6 +564,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   const requireCurrentSelection = (): void => {
     if (
       contextKey !== currentComposerWorktreeKey() ||
+      projectId !== activeProjectId ||
       !currentComposerWorktreeEnabled()
     ) {
       throw new Error(
@@ -585,6 +597,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   return {
     projectRoot: base,
     executionWorkspaceRoot: result.path,
+    projectId,
     contextKey,
   };
 }
@@ -672,7 +685,9 @@ function renderComposerBranch(): void {
     group.hidden = button.hidden;
   }
   label.textContent = branch || 'Current branch';
-  button.title = branch ? `Current branch: ${branch}` : 'Use the current Git branch';
+  button.title = branch
+    ? `Current branch: ${branch}`
+    : 'Use the current Git branch';
 }
 
 let composerEnvironmentRequest = 0;
@@ -866,6 +881,18 @@ function renderProjectContext() {
   );
   const repositoryRow = document.getElementById('composer-repository-context');
   const hasProject = Boolean(activeProjectRoot);
+  const selectedProject = ProjectScope.find(
+    cachedProjects || [],
+    activeProjectId ?? activeProjectRoot,
+  );
+  const projectButton = document.getElementById('composer-project');
+  const projectButtonLabel = document.getElementById('composer-project-label');
+  if (projectButton) {
+    projectButton.hidden = !selectedProject || Boolean(selectedProject.root);
+  }
+  if (projectButtonLabel) {
+    projectButtonLabel.textContent = selectedProject?.name || '';
+  }
   const homeVisible = !document.getElementById('studio-home')?.hidden;
   if (contextRow) {
     // Keep the runtime context visible in chat so the selected project and
@@ -880,17 +907,19 @@ function renderProjectContext() {
     designStatus.classList.toggle('is-offline', !hasProject);
     const text = designStatus.lastChild;
     if (text?.nodeType === Node.TEXT_NODE) {
-      text.textContent = hasProject ? 'Project connected' : 'Waiting for a project';
+      text.textContent = hasProject
+        ? 'Project connected'
+        : 'Waiting for a project';
     }
   }
   if (!headerLabel) {
     return;
   }
   if (!hasProject) {
-    headerLabel.textContent = 'Local';
+    headerLabel.textContent = selectedProject?.name || 'Local';
     headerLabel.removeAttribute('title');
     if (locationLabel) {
-      locationLabel.textContent = 'Local';
+      locationLabel.textContent = selectedProject?.name || 'Local';
     }
     if (workspaceLabel) {
       workspaceLabel.textContent = 'Select folder…';
@@ -902,7 +931,7 @@ function renderProjectContext() {
     .split('/')
     .filter(Boolean);
   const projectName = parts[parts.length - 1] || activeProjectRoot;
-  headerLabel.textContent = projectName;
+  headerLabel.textContent = selectedProject?.name || projectName;
   headerLabel.title = activeProjectRoot;
   if (locationLabel) {
     locationLabel.textContent = projectName;
@@ -1262,23 +1291,27 @@ function conversationNode(
     c,
     studioComposerBusy && c.id === activeConversationId,
   );
-  const status = activity === 'awaiting'
-    ? 'waiting'
-    : activity === 'failed'
-      ? 'error'
-      : activity === 'idle' || activity === 'completed'
-        ? ''
-        : activity;
+  const status =
+    activity === 'awaiting'
+      ? 'waiting'
+      : activity === 'failed'
+        ? 'error'
+        : activity === 'idle' || activity === 'completed'
+          ? ''
+          : activity;
   const statusLabel = status ? ConversationState.label(activity) : '';
   if (status) {
     dot.classList.add(`is-${status}`);
-    dot.innerHTML = status === 'running' ? '' : icon(
-      status === 'error'
-        ? 'ic-warning'
-        : status === 'interrupted'
-          ? 'ic-alarm-clock'
-          : 'ic-list-checks',
-    );
+    dot.innerHTML =
+      status === 'running'
+        ? ''
+        : icon(
+            status === 'error'
+              ? 'ic-warning'
+              : status === 'interrupted'
+                ? 'ic-alarm-clock'
+                : 'ic-list-checks',
+          );
     dot.title = statusLabel;
     row.dataset.taskState = status;
     row.setAttribute(
@@ -1617,7 +1650,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.setAttribute('role', 'menu');
   popover.setAttribute('aria-label', 'Change project');
   const glyph = (globalThis as any).CdsIcons.html;
-  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options">${studioLibraries.projectOptionsMarkup(projects, conversation.workspaceRoot || '')}</div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p>`;
+  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options">${studioLibraries.projectOptionsMarkup(projects, conversation.projectId ?? conversation.workspaceRoot ?? '')}</div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p>`;
   const left =
     bounds.right + 240 <= window.innerWidth - 8
       ? bounds.right - 3
@@ -1677,7 +1710,12 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
         throw new Error(result.error || '项目没有更改。');
       }
       if (activeConversationId === id) {
-        setActiveProject(root);
+        setActiveProject(
+          result.conversation?.workspaceRoot ||
+            conversation?.workspaceRoot ||
+            '',
+          result.conversation?.projectId || '',
+        );
       }
       close();
       if (parentMenu) {
@@ -1698,7 +1736,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       popover.querySelector('.mp-project-options')!.innerHTML =
         studioLibraries.projectOptionsMarkup(
           projects,
-          conversation.workspaceRoot || '',
+          conversation.projectId ?? conversation.workspaceRoot ?? '',
           input.value,
         );
     }
@@ -1710,16 +1748,14 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       void move(String(button.dataset.projectRoot || ''));
     }
     if (button?.hasAttribute('data-project-picker')) {
-      void Data.openProject()
-        .then(result => {
-          if (result.ok && result.project) {
-            return move(result.project.root);
-          }
-          if (!result.ok && !result.canceled) {
-            report(result.error || '项目没有创建。');
-          }
-        })
-        .catch(report);
+      ProjectWorkspace.create(
+        popover,
+        Data,
+        project => {
+          void move(ProjectScope.key(project));
+        },
+        popover.querySelector<HTMLInputElement>('[data-project-search]')?.value,
+      );
     }
   });
   popover.querySelector<HTMLInputElement>('input')?.focus();
@@ -1977,16 +2013,25 @@ function emptySessionsPictogram() {
   return svg;
 }
 
+let sidebarRenderGeneration = 0;
+
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) {
     return;
   }
+  const generation = ++sidebarRenderGeneration;
   const [list, projects] = await Promise.all([
     Data.conversations(),
     Data.projects(),
   ]);
+  if (generation !== sidebarRenderGeneration) {
+    return;
+  }
   cachedProjects = projects;
+  if (activeProjectId === undefined && activeProjectRoot) {
+    activeProjectId = ProjectScope.find(projects, activeProjectRoot)?.id;
+  }
   const registeredRoots = new Set(
     projects.map(project => normalizedProjectRoot(project.root)),
   );
@@ -2012,23 +2057,15 @@ async function renderSidebar() {
       conversation => Number(conversation.updatedAt) >= cutoff,
     );
   }
-  const wsGroups = sidebarGroups.groupByWorkspace(
-    filtered as Array<MagicPointerConversation & {workspaceRoot?: string}>,
-  );
-  const conversationsByRoot = new Map(
-    wsGroups.map(group => [
-      normalizedProjectRoot(group.workspaceRoot),
-      group.items,
-    ]),
-  );
   const projectGroups = projects
     .filter(project => !project.archived)
     .sort((a, b) => Number(Boolean(b.starred)) - Number(Boolean(a.starred)))
     .map(project => ({
-      key: project.root,
+      key: ProjectScope.key(project),
       label: project.name,
-      items: (conversationsByRoot.get(normalizedProjectRoot(project.root)) ||
-        []) as MagicPointerConversation[],
+      items: filtered.filter(conversation =>
+        ProjectScope.contains(project, conversation),
+      ),
     }))
     .filter(project => {
       if (!sidebarQuery.trim()) {
@@ -2041,15 +2078,17 @@ async function renderSidebar() {
         project.items.length > 0
       );
     });
-  const localGroup = wsGroups.find(group => group.key === '__local__');
+  const localConversations = filtered.filter(
+    conversation => !ProjectScope.forConversation(projects, conversation),
+  );
   const groups = [
     ...projectGroups,
-    ...(localGroup
+    ...(localConversations.length
       ? [
           {
             key: '',
-            label: localGroup.label,
-            items: localGroup.items as MagicPointerConversation[],
+            label: 'Local',
+            items: localConversations,
           },
         ]
       : []),
@@ -2082,8 +2121,7 @@ async function renderSidebar() {
     const open = expandedWorkspaces.get(group.key) !== false;
     project.classList.toggle(
       'is-active',
-      normalizedProjectRoot(group.key) ===
-        normalizedProjectRoot(activeProjectRoot),
+      group.key === (activeProjectId ?? activeProjectRoot),
     );
     project.dataset.open = String(open);
     project.dataset.workspace = group.key;
@@ -2246,7 +2284,7 @@ function setWorkspaceNote(message: string): void {
   note.hidden = !message;
 }
 
-async function openProjectFromPicker() {
+async function openProjectFromPicker(preserveProjectId?: string) {
   const picked = await Data.openProject();
   if (picked?.canceled) {
     return;
@@ -2263,7 +2301,8 @@ async function openProjectFromPicker() {
     return;
   }
   setWorkspaceNote('');
-  setActiveProject(picked.project.root);
+  invalidateProjectCache();
+  setActiveProject(picked.project.root, preserveProjectId ?? picked.project.id);
   startNewChat();
   await renderSidebar();
 }
@@ -2324,7 +2363,16 @@ async function openWorkspaceMenu() {
   if (!menu) {
     return;
   }
-  const projects = (await warmProjects()).filter(project => !project.archived);
+  const availableProjects = await warmProjects();
+  const selectedProject = ProjectScope.find(
+    availableProjects,
+    activeProjectId ?? activeProjectRoot,
+  );
+  const preservedProjectId =
+    selectedProject && !selectedProject.root ? selectedProject.id : undefined;
+  const projects = availableProjects.filter(
+    project => !project.archived && project.root,
+  );
   const rows: HTMLElement[] = [];
   const close = () => {
     closeAnchoredPopover('composer-workspace-menu', 'composer-workspace');
@@ -2357,7 +2405,7 @@ async function openWorkspaceMenu() {
           name || root,
           () => {
             close();
-            setActiveProject(root);
+            setActiveProject(root, preservedProjectId ?? project.id);
             void startNewChat();
             void renderSidebar();
           },
@@ -2378,7 +2426,7 @@ async function openWorkspaceMenu() {
     workspaceMenuRow('mp-workspace-menu-row', 'Open folder…', () => {
       close();
       invalidateProjectCache();
-      void openProjectFromPicker();
+      void openProjectFromPicker(preservedProjectId);
     }),
   );
   menu.replaceChildren(...rows);
@@ -2401,6 +2449,12 @@ document
     button.setAttribute('aria-expanded', 'true');
     void openWorkspaceMenu();
   });
+
+document.getElementById('composer-project')?.addEventListener('click', () => {
+  if (activeProjectId) {
+    libraryUi.openProject(activeProjectId);
+  }
+});
 document
   .getElementById('workspace-filter')
   ?.addEventListener('click', event => {
@@ -2768,8 +2822,7 @@ function readStoredComposerQuota(key: string): MagicPointerQuotaReport | null {
         detail: typeof row.detail === 'string' ? row.detail : '',
       })),
       error: typeof candidate.error === 'string' ? candidate.error : '',
-      source:
-        typeof candidate.source === 'string' ? candidate.source : '',
+      source: typeof candidate.source === 'string' ? candidate.source : '',
       fetchedAt:
         typeof candidate.fetchedAt === 'number' &&
         Number.isFinite(candidate.fetchedAt)
@@ -3297,7 +3350,13 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     );
   } else if (composerQuotaError) {
     popover.append(el('div', 'mp-usage-divider'));
-    popover.append(el('div', 'mp-usage-section', `Usage unavailable · ${composerQuotaError}`));
+    popover.append(
+      el(
+        'div',
+        'mp-usage-section',
+        `Usage unavailable · ${composerQuotaError}`,
+      ),
+    );
   } else {
     popover.append(el('div', 'mp-usage-divider'));
     popover.append(
@@ -3558,10 +3617,17 @@ async function renderStudioHome() {
     projects,
     conversations: conversations.map(conversation => ({
       ...conversation,
-      archived: Boolean(studioLibraries.sessionPreference(conversation.id).archived),
-      pinned: Boolean(studioLibraries.sessionPreference(conversation.id).pinned),
+      archived: Boolean(
+        studioLibraries.sessionPreference(conversation.id).archived,
+      ),
+      pinned: Boolean(
+        studioLibraries.sessionPreference(conversation.id).pinned,
+      ),
       acknowledgedAt: studioLibraries.sessionPreference(conversation.id).seenAt,
-      state: studioComposerBusy && conversation.id === activeConversationId ? 'running' : undefined,
+      state:
+        studioComposerBusy && conversation.id === activeConversationId
+          ? 'running'
+          : undefined,
     })),
     onOpenConversation: id => {
       void openConversation(id);
@@ -3659,9 +3725,9 @@ function selectGlobalSearchResult(item: StudioSearchItem) {
     return;
   }
   if (kind === 'project') {
-    setActiveProject(String(item.target.workspaceRoot || ''));
-    startNewChat();
-    void renderSidebar();
+    libraryUi.openProject(
+      String(item.target.projectId || item.target.workspaceRoot || ''),
+    );
     return;
   }
   if (kind === 'route') {
@@ -3838,7 +3904,7 @@ async function openConversation(id: string) {
   const projectRoot = String(
     (c as {workspaceRoot?: string}).workspaceRoot || '',
   );
-  setActiveProject(projectRoot);
+  setActiveProject(projectRoot, c.projectId);
   show('chat');
   setStudioHomeVisible(false);
   document
@@ -6701,10 +6767,7 @@ function seedSessionPane(sessionId: string): void {
 
 // The machine's own toggle reads the session's current expansion, so what is on
 // screen has to be what it believes.
-function trackSessionPaneExpansion(
-  sessionId: string,
-  expanded: boolean,
-): void {
+function trackSessionPaneExpansion(sessionId: string, expanded: boolean): void {
   const state = sessionPaneState;
   if (!state || state.expandedBySession[sessionId] === expanded) {
     return;
@@ -8092,7 +8155,11 @@ function syncInspectorGeometry() {
       isOverlayOpen: inspectorState.open,
     };
   }
-  if (sessionPaneState && sessionPaneState.isViewportNarrow && inspectorState.open) {
+  if (
+    sessionPaneState &&
+    sessionPaneState.isViewportNarrow &&
+    inspectorState.open
+  ) {
     shell.dataset.inspectorOverlay = 'true';
   } else {
     delete shell.dataset.inspectorOverlay;
@@ -8640,7 +8707,7 @@ function appendTerminalOutput(text: string) {
 
 Data.onProjectTerminalEvent(event => {
   appendTerminalOutput(
-      event.type === 'output'
+    event.type === 'output'
       ? event.text
       : `\nTerminal exited (${event.code ?? 'stopped'})\n`,
   );
@@ -8937,22 +9004,24 @@ document.addEventListener('click', e => {
 
   const projectNew = target.closest<HTMLElement>('[data-project-new]');
   if (projectNew) {
-    setActiveProject(projectNew.dataset.projectNew || '');
+    const project = ProjectScope.find(
+      cachedProjects || [],
+      projectNew.dataset.projectNew || '',
+    );
+    setActiveProject(project?.root || '', project?.id);
     startNewChat();
     return;
   }
   const projectTools = target.closest<HTMLElement>('[data-project-tools]');
   if (projectTools) {
-    setActiveProject(projectTools.dataset.projectTools || '');
-    setInspector(true, 'files');
+    libraryUi.openProject(projectTools.dataset.projectTools || '');
     return;
   }
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
   if (projectToggle) {
     const key = projectToggle.dataset.workspaceToggle || '';
     const project = projectToggle.closest<HTMLElement>('.mpw-project');
-    const alreadyActive =
-      normalizedProjectRoot(key) === normalizedProjectRoot(activeProjectRoot);
+    const alreadyActive = key === (activeProjectId ?? activeProjectRoot);
     const open = project?.dataset.open !== 'false';
     if (projectToggle.dataset.virtualGroup === 'true') {
       expandedWorkspaces.set(key, !open);
@@ -8962,7 +9031,11 @@ document.addEventListener('click', e => {
       projectToggle.setAttribute('aria-expanded', String(!open));
       return;
     }
-    setActiveProject(key);
+    const selectedProject = ProjectScope.find(cachedProjects || [], key);
+    setActiveProject(
+      selectedProject?.root || '',
+      selectedProject ? selectedProject.id : '',
+    );
     expandedWorkspaces.set(key, alreadyActive ? !open : true);
     if (project) {
       project.dataset.open = String(alreadyActive ? !open : true);
@@ -8973,11 +9046,13 @@ document.addEventListener('click', e => {
     );
     void (async () => {
       const list = await Data.conversations();
-      const recent = list.find(
-        conversation =>
-          normalizedProjectRoot(
-            (conversation as {workspaceRoot?: string}).workspaceRoot,
-          ) === normalizedProjectRoot(key),
+      if (key !== (activeProjectId ?? activeProjectRoot)) {
+        return;
+      }
+      const recent = list.find(conversation =>
+        selectedProject
+          ? ProjectScope.contains(selectedProject, conversation)
+          : !ProjectScope.forConversation(cachedProjects || [], conversation),
       );
       if (recent) {
         await openConversation(recent.id);
@@ -8993,8 +9068,7 @@ document.addEventListener('click', e => {
     '[data-conversation-tab]',
   );
   if (conversationTab) {
-    const trajectory =
-      conversationTab.dataset.conversationTab === 'trajectory';
+    const trajectory = conversationTab.dataset.conversationTab === 'trajectory';
     if (trajectory && activeConversationId) {
       openWorkspaceResource({
         kind: 'transcript',
@@ -9671,7 +9745,13 @@ let composerPreset = (() => {
   try {
     const stored = localStorage.getItem(COMPOSER_PRESET_KEY);
     return stored &&
-      ['auto', 'read-only', 'workspace-write', 'plan', 'danger-full-access'].includes(stored)
+      [
+        'auto',
+        'read-only',
+        'workspace-write',
+        'plan',
+        'danger-full-access',
+      ].includes(stored)
       ? stored
       : 'auto';
   } catch {
@@ -11928,7 +12008,10 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     renderConversationProgress({phase: 'runtime_boot', fields: {}});
     try {
       const workspace = await prepareComposerWorktree();
-      if (pendingConversation !== submittedConversation) {
+      if (
+        pendingConversation !== submittedConversation ||
+        workspace.projectId !== activeProjectId
+      ) {
         return;
       }
       const response = await Data.sendConversation(
@@ -11942,6 +12025,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         attachmentPaths,
         taskInput,
         workspace.executionWorkspaceRoot,
+        workspace.projectId,
       );
       if (pendingConversation !== submittedConversation) {
         await renderSidebar();

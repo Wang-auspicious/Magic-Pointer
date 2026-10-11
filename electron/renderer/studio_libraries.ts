@@ -1,16 +1,17 @@
 'use strict';
 
 (() => {
-  type Row = ConversationActivityInput & {
-    id: string;
-    title?: string;
-    createdAt?: number;
-    updatedAt?: number;
-    workspaceRoot?: string;
-    taskContext?: any;
-    agentSessionId?: string;
-    turns?: any[];
-  };
+  type Row = ConversationActivityInput &
+    ProjectMembership & {
+      id: string;
+      title?: string;
+      createdAt?: number;
+      updatedAt?: number;
+      workspaceRoot?: string;
+      taskContext?: any;
+      agentSessionId?: string;
+      turns?: any[];
+    };
   type SessionPreference = {
     pinned?: boolean;
     archived?: boolean;
@@ -227,9 +228,10 @@
   ) {
     const activity = (item: MagicPointerProject) =>
       Math.max(
+        Number(item.updatedAt || 0),
         Number(item.lastOpenedAt || 0),
         ...rows
-          .filter(row => row.workspaceRoot === item.root)
+          .filter(row => ProjectScope.contains(item, row))
           .map(row => Number(row.updatedAt || 0)),
       );
     return [...items].sort(
@@ -529,14 +531,15 @@
     currentRoot: string,
     query = '',
   ) {
+    const selected = ProjectScope.find(projects, currentRoot);
     const rows = projects.filter(
       project =>
-        (!project.archived || project.root === currentRoot) &&
+        (!project.archived || project === selected) &&
         `${project.name} ${project.root}`
           .toLocaleLowerCase()
           .includes(query.toLocaleLowerCase()),
     );
-    return `${!query ? `<button type="button" data-project-root="" role="menuitemradio" aria-checked="${!currentRoot}"><span>No project</span>${!currentRoot ? glyph('check') : ''}</button>` : ''}${rows.map(project => `<button type="button" data-project-root="${escape(project.root)}" role="menuitemradio" aria-checked="${project.root === currentRoot}"><span>${escape(project.name)}</span>${project.root === currentRoot ? glyph('check') : ''}</button>`).join('')}${!rows.length ? `<p class="mp-library-note">${query ? 'No matching projects' : 'No projects yet'}</p>` : ''}`;
+    return `${!query ? `<button type="button" data-project-root="" role="menuitemradio" aria-checked="${!currentRoot}"><span>No project</span>${!currentRoot ? glyph('check') : ''}</button>` : ''}${rows.map(project => `<button type="button" data-project-root="${escape(ProjectScope.key(project))}" role="menuitemradio" aria-checked="${project === selected}"><span>${escape(project.name)}</span>${project === selected ? glyph('check') : ''}</button>`).join('')}${!rows.length ? `<p class="mp-library-note">${query ? 'No matching projects' : 'No projects yet'}</p>` : ''}`;
   }
   type FilterOption = [string, string, boolean?];
   const FILTER_OPTIONS: Record<keyof Filters, FilterOption[]> = {
@@ -584,7 +587,7 @@
     show(view: string): void;
     compose(prompt: string): void;
     openProject(): Promise<void>;
-    selectProject(root: string): void;
+    selectProject(root: string, projectId?: string): void;
     renameConversation(id: string, title: string): void;
     changeProject(id: string, anchor: HTMLElement): void;
     refreshSidebar(): Promise<void>;
@@ -617,7 +620,7 @@
     const designContents = new Map<string, string>();
     let conversations: Row[] = [];
     let projects: MagicPointerProject[] = [];
-    let selectedProjectRoot = '';
+    let selectedProjectKey = '';
     let projectStatus: 'active' | 'archived' = 'active';
     let catalog: MagicPointerSlashDirectory | null = null;
     let trackers: any[] = [];
@@ -781,8 +784,8 @@
     }
     function projectPage() {
       if (
-        selectedProjectRoot &&
-        projects.some(project => project.root === selectedProjectRoot)
+        selectedProjectKey &&
+        ProjectScope.find(projects, selectedProjectKey)
       ) {
         return '<div class="mp-project-detail-host"></div>';
       }
@@ -805,7 +808,7 @@
           ['created', 'Date created'],
           ['name', 'Alphabetical'],
         ]) +
-        `<button type="button" class="mp-library-primary" data-library-open-project>${glyph('attach')} New project</button></div></div>` +
+        `<button type="button" class="mp-library-primary" data-library-create-project>${glyph('attach')} New project</button></div></div>` +
         (searchingProjects
           ? `<label class="mp-library-search mp-project-search">${glyph('search')}<input type="search" data-library-search placeholder="Search projects..." value="${escape(query)}" aria-label="Search projects" /></label>`
           : '');
@@ -815,11 +818,11 @@
               'projects',
               'Looking to start a project?',
               'Upload materials, set custom instructions, and organize conversations in one space.',
-              '<button type="button" class="mp-library-primary" data-library-open-project>New project</button>',
+              '<button type="button" class="mp-library-primary" data-library-create-project>New project</button>',
             )
           : rows.length === 0
             ? `<p class="mp-library-nomatch">${query ? `No projects matching “${escape(query)}”` : projectStatus === 'archived' ? 'No archived projects.' : 'No active projects.'}</p>`
-            : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(project.root)}"><span class="mp-project-card-heading">${glyph('projects', 'large')}${project.starred ? `<span aria-label="Starred" title="Starred">${glyph('pinned-star')}</span>` : ''}</span><strong>${escape(project.name)}</strong><p>${escape(project.description || project.root)}</p><small>${conversations.filter(row => row.workspaceRoot === project.root).length} conversations</small></button>`).join('')}</div>`;
+            : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(ProjectScope.key(project))}"><span class="mp-project-card-heading">${glyph('projects', 'large')}${project.starred ? `<span aria-label="Starred" title="Starred">${glyph('pinned-star')}</span>` : ''}</span><strong>${escape(project.name)}</strong><p>${escape(project.description || project.root)}</p><small>${conversations.filter(row => ProjectScope.contains(project, row)).length} conversations</small></button>`).join('')}</div>`;
       return header + body;
     }
     const suggestions = [
@@ -1125,7 +1128,7 @@
       const projectHost = host.querySelector<HTMLElement>(
         '.mp-project-detail-host',
       );
-      const project = projects.find(item => item.root === selectedProjectRoot);
+      const project = ProjectScope.find(projects, selectedProjectKey);
       document
         .querySelector<HTMLElement>('.mp-shell')
         ?.setAttribute(
@@ -1136,16 +1139,18 @@
         globalThis.ProjectWorkspace.mount(projectHost, project, conversations, {
           data: options.data,
           onBack: () => {
-            selectedProjectRoot = '';
+            selectedProjectKey = '';
             paint();
           },
-          onCompose: (root, prompt) => {
-            options.selectProject(root);
+          onCompose: (root, prompt, projectId) => {
+            options.selectProject(root, projectId);
             options.compose(prompt);
           },
           onChanged: updated => {
             projects = projects.map(item =>
-              item.root === updated.root ? updated : item,
+              ProjectScope.key(item) === ProjectScope.key(updated)
+                ? updated
+                : item,
             );
             void options.refreshSidebar();
           },
@@ -1335,7 +1340,7 @@
           d.projectStatusFilter === 'archived'
         ) {
           projectStatus = d.projectStatusFilter;
-          selectedProjectRoot = '';
+          selectedProjectKey = '';
           paint();
         }
         if (d.librarySort) {
@@ -1348,29 +1353,21 @@
           }
           paint();
         }
-        if ('libraryOpenProject' in d) {
-          void options.data
-            .openProject()
-            .then(async result => {
-              if (result.canceled) {
-                return;
-              }
-              if (!result.ok || !result.project) {
-                error = result.error || 'Could not open project.';
-                paint();
-                return;
-              }
-              selectedProjectRoot = result.project.root;
-              await render('projects');
+        if ('libraryCreateProject' in d) {
+          ProjectWorkspace.create(
+            host,
+            options.data,
+            project => {
+              selectedProjectKey = ProjectScope.key(project);
+              projectStatus = 'active';
+              void render('projects');
               void options.refreshSidebar();
-            })
-            .catch(reason => {
-              error = String(reason);
-              paint();
-            });
+            },
+            query,
+          );
         }
         if (d.libraryProject) {
-          selectedProjectRoot = d.libraryProject;
+          selectedProjectKey = d.libraryProject;
           paint();
         }
         if ('libraryCompose' in d) {
@@ -1521,7 +1518,7 @@
       changed,
       filterMenu,
       openProject(root: string) {
-        selectedProjectRoot = root;
+        selectedProjectKey = root;
         options.show('projects');
       },
       setInventory(value: typeof customInventory) {

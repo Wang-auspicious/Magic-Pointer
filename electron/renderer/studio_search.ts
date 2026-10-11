@@ -23,8 +23,10 @@
       updatedAt?: unknown;
     }>;
     projects?: ReadonlyArray<{
+      id?: unknown;
       root?: unknown;
       name?: unknown;
+      description?: unknown;
       lastOpenedAt?: unknown;
     }>;
     commands?: ReadonlyArray<{name?: unknown; description?: unknown}>;
@@ -87,16 +89,17 @@
     }
     for (const project of (sources.projects ?? []).slice(0, LIMITS.project)) {
       const root = clean(project.root);
-      if (!root) {
+      const id = clean(project.id);
+      if (!id && !root) {
         continue;
       }
       items.push({
         kind: 'project',
-        key: `project:${root}`,
+        key: `project:${id || root}`,
         label: clean(project.name) || root,
-        detail: root,
-        keywords: [root],
-        target: {workspaceRoot: root},
+        detail: clean(project.description) || root,
+        keywords: [root, clean(project.description)].filter(Boolean),
+        target: {workspaceRoot: root, ...(id ? {projectId: id} : {})},
         recency: finiteRecency(project.lastOpenedAt),
       });
     }

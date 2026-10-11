@@ -3,7 +3,8 @@
 type HomeView = 'overview' | 'models';
 type HomeRange = 'all' | '30d' | '7d';
 
-interface HomeAttentionItem extends ConversationActivityInput {
+interface HomeAttentionItem
+  extends ConversationActivityInput, ProjectMembership {
   id: string;
   title?: string;
   state?: string;
@@ -90,6 +91,10 @@ const homeConversationState: ConversationStateApi =
   typeof require === 'function'
     ? require('./conversation_state')
     : globalThis.ConversationState;
+const homeProjectScope: ProjectScopeApi =
+  typeof require === 'function'
+    ? require('./project_scope')
+    : globalThis.ProjectScope;
 let homeRange: HomeRange = 'all';
 let cachedOptions: HomeRenderOptions | null = null;
 let controlsBound = false;
@@ -178,16 +183,18 @@ function selectActiveProjects(
   conversations: readonly HomeAttentionItem[],
   now = Date.now(),
 ): HomeProjectItem[] {
-  const key = (root: string) =>
-    root.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
   const activity = new Map<string, {updatedAt: number; running: boolean}>();
   for (const conversation of conversations) {
-    if (!conversation.workspaceRoot || conversation.archived) {
+    if (conversation.archived) {
       continue;
     }
-    const root = key(conversation.workspaceRoot);
-    const prior = activity.get(root);
-    activity.set(root, {
+    const project = homeProjectScope.forConversation(projects, conversation);
+    if (!project) {
+      continue;
+    }
+    const identity = homeProjectScope.key(project);
+    const prior = activity.get(identity);
+    activity.set(identity, {
       updatedAt: Math.max(prior?.updatedAt || 0, conversation.updatedAt || 0),
       running: Boolean(prior?.running || stateOf(conversation) === 'running'),
     });
@@ -195,7 +202,7 @@ function selectActiveProjects(
   return projects
     .filter(project => !project.archived)
     .flatMap(project => {
-      const latest = activity.get(key(project.root));
+      const latest = activity.get(homeProjectScope.key(project));
       return latest && (latest.running || latest.updatedAt >= now - 604800000)
         ? [{project, ...latest}]
         : [];
@@ -580,7 +587,7 @@ function render(options: HomeRenderOptions): void {
     );
     button.dataset.projectRoot = item.project.root;
     button.addEventListener('click', () =>
-      options.onOpenProject?.(item.project.root),
+      options.onOpenProject?.(homeProjectScope.key(item.project)),
     );
     return button;
   });

@@ -1,4 +1,5 @@
-interface ProjectConversation extends ConversationActivityInput {
+interface ProjectConversation
+  extends ConversationActivityInput, ProjectMembership {
   id: string;
   title?: string;
   workspaceRoot?: string;
@@ -8,11 +9,17 @@ interface ProjectConversation extends ConversationActivityInput {
 interface ProjectWorkspaceOptions {
   data: MagicPointerDataApi;
   onBack(): void;
-  onCompose(root: string, prompt: string): void;
+  onCompose(root: string, prompt: string, projectId?: string): void;
   onChanged(project: MagicPointerProject): void;
 }
 
 interface ProjectWorkspaceApi {
+  create(
+    host: HTMLElement,
+    data: MagicPointerDataApi,
+    onCreated: (project: MagicPointerProject) => void,
+    initialName?: string,
+  ): void;
   mount(
     host: HTMLElement,
     project: MagicPointerProject,
@@ -38,16 +45,71 @@ declare global {
     });
   }
 
-  function rootKey(root: string): string {
-    return root.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  }
-
   function fileName(file: string): string {
     return file.split(/[\\/]/).pop() || file;
   }
 
   function action(label: string, key: string, primary = false): string {
     return `<button type="button" class="mp-project-button${primary ? ' is-primary' : ''}" data-project-action="${key}">${label}</button>`;
+  }
+
+  function create(
+    host: HTMLElement,
+    data: MagicPointerDataApi,
+    onCreated: (project: MagicPointerProject) => void,
+    initialName = '',
+  ): void {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'mp-project-editor';
+    dialog.innerHTML = `<form>
+      <header><h2>Create project</h2><button type="button" data-project-editor-close aria-label="Close">×</button></header>
+      <label>Name<input name="name" value="${escape(initialName)}" maxlength="120" placeholder="Name your project" required></label>
+      <label>Description (optional)<textarea name="description" rows="4" maxlength="2000" placeholder="What are you working on?"></textarea></label>
+      <p class="mp-project-status" data-project-edit-error role="status"></p>
+      <footer><button type="button" class="mp-project-button" data-project-editor-close>Cancel</button><button type="submit" class="mp-project-button is-primary">Create project</button></footer>
+    </form>`;
+    host.append(dialog);
+    dialog
+      .querySelectorAll('[data-project-editor-close]')
+      .forEach(button =>
+        button.addEventListener('click', () => dialog.close()),
+      );
+    dialog.addEventListener('close', () => dialog.remove(), {once: true});
+    dialog.querySelector('form')!.addEventListener('submit', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const submit =
+        dialog.querySelector<HTMLButtonElement>('[type="submit"]')!;
+      if (submit.disabled) {
+        return;
+      }
+      const values = new FormData(event.currentTarget as HTMLFormElement);
+      submit.disabled = true;
+      void data
+        .createProject({
+          name: String(values.get('name') || ''),
+          description: String(values.get('description') || ''),
+        })
+        .then(result => {
+          if (!result.ok || !result.project) {
+            throw new Error(
+              result.error || 'Could not create project. Try again.',
+            );
+          }
+          if (dialog.isConnected && dialog.open) {
+            dialog.close();
+            onCreated(result.project);
+          }
+        })
+        .catch(error => {
+          dialog.querySelector('[data-project-edit-error]')!.textContent =
+            error instanceof Error ? error.message : String(error);
+        })
+        .finally(() => {
+          submit.disabled = false;
+        });
+    });
+    dialog.showModal();
   }
 
   function mount(
@@ -63,7 +125,7 @@ declare global {
     root.setAttribute('aria-label', project.name);
     host.replaceChildren(root);
     const rows = conversations
-      .filter(row => rootKey(row.workspaceRoot || '') === rootKey(project.root))
+      .filter(row => ProjectScope.contains(project, row))
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
     function status(message: string): void {
@@ -135,7 +197,7 @@ declare global {
               <ul class="mp-project-files">${(project.sharedFiles || []).map((file, index) => `<li title="${escape(file)}"><span>${escape(fileName(file))}</span><button type="button" data-project-action="remove-file" data-file-index="${index}" aria-label="Remove ${escape(fileName(file))} from project">×</button></li>`).join('')}</ul>
               ${project.sharedFiles?.length ? '' : '<p class="mp-project-empty">Add reference documents, notes, or images.</p>'}
             </section>
-            <section class="mp-project-location"><h2>Local folder</h2><p>${escape(project.root)}</p>${action('Open folder', 'folder')}</section>
+            ${project.root ? `<section class="mp-project-location"><h2>Local folder</h2><p>${escape(project.root)}</p>${action('Open folder', 'folder')}</section>` : ''}
           </aside>
         </div>`;
       const composer = root.querySelector<HTMLTextAreaElement>(
@@ -158,7 +220,10 @@ declare global {
       saving = true;
       root.setAttribute('aria-busy', 'true');
       try {
-        const result = await options.data.updateProject(project.root, patch);
+        const result = await options.data.updateProject(
+          ProjectScope.key(project),
+          patch,
+        );
         if (!result.ok || !result.project) {
           throw new Error(result.error || 'Could not save project. Try again.');
         }
@@ -288,7 +353,7 @@ declare global {
       event.preventDefault();
       const prompt = String(new FormData(form).get('prompt') || '').trim();
       if (prompt) {
-        options.onCompose(project.root, prompt);
+        options.onCompose(project.root, prompt, project.id);
       }
     });
 
@@ -367,5 +432,5 @@ declare global {
     paint();
   }
 
-  globalThis.ProjectWorkspace = {mount};
+  globalThis.ProjectWorkspace = {mount, create};
 })();
