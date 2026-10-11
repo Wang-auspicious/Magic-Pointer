@@ -290,10 +290,70 @@ const ChatView = (() => {
     search: 'Searched',
     read: 'Read',
     bash: 'Ran',
-    write: 'Wrote',
+    // The reference past-tenses `write` as "Created a file", not "Wrote".
+    write: 'Created',
     edit: 'Edited',
     code: 'Used',
     others: 'Tool call',
+  };
+
+  /**
+   * In-flight verbs.
+   *
+   * The reference names a gerund beside every completed verb and picks between
+   * them by status: "Reading src/app.ts" while it runs, "Read src/app.ts" once
+   * it lands. Its gerunds are not mechanical — Write runs as "Creating", not
+   * "Writing" — so this is a lookup, not a suffix rule.
+   *
+   * A tool with no entry keeps its completed verb mid-flight rather than
+   * having a tense invented for it.
+   */
+  const RUNNING_TITLES: Record<string, string> = {
+    read: 'Reading',
+    Read: 'Reading',
+    read_around: 'Reading',
+    'ToolResult.read': 'Reading',
+    write: 'Creating',
+    Write: 'Creating',
+    SaveSkill: 'Saving a skill',
+    edit: 'Editing',
+    Edit: 'Editing',
+    edit_file: 'Editing',
+    Patch: 'Editing',
+    bash: 'Running',
+    Bash: 'Running',
+    BashRead: 'Running',
+    pwsh: 'Running',
+    run_code: 'Running code',
+    grep: 'Searching',
+    Grep: 'Searching',
+    glob: 'Searching',
+    Glob: 'Searching',
+    search: 'Searching',
+    Search: 'Searching',
+    web_search: 'Searching the web',
+    find_in_window: 'Searching',
+    find_roots: 'Finding windows',
+    search_ui: 'Searching controls',
+    Recall: 'Recalling',
+    web_fetch: 'Fetching',
+    Fetch: 'Fetching',
+    list_dir: 'Listing files',
+    Tools: 'Loading tools',
+    look: 'Looking',
+    Look: 'Looking',
+    'Browser.navigate': 'Opening page',
+    turn_ended: 'Finishing turn',
+  };
+
+  const VARIANT_RUNNING_TITLES: Record<ToolVariant, string> = {
+    search: 'Searching',
+    read: 'Reading',
+    bash: 'Running',
+    write: 'Creating',
+    edit: 'Editing',
+    code: 'Using',
+    others: '',
   };
 
   const TOOL_TITLES: Record<string, string> = {
@@ -476,8 +536,978 @@ const ChatView = (() => {
     return undefined;
   }
 
+  // -------------------------------------------------------------------
+  // Claude tool-presentation port.
+  //
+  // Transcribed from claude.ai's own tool-card code (Claude desktop reverse
+  // engineering reports 31, 32 and 33). The tables are literal on purpose:
+  // the reference selects wording by lookup and never by a suffix rule, so
+  // `Write` runs as "Creating a file" rather than "Writing a file", and
+  // `PowerShell` normalises to `power_shell` while its alias separately lands
+  // on `powershell`. Each table names the reference symbol it came from.
+  // -------------------------------------------------------------------
+
+  type ToolCategory =
+    | 'read'
+    | 'view'
+    | 'write'
+    | 'edit'
+    | 'notebook_edit'
+    | 'delete_file'
+    | 'glob'
+    | 'grep'
+    | 'web'
+    | 'web_fetch'
+    | 'bash'
+    | 'kill_bash'
+    | 'tmux'
+    | 'task'
+    | 'skill'
+    | 'share'
+    | 'past_chats'
+    | 'project_knowledge'
+    | 'drive_search'
+    | 'plan'
+    | 'todo'
+    | 'code'
+    | 'preview'
+    | 'screenshot'
+    | 'browser'
+    | 'tool_search'
+    | 'exit_plan_mode'
+    | 'enter_plan_mode'
+    | 'ask_user_question'
+    | 'bash_output'
+    | 'artifact';
+
+  /**
+   * Claude's `wR`. camelCase splits to snake_case, then everything lowercases:
+   * `Bash` to `bash`, `BashTool` to `bash_tool`, `PowerShell` to `power_shell`.
+   */
+  function normaliseToolName(raw: string): string {
+    return raw.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  }
+
+  /**
+   * Claude's `kR` is `{Bash: "bash", BashTool: "bash", PowerShell: "powershell"}`
+   * and it maps a PascalCase spelling to a *category* -- `jR` in the same file
+   * is just the set of those keys passed through `wR`. It is deliberately not
+   * substituted for the normalised name below, because doing so would key
+   * `PowerShell` under `powershell`, a spelling no table in the reference has;
+   * all three of its entries already normalise into `NR` unaided
+   * (`Bash` -> `bash`, `BashTool` -> `bash_tool`, `PowerShell` -> `power_shell`).
+   * The only entry that changes an answer is MP's own `AskUser`.
+   */
+  const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
+    AskUser: 'ask_user_question',
+  };
+
+  function aliasToolName(raw: string): string {
+    return normaliseToolName(TOOL_NAME_ALIASES[raw] ?? raw);
+  }
+
+  /** Claude's `NR`. Normalised tool name to presentation category. */
+  const TOOL_CATEGORY_BY_NAME: Readonly<Record<string, ToolCategory>> = {
+    read: 'read',
+    view: 'view',
+    write: 'write',
+    create_file: 'write',
+    edit: 'edit',
+    multi_edit: 'edit',
+    str_replace: 'edit',
+    str_replace_editor: 'edit',
+    update_file: 'edit',
+    notebook_edit: 'notebook_edit',
+    open_file: 'read',
+    close_file: 'read',
+    delete_file: 'delete_file',
+    file_search: 'glob',
+    present_files: 'share',
+    send_user_file: 'share',
+    recent_chats: 'past_chats',
+    conversation_search: 'past_chats',
+    project_knowledge_search: 'project_knowledge',
+    drive_search: 'drive_search',
+    web_fetch: 'web_fetch',
+    web_search: 'web',
+    web_search_fast: 'web',
+    bash: 'bash',
+    bash_tool: 'bash',
+    power_shell: 'bash',
+    // `kR` spells PowerShell's normalised name `powershell`; `NR` spells it
+    // `power_shell`. Both spellings are the same category.
+    powershell: 'bash',
+    task: 'task',
+    agent: 'task',
+    skill: 'skill',
+    todo_write: 'plan',
+    kill_bash: 'kill_bash',
+    tmux: 'tmux',
+    exit_plan_mode: 'exit_plan_mode',
+    enter_plan_mode: 'enter_plan_mode',
+    ask_user_question: 'ask_user_question',
+    bash_output: 'bash_output',
+    tool_search: 'tool_search',
+    repl: 'code',
+    java_script: 'code',
+    glob: 'glob',
+    grep: 'grep',
+    preview_start: 'preview',
+    preview_stop: 'preview',
+    preview_list: 'preview',
+    preview_screenshot: 'preview',
+    preview_snapshot: 'preview',
+    preview_click: 'preview',
+    preview_type: 'preview',
+    preview_fill: 'preview',
+    preview_scroll: 'preview',
+    preview_select: 'preview',
+    preview_eval: 'preview',
+    preview_resize: 'preview',
+    preview_logs: 'preview',
+    preview_console_logs: 'preview',
+    preview_network: 'preview',
+    preview_inspect: 'preview',
+  };
+
+  /**
+   * Claude's `PR`. A tool in these categories stops being its own card once it
+   * is reached through a namespace (`mcp__server__tool`, a prefixed name, or a
+   * `:` path) — the connector card represents it instead.
+   */
+  const NAMESPACED_SUPPRESSED_CATEGORIES: ReadonlySet<ToolCategory> = new Set([
+    'tool_search',
+    'share',
+    'code',
+    'past_chats',
+    'project_knowledge',
+    'drive_search',
+    'skill',
+  ]);
+
+  /**
+   * Standing in for Claude's `VP`, which strips a namespace prefix and lives
+   * in an uncaptured chunk. `__` and `:` are the only namespace shapes MP
+   * produces, so this is the same test the reference ends up making.
+   */
+  function isNamespacedToolName(raw: string): boolean {
+    return raw.startsWith('mcp__') || raw.includes('__') || raw.includes(':');
+  }
+
+  /**
+   * Claude's `zR`, minus its two uncaptured predicates. `IF(e)` (the
+   * Chrome-extension test) is not reproduced, so a namespaced `browser_*`
+   * name is not folded into the `browser` category; `oL(e)` guards the one
+   * `present_files` exception and is read as false. The screenshot rule is
+   * kept verbatim.
+   */
+  function toolCategory(raw: string): ToolCategory | undefined {
+    const alias = aliasToolName(raw);
+    const named = TOOL_CATEGORY_BY_NAME[alias];
+    if (named !== undefined) {
+      if (
+        NAMESPACED_SUPPRESSED_CATEGORIES.has(named) &&
+        isNamespacedToolName(raw)
+      ) {
+        return undefined;
+      }
+      return named;
+    }
+    if (
+      alias.includes('screenshot') &&
+      (raw.includes('computer-use') ||
+        raw.includes('remote-devices__computer_'))
+    ) {
+      return 'screenshot';
+    }
+    return undefined;
+  }
+
+  /**
+   * Claude's `qT`. The connector name for a namespaced call.
+   *
+   * Adapted: both shapes put the server left of the double underscore, but
+   * Claude writes `mcp__<server>__<tool>` while MP writes
+   * `mcp_<server>__<tool>`, so the server is the second segment there and the
+   * first here. Reading the reference's index verbatim would name the tool
+   * instead of the server.
+   */
+  function connectorDisplayName(raw: string): string {
+    const parts = raw.split('__');
+    if (parts.length < 2) {
+      return 'connector';
+    }
+    const server = raw.startsWith('mcp__') ? parts[1] : parts[0];
+    if (server === undefined || server === '') {
+      return 'connector';
+    }
+    return server.replace(/^mcp_/, '').replace(/_/g, ' ');
+  }
+
+  /**
+   * Claude names a namespaced call after its server (`Used {name}`, id
+   * `Nj4ZbS6pT4`) rather than showing the raw `mcp__server__tool` id.
+   */
+  function connectorTitle(raw: string): string | undefined {
+    return isNamespacedToolName(raw)
+      ? `Used ${connectorDisplayName(raw)}`
+      : undefined;
+  }
+
+  /** Claude's `fA` combined with the wider test report 31 section 1.4 uses. */
+  const COMMAND_TOOL_NAMES: ReadonlySet<string> = new Set([
+    'bash',
+    'bash_tool',
+    'power_shell',
+    'powershell',
+    'kill_bash',
+    'tmux',
+  ]);
+
+  function isCommandTool(raw: string): boolean {
+    return COMMAND_TOOL_NAMES.has(aliasToolName(raw));
+  }
+
+  const CATEGORY_VARIANTS: Readonly<Record<ToolCategory, ToolVariant>> = {
+    read: 'read',
+    view: 'read',
+    write: 'write',
+    edit: 'edit',
+    notebook_edit: 'edit',
+    delete_file: 'write',
+    glob: 'search',
+    grep: 'search',
+    web: 'search',
+    web_fetch: 'read',
+    bash: 'bash',
+    kill_bash: 'bash',
+    tmux: 'bash',
+    task: 'code',
+    skill: 'code',
+    share: 'write',
+    past_chats: 'search',
+    project_knowledge: 'search',
+    drive_search: 'search',
+    plan: 'code',
+    todo: 'code',
+    code: 'code',
+    preview: 'code',
+    screenshot: 'code',
+    browser: 'code',
+    tool_search: 'search',
+    exit_plan_mode: 'code',
+    enter_plan_mode: 'code',
+    ask_user_question: 'code',
+    bash_output: 'code',
+    artifact: 'write',
+  };
+
   function classifyTool(name: string): ToolVariant {
-    return DESKTOP_TOOLS.has(name) ? 'code' : TOOL_VARIANTS[name] || 'others';
+    if (DESKTOP_TOOLS.has(name)) {
+      return 'code';
+    }
+    const category = toolCategory(name);
+    if (category !== undefined) {
+      return CATEGORY_VARIANTS[category];
+    }
+    return TOOL_VARIANTS[name] || 'others';
+  }
+
+  /**
+   * Claude's `BD`. The in-flight verb for every name it can spell, keyed by
+   * normalised tool name. This is a lookup and not a suffix rule: `Write` is
+   * "Creating a file", `str_replace` is "Editing a file".
+   */
+  const RUNNING_LABELS_BY_NAME: Readonly<Record<string, string>> = {
+    read: 'Reading a file',
+    view: 'Reading a file',
+    write: 'Creating a file',
+    create_file: 'Creating a file',
+    edit: 'Editing a file',
+    str_replace: 'Editing a file',
+    str_replace_editor: 'Editing a file',
+    multi_edit: 'Editing files',
+    notebook_edit: 'Editing a notebook',
+    open_file: 'Opening file',
+    update_file: 'Updating file',
+    close_file: 'Closing file',
+    delete_file: 'Deleting a file',
+    file_search: 'Searching files',
+    grep: 'Searching files',
+    glob: 'Looking for files',
+    ls: 'Listing files',
+    present_files: 'Sharing files',
+    send_user_file: 'Sharing files',
+    send_user_message: 'Sending message',
+    push_notification: 'Sending notification',
+    repl: 'Running code',
+    java_script: 'Running code',
+    recent_chats: 'Searching past chats',
+    conversation_search: 'Searching past chats',
+    project_knowledge_search: 'Searching project knowledge',
+    drive_search: 'Searching Google Drive',
+    web_fetch: 'Reading a page',
+    web_search: 'Searching the web',
+    web_search_fast: 'Searching the web',
+    task: 'Running an agent',
+    agent: 'Running an agent',
+    skill: 'Running skill',
+    tool_search: 'Loading tools',
+    exit_plan_mode: 'Proposing a plan',
+    enter_plan_mode: 'Starting a plan',
+    todo_write: 'Updating the plan',
+    ask_user_question: 'Asking a question',
+    bash_output: 'Checking command output',
+    list_mcp_resources: 'Listing resources',
+    list_mcp_resources_tool: 'Listing resources',
+    read_resource_link: 'Reading resource',
+    read_mcp_resource_tool: 'Reading resource',
+    read_widget_context: 'Reading widget context',
+  };
+
+  /**
+   * The command-class table report 32 section 2 records alongside `BD`. It
+   * takes precedence for the CLI tool names and is the only running table
+   * whose labels carry a trailing ellipsis.
+   */
+  const CLI_RUNNING_LABELS: Readonly<Record<string, string>> = {
+    glob: 'Looking for files\u2026',
+    grep: 'Searching files\u2026',
+    read: 'Reading a file\u2026',
+    write: 'Creating a file\u2026',
+    edit: 'Editing a file\u2026',
+    bash: 'Running a command\u2026',
+    bash_tool: 'Running a command\u2026',
+    power_shell: 'Running a command\u2026',
+    powershell: 'Running a command\u2026',
+    web_fetch: 'Reading a page\u2026',
+    web_search: 'Searching the web\u2026',
+    task: 'Multitasking\u2026',
+    agent: 'Multitasking\u2026',
+    send_message: 'Multitasking\u2026',
+    task_get: 'Reading task\u2026',
+    task_list: 'Listing tasks\u2026',
+    task_create: 'Updating tasks\u2026',
+    task_update: 'Updating tasks\u2026',
+    task_stop: 'Updating tasks\u2026',
+    todo_write: 'Updating the plan\u2026',
+    tool_search: 'Loading tools\u2026',
+    ask_user_question: 'Asking a question\u2026',
+    skill: 'Using a skill\u2026',
+    send_user_message: 'Sending message\u2026',
+    send_user_file: 'Sharing files\u2026',
+    push_notification: 'Sending notification\u2026',
+    fetch_inbox_message: 'Reading the thread\u2026',
+    bash_output: 'Checking command output\u2026',
+    kill_bash: 'Stopping a command\u2026',
+    ls: 'Listing files\u2026',
+    multi_edit: 'Editing files\u2026',
+    notebook_edit: 'Editing notebook\u2026',
+    enter_plan_mode: 'Starting a plan\u2026',
+    exit_plan_mode: 'Proposing a plan\u2026',
+    workflow: 'Running workflow\u2026',
+    repl: 'Running code\u2026',
+    java_script: 'Running code\u2026',
+    appifact_repl: 'Running code\u2026',
+    poll: 'Waiting for results\u2026',
+    tmux: 'Running terminal\u2026',
+  };
+
+  /**
+   * Claude's `YI`. Only the verbs whose past tense is not "+ed" are listed;
+   * everything else falls through to the category table below.
+   */
+  const DONE_LABELS_BY_NAME: Readonly<Record<string, string>> = {
+    ask_user_question: 'Asked a question',
+    bash_output: 'Checked command output',
+    enter_plan_mode: 'Started a plan',
+    exit_plan_mode: 'Proposed a plan',
+    java_script: 'Ran code',
+    repl: 'Ran code',
+    ls: 'Listed files',
+    push_notification: 'Sent notification',
+    present_files: 'Shared files',
+    send_user_file: 'Shared files',
+    send_user_message: 'Sent message',
+    skill: 'Ran skill',
+    tool_search: 'Loaded tools',
+  };
+
+  /** Claude's `XI`. Keyed by normalised name, exactly as the reference keys it. */
+  const CANCELLED_LABELS_BY_NAME: Readonly<Record<string, string>> = {
+    read: 'Stopped reading file',
+    write: 'Stopped creating file',
+    recent_chats: 'Stopped searching past chats',
+    conversation_search: 'Stopped searching past chats',
+    project_knowledge_search: 'Stopped searching project knowledge',
+    tool_search: 'Stopped loading tools',
+    bash: 'Stopped running the command',
+    bash_tool: 'Stopped running the command',
+    power_shell: 'Stopped running the command',
+  };
+
+  /**
+   * Claude's `QI`. Cancelled wording never applies to these, however the call
+   * was spelt.
+   */
+  const NEVER_CANCELLED_LABELS: ReadonlySet<string> = new Set([
+    'ask_user_question',
+    'bash_output',
+    'enter_plan_mode',
+    'hub_workspace_setup',
+    'java_script',
+    'ls',
+    'present_files',
+    'push_notification',
+    'read_widget_context',
+    'send_user_file',
+    'send_user_message',
+    'tool_search',
+  ]);
+
+  /** Claude's `$I`. Done wording never applies to these. */
+  const NEVER_DONE_LABELS: ReadonlySet<string> = new Set([
+    'exit_plan_mode',
+    'repl',
+    'skill',
+  ]);
+
+  /**
+   * Claude's `eL`. The command family keeps its cancelled wording even when
+   * reached through an MCP wrapper.
+   */
+  const CANCELLED_THROUGH_MCP: ReadonlySet<string> = new Set([
+    'bash',
+    'bash_tool',
+    'power_shell',
+    'powershell',
+  ]);
+
+  /**
+   * Claude's `BR`. Category wording with a count: `[singular, plural]`. A
+   * single entry means the reference has no plural form for that category.
+   */
+  const CATEGORY_DONE_LABELS: Readonly<
+    Record<ToolCategory, readonly [string, string?]>
+  > = {
+    read: ['Read a file', 'Read {count} files'],
+    view: ['Read a file', 'Read {count} files'],
+    write: ['Created a file', 'Created {count} files'],
+    edit: ['Edited a file', 'Edited {count} files'],
+    notebook_edit: ['Edited a notebook', 'Edited {count} notebooks'],
+    delete_file: ['Deleted a file', 'Deleted {count} files'],
+    glob: ['Looked for files'],
+    grep: ['Searched files'],
+    web: ['Searched the web'],
+    web_fetch: ['Read a page', 'Read {count} pages'],
+    bash: ['Ran a command', 'Ran {count} commands'],
+    kill_bash: ['Stopped a command', 'Stopped {count} commands'],
+    tmux: ['Ran terminal'],
+    task: ['Ran an agent', 'Ran {count} agents'],
+    skill: ['Loaded a skill', 'Loaded {count} skills'],
+    share: ['Shared files'],
+    past_chats: ['Searched past chats'],
+    project_knowledge: ['Searched project knowledge'],
+    drive_search: ['Searched Google Drive'],
+    plan: ['Updated the plan'],
+    todo: ['Updated tasks'],
+    code: ['Ran code', 'Ran code {count} times'],
+    preview: ['Used the browser'],
+    screenshot: ['Desktop screenshot', 'Desktop screenshots'],
+    browser: ['Used Claude in Chrome'],
+    tool_search: ['Loaded tools'],
+    exit_plan_mode: ['Proposed a plan'],
+    enter_plan_mode: ['Started a plan'],
+    ask_user_question: ['Asked a question'],
+    bash_output: ['Checked command output'],
+    artifact: ['Used artifacts'],
+  };
+
+  /**
+   * Claude's `bE`. The category-level gerund, used when the name-level table
+   * has nothing. The reference writes these as singular/plural pairs.
+   */
+  const CATEGORY_RUNNING_LABELS: Readonly<Record<ToolCategory, string>> = {
+    read: 'Reading a file',
+    view: 'Reading a file',
+    write: 'Creating a file',
+    edit: 'Editing a file',
+    notebook_edit: 'Editing a notebook',
+    delete_file: 'Deleting a file',
+    glob: 'Looking for files',
+    grep: 'Searching files',
+    web: 'Searching the web',
+    web_fetch: 'Reading a page',
+    bash: 'Running a command',
+    kill_bash: 'Stopping a command',
+    tmux: 'Running terminal',
+    task: 'Running an agent',
+    skill: 'Loading skill',
+    share: 'Sharing files',
+    past_chats: 'Searching past chats',
+    project_knowledge: 'Searching project knowledge',
+    drive_search: 'Searching Google Drive',
+    plan: 'Updating the plan',
+    todo: 'Updating tasks',
+    code: 'Running code',
+    preview: 'Taking screenshot',
+    screenshot: 'Taking screenshot',
+    browser: 'Browsing',
+    tool_search: 'Loading tools',
+    exit_plan_mode: 'Proposing a plan',
+    enter_plan_mode: 'Starting a plan',
+    ask_user_question: 'Asking a question',
+    bash_output: 'Checking command output',
+    artifact: 'Using artifacts',
+  };
+
+  /**
+   * Claude's task-status (`uR`), computer-action (`bR`) and project-method
+   * (`bR`) switches are deliberately not ported: MP has no tool that takes a
+   * `status`, a computer-use `action` or a project `method`, so those strings
+   * would have no row to land on.
+   */
+
+  /**
+   * Claude's `VI`. The eight fixed remote-device tool ids. Each entry is the
+   * running form; the done form is the same sentence in the past tense and the
+   * cancelled form is generated mechanically as `Stopped <lowercased first
+   * word><rest>`.
+   */
+  const REMOTE_DEVICE_LABELS: Readonly<
+    Record<string, readonly [string, string]>
+  > = {
+    'mcp__remote-devices__device_stage_files': [
+      'Reading files on your computer',
+      'Read files on your computer',
+    ],
+    'mcp__remote-devices__device_commit_files': [
+      'Saving files to your computer',
+      'Saved files to your computer',
+    ],
+    'mcp__remote-devices__device_list_dir': [
+      'Listing files on your computer',
+      'Listed files on your computer',
+    ],
+    'mcp__remote-devices__device_request_folder_access': [
+      'Requesting access to a folder on your computer',
+      'Requested access to a folder on your computer',
+    ],
+    'mcp__remote-devices__device_request_delete_permission': [
+      'Requesting permission to delete files on your computer',
+      'Requested permission to delete files on your computer',
+    ],
+    'mcp__remote-devices__list_devices': [
+      'Listing connected computers',
+      'Listed connected computers',
+    ],
+    'mcp__remote-devices__get_device_info': [
+      'Checking computer status',
+      'Checked computer status',
+    ],
+    'mcp__remote-devices__device_bash': [
+      'Running a command on your computer',
+      'Ran a command on your computer',
+    ],
+  };
+
+  /**
+   * Claude's `dR`. Artifact actions, each `[running, done]`. The action is
+   * `input.action`, or `"publish"` when the tool is an artifact tool and the
+   * input carries one of the publish keys without an explicit action.
+   */
+  const ARTIFACT_ACTION_LABELS: Readonly<
+    Record<string, readonly [string, string]>
+  > = {
+    publish: ['Publishing an artifact', 'Published an artifact'],
+    // MP names the creation tool `Artifact.create`; the reference spells the
+    // same action `create_artifact` in its cowork table, where it reads
+    // "Creating artifact" / "Created artifact". `dR` has no `create` entry.
+    create: ['Creating artifact', 'Created artifact'],
+    upload_asset: ['Adding artifact files', 'Added artifact files'],
+    copy_from: ['Adding artifact files', 'Added artifact files'],
+    share: ['Sharing an artifact', 'Shared an artifact'],
+    read: ['Reading an artifact', 'Read an artifact'],
+    read_file: ['Reading an artifact', 'Read an artifact'],
+    read_asset: ['Reading an artifact', 'Read an artifact'],
+    read_page_data: ['Reading artifact data', 'Read artifact data'],
+    read_db: ['Reading artifact data', 'Read artifact data'],
+    list_files: ['Listing artifact files', 'Listed artifact files'],
+    list_assets: ['Listing artifact files', 'Listed artifact files'],
+    delete_asset: ['Deleting an artifact file', 'Deleted an artifact file'],
+    open: ['Opening an artifact', 'Opened an artifact'],
+    update: ['Updating an artifact', 'Updated an artifact'],
+    sync: ['Syncing an artifact', 'Synced an artifact'],
+    version: ['Saving an artifact version', 'Saved an artifact version'],
+    list: ['Listing artifacts', 'Listed artifacts'],
+    list_types: ['Checking artifact types', 'Checked artifact types'],
+    describe_type: ['Checking an artifact type', 'Checked an artifact type'],
+    quickstart: [
+      'Checking how to start an artifact',
+      'Checked how to start an artifact',
+    ],
+    delete: ['Deleting an artifact', 'Deleted an artifact'],
+    pin: ['Pinning an artifact', 'Pinned an artifact'],
+    unpin: ['Unpinning an artifact', 'Unpinned an artifact'],
+    comments: ['Reading artifact comments', 'Read artifact comments'],
+    reply: [
+      'Replying to an artifact comment',
+      'Replied to an artifact comment',
+    ],
+    resolve: ['Resolving an artifact comment', 'Resolved an artifact comment'],
+    watch: ['Watching an artifact', 'Watching an artifact'],
+    unwatch: ['Stopping an artifact watch', 'Stopped watching an artifact'],
+    status: ['Listing artifact watches', 'Listed artifact watches'],
+    resume_replies: [
+      'Resuming artifact comment replies',
+      'Resumed artifact comment replies',
+    ],
+    write_db: ['Updating artifact data', 'Updated artifact data'],
+    preview: ['Previewing an artifact', 'Previewed an artifact'],
+    verify: ['Checking an artifact', 'Checked an artifact'],
+  };
+
+  /** Claude's `hR`. Input keys that imply `publish` when no action is given. */
+  const ARTIFACT_PUBLISH_KEYS: readonly string[] = [
+    'file_path',
+    'files',
+    'root',
+    'type_url',
+    'capabilities',
+    'contract',
+  ];
+
+  const ARTIFACT_TOOL_NAMES: ReadonlySet<string> = new Set([
+    'artifact',
+    'artifacts',
+    'artifacts_v0',
+  ]);
+
+  /** Claude's `lR`. Keeps the last two path segments. */
+  function shortenPath(path: string): string {
+    const parts = path.split('/');
+    return parts.length > 2
+      ? parts.slice(-2).join('/')
+      : parts[parts.length - 1] || path;
+  }
+
+  /** Claude's `J`. Read a string field, or nothing. */
+  function inputString(
+    input: Record<string, unknown>,
+    key: string,
+  ): string | undefined {
+    const value = input[key];
+    return typeof value === 'string' ? value : undefined;
+  }
+
+  /** The three states the reference words differently. */
+  type ToolPhase = 'running' | 'done' | 'cancelled';
+
+  /**
+   * Claude's `TA`. Summaries lose their trailing punctuation.
+   */
+  function stripTrailingPunctuation(value: string): string {
+    return value.trim().replace(/[.!?;:,]+$/, '');
+  }
+
+  /**
+   * Claude's `Fs`/`rr` pair, both of which live in uncaptured chunks. The
+   * reference applies `Fs(value).trim()` as a general normalise-then-trim, so
+   * a whitespace collapse followed by a trim is what the caller observes.
+   */
+  function normaliseText(value: string): string {
+    return value.replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Claude's `mA`. The model-written `description` for a command tool, or
+   * nothing. Four rejections, in the reference's order.
+   *
+   * The fourth is the one that matters: a description containing a newline is
+   * refused outright, which is what makes the row a single line instead of a
+   * truncated one. A multi-line description therefore falls back rather than
+   * being cut.
+   */
+  function commandDescription(
+    input: Record<string, unknown>,
+  ): string | undefined {
+    const raw = input.description;
+    if (typeof raw !== 'string') {
+      return undefined;
+    }
+    if (raw.includes('<cc-memory') || raw.includes('</cc-memory')) {
+      return undefined;
+    }
+    const normalised = normaliseText(raw);
+    if (normalised === '') {
+      return undefined;
+    }
+    // The newline test runs on the *raw* value, not the collapsed one: the
+    // reference collapses whitespace only to ask whether anything is left,
+    // and checks for a line break on the untouched string. Testing the
+    // collapsed value would make this branch unreachable.
+    if (/[\n\r]/.test(raw.trim())) {
+      return undefined;
+    }
+    return normalised;
+  }
+
+  /**
+   * Claude's `gA`. True when the description merely restates the command.
+   *
+   * Both sides are whitespace-collapsed and lower-cased, and the description
+   * must be a *prefix* of the command followed by a character outside
+   * `[a-z0-9_]` — so `ls` is suppressed above `ls -la` but survives above
+   * `lsof`.
+   */
+  function descriptionRestatesCommand(
+    description: string,
+    input: Record<string, unknown>,
+  ): boolean {
+    const command = input.command;
+    if (typeof command !== 'string') {
+      return false;
+    }
+    const flatten = (value: string) =>
+      normaliseText(value).replace(/\s+/g, ' ').toLowerCase();
+    const described = flatten(description);
+    const executed = flatten(command);
+    if (executed === '' || !executed.startsWith(described)) {
+      return false;
+    }
+    return (
+      executed.length === described.length ||
+      /[^a-z0-9_]/.test(executed.charAt(described.length))
+    );
+  }
+
+  /**
+   * Claude's `hA`. The bash one-line summary: the model's description when it
+   * survives all four rejections and is not a restatement of the command.
+   * Returns nothing when it does not, which is what sends the row to the
+   * fallback chain.
+   */
+  function commandSummary(input: Record<string, unknown>): string | undefined {
+    const description = commandDescription(input);
+    if (description === undefined) {
+      return undefined;
+    }
+    return descriptionRestatesCommand(description, input)
+      ? undefined
+      : description;
+  }
+
+  /**
+   * The fallback chain report 31 section 1.4 records, in its order:
+   * description, then the raw command, then the state verb.
+   *
+   * Step two has no truncation in the reference — a long command is shown
+   * whole at this layer and any clamping is the row's `text-overflow`, which
+   * is why `firstLine` is the only shaping done here.
+   */
+  function commandSummaryLine(input: Record<string, unknown>): string {
+    const description = commandSummary(input);
+    if (description !== undefined) {
+      return description;
+    }
+    return firstLine(
+      inputString(input, 'command') ?? inputString(input, 'cmd') ?? '',
+    );
+  }
+
+  /**
+   * Claude's `WP`. How a file-writing call can be previewed.
+   *
+   * Two adaptations, both forced by MP's tool shapes: the reference reads
+   * `file_path` where MP writes `path`, and the reference takes an `Edit`'s
+   * top-level `old_string`/`new_string` *before* looking at `edits`, so an
+   * `Edit` carrying only `edits` resolves to nothing there while MP's Edit
+   * accepts exactly that shape. The pair is therefore read from either place.
+   * The 200000-character ceiling is the reference's own number.
+   */
+  function fileChangeMode(
+    name: string,
+    input: Record<string, unknown>,
+  ): 'preview' | 'too_large' | undefined {
+    const path = input.file_path ?? input.path;
+    if (typeof path !== 'string') {
+      return undefined;
+    }
+    const alias = aliasToolName(name);
+    let parts: unknown[];
+    if (alias === 'write' || alias === 'create_file') {
+      parts = [input.content];
+    } else if (
+      typeof input.old_string === 'string' ||
+      typeof input.new_string === 'string'
+    ) {
+      parts = [input.old_string, input.new_string];
+    } else if (Array.isArray(input.edits) && input.edits.length > 0) {
+      parts = input.edits.flatMap(edit =>
+        typeof edit === 'object' && edit !== null
+          ? [
+              (edit as Record<string, unknown>).old_string,
+              (edit as Record<string, unknown>).new_string,
+            ]
+          : [undefined],
+      );
+    } else {
+      return undefined;
+    }
+    if (!parts.every(part => typeof part === 'string')) {
+      return undefined;
+    }
+    return (parts as string[]).every(part => part.length <= 200000)
+      ? 'preview'
+      : 'too_large';
+  }
+
+  /**
+   * Claude's `fN`. Thinking duration wording. The reference rounds to whole
+   * seconds first and renders nothing at or below zero.
+   */
+  function thinkingDuration(ms: number): string | undefined {
+    const seconds = Math.round(ms / 1000);
+    if (seconds <= 0) {
+      return undefined;
+    }
+    if (seconds < 60) {
+      return `Thought for ${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    if (minutes < 60) {
+      return rest > 0
+        ? `Thought for ${minutes}m ${rest}s`
+        : `Thought for ${minutes}m`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const minutesRest = minutes % 60;
+    return minutesRest > 0
+      ? `Thought for ${hours}h ${minutesRest}m`
+      : `Thought for ${hours}h`;
+  }
+
+  /**
+   * The category-level done wording with a count, from Claude's `BR`. A
+   * single-entry row means the reference has no plural form, so the singular
+   * stands for any count.
+   */
+  function categoryDoneLabel(
+    category: ToolCategory | undefined,
+    count: number,
+  ): string | undefined {
+    if (category === undefined) {
+      return undefined;
+    }
+    const pair = CATEGORY_DONE_LABELS[category];
+    const chosen = count === 1 ? pair[0] : (pair[1] ?? pair[0]);
+    return chosen.replace('{count}', String(count));
+  }
+
+  /**
+   * Resolve the label a tool row shows, in the reference's precedence:
+   * the running table, then the irregular past table, then the cancelled
+   * table with its three gates, then the category tables.
+   *
+   * Returns nothing when the reference has no wording, which lets a caller
+   * fall back to its own table instead of inventing a verb.
+   */
+  function toolLabel(
+    rawName: string,
+    input: Record<string, unknown>,
+    phase: ToolPhase,
+    count = 1,
+  ): string | undefined {
+    const name = aliasToolName(rawName);
+    const namespaced = isNamespacedToolName(rawName);
+    const category = toolCategory(rawName);
+
+    const remote = REMOTE_DEVICE_LABELS[rawName];
+    if (remote !== undefined) {
+      if (phase === 'running') {
+        return remote[0];
+      }
+      if (phase === 'cancelled') {
+        return `Stopped ${remote[0].charAt(0).toLowerCase()}${remote[0].slice(1)}`;
+      }
+      return remote[1];
+    }
+
+    if (phase === 'running') {
+      const cli = CLI_RUNNING_LABELS[name];
+      if (cli !== undefined) {
+        return cli;
+      }
+      const named = RUNNING_LABELS_BY_NAME[name];
+      if (named !== undefined) {
+        return named;
+      }
+      return categoryDoneOrRunning(category);
+    }
+
+    if (phase === 'cancelled') {
+      const cancellable =
+        !NEVER_CANCELLED_LABELS.has(name) &&
+        (!namespaced || CANCELLED_THROUGH_MCP.has(name));
+      if (cancellable) {
+        const cancelled = CANCELLED_LABELS_BY_NAME[name];
+        if (cancelled !== undefined) {
+          return cancelled;
+        }
+      }
+      return undefined;
+    }
+
+    if (!NEVER_DONE_LABELS.has(name)) {
+      const irregular = DONE_LABELS_BY_NAME[name];
+      if (irregular !== undefined) {
+        return irregular;
+      }
+    }
+    return categoryDoneLabel(category, count);
+  }
+
+  function categoryDoneOrRunning(
+    category: ToolCategory | undefined,
+  ): string | undefined {
+    return category === undefined
+      ? undefined
+      : CATEGORY_RUNNING_LABELS[category];
+  }
+
+  /**
+   * Claude's artifact action routing (`gR`): an explicit `input.action`, or
+   * `publish` when an artifact tool carries a publish key and no action.
+   *
+   * MP spells these as `Artifact.create` / `Artifact.read` / `Artifact.update`
+   * rather than a single `Artifact` tool with an `action` input, so the method
+   * after the dot is read as the action and takes precedence over `input.action`.
+   */
+  function artifactActionLabel(
+    rawName: string,
+    input: Record<string, unknown>,
+    phase: ToolPhase,
+  ): string | undefined {
+    const dot = rawName.indexOf('.');
+    const head = aliasToolName(dot === -1 ? rawName : rawName.slice(0, dot));
+    if (!ARTIFACT_TOOL_NAMES.has(head)) {
+      return undefined;
+    }
+    const method =
+      dot === -1 ? undefined : normaliseToolName(rawName.slice(dot + 1));
+    const action =
+      method ??
+      inputString(input, 'action') ??
+      (ARTIFACT_PUBLISH_KEYS.some(key => key in input) ? 'publish' : undefined);
+    if (action === undefined) {
+      return undefined;
+    }
+    const entry = ARTIFACT_ACTION_LABELS[action];
+    if (entry === undefined) {
+      return undefined;
+    }
+    return phase === 'running' ? entry[0] : entry[1];
   }
 
   function isJunkSummary(value: string): boolean {
@@ -515,6 +1545,50 @@ const ChatView = (() => {
     return candidates.find(c => !isJunkSummary(c)) ?? '';
   }
 
+  function parseArgs(argsRaw: string): Record<string, unknown> | null {
+    if (argsRaw === '') {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(argsRaw);
+      return typeof parsed === 'object' && parsed !== null
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The one-line summary for a settled or in-flight row.
+   *
+   * Command tools go through the reference's description filter chain; every
+   * other tool keeps the existing first-useful-string rule. The two answer
+   * different questions and the reference only replaces the first one, so the
+   * generic path is left alone rather than being folded into it.
+   */
+  function summaryText(
+    name: string,
+    variant: ToolVariant,
+    argsRaw: string,
+  ): string {
+    if (isCommandTool(name)) {
+      const input = parseArgs(argsRaw);
+      return input === null ? firstLine(argsRaw) : commandSummaryLine(input);
+    }
+    // Claude's `lR` under `shortenPaths`: the row names the file by its last two
+    // segments (`src/app.ts`) instead of the whole resolved path.
+    if (FILE_PATH_VARIANTS.has(variant)) {
+      const input = parseArgs(argsRaw);
+      const path =
+        input === null ? undefined : pickString(input, ['path', 'file_path']);
+      if (path !== undefined) {
+        return shortenPath(path);
+      }
+    }
+    return deriveSummary(variant, argsRaw);
+  }
+
   function deriveFilePath(
     variant: ToolVariant,
     argsRaw: string,
@@ -531,6 +1605,9 @@ const ChatView = (() => {
     if (typeof parsed !== 'object' || parsed === null) {
       return undefined;
     }
+    // Deliberately the full path: this value is the delivered-file map key,
+    // and shortening it would collide two files that share their last two
+    // segments. The display form is shortened in `summaryText` instead.
     return pickString(parsed as Record<string, unknown>, ['path', 'file_path']);
   }
 
@@ -693,6 +1770,7 @@ const ChatView = (() => {
     state: ToolState;
     callId: string;
     diffStat: DiffStat | null;
+    fileChange: 'preview' | 'too_large' | undefined;
   }
 
   function toolRowModel(
@@ -710,63 +1788,93 @@ const ChatView = (() => {
           : result.isError
             ? 'error'
             : 'ok';
-    const base = argsRaw === '' ? name : deriveSummary(variant, argsRaw);
+    const input = parseArgs(argsRaw) ?? {};
+    const phase: ToolPhase =
+      state === 'running'
+        ? 'running'
+        : state === 'stopped'
+          ? 'cancelled'
+          : 'done';
     const errorUrl =
       state === 'error' && name === 'Browser.navigate'
         ? (() => {
-            try {
-              const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
-              return typeof parsed.url === 'string' ? parsed.url : '';
-            } catch {
-              return '';
-            }
+            const url = input.url;
+            return typeof url === 'string' ? url : '';
           })()
         : '';
-    const title = isBlockedResult(result)
+
+    const descriptiveBase =
+      argsRaw === '' ? name : summaryText(name, variant, argsRaw);
+    let summary =
+      name === 'list_dir' || isQuestionTool(name) || PLAN_TOOLS.has(name)
+        ? ''
+        : descriptiveBase;
+    if (name === 'Tools' && Array.isArray(input.names)) {
+      summary = input.names.join(', ');
+    }
+
+    // The reference's category labels are its *last resort*: "Ran a command"
+    // only appears when there is no description and no command to show. This
+    // row is `<title> <summary>`, so when a detail is on the line the short
+    // verb stays -- "Read a file src/app.ts" would state the same thing twice.
+    const detailSpliced = summary !== '';
+    const sentence = (label: string | undefined) =>
+      detailSpliced ? undefined : label;
+
+    const mpCompleted =
+      TOOL_TITLES[name] ??
+      (variant === 'others' ? name : VARIANT_TITLES[variant]);
+    const mpRunning =
+      RUNNING_TITLES[name] || VARIANT_RUNNING_TITLES[variant] || mpCompleted;
+
+    // A namespaced MCP call is named after its server rather than shown as its
+    // raw id, and that name is not a sentence to append a detail to.
+    const connector = connectorTitle(name);
+
+    // Three of the reference's tables answer with a whole sentence rather than
+    // a verb to pair with a detail: the artifact actions, the eight fixed
+    // remote-device ids, and the cancelled verbs. Those replace the line
+    // instead of being appended to it, so the detail is dropped. The cancelled
+    // table only fires where it has an entry -- anything without one keeps its
+    // completed label, which is the reference's own gate.
+    const sentenceTitle =
+      artifactActionLabel(name, input, phase) ??
+      (REMOTE_DEVICE_LABELS[name] === undefined
+        ? undefined
+        : toolLabel(name, input, phase)) ??
+      (phase === 'cancelled' ? toolLabel(name, input, 'cancelled') : undefined);
+    if (sentenceTitle !== undefined) {
+      summary = '';
+    }
+
+    const completedTitle = isBlockedResult(result)
       ? 'Blocked'
       : errorUrl
         ? 'Failed to fetch'
         : SUBAGENT_TOOLS.has(name)
-          ? state === 'running'
-            ? 'Running subagent'
-            : 'Subagent'
-          : (TOOL_TITLES[name] ??
-            (variant === 'others' ? name : VARIANT_TITLES[variant]));
-    const descriptiveBase =
-      variant === 'bash'
-        ? (() => {
-            try {
-              const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
-              const description =
-                typeof parsed.description === 'string'
-                  ? parsed.description.trim()
-                  : '';
-              const command =
-                typeof parsed.command === 'string'
-                  ? parsed.command.trim()
-                  : typeof parsed.cmd === 'string'
-                    ? parsed.cmd.trim()
-                    : '';
-              return firstLine(description || command);
-            } catch {
-              return '';
-            }
-          })()
-        : base;
-    let summary =
-      name === 'list_dir' ||
-      isQuestionTool(name) ||
-      ['Todo', 'TodoWrite', 'todo_write'].includes(name)
-        ? ''
-        : descriptiveBase;
-    if (name === 'Tools') {
-      try {
-        const args = JSON.parse(argsRaw);
-        if (Array.isArray(args.names)) {
-          summary = args.names.join(', ');
-        }
-      } catch {}
-    }
+          ? 'Subagent'
+          : (connector ??
+            sentence(toolLabel(name, input, 'done')) ??
+            mpCompleted);
+    // An unknown tool is shown by its raw name when settled, and keeps that
+    // name mid-flight too — a wrong tense beats a wrong tool.
+    // `||`, not `??`: an empty variant title means "no running form", and a
+    // nullish chain would make that empty string the visible label.
+    const runningTitle = SUBAGENT_TOOLS.has(name)
+      ? 'Running subagent'
+      : isQuestionTool(name)
+        ? (connector ??
+          sentence(toolLabel(name, input, 'running')) ??
+          RUNNING_TITLES[name] ??
+          'Asking a question')
+        : (connector ??
+          sentence(toolLabel(name, input, 'running')) ??
+          mpRunning);
+
+    // A stopped call previously rendered with the completed verb, which says
+    // the opposite of what happened.
+    const title =
+      sentenceTitle ?? (phase === 'running' ? runningTitle : completedTitle);
     let output = result === undefined || !result.text ? null : result.text;
     if (output) {
       try {
@@ -809,6 +1917,7 @@ const ChatView = (() => {
       state,
       callId,
       diffStat: deriveDiffStat(name, argsRaw),
+      fileChange: fileChangeMode(name, input),
     };
   }
 
@@ -1164,6 +2273,95 @@ const ChatView = (() => {
     return root;
   }
 
+  /**
+   * Keep the shimmer clone's glyphs identical to the live label.
+   *
+   * A running label's text can be rewritten in place (a streaming summary, a
+   * changing path), and the clone is a separate node — without this it would
+   * freeze on the first frame's wording while the real text moved on.
+   * Reading the label deliberately skips the clone, so writing the clone
+   * cannot feed back into the next read.
+   */
+  function trackShimmerClone(host: ChatNode, clone: ChatNode): void {
+    if (typeof MutationObserver === 'undefined' || !DOC) {
+      return;
+    }
+    const target = host as Element;
+    if (typeof target.nodeType !== 'number') {
+      return;
+    }
+    // Test harnesses build stand-in nodes with no owner document; observing
+    // those would throw, and there is nothing to keep in sync anyway.
+    if ((target as unknown as {ownerDocument?: unknown}).ownerDocument !== DOC) {
+      return;
+    }
+    const cloneNode = clone as Element;
+    const readLabel = (): string => {
+      let out = '';
+      for (const child of Array.from(target.childNodes)) {
+        if (child === cloneNode) {
+          continue;
+        }
+        out += child.textContent ?? '';
+      }
+      return out;
+    };
+    new MutationObserver(() => {
+      const next = readLabel();
+      if (cloneNode.textContent !== next) {
+        cloneNode.textContent = next;
+      }
+    }).observe(target, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  }
+
+  /**
+   * A label that lights up while its row is in flight.
+   *
+   * The text itself is never recoloured: a second copy of the glyphs is stacked
+   * on top, punched out with `mask-clip: text`, and a 120deg band is swept
+   * across that copy. When `shimmering` is false no clone is built at all, so
+   * settled rows cost nothing.
+   */
+  function shimmerText(
+    text: string,
+    opts: {
+      shimmering: boolean;
+      paused?: boolean;
+      delayMs?: number;
+      className?: string;
+    },
+  ): ChatNode {
+    const root = h('span', {
+      class: opts.className ? `mp-shimmer ${opts.className}` : 'mp-shimmer',
+    });
+    root.setAttribute('data-shimmering', opts.shimmering ? 'true' : 'false');
+    const vars: string[] = [];
+    if (opts.shimmering && opts.delayMs) {
+      vars.push(`--mp-shimmer-delay:${opts.delayMs}ms`);
+    }
+    if (opts.shimmering && opts.paused) {
+      vars.push('--mp-shimmer-play-state:paused');
+    }
+    if (vars.length > 0) {
+      root.setAttribute('style', `${vars.join(';')};`);
+    }
+    attach(root, text);
+    if (opts.shimmering) {
+      const clone = h('span', {
+        class: 'mp-shimmer-clone',
+        'aria-hidden': 'true',
+      });
+      attach(clone, text);
+      attach(root, clone);
+      trackShimmerClone(root, clone);
+    }
+    return root;
+  }
+
   function toolRowNode(model: ToolRowModel, scope = ''): ChatNode {
     const root = h('div', {class: 'mp-chat-tool'});
     root.setAttribute('data-tool', '');
@@ -1196,9 +2394,12 @@ const ChatView = (() => {
       const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
       attach(sep, ' ');
       collapsed.push(sep);
-      const summary = h('span', {class: 'mp-chat-summary'});
-      attach(summary, summaryText);
-      collapsed.push(summary);
+      collapsed.push(
+        shimmerText(summaryText, {
+          shimmering: model.state === 'running',
+          className: 'mp-chat-summary',
+        }),
+      );
     }
 
     if (
@@ -1223,7 +2424,13 @@ const ChatView = (() => {
     }
 
     const body: ChatNode[] = [];
-    const diff = deriveDiff(model.name, model.argsRaw ?? '');
+    // `too_large` is the reference's refusal to preview a change whose strings
+    // exceed 200000 characters: the row keeps its diffstat and drops the body
+    // rather than rendering a diff too big to read.
+    const diff =
+      model.fileChange === 'too_large'
+        ? null
+        : deriveDiff(model.name, model.argsRaw ?? '');
     const command = toolCommandOf(model);
     const singleLine = command !== null && command.rest === '';
     let outputInCard = false;
@@ -1319,7 +2526,12 @@ const ChatView = (() => {
     running = false,
     thinkId = '',
   ): ChatNode {
-    const summaryText = running ? latestLine(reasoning) : firstLine(reasoning);
+    // Claude's `TA` trims a summary's trailing punctuation, and the bare word
+    // "Thinking" is what the reference shows when it has no summary left to
+    // derive -- it is the one case where the block renders text of its own.
+    const derived = running ? latestLine(reasoning) : firstLine(reasoning);
+    const summaryText =
+      derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
     const summary = h('span', {class: 'mp-chat-summary'});
     if (running) {
       summary.setAttribute('data-follow-end', 'true');
@@ -1374,13 +2586,20 @@ const ChatView = (() => {
     node: HTMLElement,
     text: string,
     running: boolean,
+    durationMs?: number,
   ): void {
     node.setAttribute('data-state', running ? 'running' : 'ok');
+    // Claude's `fN` wording ("Thought for 12s") replaces the bare verb once
+    // the block settles and a real duration is known.
+    const settled =
+      durationMs === undefined ? undefined : thinkingDuration(durationMs);
     node.querySelector('.mp-chat-title')!.textContent = running
       ? 'Thinking…'
-      : 'Thought';
+      : (settled ?? 'Thought');
     const summary = node.querySelector('.mp-chat-summary')!;
-    const preview = running ? latestLine(text) : firstLine(text);
+    const derived = running ? latestLine(text) : firstLine(text);
+    const preview =
+      derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
     if (summary.textContent !== preview) {
       summary.textContent = preview;
     }
@@ -2066,11 +3285,21 @@ const ChatView = (() => {
           attach(label, h('span', {class: 'mp-chat-title'}, model.title));
           if (model.summary) {
             attach(label, h('span', {class: 'mp-chat-tool-sep'}, ' '));
-            attach(label, h('span', {class: 'mp-chat-summary'}, model.summary));
+            attach(
+              label,
+              shimmerText(model.summary, {
+                shimmering: model.state === 'running',
+                className: 'mp-chat-summary',
+              }),
+            );
           }
         }
       } else {
-        attach(label, toolGroupLabel(chips));
+        const inFlight = chips.some(chip => chip.result === undefined);
+        attach(
+          label,
+          shimmerText(toolGroupLabel(chips), {shimmering: inFlight}),
+        );
       }
     }
     if (model?.diffStat) {
@@ -2189,14 +3418,87 @@ const ChatView = (() => {
     return root;
   }
 
+  /**
+   * Claude's aggregate fallback for a step line: `Used a tool` / `Used {count}
+   * tools` (`BRG8o6gNdU` and `JtrYJ8F4gT`).
+   */
+  const USED_A_TOOL = 'Used a tool';
+
+  function usedTools(count: number): string {
+    return `Used ${count} tools`;
+  }
+
+  /**
+   * The order a settled group lists its groups in. Claude sorts by a tier
+   * table (`eM`) that lives in an uncaptured chunk, so the *order* here is MP's
+   * and only the wording is the reference's; a category the reference names is
+   * listed before one it does not.
+   */
+  const GROUP_CATEGORY_ORDER: readonly ToolCategory[] = [
+    'bash',
+    'kill_bash',
+    'tmux',
+    'read',
+    'view',
+    'web_fetch',
+    'web',
+    'grep',
+    'glob',
+    'edit',
+    'write',
+    'notebook_edit',
+    'delete_file',
+    'task',
+    'skill',
+    'plan',
+    'todo',
+    'code',
+    'preview',
+    'screenshot',
+    'browser',
+    'share',
+    'tool_search',
+    'past_chats',
+    'project_knowledge',
+    'drive_search',
+    'ask_user_question',
+    'bash_output',
+    'enter_plan_mode',
+    'exit_plan_mode',
+    'artifact',
+  ];
+
+  /** Claude keeps the top three groups and accounts for the rest. */
+  const GROUP_MAX_GROUPS = 3;
+
+  /** MP's bucket wording, used only for a tool the reference cannot name. */
   const GROUP_CLAUSES: Record<ToolVariant, (n: number) => string> = {
     bash: n => `Ran ${n} command${n === 1 ? '' : 's'}`,
     read: n => `Read ${n} file${n === 1 ? '' : 's'}`,
     search: n => `Searched ${n} time${n === 1 ? '' : 's'}`,
     write: n => `Wrote ${n} file${n === 1 ? '' : 's'}`,
     edit: n => `Edited ${n} file${n === 1 ? '' : 's'}`,
-    code: n => `Used ${n} tool${n === 1 ? '' : 's'}`,
-    others: n => `Used ${n} tool${n === 1 ? '' : 's'}`,
+    code: n => usedTools(n),
+    others: n => usedTools(n),
+  };
+
+  /**
+   * In-flight group labels.
+   *
+   * The reference renders a running group as "{gerund} {count} {noun}…" and
+   * does it only for the five names in its read/write/edit/bash set — every
+   * other tool gets a single-tool label instead. The count is of the tools
+   * still in flight, not of the whole run. An empty string means "this family
+   * has no running form", which sends the caller to the single-tool fallback.
+   */
+  const GROUP_RUNNING_CLAUSES: Record<ToolVariant, (n: number) => string> = {
+    bash: n => `Running ${n} command${n === 1 ? '' : 's'}…`,
+    read: n => `Reading ${n} file${n === 1 ? '' : 's'}…`,
+    write: n => `Creating ${n} file${n === 1 ? '' : 's'}…`,
+    edit: n => `Editing ${n} file${n === 1 ? '' : 's'}…`,
+    search: n => `Searching ${n} time${n === 1 ? '' : 's'}…`,
+    code: () => '',
+    others: () => '',
   };
 
   const GROUP_ORDER: readonly ToolVariant[] = [
@@ -2221,8 +3523,28 @@ const ChatView = (() => {
     );
   }
 
-  function failedCount(chips: TurnChip[]): number {
-    return chips.filter(chip => chip.result?.isError === true).length;
+  /** The label for a set of tools that have not settled yet. */
+  function runningGroupClause(pending: TurnChip[]): string {
+    const variants = new Set(pending.map(chip => classifyTool(chip.name)));
+    if (variants.size === 1) {
+      const clause = GROUP_RUNNING_CLAUSES[[...variants][0]](pending.length);
+      if (clause) {
+        return clause;
+      }
+    }
+    if (pending.length === 1) {
+      const chip = pending[0];
+      const variant = classifyTool(chip.name);
+      // `||`, not `??`: an empty variant title means "no running form", and a
+      // nullish chain would happily render that empty string as the label.
+      const active =
+        RUNNING_TITLES[chip.name] ||
+        VARIANT_RUNNING_TITLES[variant] ||
+        TOOL_TITLES[chip.name] ||
+        chip.name;
+      return `${active}…`;
+    }
+    return `${pending.length} tools running…`;
   }
 
   function toolGroupLabel(chips: TurnChip[]): string {
@@ -2243,49 +3565,91 @@ const ChatView = (() => {
     const pending = chips.filter(chip => chip.result === undefined);
     if (pending.length) {
       const completed = chips.filter(chip => chip.result !== undefined);
-      const active =
-        pending.length === 1
-          ? TOOL_TITLES[pending[0].name] || pending[0].name
-          : `${pending.length} tools`;
       return (
-        `Running ${active}` +
+        runningGroupClause(pending) +
         (completed.length ? ` · ${toolGroupLabel(completed)}` : '')
       );
     }
-    const counts = new Map<ToolVariant, number>();
-    const failures = new Map<ToolVariant, number>();
-    for (const chip of chips) {
-      const variant = classifyTool(chip.name);
-      counts.set(variant, (counts.get(variant) || 0) + 1);
-      if (chip.result?.isError === true) {
-        failures.set(variant, (failures.get(variant) || 0) + 1);
+    // Claude counts per *category* and words each group with that category's
+    // own count form. MP buckets per render variant, so a tool the reference
+    // cannot name still groups through its variant clause -- the two keys are
+    // kept apart rather than forced onto one taxonomy, because MP's `search`
+    // bucket covers `grep`, `glob` and `web`, which the reference words
+    // differently.
+    const categories = new Map<ToolCategory, {count: number; failed: number}>();
+    const buckets = new Map<ToolVariant, {count: number; failed: number}>();
+    const bump = <K>(
+      map: Map<K, {count: number; failed: number}>,
+      key: K,
+      failed: boolean,
+    ) => {
+      const entry = map.get(key);
+      if (entry === undefined) {
+        map.set(key, {count: 1, failed: failed ? 1 : 0});
+        return;
       }
-    }
-    const order = GROUP_ORDER.filter(variant => counts.has(variant));
-    const clauseFor = (variant: ToolVariant) => {
-      const base = GROUP_CLAUSES[variant](counts.get(variant) as number);
-      const failed = failures.get(variant) || 0;
-      return failed > 0 ? `${base} (${failed} failed)` : base;
+      entry.count += 1;
+      if (failed) {
+        entry.failed += 1;
+      }
     };
-    if (order.length === 1) {
-      return clauseFor(order[0]);
+    for (const chip of chips) {
+      const failed = chip.result?.isError === true;
+      const category = toolCategory(chip.name);
+      if (category !== undefined) {
+        bump(categories, category, failed);
+        continue;
+      }
+      bump(buckets, classifyTool(chip.name), failed);
     }
-    if (!order.length) {
-      return `Ran ${chips.length} tools`;
+
+    const groups: Array<{order: number; label: string; failed: number}> = [];
+    for (const [category, entry] of categories) {
+      const index = GROUP_CATEGORY_ORDER.indexOf(category);
+      groups.push({
+        order: index === -1 ? GROUP_CATEGORY_ORDER.length : index,
+        label: categoryDoneLabel(category, entry.count) as string,
+        failed: entry.failed,
+      });
     }
-    const failed = failedCount(chips);
-    const placed = [...failures.keys()].some(variant =>
-      order.includes(variant),
-    );
-    const parts = order.map(clauseFor);
-    if (failed > 0 && !placed) {
-      parts[parts.length - 1] = `${parts[parts.length - 1]} (${failed} failed)`;
+    for (const [variant, entry] of buckets) {
+      groups.push({
+        order: GROUP_ORDER.indexOf(variant) + GROUP_CATEGORY_ORDER.length,
+        label: GROUP_CLAUSES[variant](entry.count),
+        failed: entry.failed,
+      });
     }
-    return parts
+    if (!groups.length) {
+      return chips.length === 1 ? USED_A_TOOL : usedTools(chips.length);
+    }
+
+    const withFailures = (group: {label: string; failed: number}) =>
+      group.failed > 0
+        ? `${group.label} (${group.failed} failed)`
+        : group.label;
+
+    if (groups.length === 1) {
+      return withFailures(groups[0]);
+    }
+
+    groups.sort((a, b) => a.order - b.order);
+    const shown = groups.slice(0, GROUP_MAX_GROUPS);
+    const hidden = groups.length - shown.length;
+    // A failure count rides its own clause, and lands on the last shown group
+    // when no shown group carries one of its own.
+    const failureTotal = groups.reduce((sum, group) => sum + group.failed, 0);
+    const placed = shown.some(group => group.failed > 0);
+    const parts = shown.map(withFailures);
+    if (failureTotal > 0 && !placed) {
+      parts[parts.length - 1] =
+        `${parts[parts.length - 1]} (${failureTotal} failed)`;
+    }
+    const label = parts
       .map((part, index) =>
         index === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
       )
       .join(', ');
+    return hidden > 0 ? `${label}, and ${hidden} more steps` : label;
   }
 
   function formatRunMeta(ms: number, tokens: number | null): string {
@@ -2697,6 +4061,10 @@ const ChatView = (() => {
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
     let thinkingText = '';
+    // Claude's duration comes from the pair of timestamps on the thinking
+    // block; the live snapshot carries none, so the span this row observed is
+    // the clock instead of a fabricated number.
+    let thinkingStartedAt = 0;
     const traceNodes = new Map<
       string,
       {node: HTMLElement; signature: string}
@@ -3104,17 +4472,27 @@ const ChatView = (() => {
           if (!thinking) {
             thinking = thinkNode('', true, `${scope}:head`) as HTMLElement;
           }
+          if (!thinkingStartedAt) {
+            thinkingStartedAt = Date.now();
+          }
           const body = thinking.querySelector<HTMLElement>(
             '.mp-chat-think-body',
           )!;
           appendText(body, thinkingText, nextThinking);
           const summary = thinking.querySelector('.mp-chat-summary')!;
-          const latestSummary = latestLine(nextThinking);
+          const derived = latestLine(nextThinking);
+          const latestSummary =
+            derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
           if (summary.textContent !== latestSummary) {
             summary.textContent = latestSummary;
           }
           thinkingText = nextThinking;
-          updateThinkingState(thinking, nextThinking, !snapshot.answer);
+          updateThinkingState(
+            thinking,
+            nextThinking,
+            !snapshot.answer,
+            Date.now() - thinkingStartedAt,
+          );
           desired.push(thinking);
         }
         const nextAnswer = String(snapshot.answer || '');
@@ -3473,6 +4851,16 @@ const ChatView = (() => {
       deriveDiff,
       formatClock,
       relativeTime,
+      toolGroupLabel,
+      runningGroupClause,
+      normaliseToolName,
+      toolCategory,
+      toolLabel,
+      commandSummary,
+      fileChangeMode,
+      thinkingDuration,
+      connectorDisplayName,
+      shortenPath,
     },
   };
 })();

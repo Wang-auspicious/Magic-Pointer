@@ -457,7 +457,17 @@
 }
 
 .mp-chat-title {
-  flex: 0 0 auto;
+  /* The reference marks a tool card `clampTitle: true` because some of its
+   * titles are whole sentences -- "Stopped running the command", "Ran a
+   * command on your computer". Those are now rendered here, so the title has
+   * to be allowed to shrink and clip instead of pushing the summary off the
+   * row. `0 1 auto` keeps the short verbs ("Read", "Ran") at their natural
+   * width and only clamps when the line runs out. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--mp-text-secondary);
   font-weight: var(--mp-weight-regular);
 }
@@ -866,11 +876,79 @@
 }
 
 .mp-chat-diff-add {
-  color: #1e9e3c;
+  color: var(--mp-git-added);
 }
 
 .mp-chat-diff-del {
-  color: #cd2054;
+  color: var(--mp-git-removed);
+}
+
+/* Running-label shimmer.
+   The text is never recoloured. A byte-identical copy of the glyphs is stacked
+   on top, punched out with mask-clip:text, and a 120deg band is swept across
+   that copy. The original sits untouched underneath, so a running label reads
+   as lit rather than repainted. Idle labels carry no clone at all, which keeps
+   the cost at zero for everything not currently running. */
+
+@keyframes mp-shimmer-band {
+  0%,
+  15% {
+    animation-timing-function: cubic-bezier(.714, .121, .211, .888);
+    translate: -62.5%;
+  }
+
+  85%,
+  100% {
+    translate: -12.5%;
+  }
+}
+
+.mp-shimmer {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.mp-shimmer-clone {
+  display: none;
+}
+
+@supports (-webkit-mask-clip: text) {
+  .mp-shimmer[data-shimmering='true'] > .mp-shimmer-clone {
+    position: absolute;
+    inset: 0;
+    display: block;
+    overflow: clip;
+    padding: inherit;
+    white-space: inherit;
+    pointer-events: none;
+    -webkit-text-fill-color: transparent;
+    -webkit-mask-image: linear-gradient(#000 0 0);
+    -webkit-mask-clip: text;
+  }
+
+  .mp-shimmer[data-shimmering='true'] > .mp-shimmer-clone::after {
+    content: '';
+    position: absolute;
+    inset: 0 -300% 0 0;
+    translate: -62.5%;
+    background-image: linear-gradient(
+      120deg,
+      transparent 37.5%,
+      var(--mp-shimmer-peak) 50%,
+      transparent 62.5%
+    );
+    animation: mp-shimmer-band 3s linear infinite;
+    animation-delay: var(--mp-shimmer-delay, 0s);
+    animation-play-state: var(--mp-shimmer-play-state, running);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-shimmer-clone {
+    display: none !important;
+  }
 }
 
 .mp-chat-tool[data-error-title='true'] > .mp-chat-disclosure > .mp-chat-row .mp-chat-title {
