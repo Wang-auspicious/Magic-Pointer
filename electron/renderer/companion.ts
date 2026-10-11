@@ -206,13 +206,13 @@ async function submitCompanionTurn(payload: {
   cpAgentSessionId = null;
   cpComposer?.running(true);
   try {
-    const response = await Data.sendConversation(
-      currentId,
-      text,
-      'workspace-write',
+    const response = await Data.sendConversation({
+      conversationId: currentId,
+      question: text,
+      permissionPreset: 'workspace-write',
       requestId,
-      currentWorkspaceRoot,
-    );
+      workspaceRoot: currentWorkspaceRoot,
+    });
     if (response?.ok && response.conversationId) {
       currentId = String(response.conversationId);
       try {

@@ -9,9 +9,10 @@ interface ProjectConversation
 interface ProjectWorkspaceOptions {
   data: MagicPointerDataApi;
   onBack(): void;
-  onCompose(root: string, prompt: string, projectId?: string): void;
+  onSubmit(prompt: string): void;
   onChanged(project: MagicPointerProject): void;
   draft?: string;
+  submissionError?: string;
   onDraftChange?(text: string): void;
 }
 
@@ -122,7 +123,9 @@ declare global {
   ): void {
     let project = initialProject;
     let chatDraft = options.draft || '';
+    let submissionError = options.submissionError || '';
     let saving = false;
+    let submitting = false;
     const root = document.createElement('section');
     root.className = 'mp-project-workspace';
     root.setAttribute('aria-label', project.name);
@@ -163,7 +166,7 @@ declare global {
             </details>
           </div>
         </header>
-        <p class="mp-project-status" data-project-status role="status" hidden></p>
+        <p class="mp-project-status" data-project-status role="status" ${submissionError ? '' : 'hidden'}>${escape(submissionError)}</p>
         ${project.archived ? `<div class="mp-project-archive-note"><p>This project is archived. Your chats, instructions, and files are saved.</p>${action('Restore project', 'restore')}</div>` : ''}
         <div class="mp-project-columns">
           <div class="mp-project-chats">
@@ -208,12 +211,22 @@ declare global {
       );
       if (composer) {
         composer.value = chatDraft;
+        syncSubmitState();
       }
       const searchInput = root.querySelector<HTMLInputElement>(
         '[data-project-chat-search]',
       )!;
       searchInput.value = search;
       searchInput.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+
+    function syncSubmitState(): void {
+      const form = root.querySelector<HTMLFormElement>('.mp-project-compose');
+      const submit = form?.querySelector<HTMLButtonElement>('[type="submit"]');
+      if (form && submit) {
+        submit.disabled = submitting || !chatDraft.trim();
+        form.setAttribute('aria-busy', String(submitting));
+      }
     }
 
     async function save(patch: MagicPointerProjectPatch): Promise<boolean> {
@@ -330,6 +343,9 @@ declare global {
       const input = event.target as HTMLInputElement;
       if (input.matches('.mp-project-compose textarea')) {
         chatDraft = input.value;
+        submissionError = '';
+        status('');
+        syncSubmitState();
         options.onDraftChange?.(chatDraft);
         return;
       }
@@ -359,12 +375,31 @@ declare global {
         return;
       }
       event.preventDefault();
+      if (submitting) {
+        return;
+      }
       const prompt = String(new FormData(form).get('prompt') || '').trim();
       if (prompt) {
-        options.onCompose(project.root, prompt, project.id);
+        submitting = true;
+        syncSubmitState();
+        options.onSubmit(prompt);
         chatDraft = '';
         form.querySelector<HTMLTextAreaElement>('textarea')!.value = '';
         options.onDraftChange?.('');
+      }
+    });
+
+    root.addEventListener('keydown', event => {
+      const input = event.target as HTMLElement;
+      if (
+        input.matches('.mp-project-compose textarea') &&
+        event.key === 'Enter' &&
+        !event.shiftKey &&
+        !event.isComposing &&
+        event.keyCode !== 229
+      ) {
+        event.preventDefault();
+        input.closest('form')?.requestSubmit();
       }
     });
 

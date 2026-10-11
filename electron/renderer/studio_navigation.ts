@@ -16,6 +16,7 @@ declare global {
     sourceIds: string[];
     workspaceRoot: string;
     additionalFolders?: string[];
+    returnToProject?: string;
     projectId?: string;
   }
 
@@ -77,6 +78,10 @@ declare global {
           api.visit(location);
         } else {
           entries[index] = {...location};
+          if (index > 0 && key(entries[index - 1]) === key(location)) {
+            entries.splice(index, 1);
+            index -= 1;
+          }
         }
       },
       move(delta) {

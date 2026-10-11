@@ -5431,17 +5431,20 @@ const VIEWS: Record<string, string> = Object.fromEntries(
 const libraryUi = studioLibraries.createController({
   data: Data,
   show,
-  compose: (prompt: string) => {
-    startNewChat();
-    show('chat');
-    const input = document.querySelector<HTMLTextAreaElement>(
-      '#composer-form textarea',
-    );
-    if (input) {
-      input.value = prompt;
-      fitComposer(input);
-      input.focus();
-    }
+  compose: composeLibraryPrompt,
+  startProjectChat: (project: MagicPointerProject, prompt: string) => {
+    setActiveProject(project.root, project.id);
+    composeLibraryPrompt(prompt);
+    const location = composerLocation();
+    captureComposerDraft();
+    const draft = windowNavigation.draft(location)!;
+    windowNavigation.saveDraft(location, {
+      ...draft,
+      returnToProject: ProjectScope.key(project),
+    });
+    (
+      document.getElementById('composer-form') as HTMLFormElement
+    ).requestSubmit();
   },
   openProject: openProjectFromPicker,
   selectProject: setActiveProject,
@@ -5466,6 +5469,19 @@ const libraryUi = studioLibraries.createController({
   },
   conversationId: () => activeConversationId,
 });
+
+function composeLibraryPrompt(prompt: string): void {
+  startNewChat();
+  show('chat');
+  const input = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea',
+  );
+  if (input) {
+    input.value = prompt;
+    fitComposer(input);
+    input.focus();
+  }
+}
 
 const personalActivityUi = globalThis.PersonalActivityView?.mount(
   document.getElementById('personal-activity'),
@@ -5624,6 +5640,7 @@ function captureComposerDraft(): void {
     workspaceRoot: displayedComposer.workspaceRoot,
     projectId: displayedComposer.projectId,
     additionalFolders: [...composerAdditionalFolders],
+    returnToProject: windowNavigation.draft(owner.location)?.returnToProject,
   });
 }
 
@@ -12226,6 +12243,8 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       workspaceRoot: activeProjectRoot,
       projectId: activeProjectId,
       additionalFolders: [...composerAdditionalFolders],
+      returnToProject:
+        windowNavigation.draft(navigationLocation)?.returnToProject,
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
@@ -12344,25 +12363,36 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       ) {
         return;
       }
-      const response = await Data.sendConversation(
+      const response = await Data.sendConversation({
         conversationId,
         question,
         permissionPreset,
         requestId,
-        workspace.projectRoot,
+        workspaceRoot: workspace.projectRoot,
         effort,
-        permissionChoice,
-        attachmentPaths,
+        permissionGrant: permissionChoice?.grant,
+        permissionDeny: permissionChoice?.deny,
+        permissionGrantOnce: permissionChoice?.once,
+        attachments: attachmentPaths,
         taskInput,
-        workspace.executionWorkspaceRoot,
-        workspace.projectId,
-        navigationDraft.additionalFolders,
-      );
+        executionWorkspaceRoot: workspace.executionWorkspaceRoot,
+        projectId: workspace.projectId,
+        additionalFolders: navigationDraft.additionalFolders,
+      });
       if (response?.conversationId) {
         acceptSubmissionNavigation(requestId, String(response.conversationId));
       }
       if (!response?.ok && !windowNavigation.draft(submission.location)?.text) {
         windowNavigation.saveDraft(submission.location, submission.draft);
+      }
+      if (
+        (!response?.ok || !response.conversationId) &&
+        !submission.accepted &&
+        submission.draft.returnToProject
+      ) {
+        throw new Error(
+          response?.error || 'Could not create the conversation.',
+        );
       }
       if (!isCurrentSubmission()) {
         await renderSidebar();
@@ -12428,6 +12458,25 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     } catch (error) {
       if (!windowNavigation.draft(submission.location)?.text) {
         windowNavigation.saveDraft(submission.location, submission.draft);
+      }
+      const returnToProject = submission.draft.returnToProject;
+      if (!submission.accepted && returnToProject) {
+        const location: StudioLocation = {kind: 'project', id: returnToProject};
+        if (!windowNavigation.draft(location)?.text) {
+          windowNavigation.saveDraft(location, submission.draft);
+        }
+        libraryUi.setProjectSubmissionError(
+          returnToProject,
+          error instanceof Error ? error.message : String(error),
+        );
+        if (!isCurrentSubmission()) {
+          return;
+        }
+        if (!textarea.value.trim() || textarea.value === submission.draft.text) {
+          windowNavigation.replace(location);
+          show('projects', returnToProject);
+          return;
+        }
       }
       if (!isCurrentSubmission()) {
         return;

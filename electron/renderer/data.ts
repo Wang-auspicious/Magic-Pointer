@@ -190,6 +190,23 @@ declare global {
     record?: Record<string, unknown>;
   }
 
+  interface MagicPointerConversationSend {
+    conversationId?: string | null;
+    projectId?: string;
+    question: string;
+    attachments?: string[];
+    taskInput?: MagicPointerTaskInput;
+    permissionPreset?: string;
+    requestId?: string;
+    workspaceRoot?: string;
+    additionalFolders?: string[];
+    executionWorkspaceRoot?: string;
+    effort?: string;
+    permissionGrant?: string;
+    permissionDeny?: string;
+    permissionGrantOnce?: string;
+  }
+
   type MagicPointerProjectPreview =
     | {kind: 'text'; text: string; truncated: boolean}
     | {
@@ -888,22 +905,7 @@ declare global {
         conversation?: MagicPointerConversation;
         error?: string;
       }>;
-      send(payload: {
-        conversationId?: string | null;
-        projectId?: string;
-        question: string;
-        attachments?: string[];
-        taskInput?: MagicPointerTaskInput;
-        permissionPreset?: string;
-        requestId?: string;
-        workspaceRoot?: string;
-        additionalFolders?: string[];
-        executionWorkspaceRoot?: string;
-        effort?: string;
-        permissionGrant?: string;
-        permissionDeny?: string;
-        permissionGrantOnce?: string;
-      }): Promise<Record<string, any>>;
+      send(payload: MagicPointerConversationSend): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{
         ok?: boolean;
         canceled?: boolean;
@@ -1258,18 +1260,7 @@ declare global {
       error?: string;
     }>;
     sendConversation(
-      conversationId: string | null,
-      question: string,
-      permissionPreset?: string,
-      requestId?: string,
-      workspaceRoot?: string,
-      effort?: string,
-      permission?: {grant?: string; deny?: string; once?: string},
-      attachments?: string[],
-      taskInput?: MagicPointerTaskInput,
-      executionWorkspaceRoot?: string,
-      projectId?: string,
-      additionalFolders?: string[],
+      request: MagicPointerConversationSend,
     ): Promise<Record<string, any>>;
     respondConversation(
       payload: MagicPointerInputResponse,
@@ -1903,37 +1894,16 @@ const Data: MagicPointerDataApi = {
   },
 
   async sendConversation(
-    conversationId: string | null,
-    question: string,
-    permissionPreset?: string,
-    requestId?: string,
-    workspaceRoot?: string,
-    effort?: string,
-    permission?: {grant?: string; deny?: string; once?: string},
-    attachments: string[] = [],
-    taskInput?: MagicPointerTaskInput,
-    executionWorkspaceRoot?: string,
-    projectId?: string,
-    additionalFolders?: string[],
+    request: MagicPointerConversationSend,
   ): Promise<Record<string, any>> {
     if (!hasBridge()) {
       return {ok: false, error: '请在 Magic Pointer 应用里发送。'};
     }
     return bridge()!.conversations.send({
-      conversationId,
-      projectId,
-      question,
-      attachments,
-      taskInput,
-      permissionPreset: permissionPreset || 'workspace-write',
-      requestId,
-      workspaceRoot,
-      executionWorkspaceRoot,
-      additionalFolders,
-      effort: effort || 'high',
-      permissionGrant: permission?.grant,
-      permissionDeny: permission?.deny,
-      permissionGrantOnce: permission?.once,
+      ...request,
+      attachments: request.attachments || [],
+      permissionPreset: request.permissionPreset || 'workspace-write',
+      effort: request.effort || 'high',
     });
   },
 

@@ -586,6 +586,7 @@
     data: MagicPointerDataApi;
     show(view: string, projectKey?: string): void;
     compose(prompt: string): void;
+    startProjectChat(project: MagicPointerProject, prompt: string): void;
     openProject(): Promise<void>;
     selectProject(root: string, projectId?: string): void;
     projectDraft?(key: string): string;
@@ -623,6 +624,7 @@
     let conversations: Row[] = [];
     let projects: MagicPointerProject[] = [];
     let selectedProjectKey = '';
+    const projectSubmissionErrors = new Map<string, string>();
     let renderGeneration = 0;
     let projectStatus: 'active' | 'archived' = 'active';
     let catalog: MagicPointerSlashDirectory | null = null;
@@ -1142,14 +1144,19 @@
         globalThis.ProjectWorkspace.mount(projectHost, project, conversations, {
           data: options.data,
           draft: options.projectDraft?.(ProjectScope.key(project)),
-          onDraftChange: text =>
-            options.onProjectDraftChange?.(ProjectScope.key(project), text),
+          submissionError: projectSubmissionErrors.get(
+            ProjectScope.key(project),
+          ),
+          onDraftChange: text => {
+            projectSubmissionErrors.delete(ProjectScope.key(project));
+            options.onProjectDraftChange?.(ProjectScope.key(project), text);
+          },
           onBack: () => {
             options.show('projects');
           },
-          onCompose: (root, prompt, projectId) => {
-            options.selectProject(root, projectId);
-            options.compose(prompt);
+          onSubmit: prompt => {
+            projectSubmissionErrors.delete(ProjectScope.key(project));
+            options.startProjectChat(project, prompt);
           },
           onChanged: updated => {
             projects = projects.map(item =>
@@ -1527,6 +1534,9 @@
       render,
       changed,
       filterMenu,
+      setProjectSubmissionError(key: string, message: string) {
+        projectSubmissionErrors.set(key, message);
+      },
       openProject(root: string) {
         options.show('projects', root);
       },
