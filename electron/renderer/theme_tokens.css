@@ -33,42 +33,67 @@
 
 :root {
   color-scheme: light;
-  --mp-window-bar: 36px;
-  --mp-sidebar-width: 288px;
-  --mp-sidebar-collapsed: 44px;
-  --mp-content-width: 768px;
-  --mp-inspector-min: 420px;
-  --mp-inspector-max: 760px;
+  /* Geometry. 288px and the 700px collapse breakpoint are Claude's own values -
+     the desktop shell persists both. Claude's pane-overlay breakpoint is 768px
+     measured on the pane's own container, which is a different quantity from
+     --mp-content-width. The inspector bounds are Magic Pointer's own: Claude's
+     pane grid declares only a 320px per-column floor and no ceiling. */
+  --mp-window-bar: 36px; /* no CDS counterpart */
+  --mp-sidebar-width: 288px; /* Claude desktop bootFrameLayout.sidebarWidth */
+  --mp-sidebar-collapsed: 44px; /* no CDS counterpart: Claude's data has no collapsed width */
+  --mp-content-width: 768px; /* Magic Pointer's own reading measure */
+  --mp-inspector-min: 420px; /* Magic Pointer's own; Claude's pane floor is 320px */
+  --mp-inspector-max: 760px; /* Magic Pointer's own; Claude has no pane ceiling */
 
-  --mp-page: #FCFCFB;
-  --mp-sidebar: #FBFBF9;
-  --mp-panel: #FDFDFC;
-  --mp-panel-subtle: #F3F3F2;
-  --mp-markdown-cell: #F2F2F1;
-  --mp-code-surface: #FFFFFF;
-  --mp-repository-surface: #F2F2F1;
-  --mp-composer: #FEFEFE;
-  --mp-user-bubble: #F0F0EF;
-  --mp-selected: #EDECE8;
-  --mp-text: #0B0B0B;
-  --mp-text-secondary: #52514E;
-  --mp-text-muted: #898781;
-  --mp-rule: rgba(11, 11, 11, .10);
-  --mp-rule-strong: rgba(11, 11, 11, .18);
-  --mp-hover: rgba(11, 11, 11, .05);
+  /* Surfaces. Claude's light ramp: page is gray-10, cards are gray-0. Every value
+     below that is an exact CDS token is marked with the token it came from; the
+     rest are genuinely Magic Pointer's own and have no CDS counterpart. */
+  --mp-page: #FCFCFB; /* --cds-gray-10, and the shell's measured first-frame body colour */
+  --mp-sidebar: #FBFBF9; /* boot placeholder: color-mix(in srgb, #f9f9f7 50%, #fcfcfb) */
+  --mp-panel: #FFFFFF; /* --cds-surface-2 light = --cds-surface-3 light = --cds-gray-0 */
+  --mp-panel-subtle: #F3F3F2; /* no CDS counterpart: Claude recesses with --cds-fill-control (alpha-2) */
+  --mp-markdown-cell: #F2F2F1; /* no CDS counterpart */
+  --mp-code-surface: #FFFFFF; /* --cds-gray-0 */
+  --mp-repository-surface: #F2F2F1; /* no CDS counterpart */
+  --mp-composer: #FEFEFE; /* no CDS counterpart: Claude uses --cds-fill-field light = #ffffff80 */
+  --mp-user-bubble: #F0EFEC; /* --cds-gray-50 */
+  --mp-selected: #EDECE8; /* no CDS counterpart: Claude selects with --cds-fill-ghost-selected (alpha-2) */
+  --mp-text: #0B0B0B; /* --cds-text-primary light = --cds-neutral-900 = --cds-gray-900 */
+  --mp-text-secondary: #52514E; /* --cds-text-secondary light = --cds-neutral-600 = --cds-gray-600 */
+  --mp-text-muted: #898781; /* --cds-text-muted light = --cds-neutral-400 = --cds-gray-400 */
+  --mp-rule: rgba(11, 11, 11, .10); /* --cds-alpha-2 */
+  --mp-rule-strong: rgba(11, 11, 11, .20); /* --cds-border-strong = --cds-alpha-3 */
+  --mp-hover: rgba(11, 11, 11, .05); /* --cds-fill-ghost-hover light = --cds-alpha-1 */
   --mp-task-card: var(--mp-hover);
-  --mp-active: rgba(11, 11, 11, .09);
-  --mp-clay: #D97757;
-  --mp-clay-strong: #C6613F;
+  --mp-active: rgba(11, 11, 11, .10); /* --cds-fill-ghost-selected light = --cds-alpha-2 */
+  --mp-clay: #D97757; /* --cds-clay */
+  --mp-clay-strong: #C6613F; /* --cds-clay-emphasized */
   --mp-activity-blue: #86ACEA;
   --mp-heat-level-1: #86ACEA;
   --mp-heat-level-2: #6394E3;
   --mp-heat-level-3: #407CDD;
   --mp-heat-level-4: #2566D0;
   --mp-pictogram-200: 51 16.5% 84.5%;
+  /* Deliberately NOT aligned to --cds-text-danger / --cds-text-success /
+     --cds-text-accent. Claude splits these into a text token (red-600 #8E2626,
+     green-600 #006300, blue-600 #184F95 in light) and a separate fill token
+     (--cds-fill-danger / -success / -accent). Magic Pointer has one token per
+     role and uses it for text, borders and 12% tints alike, so adopting the
+     text-level value would make every error fill too dark. */
   --mp-danger: #B42318;
   --mp-success: #2E7D4F;
   --mp-focus: #2566D0;
+
+  /* Diff counts. The minus glyph is U+2212 MINUS SIGN, never a hyphen.
+     Exact matches for --cds-text-git-added (light #1e9e3c) and
+     --cds-text-git-removed (light #cd2054). */
+  --mp-git-added: #1E9E3C;
+  --mp-git-removed: #CD2054;
+
+  /* Shimmer band. A single solid peak colour swept across a masked clone of
+     the glyphs, so the text itself never changes colour — only the highlight
+     passes over it. This is the lighter companion of the running text colour. */
+  --mp-shimmer-peak: #F59575;
 
   --mp-syn-command: #0073E6;
   --mp-syn-keyword: #C5621B;
@@ -98,8 +123,24 @@
   --mp-weight-medium: 500;
   --mp-weight-semibold: 580;
   --mp-weight-bold: 600;
+  /* Type scale: --mp-text-body/footnote/caption already equal --cds-font-size-body
+     (.8125rem = 13px), --cds-font-size-footnote (.75rem = 12px) and
+     --cds-font-size-caption (.6875rem = 11px). The line heights are NOT aligned:
+     the shipped sheet carries two variants (a 13px/19px and a 14px/20px body) and
+     which rule wins per theme was not resolved from the minified CSS, so these
+     keep Magic Pointer's tighter 18/16/14/28 values rather than guessing. Claude's
+     weights are also a different mechanism: --cds-font-wght-regular/medium/
+     semibold/bold resolve to the font default in light and to "wght" 360/460/540/560
+     in dark, used through font-variation-settings. Magic Pointer sets numeric
+     font-weight, so adopting 360/460/540/560 would lighten every glyph. */
+  /* --cds-font-grad-bold 200, --cds-font-grad-semibold 180 if the grade axis is ever used. */
 
   --mp-s0: 0px;
+  /* Spacing. These are positional indices, not semantic names, so they are not
+     renumbered. They already contain every CDS named step - --cds-pad-xs 4,
+     --cds-pad-sm 6, --cds-pad-md 8, --cds-pad-lg 12, --cds-pad-xl 20 and
+     --cds-gap-xs 6, --cds-gap-sm 8, --cds-gap-md 12, --cds-gap-lg 20,
+     --cds-gap-xl 32 - so a call site that wants the measured step can pick it. */
   --mp-s1: 2px;
   --mp-s2: 3px;
   --mp-s3: 4px;
@@ -116,6 +157,9 @@
   --mp-s14: 56px;
 
   --mp-r0: 0px;
+  /* Radii. Also positional. --cds-radius--xs/--cds-radius--sm (5px) and
+     --cds-radius--lg (7px) are Magic Pointer's --mp-r4 and above; the composer
+     radius is --cds-radius-composer (12px) = --mp-r8. */
   --mp-r1: 2px;
   --mp-r2: 3px;
   --mp-r3: 4px;
@@ -127,15 +171,26 @@
   --mp-r-sheet: 16px;
   --mp-r-pill: 999px;
 
-  --mp-dur-fast: 120ms;
-  --mp-actions-in: .12s;
-  --mp-actions-in-delay: .1s;
-  --mp-actions-out: 60ms;
-  --mp-actions-ease: cubic-bezier(.32, .72, 0, 1);
-  --mp-dur-normal: 180ms;
-  --mp-dur-structure: 300ms;
-  --mp-ease-out: cubic-bezier(.32,.72,0,1);
+  /* Motion. Four of these are exact CDS values; --mp-dur-normal is Claude's
+     --cds-dur-base (.2s). Claude also has --cds-dur-sheet (.3s, = --mp-dur-structure)
+     and --cds-dur-slow (.45s), plus --cds-ease-out cubic-bezier(0, 0, .2, 1) and
+     --cds-ease-overshoot cubic-bezier(.34, 1.3, .64, 1). */
+  --mp-dur-fast: 120ms; /* --cds-dur-snap */
+  --mp-actions-in: .12s; /* --cds-dur-snap */
+  --mp-actions-in-delay: .1s; /* no CDS counterpart */
+  --mp-actions-out: 60ms; /* --cds-dur-fast */
+  --mp-actions-ease: cubic-bezier(.32, .72, 0, 1); /* --cds-ease-snap */
+  --mp-dur-normal: 200ms; /* --cds-dur-base */
+  --mp-dur-structure: 300ms; /* --cds-dur-sheet */
+  --mp-ease-out: cubic-bezier(.32,.72,0,1); /* --cds-ease-snap */
 
+  /* Shadows. No CDS counterpart: Magic Pointer's pair carries a 0.5px hairline
+     ring that Claude's shadow tokens do not, and dropping it would soften every
+     menu and sheet edge. For reference, Claude's ladder is
+     --cds-shadow-sm 0 1px 2px 0 hsl(from gray-900 / 6%), 0 2px 8px 0 #0000003d
+     --cds-shadow-md 0 2px 4px 0 hsl(from gray-900 / 7%), 0 6px 16px 0 #0000003d
+     --cds-shadow-lg 0 4px 8px 0 hsl(from gray-900 / 8%), 0 12px 28px -2px #0000003d
+     --cds-shadow-popover 0 8px 24px #00000052, 0 2px 6px #0003. */
   --mp-shadow-menu: 0 0 0 .5px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.06), 0 16px 40px rgba(0,0,0,.08);
   --mp-shadow-sheet: 0 0 0 .5px rgba(0,0,0,.05), 0 12px 32px rgba(0,0,0,.06);
 
@@ -163,28 +218,36 @@
 :root[data-theme="dark"],
 body[data-ds-dark-theme] {
   color-scheme: dark;
-  --mp-page: #20201F;
-  --mp-sidebar: #1D1D1C;
-  --mp-panel: #262626;
-  --mp-panel-subtle: #303030;
-  --mp-markdown-cell: #30302F;
-  --mp-code-surface: #30302F;
-  --mp-repository-surface: #292928;
-  --mp-composer: #2C2C2A;
-  --mp-user-bubble: #313131;
-  --mp-selected: #343433;
-  --mp-task-card: #2F2F2F;
-  --mp-text: #F0EFEC;
-  --mp-text-secondary: #C3C2B7;
-  --mp-text-muted: #898781;
-  --mp-rule: rgba(255, 255, 255, .10);
-  --mp-rule-strong: rgba(255, 255, 255, .18);
-  --mp-hover: rgba(255, 255, 255, .07);
-  --mp-active: rgba(255, 255, 255, .12);
+  /* Dark surfaces follow Claude's dark ladder: page gray-850, panels gray-830,
+     raised surfaces gray-800, with --cds-surface-0 (gray-900) reserved for the
+     most recessed surface. The fills marked below have no ladder counterpart in
+     Claude - it expresses them as alpha fills - so they keep Magic Pointer's
+     values rather than collapsing distinct roles onto one rung. */
+  --mp-page: #151515; /* --cds-surface-1 dark = --cds-gray-850, and the shell's measured dark body colour */
+  --mp-sidebar: #111111; /* boot placeholder: color-mix(in srgb, #151515 80%, black) */
+  --mp-panel: #1A1A19; /* --cds-surface-panel = --cds-surface-2 dark = --cds-gray-830 */
+  --mp-panel-subtle: #20201F; /* --cds-surface-3 dark = --cds-gray-800 */
+  --mp-markdown-cell: #30302F; /* no CDS counterpart */
+  --mp-code-surface: #30302F; /* no CDS counterpart: Claude uses --cds-fill-field dark = --cds-alpha-1 */
+  --mp-repository-surface: #292928; /* no CDS counterpart */
+  --mp-composer: #2C2C2A; /* no CDS counterpart: Claude uses --cds-fill-field dark = --cds-alpha-1 */
+  --mp-user-bubble: #313131; /* no CDS counterpart: Claude uses --cds-fill-secondary dark = --cds-alpha-2 */
+  --mp-selected: #343433; /* no CDS counterpart: Claude uses --cds-fill-ghost-selected dark = 15% white */
+  --mp-task-card: #2F2F2F; /* no CDS counterpart */
+  --mp-text: #F0EFEC; /* --cds-text-primary dark = --cds-gray-50 */
+  --mp-text-secondary: #C3C2B7; /* --cds-text-secondary dark = --cds-gray-200 */
+  --mp-text-muted: #898781; /* --cds-text-muted dark = --cds-gray-400 */
+  --mp-rule: rgba(255, 255, 255, .10); /* --cds-alpha-2 (neutral-900 flips to gray-0 in dark) */
+  --mp-rule-strong: rgba(255, 255, 255, .20); /* --cds-border-strong = --cds-alpha-3 */
+  --mp-hover: rgba(255, 255, 255, .075); /* --cds-fill-ghost-hover dark = 7.5% */
+  --mp-active: rgba(255, 255, 255, .15); /* --cds-fill-ghost-selected dark = 15% */
   --mp-pictogram-200: 60 2.5% 23.3%;
   --mp-danger: #FF6159;
   --mp-success: #74C295;
   --mp-focus: #86ACEA;
+  --mp-git-added: #32D74B; /* --cds-text-git-added dark */
+  --mp-git-removed: #FF2C56; /* --cds-text-git-removed dark */
+  --mp-shimmer-peak: #FFA98A;
   --mp-syn-command: #86ACEA;
   --mp-syn-keyword: #E0A030;
   --mp-syn-variable: #FF918A;

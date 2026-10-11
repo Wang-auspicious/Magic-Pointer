@@ -268,6 +268,20 @@
   height: 15px;
 }
 
+/* Reports why opening a project folder failed. Without it, a refused folder
+   looked identical to a broken button. */
+.mpw-workspace-note {
+  margin: 0 0 6px;
+  padding: 0 10px;
+  color: var(--mp-danger);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mpw-workspace-note[hidden] {
+  display: none;
+}
+
 .mpw-workspace-search input {
   display: none;
   width: 0;
@@ -1325,9 +1339,20 @@
   font-weight: var(--mp-weight-medium);
 }
 
+/* Tooltip layer. Claude's z ladder is coachmark 35, modal 40, popover 50,
+   tooltip 50, toast 60 - so a tooltip shares the popover rung and sits BELOW the
+   toast. Magic Pointer's ladder is scaled up but must keep that order:
+   overlay 120, popover/menu 150, account menu 180, confirm 200, toast 210.
+   This tooltip used to be 420, above the save-status toast, which inverted the
+   ladder; it now sits on the popover rung. It is position:fixed and no ancestor
+   on its chain creates a stacking context (verified), so the value competes in
+   the root context directly. Kept deliberately: .mpw-perm-confirm at 200 is
+   ABOVE the 150 popovers, which the CDS ladder inverts (modal < popover);
+   nothing is opened from inside that confirm, so lowering it would only risk
+   hiding it behind the menus it is dismissed from. */
 .mp-home-tooltip {
   position: fixed;
-  z-index: 420;
+  z-index: 150;
   max-width: 240px;
   padding: 5px 8px;
   border: 1px solid var(--mp-rule-strong);
