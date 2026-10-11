@@ -413,22 +413,27 @@ export function authorizeAccess(
 export async function ensureFolderReadScope(
   session: ContextSessionLike,
   root: string,
+  additionalFolders: readonly string[] = [],
 ): Promise<void> {
+  const grants = scopeFromEvents(session.events, session.id).grants;
+  if (
+    !root &&
+    !additionalFolders.length &&
+    !grants.some(grant => grant.grantId === 'workspace-materials')
+  ) {
+    return;
+  }
   const grant: ScopeGrant = {
     grantId: 'workspace-materials',
     taskId: session.id,
     sourceIds: [],
-    folderRoots: [resolve(root)],
+    folderRoots: [...(root ? [resolve(root)] : []), ...additionalFolders],
     windowIds: [],
     recipients: [],
     actions: ['read'],
     expiresAtMs: null,
   };
-  if (
-    !scopeFromEvents(session.events, session.id).grants.some(item =>
-      isDeepStrictEqual(item, grant),
-    )
-  ) {
+  if (!grants.some(item => isDeepStrictEqual(item, grant))) {
     await updateContext(session, {scopeGrants: [grant]});
   }
 }

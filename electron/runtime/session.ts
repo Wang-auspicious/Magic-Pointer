@@ -1463,7 +1463,7 @@ export class EventSession {
       }
       if (
         message.injected &&
-        /Saved unfinished task state|历史摘要是会话数据|\[Task input data|\[Project settings\]/.test(
+        /Saved unfinished task state|历史摘要是会话数据|\[Task input data|\[Project settings\]|\[Workspace folders\]/.test(
           content,
         )
       ) {

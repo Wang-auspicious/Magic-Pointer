@@ -309,6 +309,7 @@ export interface BackgroundPayload {
   root: string;
   userDataDir: string;
   workspace: string;
+  additionalFolders?: string[];
   sessionId: string;
   parentId: string;
   instruction: string;
@@ -389,6 +390,7 @@ export function registerSubagentTools(
     | 'root'
     | 'userDataDir'
     | 'workspace'
+    | 'additionalFolders'
     | 'session'
     | 'config'
     | 'permissionMode'
@@ -498,6 +500,7 @@ export function registerSubagentTools(
           root: options.root,
           userDataDir,
           workspace,
+          additionalFolders: options.additionalFolders,
           sessionId: id,
           parentId: parent.id,
           instruction,
@@ -795,7 +798,12 @@ export async function runBackgroundAgent(
           {
             name: 'coding-tools',
             apply: (ctx: import('./agent_plugins').PluginContext) => {
-              registerCodingTools(ctx.get('tools'), payload.workspace, session);
+              registerCodingTools(
+                ctx.get('tools'),
+                payload.workspace,
+                session,
+                payload.additionalFolders,
+              );
             },
           },
           {

@@ -1,6 +1,7 @@
 'use strict';
 
 import {createProjectStore} from './project_store';
+import {normalizeAdditionalFolders} from './workspace_folders';
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -83,6 +84,7 @@ interface Conversation {
   closed: boolean;
   turns?: TurnEntry[];
   workspaceRoot?: string;
+  additionalFolders?: string[];
   projectId?: string;
   agentSessionId?: string;
   hasPendingWork?: boolean;
@@ -115,6 +117,7 @@ interface TurnInput {
   timingMs?: unknown;
   usedBackend?: unknown;
   workspaceRoot?: unknown;
+  additionalFolders?: unknown;
   projectId?: unknown;
   agentSessionId?: unknown;
   hasPendingWork?: unknown;
@@ -614,6 +617,12 @@ function createConversationStore(
       if (workspaceRoot) {
         target.workspaceRoot = workspaceRoot;
       }
+      if (Array.isArray(turn.additionalFolders)) {
+        target.additionalFolders = normalizeAdditionalFolders(
+          target.workspaceRoot || '',
+          turn.additionalFolders,
+        );
+      }
       const agentSessionId = String(turn.agentSessionId || '').trim();
       if (agentSessionId) {
         target.agentSessionId = agentSessionId;
@@ -663,6 +672,10 @@ function createConversationStore(
       projectId: project?.id || (hasProjectSelection ? '' : undefined),
       workspaceRoot:
         String(turn.workspaceRoot || project?.root || '').trim() || undefined,
+      additionalFolders: normalizeAdditionalFolders(
+        String(turn.workspaceRoot || project?.root || '').trim(),
+        turn.additionalFolders,
+      ),
       agentSessionId: String(turn.agentSessionId || '').trim() || undefined,
       hasPendingWork:
         typeof turn.hasPendingWork === 'boolean' ? turn.hasPendingWork : false,
@@ -955,6 +968,7 @@ function createConversationStore(
       createdAt: c.createdAt,
       updatedAt: c.updatedAt,
       workspaceRoot: c.workspaceRoot || '',
+      additionalFolders: [...(c.additionalFolders || [])],
       projectId:
         c.projectId ?? projectStore.get(c.workspaceRoot || '')?.id ?? '',
       agentSessionId: c.agentSessionId || '',
@@ -1014,6 +1028,7 @@ function createConversationStore(
       closed: false,
       turns: structuredClone(sourceTurns.slice(0, index + 1)),
       workspaceRoot: source.workspaceRoot,
+      additionalFolders: [...(source.additionalFolders || [])],
       projectId: source.projectId ?? getProject(source.workspaceRoot || '')?.id,
       ...(runtime
         ? {
@@ -1259,6 +1274,10 @@ function createConversationStore(
     target.projectId = project?.id || '';
     if (project?.root) {
       target.workspaceRoot = project.root;
+      target.additionalFolders = normalizeAdditionalFolders(
+        project.root,
+        target.additionalFolders,
+      );
     }
     target.updatedAt = now();
     markDirty(target);
@@ -1275,6 +1294,9 @@ function createConversationStore(
       return {ok: false};
     }
     target.workspaceRoot = root || undefined;
+    target.additionalFolders = root
+      ? normalizeAdditionalFolders(root, target.additionalFolders)
+      : [];
     markDirty(target);
     persist();
     return {ok: true, conversation: target};

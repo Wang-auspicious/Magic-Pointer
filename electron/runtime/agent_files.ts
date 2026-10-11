@@ -14,6 +14,7 @@ import createIgnore, {type Ignore} from 'ignore';
 import {ToolRegistry, type ToolSpec, type Effect} from './tools';
 import {EventSession} from './session';
 import {asObject, type Data} from './agent';
+import {normalizeAdditionalFolders} from '../workspace_folders';
 
 const str = (value: unknown) => String(value ?? '');
 const exists = async (file: string) => {
@@ -75,29 +76,48 @@ function fileFacts(content: string) {
 
 export class WorkspaceFiles {
   readonly root: string;
+  private readonly roots: string[];
   private readVersions = new Map<string, string>();
   private checkpointDir: string;
   constructor(
     root: string,
     readonly session: EventSession,
+    additionalFolders: readonly string[] = [],
   ) {
     this.root = path.resolve(root);
+    this.roots = [
+      this.root,
+      ...normalizeAdditionalFolders(this.root, additionalFolders),
+    ].sort((a, b) => b.length - a.length);
     this.checkpointDir = path.join(this.root, '.mp', 'checkpoints', session.id);
+  }
+  private contains(root: string, target: string): boolean {
+    const relative = path.relative(root, target);
+    return (
+      relative !== '..' &&
+      !relative.startsWith('..' + path.sep) &&
+      !path.isAbsolute(relative)
+    );
+  }
+  private folderRoot(target: string): string {
+    const root = this.roots.find(folder => this.contains(folder, target));
+    if (!root) {
+      throw new Error(`Path escapes the workspace: ${target}`);
+    }
+    return root;
   }
   resolve(raw: unknown): string {
     const target = path.resolve(this.root, str(raw || '.'));
-    const relative = path.relative(this.root, target);
-    if (
-      relative === '..' ||
-      relative.startsWith('..' + path.sep) ||
-      path.isAbsolute(relative)
-    ) {
-      throw new Error(`Path escapes the workspace: ${target}`);
-    }
+    this.folderRoot(target);
     return target;
   }
   display(file: string): string {
-    return path.relative(this.root, file).replaceAll('\\', '/') || '.';
+    return (
+      (this.contains(this.root, file)
+        ? path.relative(this.root, file)
+        : file
+      ).replaceAll('\\', '/') || '.'
+    );
   }
   async read(file: string): Promise<string> {
     const buffer = await readFile(file);
@@ -223,6 +243,7 @@ export class WorkspaceFiles {
   }
   async *walk(base: string, signal: AbortSignal): AsyncGenerator<string> {
     signal.throwIfAborted();
+    const root = this.folderRoot(base);
     if ((await stat(base)).isFile()) {
       yield base;
       return;
@@ -233,7 +254,7 @@ export class WorkspaceFiles {
       for (const name of [
         '.gitignore',
         '.ignore',
-        ...(directory === this.root ? ['.git/info/exclude'] : []),
+        ...(directory === root ? ['.git/info/exclude'] : []),
       ]) {
         try {
           matcher.add(await readFile(path.join(directory, name), 'utf8'));
@@ -245,7 +266,7 @@ export class WorkspaceFiles {
       }
       return {directory, matcher};
     };
-    for (let directory = this.root; directory !== base;) {
+    for (let directory = root; directory !== base;) {
       rules.push(await addRules(directory));
       const next = path.relative(directory, base).split(path.sep)[0];
       if (!next || next === '..') {
@@ -635,8 +656,9 @@ export function registerCodingTools(
   registry: ToolRegistry,
   workspace: string,
   session: EventSession,
+  additionalFolders: readonly string[] = [],
 ): WorkspaceFiles {
-  const space = new WorkspaceFiles(workspace, session);
+  const space = new WorkspaceFiles(workspace, session, additionalFolders);
   let shellCwd = space.root;
   const schema = (properties: Data, required: string[] = []): Data => ({
     type: 'object',
@@ -830,21 +852,25 @@ export function registerCodingTools(
   );
   add(
     'Glob',
-    'Find workspace files matching a glob, ordered by most recent modification.',
-    schema({pattern: string}, ['pattern']),
+    'Find files matching a glob, ordered by most recent modification. Defaults to the working folder; set path to search an additional session folder.',
+    schema({pattern: string, path: string}, ['pattern']),
     async (args, context) => {
       const pattern = str(args.pattern);
       const match = globRegex(pattern);
       const alternative = globRegex(pattern.replace(/^\*\*\//, ''));
       const files: Array<{path: string; time: number}> = [];
-      for await (const file of space.walk(space.root, context.signal)) {
-        const relative = space.display(file);
+      const base = space.resolve(args.path || '.');
+      for await (const file of space.walk(base, context.signal)) {
+        const relative = path.relative(base, file).replaceAll('\\', '/');
         if (
           match.test(relative) ||
           alternative.test(relative) ||
           match.test(path.basename(file))
         ) {
-          files.push({path: relative, time: (await stat(file)).mtimeMs});
+          files.push({
+            path: space.display(file),
+            time: (await stat(file)).mtimeMs,
+          });
         }
       }
       return {

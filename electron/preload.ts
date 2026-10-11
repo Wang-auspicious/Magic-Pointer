@@ -490,6 +490,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       permissionPreset?: unknown;
       requestId?: unknown;
       workspaceRoot?: unknown;
+      additionalFolders?: unknown;
       executionWorkspaceRoot?: unknown;
       effort?: unknown;
       permissionGrant?: unknown;
@@ -514,6 +515,13 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
               .map(item => item.slice(0, 1000))
           : [],
         taskInput: boundedTaskInput(payload?.taskInput),
+        ...(Array.isArray(payload.additionalFolders)
+          ? {
+              additionalFolders: payload.additionalFolders.filter(
+                (folder): folder is string => typeof folder === 'string',
+              ),
+            }
+          : {}),
         permissionPreset: String(
           payload?.permissionPreset || 'workspace-write',
         ).slice(0, 40),

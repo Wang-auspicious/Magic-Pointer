@@ -1049,8 +1049,12 @@ export async function prepareTaskContext(
     if (!info.isDirectory()) {
       throw new Error('Workspace must be an existing directory');
     }
-    await ensureFolderReadScope(session, workspace);
   }
+  await ensureFolderReadScope(
+    session,
+    workspace,
+    array<string>(payload.additionalFolders),
+  );
   registerContextTools(options.registry, session, readers);
   registerArtifactTools(options.registry, session);
   const knowledge = new KnowledgeCatalog(

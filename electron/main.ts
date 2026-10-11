@@ -1,5 +1,6 @@
 import {BrowserViewRegistry} from './browser_view_registry';
 import {projectAttachments, type ProjectDetailsPatch} from './project_context';
+import {validateAdditionalFolders} from './workspace_folders';
 import type {ProjectCreateInput, ProjectRecord} from './project_store';
 
 const {
@@ -3674,9 +3675,21 @@ async function sendConversation(
     ? knownProjectRoot(requestedWorkspaceRoot)
     : '';
   if (requestedWorkspaceRoot && !effectiveWorkspaceRoot) {
-    return {ok: false, error: '请选择已识别的 git 项目文件夹。'};
+    return {ok: false, error: '请选择已登记的工作目录。'};
   }
   const projectRoot = effectiveWorkspaceRoot || '';
+  let additionalFolders: string[];
+  try {
+    additionalFolders = await validateAdditionalFolders(
+      projectRoot,
+      raw.additionalFolders ?? existing?.additionalFolders ?? [],
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
   const effectiveExecutionWorkspaceRoot =
     executionWorkspaceRoot || effectiveWorkspaceRoot || '';
   if (effectiveExecutionWorkspaceRoot && !effectiveWorkspaceRoot) {
@@ -3777,6 +3790,7 @@ async function sendConversation(
     requestId,
     attachments: taskAttachments,
     projectContext: projectContext ?? null,
+    additionalFolders,
     taskInput,
     ...(inputResponse ? {inputResponse} : {}),
     ...(conversationId ? {conversationId} : {}),
@@ -3807,6 +3821,7 @@ async function sendConversation(
         object: existing?.object || {},
         projectId: projectContext?.id || '',
         workspaceRoot: effectiveWorkspaceRoot || undefined,
+        additionalFolders,
         permissionGrant: grantNow || undefined,
         permissionDeny: denyNow || undefined,
         permissionGrantOnce: onceNow || undefined,

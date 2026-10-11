@@ -14,6 +14,8 @@ import {
   type PermissionMode,
 } from './agent';
 import {registerCodingTools} from './agent_files';
+import {validateAdditionalFolders} from '../workspace_folders';
+import {savedWorkspaceSettings} from './workspace_settings';
 import {registerSubagentTools} from './agent_background';
 import {
   contextWindowFor,
@@ -165,6 +167,11 @@ export async function runRuntime(
   if ([...instruction].length > 12000) {
     throw new Error('问题最多 12000 字。');
   }
+  const session = await EventSession.open(
+    userDataDir,
+    resolveSessionId(payload),
+  );
+  const savedFolders = savedWorkspaceSettings(session);
   const workspaceState = path.join(userDataDir, 'workspace.txt');
   const savedWorkspace = (
     await readFile(workspaceState, 'utf8').catch(() => '')
@@ -182,13 +189,16 @@ export async function runRuntime(
     ? selectedWorkspace
       ? path.resolve(selectedWorkspace)
       : undefined
-    : validSavedWorkspace;
+    : savedFolders
+      ? savedFolders.root || undefined
+      : validSavedWorkspace;
   if (workspace && !(await stat(workspace)).isDirectory()) {
     throw new Error('Workspace must be an existing directory');
   }
-  const session = await EventSession.open(
-    userDataDir,
-    resolveSessionId(payload),
+  const additionalFolders = await validateAdditionalFolders(
+    workspace || '',
+    payload.additionalFolders ??
+      (workspace ? savedFolders?.additionalFolders : []),
   );
   const sink = new RuntimeActivitySink(
     (phase, fields) => options.onProgress?.(phase, fields),
@@ -205,7 +215,7 @@ export async function runRuntime(
   const contextTools = new ToolRegistry();
   const prepared = await prepareTaskContext(
     session,
-    {...payload, workspacePath: workspace || ''},
+    {...payload, workspacePath: workspace || '', additionalFolders},
     {root, userDataDir, registry: contextTools},
   );
   const settings = settingsStore(userDataDir).load();
@@ -241,7 +251,12 @@ export async function runRuntime(
       name: 'coding-tools',
       apply: ctx => {
         if (workspace) {
-          files = registerCodingTools(ctx.get('tools'), workspace, session);
+          files = registerCodingTools(
+            ctx.get('tools'),
+            workspace,
+            session,
+            additionalFolders,
+          );
         }
       },
     },
@@ -400,6 +415,7 @@ export async function runRuntime(
             root,
             userDataDir,
             workspace,
+            additionalFolders,
             session,
             config,
             permissionMode,
@@ -456,6 +472,7 @@ export async function runRuntime(
       registry,
       instruction,
       projectContext: payload.projectContext,
+      additionalFolders,
       evidence: prepared.evidence,
       hasSelection: Boolean(
         selectionSnapshot.frameLease ||
@@ -467,7 +484,7 @@ export async function runRuntime(
       model: request =>
         plugins.context.get<AgentOptions['model']>('model_client')(request),
       config,
-      workspace,
+      workspace: workspace || '',
       permissionMode,
       signal,
       onEvent,

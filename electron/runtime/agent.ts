@@ -6,6 +6,10 @@ import {
   synchronizeProjectSettings,
   withProjectSettings,
 } from './project_settings';
+import {
+  synchronizeWorkspaceSettings,
+  withWorkspaceSettings,
+} from './workspace_settings';
 import {isDeepStrictEqual} from 'node:util';
 import {
   EventSession,
@@ -106,6 +110,7 @@ export interface AgentOptions {
   hasSelection?: boolean;
   system?: string;
   workspace?: string;
+  additionalFolders?: string[];
   config?: ModelConfig;
   signal?: AbortSignal;
   permissionMode?: PermissionMode;
@@ -823,6 +828,11 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       session,
       options.projectContext,
     );
+    const workspaceSettings = await synchronizeWorkspaceSettings(
+      session,
+      options.workspace,
+      options.additionalFolders,
+    );
     const requested = options.permissionMode ?? 'default';
     const previous = [...session.events]
       .reverse()
@@ -855,9 +865,12 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         (skills ? '\n\n' + skills : ''),
     );
     const modelMessages = () =>
-      withProjectSettings(
-        projectContextMessages(session.deriveMessages()),
-        projectSettings,
+      withWorkspaceSettings(
+        withProjectSettings(
+          projectContextMessages(session.deriveMessages()),
+          projectSettings,
+        ),
+        workspaceSettings,
       );
     for (const event of session.events) {
       if (
