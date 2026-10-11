@@ -1,79 +1,120 @@
 
+/* Composer geometry, type, elevation and motion, bound to the CDS scale.
+ *
+ * Every value that Claude's own design system names is written as
+ *   var(--cds-<token>, <literal>)
+ * The literal is the resolved value of that token at --cds-rem-scale: 1, so
+ * this sheet renders identically whether or not `cds_tokens.css` is loaded.
+ * It is NOT loaded by companion.html today - only studio.html links it - so
+ * without the fallback every declaration below would be invalid at
+ * computed-value time and the property would silently fall back to its
+ * initial value (no shadow, no radius, transparent background). The fallback
+ * is what keeps this document correct in the meantime; drop it only when the
+ * companion document also links cds_tokens.css.
+ *
+ * Resolved px at rem-scale 1: pad xs/sm/md/lg/xl = 4/6/8/12/20,
+ * gap xs/sm/md/lg = 6/8/12/20, h-control = 24 (lg 28, nested 18),
+ * radius xs/sm/lg = 5/5/7, radius-composer = 12,
+ * dur fast/snap/base/sheet/slow = 60ms/.12s/.2s/.3s/.45s,
+ * font-size body 13 / body--textlg 15 / body--lg 14 / caption 11,
+ * leading body--textlg 22, caption 17.
+ *
+ * The document's focus ring is owned by oreo.css (`:focus-visible`), so
+ * --cds-focus-shadow is deliberately not applied here - a second ring would
+ * double it. The composer's own focus feedback is the container shadow.
+ */
+
 .mcomp {
   position: relative;
-  display: flex; flex-direction: column; gap: 9px;
-  padding: 12px 12px 12px 18px;
-  border-radius: 26px;
+  display: flex; flex-direction: column; gap: var(--cds-gap-sm, .5rem);
+  padding: var(--cds-pad-lg, .75rem) var(--cds-pad-lg, .75rem) var(--cds-pad-lg, .75rem) var(--cds-pad-xl, 1.25rem);
+  border-radius: var(--cds-radius-composer, .75rem);
   background: var(--card);
-  box-shadow: var(--shadow-lift);
-  transition: box-shadow .22s var(--ease-out), transform .22s var(--ease-out);
+  box-shadow: var(--cds-shadow-md, 0 2px 4px #00000012, 0 6px 16px #0000003d);
+  transition: box-shadow var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)), transform var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1));
 }
-.mcomp:focus-within { box-shadow: var(--shadow-pop); }
-.mcomp[data-density="capsule"] { padding: 9px 9px 9px 14px; border-radius: 20px; }
+.mcomp:focus-within { box-shadow: var(--cds-shadow-popover, 0 8px 24px #0000001f, 0 2px 6px #00000014); }
+.mcomp[data-density="capsule"] {
+  padding: var(--cds-pad-md, .5rem) var(--cds-pad-md, .5rem) var(--cds-pad-md, .5rem) var(--cds-pad-lg, .75rem);
+  border-radius: var(--cds-radius-composer, .75rem);
+}
 
-.mcomp[data-state="running"] { box-shadow: var(--shadow-card); }
+.mcomp[data-state="running"] { box-shadow: var(--cds-shadow-sm, 0 1px 2px #0000000f, 0 2px 8px #0000003d); }
 .mcomp[data-state="running"] .mcomp-input { color: var(--ink-3); }
 
-.mcomp-line { display: flex; align-items: flex-end; gap: 10px; }
+.mcomp-line { display: flex; align-items: flex-end; gap: var(--cds-gap-sm, .5rem); }
 
 .mcomp-input {
-  flex: 1; min-height: 30px; max-height: 168px;
-  padding: 4px 0 5px; border: 0; outline: none; resize: none;
+  flex: 1; min-height: var(--cds-h-control--lg, 1.75rem); max-height: 168px;
+  padding: var(--cds-pad-xs, .25rem) 0; border: 0; outline: none; resize: none;
   background: transparent; color: var(--ink);
-  font: inherit; font-size: 15.5px; line-height: 1.5;
+  font: inherit; font-size: var(--cds-font-size-body--textlg, .9375rem);
+  line-height: var(--cds-leading-body--textlg, 1.375rem);
 }
-.mcomp[data-density="capsule"] .mcomp-input { font-size: 14px; }
+/* max-height must stay equal to INPUT_MAX_HEIGHT_PX in composer.ts, which
+   clamps the textarea's inline height before this guard applies. */
+.mcomp[data-density="capsule"] .mcomp-input { font-size: var(--cds-font-size-body--lg, .875rem); }
 .mcomp-input::placeholder { color: var(--ink-3); }
-.mcomp-input:disabled { -webkit-text-fill-color: var(--ink-3); }
 
-.mcomp-tools { display: flex; align-items: center; gap: 4px; }
+/* A predicted next prompt occupies the empty box as ghost text. It is offered
+   rather than typed, so it stays muted — but a step stronger than the idle
+   hint, because it is a real sentence the user can accept with Tab. */
+.mcomp[data-suggestion='true'] .mcomp-input::placeholder {
+  color: var(--ink-2);
+  opacity: .82;
+}
+.mcomp-input:disabled { -webkit-text-fill-color: var(--cds-text-disabled, var(--ink-3)); }
+
+.mcomp-tools { display: flex; align-items: center; gap: var(--cds-gap-xs, .375rem); }
 .mcomp-tool {
   display: grid; place-items: center;
-  width: 32px; height: 32px; padding: 0;
+  width: var(--cds-h-control, 1.5rem); height: var(--cds-h-control, 1.5rem); padding: 0;
   border: 0; border-radius: 50%;
-  background: transparent; color: var(--ink-3);
+  background: transparent; color: var(--cds-text-muted, var(--ink-3));
   cursor: pointer;
-  transition: background .16s var(--ease-out), color .16s var(--ease-out);
+  transition: background var(--cds-dur-snap, .12s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)), color var(--cds-dur-snap, .12s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1));
 }
 .mcomp-tool svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.6; }
 @media (hover: hover) and (pointer: fine) {
-  .mcomp-tool:hover { background: var(--paper-2); color: var(--ink); }
+  .mcomp-tool:hover { background: var(--cds-fill-ghost-hover, var(--paper-2)); color: var(--ink); }
 }
 .mcomp-tool:active { transform: scale(.94); }
 
 .mcomp-go {
   position: relative;
   display: grid; place-items: center;
-  width: 38px; height: 38px; margin-left: 2px; padding: 0;
+  width: var(--cds-h-control--lg, 1.75rem); height: var(--cds-h-control--lg, 1.75rem); margin-left: 2px; padding: 0;
   border: 0; border-radius: 50%;
-  background: var(--solid); color: var(--paper);
+  background: var(--cds-role-accent-fill, var(--solid)); color: var(--cds-role-accent-on, var(--paper));
   cursor: pointer;
-  transition: transform .18s var(--ease-out), background .18s var(--ease-out);
+  transition: transform var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)), background var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1));
 }
-.mcomp[data-density="capsule"] .mcomp-go { width: 33px; height: 33px; }
+.mcomp[data-density="capsule"] .mcomp-go { width: var(--cds-h-control, 1.5rem); height: var(--cds-h-control, 1.5rem); }
 .mcomp-go:active { transform: scale(.93); }
 .mgo-send {
   width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.9;
-  transition: opacity .18s var(--ease-out), transform .18s var(--ease-out);
+  transition: opacity var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)), transform var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1));
 }
 .mgo-stop {
   position: absolute;
-  width: 12px; height: 12px; border-radius: 3px;
+  width: 12px; height: 12px; border-radius: var(--cds-radius--xs, .3125rem);
   background: currentColor;
   opacity: 0; transform: scale(.6);
-  transition: opacity .18s var(--ease-out), transform .18s var(--ease-out);
+  transition: opacity var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)), transform var(--cds-dur-base, .2s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1));
 }
 .mcomp[data-state="running"] .mgo-send { opacity: 0; transform: scale(.6); }
 .mcomp[data-state="running"] .mgo-stop { opacity: 1; transform: scale(1); }
 
-.mcomp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: -2px; }
+.mcomp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cds-gap-xs, .375rem); margin-bottom: -2px; }
 .mmeta {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 7px 3px 8px;
+  display: inline-flex; align-items: center; gap: var(--cds-pad-xs, .25rem);
+  padding: var(--cds-pad-xs, .25rem) var(--cds-pad-sm, .375rem);
   border: 0; border-radius: var(--r-pill);
-  background: transparent; color: var(--ink-3);
-  font: inherit; font-size: 11.5px; cursor: pointer;
-  transition: background .16s var(--ease-out), color .16s var(--ease-out);
+  background: transparent; color: var(--cds-text-muted, var(--ink-3));
+  font: inherit; font-size: var(--cds-font-size-caption, .6875rem);
+  line-height: var(--cds-leading-caption, 1.0625rem);
+  cursor: pointer;
+  transition: background var(--cds-dur-snap, .12s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)), color var(--cds-dur-snap, .12s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1));
 }
 .mmeta svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
 .mmeta-chev { width: 10px; height: 10px; opacity: .55; }
@@ -82,21 +123,24 @@
   background: var(--dot, var(--green));
 }
 @media (hover: hover) and (pointer: fine) {
-  .mmeta:hover { background: var(--card-sunk); color: var(--ink-2); }
+  .mmeta:hover { background: var(--cds-fill-ghost-hover, var(--card-sunk)); color: var(--ink-2); }
 }
 .mmeta:active { transform: scale(.97); }
 
 .mcomp-file { display: none; }
 
-.mcomp-strip { display: flex; flex-wrap: wrap; gap: 7px; padding-right: 4px; }
+.mcomp-strip { display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs, .375rem); padding-right: var(--cds-pad-xs, .25rem); }
 .mchip {
   position: relative;
-  display: inline-flex; align-items: center; gap: 6px;
-  max-width: 190px; padding: 4px 8px 4px 6px;
-  border-radius: 11px;
+  display: inline-flex; align-items: center; gap: var(--cds-gap-xs, .375rem);
+  max-width: 190px;
+  padding: var(--cds-pad-xs, .25rem) var(--cds-pad-md, .5rem) var(--cds-pad-xs, .25rem) var(--cds-pad-sm, .375rem);
+  border-radius: var(--cds-radius--lg, .4375rem);
   background: var(--card-sunk);
-  font-size: 11.5px; color: var(--ink-2);
-  animation: mchip-in .26s var(--ease-out) both;
+  font-size: var(--cds-font-size-caption, .6875rem);
+  line-height: var(--cds-leading-caption, 1.0625rem);
+  color: var(--ink-2);
+  animation: mchip-in var(--cds-dur-sheet, .3s) var(--cds-ease-out, cubic-bezier(0, 0, .2, 1)) both;
 }
 @keyframes mchip-in { from { opacity: 0; transform: translateY(4px) scale(.96); } }
 .mchip svg { width: 14px; height: 14px; flex: none; stroke: var(--ink-3); fill: none; stroke-width: 1.6; }
@@ -105,20 +149,20 @@
   border-radius: 6px; object-fit: cover;
   background: var(--paper-2);
 }
-.mchip.is-img { padding-left: 4px; }
+.mchip.is-img { padding-left: var(--cds-pad-xs, .25rem); }
 .mchip small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mchip-x {
   display: grid; place-items: center;
-  width: 17px; height: 17px; flex: none; padding: 0;
+  width: var(--cds-h-control-nested, 1.125rem); height: var(--cds-h-control-nested, 1.125rem); flex: none; padding: 0;
   border: 0; border-radius: 50%;
-  background: transparent; color: var(--ink-3); cursor: pointer;
+  background: transparent; color: var(--cds-text-muted, var(--ink-3)); cursor: pointer;
 }
 .mchip-x svg { width: 11px; height: 11px; stroke-width: 2; }
 @media (hover: hover) and (pointer: fine) {
-  .mchip-x:hover { background: var(--paper-2); color: var(--ink); }
+  .mchip-x:hover { background: var(--cds-fill-ghost-hover, var(--paper-2)); color: var(--ink); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .mchip { animation: none; }
-  .mcomp, .mcomp-go, .mgo-send, .mgo-stop { transition: none; }
+  .mcomp, .mcomp-go, .mgo-send, .mgo-stop, .mcomp-tool, .mmeta { transition: none; }
 }

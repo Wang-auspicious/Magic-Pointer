@@ -13,6 +13,11 @@ const Composer = (() => {
     'js',
   ]);
   const MAX_TEXT_ATTACHMENT_BYTES = 200 * 1024;
+  // Scroll caps for the growing textarea, per density. Each value must equal
+  // the `max-height` that composer.css gives .mcomp-input, because the CSS
+  // guard only applies after this clamp has already set the inline height.
+  const INPUT_MAX_HEIGHT_PX = 168;
+  const CAPSULE_INPUT_MAX_HEIGHT_PX = 96;
 
   function h(
     tag: string,
@@ -184,6 +189,8 @@ const Composer = (() => {
       allowAttachments = true,
       meta = [],
       onMeta = () => {},
+      onSuggestionUse = null,
+      onSuggestionDismiss = null,
     } = options;
 
     let attachmentEntries: AttachmentEntry[] = [];
@@ -194,6 +201,10 @@ const Composer = (() => {
     const stopGate = createInFlightGate();
     let state: 'idle' | 'running' = 'idle';
     let idlePlaceholder = String(placeholder || '');
+    // The predicted next prompt. It is shown only while the box is empty and
+    // idle, which is what makes "start typing to dismiss it" fall out for free
+    // rather than needing its own rule.
+    let suggestion = '';
 
     const input = h(
       'textarea',
@@ -382,11 +393,22 @@ const Composer = (() => {
 
     function autoGrow() {
       input.style.height = 'auto';
-      input.style.height = `${Math.min(input.scrollHeight, density === 'capsule' ? 96 : 168)}px`;
+      const cap =
+        density === 'capsule'
+          ? CAPSULE_INPUT_MAX_HEIGHT_PX
+          : INPUT_MAX_HEIGHT_PX;
+      input.style.height = `${Math.min(input.scrollHeight, cap)}px`;
     }
     input.addEventListener('input', () => {
+      if (suggestion !== '') {
+        // Typing dismisses the prediction rather than editing it: the user has
+        // started their own sentence, so the ghost must get out of the way.
+        suggestion = '';
+        onSuggestionDismiss?.();
+      }
       autoGrow();
       syncSubmitAffordance();
+      renderPlaceholder();
     });
 
     function paintStrip() {
@@ -417,13 +439,25 @@ const Composer = (() => {
       strip.hidden = attachmentEntries.length === 0;
     }
 
+    function suggestionVisible(): boolean {
+      return suggestion !== '' && state === 'idle' && input.value === '';
+    }
+
+    /** The placeholder is the single writer for both the idle hint and the
+     *  suggestion, so the two can never be shown at once. */
+    function renderPlaceholder() {
+      const hint = state === 'running' ? '插一句（下一轮生效）…' : idlePlaceholder;
+      const show = suggestionVisible();
+      input.placeholder = show ? suggestion : hint;
+      form.dataset.suggestion = show ? 'true' : 'false';
+    }
+
     function setState(next: 'idle' | 'running') {
       state = next;
       form.dataset.state = next;
       beam.dataset.on = String(next === 'running');
       input.disabled = false;
-      input.placeholder =
-        next === 'running' ? '插一句（下一轮生效）…' : idlePlaceholder;
+      renderPlaceholder();
       syncSubmitAffordance();
       if (
         next === 'idle' &&
@@ -544,6 +578,24 @@ const Composer = (() => {
     });
 
     input.addEventListener('keydown', event => {
+      // Tab or Right arrow accepts the prediction. Both are documented, and
+      // Right arrow only acts at the end of an empty box, so it never steals
+      // the caret movement the user actually asked for.
+      if (
+        (event.key === 'Tab' || event.key === 'ArrowRight') &&
+        !event.shiftKey &&
+        !event.isComposing &&
+        suggestionVisible()
+      ) {
+        event.preventDefault();
+        input.value = suggestion;
+        suggestion = '';
+        autoGrow();
+        syncSubmitAffordance();
+        renderPlaceholder();
+        onSuggestionUse?.(input.value);
+        return;
+      }
       if (event.key !== 'Enter' || event.shiftKey || event.isComposing) {
         return;
       }
@@ -556,10 +608,21 @@ const Composer = (() => {
       focus: () => input.focus(),
       setPlaceholder: (text: string) => {
         idlePlaceholder = String(text || '');
-        if (state === 'idle') {
-          input.placeholder = idlePlaceholder;
-        }
+        renderPlaceholder();
       },
+      /** Offer a predicted next prompt. Empty clears the offer. */
+      setSuggestion: (text: string) => {
+        suggestion = String(text || '').trim();
+        renderPlaceholder();
+      },
+      clearSuggestion: () => {
+        if (suggestion === '') {
+          return;
+        }
+        suggestion = '';
+        renderPlaceholder();
+      },
+      suggestion: () => (suggestionVisible() ? suggestion : ''),
       attach(item: MagicPointerAttachment) {
         attachmentEntries.push({id: nextAttachmentId++, item});
         paintStrip();
