@@ -164,6 +164,7 @@ declare global {
 
   interface MagicPointerConversation {
     id: string;
+    projectId?: string;
     title?: string;
     subtitle?: string;
     objectKey?: string;
@@ -235,6 +236,7 @@ declare global {
   };
 
   interface MagicPointerProject {
+    id?: string;
     root: string;
     name: string;
     addedAt?: number;
@@ -249,7 +251,12 @@ declare global {
 
   type MagicPointerProjectPatch = Pick<
     Partial<MagicPointerProject>,
-    'name' | 'description' | 'instructions' | 'sharedFiles' | 'starred' | 'archived'
+    | 'name'
+    | 'description'
+    | 'instructions'
+    | 'sharedFiles'
+    | 'starred'
+    | 'archived'
   >;
 
   interface MagicPointerProjectUpdate {
@@ -710,6 +717,10 @@ declare global {
       error?: string;
     }>;
     projects?: {
+      create(input: {
+        name: string;
+        description?: string;
+      }): Promise<MagicPointerProjectUpdate>;
       startTerminal(
         projectRoot: string,
         relativePath?: string,
@@ -870,6 +881,7 @@ declare global {
       }>;
       send(payload: {
         conversationId?: string | null;
+        projectId?: string;
         question: string;
         attachments?: string[];
         taskInput?: MagicPointerTaskInput;
@@ -902,7 +914,11 @@ declare global {
       setProject?(
         id: string,
         root: string,
-      ): Promise<{ok?: boolean; error?: string}>;
+      ): Promise<{
+        ok?: boolean;
+        conversation?: MagicPointerConversation;
+        error?: string;
+      }>;
       suggest?(payload: {
         turns?: unknown;
         object?: unknown;
@@ -1105,6 +1121,10 @@ declare global {
     ): Promise<Record<string, any>>;
     isLive(): boolean;
     projects(): Promise<MagicPointerProject[]>;
+    createProject(input: {
+      name: string;
+      description?: string;
+    }): Promise<MagicPointerProjectUpdate>;
     updateProject(
       root: string,
       patch: MagicPointerProjectPatch,
@@ -1243,6 +1263,7 @@ declare global {
       attachments?: string[],
       taskInput?: MagicPointerTaskInput,
       executionWorkspaceRoot?: string,
+      projectId?: string,
     ): Promise<Record<string, any>>;
     respondConversation(
       payload: MagicPointerInputResponse,
@@ -1276,7 +1297,11 @@ declare global {
     setConversationProject(
       id: string,
       root: string,
-    ): Promise<{ok?: boolean; error?: string}>;
+    ): Promise<{
+      ok?: boolean;
+      conversation?: MagicPointerConversation;
+      error?: string;
+    }>;
     suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
     stopConversation(
       requestId: string,
@@ -1607,6 +1632,14 @@ const Data: MagicPointerDataApi = {
     return projects.update(root, patch);
   },
 
+  async createProject(input: {name: string; description?: string}) {
+    const projects = bridge()?.projects;
+    if (!projects?.create) {
+      return {ok: false, error: 'Project creation is unavailable.'};
+    }
+    return projects.create(input);
+  },
+
   async openProject(): Promise<{
     ok?: boolean;
     canceled?: boolean;
@@ -1879,12 +1912,14 @@ const Data: MagicPointerDataApi = {
     attachments: string[] = [],
     taskInput?: MagicPointerTaskInput,
     executionWorkspaceRoot?: string,
+    projectId?: string,
   ): Promise<Record<string, any>> {
     if (!hasBridge()) {
       return {ok: false, error: '请在 Magic Pointer 应用里发送。'};
     }
     return bridge()!.conversations.send({
       conversationId,
+      projectId,
       question,
       attachments,
       taskInput,
@@ -1981,7 +2016,11 @@ const Data: MagicPointerDataApi = {
   async setConversationProject(
     id: string,
     root: string,
-  ): Promise<{ok?: boolean; error?: string}> {
+  ): Promise<{
+    ok?: boolean;
+    conversation?: MagicPointerConversation;
+    error?: string;
+  }> {
     const api = bridge()?.conversations;
     if (!api?.setProject) {
       return {ok: false, error: '项目切换通道不可用。'};

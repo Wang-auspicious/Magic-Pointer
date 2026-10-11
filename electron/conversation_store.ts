@@ -1,6 +1,6 @@
 'use strict';
 
-import type {ProjectContext, ProjectDetailsPatch} from './project_context';
+import {createProjectStore} from './project_store';
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -83,6 +83,7 @@ interface Conversation {
   closed: boolean;
   turns?: TurnEntry[];
   workspaceRoot?: string;
+  projectId?: string;
   agentSessionId?: string;
   hasPendingWork?: boolean;
   permissionGrants?: string[];
@@ -114,6 +115,7 @@ interface TurnInput {
   timingMs?: unknown;
   usedBackend?: unknown;
   workspaceRoot?: unknown;
+  projectId?: unknown;
   agentSessionId?: unknown;
   hasPendingWork?: unknown;
   permissionGrant?: unknown;
@@ -138,14 +140,6 @@ const MAX_PERSIST_FAILURE_REPORTS = 5;
 const PERSIST_FAILURE_REPORT_INTERVAL_MS = 60_000;
 
 const ASYNC_WRITE_RETRY_BUDGET = 3;
-
-interface ProjectRecord extends ProjectContext {
-  addedAt: number;
-  lastOpenedAt: number;
-  updatedAt?: number;
-  starred?: boolean;
-  archived?: boolean;
-}
 
 function isTurnSettled(outcome: unknown): boolean {
   const value = String(outcome || '')
@@ -259,9 +253,8 @@ function createConversationStore(
   },
 ) {
   const file = path.join(baseDir, 'conversations.json');
-  const projectsFile = path.join(baseDir, 'projects.json');
+  const projectStore = createProjectStore({baseDir, now});
   let items: Conversation[] | null = null;
-  let projectItems: ProjectRecord[] | null = null;
   let dirty = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -502,203 +495,13 @@ function createConversationStore(
     }
   }
 
-  function loadProjects(): ProjectRecord[] {
-    if (projectItems) {
-      return projectItems;
-    }
-    try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(projectsFile, 'utf8'));
-      projectItems = Array.isArray(parsed)
-        ? (parsed as ProjectRecord[]).filter(project =>
-            Boolean(String(project?.root || '').trim()),
-          )
-        : [];
-    } catch {
-      projectItems = [];
-    }
-    return projectItems;
+  function listProjects() {
+    return projectStore.list(load());
   }
 
-  function persistProjects(): void {
-    fs.mkdirSync(baseDir, {recursive: true});
-    const tmp = `${projectsFile}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(projectItems || []), 'utf8');
-    fs.renameSync(tmp, projectsFile);
-  }
-
-  function isGitProjectRoot(root: string): boolean {
-    try {
-      const project = path.resolve(String(root || '').trim());
-      if (!project || !fs.statSync(project).isDirectory()) {
-        return false;
-      }
-      // A linked git worktree has a .git file while a normal checkout has a
-      // .git directory. Both are real git roots and are intentionally
-      // accepted here.
-      return (
-        fs.statSync(path.join(project, '.git')).isFile() ||
-        fs.statSync(path.join(project, '.git')).isDirectory()
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  function isManagedWorktreeRoot(root: unknown): boolean {
-    const project = normalizedProjectRoot(root);
-    if (!project) {
-      return false;
-    }
-    const managedRoot = path.resolve(path.dirname(baseDir), 'worktrees');
-    const relative = path.relative(managedRoot, project);
-    return Boolean(
-      relative &&
-      relative !== '..' &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative),
-    );
-  }
-
-  function normalizedProjectRoot(rawRoot: unknown): string {
-    const input = String(rawRoot || '').trim();
-    return input ? path.resolve(input) : '';
-  }
-
-  function projectKey(rawRoot: unknown): string {
-    return normalizedProjectRoot(rawRoot)
-      .replace(/[\\/]+$/, '')
-      .replace(/\\/g, '/')
-      .toLocaleLowerCase();
-  }
-
-  function registerProject(rawRoot: unknown): ProjectRecord | null {
-    const input = String(rawRoot || '').trim();
-    if (!input) {
-      return null;
-    }
-    const root = normalizedProjectRoot(input);
-    if (isManagedWorktreeRoot(root) || !isGitProjectRoot(root)) {
-      return null;
-    }
-    const key = projectKey(root);
-    const projects = loadProjects();
-    const existing = projects.find(project => {
-      return projectKey(project.root) === key;
-    });
-    const openedAt = now();
-    if (existing) {
-      existing.lastOpenedAt = openedAt;
-      persistProjects();
-      return existing;
-    }
-    const project: ProjectRecord = {
-      root,
-      name: path.basename(path.normalize(root)) || root,
-      addedAt: openedAt,
-      lastOpenedAt: openedAt,
-    };
-    projects.unshift(project);
-    persistProjects();
-    return project;
-  }
-
-  function listProjects(): ProjectRecord[] {
-    const projects = loadProjects();
-    const known = new Set(
-      projects.map(project => projectKey(project.root)).filter(Boolean),
-    );
-    let imported = false;
-    for (const conversation of load()) {
-      const root = normalizedProjectRoot(conversation.workspaceRoot);
-      if (!root || isManagedWorktreeRoot(root) || !isGitProjectRoot(root)) {
-        continue;
-      }
-      const key = projectKey(root);
-      if (!key || known.has(key)) {
-        continue;
-      }
-      projects.push({
-        root,
-        name: path.basename(path.normalize(root)) || root,
-        addedAt: conversation.createdAt,
-        lastOpenedAt: conversation.updatedAt,
-      });
-      known.add(key);
-      imported = true;
-    }
-    if (imported) {
-      persistProjects();
-    }
-    // A folder is a project only when git recognises it. One stat per project.
-    return [...projects]
-      .map(project => ({
-        ...project,
-        root: normalizedProjectRoot(project.root),
-      }))
-      .filter(
-        project =>
-          project.root &&
-          !isManagedWorktreeRoot(project.root) &&
-          isGitProjectRoot(project.root),
-      )
-      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
-      .map(project => ({
-        ...project,
-        sharedFiles: [...(project.sharedFiles || [])],
-      }));
-  }
-
-  function updateProject(
-    rawRoot: string,
-    patch: ProjectDetailsPatch,
-  ): {ok: boolean; project?: ProjectRecord; error?: string} {
-    const projects = loadProjects();
-    const index = projects.findIndex(
-      project => projectKey(project.root) === projectKey(rawRoot),
-    );
-    if (index < 0) {
-      return {ok: false, error: 'Project not found.'};
-    }
-    if (patch.name !== undefined && !patch.name.trim()) {
-      return {ok: false, error: 'Enter a project name.'};
-    }
-    const previous = projects[index];
-    const next: ProjectRecord = {...previous, updatedAt: now()};
-    if (patch.name !== undefined) {
-      next.name = patch.name.trim();
-    }
-    if (patch.description !== undefined) {
-      next.description = patch.description.trim();
-    }
-    if (patch.instructions !== undefined) {
-      next.instructions = patch.instructions.trim();
-    }
-    if (patch.starred !== undefined) {
-      next.starred = patch.starred;
-    }
-    if (patch.archived !== undefined) {
-      next.archived = patch.archived;
-    }
-    if (patch.sharedFiles !== undefined) {
-      next.sharedFiles = [
-        ...new Set(patch.sharedFiles.map(file => path.resolve(file))),
-      ];
-    }
-    projects[index] = next;
-    try {
-      persistProjects();
-    } catch (error) {
-      projects[index] = previous;
-      return {
-        ok: false,
-        error:
-          error instanceof Error ? error.message : 'Could not save project.',
-      };
-    }
-    return {
-      ok: true,
-      project: {...next, sharedFiles: [...(next.sharedFiles || [])]},
-    };
+  function getProject(key: string) {
+    listProjects();
+    return projectStore.get(key);
   }
 
   function permissionAnswerOf(
@@ -721,6 +524,16 @@ function createConversationStore(
 
   function appendTurn(turn: TurnInput = {}): Conversation {
     const conversations = load();
+    const hasProjectSelection = typeof turn.projectId === 'string';
+    const projectId = String(turn.projectId || '').trim();
+    const project = projectId
+      ? getProject(projectId)
+      : hasProjectSelection
+        ? undefined
+        : projectStore.register(turn.workspaceRoot);
+    if (projectId && !project) {
+      throw new Error('Project not found.');
+    }
     const at = turn.capturedAt || now();
     const key = objectKey(turn.object || {});
     const explicit = turn.conversationId
@@ -792,12 +605,14 @@ function createConversationStore(
         target.turns = [];
       }
       target.turns.push(entry);
-      const explicitRoot = String(turn.workspaceRoot || '').trim();
-      if (explicitRoot) {
-        const registered = registerProject(explicitRoot);
-        if (registered) {
-          target.workspaceRoot = registered.root;
-        }
+      if (project || hasProjectSelection) {
+        target.projectId = project?.id || '';
+      }
+      const workspaceRoot = String(
+        turn.workspaceRoot || project?.root || '',
+      ).trim();
+      if (workspaceRoot) {
+        target.workspaceRoot = workspaceRoot;
       }
       const agentSessionId = String(turn.agentSessionId || '').trim();
       if (agentSessionId) {
@@ -845,7 +660,9 @@ function createConversationStore(
       updatedAt: at,
       closed: false,
       turns: [entry],
-      workspaceRoot: registerProject(turn.workspaceRoot)?.root || undefined,
+      projectId: project?.id || (hasProjectSelection ? '' : undefined),
+      workspaceRoot:
+        String(turn.workspaceRoot || project?.root || '').trim() || undefined,
       agentSessionId: String(turn.agentSessionId || '').trim() || undefined,
       hasPendingWork:
         typeof turn.hasPendingWork === 'boolean' ? turn.hasPendingWork : false,
@@ -1129,6 +946,7 @@ function createConversationStore(
 
   function list(limit = Number.POSITIVE_INFINITY) {
     const conversations = load();
+    projectStore.list(conversations);
     return conversations.slice(0, limit).map(c => ({
       id: c.id,
       title: c.title,
@@ -1137,6 +955,8 @@ function createConversationStore(
       createdAt: c.createdAt,
       updatedAt: c.updatedAt,
       workspaceRoot: c.workspaceRoot || '',
+      projectId:
+        c.projectId ?? projectStore.get(c.workspaceRoot || '')?.id ?? '',
       agentSessionId: c.agentSessionId || '',
       hasPendingWork: c.hasPendingWork === true,
       lastOutcome: c.turns?.at(-1)?.outcome || '',
@@ -1194,6 +1014,7 @@ function createConversationStore(
       closed: false,
       turns: structuredClone(sourceTurns.slice(0, index + 1)),
       workspaceRoot: source.workspaceRoot,
+      projectId: source.projectId ?? getProject(source.workspaceRoot || '')?.id,
       ...(runtime
         ? {
             agentSessionId: runtime.agentSessionId,
@@ -1424,15 +1245,36 @@ function createConversationStore(
 
   function setProject(
     id: unknown,
-    rawRoot: unknown,
+    projectKey: unknown,
   ): {ok: boolean; conversation?: Conversation} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
     }
-    const root = String(rawRoot || '').trim();
-    target.workspaceRoot = root ? registerProject(root)?.root : undefined;
+    const key = String(projectKey || '').trim();
+    const project = key ? getProject(key) : undefined;
+    if (key && !project) {
+      return {ok: false};
+    }
+    target.projectId = project?.id || '';
+    if (project?.root) {
+      target.workspaceRoot = project.root;
+    }
     target.updatedAt = now();
+    markDirty(target);
+    persist();
+    return {ok: true, conversation: target};
+  }
+
+  function setWorkspace(
+    id: string,
+    root: string,
+  ): {ok: boolean; conversation?: Conversation} {
+    const target = load().find(conversation => conversation.id === id);
+    if (!target) {
+      return {ok: false};
+    }
+    target.workspaceRoot = root || undefined;
     markDirty(target);
     persist();
     return {ok: true, conversation: target};
@@ -1449,15 +1291,18 @@ function createConversationStore(
     rename,
     remove,
     setProject,
+    setWorkspace,
     timeline,
     memories,
     artifacts,
     eventSummaries,
     stats,
     clear,
-    registerProject,
+    registerProject: projectStore.register,
+    createProject: projectStore.create,
+    getProject,
     listProjects,
-    updateProject,
+    updateProject: projectStore.update,
     objectKey,
     flush,
   };

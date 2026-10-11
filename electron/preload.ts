@@ -325,6 +325,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     onTerminalEvent: (callback: PayloadCallback) =>
       onPayload('projects:terminal-event', callback),
     list: () => ipcRenderer.invoke('projects:list'),
+    create: (input: import('./project_store').ProjectCreateInput) =>
+      ipcRenderer.invoke('projects:create', input),
     update: (
       root: string,
       patch: import('./project_context').ProjectDetailsPatch,
@@ -481,6 +483,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
     send: (payload: {
       conversationId?: unknown;
+      projectId?: unknown;
       question?: unknown;
       attachments?: unknown;
       taskInput?: unknown;
@@ -495,6 +498,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     }) =>
       ipcRenderer.invoke('conversations:send', {
         conversationId: String(payload?.conversationId || '').slice(0, 120),
+        ...(typeof payload?.projectId === 'string'
+          ? {projectId: payload.projectId}
+          : {}),
         question: String(payload?.question || ''),
         attachments: Array.isArray(payload?.attachments)
           ? [

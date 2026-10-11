@@ -1,9 +1,6 @@
 import {BrowserViewRegistry} from './browser_view_registry';
-import {
-  projectAttachments,
-  type ProjectContext,
-  type ProjectDetailsPatch,
-} from './project_context';
+import {projectAttachments, type ProjectDetailsPatch} from './project_context';
+import type {ProjectCreateInput, ProjectRecord} from './project_store';
 
 const {
   app,
@@ -1971,6 +1968,15 @@ ipcMain.handle('projects:list', (event: Electron.IpcMainInvokeEvent) => {
   }
 });
 ipcMain.handle(
+  'projects:create',
+  (event: Electron.IpcMainInvokeEvent, input: ProjectCreateInput) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    return conversations().createProject(input);
+  },
+);
+ipcMain.handle(
   'projects:update',
   (
     event: Electron.IpcMainInvokeEvent,
@@ -2035,8 +2041,9 @@ function knownProjectRoot(rawRoot: unknown): string | null {
     .listProjects()
     .find(
       (project: {root?: string}) =>
-        path.resolve(String(project.root || '')).toLocaleLowerCase() ===
-        requested.toLocaleLowerCase(),
+        Boolean(project.root) &&
+        path.resolve(String(project.root)).toLocaleLowerCase() ===
+          requested.toLocaleLowerCase(),
     );
   if (match) {
     return path.resolve(String(match.root || ''));
@@ -3205,13 +3212,15 @@ ipcMain.handle(
     ) {
       return {ok: false, error: '请等当前任务停止后再切换项目。'};
     }
-    const root = String(raw.root || '').trim();
-    const registered = root ? knownProjectRoot(root) : '';
-    if (root && !registered) {
-      return {ok: false, error: '请先打开目标项目文件夹。'};
+    const projectKey = String(raw.root || '').trim();
+    const project = projectKey
+      ? conversations().getProject(projectKey)
+      : undefined;
+    if (projectKey && !project) {
+      return {ok: false, error: '找不到目标项目。'};
     }
     try {
-      const result = conversations().setProject(id, registered);
+      const result = conversations().setProject(id, project?.id || '');
       if (result.ok) {
         notifyConversationChanged(id);
       }
@@ -3605,7 +3614,31 @@ async function sendConversation(
       ...(denyNow ? [denyNow] : []),
     ]),
   ];
-  // A conversation is bound to its registered project root. A worktree is an
+  const selectedProjectId =
+    typeof raw?.projectId === 'string' ? raw.projectId.trim() : undefined;
+  const boundProject: ProjectRecord | undefined = existing
+    ? conversations().getProject(
+        existing.projectId ?? existing.workspaceRoot ?? '',
+      )
+    : undefined;
+  const projectContext: ProjectRecord | undefined =
+    selectedProjectId !== undefined
+      ? conversations().getProject(selectedProjectId)
+      : boundProject ||
+        (!existing || existing.projectId === undefined
+          ? conversations().getProject(workspaceRoot || '')
+          : undefined);
+  if (selectedProjectId && !projectContext) {
+    return {ok: false, error: '找不到所选项目，请重新选择项目。'};
+  }
+  if (
+    boundProject &&
+    selectedProjectId !== undefined &&
+    boundProject.id !== selectedProjectId
+  ) {
+    return {ok: false, error: '这条对话已属于其他项目，请先移动对话。'};
+  }
+  // A conversation is bound to its execution folder. A worktree is an
   // execution detail for this turn and never replaces that durable binding.
   const threadWorkspaceRoot = await canonicalProjectRoot(
     existing?.workspaceRoot,
@@ -3615,7 +3648,7 @@ async function sendConversation(
     threadWorkspaceRoot &&
     !samePath(existing.workspaceRoot, threadWorkspaceRoot)
   ) {
-    const rebound = conversations().setProject(
+    const rebound = conversations().setWorkspace(
       existing.id,
       threadWorkspaceRoot,
     );
@@ -3632,7 +3665,10 @@ async function sendConversation(
     return {ok: false, error: '这条对话已绑定其他项目，请先切换项目。'};
   }
   const requestedWorkspaceRoot = await canonicalProjectRoot(
-    resolveConversationWorkspace(workspaceRoot, threadWorkspaceRoot),
+    resolveConversationWorkspace(
+      workspaceRoot || projectContext?.root,
+      threadWorkspaceRoot,
+    ),
   );
   const effectiveWorkspaceRoot = requestedWorkspaceRoot
     ? knownProjectRoot(requestedWorkspaceRoot)
@@ -3683,10 +3719,6 @@ async function sendConversation(
     existing: existing?.agentSessionId,
     conversationId,
   });
-  const projectContext = conversations().listProjects().find(
-    (project: ProjectContext) =>
-      effectiveWorkspaceRoot && samePath(project.root, effectiveWorkspaceRoot),
-  );
   const taskAttachments = projectAttachments(attachments, projectContext);
   const capturedAtMs = Date.now();
   const rawTaskInput =
@@ -3773,6 +3805,7 @@ async function sendConversation(
         hasPendingWork: true,
         modelId: String(modelRuntime?.model || '').trim() || undefined,
         object: existing?.object || {},
+        projectId: projectContext?.id || '',
         workspaceRoot: effectiveWorkspaceRoot || undefined,
         permissionGrant: grantNow || undefined,
         permissionDeny: denyNow || undefined,
@@ -8480,7 +8513,13 @@ function localOpenCodeCredential(): string {
       : '',
   ].filter(Boolean);
   for (const root of roots) {
-    const authPath = path.join(root, '.local', 'share', 'opencode', 'auth.json');
+    const authPath = path.join(
+      root,
+      '.local',
+      'share',
+      'opencode',
+      'auth.json',
+    );
     try {
       const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8'));
       const entries = parsed && typeof parsed === 'object' ? parsed : {};
