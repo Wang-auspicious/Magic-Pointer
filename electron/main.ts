@@ -1,5 +1,9 @@
 import {BrowserViewRegistry} from './browser_view_registry';
-import {projectAttachments, type ProjectDetailsPatch} from './project_context';
+import {
+  projectAttachments,
+  type ProjectDetailsPatch,
+  type ProjectDocument,
+} from './project_context';
 import {validateAdditionalFolders} from './workspace_folders';
 import {
   normalizeModelSelection,
@@ -2002,6 +2006,91 @@ ipcMain.handle(
     return conversations().updateProject(raw.root, raw.patch);
   },
 );
+function projectDocument(
+  projectId: string,
+  documentId: string,
+): ProjectDocument {
+  const project: ProjectRecord | undefined =
+    conversations().getProject(projectId);
+  const document = project?.documents?.find(item => item.id === documentId);
+  if (!document) {
+    throw new Error('Project file not found.');
+  }
+  return document;
+}
+
+ipcMain.handle(
+  'projects:add-documents',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {projectId: string; paths: string[]},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    return conversations().addProjectDocuments(raw.projectId, raw.paths);
+  },
+);
+ipcMain.handle(
+  'projects:remove-document',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {projectId: string; documentId: string},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    return conversations().removeProjectDocument(raw.projectId, raw.documentId);
+  },
+);
+ipcMain.handle(
+  'projects:read-document',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {projectId: string; documentId: string},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    try {
+      const document = projectDocument(raw.projectId, raw.documentId);
+      return {
+        ok: true,
+        ...(await readProjectPreview(
+          path.dirname(document.path),
+          path.basename(document.path),
+        )),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'projects:open-document',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {projectId: string; documentId: string},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    try {
+      const document = projectDocument(raw.projectId, raw.documentId);
+      const error = await shell.openPath(document.path);
+      return error ? {ok: false, error} : {ok: true};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
 ipcMain.handle('projects:open', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) {
     return {ok: false, error: 'unauthorized_project_sender'};

@@ -28,7 +28,7 @@ declare global {
     identity: Record<string, unknown>;
     revision: Record<string, unknown>;
     capabilities: string[];
-    origin: 'user-attached' | 'user-pointed' | 'task-discovered';
+    origin: 'user-attached' | 'user-pointed' | 'task-discovered' | 'project';
     parentSourceId: string | null;
   }
 
@@ -273,6 +273,7 @@ declare global {
     description?: string;
     instructions?: string;
     sharedFiles?: string[];
+    documents?: Array<import('../project_context').ProjectDocument>;
     starred?: boolean;
     archived?: boolean;
   }
@@ -798,6 +799,22 @@ declare global {
         paths?: string[];
         error?: string;
       }>;
+      addDocuments(
+        projectId: string,
+        paths: string[],
+      ): Promise<MagicPointerProjectUpdate>;
+      removeDocument(
+        projectId: string,
+        documentId: string,
+      ): Promise<MagicPointerProjectUpdate>;
+      readDocument(
+        projectId: string,
+        documentId: string,
+      ): Promise<MagicPointerProjectFileResponse>;
+      openDocument(
+        projectId: string,
+        documentId: string,
+      ): Promise<{ok: boolean; error?: string}>;
       tree(
         projectRoot: string,
         relativePath?: string,
@@ -1181,6 +1198,22 @@ declare global {
       paths?: string[];
       error?: string;
     }>;
+    addProjectDocuments(
+      projectId: string,
+      paths: string[],
+    ): Promise<MagicPointerProjectUpdate>;
+    removeProjectDocument(
+      projectId: string,
+      documentId: string,
+    ): Promise<MagicPointerProjectUpdate>;
+    readProjectDocument(
+      projectId: string,
+      documentId: string,
+    ): Promise<MagicPointerProjectFileResponse>;
+    openProjectDocument(
+      projectId: string,
+      documentId: string,
+    ): Promise<{ok: boolean; error?: string}>;
     projectTree(
       projectRoot: string,
       relativePath?: string,
@@ -1663,6 +1696,30 @@ const Data: MagicPointerDataApi = {
       return {ok: false, error: 'Project settings are unavailable.'};
     }
     return projects.update(root, patch);
+  },
+  async addProjectDocuments(projectId: string, paths: string[]) {
+    const projects = bridge()?.projects;
+    return projects?.addDocuments
+      ? projects.addDocuments(projectId, paths)
+      : {ok: false, error: 'Project uploads are unavailable.'};
+  },
+  async removeProjectDocument(projectId: string, documentId: string) {
+    const projects = bridge()?.projects;
+    return projects?.removeDocument
+      ? projects.removeDocument(projectId, documentId)
+      : {ok: false, error: 'Project files are unavailable.'};
+  },
+  async readProjectDocument(projectId: string, documentId: string) {
+    const projects = bridge()?.projects;
+    return projects?.readDocument
+      ? projects.readDocument(projectId, documentId)
+      : {ok: false, error: 'Project file preview is unavailable.'};
+  },
+  async openProjectDocument(projectId: string, documentId: string) {
+    const projects = bridge()?.projects;
+    return projects?.openDocument
+      ? projects.openDocument(projectId, documentId)
+      : {ok: false, error: 'Project file opening is unavailable.'};
   },
 
   async createProject(input: {name: string; description?: string}) {

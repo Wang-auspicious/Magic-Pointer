@@ -408,22 +408,21 @@ export async function runRuntime(
     {
       name: 'delegate-tool',
       apply: ctx => {
-        if (workspace) {
-          registerSubagentTools(ctx.get('tools'), {
-            root,
-            userDataDir,
-            workspace,
-            additionalFolders,
-            session,
-            config,
-            permissionMode,
-            onEvent,
-            allowedTools: payload.permissionGrants || [],
-            deniedTools: payload.permissionDenials || [],
-            maxTokens: config.defaultMaxTokens || 32768,
-            contextTokens,
-          });
-        }
+        registerSubagentTools(ctx.get('tools'), {
+          root,
+          userDataDir,
+          workspace,
+          additionalFolders,
+          projectContext: payload.projectContext,
+          session,
+          config,
+          permissionMode,
+          onEvent,
+          allowedTools: payload.permissionGrants || [],
+          deniedTools: payload.permissionDenials || [],
+          maxTokens: config.defaultMaxTokens || 32768,
+          contextTokens,
+        });
       },
     },
     ...modelPlugins(streamModel),

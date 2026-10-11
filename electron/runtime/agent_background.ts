@@ -22,6 +22,11 @@ import {
 import {registerCodingTools} from './agent_files';
 import {RuntimeActivitySink} from './agent_activity';
 import {EventSession} from './session';
+import {
+  registerProjectKnowledgeTools,
+  savedProjectContext,
+} from './project_knowledge';
+import {authorizeAccess, scopeFromEvents} from './context';
 import {ToolRegistry} from './tools';
 import {streamModel} from './model';
 import {
@@ -310,6 +315,7 @@ export interface BackgroundPayload {
   userDataDir: string;
   workspace: string;
   additionalFolders?: string[];
+  projectContext?: AgentOptions['projectContext'];
   sessionId: string;
   parentId: string;
   instruction: string;
@@ -391,6 +397,7 @@ export function registerSubagentTools(
     | 'userDataDir'
     | 'workspace'
     | 'additionalFolders'
+    | 'projectContext'
     | 'session'
     | 'config'
     | 'permissionMode'
@@ -428,10 +435,7 @@ export function registerSubagentTools(
     timeout_ms: 3600000,
     used_backend: 'subagent_loop',
     execute: async (args, context) => {
-      if (!options.workspace) {
-        throw new Error('A workspace is required for coding subagents');
-      }
-      const workspace = options.workspace;
+      const workspace = options.workspace || '';
       const start = launching.then(async () => {
         context.signal.throwIfAborted();
         const id = str(args.resume_id || `agent-${randomUUID()}`);
@@ -501,6 +505,7 @@ export function registerSubagentTools(
           userDataDir,
           workspace,
           additionalFolders: options.additionalFolders,
+          projectContext: options.projectContext,
           sessionId: id,
           parentId: parent.id,
           instruction,
@@ -678,6 +683,10 @@ export async function runBackgroundAgent(
   const {userDataDir, sessionId} = payload;
   const session = await ownedChild(userDataDir, payload.parentId, sessionId);
   const parent = await EventSession.open(userDataDir, payload.parentId, false);
+  const projectContext =
+    payload.projectContext === undefined
+      ? savedProjectContext(parent)
+      : payload.projectContext;
   let state = (await readAgentStatus(userDataDir, sessionId))!;
   const previousTrajectory = Array.isArray(state.trajectory)
     ? state.trajectory.map(asObject)
@@ -797,17 +806,20 @@ export async function runBackgroundAgent(
         const hooks = new HookManager();
         const prompt = new PromptSections();
         const paths = extensionPaths(userDataDir);
+        await registerProjectKnowledgeTools(registry, session, projectContext);
         const builtins = [
           ...modelPlugins(streamModel),
           {
             name: 'coding-tools',
             apply: (ctx: import('./agent_plugins').PluginContext) => {
-              registerCodingTools(
-                ctx.get('tools'),
-                payload.workspace,
-                session,
-                payload.additionalFolders,
-              );
+              if (payload.workspace) {
+                registerCodingTools(
+                  ctx.get('tools'),
+                  payload.workspace,
+                  session,
+                  payload.additionalFolders,
+                );
+              }
             },
           },
           {
@@ -853,7 +865,13 @@ export async function runBackgroundAgent(
           );
           const common: AgentOptions = {
             ...payload,
+            projectContext,
             parentSessionId: payload.parentId,
+            authorizeAccess: request =>
+              authorizeAccess(
+                scopeFromEvents(session.events, session.id),
+                request,
+              ),
             session,
             registry,
             hooks,

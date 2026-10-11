@@ -1380,6 +1380,8 @@ function createConversationStore(
     getProject,
     listProjects,
     updateProject: projectStore.update,
+    addProjectDocuments: projectStore.addDocuments,
+    removeProjectDocument: projectStore.removeDocument,
     objectKey,
     flush,
   };

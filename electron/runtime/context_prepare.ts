@@ -27,6 +27,8 @@ import {
   type AccessRequest,
 } from './context';
 import {DocumentReader} from './context_documents';
+import {synchronizeProjectKnowledge} from './project_knowledge';
+import type {ProjectContext} from '../project_context';
 import {ExcelLiveReader} from './context_excel_live';
 import {PowerPointLiveReader} from './context_powerpoint_live';
 import {
@@ -372,6 +374,10 @@ export async function prepareTaskContext(
       source.revision.authority === 'historical',
     new FrozenSelectionReader(document),
     true,
+  );
+  await synchronizeProjectKnowledge(
+    session,
+    payload.projectContext as ProjectContext | null | undefined,
   );
   const known = new Map(
     taskSources(session.events).map(source => [source.sourceId, source]),

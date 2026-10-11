@@ -11,7 +11,7 @@
     identity: UnknownRecord;
     revision: UnknownRecord;
     capabilities: string[];
-    origin: 'user-attached' | 'user-pointed' | 'task-discovered';
+    origin: 'user-attached' | 'user-pointed' | 'task-discovered' | 'project';
     parentSourceId: string | null;
   }
 
@@ -80,6 +80,7 @@
     'capture',
   ]);
   const SOURCE_ORIGINS = new Set([
+    'project',
     'user-attached',
     'user-pointed',
     'task-discovered',

@@ -8,6 +8,7 @@ export interface ProjectSettings {
   root: string;
   name: string;
   instructions: string;
+  documents?: Array<{id: string; name: string}>;
 }
 
 export type ActiveProjectSettings = ProjectSettings | null | undefined;
@@ -31,6 +32,10 @@ export async function synchronizeProjectSettings(
           root: project.root,
           name: project.name,
           instructions: project.instructions?.trim() || '',
+          documents: (project.documents || []).map(({id, name}) => ({
+            id,
+            name,
+          })),
         };
   if (!previous || !isDeepStrictEqual(saved, snapshot)) {
     await session.append('project/settings', {project: snapshot});
@@ -53,6 +58,9 @@ export function withProjectSettings(
       : 'No project is selected.',
     settings?.instructions ||
       'No project instructions are set. Earlier project instructions no longer apply.',
+    settings?.documents?.length
+      ? `Current project files (read with Context.read):\n${settings.documents.map(document => `${JSON.stringify(document.name)}: project://${document.id}`).join('\n')}`
+      : 'No uploaded project files are selected.',
     '[/Project settings]',
   ].join('\n');
   const message: AgentMessage = {

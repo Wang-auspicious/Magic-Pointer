@@ -1,5 +1,13 @@
 import path from 'node:path';
 
+export interface ProjectDocument {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  addedAt: number;
+}
+
 export interface ProjectContext {
   id?: string;
   root: string;
@@ -7,6 +15,7 @@ export interface ProjectContext {
   description?: string;
   instructions?: string;
   sharedFiles?: string[];
+  documents?: ProjectDocument[];
 }
 
 export interface ProjectDetailsPatch {

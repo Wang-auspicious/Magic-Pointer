@@ -1,7 +1,11 @@
 import {randomUUID} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type {ProjectContext, ProjectDetailsPatch} from './project_context';
+import type {
+  ProjectContext,
+  ProjectDetailsPatch,
+  ProjectDocument,
+} from './project_context';
 
 export interface ProjectRecord extends ProjectContext {
   id: string;
@@ -36,7 +40,11 @@ function folderKey(root: string): string {
 }
 
 function copy(project: ProjectRecord): ProjectRecord {
-  return {...project, sharedFiles: [...(project.sharedFiles || [])]};
+  return {
+    ...project,
+    sharedFiles: [...(project.sharedFiles || [])],
+    documents: (project.documents || []).map(document => ({...document})),
+  };
 }
 
 export function createProjectStore({
@@ -245,5 +253,96 @@ export function createProjectStore({
     }
   }
 
-  return {create, get, list, register, update};
+  async function addDocuments(
+    key: string,
+    sourcePaths: readonly string[],
+  ): Promise<ProjectMutationResult> {
+    const project = find(key);
+    if (!project) {
+      return {ok: false, error: 'Project not found.'};
+    }
+    const documents: ProjectDocument[] = [];
+    try {
+      for (const sourcePath of new Set(sourcePaths)) {
+        const source = path.resolve(sourcePath);
+        const info = await fs.promises.stat(source);
+        if (!info.isFile()) {
+          throw new Error(`Choose a file: ${sourcePath}`);
+        }
+        const id = randomUUID();
+        const name = path.basename(source);
+        const destination = path.join(
+          baseDir,
+          'project-documents',
+          project.id,
+          id,
+          name,
+        );
+        await fs.promises.mkdir(path.dirname(destination), {recursive: true});
+        await fs.promises.copyFile(source, destination);
+        const saved = await fs.promises.stat(destination);
+        documents.push({
+          id,
+          name,
+          path: path.resolve(destination),
+          size: saved.size,
+          addedAt: now(),
+        });
+      }
+      const current = find(project.id)!;
+      const next = {
+        ...current,
+        documents: [...(current.documents || []), ...documents],
+        updatedAt: now(),
+      };
+      persist(load().map(row => (row.id === next.id ? next : row)));
+      return {ok: true, project: copy(next)};
+    } catch (error) {
+      await Promise.allSettled(
+        documents.map(document => fs.promises.unlink(document.path)),
+      );
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Could not add project files.',
+      };
+    }
+  }
+
+  function removeDocument(
+    key: string,
+    documentId: string,
+  ): ProjectMutationResult {
+    const project = find(key);
+    if (
+      !project ||
+      !project.documents?.some(document => document.id === documentId)
+    ) {
+      return {ok: false, error: 'Project file not found.'};
+    }
+    const next = {
+      ...project,
+      documents: project.documents.filter(
+        document => document.id !== documentId,
+      ),
+      updatedAt: now(),
+    };
+    try {
+      // Conversations retain source evidence after its project membership ends.
+      persist(load().map(row => (row.id === next.id ? next : row)));
+      return {ok: true, project: copy(next)};
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Could not remove project file.',
+      };
+    }
+  }
+
+  return {create, get, list, register, update, addDocuments, removeDocument};
 }

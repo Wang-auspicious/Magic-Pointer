@@ -133,7 +133,7 @@ export function sourceRef(value: unknown): SourceRef {
     throw new Error('Unsupported source kind');
   }
   if (
-    !['user-attached', 'user-pointed', 'task-discovered'].includes(
+    !['user-attached', 'user-pointed', 'task-discovered', 'project'].includes(
       String(data.origin),
     )
   ) {
@@ -245,6 +245,39 @@ export function resolveSource(
   events: readonly ContextEvent[],
   id: string,
 ): SourceRef {
+  if (id.startsWith('project://')) {
+    const locator = decodeURIComponent(id.slice('project://'.length));
+    const sources = taskSources(events).filter(
+      source => source.origin === 'project',
+    );
+    if (!sources.length) {
+      throw new Error(`Unknown project file: ${id}`);
+    }
+    const granted =
+      scopeFromEvents(events, sources[0].taskId).grants.find(
+        grant => grant.grantId === 'project-knowledge',
+      )?.sourceIds || [];
+    const documents = sources.filter(source =>
+      granted.includes(source.sourceId),
+    );
+    const direct = documents.find(
+      source => source.identity.projectDocumentId === locator,
+    );
+    if (direct) {
+      return direct;
+    }
+    const matching = documents.filter(
+      source => source.identity.projectFileName === locator,
+    );
+    if (matching.length !== 1) {
+      throw new Error(
+        matching.length
+          ? `Ambiguous project file: ${id}; use its project:// document ID.`
+          : `Unknown project file: ${id}`,
+      );
+    }
+    return matching[0];
+  }
   const references = taskReferences(events).filter(
     item => item.active && (item.referenceId === id || item.label === id),
   );
@@ -780,7 +813,7 @@ export function registerContextTools(
       name,
       description: search
         ? 'Search all authorized document content, with continuation and source locators.'
-        : 'Read a task source or precise fragment. Continue using the returned cursor.',
+        : 'Read a task source, project:// document UUID or unambiguous project:// filename. Continue using the returned cursor.',
       input_schema: schema(
         {
           source_id: string,
