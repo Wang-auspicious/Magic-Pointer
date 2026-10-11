@@ -1,4 +1,9 @@
 import {BrowserViewRegistry} from './browser_view_registry';
+import {
+  projectAttachments,
+  type ProjectContext,
+  type ProjectDetailsPatch,
+} from './project_context';
 
 const {
   app,
@@ -1965,6 +1970,18 @@ ipcMain.handle('projects:list', (event: Electron.IpcMainInvokeEvent) => {
     return [];
   }
 });
+ipcMain.handle(
+  'projects:update',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {root: string; patch: ProjectDetailsPatch},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    return conversations().updateProject(raw.root, raw.patch);
+  },
+);
 ipcMain.handle('projects:open', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) {
     return {ok: false, error: 'unauthorized_project_sender'};
@@ -3545,7 +3562,7 @@ async function sendConversation(
   ).trim();
   const attachments = Array.isArray(raw?.attachments)
     ? [
-        ...new Set(
+        ...new Set<string>(
           raw.attachments
             .map((item: unknown) => String(item || '').trim())
             .filter(Boolean)
@@ -3666,6 +3683,11 @@ async function sendConversation(
     existing: existing?.agentSessionId,
     conversationId,
   });
+  const projectContext = conversations().listProjects().find(
+    (project: ProjectContext) =>
+      effectiveWorkspaceRoot && samePath(project.root, effectiveWorkspaceRoot),
+  );
+  const taskAttachments = projectAttachments(attachments, projectContext);
   const capturedAtMs = Date.now();
   const rawTaskInput =
     raw?.taskInput &&
@@ -3702,7 +3724,7 @@ async function sendConversation(
       : TaskSources.bindConversationTaskInput(rawTaskInput, {
           taskId: effectiveAgentSessionId,
           instruction: question,
-          attachments,
+          attachments: taskAttachments,
           capturedAtMs,
         });
   } catch (error: any) {
@@ -3721,7 +3743,8 @@ async function sendConversation(
     permissionPreset,
     effort,
     requestId,
-    attachments,
+    attachments: taskAttachments,
+    projectContext,
     taskInput,
     ...(inputResponse ? {inputResponse} : {}),
     ...(conversationId ? {conversationId} : {}),

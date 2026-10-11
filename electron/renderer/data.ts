@@ -239,6 +239,21 @@ declare global {
     name: string;
     addedAt?: number;
     lastOpenedAt?: number;
+    updatedAt?: number;
+    description?: string;
+    instructions?: string;
+    sharedFiles?: string[];
+  }
+
+  type MagicPointerProjectPatch = Pick<
+    Partial<MagicPointerProject>,
+    'name' | 'description' | 'instructions' | 'sharedFiles'
+  >;
+
+  interface MagicPointerProjectUpdate {
+    ok: boolean;
+    project?: MagicPointerProject;
+    error?: string;
   }
 
   interface MagicPointerHomeStatsSlice {
@@ -703,6 +718,10 @@ declare global {
         callback: (event: MagicPointerTerminalEvent) => void,
       ): void;
       list(): Promise<MagicPointerProject[]>;
+      update(
+        root: string,
+        patch: MagicPointerProjectPatch,
+      ): Promise<MagicPointerProjectUpdate>;
       open(): Promise<{
         ok?: boolean;
         canceled?: boolean;
@@ -1084,6 +1103,10 @@ declare global {
     ): Promise<Record<string, any>>;
     isLive(): boolean;
     projects(): Promise<MagicPointerProject[]>;
+    updateProject(
+      root: string,
+      patch: MagicPointerProjectPatch,
+    ): Promise<MagicPointerProjectUpdate>;
     openProject(): Promise<{
       ok?: boolean;
       canceled?: boolean;
@@ -1572,6 +1595,14 @@ const Data: MagicPointerDataApi = {
     }
     const projects = await bridge()!.projects?.list?.();
     return Array.isArray(projects) ? projects : [];
+  },
+
+  async updateProject(root: string, patch: MagicPointerProjectPatch) {
+    const projects = bridge()?.projects;
+    if (!projects?.update) {
+      return {ok: false, error: 'Project settings are unavailable.'};
+    }
+    return projects.update(root, patch);
   },
 
   async openProject(): Promise<{

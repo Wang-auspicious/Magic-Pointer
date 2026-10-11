@@ -325,6 +325,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     onTerminalEvent: (callback: PayloadCallback) =>
       onPayload('projects:terminal-event', callback),
     list: () => ipcRenderer.invoke('projects:list'),
+    update: (
+      root: string,
+      patch: import('./project_context').ProjectDetailsPatch,
+    ) => ipcRenderer.invoke('projects:update', {root, patch}),
     open: () => ipcRenderer.invoke('projects:open'),
     pickFiles: (projectRoot: unknown, kind: unknown = 'files') =>
       ipcRenderer.invoke('projects:pick-files', {

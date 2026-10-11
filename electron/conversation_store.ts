@@ -1,5 +1,7 @@
 'use strict';
 
+import type {ProjectContext, ProjectDetailsPatch} from './project_context';
+
 const fs = require('node:fs');
 const path = require('node:path');
 const {projectStudioHomeStats} = require('./studio_home_stats');
@@ -137,11 +139,10 @@ const PERSIST_FAILURE_REPORT_INTERVAL_MS = 60_000;
 
 const ASYNC_WRITE_RETRY_BUDGET = 3;
 
-interface ProjectRecord {
-  root: string;
-  name: string;
+interface ProjectRecord extends ProjectContext {
   addedAt: number;
   lastOpenedAt: number;
+  updatedAt?: number;
 }
 
 function isTurnSettled(outcome: unknown): boolean {
@@ -639,7 +640,57 @@ function createConversationStore(
           isGitProjectRoot(project.root),
       )
       .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
-      .map(project => ({...project}));
+      .map(project => ({
+        ...project,
+        sharedFiles: [...(project.sharedFiles || [])],
+      }));
+  }
+
+  function updateProject(
+    rawRoot: string,
+    patch: ProjectDetailsPatch,
+  ): {ok: boolean; project?: ProjectRecord; error?: string} {
+    const projects = loadProjects();
+    const index = projects.findIndex(
+      project => projectKey(project.root) === projectKey(rawRoot),
+    );
+    if (index < 0) {
+      return {ok: false, error: 'Project not found.'};
+    }
+    if (patch.name !== undefined && !patch.name.trim()) {
+      return {ok: false, error: 'Enter a project name.'};
+    }
+    const previous = projects[index];
+    const next: ProjectRecord = {...previous, updatedAt: now()};
+    if (patch.name !== undefined) {
+      next.name = patch.name.trim();
+    }
+    if (patch.description !== undefined) {
+      next.description = patch.description.trim();
+    }
+    if (patch.instructions !== undefined) {
+      next.instructions = patch.instructions.trim();
+    }
+    if (patch.sharedFiles !== undefined) {
+      next.sharedFiles = [
+        ...new Set(patch.sharedFiles.map(file => path.resolve(file))),
+      ];
+    }
+    projects[index] = next;
+    try {
+      persistProjects();
+    } catch (error) {
+      projects[index] = previous;
+      return {
+        ok: false,
+        error:
+          error instanceof Error ? error.message : 'Could not save project.',
+      };
+    }
+    return {
+      ok: true,
+      project: {...next, sharedFiles: [...(next.sharedFiles || [])]},
+    };
   }
 
   function permissionAnswerOf(
@@ -1398,6 +1449,7 @@ function createConversationStore(
     clear,
     registerProject,
     listProjects,
+    updateProject,
     objectKey,
     flush,
   };
