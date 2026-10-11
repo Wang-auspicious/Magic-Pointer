@@ -188,3 +188,39 @@
   color: var(--mp-text-muted);
   font-size: 12px;
 }
+
+/*
+ * Right pane as an overlay.
+ *
+ * Claude stops giving the session pane a column of its own and floats it once the
+ * pane container is narrower than 768px, and toggling it then opens the overlay
+ * rather than the column. `shell[data-inspector-overlay]` is set by
+ * `syncInspectorGeometry` from `SessionPaneState.sidebarViewportIsNarrow`.
+ * The geometry mirrors the task-rail overlay rule in `studio_layout.css`.
+ */
+.mp-shell[data-inspector-overlay="true"] .mp-inspector {
+  position: absolute;
+  inset: var(--mp-window-bar) 0 0 auto;
+  z-index: 70;
+  width: min(var(--mp-inspector-max), 100vw);
+  margin: 0;
+  border-radius: 0;
+  border-right: 0;
+  box-shadow: var(--mp-shadow-menu);
+}
+
+/*
+ * Left sidebar row spec.
+ *
+ * Claude's boot placeholder is a hard-coded spec of the sidebar rows: 26px row
+ * pitch, a 16x16 leading at x=14, and the label column starting at x=34. The
+ * session rows already match it exactly - a 6x6 bullet at x=19 and text at x=38,
+ * from `--mp-sidebar-width` 288 plus the 8px sidebar inset, the row's 2px inset,
+ * and the bullet's 9px inline margin. The navigation rows were landing at x=38
+ * because of a 4px gap after a 24px leading box; the leading box stays (the New
+ * button's 18px circle lives in it) and the gap goes.
+ */
+.mpw-new-session,
+.mpw-customize {
+  gap: 0;
+}

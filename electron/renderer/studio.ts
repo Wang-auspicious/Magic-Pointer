@@ -2228,11 +2228,33 @@ function bindSidebarSearch() {
 }
 bindSidebarSearch();
 
-async function openProjectFromPicker() {
-  const picked = await Data.openProject();
-  if (!picked?.ok || !picked.project?.root) {
+/** Say why a project could not be opened. */
+function setWorkspaceNote(message: string): void {
+  const note = document.getElementById('workspace-note');
+  if (!note) {
     return;
   }
+  note.textContent = message;
+  note.hidden = !message;
+}
+
+async function openProjectFromPicker() {
+  const picked = await Data.openProject();
+  if (picked?.canceled) {
+    return;
+  }
+  if (!picked?.ok || !picked.project?.root) {
+    // This used to return silently. Choosing a folder that could not be opened
+    // then looked exactly like the button being broken, which is how "I pick a
+    // folder and nothing happens" was reported.
+    setWorkspaceNote(
+      picked?.error === 'unauthorized_project_sender'
+        ? '界面状态异常，请重开工作室再试。'
+        : '无法打开这个文件夹，可能已被移动或删除。',
+    );
+    return;
+  }
+  setWorkspaceNote('');
   setActiveProject(picked.project.root);
   startNewChat();
   await renderSidebar();
@@ -3780,6 +3802,7 @@ async function openConversation(id: string) {
     repositoryContextDismissedFor = '';
   }
   activeConversationId = c.id;
+  seedSessionPane(c.id);
   restoreWorkspaceResourceSnapshot();
   void refreshBackgroundAgentTasks(c.id);
   activeConversationRecord = c;
@@ -6560,6 +6583,162 @@ let inspectorState: InspectorState = {
   previousWidth: preferredInspectorWidth,
   tab: 'files',
 };
+
+interface SessionPaneAgentSidebarState {
+  expandedBySession: Record<string, boolean>;
+  autoOpenSeededFor: Record<string, boolean>;
+  perSessionExpanded: Record<string, boolean>;
+  userCollapsed: boolean;
+  isViewportNarrow: boolean;
+  isCuDocked: boolean;
+  isOverlayOpen: boolean;
+}
+
+interface SessionPaneStateModule {
+  PANE_OVERLAY_WIDTH: number;
+  createAgentSidebarState(): SessionPaneAgentSidebarState;
+  sidebarViewportIsNarrow(containerWidth: unknown): boolean;
+  setSidebarViewportNarrow(
+    state: SessionPaneAgentSidebarState,
+    narrow: boolean,
+  ): SessionPaneAgentSidebarState;
+  sidebarIsExpandedForSession(
+    state: SessionPaneAgentSidebarState,
+    sessionId: string,
+    options?: {perSession?: boolean; fallback?: boolean},
+  ): boolean;
+  toggleSidebarForSession(
+    state: SessionPaneAgentSidebarState,
+    sessionId: string,
+  ): SessionPaneAgentSidebarState;
+  seedSidebarCollapsedForSession(
+    state: SessionPaneAgentSidebarState,
+    sessionId: string,
+  ): SessionPaneAgentSidebarState;
+  serializeAgentSidebarState(state: SessionPaneAgentSidebarState): string;
+  restoreAgentSidebarState(raw: unknown): SessionPaneAgentSidebarState;
+}
+const sessionPanePolicy = (
+  globalThis as {SessionPaneState?: SessionPaneStateModule}
+).SessionPaneState;
+const SESSION_PANE_KEY = 'mp:agent-sidebar';
+let sessionPaneState: SessionPaneAgentSidebarState | null = null;
+if (sessionPanePolicy) {
+  let storedSessionPane = '';
+  try {
+    storedSessionPane = localStorage.getItem(SESSION_PANE_KEY) || '';
+  } catch {
+    /* storage unavailable */
+  }
+  sessionPaneState =
+    sessionPanePolicy.restoreAgentSidebarState(storedSessionPane);
+}
+
+function sessionPaneSessionId(): string {
+  return activeConversationId || '';
+}
+
+function persistSessionPane(): void {
+  const policy = sessionPanePolicy;
+  const state = sessionPaneState;
+  if (!policy || !state) {
+    return;
+  }
+  try {
+    localStorage.setItem(
+      SESSION_PANE_KEY,
+      policy.serializeAgentSidebarState(state),
+    );
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+// A per-session override, when one exists, wins over the global collapse flag.
+function sessionPaneIsExpandedFor(sessionId: string): boolean {
+  const policy = sessionPanePolicy;
+  const state = sessionPaneState;
+  if (!policy || !state) {
+    return true;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(state.perSessionExpanded, sessionId)
+  ) {
+    return policy.sidebarIsExpandedForSession(state, sessionId, {
+      perSession: true,
+      fallback: false,
+    });
+  }
+  return policy.sidebarIsExpandedForSession(state, sessionId);
+}
+
+function seedSessionPane(sessionId: string): void {
+  const policy = sessionPanePolicy;
+  const state = sessionPaneState;
+  if (!policy || !state) {
+    return;
+  }
+  sessionPaneState = policy.seedSidebarCollapsedForSession(state, sessionId);
+}
+
+// The machine's own toggle reads the session's current expansion, so what is on
+// screen has to be what it believes.
+function trackSessionPaneExpansion(
+  sessionId: string,
+  expanded: boolean,
+): void {
+  const state = sessionPaneState;
+  if (!state || state.expandedBySession[sessionId] === expanded) {
+    return;
+  }
+  sessionPaneState = {
+    ...state,
+    expandedBySession: {...state.expandedBySession, [sessionId]: expanded},
+  };
+}
+
+// Under 768px of the pane's own container Claude stops making the pane a column
+// and floats it instead.
+function syncSessionPaneViewport(): void {
+  const policy = sessionPanePolicy;
+  const state = sessionPaneState;
+  if (!policy || !state) {
+    return;
+  }
+  const next = policy.setSidebarViewportNarrow(
+    state,
+    policy.sidebarViewportIsNarrow(inspectorAvailableWidth()),
+  );
+  if (next.isViewportNarrow === state.isViewportNarrow) {
+    return;
+  }
+  sessionPaneState = next;
+  syncInspectorGeometry();
+}
+
+function toggleSessionPane(tab: string): void {
+  const policy = sessionPanePolicy;
+  const state = sessionPaneState;
+  const sessionId = sessionPaneSessionId();
+  if (!policy || !state) {
+    setInspector(shell.dataset.inspector !== 'open', tab);
+    return;
+  }
+  seedSessionPane(sessionId);
+  const toggled = policy.toggleSidebarForSession(
+    sessionPaneState || state,
+    sessionId,
+  );
+  sessionPaneState = toggled;
+  persistSessionPane();
+  setInspector(
+    toggled.isViewportNarrow
+      ? toggled.isOverlayOpen
+      : sessionPaneIsExpandedFor(sessionId),
+    tab,
+  );
+}
+
 function inspectorError(message: string) {
   const host = document.getElementById('project-file-tree');
   if (host) {
@@ -7849,6 +8028,7 @@ if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
 }
 window.addEventListener('resize', () => {
   scheduleStreamRail();
+  syncSessionPaneViewport();
   if (inspectorState.open && !inspectorState.maximized) {
     inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
       type: 'viewport',
@@ -7859,6 +8039,9 @@ window.addEventListener('resize', () => {
   }
   scheduleProjectBrowserResize();
 });
+
+seedSessionPane(sessionPaneSessionId());
+syncSessionPaneViewport();
 
 function inspectorAvailableWidth(): number {
   const sidebarWidth =
@@ -7885,6 +8068,17 @@ function syncInspectorGeometry() {
   inspector.dataset.railOverlay = String(
     taskRail && !backgroundTasks && rail.overlay,
   );
+  if (sessionPaneState && sessionPaneState.isViewportNarrow) {
+    sessionPaneState = {
+      ...sessionPaneState,
+      isOverlayOpen: inspectorState.open,
+    };
+  }
+  if (sessionPaneState && sessionPaneState.isViewportNarrow && inspectorState.open) {
+    shell.dataset.inspectorOverlay = 'true';
+  } else {
+    delete shell.dataset.inspectorOverlay;
+  }
   shell.dataset.taskSurface = !inspectorState.open
     ? ''
     : backgroundTasks
@@ -7954,6 +8148,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       : {type: 'close'},
   );
   activeInspectorTab = inspectorState.tab;
+  trackSessionPaneExpansion(sessionPaneSessionId(), inspectorState.open);
   syncInspectorGeometry();
   document
     .querySelectorAll<HTMLElement>('[data-inspector-panel]')
@@ -8019,8 +8214,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
 
 document.getElementById('inspector-toggle')?.addEventListener('click', () => {
   const activeResource = workspaceResourceTabs.find(tab => tab.active);
-  setInspector(
-    shell.dataset.inspector !== 'open',
+  toggleSessionPane(
     activeResource
       ? resourcePanelFor(activeResource.kind)
       : activeProjectRoot
@@ -10308,6 +10502,12 @@ function fitComposer(ta: HTMLTextAreaElement) {
 
 let composerSuggestion = '';
 let composerSuggestionRequest = 0;
+// How many predictions in a row the user has been shown and ignored. The
+// reference drops the frequency after a run of them and restores it as soon as
+// one is used, so the feature backs off instead of nagging. Accepting is what
+// resets it — seeing is not using.
+const COMPOSER_SUGGESTION_UNUSED_LIMIT = 3;
+let composerSuggestionUnused = 0;
 
 const COMPOSER_PLACEHOLDER_HOME = 'Describe a task or ask a question';
 const COMPOSER_PLACEHOLDER_THREAD = 'Type / for commands';
@@ -10341,9 +10541,17 @@ function clearComposerSuggestion() {
 
 async function refreshComposerSuggestion(turns: unknown, object: unknown) {
   const request = ++composerSuggestionRequest;
+  if (composerSuggestionUnused >= COMPOSER_SUGGESTION_UNUSED_LIMIT) {
+    composerSuggestion = '';
+    applyComposerPlaceholder();
+    return;
+  }
   const suggestion = await Data.suggestNextPrompt(turns, object);
   if (request !== composerSuggestionRequest) {
     return;
+  }
+  if (suggestion) {
+    composerSuggestionUnused += 1;
   }
   composerSuggestion = suggestion;
   applyComposerPlaceholder();
@@ -11186,6 +11394,8 @@ function acceptComposerSuggestion(textarea: HTMLTextAreaElement): boolean {
   }
   textarea.value = composerSuggestion;
   textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  // Using one brings the frequency back to normal.
+  composerSuggestionUnused = 0;
   clearComposerSuggestion();
   textarea.dispatchEvent(new Event('input', {bubbles: true}));
   return true;
@@ -11859,6 +12069,7 @@ function startNewChat() {
     }
   }
   activeConversationId = null;
+  seedSessionPane('');
   newChatWorktreeId = `new-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .slice(2, 8)}`;
