@@ -88,15 +88,29 @@ declare global {
         </nav>
         <header class="mp-project-heading">
           <div><h1>${escape(project.name)}</h1>${project.description ? `<p>${escape(project.description)}</p>` : '<p>Add a description to keep your work in focus.</p>'}</div>
-          ${action('Edit details', 'details')}
+          <div class="mp-project-heading-actions">
+            ${action('Edit details', 'details')}
+            <details class="mp-project-menu">
+              <summary class="mp-project-button" aria-label="Project actions">···</summary>
+              <div>
+                ${action(project.starred ? 'Unstar project' : 'Star project', 'star')}
+                ${action(project.archived ? 'Restore project' : 'Archive project', project.archived ? 'restore' : 'archive')}
+              </div>
+            </details>
+          </div>
         </header>
         <p class="mp-project-status" data-project-status role="status" hidden></p>
+        ${project.archived ? `<div class="mp-project-archive-note"><p>This project is archived. Your chats, instructions, and files are saved.</p>${action('Restore project', 'restore')}</div>` : ''}
         <div class="mp-project-columns">
           <div class="mp-project-chats">
-            <form class="mp-project-compose">
+            ${
+              project.archived
+                ? ''
+                : `<form class="mp-project-compose">
               <textarea name="prompt" rows="3" aria-label="New chat in ${escape(project.name)}" placeholder="Start a chat in this project" required></textarea>
               <div><span>Uses this project's instructions and files</span><button class="mp-project-button is-primary" type="submit">Start chat <span aria-hidden="true">↑</span></button></div>
-            </form>
+            </form>`
+            }
             <div class="mp-project-section-heading"><h2>Chats</h2><span>${rows.length}</span></div>
             <label class="mp-project-chat-search"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4.5 4.5"/></svg><input type="search" placeholder="Search chats" aria-label="Search project chats" data-project-chat-search></label>
             <div class="mp-project-chat-list">${rows
@@ -125,9 +139,12 @@ declare global {
             <section class="mp-project-location"><h2>Local folder</h2><p>${escape(project.root)}</p>${action('Open folder', 'folder')}</section>
           </aside>
         </div>`;
-      root.querySelector<HTMLTextAreaElement>(
+      const composer = root.querySelector<HTMLTextAreaElement>(
         '.mp-project-compose textarea',
-      )!.value = draft;
+      );
+      if (composer) {
+        composer.value = draft;
+      }
       const searchInput = root.querySelector<HTMLInputElement>(
         '[data-project-chat-search]',
       )!;
@@ -210,6 +227,38 @@ declare global {
       dialog.showModal();
     }
 
+    function confirmArchive(): void {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'mp-project-editor mp-project-archive-dialog';
+      dialog.innerHTML = `<form>
+        <header><h2>Archive project?</h2></header>
+        <p>Archive ${escape(project.name)}? It will leave your active projects. Your chats, instructions, and files will be kept, and you can restore it later.</p>
+        <p class="mp-project-status" data-project-edit-error role="status"></p>
+        <footer><button type="button" class="mp-project-button" data-project-editor-close>Cancel</button><button type="submit" class="mp-project-button is-primary">Archive project</button></footer>
+      </form>`;
+      root.append(dialog);
+      dialog
+        .querySelector('[data-project-editor-close]')!
+        .addEventListener('click', () => dialog.close());
+      dialog.addEventListener('close', () => dialog.remove(), {once: true});
+      dialog.querySelector('form')!.addEventListener('submit', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const submit =
+          dialog.querySelector<HTMLButtonElement>('[type="submit"]')!;
+        submit.disabled = true;
+        void save({archived: true}).then(saved => {
+          submit.disabled = false;
+          if (saved && root.isConnected) {
+            dialog.close();
+            paint();
+            options.onBack();
+          }
+        });
+      });
+      dialog.showModal();
+    }
+
     root.addEventListener('input', event => {
       const input = event.target as HTMLInputElement;
       if (!input.matches('[data-project-chat-search]')) {
@@ -254,6 +303,16 @@ declare global {
       const key = button.dataset.projectAction;
       if (key === 'back') {
         options.onBack();
+      } else if (key === 'star' || key === 'restore') {
+        const patch =
+          key === 'star' ? {starred: !project.starred} : {archived: false};
+        void save(patch).then(saved => {
+          if (saved && root.isConnected) {
+            paint();
+          }
+        });
+      } else if (key === 'archive') {
+        confirmArchive();
       } else if (key === 'details' || key === 'instructions') {
         edit(key);
       } else if (key === 'files') {

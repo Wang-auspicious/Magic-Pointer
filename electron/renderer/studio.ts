@@ -2041,6 +2041,8 @@ async function renderSidebar() {
     ]),
   );
   const projectGroups = projects
+    .filter(project => !project.archived)
+    .sort((a, b) => Number(Boolean(b.starred)) - Number(Boolean(a.starred)))
     .map(project => ({
       key: project.root,
       label: project.name,
@@ -2341,7 +2343,7 @@ async function openWorkspaceMenu() {
   if (!menu) {
     return;
   }
-  const projects = await warmProjects();
+  const projects = (await warmProjects()).filter(project => !project.archived);
   const rows: HTMLElement[] = [];
   const close = () => {
     closeAnchoredPopover('composer-workspace-menu', 'composer-workspace');

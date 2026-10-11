@@ -6,6 +6,28 @@
   line-height: 1.5;
 }
 
+.mp-project-card-heading,
+.mp-project-list-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mp-project-card-heading {
+  width: 100%;
+  justify-content: space-between;
+}
+.mp-project-list-tabs button {
+  padding: 5px 10px;
+  border-radius: var(--mp-r5);
+  color: var(--mp-text-muted);
+  font-size: 13px;
+}
+.mp-project-list-tabs button:hover,
+.mp-project-list-tabs button[aria-selected='true'] {
+  background: var(--mp-hover);
+  color: var(--mp-text);
+}
+
 .mp-project-workspace [hidden] {
   display: none;
 }
@@ -44,8 +66,52 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.mp-project-heading > button {
+.mp-project-heading-actions {
+  display: flex;
+  align-items: center;
   flex: none;
+  gap: 4px;
+}
+.mp-project-menu {
+  position: relative;
+}
+.mp-project-menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+.mp-project-menu > div {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  min-width: 168px;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+  box-shadow: var(--mp-shadow-menu);
+}
+.mp-project-menu > div > button {
+  justify-content: flex-start;
+}
+.mp-project-archive-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  border-radius: var(--mp-r6);
+  background: var(--mp-hover);
+  color: var(--mp-text-secondary);
+}
+.mp-project-archive-note p {
+  margin: 0;
+}
+.mp-project-archive-dialog {
+  max-width: 420px;
 }
 .mp-project-button {
   display: inline-flex;

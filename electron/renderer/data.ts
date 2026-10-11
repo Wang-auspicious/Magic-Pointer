@@ -243,11 +243,13 @@ declare global {
     description?: string;
     instructions?: string;
     sharedFiles?: string[];
+    starred?: boolean;
+    archived?: boolean;
   }
 
   type MagicPointerProjectPatch = Pick<
     Partial<MagicPointerProject>,
-    'name' | 'description' | 'instructions' | 'sharedFiles'
+    'name' | 'description' | 'instructions' | 'sharedFiles' | 'starred' | 'archived'
   >;
 
   interface MagicPointerProjectUpdate {

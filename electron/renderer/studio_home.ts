@@ -201,6 +201,7 @@ function selectActiveProjects(
     });
   }
   return projects
+    .filter(project => !project.archived)
     .flatMap(project => {
       const latest = activity.get(key(project.root));
       return latest && (latest.running || latest.updatedAt >= now - 604800000)

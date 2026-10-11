@@ -235,12 +235,14 @@
           .filter(row => row.workspaceRoot === item.root)
           .map(row => Number(row.updatedAt || 0)),
       );
-    return [...items].sort((a, b) =>
-      sort === 'name'
-        ? a.name.localeCompare(b.name)
-        : sort === 'created'
-          ? Number(b.addedAt || 0) - Number(a.addedAt || 0)
-          : activity(b) - activity(a),
+    return [...items].sort(
+      (a, b) =>
+        Number(Boolean(b.starred)) - Number(Boolean(a.starred)) ||
+        (sort === 'name'
+          ? a.name.localeCompare(b.name)
+          : sort === 'created'
+            ? Number(b.addedAt || 0) - Number(a.addedAt || 0)
+            : activity(b) - activity(a)),
     );
   }
   function sortSkills(items: MagicPointerSlashEntry[], sort: string) {
@@ -530,10 +532,12 @@
     currentRoot: string,
     query = '',
   ) {
-    const rows = projects.filter(project =>
-      `${project.name} ${project.root}`
-        .toLocaleLowerCase()
-        .includes(query.toLocaleLowerCase()),
+    const rows = projects.filter(
+      project =>
+        (!project.archived || project.root === currentRoot) &&
+        `${project.name} ${project.root}`
+          .toLocaleLowerCase()
+          .includes(query.toLocaleLowerCase()),
     );
     return `${!query ? `<button type="button" data-project-root="" role="menuitemradio" aria-checked="${!currentRoot}"><span>No project</span>${!currentRoot ? glyph('check') : ''}</button>` : ''}${rows.map(project => `<button type="button" data-project-root="${escape(project.root)}" role="menuitemradio" aria-checked="${project.root === currentRoot}"><span>${escape(project.name)}</span>${project.root === currentRoot ? glyph('check') : ''}</button>`).join('')}${!rows.length ? `<p class="mp-library-note">${query ? 'No matching projects' : 'No projects yet'}</p>` : ''}`;
   }
@@ -617,6 +621,7 @@
     let conversations: Row[] = [];
     let projects: MagicPointerProject[] = [];
     let selectedProjectRoot = '';
+    let projectStatus: 'active' | 'archived' = 'active';
     let catalog: MagicPointerSlashDirectory | null = null;
     let trackers: any[] = [];
     let error = '';
@@ -785,16 +790,18 @@
         return '<div class="mp-project-detail-host"></div>';
       }
       const rows = sortProjects(
-        projects.filter(project =>
-          `${project.name} ${project.description || ''} ${project.root}`
-            .toLocaleLowerCase()
-            .includes(query.toLocaleLowerCase()),
+        projects.filter(
+          project =>
+            Boolean(project.archived) === (projectStatus === 'archived') &&
+            `${project.name} ${project.description || ''} ${project.root}`
+              .toLocaleLowerCase()
+              .includes(query.toLocaleLowerCase()),
         ),
         conversations,
         projectSort,
       );
       const header =
-        `<div class="mp-library-head"><div class="mp-library-actions">` +
+        `<div class="mp-library-head"><div class="mp-project-list-tabs" role="tablist" aria-label="Project status">${(['active', 'archived'] as const).map(status => `<button type="button" role="tab" aria-selected="${status === projectStatus}" data-project-status-filter="${status}">${status === 'active' ? 'Active' : 'Archived'}</button>`).join('')}</div><div class="mp-library-actions">` +
         `<button type="button" data-library-search-toggle aria-label="Search projects" aria-expanded="${searchingProjects}">${glyph('search')}</button>` +
         sortControl('projects', projectSort, [
           ['activity', 'Last updated'],
@@ -806,7 +813,7 @@
           ? `<label class="mp-library-search mp-project-search">${glyph('search')}<input type="search" data-library-search placeholder="Search projects..." value="${escape(query)}" aria-label="Search projects" /></label>`
           : '');
       const body =
-        projects.length === 0
+        projects.length === 0 && projectStatus === 'active'
           ? empty(
               'projects',
               'Looking to start a project?',
@@ -814,8 +821,8 @@
               '<button type="button" class="mp-library-primary" data-library-open-project>New project</button>',
             )
           : rows.length === 0
-            ? `<p class="mp-library-nomatch">No projects matching “${escape(query)}”</p>`
-            : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(project.root)}">${glyph('projects', 'large')}<strong>${escape(project.name)}</strong><p>${escape(project.description || project.root)}</p><small>${conversations.filter(row => row.workspaceRoot === project.root).length} conversations</small></button>`).join('')}</div>`;
+            ? `<p class="mp-library-nomatch">${query ? `No projects matching “${escape(query)}”` : projectStatus === 'archived' ? 'No archived projects.' : 'No active projects.'}</p>`
+            : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(project.root)}"><span class="mp-project-card-heading">${glyph('projects', 'large')}${project.starred ? `<span aria-label="Starred" title="Starred">${glyph('pinned-star')}</span>` : ''}</span><strong>${escape(project.name)}</strong><p>${escape(project.description || project.root)}</p><small>${conversations.filter(row => row.workspaceRoot === project.root).length} conversations</small></button>`).join('')}</div>`;
       return header + body;
     }
     const suggestions = [
@@ -1326,6 +1333,14 @@
           return;
         }
         const d = target.dataset;
+        if (
+          d.projectStatusFilter === 'active' ||
+          d.projectStatusFilter === 'archived'
+        ) {
+          projectStatus = d.projectStatusFilter;
+          selectedProjectRoot = '';
+          paint();
+        }
         if (d.librarySort) {
           if (d.librarySort === 'projects') {
             projectSort = String(d.sortValue);

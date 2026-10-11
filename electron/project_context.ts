@@ -13,6 +13,8 @@ export interface ProjectDetailsPatch {
   description?: string;
   instructions?: string;
   sharedFiles?: string[];
+  starred?: boolean;
+  archived?: boolean;
 }
 
 export function projectAttachments(

@@ -143,6 +143,8 @@ interface ProjectRecord extends ProjectContext {
   addedAt: number;
   lastOpenedAt: number;
   updatedAt?: number;
+  starred?: boolean;
+  archived?: boolean;
 }
 
 function isTurnSettled(outcome: unknown): boolean {
@@ -670,6 +672,12 @@ function createConversationStore(
     }
     if (patch.instructions !== undefined) {
       next.instructions = patch.instructions.trim();
+    }
+    if (patch.starred !== undefined) {
+      next.starred = patch.starred;
+    }
+    if (patch.archived !== undefined) {
+      next.archived = patch.archived;
     }
     if (patch.sharedFiles !== undefined) {
       next.sharedFiles = [
