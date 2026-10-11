@@ -3,6 +3,7 @@ import {
   projectAttachments,
   type ProjectDetailsPatch,
   type ProjectDocument,
+  type ProjectTextInput,
 } from './project_context';
 import {validateAdditionalFolders} from './workspace_folders';
 import {
@@ -2029,6 +2030,18 @@ ipcMain.handle(
       return {ok: false, error: 'unauthorized_project_sender'};
     }
     return conversations().addProjectDocuments(raw.projectId, raw.paths);
+  },
+);
+ipcMain.handle(
+  'projects:add-text',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {projectId: string; input: ProjectTextInput},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    return conversations().addProjectText(raw.projectId, raw.input);
   },
 );
 ipcMain.handle(

@@ -126,6 +126,9 @@ declare global {
     let submissionError = options.submissionError || '';
     let saving = false;
     let submitting = false;
+    let textDraft: MagicPointerProjectTextInput = {title: '', content: ''};
+    let pendingTextTitle = '';
+    let statusText = '';
     const root = document.createElement('section');
     root.className = 'mp-project-workspace';
     root.setAttribute('aria-label', project.name);
@@ -135,6 +138,7 @@ declare global {
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
     function status(message: string): void {
+      statusText = message;
       const target = root.querySelector<HTMLElement>('[data-project-status]');
       if (target) {
         target.textContent = message;
@@ -198,10 +202,11 @@ declare global {
               <p class="mp-project-instructions ${project.instructions ? '' : 'is-empty'}">${escape(project.instructions || 'Set how Magic Pointer should respond in this project.')}</p>
             </section>
             <section>
-              <div class="mp-project-section-heading"><h2>Files <span>${(project.documents?.length || 0) + (project.sharedFiles?.length || 0)}</span></h2><details class="mp-project-menu"><summary class="mp-project-button">Add files</summary><div>${action('Upload files', 'files')}${action('Link local files', 'link-files')}</div></details></div>
+              <div class="mp-project-section-heading"><h2>Files <span>${(project.documents?.length || 0) + (project.sharedFiles?.length || 0)}</span></h2><details class="mp-project-menu"><summary class="mp-project-button">Add files</summary><div>${action('Upload files', 'files')}${action('Add text content', 'add-text')}${action('Link local files', 'link-files')}</div></details></div>
               <p class="mp-project-context-note">Available to every chat in this project.</p>
               <ul class="mp-project-files">${(project.documents || []).map(document => `<li><button class="mp-project-file-name" type="button" data-project-action="preview-file" data-document-id="${escape(document.id)}"><span>${escape(document.name)}</span><small>${document.size < 1024 ? `${document.size} B` : `${Math.ceil(document.size / 1024)} KB`}</small></button><button type="button" data-project-action="remove-document" data-document-id="${escape(document.id)}" aria-label="Remove ${escape(document.name)} from project">×</button></li>`).join('')}${(project.sharedFiles || []).map((file, index) => `<li title="${escape(file)}"><span>${escape(fileName(file))}<small>Linked file</small></span><button type="button" data-project-action="remove-file" data-file-index="${index}" aria-label="Remove ${escape(fileName(file))} from project">×</button></li>`).join('')}</ul>
-              ${project.sharedFiles?.length || project.documents?.length ? '' : '<p class="mp-project-empty">Add reference documents, notes, or images.</p>'}
+              ${pendingTextTitle ? `<div class="mp-project-pending-file" aria-busy="true" role="status"><span>${escape(pendingTextTitle)}</span><small>Adding…</small></div>` : ''}
+              ${project.sharedFiles?.length || project.documents?.length || pendingTextTitle ? '' : '<p class="mp-project-empty">Add reference documents, notes, or images.</p>'}
             </section>
             ${project.root ? `<section class="mp-project-location"><h2>Local folder</h2><p>${escape(project.root)}</p>${action('Open folder', 'folder')}</section>` : ''}
           </aside>
@@ -218,6 +223,7 @@ declare global {
       )!;
       searchInput.value = search;
       searchInput.dispatchEvent(new Event('input', {bubbles: true}));
+      status(statusText);
     }
 
     function syncSubmitState(): void {
@@ -236,6 +242,7 @@ declare global {
         return false;
       }
       saving = true;
+      status('');
       root.setAttribute('aria-busy', 'true');
       try {
         const result = await operation();
@@ -265,6 +272,61 @@ declare global {
       return mutate(() =>
         options.data.updateProject(ProjectScope.key(project), patch),
       );
+    }
+
+    function addTextContent(): void {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'mp-project-editor mp-project-text-editor';
+      dialog.innerHTML = `<header><h2>Add text content</h2><button type="button" data-text-close aria-label="Close">×</button></header><form>
+        <label>Title<input name="title" placeholder="Name your content" required></label>
+        <label>Content<textarea name="content" rows="12" placeholder="Type or paste in content..." required></textarea></label>
+        <footer><button type="button" class="mp-project-button" data-text-close>Cancel</button><button type="submit" class="mp-project-button is-primary">Add Content</button></footer>
+      </form>`;
+      const title = dialog.querySelector<HTMLInputElement>('[name="title"]')!;
+      const content =
+        dialog.querySelector<HTMLTextAreaElement>('[name="content"]')!;
+      title.value = textDraft.title;
+      content.value = textDraft.content;
+      const remember = () => {
+        textDraft = {title: title.value, content: content.value};
+        content.style.height = 'auto';
+        content.style.height = `${content.scrollHeight}px`;
+      };
+      dialog.addEventListener('input', remember);
+      dialog
+        .querySelectorAll('[data-text-close]')
+        .forEach(button =>
+          button.addEventListener('click', () => dialog.close()),
+        );
+      dialog.addEventListener('close', () => dialog.remove(), {once: true});
+      dialog.querySelector('form')!.addEventListener('submit', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        remember();
+        if (!textDraft.title.trim() || !textDraft.content.trim() || saving) {
+          return;
+        }
+        const submitted = {...textDraft};
+        dialog.close();
+        pendingTextTitle = submitted.title;
+        const operation = mutate(() =>
+          options.data.addProjectText(ProjectScope.key(project), submitted),
+        );
+        paint();
+        void operation.then(saved => {
+          pendingTextTitle = '';
+          if (saved) {
+            textDraft = {title: '', content: ''};
+          }
+          if (root.isConnected) {
+            paint();
+          }
+        });
+      });
+      root.append(dialog);
+      dialog.showModal();
+      title.focus();
+      remember();
     }
 
     async function previewDocument(id: string): Promise<void> {
@@ -483,6 +545,9 @@ declare global {
         confirmArchive();
       } else if (key === 'details' || key === 'instructions') {
         edit(key);
+      } else if (key === 'add-text') {
+        button.closest('details')?.removeAttribute('open');
+        addTextContent();
       } else if (key === 'files' || key === 'link-files') {
         button.disabled = true;
         void options.data

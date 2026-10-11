@@ -246,7 +246,7 @@ export function resolveSource(
   id: string,
 ): SourceRef {
   if (id.startsWith('project://')) {
-    const locator = decodeURIComponent(id.slice('project://'.length));
+    const locator = id.slice('project://'.length);
     const sources = taskSources(events).filter(
       source => source.origin === 'project',
     );
@@ -266,9 +266,19 @@ export function resolveSource(
     if (direct) {
       return direct;
     }
-    const matching = documents.filter(
+    let matching = documents.filter(
       source => source.identity.projectFileName === locator,
     );
+    if (!matching.length) {
+      try {
+        const decoded = decodeURIComponent(locator);
+        matching = documents.filter(
+          source => source.identity.projectFileName === decoded,
+        );
+      } catch {
+        // A project title may contain a literal percent sign.
+      }
+    }
     if (matching.length !== 1) {
       throw new Error(
         matching.length

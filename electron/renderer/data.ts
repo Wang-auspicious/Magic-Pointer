@@ -278,6 +278,9 @@ declare global {
     archived?: boolean;
   }
 
+  type MagicPointerProjectTextInput =
+    import('../project_context').ProjectTextInput;
+
   type MagicPointerProjectPatch = Pick<
     Partial<MagicPointerProject>,
     | 'name'
@@ -803,6 +806,10 @@ declare global {
         projectId: string,
         paths: string[],
       ): Promise<MagicPointerProjectUpdate>;
+      addText(
+        projectId: string,
+        input: MagicPointerProjectTextInput,
+      ): Promise<MagicPointerProjectUpdate>;
       removeDocument(
         projectId: string,
         documentId: string,
@@ -1201,6 +1208,10 @@ declare global {
     addProjectDocuments(
       projectId: string,
       paths: string[],
+    ): Promise<MagicPointerProjectUpdate>;
+    addProjectText(
+      projectId: string,
+      input: MagicPointerProjectTextInput,
     ): Promise<MagicPointerProjectUpdate>;
     removeProjectDocument(
       projectId: string,
@@ -1702,6 +1713,12 @@ const Data: MagicPointerDataApi = {
     return projects?.addDocuments
       ? projects.addDocuments(projectId, paths)
       : {ok: false, error: 'Project uploads are unavailable.'};
+  },
+  async addProjectText(projectId: string, input: MagicPointerProjectTextInput) {
+    const projects = bridge()?.projects;
+    return projects?.addText
+      ? projects.addText(projectId, input)
+      : {ok: false, error: 'Project text content is unavailable.'};
   },
   async removeProjectDocument(projectId: string, documentId: string) {
     const projects = bridge()?.projects;

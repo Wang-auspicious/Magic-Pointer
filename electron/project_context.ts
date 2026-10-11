@@ -8,6 +8,11 @@ export interface ProjectDocument {
   addedAt: number;
 }
 
+export interface ProjectTextInput {
+  title: string;
+  content: string;
+}
+
 export interface ProjectContext {
   id?: string;
   root: string;

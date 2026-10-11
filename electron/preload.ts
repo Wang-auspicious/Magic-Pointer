@@ -339,6 +339,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     open: () => ipcRenderer.invoke('projects:open'),
     addDocuments: (projectId: string, paths: string[]) =>
       ipcRenderer.invoke('projects:add-documents', {projectId, paths}),
+    addText: (
+      projectId: string,
+      input: import('./project_context').ProjectTextInput,
+    ) => ipcRenderer.invoke('projects:add-text', {projectId, input}),
     removeDocument: (projectId: string, documentId: string) =>
       ipcRenderer.invoke('projects:remove-document', {projectId, documentId}),
     readDocument: (projectId: string, documentId: string) =>

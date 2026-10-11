@@ -1381,6 +1381,7 @@ function createConversationStore(
     listProjects,
     updateProject: projectStore.update,
     addProjectDocuments: projectStore.addDocuments,
+    addProjectText: projectStore.addTextDocument,
     removeProjectDocument: projectStore.removeDocument,
     objectKey,
     flush,

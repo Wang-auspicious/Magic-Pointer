@@ -5,6 +5,7 @@ import type {
   ProjectContext,
   ProjectDetailsPatch,
   ProjectDocument,
+  ProjectTextInput,
 } from './project_context';
 
 export interface ProjectRecord extends ProjectContext {
@@ -344,5 +345,61 @@ export function createProjectStore({
     }
   }
 
-  return {create, get, list, register, update, addDocuments, removeDocument};
+  async function addTextDocument(
+    key: string,
+    input: ProjectTextInput,
+  ): Promise<ProjectMutationResult> {
+    const project = find(key);
+    if (!project) {
+      return {ok: false, error: 'Project not found.'};
+    }
+    if (!input.title.trim() || !input.content.trim()) {
+      return {ok: false, error: 'Enter a title and content.'};
+    }
+    const id = randomUUID();
+    const destination = path.resolve(
+      baseDir,
+      'project-documents',
+      project.id,
+      id,
+      'content.txt',
+    );
+    try {
+      await fs.promises.mkdir(path.dirname(destination), {recursive: true});
+      await fs.promises.writeFile(destination, input.content, 'utf8');
+      const document: ProjectDocument = {
+        id,
+        name: input.title,
+        path: destination,
+        size: Buffer.byteLength(input.content, 'utf8'),
+        addedAt: now(),
+      };
+      const current = find(project.id)!;
+      const next = {
+        ...current,
+        documents: [...(current.documents || []), document],
+        updatedAt: now(),
+      };
+      persist(load().map(row => (row.id === next.id ? next : row)));
+      return {ok: true, project: copy(next)};
+    } catch (error) {
+      await fs.promises.unlink(destination).catch(() => {});
+      return {
+        ok: false,
+        error:
+          error instanceof Error ? error.message : 'Error saving text content.',
+      };
+    }
+  }
+
+  return {
+    create,
+    get,
+    list,
+    register,
+    update,
+    addDocuments,
+    removeDocument,
+    addTextDocument,
+  };
 }
