@@ -3776,7 +3776,7 @@ async function sendConversation(
     effort,
     requestId,
     attachments: taskAttachments,
-    projectContext,
+    projectContext: projectContext ?? null,
     taskInput,
     ...(inputResponse ? {inputResponse} : {}),
     ...(conversationId ? {conversationId} : {}),

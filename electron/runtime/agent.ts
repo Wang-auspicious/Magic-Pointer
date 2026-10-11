@@ -1,6 +1,11 @@
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
+import type {ProjectContext} from '../project_context';
+import {
+  synchronizeProjectSettings,
+  withProjectSettings,
+} from './project_settings';
 import {isDeepStrictEqual} from 'node:util';
 import {
   EventSession,
@@ -96,6 +101,7 @@ export interface AgentOptions {
   registry: ToolRegistry;
   model: ModelRunner;
   instruction?: string;
+  projectContext?: ProjectContext | null;
   evidence?: string;
   hasSelection?: boolean;
   system?: string;
@@ -813,6 +819,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       turn: session.openTurn,
       interactionId: `${session.id}:${session.openTurn}`,
     });
+    const projectSettings = await synchronizeProjectSettings(
+      session,
+      options.projectContext,
+    );
     const requested = options.permissionMode ?? 'default';
     const previous = [...session.events]
       .reverse()
@@ -844,6 +854,11 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       (options.system ?? (await buildSystemPrompt(options))) +
         (skills ? '\n\n' + skills : ''),
     );
+    const modelMessages = () =>
+      withProjectSettings(
+        projectContextMessages(session.deriveMessages()),
+        projectSettings,
+      );
     for (const event of session.events) {
       if (
         event.type === 'operation/settled' &&
@@ -918,7 +933,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       const estimated = estimateTokens(
         requestSystem +
           JSON.stringify(schemas) +
-          JSON.stringify(projectContextMessages(session.deriveMessages())),
+          JSON.stringify(modelMessages()),
       );
       if (
         estimated >=
@@ -950,9 +965,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           })),
         };
       } else {
-        const requestMessages = projectContextMessages(
-          session.deriveMessages(),
-        );
+        const requestMessages = modelMessages();
         await session.recordRequest(
           turns,
           requestSystem,

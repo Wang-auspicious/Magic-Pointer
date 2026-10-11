@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 export interface ProjectContext {
+  id?: string;
   root: string;
   name: string;
   description?: string;
@@ -31,22 +32,4 @@ export function projectAttachments(
     }
   }
   return [...files.values()];
-}
-
-export function projectTurnInstruction(
-  instruction: string,
-  project?: ProjectContext | null,
-): string {
-  if (!instruction || !project?.instructions?.trim()) {
-    return instruction;
-  }
-  return [
-    `User-saved project instructions for this turn (${project.name}):`,
-    project.instructions.trim(),
-    '',
-    'These are the current project instructions, superseding earlier project settings. The current request takes precedence. Tool permissions and source access are unchanged.',
-    '',
-    'Current request:',
-    instruction,
-  ].join('\n');
 }

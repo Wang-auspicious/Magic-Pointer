@@ -64,7 +64,6 @@ import {readMcpConfigs, registerMcpDiscovery} from './mcp';
 import {settingsStore} from './model_admin';
 import {Fabric, registerRecipeTools} from './fabric';
 import {ScreenMemory} from './context_memory';
-import {projectTurnInstruction} from '../project_context';
 
 export type Data = Record<string, any>;
 export interface RuntimeOptions {
@@ -456,6 +455,7 @@ export async function runRuntime(
       session,
       registry,
       instruction,
+      projectContext: payload.projectContext,
       evidence: prepared.evidence,
       hasSelection: Boolean(
         selectionSnapshot.frameLease ||
@@ -598,7 +598,7 @@ export async function runRuntime(
     await session.append('runtime/effort', {effort: config.effort});
     const terminal = await runAgent({
       ...common,
-      instruction: projectTurnInstruction(instruction, payload.projectContext),
+      instruction,
       evidence: prepared.evidence,
     });
     sink.flush();
