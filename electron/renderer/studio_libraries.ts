@@ -584,10 +584,12 @@
   };
   interface ControllerOptions {
     data: MagicPointerDataApi;
-    show(view: string): void;
+    show(view: string, projectKey?: string): void;
     compose(prompt: string): void;
     openProject(): Promise<void>;
     selectProject(root: string, projectId?: string): void;
+    projectDraft?(key: string): string;
+    onProjectDraftChange?(key: string, text: string): void;
     renameConversation(id: string, title: string): void;
     changeProject(id: string, anchor: HTMLElement): void;
     refreshSidebar(): Promise<void>;
@@ -621,6 +623,7 @@
     let conversations: Row[] = [];
     let projects: MagicPointerProject[] = [];
     let selectedProjectKey = '';
+    let renderGeneration = 0;
     let projectStatus: 'active' | 'archived' = 'active';
     let catalog: MagicPointerSlashDirectory | null = null;
     let trackers: any[] = [];
@@ -1138,9 +1141,11 @@
       if (projectHost && project) {
         globalThis.ProjectWorkspace.mount(projectHost, project, conversations, {
           data: options.data,
+          draft: options.projectDraft?.(ProjectScope.key(project)),
+          onDraftChange: text =>
+            options.onProjectDraftChange?.(ProjectScope.key(project), text),
           onBack: () => {
-            selectedProjectKey = '';
-            paint();
+            options.show('projects');
           },
           onCompose: (root, prompt, projectId) => {
             options.selectProject(root, projectId);
@@ -1157,7 +1162,11 @@
         });
       }
     }
-    async function render(view: string) {
+    async function render(view: string, projectKey?: string) {
+      const generation = ++renderGeneration;
+      if (view === 'projects' && projectKey !== undefined) {
+        selectedProjectKey = projectKey;
+      }
       if (!hosts.includes(view)) {
         activeView = '';
         document
@@ -1177,6 +1186,9 @@
           options.data.projects(),
           loadPictograms(),
         ]);
+        if (generation !== renderGeneration || activeView !== snapshot) {
+          return;
+        }
         conversations = nextConversations;
         projects = nextProjects;
         if (view === 'designs') {
@@ -1222,7 +1234,7 @@
       } catch (reason) {
         error = reason instanceof Error ? reason.message : String(reason);
       }
-      if (activeView === snapshot) {
+      if (activeView === snapshot && generation === renderGeneration) {
         paint();
       }
     }
@@ -1358,17 +1370,15 @@
             host,
             options.data,
             project => {
-              selectedProjectKey = ProjectScope.key(project);
               projectStatus = 'active';
-              void render('projects');
+              options.show('projects', ProjectScope.key(project));
               void options.refreshSidebar();
             },
             query,
           );
         }
         if (d.libraryProject) {
-          selectedProjectKey = d.libraryProject;
-          paint();
+          options.show('projects', d.libraryProject);
         }
         if ('libraryCompose' in d) {
           options.compose(d.libraryCompose || '');
@@ -1518,8 +1528,7 @@
       changed,
       filterMenu,
       openProject(root: string) {
-        selectedProjectKey = root;
-        options.show('projects');
+        options.show('projects', root);
       },
       setInventory(value: typeof customInventory) {
         customInventory = value;

@@ -3858,8 +3858,9 @@ async function openConversation(id: string) {
   const notificationSequence = conversationNotificationSequence;
   const c = await Data.conversation(id);
   if (!c || generation !== conversationOpenGeneration) {
-    return;
+    return false;
   }
+  captureComposerDraft();
   studioLibraries.setSessionPreference(c.id, {seenAt: Date.now()});
   const switchedTask = activeConversationId !== c.id;
   if (switchedTask) {
@@ -3906,6 +3907,7 @@ async function openConversation(id: string) {
   );
   setActiveProject(projectRoot, c.projectId);
   show('chat');
+  restoreComposerDraft({kind: 'conversation', id: c.id});
   setStudioHomeVisible(false);
   document
     .querySelectorAll('#side-convos .side-item')
@@ -3923,7 +3925,7 @@ async function openConversation(id: string) {
   renderProjectContext();
   await renderRepositoryContextBar(true);
   if (generation !== conversationOpenGeneration) {
-    return;
+    return false;
   }
   const preview = document.getElementById('chat-source-preview');
   const sourceThumb = document.getElementById(
@@ -3961,7 +3963,7 @@ async function openConversation(id: string) {
 
   const stream = document.getElementById('stream');
   if (!stream) {
-    return;
+    return false;
   }
   LiveCards.reset();
   chatCardNodes.clear();
@@ -3986,7 +3988,7 @@ async function openConversation(id: string) {
     renderUsageMeter([]);
     renderConversationActivity();
     setConversationTab(activeConversationTab);
-    return;
+    return true;
   }
   const flow = document.createElement('div');
   flow.className = 'mp-chat-flow';
@@ -4024,6 +4026,7 @@ async function openConversation(id: string) {
   if (notificationSequence !== conversationNotificationSequence) {
     void refreshOpenConversation({id: c.id});
   }
+  return true;
 }
 
 function syncConversationPendingInput(turns: MagicPointerTurn[]) {
@@ -5362,6 +5365,14 @@ const libraryUi = studioLibraries.createController({
   },
   openProject: openProjectFromPicker,
   selectProject: setActiveProject,
+  projectDraft: (key: string) =>
+    windowNavigation.draft({kind: 'project', id: key})?.text || '',
+  onProjectDraftChange: (key: string, text: string) => {
+    windowNavigation.saveDraft(
+      {kind: 'project', id: key},
+      {text, attachments: [], sourceIds: [], workspaceRoot: ''},
+    );
+  },
   renameConversation: openRenameDialog,
   changeProject: (id: string, anchor: HTMLElement) => {
     void openProjectAssignment(id, anchor);
@@ -5406,9 +5417,13 @@ document
     }
   });
 
-function show(view: string) {
+function show(view: string, projectKey?: string) {
   const current = studioShell.shellState(view);
   view = current.activeView;
+  if (view !== 'chat') {
+    captureComposerDraft();
+    conversationOpenGeneration += 1;
+  }
   shell.dataset.view = view;
   document.getElementById('workspace-eyebrow')!.textContent = current.eyebrow;
   document.getElementById('workspace-title')!.textContent = current.title;
@@ -5447,7 +5462,10 @@ function show(view: string) {
   } else {
     personalActivityUi?.hide();
   }
-  void libraryUi.render(view);
+  void libraryUi.render(
+    view,
+    view === 'projects' ? projectKey || '' : undefined,
+  );
   if (view !== 'chat') {
     closeAux();
     if (shell.dataset.inspector === 'open') {
@@ -5457,12 +5475,153 @@ function show(view: string) {
       setBottomPanel(false);
     }
   }
-  recordWindowNavigation(view);
+  recordWindowNavigation(view, projectKey);
 }
 
-const windowViewHistory = ['chat'];
-let windowViewHistoryIndex = 0;
-let replayingWindowNavigation = false;
+const windowNavigation = StudioNavigation.create();
+interface NavigationSubmission {
+  location: StudioComposerLocation;
+  draft: StudioComposerDraft;
+  keepOriginal: boolean;
+  accepted: boolean;
+  workspace?: PreparedComposerWorkspace;
+}
+const navigationSubmissions = new Map<string, NavigationSubmission>();
+let displayedComposer: {
+  location: StudioComposerLocation;
+  workspaceRoot: string;
+  projectId?: string;
+} | null = null;
+
+function composerLocation(): StudioComposerLocation {
+  const id = activeConversationId || pendingConversation?.conversationId;
+  return id
+    ? {kind: 'conversation', id}
+    : {kind: 'draft', id: newChatWorktreeId};
+}
+
+function captureComposerDraft(): void {
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea',
+  );
+  if (!displayedComposer || !textarea || shell.dataset.view !== 'chat') {
+    return;
+  }
+  const owner = displayedComposer;
+  const submission = [...navigationSubmissions.values()].find(
+    item =>
+      !item.accepted &&
+      item.location.kind === owner.location.kind &&
+      item.location.id === owner.location.id,
+  );
+  if (
+    submission?.keepOriginal &&
+    !textarea.value &&
+    composerAttachments.length === submission.draft.attachments.length &&
+    composerAttachments.every(
+      (file, index) => file === submission.draft.attachments[index],
+    ) &&
+    composerSelectedSourceIds.size === submission.draft.sourceIds.length &&
+    submission.draft.sourceIds.every(sourceId =>
+      composerSelectedSourceIds.has(sourceId),
+    )
+  ) {
+    return;
+  }
+  if (submission) {
+    submission.keepOriginal = false;
+  }
+  windowNavigation.saveDraft(displayedComposer.location, {
+    text: textarea.value,
+    attachments: [...composerAttachments],
+    sourceIds: [...composerSelectedSourceIds],
+    workspaceRoot: displayedComposer.workspaceRoot,
+    projectId: displayedComposer.projectId,
+  });
+}
+
+function restoreComposerDraft(location: StudioComposerLocation): void {
+  const draft = windowNavigation.draft(location);
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea',
+  );
+  if (textarea) {
+    textarea.value = draft?.text || '';
+    fitComposer(textarea);
+  }
+  composerAttachments = [...(draft?.attachments || [])];
+  composerSelectedSourceIds.clear();
+  const available = new Set(
+    activeTaskContext?.sources.map(source => source.sourceId) || [],
+  );
+  for (const sourceId of draft?.sourceIds || []) {
+    if (available.has(sourceId)) {
+      composerSelectedSourceIds.add(sourceId);
+    }
+  }
+  displayedComposer = {
+    location,
+    workspaceRoot: activeProjectRoot,
+    projectId: activeProjectId,
+  };
+  renderComposerAttachments();
+  renderComposerMaterials();
+  syncComposerSubmitState();
+}
+
+function acceptSubmissionNavigation(
+  requestId: string,
+  conversationId: string,
+  title?: string,
+): void {
+  const submission = navigationSubmissions.get(requestId);
+  if (!submission || submission.accepted) {
+    return;
+  }
+  const visible =
+    displayedComposer?.location.kind === submission.location.kind &&
+    displayedComposer.location.id === submission.location.id;
+  if (visible) {
+    captureComposerDraft();
+  }
+  if (submission.keepOriginal) {
+    windowNavigation.clearDraft(submission.location);
+  }
+  const location: StudioComposerLocation = {
+    kind: 'conversation',
+    id: conversationId,
+  };
+  windowNavigation.retarget(submission.location, location);
+  submission.location = location;
+  submission.accepted = true;
+  submission.keepOriginal = false;
+  if (submission.workspace) {
+    adoptComposerWorktreeConversation(
+      submission.workspace.contextKey,
+      submission.workspace.projectRoot,
+      conversationId,
+    );
+  }
+  if (visible && displayedComposer) {
+    displayedComposer.location = location;
+    composerAttachments = composerAttachments.filter(
+      file => !submission.draft.attachments.includes(file),
+    );
+    for (const sourceId of submission.draft.sourceIds) {
+      composerSelectedSourceIds.delete(sourceId);
+    }
+    renderComposerAttachments();
+    renderComposerMaterials();
+    if (pendingConversation?.requestId === requestId) {
+      activeConversationId = conversationId;
+      const heading = document.getElementById('chat-title');
+      if (heading && title) {
+        heading.textContent = title;
+      }
+    }
+  }
+  syncWindowNavigation();
+}
 
 function syncWindowNavigation() {
   const back = document.getElementById(
@@ -5471,38 +5630,48 @@ function syncWindowNavigation() {
   const forward = document.getElementById(
     'window-forward',
   ) as HTMLButtonElement | null;
+  const state = windowNavigation.state();
   if (back) {
-    back.disabled = windowViewHistoryIndex <= 0;
+    back.disabled = !state.canBack;
   }
   if (forward) {
-    forward.disabled = windowViewHistoryIndex >= windowViewHistory.length - 1;
+    forward.disabled = !state.canForward;
   }
 }
 
-function recordWindowNavigation(view: string) {
-  if (
-    replayingWindowNavigation ||
-    windowViewHistory[windowViewHistoryIndex] === view
-  ) {
-    syncWindowNavigation();
-    return;
-  }
-  windowViewHistory.splice(windowViewHistoryIndex + 1);
-  windowViewHistory.push(view);
-  windowViewHistoryIndex = windowViewHistory.length - 1;
+function recordWindowNavigation(view: string, projectKey?: string) {
+  const location: StudioLocation =
+    view === 'chat'
+      ? composerLocation()
+      : view === 'projects' && projectKey
+        ? {kind: 'project', id: projectKey}
+        : {kind: 'view', view};
+  windowNavigation.visit(location);
   syncWindowNavigation();
 }
 
-function moveWindowNavigation(delta: number) {
-  const next = windowViewHistoryIndex + delta;
-  if (next < 0 || next >= windowViewHistory.length) {
+function moveWindowNavigation(delta: -1 | 1) {
+  captureComposerDraft();
+  const next = windowNavigation.move(delta);
+  if (!next) {
     return;
   }
-  windowViewHistoryIndex = next;
-  replayingWindowNavigation = true;
-  show(windowViewHistory[next]);
-  replayingWindowNavigation = false;
   syncWindowNavigation();
+  if (next.kind === 'project') {
+    show('projects', next.id);
+  } else if (next.kind === 'conversation') {
+    void openConversation(next.id).then(opened => {
+      if (!opened && windowNavigation.isCurrent(next)) {
+        windowNavigation.replace({kind: 'view', view: 'chats'});
+        show('chats');
+      }
+    });
+  } else if (next.kind === 'draft') {
+    startNewChat(next.id);
+    show('chat');
+  } else {
+    show(next.view);
+  }
 }
 
 document
@@ -11716,6 +11885,13 @@ async function stopActiveConversation() {
 }
 
 Data.onConversationProgress(payload => {
+  if (payload.requestId && payload.conversationId) {
+    acceptSubmissionNavigation(
+      payload.requestId,
+      payload.conversationId,
+      payload.title,
+    );
+  }
   if (
     !pendingConversation ||
     payload.requestId !== pendingConversation.requestId ||
@@ -11910,6 +12086,16 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       return;
     }
 
+    captureComposerDraft();
+    const navigationLocation = composerLocation();
+    const navigationDraft: StudioComposerDraft = {
+      text: textarea.value,
+      attachments: [...composerAttachments],
+      sourceIds: [...composerSelectedSourceIds],
+      workspaceRoot: activeProjectRoot,
+      projectId: activeProjectId,
+    };
+    windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
     const requestQuestion = attachmentPaths.length
       ? `${question}\n\n附件：\n${attachmentPaths.map(filePath => `- ${filePath}`).join('\n')}`
@@ -11999,6 +12185,17 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       liveTokens: null,
     };
     const submittedConversation = pendingConversation;
+    const submission: NavigationSubmission = {
+      location: navigationLocation,
+      draft: navigationDraft,
+      keepOriginal: true,
+      accepted: false,
+    };
+    navigationSubmissions.set(requestId, submission);
+    const isCurrentSubmission = () =>
+      pendingConversation === submittedConversation &&
+      shell.dataset.view === 'chat' &&
+      windowNavigation.isCurrent(submission.location);
     const conversationId = activeConversationId;
     const hadPendingInput = Boolean(pendingPermissionAsk || pendingAskInput);
     const permissionChoice = pendingPermissionChoice || undefined;
@@ -12008,6 +12205,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     renderConversationProgress({phase: 'runtime_boot', fields: {}});
     try {
       const workspace = await prepareComposerWorktree();
+      submission.workspace = workspace;
       if (
         pendingConversation !== submittedConversation ||
         workspace.projectId !== activeProjectId
@@ -12027,7 +12225,13 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         workspace.executionWorkspaceRoot,
         workspace.projectId,
       );
-      if (pendingConversation !== submittedConversation) {
+      if (response?.conversationId) {
+        acceptSubmissionNavigation(requestId, String(response.conversationId));
+      }
+      if (!response?.ok && !windowNavigation.draft(submission.location)?.text) {
+        windowNavigation.saveDraft(submission.location, submission.draft);
+      }
+      if (!isCurrentSubmission()) {
         await renderSidebar();
         return;
       }
@@ -12047,8 +12251,6 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         }
         throw new Error(response?.error || '这次没有答完。');
       }
-      composerAttachments = [];
-      composerSelectedSourceIds.clear();
       renderComposerAttachments();
       renderComposerMaterials();
       const command = (response as {command?: {type?: string; preset?: string}})
@@ -12059,7 +12261,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         renderPermissionChip();
       } else if (command?.type === 'model') {
         await refreshComposerModel();
-        if (pendingConversation !== submittedConversation) {
+        if (!isCurrentSubmission()) {
           return;
         }
       } else if (
@@ -12080,7 +12282,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       }
       await openConversation(String(response.conversationId));
       await renderSidebar();
-      if (pendingConversation !== submittedConversation) {
+      if (!isCurrentSubmission()) {
         return;
       }
       setComposerSettledState(awaiting.awaitingUserInput ? 'idle' : 'success');
@@ -12091,17 +12293,17 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         );
       }
     } catch (error) {
-      if (pendingConversation !== submittedConversation) {
+      if (!windowNavigation.draft(submission.location)?.text) {
+        windowNavigation.saveDraft(submission.location, submission.draft);
+      }
+      if (!isCurrentSubmission()) {
         return;
       }
       if (hadPendingInput && conversationId) {
         const durable = await Data.conversation(conversationId).catch(
           () => undefined,
         );
-        if (
-          pendingConversation !== submittedConversation ||
-          activeConversationId !== conversationId
-        ) {
+        if (!isCurrentSubmission() || activeConversationId !== conversationId) {
           return;
         }
         if (durable) {
@@ -12113,6 +12315,10 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
           error instanceof Error ? error.message : String(error),
         ),
       );
+      if (!textarea.value.trim()) {
+        composerAttachments = [...submission.draft.attachments];
+        renderComposerAttachments();
+      }
       textarea.value = ConversationControl.failedDraftValue(
         textarea.value,
         question,
@@ -12120,6 +12326,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       fitComposer(textarea);
       setComposerSettledState('error');
     } finally {
+      navigationSubmissions.delete(requestId);
       if (pendingConversation === submittedConversation) {
         detachPendingConversation();
       }
@@ -12128,8 +12335,12 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
 });
 
 async function boot(initialView: string) {
+  const generation = conversationOpenGeneration;
   void refreshComposerModel();
   await renderSidebar();
+  if (generation !== conversationOpenGeneration) {
+    return;
+  }
   if (initialView !== 'chat') {
     show(initialView);
     return;
@@ -12153,10 +12364,11 @@ function detachPendingConversation() {
   setComposerRunningState(false);
 }
 
-function startNewChat() {
-  newChatWorktreeId = `new-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+function startNewChat(draftId?: string) {
+  captureComposerDraft();
+  const saved = draftId
+    ? windowNavigation.draft({kind: 'draft', id: draftId})
+    : undefined;
   conversationOpenGeneration += 1;
   detachPendingConversation();
   clearWorkspaceResources();
@@ -12172,9 +12384,9 @@ function startNewChat() {
   }
   activeConversationId = null;
   seedSessionPane('');
-  newChatWorktreeId = `new-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  newChatWorktreeId =
+    draftId ||
+    `new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   activeConversationView = null;
   activeConversationRecord = null;
   activeConversationTurns = [];
@@ -12198,6 +12410,9 @@ function startNewChat() {
   clearComposerSuggestion();
   renderProjectTasks();
   setActiveTaskContext(null, true);
+  if (saved) {
+    setActiveProject(saved.workspaceRoot, saved.projectId);
+  }
   composerAttachments = [];
   renderComposerAttachments();
   void refreshFigmaConnection();
@@ -12235,6 +12450,10 @@ function startNewChat() {
   void renderStudioHome();
   const card = document.querySelector<HTMLElement>('#composer-form .mpw-card');
   const textarea = document.querySelector<HTMLTextAreaElement>('.mpw-input');
+  restoreComposerDraft({kind: 'draft', id: newChatWorktreeId});
+  if (shell.dataset.view === 'chat') {
+    recordWindowNavigation('chat');
+  }
   if (card) {
     card.classList.remove('is-pulsed');
     void card.offsetWidth;
@@ -12245,8 +12464,9 @@ function startNewChat() {
 }
 
 document.getElementById('nav-new-chat')?.addEventListener('click', () => {
-  setProductMode('walker');
+  setProductMode('walker', false);
   startNewChat();
+  show('chat');
 });
 
 const stashSummaryCache = new Map<string, string>();

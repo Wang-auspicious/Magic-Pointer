@@ -11,6 +11,8 @@ interface ProjectWorkspaceOptions {
   onBack(): void;
   onCompose(root: string, prompt: string, projectId?: string): void;
   onChanged(project: MagicPointerProject): void;
+  draft?: string;
+  onDraftChange?(text: string): void;
 }
 
 interface ProjectWorkspaceApi {
@@ -119,6 +121,7 @@ declare global {
     options: ProjectWorkspaceOptions,
   ): void {
     let project = initialProject;
+    let chatDraft = options.draft || '';
     let saving = false;
     const root = document.createElement('section');
     root.className = 'mp-project-workspace';
@@ -137,9 +140,9 @@ declare global {
     }
 
     function paint(): void {
-      const draft =
+      chatDraft =
         root.querySelector<HTMLTextAreaElement>('.mp-project-compose textarea')
-          ?.value || '';
+          ?.value ?? chatDraft;
       const search =
         root.querySelector<HTMLInputElement>('[data-project-chat-search]')
           ?.value || '';
@@ -204,7 +207,7 @@ declare global {
         '.mp-project-compose textarea',
       );
       if (composer) {
-        composer.value = draft;
+        composer.value = chatDraft;
       }
       const searchInput = root.querySelector<HTMLInputElement>(
         '[data-project-chat-search]',
@@ -325,6 +328,11 @@ declare global {
 
     root.addEventListener('input', event => {
       const input = event.target as HTMLInputElement;
+      if (input.matches('.mp-project-compose textarea')) {
+        chatDraft = input.value;
+        options.onDraftChange?.(chatDraft);
+        return;
+      }
       if (!input.matches('[data-project-chat-search]')) {
         return;
       }
@@ -354,6 +362,9 @@ declare global {
       const prompt = String(new FormData(form).get('prompt') || '').trim();
       if (prompt) {
         options.onCompose(project.root, prompt, project.id);
+        chatDraft = '';
+        form.querySelector<HTMLTextAreaElement>('textarea')!.value = '';
+        options.onDraftChange?.('');
       }
     });
 

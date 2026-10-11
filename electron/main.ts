@@ -3883,6 +3883,14 @@ async function sendConversation(
     });
     notifyConversationChanged(conversation.id, {turnIndex, progress});
   };
+  if (sender && !sender.isDestroyed()) {
+    sender.send('conversations:progress', {
+      requestId,
+      conversationId: conversation.id,
+      title: conversation.title,
+      turnIndex,
+    });
+  }
   notifyConversationChanged(conversation.id);
   return new Promise(resolve => {
     let finished = false;

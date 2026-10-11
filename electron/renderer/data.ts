@@ -181,6 +181,14 @@ declare global {
     [key: string]: unknown;
   }
 
+  interface MagicPointerConversationProgress {
+    requestId?: string;
+    conversationId?: string;
+    title?: string;
+    turnIndex?: number;
+    record?: Record<string, unknown>;
+  }
+
   type MagicPointerProjectPreview =
     | {kind: 'text'; text: string; truncated: boolean}
     | {
@@ -945,12 +953,7 @@ declare global {
       artifacts(): Promise<unknown[]>;
       onTurn?(cb: (change?: MagicPointerConversationChange) => void): void;
       onProgress?(
-        cb: (payload: {
-          requestId?: string;
-          conversationId?: string;
-          turnIndex?: number;
-          record?: Record<string, unknown>;
-        }) => void,
+        cb: (payload: MagicPointerConversationProgress) => void,
       ): void;
     };
     contextTrackers?: {
@@ -1317,12 +1320,7 @@ declare global {
       error?: string;
     }>;
     onConversationProgress(
-      callback: (payload: {
-        requestId?: string;
-        conversationId?: string;
-        turnIndex?: number;
-        record?: Record<string, unknown>;
-      }) => void,
+      callback: (payload: MagicPointerConversationProgress) => void,
     ): void;
     models(refresh?: boolean): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
@@ -2074,12 +2072,7 @@ const Data: MagicPointerDataApi = {
   },
 
   onConversationProgress(
-    callback: (payload: {
-      requestId?: string;
-      conversationId?: string;
-      turnIndex?: number;
-      record?: Record<string, unknown>;
-    }) => void,
+    callback: (payload: MagicPointerConversationProgress) => void,
   ): void {
     bridge()?.conversations?.onProgress?.(callback);
   },
