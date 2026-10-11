@@ -278,11 +278,18 @@ body {
   background: var(--mp-page);
   color: var(--mp-text);
   font-family: var(--mp-font-ui);
-  font-size: var(--mp-text-body);
   font-weight: var(--mp-weight-regular);
   line-height: var(--mp-leading-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: auto;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-size: var(--mp-text-body);
 }
 
 button,

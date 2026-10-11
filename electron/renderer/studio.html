@@ -291,15 +291,18 @@
                   <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-workspace-label">Select folder…</span>
                 </button>
                 <div class="mp-workspace-menu" id="composer-workspace-menu" hidden role="menu" aria-label="选择工作目录"></div>
-                <button type="button" class="mp-composer-branch" id="composer-branch" aria-label="Select a branch" aria-haspopup="menu" aria-expanded="false" hidden>
-                  <svg aria-hidden="true"><use href="#ic-branch" /></svg><span id="composer-branch-label">main</span><svg class="mp-composer-branch-chevron" aria-hidden="true"><use href="#ic-chev" /></svg>
-                </button>
+                <div class="mp-composer-git-context" id="composer-git-context" hidden>
+                  <button type="button" class="mp-composer-branch" id="composer-branch" aria-label="Select a branch" aria-haspopup="menu" aria-expanded="false" hidden>
+                    <svg aria-hidden="true"><use href="#ic-branch" /></svg><span id="composer-branch-label">main</span>
+                  </button>
+                  <span class="mp-composer-git-divider" aria-hidden="true"></span>
+                  <button type="button" class="mp-composer-worktree" id="composer-worktree" role="checkbox" aria-checked="false"
+                    aria-label="在独立的 git worktree 中工作" title="在独立的 git worktree 中工作" hidden>
+                    <span class="mp-worktree-box" aria-hidden="true"><svg aria-hidden="true"><use href="#ic-check" /></svg></span>
+                    <span>worktree</span>
+                  </button>
+                </div>
                 <div class="mp-branch-menu" id="composer-branch-menu" hidden role="menu" aria-label="选择分支"></div>
-                <button type="button" class="mp-composer-worktree" id="composer-worktree" role="checkbox" aria-checked="false"
-                  aria-label="在独立的 git worktree 中工作" title="在独立的 git worktree 中工作" hidden>
-                  <span class="mp-worktree-box" aria-hidden="true"><svg aria-hidden="true"><use href="#ic-check" /></svg></span>
-                  <span>Worktree</span>
-                </button>
                 <button type="button" class="mp-composer-folder-add" id="composer-context-folder-add" aria-label="Open another folder" title="Open another folder">
                   <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
                 </button>

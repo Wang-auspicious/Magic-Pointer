@@ -1609,14 +1609,11 @@
 
 .mp-composer-context-row {
   display: flex;
-  min-height: 28px;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0;
-  width: fit-content;
+  gap: var(--cds-gap-xs);
   max-width: 100%;
-  padding: 2px;
-  border-radius: var(--mp-r5);
-  background: var(--mp-hover);
 }
 
 .mp-composer-environment,
@@ -1624,39 +1621,75 @@
 .mp-composer-branch,
 .mp-composer-folder-add {
   display: inline-flex;
+  min-width: 0;
   max-width: 260px;
-  height: 28px;
+  height: var(--cds-h-control);
   align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border-radius: var(--mp-r5);
-  color: var(--mp-text-secondary);
-  background: transparent;
+  gap: var(--cds-gap-xs);
+  padding: 0 var(--cds-pad-sm);
+  border-radius: var(--cds-radius);
+  color: var(--cds-text-secondary);
+  background: var(--cds-fill-secondary);
+  font-size: var(--cds-font-size-body);
+  line-height: var(--cds-leading-body);
   white-space: nowrap;
+}
+
+.mp-composer-environment {
+  background: transparent;
+}
+
+.mp-composer-workspace span {
+  max-width: 160px;
+}
+
+.mp-composer-git-context {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: var(--cds-radius);
+  background: var(--cds-fill-secondary);
+}
+
+.mp-composer-git-context:has([aria-expanded="true"]) {
+  background: var(--cds-fill-secondary-hover);
+}
+
+.mp-composer-workspace,
+.mp-composer-git-context,
+.mp-composer-folder-add {
+  box-shadow: inset 0 0 0 1px var(--cds-fill-secondary-ring), 0 1px 2px #0000000d;
 }
 
 .mp-composer-branch {
   max-width: 168px;
-  gap: 6px;
+  background: transparent;
+  border-radius: inherit;
 }
 
 .mp-composer-folder-add {
-  width: 28px;
-  min-width: 28px;
+  min-width: var(--cds-h-control);
   justify-content: center;
-  padding: 0;
 }
 
 .mp-composer-environment:hover,
 .mp-composer-workspace:hover,
 .mp-composer-branch:hover,
 .mp-composer-folder-add:hover {
-  color: var(--mp-text);
-  background: var(--mp-active);
+  color: var(--cds-text-primary);
+  background: var(--cds-fill-secondary-hover);
 }
 
-.mp-composer-context-row > :where(button, .mp-workspace-menu, .mp-branch-menu) + button {
-  border-left: 1px solid var(--mp-rule);
+.mp-composer-git-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  margin-block: 7px;
+  background: var(--cds-border);
+  transition: opacity var(--mp-dur-fast);
+}
+
+.mp-composer-git-context:hover .mp-composer-git-divider,
+.mp-composer-git-context:focus-within .mp-composer-git-divider {
+  opacity: 0;
 }
 
 .mpw-model-key {
@@ -1921,22 +1954,21 @@
 
 .mp-composer-worktree {
   display: inline-flex;
-  height: 28px;
+  height: var(--cds-h-control);
   align-items: center;
-  gap: 6px;
-  padding: 0 9px;
-  border-radius: 4px;
-  color: var(--mp-text);
-  font-size: 11px;
-  line-height: 16px;
+  gap: 3px;
+  padding: 0 var(--cds-pad-sm) 0 5px;
+  border-radius: inherit;
+  color: var(--cds-text-secondary);
+  font-size: var(--cds-font-size-body);
+  line-height: var(--cds-leading-body);
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
 .mp-composer-worktree:hover {
-  color: var(--mp-text-secondary);
-  background: var(--mp-hover);
+  background: var(--cds-fill-secondary-hover);
 }
 
 .mp-composer-worktree[aria-checked="true"] {
@@ -1945,12 +1977,12 @@
 
 .mp-worktree-box {
   display: grid;
-  width: 12px;
-  height: 12px;
+  width: var(--cds-checkbox-xxs);
+  height: var(--cds-checkbox-xxs);
   flex: none;
   place-items: center;
   border: 1px solid var(--mp-rule-strong);
-  border-radius: 3px;
+  border-radius: var(--cds-checkbox-xxs-radius);
   background: transparent;
 }
 
@@ -1979,8 +2011,8 @@
 .mp-composer-workspace svg,
 .mp-composer-branch svg,
 .mp-composer-folder-add svg {
-  width: 15px;
-  height: 15px;
+  width: var(--cds-icon--sm);
+  height: var(--cds-icon--sm);
   flex: none;
 }
 

@@ -542,6 +542,7 @@ interface PreparedComposerWorkspace {
 async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   const base = activeProjectRoot;
   const contextKey = currentComposerWorktreeKey();
+  const identity = currentComposerWorktreeId();
   if (!base || !currentComposerWorktreeEnabled()) {
     return {
       projectRoot: base,
@@ -549,8 +550,18 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
       contextKey,
     };
   }
+  const requireCurrentSelection = (): void => {
+    if (
+      contextKey !== currentComposerWorktreeKey() ||
+      !currentComposerWorktreeEnabled()
+    ) {
+      throw new Error(
+        'Workspace selection changed. Send again from the selected workspace.',
+      );
+    }
+  };
   await warmComposerEnvironment(base);
-  const identity = currentComposerWorktreeId();
+  requireCurrentSelection();
   const result = await Data.projectWorktree({
     action: 'create',
     projectRoot: base,
@@ -570,6 +581,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   };
   composerWorktrees.set(contextKey, record);
   persistComposerWorktrees();
+  requireCurrentSelection();
   return {
     projectRoot: base,
     executionWorkspaceRoot: result.path,
@@ -655,6 +667,10 @@ function renderComposerBranch(): void {
   }
   const branch = currentComposerBranch();
   button.hidden = !activeProjectRoot || projectEnvironment?.isGit !== true;
+  const group = document.getElementById('composer-git-context');
+  if (group) {
+    group.hidden = button.hidden;
+  }
   label.textContent = branch || 'Current branch';
   button.title = branch ? `Current branch: ${branch}` : 'Use the current Git branch';
 }
@@ -11929,6 +11945,9 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     renderConversationProgress({phase: 'runtime_boot', fields: {}});
     try {
       const workspace = await prepareComposerWorktree();
+      if (pendingConversation !== submittedConversation) {
+        return;
+      }
       const response = await Data.sendConversation(
         conversationId,
         question,
