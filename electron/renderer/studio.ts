@@ -333,7 +333,6 @@ function bindCanvas() {
 
 let sidebarQuery = '';
 let sidebarRecentOnly = false;
-const expandedWorkspaces = new Map<string, boolean>();
 let activeProjectRoot = '';
 let activeProjectId: string | undefined;
 let projectEnvironment: MagicPointerProjectEnvironment | null = null;
@@ -2118,7 +2117,7 @@ async function renderSidebar() {
   for (const group of displayGroups) {
     const project = document.createElement('section');
     project.className = 'mpw-project';
-    const open = expandedWorkspaces.get(group.key) !== false;
+    const open = sidebarState.groupExpanded(group.key);
     project.classList.toggle(
       'is-active',
       group.key === (activeProjectId ?? activeProjectRoot),
@@ -2131,15 +2130,15 @@ async function renderSidebar() {
     toggle.type = 'button';
     toggle.className = 'mpw-project-toggle';
     toggle.dataset.workspaceToggle = group.key;
-    if (group.virtual) {
-      toggle.dataset.virtualGroup = 'true';
-    }
-    toggle.dataset.projectSelect = group.key;
     toggle.setAttribute('aria-expanded', String(open));
+    const chevron = document.createElement('span');
+    chevron.className = 'mpw-project-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.innerHTML = icon('ic-chev');
     const projectName = document.createElement('span');
     projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
-    toggle.appendChild(projectName);
+    toggle.append(chevron, projectName);
     const actions = document.createElement('span');
     actions.className = 'mpw-project-actions';
     if (group.key && !group.virtual) {
@@ -5341,7 +5340,7 @@ const shell = document.getElementById('shell') as HTMLElement;
 const aux = document.getElementById('aux') as HTMLElement;
 let lastNonSettingsView = 'chat';
 const studioShell = globalThis.StudioShell;
-const SIDEBAR_COLLAPSE_KEY = 'mp:studio-sidebar-collapsed';
+const sidebarState = StudioSidebarState.create(localStorage, window.innerWidth);
 const VIEWS: Record<string, string> = Object.fromEntries(
   studioShell.STUDIO_VIEWS.map((view: {id: string}) => [
     view.id,
@@ -5418,6 +5417,7 @@ document
   });
 
 function show(view: string, projectKey?: string) {
+  dismissSidebar();
   const current = studioShell.shellState(view);
   view = current.activeView;
   if (view !== 'chat') {
@@ -5961,7 +5961,7 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
     return;
   }
   if (command === 'toggle-sidebar') {
-    setSidebarCollapsed(shell.dataset.sidebar !== 'collapsed');
+    toggleSidebar();
     return;
   }
   if (command === 'toggle-inspector') {
@@ -6226,6 +6226,12 @@ document.addEventListener('keydown', event => {
       .forEach(menu => {
         menu.hidden = true;
       });
+    if (!menuWasOpen && sidebarState.layout() === 'overlay') {
+      event.preventDefault();
+      dismissSidebar();
+      document.getElementById('sidebar-toggle')?.focus();
+      return;
+    }
     if (
       !menuWasOpen &&
       studioComposerBusy &&
@@ -6346,37 +6352,94 @@ document.addEventListener('mp:branch-conversation', (event: Event) => {
   });
 });
 
-function setSidebarCollapsed(collapsed: boolean, persist = true) {
-  shell.dataset.sidebar = collapsed ? 'collapsed' : 'expanded';
-  const button = document.getElementById('sidebar-toggle');
-  button?.setAttribute('aria-pressed', String(collapsed));
-  button?.setAttribute('aria-label', collapsed ? '展开侧栏' : '折叠侧栏');
-  if (button instanceof HTMLElement) {
-    button.title = collapsed ? '展开侧栏' : '折叠侧栏';
+function renderSidebarLayout(): void {
+  const layout = sidebarState.layout();
+  const visible = layout !== 'hidden';
+  shell.dataset.sidebar = layout === 'docked' ? 'expanded' : 'collapsed';
+  shell.dataset.sidebarOverlay = String(layout === 'overlay');
+  const sidebar = document.getElementById('studio-sidebar');
+  if (sidebar) {
+    sidebar.inert = !visible;
+    sidebar.setAttribute('aria-hidden', String(!visible));
   }
-  if (persist) {
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSE_KEY, collapsed ? '1' : '0');
-    } catch {
-      /* renderer storage unavailable */
-    }
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (backdrop) {
+    backdrop.hidden = layout !== 'overlay' || !sidebarState.isNarrow();
+  }
+  const button = document.getElementById('sidebar-toggle');
+  button?.setAttribute('aria-expanded', String(visible));
+  button?.setAttribute('aria-label', visible ? '折叠侧栏' : '展开侧栏');
+  if (button instanceof HTMLElement) {
+    button.title = visible ? '折叠侧栏' : '展开侧栏';
+  }
+}
+
+function toggleSidebar(): void {
+  sidebarState.toggle();
+  renderSidebarLayout();
+  syncSessionPaneViewport();
+  syncInspectorGeometry();
+}
+
+function dismissSidebar(): void {
+  if (sidebarState.layout() === 'overlay') {
+    sidebarState.dismiss();
+    renderSidebarLayout();
   }
 }
 
 (function bindSidebarCollapse() {
-  let collapsed = false;
-  try {
-    collapsed = localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1';
-  } catch {
-    /* use expanded */
-  }
-  setSidebarCollapsed(collapsed, false);
-  document
-    .getElementById('sidebar-toggle')
-    ?.addEventListener('click', event => {
-      event.stopPropagation();
-      setSidebarCollapsed(shell.dataset.sidebar !== 'collapsed');
-    });
+  renderSidebarLayout();
+  const button = document.getElementById('sidebar-toggle');
+  const sidebar = document.getElementById('studio-sidebar');
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelClose = () => clearTimeout(closeTimer);
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer = setTimeout(() => {
+      if (
+        !sidebarState.isNarrow() &&
+        !sidebar?.contains(document.activeElement)
+      ) {
+        dismissSidebar();
+      }
+    }, 180);
+  };
+  button?.addEventListener('click', event => {
+    event.stopPropagation();
+    cancelClose();
+    toggleSidebar();
+  });
+  button?.addEventListener('pointerenter', event => {
+    if (event.pointerType === 'mouse') {
+      cancelClose();
+      sidebarState.peek();
+      renderSidebarLayout();
+    }
+  });
+  button?.addEventListener('pointerleave', scheduleClose);
+  sidebar?.addEventListener('pointerenter', cancelClose);
+  sidebar?.addEventListener('pointerleave', scheduleClose);
+  sidebar?.addEventListener('focusin', cancelClose);
+  sidebar?.addEventListener('focusout', () => {
+    if (!sidebar.matches(':hover')) {
+      scheduleClose();
+    }
+  });
+  document.getElementById('sidebar-backdrop')?.addEventListener('click', () => {
+    dismissSidebar();
+    button?.focus();
+  });
+  document.addEventListener('pointerdown', event => {
+    const target = event.target as Element | null;
+    if (target && !target.closest('#studio-sidebar, #sidebar-toggle')) {
+      dismissSidebar();
+    }
+  });
+  window.addEventListener('resize', () => {
+    sidebarState.resize(window.innerWidth);
+    renderSidebarLayout();
+  });
 })();
 
 function openAux() {
@@ -8295,8 +8358,10 @@ syncSessionPaneViewport();
 
 function inspectorAvailableWidth(): number {
   const sidebarWidth =
-    document.querySelector('.mpw-sidebar-col')?.getBoundingClientRect().width ??
-    (shell.dataset.sidebar === 'collapsed' ? 44 : 288);
+    sidebarState.layout() === 'docked'
+      ? (document.querySelector('.mpw-sidebar-col')?.getBoundingClientRect()
+          .width ?? 288)
+      : 0;
   return Math.max(0, shell.clientWidth - sidebarWidth);
 }
 
@@ -9179,6 +9244,7 @@ document.addEventListener('click', e => {
     );
     setActiveProject(project?.root || '', project?.id);
     startNewChat();
+    show('chat');
     return;
   }
   const projectTools = target.closest<HTMLElement>('[data-project-tools]');
@@ -9190,46 +9256,11 @@ document.addEventListener('click', e => {
   if (projectToggle) {
     const key = projectToggle.dataset.workspaceToggle || '';
     const project = projectToggle.closest<HTMLElement>('.mpw-project');
-    const alreadyActive = key === (activeProjectId ?? activeProjectRoot);
-    const open = project?.dataset.open !== 'false';
-    if (projectToggle.dataset.virtualGroup === 'true') {
-      expandedWorkspaces.set(key, !open);
-      if (project) {
-        project.dataset.open = String(!open);
-      }
-      projectToggle.setAttribute('aria-expanded', String(!open));
-      return;
-    }
-    const selectedProject = ProjectScope.find(cachedProjects || [], key);
-    setActiveProject(
-      selectedProject?.root || '',
-      selectedProject ? selectedProject.id : '',
-    );
-    expandedWorkspaces.set(key, alreadyActive ? !open : true);
+    const expanded = sidebarState.toggleGroup(key);
     if (project) {
-      project.dataset.open = String(alreadyActive ? !open : true);
+      project.dataset.open = String(expanded);
     }
-    projectToggle.setAttribute(
-      'aria-expanded',
-      String(alreadyActive ? !open : true),
-    );
-    void (async () => {
-      const list = await Data.conversations();
-      if (key !== (activeProjectId ?? activeProjectRoot)) {
-        return;
-      }
-      const recent = list.find(conversation =>
-        selectedProject
-          ? ProjectScope.contains(selectedProject, conversation)
-          : !ProjectScope.forConversation(cachedProjects || [], conversation),
-      );
-      if (recent) {
-        await openConversation(recent.id);
-      } else {
-        startNewChat();
-      }
-      await renderSidebar();
-    })();
+    projectToggle.setAttribute('aria-expanded', String(expanded));
     return;
   }
 

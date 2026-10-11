@@ -1,7 +1,9 @@
 .mp-shell {
+  --mp-sidebar-seat: var(--mp-sidebar-width);
+  position: relative;
   display: grid;
   grid-template-rows: var(--mp-window-bar) minmax(0, 1fr);
-  grid-template-columns: var(--mp-sidebar-width) minmax(0, 1fr) auto;
+  grid-template-columns: var(--mp-sidebar-seat) minmax(0, 1fr) auto;
   width: 100vw;
   height: 100vh;
   min-width: 0;
@@ -21,7 +23,7 @@
   height: var(--mp-window-bar);
   min-width: 0;
   padding: 0 0 0 8px;
-  background: linear-gradient(to right, var(--mp-sidebar) 0 var(--mp-sidebar-width), var(--mp-page) var(--mp-sidebar-width) 100%);
+  background: linear-gradient(to right, var(--mp-sidebar) 0 var(--mp-sidebar-seat), var(--mp-page) var(--mp-sidebar-seat) 100%);
   border-bottom: 1px solid color-mix(in srgb, var(--mp-rule) 42%, transparent);
   -webkit-app-region: drag;
   user-select: none;
@@ -357,6 +359,7 @@
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
+  gap: 6px;
   text-align: left;
 }
 
@@ -418,11 +421,20 @@
 .mpw-project-chevron svg {
   width: 10px;
   height: 10px;
+  transform: rotate(-90deg);
   transition: transform var(--mp-dur-normal) var(--mp-ease-out);
 }
 
-.mpw-project-chevron svg.is-open {
-  transform: rotate(90deg);
+.mpw-project-chevron {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 10px;
+  color: var(--mp-text-muted);
+}
+
+.mpw-project[data-open="true"] .mpw-project-chevron svg {
+  transform: none;
 }
 
 .mpw-project-name,
@@ -3505,88 +3517,52 @@
 }
 
 .mp-shell[data-sidebar="collapsed"] {
-  grid-template-columns: var(--mp-sidebar-collapsed) minmax(0, 1fr) auto;
+  --mp-sidebar-seat: 0px;
 }
 
-.mp-shell[data-sidebar="collapsed"] .mpw-sidebar {
-  padding-inline: 8px;
+.mp-sidebar-backdrop {
+  position: absolute;
+  z-index: 49;
+  inset: var(--mp-window-bar) 0 0;
+  background: color-mix(in srgb, var(--mp-page) 28%, transparent);
 }
 
-.mp-shell[data-sidebar="collapsed"] .mp-mode-segment,
-.mp-shell[data-sidebar="collapsed"] .mpw-customize .mp-nav-label,
-.mp-shell[data-sidebar="collapsed"] .mpw-new-session .mp-nav-label,
-.mp-shell[data-sidebar="collapsed"] .mpw-workspace-browser,
-.mp-shell[data-sidebar="collapsed"] .mp-account-footer span,
-.mp-shell[data-sidebar="collapsed"] .mp-account-footer > svg,
-.mp-shell[data-sidebar="collapsed"] .mp-update-card {
+.mp-sidebar-backdrop[hidden] {
   display: none;
 }
 
-.mp-shell[data-sidebar="collapsed"] .mpw-logo-row {
-  display: none;
+.mp-shell[data-sidebar="collapsed"] .mpw-sidebar-col {
+  position: absolute;
+  grid-area: auto;
+  z-index: 50;
+  inset: var(--mp-window-bar) auto 0 0;
+  width: var(--mp-sidebar-width);
+  border: 1px solid var(--mp-rule);
+  border-left: 0;
+  border-radius: 0 var(--cds-panel-radius) var(--cds-panel-radius) 0;
+  box-shadow: var(--mp-shadow-sheet);
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+  transition: opacity var(--mp-dur-fast), transform var(--mp-dur-fast), visibility var(--mp-dur-fast);
 }
 
-.mp-shell[data-sidebar="collapsed"] .mpw-new-session,
-.mp-shell[data-sidebar="collapsed"] .mpw-customize {
-  justify-content: center;
-  padding: 0;
+.mp-shell[data-sidebar-overlay="true"] .mpw-sidebar-col {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
-.mp-shell[data-sidebar="collapsed"] .mpw-foot {
-  display: block;
-}
-
-.mp-shell[data-sidebar="collapsed"] .mp-account-footer {
-  display: grid;
-  width: 28px;
-  grid-template-columns: 20px;
-  justify-content: center;
-  padding: 0;
+@media (prefers-reduced-motion: reduce) {
+  .mpw-sidebar-col,
+  .mpw-project-chevron svg {
+    transition: none !important;
+  }
 }
 
 @media (max-width: 1020px) {
-  .mp-shell {
-    grid-template-columns: var(--mp-sidebar-collapsed) minmax(0, 1fr) auto;
-  }
-
-  .mpw-sidebar {
-    padding-inline: 8px;
-  }
-
-  .mpw-foot {
-    display: block;
-    margin-top: auto;
-  }
-
-  .mp-mode-segment,
-  .mpw-customize .mp-nav-label,
-  .mpw-new-session .mp-nav-label,
-  .mpw-workspace-browser,
-  .mp-account-footer span,
-  .mp-account-footer > svg,
-  .mp-update-card {
-    display: none;
-  }
-
-  .mp-account-footer > span,
-  .mp-account-footer > svg {
-    display: none !important;
-  }
-
-  .mp-account-footer > .mp-account-mark {
-    display: block !important;
-  }
-
-  .mpw-logo-row {
-    display: none;
-  }
-
-  .mpw-new-session,
-  .mpw-customize {
-    justify-content: center;
-    padding: 0;
-  }
-
   .mp-inspector {
     min-width: 420px;
     width: 420px;
@@ -3597,7 +3573,7 @@
   .mp-inspector:not([hidden]) {
     position: absolute;
     z-index: 70;
-    inset: 8px 8px 8px var(--mp-sidebar-collapsed);
+    inset: 8px 8px 8px var(--mp-sidebar-seat);
     width: auto;
     min-width: 0;
     margin: 0;

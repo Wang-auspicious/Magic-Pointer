@@ -5,7 +5,6 @@
 .mp-nav-create { position: absolute; right: 5px; top: 4px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; color: var(--mp-text-muted); opacity: 0; pointer-events: none; }
 .mp-nav-row:is(:hover, :focus-within) .mp-nav-create { opacity: 1; pointer-events: auto; }
 .mp-nav-create:hover { background: var(--mp-active); }
-.mp-shell[data-sidebar="collapsed"] .mp-nav-create { display: none; }
 .mp-session-heading { display: flex; min-height: 32px; align-items: center; gap: 4px; padding: 0 4px 0 8px; color: var(--mp-text-muted); font-size: 12px; }
 .mp-session-heading > span { flex: 1; }
 .mp-session-heading button { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; opacity: 0; transition: opacity .12s; }

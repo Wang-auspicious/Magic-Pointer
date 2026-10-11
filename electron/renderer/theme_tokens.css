@@ -40,7 +40,6 @@
      pane grid declares only a 320px per-column floor and no ceiling. */
   --mp-window-bar: 36px; /* no CDS counterpart */
   --mp-sidebar-width: 288px; /* Claude desktop bootFrameLayout.sidebarWidth */
-  --mp-sidebar-collapsed: 44px; /* no CDS counterpart: Claude's data has no collapsed width */
   --mp-content-width: 768px; /* Magic Pointer's own reading measure */
   --mp-inspector-min: 420px; /* Magic Pointer's own; Claude's pane floor is 320px */
   --mp-inspector-max: 760px; /* Magic Pointer's own; Claude has no pane ceiling */

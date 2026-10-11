@@ -30,7 +30,7 @@
         <button type="button" class="mp-toolbar-button" id="app-menu" aria-label="应用菜单" title="应用菜单" aria-haspopup="menu" aria-expanded="false">
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-menu" /></svg>
         </button>
-        <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">
+        <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏" aria-controls="studio-sidebar" aria-expanded="true">
           <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0DD;</span>
         </button>
         <button type="button" class="mp-toolbar-button" id="global-search-toggle" aria-label="全局搜索" title="搜索会话、项目和命令">
@@ -46,7 +46,8 @@
       <div class="mp-window-caption-safe" aria-hidden="true"></div>
     </header>
 
-    <aside class="mpw-sidebar-col">
+    <button type="button" class="mp-sidebar-backdrop" id="sidebar-backdrop" tabindex="-1" aria-label="关闭侧栏" hidden></button>
+    <aside class="mpw-sidebar-col" id="studio-sidebar" aria-label="Sidebar">
       <div class="mpw-sidebar">
         <div class="mpw-logo-row">
           <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="工作模式">
@@ -704,6 +705,7 @@
   <script defer src="conversation_state.js?v=1"></script>
   <script defer src="project_scope.js?v=1"></script>
   <script defer src="studio_navigation.js?v=1"></script>
+  <script defer src="studio_sidebar_state.js?v=1"></script>
   <script defer src="studio_home.js?v=33"></script>
   <script defer src="studio_subagents.js?v=33"></script>
   <script defer src="studio_inspector_state.js?v=33"></script>
