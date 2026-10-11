@@ -152,6 +152,34 @@ const ConversationControl = (() => {
       } catch {
         return false;
       }
+    } else if (
+      phase === 'permission_review_started' ||
+      phase === 'permission_review_finished'
+    ) {
+      let review = transcript.trajectory.find(
+        row => row.kind === 'permission-review' && row.callId === fields.id,
+      );
+      if (!review) {
+        review = {
+          kind: 'permission-review',
+          callId: fields.id,
+          name: fields.name,
+          startedAt: at,
+          ...timeOrigin,
+        };
+        transcript.trajectory.push(review);
+      }
+      Object.assign(review, {
+        state:
+          phase === 'permission_review_started'
+            ? 'running'
+            : fields.state === 'cancelled'
+              ? 'cancelled'
+              : 'done',
+        decision: fields.decision,
+        reason: fields.reason,
+        ...(phase === 'permission_review_finished' ? {completedAt: at} : {}),
+      });
     } else if (phase === 'model_usage') {
       try {
         const usage = JSON.parse(decodeBlob(fields));

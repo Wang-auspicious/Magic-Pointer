@@ -3,6 +3,10 @@ import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import type {PermissionMode} from '../permission_mode';
 export type {PermissionMode} from '../permission_mode';
+import {
+  reviewAutoPermission,
+  type AutoPermissionReview,
+} from './auto_permission';
 import type {ProjectContext} from '../project_context';
 import {
   synchronizeProjectSettings,
@@ -133,6 +137,7 @@ export interface AgentOptions {
     | Promise<{allowed: boolean; reason: string} | void>;
   onSessionEnd?: () => void | Promise<void>;
   metadata?: Data;
+  parentSessionId?: string;
 }
 export const asObject = (value: unknown): Data =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -223,6 +228,27 @@ function mergeModelUsage(total: Record<string, number>, raw: unknown): boolean {
   }
   total.turnsReported = (total.turnsReported ?? 0) + 1;
   return true;
+}
+
+function recordModelCost(
+  total: Record<string, number>,
+  requestUsage: Record<string, number>,
+  config: ModelConfig | undefined,
+  backend: string | undefined,
+  at: number,
+): void {
+  if (!backend?.startsWith('magic_pointer.') || !config?.baseUrl) {
+    return;
+  }
+  let host = '';
+  try {
+    host = new URL(config.baseUrl).hostname;
+  } catch {}
+  const cost = estimateCostUsd(requestUsage, config.model, host, at);
+  if (cost !== null) {
+    total.estimatedCostUsd = (total.estimatedCostUsd ?? 0) + cost;
+    total.pricedRequests = (total.pricedRequests ?? 0) + 1;
+  }
 }
 
 export type ToolHook = (payload: Data) => Data | void | Promise<Data | void>;
@@ -334,7 +360,7 @@ function permissionFor(
   options: AgentOptions,
   call: ToolCall,
   claimedOnce: Set<string>,
-): string {
+): 'allow' | 'ask' | 'deny' | 'review' {
   const effect = options.registry.effect(call.name, asObject(call.arguments));
   const mode = options.session.permissionMode(
     options.permissionMode ?? 'default',
@@ -425,7 +451,12 @@ function permissionFor(
       return 'allow';
     }
   }
-  return decidePermission(mode, effect);
+  const decision = decidePermission(mode, effect);
+  return decision === 'ask' &&
+    mode === 'accept_reversible' &&
+    effect !== 'purchase'
+    ? 'review'
+    : decision;
 }
 
 function blocked(
@@ -1031,25 +1062,16 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         }
         backend = reply.usedBackend ?? backend;
         const reported = mergeModelUsage(usage, reply.usage);
-        if (
-          reported &&
-          reply.usedBackend?.startsWith('magic_pointer.') &&
-          options.config?.baseUrl
-        ) {
-          let host = '';
-          try {
-            host = new URL(options.config.baseUrl).hostname;
-          } catch {}
-          const cost = estimateCostUsd(
+        const requestUsage: Record<string, number> = {};
+        if (reported) {
+          mergeModelUsage(requestUsage, reply.usage);
+          recordModelCost(
             usage,
-            options.config.model,
-            host,
+            requestUsage,
+            options.config,
+            reply.usedBackend,
             requestStartedAt,
           );
-          if (cost !== null) {
-            usage.estimatedCostUsd = (usage.estimatedCostUsd ?? 0) + cost;
-            usage.pricedRequests = (usage.pricedRequests ?? 0) + 1;
-          }
         }
         await session.append('model/response', {
           turn: session.openTurn,
@@ -1060,8 +1082,6 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           toolCallCount: reply.tool_calls.length,
         });
         if (reported) {
-          const requestUsage: Record<string, number> = {};
-          mergeModelUsage(requestUsage, reply.usage);
           emit({kind: 'model_usage', usage: {...usage}, requestUsage});
         }
         if (
@@ -1275,11 +1295,93 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
               );
             }
           }
-          const decision = permissionFor(options, call, claimedOnce);
+          let decision = permissionFor(options, call, claimedOnce);
+          let review: AutoPermissionReview | undefined;
+          if (decision === 'review') {
+            const reviewStartedAt = Date.now();
+            await session.append('permission/review_started', {
+              callId: call.id,
+              tool: call.name,
+              arguments: args,
+            });
+            emit({
+              kind: 'permission_review_started',
+              id: call.id,
+              name: call.name,
+            });
+            review = await reviewAutoPermission(
+              options,
+              call,
+              effect,
+              modelMessages(),
+              signal,
+            );
+            if (review.requested) {
+              usage.permissionReviewRequests =
+                (usage.permissionReviewRequests ?? 0) + 1;
+            }
+            const reviewUsage: Record<string, number> = {};
+            if (mergeModelUsage(reviewUsage, review.usage)) {
+              recordModelCost(
+                usage,
+                reviewUsage,
+                options.config,
+                review.usedBackend,
+                reviewStartedAt,
+              );
+              for (const key of [
+                'inputTokens',
+                'outputTokens',
+                'totalTokens',
+                'cacheReadTokens',
+                'cacheWriteTokens',
+              ]) {
+                if (reviewUsage[key] !== undefined) {
+                  usage[key] = (usage[key] ?? 0) + reviewUsage[key];
+                }
+              }
+              for (const key of [
+                'inputTokens',
+                'outputTokens',
+                'totalTokens',
+              ]) {
+                if (reviewUsage[key] !== undefined) {
+                  const field = `permissionReview${key[0].toUpperCase()}${key.slice(1)}`;
+                  usage[field] = (usage[field] ?? 0) + reviewUsage[key];
+                }
+              }
+            }
+            await session.append('permission/reviewed', {
+              callId: call.id,
+              tool: call.name,
+              arguments: args,
+              ...review,
+            });
+            emit({
+              kind: 'permission_review_finished',
+              id: call.id,
+              name: call.name,
+              review,
+              usage: {...usage},
+            });
+            if (session.pendingInbox('next-step').length) {
+              return blocked(
+                call,
+                'Not executed: new user input must be applied first.',
+                'steer_pending',
+              );
+            }
+            // Appending the review refreshes the session, including mode changes
+            // and explicit denials made while the reviewer was running.
+            const current = permissionFor(options, call, claimedOnce);
+            decision = current === 'review' ? review.decision : current;
+          }
           if (decision === 'deny') {
             return blocked(
               call,
-              `Tool ${spec.name} is denied in the current permission mode.`,
+              review?.decision === 'deny'
+                ? `Auto blocked ${spec.name}: ${review.reason}`
+                : `Tool ${spec.name} is denied in the current permission mode.`,
             );
           }
           if (decision === 'ask') {
@@ -1287,13 +1389,18 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
               spec.name === 'DailyWrap.read' ||
               (spec.name === 'Recall' && args.session_id !== session.id) ||
               historyRecipeCall(call);
+            const canGrantTool =
+              !exactHistoryRead &&
+              ['reversible_write', 'local_irreversible'].includes(effect);
             const request = {
               kind: 'permission',
               tool: spec.name,
-              question: `Allow ${spec.name}?`,
-              options: exactHistoryRead
-                ? ['仅这一次允许', '拒绝']
-                : ['仅这一次允许', `本会话总是允许 ${spec.name}`, '拒绝'],
+              question: review
+                ? `${review.reason}\nAllow ${spec.name}?`
+                : `Allow ${spec.name}?`,
+              options: canGrantTool
+                ? ['仅这一次允许', `本会话总是允许 ${spec.name}`, '拒绝']
+                : ['仅这一次允许', '拒绝'],
               awaitingUserInput: true,
               harnessPermission: true,
               requestId: call.id,

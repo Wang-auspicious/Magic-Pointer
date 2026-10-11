@@ -126,6 +126,46 @@ export class RuntimeActivitySink {
       }
       return;
     }
+    if (kind === 'permission_review_started') {
+      this.flush();
+      const at = this.mark('permission_review_started', {
+        id: event.id,
+        name: event.name,
+      });
+      this.add({
+        kind: 'permission-review',
+        callId: event.id,
+        name: event.name,
+        state: 'running',
+        startedAt: at,
+      });
+      return;
+    }
+    if (kind === 'permission_review_finished') {
+      const review = asObject(event.review);
+      const at = this.mark('permission_review_finished', {
+        id: event.id,
+        name: event.name,
+        decision: review.decision,
+        reason: review.reason,
+      });
+      const record = this.trajectory.find(
+        row => row.kind === 'permission-review' && row.callId === event.id,
+      );
+      if (record) {
+        Object.assign(record, review, {state: 'done', completedAt: at});
+      }
+      this.activities.push({
+        kind: 'permission_review',
+        id: event.id,
+        name: event.name,
+        state: review.error ? 'error' : 'done',
+        startedMs: at - Number(review.latencyMs || 0),
+        ...review,
+      });
+      this.blob('model_usage', event.usage);
+      return;
+    }
     if (kind === 'tool_call_started') {
       this.flush();
       const at = this.blob('tool_call', {
@@ -189,7 +229,7 @@ export class RuntimeActivitySink {
         isError: result.is_error,
       });
       const activity = this.activities.find(
-        item => item.id === result.tool_call_id,
+        item => item.kind === 'tool' && item.id === result.tool_call_id,
       );
       if (activity) {
         Object.assign(activity, {
@@ -202,6 +242,31 @@ export class RuntimeActivitySink {
     }
     if (kind === 'turn_finished' || kind === 'loop_stopped') {
       this.flush();
+      if (kind === 'loop_stopped') {
+        for (const review of this.trajectory) {
+          if (
+            review.kind !== 'permission-review' ||
+            review.state !== 'running'
+          ) {
+            continue;
+          }
+          const at = this.mark('permission_review_finished', {
+            id: review.callId,
+            name: review.name,
+            state: 'cancelled',
+            reason: 'Review interrupted.',
+          });
+          Object.assign(review, {state: 'cancelled', completedAt: at});
+          this.activities.push({
+            kind: 'permission_review',
+            id: review.callId,
+            name: review.name,
+            state: 'cancelled',
+            startedMs: review.startedAt,
+            latencyMs: at - Number(review.startedAt),
+          });
+        }
+      }
       const at = this.mark('model_response', {
         state:
           kind === 'loop_stopped'

@@ -4319,13 +4319,23 @@ const ChatView = (() => {
           const activeTools = snapshot.trajectory.filter(
             r => r.kind === 'tool' && r.state === 'running',
           ).length;
-          const statusText = activeChildren
-            ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
-            : activeTools
-              ? 'Running tools'
-              : snapshot.answer
-                ? 'Writing'
-                : 'Thinking';
+          const activeReview = [...snapshot.trajectory]
+            .reverse()
+            .find(
+              row =>
+                row.kind === 'permission-review' && row.state === 'running',
+            );
+          const statusText = activeReview
+            ? liveStatusLabel('permission_review_started', {
+                name: activeReview.name,
+              })
+            : activeChildren
+              ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
+              : activeTools
+                ? 'Running tools'
+                : snapshot.answer
+                  ? 'Writing'
+                  : 'Thinking';
           const statusLabel = traceStatus.querySelector(
             '.mp-chat-turn-status-label',
           );
@@ -4378,6 +4388,8 @@ const ChatView = (() => {
               'agent_turn',
               'agent_start',
               'budget_renewed',
+              'permission_review_started',
+              'permission_review_finished',
             ].includes(phase)
           ) {
             latest.set('status', record);
@@ -4574,6 +4586,8 @@ const ChatView = (() => {
       model_first_chunk: '模型开始响应',
       model_response: '整理结果',
       budget_renewed: '继续执行下一轮',
+      permission_review_started: `Auto 正在检查 ${String(fields.name || '操作')}`,
+      permission_review_finished: 'Auto 已完成权限检查',
       total: '本轮处理完成',
     };
     if (labels[phase]) {

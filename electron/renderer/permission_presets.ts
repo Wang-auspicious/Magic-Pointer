@@ -5,6 +5,7 @@ interface PresetOption {
   mode?: import('../permission_mode').PermissionMode;
   name: string;
   description: string;
+  detail?: string;
   label: string;
   primary?: boolean;
   confirm?: {title: string; description: string};
@@ -20,6 +21,7 @@ const PRESETS: PresetOption[] = [
     name: '自动',
     label: 'Auto',
     description: 'Magic Pointer handles permission decisions',
+    detail: 'Permission reviews use the selected model and count toward usage.',
     primary: true,
     badge: 'Start',
     shortcut: '1',

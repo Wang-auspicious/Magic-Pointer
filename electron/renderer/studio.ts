@@ -10464,6 +10464,7 @@ interface PermPresetOption {
   name: string;
   label: string;
   description: string;
+  detail?: string;
   glyph: string;
   confirm?: {title: string; description: string};
   badge?: string;
@@ -10485,7 +10486,9 @@ function renderPermissionChip() {
   const label = document.getElementById('composer-permission-label');
   const option = permPresets.optionOf(composerPreset);
   if (btn instanceof HTMLButtonElement) {
-    btn.title = option?.description || '';
+    btn.title = [option?.description, option?.detail]
+      .filter(Boolean)
+      .join('\n');
     const owner = windowNavigation.state().current;
     btn.disabled = Boolean(
       owner &&
@@ -10567,6 +10570,9 @@ function openPermissionMenu() {
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(selected));
     row.dataset.permValue = option.value;
+    if (option.detail) {
+      row.title = option.detail;
+    }
     if (option.shortcut) {
       row.dataset.permKey = option.shortcut;
     }

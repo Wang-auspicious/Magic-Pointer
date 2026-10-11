@@ -700,6 +700,10 @@ export async function runBackgroundAgent(
       'turnsReported',
       'estimatedCostUsd',
       'pricedRequests',
+      'permissionReviewRequests',
+      'permissionReviewInputTokens',
+      'permissionReviewOutputTokens',
+      'permissionReviewTotalTokens',
     ]) {
       if (typeof current[key] === 'number') {
         combined[key] = (Number(usageBeforeRun[key]) || 0) + current[key];
@@ -849,6 +853,7 @@ export async function runBackgroundAgent(
           );
           const common: AgentOptions = {
             ...payload,
+            parentSessionId: payload.parentId,
             session,
             registry,
             hooks,
