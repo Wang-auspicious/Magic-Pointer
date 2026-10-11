@@ -2,6 +2,7 @@
 
 interface PresetOption {
   value: string;
+  mode?: import('../permission_mode').PermissionMode;
   name: string;
   description: string;
   label: string;
@@ -15,6 +16,7 @@ interface PresetOption {
 const PRESETS: PresetOption[] = [
   {
     value: 'auto',
+    mode: 'accept_reversible',
     name: '自动',
     label: 'Auto',
     description: 'Magic Pointer handles permission decisions',
@@ -24,7 +26,8 @@ const PRESETS: PresetOption[] = [
   },
   {
     value: 'read-only',
-    name: '只读',
+    mode: 'safe',
+    name: '手动',
     label: 'Manual',
     description: 'Always ask before making changes',
     primary: false,
@@ -32,6 +35,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     value: 'workspace-write',
+    mode: 'default',
     name: '接受编辑',
     label: 'Accept edits',
     description: 'Automatically accept all file edits',
@@ -40,6 +44,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     value: 'plan',
+    mode: 'plan',
     name: '计划模式',
     label: 'Plan',
     description: 'Create a plan before making changes',
@@ -48,6 +53,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     value: 'danger-full-access',
+    mode: 'bypass',
     name: '完全访问',
     label: 'Bypass permissions',
     description: 'Accepts all permissions',
@@ -91,7 +97,20 @@ function presetSvg(option: PresetOption): string {
   return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[option.value] || paths.custom}" /></svg>`;
 }
 
-const PermissionPresets = {PRESETS, PRIMARY_PRESETS, optionOf, presetSvg};
+function presetForMode(
+  mode: unknown,
+): import('../permission_mode').PermissionPreset | undefined {
+  return PRESETS.find(option => option.mode === mode)?.value as
+    import('../permission_mode').PermissionPreset | undefined;
+}
+
+const PermissionPresets = {
+  PRESETS,
+  PRIMARY_PRESETS,
+  optionOf,
+  presetSvg,
+  presetForMode,
+};
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = PermissionPresets;
 }

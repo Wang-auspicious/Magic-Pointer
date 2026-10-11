@@ -686,6 +686,12 @@ declare global {
     error?: string;
   }
 
+  type MagicPointerPermissionPreset =
+    import('../permission_mode').PermissionPreset;
+
+  type MagicPointerPermissionSelectionResult =
+    import('../permission_mode').PermissionSelectionResult;
+
   interface MagicPointerQuotaRow {
     id: string;
     label: string;
@@ -951,6 +957,10 @@ declare global {
         id: string,
         selection: MagicPointerModelSelection,
       ): Promise<MagicPointerModelSelectionResult>;
+      setPermission?(
+        id: string,
+        preset: MagicPointerPermissionPreset,
+      ): Promise<MagicPointerPermissionSelectionResult>;
       suggest?(payload: {
         turns?: unknown;
         object?: unknown;
@@ -1323,6 +1333,10 @@ declare global {
       id: string,
       selection: MagicPointerModelSelection,
     ): Promise<MagicPointerModelSelectionResult>;
+    setConversationPermission(
+      id: string,
+      preset: MagicPointerPermissionPreset,
+    ): Promise<MagicPointerPermissionSelectionResult>;
     suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
     stopConversation(
       requestId: string,
@@ -1929,7 +1943,6 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.send({
       ...request,
       attachments: request.attachments || [],
-      permissionPreset: request.permissionPreset || 'workspace-write',
       effort: request.effort || 'high',
     });
   },
@@ -2037,6 +2050,27 @@ const Data: MagicPointerDataApi = {
     }
     try {
       return await select(id, selection);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+
+  async setConversationPermission(
+    id: string,
+    preset: MagicPointerPermissionPreset,
+  ): Promise<MagicPointerPermissionSelectionResult> {
+    const select = bridge()?.conversations?.setPermission;
+    if (!select) {
+      return {
+        ok: false,
+        error: 'Conversation permission selection is unavailable.',
+      };
+    }
+    try {
+      return await select(id, preset);
     } catch (error) {
       return {
         ok: false,

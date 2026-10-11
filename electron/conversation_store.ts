@@ -2,6 +2,7 @@
 
 import {createProjectStore} from './project_store';
 import {normalizeAdditionalFolders} from './workspace_folders';
+import type {PermissionMode} from './permission_mode';
 import {
   normalizeModelSelection,
   type ConversationModelSelection,
@@ -1331,6 +1332,29 @@ function createConversationStore(
     return {ok: true, conversation: target};
   }
 
+  function setPermissionMode(
+    id: string,
+    sessionId: string,
+    mode: PermissionMode,
+  ): {ok: boolean; conversation?: Conversation} {
+    const target = get(id);
+    if (!target) {
+      return {ok: false};
+    }
+    target.agentSessionId = sessionId;
+    target.taskContext = {
+      referenceRevision: 0,
+      sources: [],
+      references: [],
+      ...target.taskContext,
+      taskId: sessionId,
+      permissionMode: mode,
+    };
+    markDirty(target);
+    persist();
+    return {ok: true, conversation: target};
+  }
+
   return {
     appendTurn,
     updateTurn,
@@ -1344,6 +1368,7 @@ function createConversationStore(
     setProject,
     setWorkspace,
     setModel,
+    setPermissionMode,
     timeline,
     memories,
     artifacts,

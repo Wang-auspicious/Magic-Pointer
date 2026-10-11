@@ -1,6 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
+import type {PermissionMode} from '../permission_mode';
+export type {PermissionMode} from '../permission_mode';
 import type {ProjectContext} from '../project_context';
 import {
   synchronizeProjectSettings,
@@ -83,8 +85,6 @@ export interface ModelReply {
   usedBackend?: string;
 }
 export type ModelRunner = (request: ModelRequest) => Promise<ModelReply>;
-export type PermissionMode =
-  'default' | 'plan' | 'accept_reversible' | 'safe' | 'bypass';
 export type AgentEvent = {kind: string; [key: string]: unknown};
 export interface AgentResult {
   reason: string;

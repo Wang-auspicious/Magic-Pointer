@@ -5635,7 +5635,8 @@ function captureComposerDraft(): void {
     sameModelSelection(
       currentComposerModelSelection(),
       submission.draft.modelSelection,
-    )
+    ) &&
+    composerPreset === submission.draft.permissionPreset
   ) {
     return;
   }
@@ -5651,6 +5652,7 @@ function captureComposerDraft(): void {
     additionalFolders: [...composerAdditionalFolders],
     returnToProject: windowNavigation.draft(owner.location)?.returnToProject,
     modelSelection: currentComposerModelSelection(),
+    permissionPreset: composerPreset,
   });
 }
 
@@ -5658,7 +5660,7 @@ function restoreComposerDraft(
   location: StudioComposerLocation,
   saved?: Pick<
     MagicPointerConversation,
-    'additionalFolders' | 'modelSelection'
+    'additionalFolders' | 'modelSelection' | 'taskContext'
   >,
 ): void {
   const draft = windowNavigation.draft(location);
@@ -5675,6 +5677,16 @@ function restoreComposerDraft(
   ];
   const selection = draft?.modelSelection ?? saved?.modelSelection;
   composerModelSelection = selection ? {...selection} : undefined;
+  const savedPreset = permPresets.presetForMode(
+    saved?.taskContext?.permissionMode,
+  );
+  composerPreset =
+    (pendingPermissionSelections.has(`${location.kind}:${location.id}`)
+      ? draft?.permissionPreset
+      : savedPreset) ??
+    draft?.permissionPreset ??
+    defaultComposerPreset;
+  renderPermissionChip();
   renderComposerModel();
   renderComposerFolders();
   composerSelectedSourceIds.clear();
@@ -10068,7 +10080,7 @@ function bindEffortChip() {
 }
 
 const COMPOSER_PRESET_KEY = 'mp:composer-permission-preset:v1';
-let composerPreset = (() => {
+const defaultComposerPreset: MagicPointerPermissionPreset = (() => {
   try {
     const stored = localStorage.getItem(COMPOSER_PRESET_KEY);
     return stored &&
@@ -10079,12 +10091,14 @@ let composerPreset = (() => {
         'plan',
         'danger-full-access',
       ].includes(stored)
-      ? stored
+      ? (stored as MagicPointerPermissionPreset)
       : 'auto';
   } catch {
     return 'auto';
   }
 })();
+let composerPreset = defaultComposerPreset;
+const pendingPermissionSelections = new Set<string>();
 let composerAttachments: string[] = [];
 
 function normalizedTaskContext(value: unknown): MagicPointerTaskContext | null {
@@ -10129,18 +10143,17 @@ function setActiveTaskContext(value: unknown, resetSelection = false) {
     (resetSelection ||
       next.permissionMode !== activeTaskContext?.permissionMode)
   ) {
-    const preset = (
-      {
-        plan: 'plan',
-        safe: 'read-only',
-        default: 'workspace-write',
-        accept_reversible: 'auto',
-        bypass: 'danger-full-access',
-      } as Record<string, string>
-    )[next.permissionMode];
-    if (preset) {
+    const preset = permPresets.presetForMode(next.permissionMode);
+    const owner = composerLocation();
+    if (
+      preset &&
+      !pendingPermissionSelections.has(`${owner.kind}:${owner.id}`)
+    ) {
       composerPreset = preset;
-      persistComposerPreset();
+      const draft = windowNavigation.draft(owner);
+      if (draft) {
+        windowNavigation.saveDraft(owner, {...draft, permissionPreset: preset});
+      }
       renderPermissionChip();
     }
   }
@@ -10461,6 +10474,7 @@ interface PermPresetsModule {
   PRESETS: PermPresetOption[];
   optionOf(value: string): PermPresetOption | undefined;
   presetSvg(option: PermPresetOption): string;
+  presetForMode(mode: unknown): MagicPointerPermissionPreset | undefined;
 }
 const permPresets = (globalThis as {PermissionPresets?: PermPresetsModule})
   .PermissionPresets!;
@@ -10472,6 +10486,13 @@ function renderPermissionChip() {
   const option = permPresets.optionOf(composerPreset);
   if (btn instanceof HTMLButtonElement) {
     btn.title = option?.description || '';
+    const owner = windowNavigation.state().current;
+    btn.disabled = Boolean(
+      owner &&
+      (owner.kind === 'conversation' || owner.kind === 'draft') &&
+      pendingPermissionSelections.has(`${owner.kind}:${owner.id}`),
+    );
+    btn.setAttribute('aria-busy', String(btn.disabled));
   }
   if (glyph) {
     glyph.innerHTML = option ? permPresets.presetSvg(option) : '';
@@ -10481,11 +10502,48 @@ function renderPermissionChip() {
   }
 }
 
-function persistComposerPreset(): void {
-  try {
-    localStorage.setItem(COMPOSER_PRESET_KEY, composerPreset);
-  } catch {
-    /* storage unavailable */
+async function selectComposerPermission(
+  preset: MagicPointerPermissionPreset,
+  owner = composerLocation(),
+): Promise<void> {
+  const key = `${owner.kind}:${owner.id}`;
+  if (pendingPermissionSelections.has(key)) {
+    return;
+  }
+  if (windowNavigation.isCurrent(owner)) {
+    captureComposerDraft();
+  }
+  const before = windowNavigation.draft(owner);
+  if (!before) {
+    return;
+  }
+  pendingPermissionSelections.add(key);
+  windowNavigation.saveDraft(owner, {...before, permissionPreset: preset});
+  if (windowNavigation.isCurrent(owner)) {
+    composerPreset = preset;
+    renderPermissionChip();
+  }
+  const result =
+    owner.kind === 'conversation'
+      ? await Data.setConversationPermission(owner.id, preset)
+      : {ok: true, preset};
+  pendingPermissionSelections.delete(key);
+  const selected = result.ok
+    ? result.preset || preset
+    : before.permissionPreset || defaultComposerPreset;
+  const draft = windowNavigation.draft(owner);
+  if (draft) {
+    windowNavigation.saveDraft(owner, {...draft, permissionPreset: selected});
+  }
+  if (!windowNavigation.isCurrent(owner)) {
+    return;
+  }
+  composerPreset = selected;
+  renderPermissionChip();
+  if (!result.ok) {
+    const menu = document.getElementById('composer-permission-menu');
+    menu?.replaceChildren(modelMenuNote(result.error || '切换失败。'));
+    positionAnchoredPopover('composer-permission-menu', 'composer-permission');
   }
 }
 
@@ -10561,6 +10619,7 @@ function openPermissionMenu() {
 }
 
 function confirmFullAccess() {
+  const owner = composerLocation();
   const option = permPresets.PRESETS.find(
     p => p.value === 'danger-full-access',
   );
@@ -10601,9 +10660,7 @@ function confirmFullAccess() {
     enable.disabled = !box.checked;
   });
   enable.addEventListener('click', () => {
-    composerPreset = 'danger-full-access';
-    persistComposerPreset();
-    renderPermissionChip();
+    void selectComposerPermission('danger-full-access', owner);
     overlay.remove();
   });
   actions.append(cancel, enable);
@@ -10644,9 +10701,9 @@ function bindPermissionChip() {
         confirmFullAccess();
         return;
       }
-      composerPreset = value;
-      persistComposerPreset();
-      renderPermissionChip();
+      if (permPresets.PRESETS.some(option => option.value === value)) {
+        void selectComposerPermission(value as MagicPointerPermissionPreset);
+      }
     });
 }
 let composerPlan: ReturnType<typeof PlanList.project> = null;
@@ -12330,6 +12387,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       returnToProject:
         windowNavigation.draft(navigationLocation)?.returnToProject,
       modelSelection: currentComposerModelSelection(),
+      permissionPreset: composerPreset,
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
@@ -12435,7 +12493,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     const conversationId = activeConversationId;
     const hadPendingInput = Boolean(pendingPermissionAsk || pendingAskInput);
     const permissionChoice = pendingPermissionChoice || undefined;
-    const permissionPreset = composerPreset;
+    const permissionPreset = navigationDraft.permissionPreset;
     const effort = composerEffort;
     syncConversationPendingInput([]);
     renderConversationProgress({phase: 'runtime_boot', fields: {}});
@@ -12542,11 +12600,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
           };
         }
       ).command;
-      if (command?.type === 'permission' && command.preset) {
-        composerPreset = String(command.preset);
-        persistComposerPreset();
-        renderPermissionChip();
-      } else if (command?.type === 'model') {
+      if (command?.type === 'model') {
         await refreshComposerModel();
         if (!isCurrentSubmission()) {
           return;

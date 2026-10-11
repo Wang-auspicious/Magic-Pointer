@@ -18,6 +18,7 @@ declare global {
     additionalFolders?: string[];
     returnToProject?: string;
     modelSelection?: MagicPointerModelSelection;
+    permissionPreset?: MagicPointerPermissionPreset;
     projectId?: string;
   }
 

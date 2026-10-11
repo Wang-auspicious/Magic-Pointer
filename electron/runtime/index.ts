@@ -11,8 +11,12 @@ import {
   HookManager,
   type AgentEvent,
   type AgentOptions,
-  type PermissionMode,
 } from './agent';
+import {
+  normalizePermissionPreset,
+  PERMISSION_MODES,
+  presetForPermissionMode,
+} from '../permission_mode';
 import {registerCodingTools} from './agent_files';
 import {validateAdditionalFolders} from '../workspace_folders';
 import {savedWorkspaceSettings} from './workspace_settings';
@@ -75,13 +79,6 @@ export interface RuntimeOptions {
   onEvent?: (event: AgentEvent) => void;
   onProgress?: (phase: string, fields: Data) => void;
 }
-const presets: Record<string, PermissionMode> = {
-  auto: 'accept_reversible',
-  plan: 'plan',
-  'read-only': 'safe',
-  'workspace-write': 'default',
-  'danger-full-access': 'bypass',
-};
 
 export function resolveSessionId(payload: Data): string {
   const explicit = String(
@@ -127,11 +124,7 @@ export async function runRuntime(
 ): Promise<Data> {
   const started = performance.now();
   const {root, userDataDir, signal} = options;
-  const preset = String(payload.permissionPreset || 'workspace-write');
-  const permissionMode = presets[preset];
-  if (!permissionMode) {
-    throw new Error(`Unknown permission preset: ${preset}`);
-  }
+  const requestedPreset = normalizePermissionPreset(payload.permissionPreset);
   const config = resolveModelConfig(
     {
       ...payload.modelRuntime,
@@ -171,6 +164,11 @@ export async function runRuntime(
     userDataDir,
     resolveSessionId(payload),
   );
+  const preset =
+    requestedPreset ??
+    presetForPermissionMode(session.permissionMode('default')) ??
+    'workspace-write';
+  const permissionMode = PERMISSION_MODES[preset];
   const savedFolders = savedWorkspaceSettings(session);
   const workspaceState = path.join(userDataDir, 'workspace.txt');
   const savedWorkspace = (
@@ -546,14 +544,23 @@ export async function runRuntime(
         };
       }
       if (name === 'permission') {
-        if (rest && !presets[rest]) {
-          throw new Error('Unknown permission preset');
+        const selected = normalizePermissionPreset(rest || undefined) ?? preset;
+        if (rest) {
+          const mode = PERMISSION_MODES[selected];
+          await session.append('permission/mode', {mode, requested: mode});
         }
         return {
           ok: true,
-          command: {type: name, preset: rest || preset},
-          permissionPreset: rest || preset,
-          answer: rest ? `权限预设：${rest}` : Object.keys(presets).join(' · '),
+          command: {type: name, preset: selected},
+          permissionPreset: selected,
+          agentSessionId: session.id,
+          taskContext: {
+            ...prepared.taskContext,
+            permissionMode: session.permissionMode(permissionMode),
+          },
+          answer: rest
+            ? `权限预设：${rest}`
+            : Object.keys(PERMISSION_MODES).join(' · '),
         };
       }
       if (name === 'model') {
@@ -630,7 +637,9 @@ export async function runRuntime(
       loopTerminated: !successful,
       loopTerminatedReason: successful ? undefined : terminal.reason,
       usedBackend: terminal.usedBackend,
-      permissionPreset: preset,
+      permissionPreset: presetForPermissionMode(
+        session.permissionMode(permissionMode),
+      ),
       receipts: [terminal.receipt],
       events: terminal.results,
       activities: sink.activities,
@@ -651,7 +660,10 @@ export async function runRuntime(
         .map(event => event.data),
       awaitingUserInput: terminal.reason === 'awaiting_user',
       pendingInput: terminal.pending_input,
-      taskContext: prepared.taskContext,
+      taskContext: {
+        ...prepared.taskContext,
+        permissionMode: session.permissionMode(permissionMode),
+      },
       artifacts: prepared.artifacts,
       runtimeTurn:
         [...session.events].reverse().find(event => event.type === 'turn/end')

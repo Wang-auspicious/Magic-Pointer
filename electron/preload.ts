@@ -1,5 +1,6 @@
 const {contextBridge, ipcRenderer} = require('electron');
 import {normalizeModelSelection} from './conversation_model';
+import {normalizePermissionPreset} from './permission_mode';
 
 type PayloadCallback = (payload: unknown) => void;
 type SignalCallback = () => void;
@@ -528,9 +529,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
               ),
             }
           : {}),
-        permissionPreset: String(
-          payload?.permissionPreset || 'workspace-write',
-        ).slice(0, 40),
+        permissionPreset: normalizePermissionPreset(payload.permissionPreset),
         requestId: String(payload?.requestId || '').slice(0, 120),
         ...(String(payload?.workspaceRoot || '').trim()
           ? {
@@ -599,6 +598,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       ipcRenderer.invoke('conversations:set-model', {
         id,
         selection: normalizeModelSelection(selection),
+      }),
+    setPermission: (id: string, preset: unknown) =>
+      ipcRenderer.invoke('conversations:set-permission', {
+        id,
+        preset: normalizePermissionPreset(preset),
       }),
     suggest: (payload: {turns?: unknown; object?: unknown} = {}) =>
       ipcRenderer.invoke('conversations:suggest', {

@@ -6,6 +6,13 @@ import {
   type ConversationModelSelection,
 } from './conversation_model';
 import type {ModelConfig} from './runtime/model';
+import {
+  normalizePermissionPreset,
+  PERMISSION_MODES,
+  presetForPermissionMode,
+  type PermissionPreset,
+  type PermissionSelectionResult,
+} from './permission_mode';
 import type {ProjectCreateInput, ProjectRecord} from './project_store';
 
 const {
@@ -29,7 +36,7 @@ const {spawn} = require('child_process');
 const {net} = require('electron');
 const {expandPassage} = require('./runtime/text');
 const {resolveModelConfig, listModels} = require('./runtime/model');
-const {handleSessionRead} = require('./runtime/session');
+const {handleSession, handleSessionRead} = require('./runtime/session');
 const {PersonalActivityService} = require('./personal_activity_service');
 const {configureDesktop} = require('./runtime/desktop');
 const fs = require('fs');
@@ -3086,53 +3093,60 @@ async function restoreConversationContext(conversation: any) {
   } catch {
     return conversation;
   }
-  if (
-    turn.pendingInput ||
-    turn.outcome === '可恢复' ||
-    turn.outcome === '等待输入'
-  ) {
-    try {
-      const status = await handleSessionRead(
-        {action: 'status', sessionId},
-        FABRIC_DATA_DIR,
+  try {
+    const status = await handleSessionRead(
+      {action: 'status', sessionId},
+      FABRIC_DATA_DIR,
+    );
+    const preset = presetForPermissionMode(status.permissionMode);
+    if (
+      status.ok &&
+      preset &&
+      status.permissionMode !== conversation.taskContext?.permissionMode
+    ) {
+      const updated = conversations().setPermissionMode(
+        conversation.id,
+        sessionId,
+        PERMISSION_MODES[preset],
       );
-      if (
-        status.ok &&
-        'pendingInput' in status &&
-        (status.pendingInput
-          ? status.pendingInput.requestId !== turn.pendingInput?.requestId
-          : Boolean(turn.pendingInput))
-      ) {
-        const trajectory = (turn.trajectory || []).map((item: any) =>
-          item.kind === 'tool' &&
-          item.callId === status.lastInputAnswer?.requestId
-            ? {
-                ...item,
-                result: status.lastInputAnswer.message.content,
-                state: 'done',
-                isError: false,
-              }
-            : item,
-        );
-        conversations().updateTurn({
-          conversationId: conversation.id,
-          pendingInput: status.pendingInput || null,
-          trajectory,
-        });
-        conversations().flush();
-        turn = {
-          ...turn,
-          pendingInput: status.pendingInput || undefined,
-          trajectory,
-        };
-        conversation = {
-          ...conversation,
-          turns: [...conversation.turns.slice(0, -1), turn],
-        };
-      }
-    } catch {
-      /* Leave an unanswered card retryable if the runtime cannot be read. */
+      conversation = updated.conversation || conversation;
     }
+    if (
+      status.ok &&
+      'pendingInput' in status &&
+      (status.pendingInput
+        ? status.pendingInput.requestId !== turn.pendingInput?.requestId
+        : Boolean(turn.pendingInput))
+    ) {
+      const trajectory = (turn.trajectory || []).map((item: any) =>
+        item.kind === 'tool' &&
+        item.callId === status.lastInputAnswer?.requestId
+          ? {
+              ...item,
+              result: status.lastInputAnswer.message.content,
+              state: 'done',
+              isError: false,
+            }
+          : item,
+      );
+      conversations().updateTurn({
+        conversationId: conversation.id,
+        pendingInput: status.pendingInput || null,
+        trajectory,
+      });
+      conversations().flush();
+      turn = {
+        ...turn,
+        pendingInput: status.pendingInput || undefined,
+        trajectory,
+      };
+      conversation = {
+        ...conversation,
+        turns: [...conversation.turns.slice(0, -1), turn],
+      };
+    }
+  } catch {
+    /* Retain the last known state if the runtime cannot be read. */
   }
   if (typeof turn.modelUsage?.contextTokens === 'number') {
     return conversation;
@@ -3337,6 +3351,67 @@ function setConversationModel(
     };
   }
 }
+
+async function setConversationPermission(
+  id: string,
+  raw: unknown,
+): Promise<PermissionSelectionResult> {
+  try {
+    const preset = normalizePermissionPreset(raw);
+    const conversation = conversations().get(id);
+    if (!preset || !conversation) {
+      return {ok: false, error: 'Choose a conversation and permission mode.'};
+    }
+    const sessionId = studioConversationSessionId({
+      existing: conversation.agentSessionId,
+      conversationId: id,
+    });
+    const result = await handleSession(
+      {action: 'permission-mode', sessionId, preset},
+      FABRIC_DATA_DIR,
+    );
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: String(result.error || 'Permission change failed.'),
+      };
+    }
+    const saved = conversations().setPermissionMode(
+      id,
+      sessionId,
+      PERMISSION_MODES[preset],
+    );
+    if (!saved.ok) {
+      return {ok: false, error: 'Conversation not found.'};
+    }
+    conversations().flush();
+    notifyConversationChanged(id);
+    return {
+      ok: true,
+      sessionId,
+      preset,
+      permissionMode: PERMISSION_MODES[preset],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+ipcMain.handle(
+  'conversations:set-permission',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {id?: unknown; preset?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    return setConversationPermission(String(raw.id || ''), raw.preset);
+  },
+);
 
 ipcMain.handle(
   'conversations:set-model',
@@ -3609,9 +3684,6 @@ async function sendConversation(
   const conversationId = String(raw?.conversationId || '')
     .trim()
     .slice(0, 120);
-  const permissionPreset = String(raw?.permissionPreset || 'workspace-write')
-    .trim()
-    .slice(0, 40);
   const effort = normalizeConversationEffort(raw?.effort);
   const requestId =
     String(raw?.requestId || crypto.randomUUID())
@@ -3632,6 +3704,18 @@ async function sendConversation(
       ].slice(0, 32)
     : [];
   let existing = conversationId ? conversations().get(conversationId) : null;
+  let permissionPreset: PermissionPreset;
+  try {
+    permissionPreset =
+      normalizePermissionPreset(raw.permissionPreset) ??
+      presetForPermissionMode(existing?.taskContext?.permissionMode) ??
+      'workspace-write';
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
   if (inputResponse && !existing?.turns?.length) {
     return {ok: false, accepted: false, error: 'unknown_conversation'};
   }
@@ -3890,6 +3974,14 @@ async function sendConversation(
         workspaceRoot: effectiveWorkspaceRoot || undefined,
         additionalFolders,
         modelSelection,
+        taskContext: {
+          referenceRevision: 0,
+          sources: [],
+          references: [],
+          ...existing?.taskContext,
+          taskId: effectiveAgentSessionId,
+          permissionMode: PERMISSION_MODES[permissionPreset],
+        },
         permissionGrant: grantNow || undefined,
         permissionDeny: denyNow || undefined,
         permissionGrantOnce: onceNow || undefined,

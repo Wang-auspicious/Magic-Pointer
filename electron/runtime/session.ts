@@ -3,6 +3,7 @@ import {readFile, mkdir, open, stat, truncate, unlink} from 'node:fs/promises';
 import path from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import type {AgentMessage} from './agent';
+import {normalizePermissionPreset, PERMISSION_MODES} from '../permission_mode';
 import {
   validateContextUpdate,
   taskSources,
@@ -764,6 +765,28 @@ function usage(events: Event[]): Data | null {
   };
 }
 
+function currentPermissionMode(
+  events: ReadonlyArray<Pick<SessionEvent, 'type' | 'data'>>,
+  fallback: string,
+): string {
+  for (const event of [...events].reverse()) {
+    if (event.type === 'permission/mode') {
+      return text(event.data.mode);
+    }
+    if (
+      event.type === 'user_input/answered' &&
+      object(event.data.pendingInput).kind === 'plan'
+    ) {
+      return (
+        {once: 'safe', grant: 'default', deny: 'plan'}[
+          text(object(event.data.response).decision)
+        ] ?? fallback
+      );
+    }
+  }
+  return fallback;
+}
+
 export async function handleSessionRead(
   payload: Data,
   userDataDir: string,
@@ -826,6 +849,7 @@ export async function handleSessionRead(
       [...events].reverse().find(event => event.type === 'receipt/issued')?.data
         .status,
     ) || null;
+  const permissionMode = currentPermissionMode(events, '');
   return {
     ...result,
     hasPendingWork:
@@ -836,6 +860,7 @@ export async function handleSessionRead(
       ['partial', 'unverified'].includes(lastReceiptStatus ?? ''),
     lastTurnReason,
     lastReceiptStatus,
+    ...(permissionMode ? {permissionMode} : {}),
     openTurn,
     pendingInput: outstandingInput,
     answeredInputIds: answers.map(event => event.data.requestId),
@@ -1122,22 +1147,7 @@ export class EventSession {
     return inbox(this.events, target);
   }
   permissionMode(fallback: string): string {
-    for (const event of [...this.events].reverse()) {
-      if (event.type === 'permission/mode') {
-        return text(event.data.mode);
-      }
-      if (
-        event.type === 'user_input/answered' &&
-        object(event.data.pendingInput).kind === 'plan'
-      ) {
-        return (
-          {once: 'safe', grant: 'default', deny: 'plan'}[
-            text(object(event.data.response).decision)
-          ] ?? fallback
-        );
-      }
-    }
-    return fallback;
+    return currentPermissionMode(this.events, fallback);
   }
 
   async append(
@@ -1968,8 +1978,17 @@ export async function handleSession(
     const session = await EventSession.open(
       userDataDir,
       text(payload.sessionId),
-      false,
+      action === 'permission-mode',
     );
+    if (action === 'permission-mode') {
+      const preset = normalizePermissionPreset(payload.preset);
+      if (!preset) {
+        throw new Error('Choose a permission mode.');
+      }
+      const mode = PERMISSION_MODES[preset];
+      await session.append('permission/mode', {mode, requested: mode});
+      return {ok: true, sessionId: session.id, preset, permissionMode: mode};
+    }
     if (action === 'subagent-respond') {
       const {respondToAgent} =
         require('./agent_background') as typeof import('./agent_background');
@@ -2004,6 +2023,7 @@ export async function handleSession(
         sessionId: child.id,
         taskContext: {
           taskId: child.id,
+          permissionMode: child.permissionMode('default'),
           sources: taskSources(child.events),
           references: taskReferences(child.events),
           referenceRevision: referenceRevision(child.events),
