@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  type Row = {
+  type Row = ConversationActivityInput & {
     id: string;
     title?: string;
     createdAt?: number;
@@ -9,7 +9,6 @@
     workspaceRoot?: string;
     taskContext?: any;
     agentSessionId?: string;
-    hasPendingWork?: boolean;
     turns?: any[];
   };
   type SessionPreference = {
@@ -177,9 +176,7 @@
                 ? 'Unread'
                 : 'Read'
               : preferences.filters.group === 'state'
-                ? row.hasPendingWork
-                  ? 'In progress'
-                  : 'Completed'
+                ? ConversationState.label(ConversationState.derive(row))
                 : preferences.filters.group === 'date'
                   ? new Date(Number(row.updatedAt || 0)).toLocaleDateString(
                       undefined,

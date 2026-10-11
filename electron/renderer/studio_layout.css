@@ -475,6 +475,10 @@
   color: var(--mp-clay);
 }
 
+.side-dot.is-running {
+  background: var(--mp-activity-blue);
+}
+
 .side-dot:is(.is-pending, .is-waiting, .is-interrupted, .is-error) {
   width: 16px;
   height: 16px;

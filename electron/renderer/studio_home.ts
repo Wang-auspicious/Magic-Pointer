@@ -3,15 +3,11 @@
 type HomeView = 'overview' | 'models';
 type HomeRange = 'all' | '30d' | '7d';
 
-interface HomeAttentionItem {
+interface HomeAttentionItem extends ConversationActivityInput {
   id: string;
   title?: string;
   state?: string;
   updatedAt?: number;
-  hasPendingWork?: boolean;
-  lastOutcome?: string;
-  lastFailed?: boolean;
-  lastPendingInputKind?: string;
   workspaceRoot?: string;
   archived?: boolean;
   pinned?: boolean;
@@ -90,6 +86,10 @@ const PRIORITY: Record<string, number> = {
 };
 
 let homeView: HomeView = 'overview';
+const homeConversationState: ConversationStateApi =
+  typeof require === 'function'
+    ? require('./conversation_state')
+    : globalThis.ConversationState;
 let homeRange: HomeRange = 'all';
 let cachedOptions: HomeRenderOptions | null = null;
 let controlsBound = false;
@@ -147,19 +147,11 @@ function stateOf(item: HomeAttentionItem): string {
   if (state) {
     return state;
   }
-  if (item.lastPendingInputKind) {
-    return 'awaiting';
+  const activity = homeConversationState.derive(item);
+  if (activity === 'interrupted' || activity === 'pending') {
+    return 'resumable';
   }
-  if (item.lastFailed || item.lastOutcome === '失败') {
-    return 'failed';
-  }
-  if (
-    item.hasPendingWork &&
-    ['进行中', 'running', 'in_progress'].includes(item.lastOutcome || '')
-  ) {
-    return 'running';
-  }
-  return item.hasPendingWork ? 'resumable' : '';
+  return activity === 'idle' || activity === 'completed' ? '' : activity;
 }
 
 function selectAttentionItems(

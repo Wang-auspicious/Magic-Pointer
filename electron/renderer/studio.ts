@@ -1258,51 +1258,32 @@ function conversationNode(
   row.type = 'button';
   const dot = document.createElement('span');
   dot.className = 'side-dot';
-  const lastTurn = Array.isArray(c.turns)
-    ? c.turns[c.turns.length - 1]
-    : undefined;
-  const outcome = c.lastOutcome || lastTurn?.outcome || '';
-  const hasError =
-    c.lastFailed === true ||
-    c.failed === true ||
-    lastTurn?.failed === true ||
-    outcome === '失败';
-  const hasInput = Boolean(
-    c.lastPendingInputKind || lastTurn?.pendingInput?.kind,
+  const activity = ConversationState.derive(
+    c,
+    studioComposerBusy && c.id === activeConversationId,
   );
-  const runningHere = studioComposerBusy && c.id === activeConversationId;
-  const interrupted =
-    c.hasPendingWork &&
-    ((outcome === '进行中' && !runningHere) || outcome === '可恢复');
-  const status = hasInput
+  const status = activity === 'awaiting'
     ? 'waiting'
-    : interrupted
-      ? 'interrupted'
-      : hasError
-        ? 'error'
-        : c.hasPendingWork
-          ? 'pending'
-          : '';
-  const stateLabels: Record<string, string> = {
-    waiting: '待答复',
-    error: '失败',
-    interrupted: '已中断',
-    pending: runningHere ? '进行中' : '待继续',
-  };
+    : activity === 'failed'
+      ? 'error'
+      : activity === 'idle' || activity === 'completed'
+        ? ''
+        : activity;
+  const statusLabel = status ? ConversationState.label(activity) : '';
   if (status) {
     dot.classList.add(`is-${status}`);
-    dot.innerHTML = icon(
+    dot.innerHTML = status === 'running' ? '' : icon(
       status === 'error'
         ? 'ic-warning'
         : status === 'interrupted'
           ? 'ic-alarm-clock'
           : 'ic-list-checks',
     );
-    dot.title = stateLabels[status];
+    dot.title = statusLabel;
     row.dataset.taskState = status;
     row.setAttribute(
       'aria-label',
-      `${String(c.title || '未命名对话')}，${stateLabels[status]}`,
+      `${String(c.title || '未命名对话')}，${statusLabel}`,
     );
     if (c.hasPendingWork) {
       row.dataset.pendingWork = 'true';
@@ -1314,7 +1295,7 @@ function conversationNode(
   title.textContent = String(c.title || '未命名对话');
   const stateLabel = document.createElement('span');
   stateLabel.className = 'side-state-label';
-  stateLabel.textContent = stateLabels[status] || '';
+  stateLabel.textContent = statusLabel;
   const actions = document.createElement('span');
   actions.className = 'side-actions';
   const ellipsis = document.createElement('span');

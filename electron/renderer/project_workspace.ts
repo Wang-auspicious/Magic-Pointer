@@ -1,9 +1,8 @@
-interface ProjectConversation {
+interface ProjectConversation extends ConversationActivityInput {
   id: string;
   title?: string;
   workspaceRoot?: string;
   updatedAt?: number;
-  hasPendingWork?: boolean;
 }
 
 interface ProjectWorkspaceOptions {
@@ -117,7 +116,7 @@ declare global {
               .map(
                 row => `
               <button type="button" class="mp-project-chat" data-open="${escape(row.id)}" data-project-chat-title="${escape(row.title || 'Untitled')}">
-                <span><strong>${escape(row.title || 'Untitled')}</strong>${row.hasPendingWork ? '<small>In progress</small>' : ''}</span>
+                <span><strong>${escape(row.title || 'Untitled')}</strong>${row.hasPendingWork || row.lastFailed ? `<small>${escape(ConversationState.label(ConversationState.derive(row)))}</small>` : ''}</span>
                 ${row.updatedAt ? `<time datetime="${new Date(row.updatedAt).toISOString()}">${escape(new Date(row.updatedAt).toLocaleDateString(undefined, {month: 'short', day: 'numeric'}))}</time>` : ''}
               </button>`,
               )
