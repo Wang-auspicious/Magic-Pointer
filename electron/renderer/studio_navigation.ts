@@ -17,6 +17,7 @@ declare global {
     workspaceRoot: string;
     additionalFolders?: string[];
     returnToProject?: string;
+    modelSelection?: MagicPointerModelSelection;
     projectId?: string;
   }
 
@@ -50,6 +51,9 @@ declare global {
       attachments: [...draft.attachments],
       sourceIds: [...draft.sourceIds],
       additionalFolders: [...(draft.additionalFolders || [])],
+      modelSelection: draft.modelSelection
+        ? {...draft.modelSelection}
+        : undefined,
     };
   }
 

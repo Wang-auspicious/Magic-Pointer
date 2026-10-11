@@ -1,5 +1,7 @@
 'use strict';
 
+import type {ConversationModelSelection} from './conversation_model';
+
 type UnknownRecord = Record<string, any>;
 
 type CredentialReader = {
@@ -216,6 +218,27 @@ function promoteLegacyProfile(
   };
 }
 
+function resolveSelectedModelRuntimeConfig(
+  settings: UnknownRecord | null,
+  credentialStore: CredentialReader | null,
+  selection: ConversationModelSelection,
+): UnknownRecord | null {
+  const selected = selectActiveProfileModel(
+    settings,
+    selection.model,
+    selection.profileId,
+  );
+  if (selected) {
+    return resolveActiveModelRuntimeConfig(selected, credentialStore);
+  }
+  if (selection.profileId) {
+    throw new Error(
+      'The selected model provider is unavailable. Choose another model.',
+    );
+  }
+  return null;
+}
+
 function selectActiveProfileModel(
   settings: UnknownRecord | null,
   model: unknown,
@@ -345,6 +368,7 @@ module.exports = {
   LEGACY_CREDENTIAL_REF,
   promoteLegacyProfile,
   resolveActiveModelRuntimeConfig,
+  resolveSelectedModelRuntimeConfig,
   selectActiveProfileModel,
   upsertGroqProfile,
 };

@@ -1,4 +1,5 @@
 const {contextBridge, ipcRenderer} = require('electron');
+import {normalizeModelSelection} from './conversation_model';
 
 type PayloadCallback = (payload: unknown) => void;
 type SignalCallback = () => void;
@@ -238,8 +239,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     ipcRenderer.invoke('models:catalog', {refresh: options.refresh === true}),
   selectModel: (model: unknown, profileId?: string) =>
     ipcRenderer.invoke('models:select', {model, profileId}),
-  modelQuota: (options: {force?: unknown} = {}) =>
-    ipcRenderer.invoke('models:quota', {force: options?.force === true}),
+  modelQuota: (options: {force?: unknown; selection?: unknown} = {}) =>
+    ipcRenderer.invoke('models:quota', {
+      force: options?.force === true,
+      selection: normalizeModelSelection(options.selection),
+    }),
   slashDirectory: () => ipcRenderer.invoke('slash:directory'),
   undoAction: (
     payload: {taskId?: unknown; sessionId?: unknown; actionId?: unknown} = {},
@@ -484,6 +488,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     send: (payload: {
       conversationId?: unknown;
       projectId?: unknown;
+      modelSelection?: unknown;
       question?: unknown;
       attachments?: unknown;
       taskInput?: unknown;
@@ -503,6 +508,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           ? {projectId: payload.projectId}
           : {}),
         question: String(payload?.question || ''),
+        modelSelection: normalizeModelSelection(payload.modelSelection),
         attachments: Array.isArray(payload?.attachments)
           ? [
               ...new Set(
@@ -589,6 +595,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       }),
     setProject: (id: string, root: string) =>
       ipcRenderer.invoke('conversations:set-project', {id, root}),
+    setModel: (id: string, selection: unknown) =>
+      ipcRenderer.invoke('conversations:set-model', {
+        id,
+        selection: normalizeModelSelection(selection),
+      }),
     suggest: (payload: {turns?: unknown; object?: unknown} = {}) =>
       ipcRenderer.invoke('conversations:suggest', {
         turns: Array.isArray(payload?.turns) ? payload.turns.slice(-12) : [],

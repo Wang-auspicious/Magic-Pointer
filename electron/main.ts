@@ -1,6 +1,11 @@
 import {BrowserViewRegistry} from './browser_view_registry';
 import {projectAttachments, type ProjectDetailsPatch} from './project_context';
 import {validateAdditionalFolders} from './workspace_folders';
+import {
+  normalizeModelSelection,
+  type ConversationModelSelection,
+} from './conversation_model';
+import type {ModelConfig} from './runtime/model';
 import type {ProjectCreateInput, ProjectRecord} from './project_store';
 
 const {
@@ -65,6 +70,7 @@ const {
   promoteLegacyProfile,
   LEGACY_CREDENTIAL_REF,
   resolveActiveModelRuntimeConfig,
+  resolveSelectedModelRuntimeConfig,
   selectActiveProfileModel,
   collectModelCatalog,
 } = require('./model_runtime_config');
@@ -3299,6 +3305,51 @@ ipcMain.handle(
     }
   },
 );
+
+function setConversationModel(
+  id: string,
+  raw: unknown,
+): {
+  ok: boolean;
+  selection?: ConversationModelSelection;
+  error?: string;
+} {
+  try {
+    const requested = normalizeModelSelection(raw);
+    if (!requested) {
+      return {ok: false, error: 'Choose a model.'};
+    }
+    const runtime = activeModelRuntimeConfig(requested);
+    const selection = {
+      model: requested.model,
+      ...(runtime?.profileId ? {profileId: String(runtime.profileId)} : {}),
+    };
+    const result = conversations().setModel(id, selection);
+    if (!result.ok) {
+      return {ok: false, error: 'Conversation not found.'};
+    }
+    notifyConversationChanged(id);
+    return {ok: true, selection};
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+ipcMain.handle(
+  'conversations:set-model',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {id?: unknown; selection?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    return setConversationModel(String(raw.id || ''), raw.selection);
+  },
+);
 ipcMain.handle(
   'conversations:export',
   async (event: Electron.IpcMainInvokeEvent, id: string) => {
@@ -3778,7 +3829,23 @@ async function sendConversation(
       error: `invalid_task_input: ${String(error?.message || error)}`,
     };
   }
-  const modelRuntime = activeModelRuntimeConfig();
+  let modelRuntime: ModelConfig;
+  let modelSelection: ConversationModelSelection;
+  try {
+    const requested =
+      normalizeModelSelection(raw.modelSelection) ?? existing?.modelSelection;
+    const runtime = activeModelRuntimeConfig(requested);
+    modelRuntime = resolveModelConfig(runtime, ROOT, FABRIC_DATA_DIR);
+    modelSelection = {
+      model: modelRuntime.model,
+      ...(runtime?.profileId ? {profileId: runtime.profileId} : {}),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
   const hadPendingWork = existing?.hasPendingWork === true;
   const payload = {
     question,
@@ -3822,6 +3889,7 @@ async function sendConversation(
         projectId: projectContext?.id || '',
         workspaceRoot: effectiveWorkspaceRoot || undefined,
         additionalFolders,
+        modelSelection,
         permissionGrant: grantNow || undefined,
         permissionDeny: denyNow || undefined,
         permissionGrantOnce: onceNow || undefined,
@@ -4008,17 +4076,19 @@ async function sendConversation(
     };
     const modelCommand = /^\/model +(\S[\s\S]*)$/i.exec(question);
     if (modelCommand) {
-      void selectRuntimeModel(modelCommand[1]).then(selected =>
-        finish(
-          selected?.ok === true
-            ? {
-                ...selected,
-                command: {type: 'model', model: selected.model},
-                answer: `默认模型已切换为 ${selected.model}，下一次发送即生效。`,
-                hasPendingWork: hadPendingWork,
-              }
-            : selected,
-        ),
+      const selected = setConversationModel(conversation.id, {
+        model: modelCommand[1],
+        profileId: modelSelection.profileId,
+      });
+      finish(
+        selected.ok
+          ? {
+              ...selected,
+              command: {type: 'model', modelSelection: selected.selection},
+              answer: `此会话的模型已切换为 ${selected.selection!.model}，下一次发送即生效。`,
+              hasPendingWork: hadPendingWork,
+            }
+          : selected,
       );
       return;
     }
@@ -8507,12 +8577,21 @@ async function getStudioModelCatalog(refresh = false) {
   );
 }
 
-function activeModelRuntimeConfig() {
-  const runtime = resolveActiveModelRuntimeConfig(
-    fabricSettings,
-    credentialStore,
-  );
+function activeModelRuntimeConfig(selection?: ConversationModelSelection) {
+  const runtime = selection
+    ? resolveSelectedModelRuntimeConfig(
+        fabricSettings,
+        credentialStore,
+        selection,
+      )
+    : resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
   if (!runtime) {
+    if (selection) {
+      return {
+        ...resolveModelConfig(null, ROOT, FABRIC_DATA_DIR),
+        model: selection.model,
+      };
+    }
     return legacyModelCatalog.length ? {models: legacyModelCatalog} : null;
   }
   const discovered = runtime && discoveredModelCatalogs.get(runtime.profileId);
@@ -8565,8 +8644,11 @@ function localOpenCodeCredential(): string {
   return '';
 }
 
-function readActiveQuota(force = false): Promise<any> {
-  const runtime = activeModelRuntimeConfig();
+function readActiveQuota(
+  force = false,
+  selection?: ConversationModelSelection,
+): Promise<any> {
+  const runtime = activeModelRuntimeConfig(selection);
   if (!runtime) {
     return Promise.resolve({
       adapter: null,
@@ -9836,7 +9918,13 @@ ipcMain.handle(
       return {ok: false, error: 'unauthorized_quota_reader'};
     }
     try {
-      return {ok: true, quota: await readActiveQuota(raw?.force === true)};
+      return {
+        ok: true,
+        quota: await readActiveQuota(
+          raw?.force === true,
+          normalizeModelSelection(raw.selection),
+        ),
+      };
     } catch (error) {
       return {
         ok: false,

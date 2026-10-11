@@ -336,6 +336,7 @@ let sidebarRecentOnly = false;
 let activeProjectRoot = '';
 let activeProjectId: string | undefined;
 let composerAdditionalFolders: string[] = [];
+let composerModelSelection: MagicPointerModelSelection | undefined;
 let projectEnvironment: MagicPointerProjectEnvironment | null = null;
 let repositoryContextDismissedFor = '';
 let repositoryContextRequest = 0;
@@ -2945,10 +2946,10 @@ function storeComposerQuota(
 }
 
 function syncComposerQuotaIdentity(): string {
-  const key = [
-    modelCatalog?.currentProfileId || '',
-    modelCatalog?.provider || '',
-  ].join(':');
+  const catalog = activeComposerModelCatalog();
+  const key = [catalog?.currentProfileId || '', catalog?.provider || ''].join(
+    ':',
+  );
   if (composerQuotaKey !== key) {
     // Never carry an in-memory balance across profiles or providers. A
     // matching persisted report is safe to paint while the fresh request runs.
@@ -2971,7 +2972,10 @@ function ensureComposerQuota(force = false) {
   }
   composerQuotaPending = true;
   composerQuotaRequestKey = key;
-  void Data.modelQuota({force}).then(result => {
+  void Data.modelQuota({
+    force,
+    selection: currentComposerModelSelection(),
+  }).then(result => {
     if (composerQuotaRequestKey !== key) {
       return;
     }
@@ -3166,13 +3170,14 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       (Number(usage?.outputTokens) || 0)
     );
   }, 0);
-  const currentModel = modelCatalog?.groups
+  const catalog = activeComposerModelCatalog();
+  const currentModel = catalog?.groups
     ?.flatMap(group => group.models || [])
     .find(
       entry =>
-        entry.id === modelCatalog?.current &&
-        (!modelCatalog?.currentProfileId ||
-          entry.profileId === modelCatalog.currentProfileId),
+        entry.id === catalog?.current &&
+        (!catalog?.currentProfileId ||
+          entry.profileId === catalog.currentProfileId),
     );
   const latestUsage = latestContextUsage(turns);
   const contextWindow = Math.max(
@@ -3987,7 +3992,7 @@ async function openConversation(id: string) {
   );
   setActiveProject(projectRoot, c.projectId);
   show('chat');
-  restoreComposerDraft({kind: 'conversation', id: c.id}, c.additionalFolders);
+  restoreComposerDraft({kind: 'conversation', id: c.id}, c);
   setStudioHomeVisible(false);
   document
     .querySelectorAll('#side-convos .side-item')
@@ -5626,6 +5631,10 @@ function captureComposerDraft(): void {
       (submission.draft.additionalFolders?.length || 0) &&
     composerAdditionalFolders.every(
       (folder, index) => folder === submission.draft.additionalFolders?.[index],
+    ) &&
+    sameModelSelection(
+      currentComposerModelSelection(),
+      submission.draft.modelSelection,
     )
   ) {
     return;
@@ -5641,12 +5650,16 @@ function captureComposerDraft(): void {
     projectId: displayedComposer.projectId,
     additionalFolders: [...composerAdditionalFolders],
     returnToProject: windowNavigation.draft(owner.location)?.returnToProject,
+    modelSelection: currentComposerModelSelection(),
   });
 }
 
 function restoreComposerDraft(
   location: StudioComposerLocation,
-  additionalFolders: string[] = [],
+  saved?: Pick<
+    MagicPointerConversation,
+    'additionalFolders' | 'modelSelection'
+  >,
 ): void {
   const draft = windowNavigation.draft(location);
   const textarea = document.querySelector<HTMLTextAreaElement>(
@@ -5658,8 +5671,11 @@ function restoreComposerDraft(
   }
   composerAttachments = [...(draft?.attachments || [])];
   composerAdditionalFolders = [
-    ...(draft?.additionalFolders ?? additionalFolders),
+    ...(draft?.additionalFolders ?? saved?.additionalFolders ?? []),
   ];
+  const selection = draft?.modelSelection ?? saved?.modelSelection;
+  composerModelSelection = selection ? {...selection} : undefined;
+  renderComposerModel();
   renderComposerFolders();
   composerSelectedSourceIds.clear();
   const available = new Set(
@@ -10979,6 +10995,61 @@ function syncComposerSubmitState() {
 let modelCatalog: MagicPointerModelCatalog | null = null;
 let modelCatalogRequest = 0;
 let modelSelectionRequest = 0;
+const pendingModelSelections = new Map<string, number>();
+
+function currentComposerModelSelection():
+  MagicPointerModelSelection | undefined {
+  if (composerModelSelection) {
+    return {...composerModelSelection};
+  }
+  if (!modelCatalog?.current) {
+    return undefined;
+  }
+  return {
+    model: modelCatalog.current,
+    ...(modelCatalog.currentProfileId
+      ? {profileId: modelCatalog.currentProfileId}
+      : {}),
+  };
+}
+
+function sameModelSelection(
+  left: MagicPointerModelSelection | undefined,
+  right: MagicPointerModelSelection | undefined,
+): boolean {
+  return left?.model === right?.model && left?.profileId === right?.profileId;
+}
+
+function activeComposerModelCatalog(): MagicPointerModelCatalog | null {
+  const selection = currentComposerModelSelection();
+  if (!modelCatalog || !selection) {
+    return modelCatalog;
+  }
+  const group = modelCatalog.groups?.find(
+    item => item.profileId === selection.profileId,
+  );
+  return {
+    ...modelCatalog,
+    groups: modelCatalog.groups?.map(item =>
+      item === group && !item.models.some(model => model.id === selection.model)
+        ? {
+            ...item,
+            models: [
+              {id: selection.model, profileId: selection.profileId},
+              ...item.models,
+            ],
+          }
+        : item,
+    ),
+    current: selection.model,
+    currentProfileId: selection.profileId,
+    provider:
+      group?.provider ||
+      (selection.profileId === modelCatalog.currentProfileId
+        ? modelCatalog.provider
+        : ''),
+  };
+}
 
 async function refreshComposerModel() {
   const request = ++modelCatalogRequest;
@@ -11000,7 +11071,7 @@ async function refreshComposerModel() {
 function renderComposerModel() {
   const label = document.getElementById('composer-model-label');
   const btn = document.getElementById('composer-model');
-  const current = modelCatalog?.current || '';
+  const current = currentComposerModelSelection()?.model || '';
   syncComposerQuotaIdentity();
   if (modelCatalog) {
     ensureComposerQuota();
@@ -11022,7 +11093,7 @@ async function openModelMenu() {
     return;
   }
   modelMoreOpen = false;
-  menu.replaceChildren(...modelMenuRows(modelCatalog));
+  menu.replaceChildren(...modelMenuRows(activeComposerModelCatalog()));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
   bindDigitShortcuts(menu, 'modelKey');
   const request = ++modelCatalogRequest;
@@ -11350,7 +11421,7 @@ function renderModelMenu(): void {
     document.activeElement instanceof HTMLElement
       ? document.activeElement.dataset.modelPin
       : undefined;
-  menu.replaceChildren(...modelMenuRows(modelCatalog));
+  menu.replaceChildren(...modelMenuRows(activeComposerModelCatalog()));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
   positionModelMorePanel();
   const panel = menu.querySelector<HTMLElement>('.mpw-model-more-panel');
@@ -11600,7 +11671,7 @@ function bindModelSeat() {
       if (pin) {
         e.stopPropagation();
         const id = pin.dataset.modelPin || '';
-        const pins = resolveModelPins(modelCatalog);
+        const pins = resolveModelPins(activeComposerModelCatalog());
         const index = pins.includes(id) ? pins.indexOf(id) : pins.indexOf('');
         if (index < 0) {
           return;
@@ -11617,20 +11688,45 @@ function bindModelSeat() {
       e.stopPropagation();
       const modelId = row.dataset.modelId || '';
       const profileId = row.dataset.modelProfileId;
-      if (
-        modelId === modelCatalog?.current &&
-        profileId === modelCatalog?.currentProfileId
-      ) {
+      const selection = {model: modelId, ...(profileId ? {profileId} : {})};
+      if (sameModelSelection(selection, currentComposerModelSelection())) {
         closeModelMenu();
         return;
       }
       const selectionRequest = ++modelSelectionRequest;
+      const owner = composerLocation();
+      const key = `${owner.kind}:${owner.id}`;
+      pendingModelSelections.set(key, selectionRequest);
+      captureComposerDraft();
+      const before = windowNavigation.draft(owner)!;
+      composerModelSelection = selection;
+      windowNavigation.saveDraft(owner, {...before, modelSelection: selection});
       ++modelCatalogRequest;
       closeModelMenu();
-      const result = await Data.selectModel(modelId, profileId);
-      if (selectionRequest !== modelSelectionRequest) {
+      renderComposerModel();
+      const result =
+        owner.kind === 'conversation'
+          ? await Data.setConversationModel(owner.id, selection)
+          : {ok: true, selection};
+      if (pendingModelSelections.get(key) !== selectionRequest) {
         return;
       }
+      pendingModelSelections.delete(key);
+      const selected = result.ok
+        ? result.selection || selection
+        : before.modelSelection;
+      const currentDraft = windowNavigation.draft(owner);
+      if (currentDraft) {
+        windowNavigation.saveDraft(owner, {
+          ...currentDraft,
+          modelSelection: selected,
+        });
+      }
+      if (!windowNavigation.isCurrent(owner)) {
+        return;
+      }
+      composerModelSelection = selected;
+      renderComposerModel();
       if (!result?.ok) {
         if (menu) {
           menu.replaceChildren(modelMenuNote(result?.error || '切换失败。'));
@@ -11638,18 +11734,6 @@ function bindModelSeat() {
         positionAnchoredPopover('composer-model-menu', 'composer-model');
         return;
       }
-      const selectedProfileId = profileId;
-      const selectedGroup = modelCatalog?.groups?.find(
-        group => group.profileId === selectedProfileId,
-      );
-      modelCatalog = {
-        ...modelCatalog,
-        current: modelId,
-        currentProfileId: selectedProfileId,
-        provider: selectedGroup?.provider || modelCatalog?.provider || '',
-      };
-      renderComposerModel();
-      void refreshComposerModel();
     });
 }
 bindModelSeat();
@@ -12245,6 +12329,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       additionalFolders: [...composerAdditionalFolders],
       returnToProject:
         windowNavigation.draft(navigationLocation)?.returnToProject,
+      modelSelection: currentComposerModelSelection(),
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
@@ -12378,9 +12463,41 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         executionWorkspaceRoot: workspace.executionWorkspaceRoot,
         projectId: workspace.projectId,
         additionalFolders: navigationDraft.additionalFolders,
+        modelSelection: navigationDraft.modelSelection,
       });
       if (response?.conversationId) {
         acceptSubmissionNavigation(requestId, String(response.conversationId));
+      }
+      const selectedByCommand =
+        response?.command?.type === 'model'
+          ? (response.command.modelSelection as
+              MagicPointerModelSelection | undefined)
+          : undefined;
+      if (selectedByCommand) {
+        if (windowNavigation.isCurrent(submission.location)) {
+          captureComposerDraft();
+        }
+        const draft = windowNavigation.draft(submission.location);
+        if (
+          !draft ||
+          sameModelSelection(
+            draft.modelSelection,
+            submission.draft.modelSelection,
+          )
+        ) {
+          windowNavigation.saveDraft(submission.location, {
+            ...submission.draft,
+            text: '',
+            attachments: [],
+            sourceIds: [],
+            ...draft,
+            modelSelection: {...selectedByCommand},
+          });
+          if (windowNavigation.isCurrent(submission.location)) {
+            composerModelSelection = {...selectedByCommand};
+            renderComposerModel();
+          }
+        }
       }
       if (!response?.ok && !windowNavigation.draft(submission.location)?.text) {
         windowNavigation.saveDraft(submission.location, submission.draft);
@@ -12416,8 +12533,15 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       }
       renderComposerAttachments();
       renderComposerMaterials();
-      const command = (response as {command?: {type?: string; preset?: string}})
-        .command;
+      const command = (
+        response as {
+          command?: {
+            type?: string;
+            preset?: string;
+            modelSelection?: MagicPointerModelSelection;
+          };
+        }
+      ).command;
       if (command?.type === 'permission' && command.preset) {
         composerPreset = String(command.preset);
         persistComposerPreset();
@@ -12472,7 +12596,10 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         if (!isCurrentSubmission()) {
           return;
         }
-        if (!textarea.value.trim() || textarea.value === submission.draft.text) {
+        if (
+          !textarea.value.trim() ||
+          textarea.value === submission.draft.text
+        ) {
           windowNavigation.replace(location);
           show('projects', returnToProject);
           return;

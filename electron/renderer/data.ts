@@ -177,6 +177,7 @@ declare global {
     lastPendingInputKind?: string;
     workspaceRoot?: string;
     additionalFolders?: string[];
+    modelSelection?: MagicPointerModelSelection;
     object?: MagicPointerObject | null;
     turns?: MagicPointerTurn[];
     [key: string]: unknown;
@@ -193,6 +194,7 @@ declare global {
   interface MagicPointerConversationSend {
     conversationId?: string | null;
     projectId?: string;
+    modelSelection?: MagicPointerModelSelection;
     question: string;
     attachments?: string[];
     taskInput?: MagicPointerTaskInput;
@@ -673,6 +675,17 @@ declare global {
     groups?: MagicPointerModelGroup[];
   }
 
+  interface MagicPointerModelSelection {
+    model: string;
+    profileId?: string;
+  }
+
+  interface MagicPointerModelSelectionResult {
+    ok?: boolean;
+    selection?: MagicPointerModelSelection;
+    error?: string;
+  }
+
   interface MagicPointerQuotaRow {
     id: string;
     label: string;
@@ -737,7 +750,10 @@ declare global {
       model: unknown,
       profileId?: string,
     ): Promise<{ok?: boolean; model?: string; error?: string}>;
-    modelQuota?(options?: {force?: unknown}): Promise<{
+    modelQuota?(options?: {
+      force?: unknown;
+      selection?: MagicPointerModelSelection;
+    }): Promise<{
       ok?: boolean;
       quota?: MagicPointerQuotaReport;
       error?: string;
@@ -931,6 +947,10 @@ declare global {
         conversation?: MagicPointerConversation;
         error?: string;
       }>;
+      setModel?(
+        id: string,
+        selection: MagicPointerModelSelection,
+      ): Promise<MagicPointerModelSelectionResult>;
       suggest?(payload: {
         turns?: unknown;
         object?: unknown;
@@ -1299,6 +1319,10 @@ declare global {
       conversation?: MagicPointerConversation;
       error?: string;
     }>;
+    setConversationModel(
+      id: string,
+      selection: MagicPointerModelSelection,
+    ): Promise<MagicPointerModelSelectionResult>;
     suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
     stopConversation(
       requestId: string,
@@ -1322,7 +1346,10 @@ declare global {
       model: string,
       profileId?: string,
     ): Promise<{ok?: boolean; model?: string; error?: string}>;
-    modelQuota(options?: {force?: boolean}): Promise<MagicPointerQuotaResult>;
+    modelQuota(options?: {
+      force?: boolean;
+      selection?: MagicPointerModelSelection;
+    }): Promise<MagicPointerQuotaResult>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
@@ -2000,6 +2027,23 @@ const Data: MagicPointerDataApi = {
     }
     return api.setProject(id, root);
   },
+  async setConversationModel(
+    id: string,
+    selection: MagicPointerModelSelection,
+  ): Promise<MagicPointerModelSelectionResult> {
+    const select = bridge()?.conversations?.setModel;
+    if (!select) {
+      return {ok: false, error: 'Conversation model selection is unavailable.'};
+    }
+    try {
+      return await select(id, selection);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
 
   async suggestNextPrompt(
     turns: unknown,
@@ -2103,7 +2147,7 @@ const Data: MagicPointerDataApi = {
   },
 
   async modelQuota(
-    options: {force?: boolean} = {},
+    options: {force?: boolean; selection?: MagicPointerModelSelection} = {},
   ): Promise<MagicPointerQuotaResult> {
     if (!hasBridge()) {
       return {report: null, error: '配额通道不可用。'};
@@ -2111,6 +2155,7 @@ const Data: MagicPointerDataApi = {
     try {
       const response = await bridge()!.modelQuota?.({
         force: options.force === true,
+        selection: options.selection,
       });
       if (!response?.ok) {
         return {

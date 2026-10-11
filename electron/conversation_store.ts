@@ -2,6 +2,10 @@
 
 import {createProjectStore} from './project_store';
 import {normalizeAdditionalFolders} from './workspace_folders';
+import {
+  normalizeModelSelection,
+  type ConversationModelSelection,
+} from './conversation_model';
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -85,6 +89,7 @@ interface Conversation {
   turns?: TurnEntry[];
   workspaceRoot?: string;
   additionalFolders?: string[];
+  modelSelection?: ConversationModelSelection;
   projectId?: string;
   agentSessionId?: string;
   hasPendingWork?: boolean;
@@ -118,6 +123,7 @@ interface TurnInput {
   usedBackend?: unknown;
   workspaceRoot?: unknown;
   additionalFolders?: unknown;
+  modelSelection?: unknown;
   projectId?: unknown;
   agentSessionId?: unknown;
   hasPendingWork?: unknown;
@@ -526,6 +532,7 @@ function createConversationStore(
   }
 
   function appendTurn(turn: TurnInput = {}): Conversation {
+    const modelSelection = normalizeModelSelection(turn.modelSelection);
     const conversations = load();
     const hasProjectSelection = typeof turn.projectId === 'string';
     const projectId = String(turn.projectId || '').trim();
@@ -608,6 +615,9 @@ function createConversationStore(
         target.turns = [];
       }
       target.turns.push(entry);
+      if (modelSelection) {
+        target.modelSelection = modelSelection;
+      }
       if (project || hasProjectSelection) {
         target.projectId = project?.id || '';
       }
@@ -670,6 +680,7 @@ function createConversationStore(
       closed: false,
       turns: [entry],
       projectId: project?.id || (hasProjectSelection ? '' : undefined),
+      modelSelection,
       workspaceRoot:
         String(turn.workspaceRoot || project?.root || '').trim() || undefined,
       additionalFolders: normalizeAdditionalFolders(
@@ -969,6 +980,7 @@ function createConversationStore(
       updatedAt: c.updatedAt,
       workspaceRoot: c.workspaceRoot || '',
       additionalFolders: [...(c.additionalFolders || [])],
+      modelSelection: c.modelSelection ? {...c.modelSelection} : undefined,
       projectId:
         c.projectId ?? projectStore.get(c.workspaceRoot || '')?.id ?? '',
       agentSessionId: c.agentSessionId || '',
@@ -1029,6 +1041,9 @@ function createConversationStore(
       turns: structuredClone(sourceTurns.slice(0, index + 1)),
       workspaceRoot: source.workspaceRoot,
       additionalFolders: [...(source.additionalFolders || [])],
+      modelSelection: source.modelSelection
+        ? {...source.modelSelection}
+        : undefined,
       projectId: source.projectId ?? getProject(source.workspaceRoot || '')?.id,
       ...(runtime
         ? {
@@ -1302,6 +1317,20 @@ function createConversationStore(
     return {ok: true, conversation: target};
   }
 
+  function setModel(
+    id: string,
+    selection: ConversationModelSelection,
+  ): {ok: boolean; conversation?: Conversation} {
+    const target = load().find(conversation => conversation.id === id);
+    if (!target) {
+      return {ok: false};
+    }
+    target.modelSelection = normalizeModelSelection(selection);
+    markDirty(target);
+    persist();
+    return {ok: true, conversation: target};
+  }
+
   return {
     appendTurn,
     updateTurn,
@@ -1314,6 +1343,7 @@ function createConversationStore(
     remove,
     setProject,
     setWorkspace,
+    setModel,
     timeline,
     memories,
     artifacts,
