@@ -9,6 +9,19 @@ interface HomeAttentionItem {
   state?: string;
   updatedAt?: number;
   hasPendingWork?: boolean;
+  lastOutcome?: string;
+  lastFailed?: boolean;
+  lastPendingInputKind?: string;
+  workspaceRoot?: string;
+  archived?: boolean;
+  pinned?: boolean;
+  acknowledgedAt?: number;
+}
+
+interface HomeProjectItem {
+  project: MagicPointerProject;
+  updatedAt: number;
+  running: boolean;
 }
 
 interface HomeDailyLike {
@@ -47,6 +60,9 @@ interface HomeRenderOptions {
   stats: HomeStatsLike | null;
   conversations: readonly HomeAttentionItem[];
   onOpenConversation?: (id: string) => void;
+  projects?: readonly MagicPointerProject[];
+  onOpenProject?: (root: string) => void;
+  displayName?: string;
 }
 
 interface StudioHomeApi {
@@ -56,11 +72,17 @@ interface StudioHomeApi {
   selectAttentionItems(
     items: readonly HomeAttentionItem[],
   ): HomeAttentionItem[];
+  selectActiveProjects(
+    projects: readonly MagicPointerProject[],
+    conversations: readonly HomeAttentionItem[],
+    now?: number,
+  ): HomeProjectItem[];
   render(options: HomeRenderOptions): void;
 }
 
 const PRIORITY: Record<string, number> = {
   awaiting: 0,
+  failed: 1,
   running: 1,
   review: 2,
   resumable: 3,
@@ -72,6 +94,7 @@ let homeRange: HomeRange = 'all';
 let cachedOptions: HomeRenderOptions | null = null;
 let controlsBound = false;
 let tooltipTimer: ReturnType<typeof setTimeout> | null = null;
+const expandedHomeSections = new Set<string>();
 
 function esc(value: unknown): string {
   return String(value ?? '')
@@ -124,6 +147,18 @@ function stateOf(item: HomeAttentionItem): string {
   if (state) {
     return state;
   }
+  if (item.lastPendingInputKind) {
+    return 'awaiting';
+  }
+  if (item.lastFailed || item.lastOutcome === '失败') {
+    return 'failed';
+  }
+  if (
+    item.hasPendingWork &&
+    ['进行中', 'running', 'in_progress'].includes(item.lastOutcome || '')
+  ) {
+    return 'running';
+  }
   return item.hasPendingWork ? 'resumable' : '';
 }
 
@@ -131,14 +166,53 @@ function selectAttentionItems(
   items: readonly HomeAttentionItem[],
 ): HomeAttentionItem[] {
   return items
-    .filter(item => stateOf(item) in PRIORITY)
+    .filter(
+      item =>
+        !item.archived &&
+        !item.pinned &&
+        stateOf(item) in PRIORITY &&
+        !(item.updatedAt && Number(item.acknowledgedAt || 0) >= item.updatedAt),
+    )
     .sort(
       (a, b) =>
         PRIORITY[stateOf(a)] - PRIORITY[stateOf(b)] ||
         finite(b.updatedAt) - finite(a.updatedAt) ||
         String(a.id).localeCompare(String(b.id)),
-    )
-    .slice(0, 8);
+    );
+}
+
+function selectActiveProjects(
+  projects: readonly MagicPointerProject[],
+  conversations: readonly HomeAttentionItem[],
+  now = Date.now(),
+): HomeProjectItem[] {
+  const key = (root: string) =>
+    root.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const activity = new Map<string, {updatedAt: number; running: boolean}>();
+  for (const conversation of conversations) {
+    if (!conversation.workspaceRoot || conversation.archived) {
+      continue;
+    }
+    const root = key(conversation.workspaceRoot);
+    const prior = activity.get(root);
+    activity.set(root, {
+      updatedAt: Math.max(prior?.updatedAt || 0, conversation.updatedAt || 0),
+      running: Boolean(prior?.running || stateOf(conversation) === 'running'),
+    });
+  }
+  return projects
+    .flatMap(project => {
+      const latest = activity.get(key(project.root));
+      return latest && (latest.running || latest.updatedAt >= now - 604800000)
+        ? [{project, ...latest}]
+        : [];
+    })
+    .sort(
+      (a, b) =>
+        Number(b.running) - Number(a.running) ||
+        b.updatedAt - a.updatedAt ||
+        a.project.name.localeCompare(b.project.name),
+    );
 }
 
 function statTile(label: string, value: string): string {
@@ -211,6 +285,8 @@ function attentionLabel(state: string): string {
   switch (state) {
     case 'awaiting':
       return 'Needs your input';
+    case 'failed':
+      return 'Needs attention';
     case 'running':
       return 'Running';
     case 'review':
@@ -400,30 +476,125 @@ function bindControlsOnce(): void {
 function render(options: HomeRenderOptions): void {
   cachedOptions = options;
   bindControlsOnce();
-  renderSelectedStats();
+  const attention = selectAttentionItems(
+    options.conversations.filter(item => stateOf(item) !== 'running'),
+  );
+  const projects = selectActiveProjects(
+    options.projects || [],
+    options.conversations,
+  );
+  const clear = attention.length === 0 && projects.length === 0;
+  const title = document.getElementById('studio-home-title');
+  const name = options.displayName?.trim();
+  if (title) {
+    title.textContent = clear
+      ? `What's up next${name ? `, ${name}` : ''}?`
+      : `Welcome back${name ? `, ${name}` : ''}`;
+  }
+  const stats = document.getElementById('studio-home-stats');
+  if (stats) {
+    stats.hidden = !clear;
+  }
+  if (clear) {
+    renderSelectedStats();
+  } else {
+    hideTooltip();
+  }
 
   const attentionHost = document.getElementById('studio-home-attention');
   if (!attentionHost) {
     return;
   }
-  const attention = selectAttentionItems(options.conversations);
-  attentionHost.hidden = attention.length === 0;
-  const nodes = attention.map(item => {
+  attentionHost.hidden = clear;
+  const limit = Math.min(
+    5,
+    3 + Number(window.innerHeight >= 800) + Number(window.innerHeight >= 900),
+  );
+  function section(label: string, nodes: HTMLElement[]): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'mp-home-section';
+    const header = document.createElement('header');
+    const heading = document.createElement('h2');
+    heading.textContent = label;
+    header.append(heading);
+    const expanded = expandedHomeSections.has(label);
+    if (nodes.length > limit) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'mp-home-section-toggle';
+      toggle.textContent = expanded
+        ? 'Show less'
+        : `Show ${nodes.length - limit} more`;
+      toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.addEventListener('click', () => {
+        if (expanded) {
+          expandedHomeSections.delete(label);
+        } else {
+          expandedHomeSections.add(label);
+        }
+        render(cachedOptions!);
+      });
+      header.append(toggle);
+    }
+    const list = document.createElement('div');
+    list.className = 'mp-home-section-list';
+    list.append(...(expanded ? nodes : nodes.slice(0, limit)));
+    section.append(header, list);
+    return section;
+  }
+  function row(
+    label: string,
+    state: string,
+    detail: string,
+  ): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'mp-home-attention-row';
-    button.dataset.conversationId = item.id;
+    button.dataset.state = state;
+    const dot = document.createElement('i');
+    dot.className = 'mp-home-state-dot';
+    dot.setAttribute('aria-hidden', 'true');
     const title = document.createElement('strong');
-    title.textContent = String(item.title || 'Untitled');
-    const state = document.createElement('span');
-    state.textContent = attentionLabel(stateOf(item));
-    button.append(title, state);
+    title.textContent = label;
+    const meta = document.createElement('span');
+    meta.textContent = detail;
+    const arrow = document.createElement('span');
+    arrow.className = 'mp-home-row-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    arrow.textContent = '›';
+    button.append(dot, title, meta, arrow);
+    return button;
+  }
+  const sessionNodes = attention.map(item => {
+    const state = stateOf(item);
+    const button = row(item.title || 'Untitled', state, attentionLabel(state));
+    button.dataset.conversationId = item.id;
     button.addEventListener('click', () =>
       options.onOpenConversation?.(item.id),
     );
     return button;
   });
-  attentionHost.replaceChildren(...nodes);
+  const projectNodes = projects.map(item => {
+    const button = row(
+      item.project.name,
+      item.running ? 'running' : '',
+      item.running
+        ? 'Working'
+        : new Date(item.updatedAt).toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+          }),
+    );
+    button.dataset.projectRoot = item.project.root;
+    button.addEventListener('click', () =>
+      options.onOpenProject?.(item.project.root),
+    );
+    return button;
+  });
+  attentionHost.replaceChildren(
+    ...(sessionNodes.length ? [section('Sessions', sessionNodes)] : []),
+    ...(projectNodes.length ? [section('Projects', projectNodes)] : []),
+  );
 }
 
 const StudioHome: StudioHomeApi = {
@@ -431,6 +602,7 @@ const StudioHome: StudioHomeApi = {
   renderModelsCard,
   formatStatsNote,
   selectAttentionItems,
+  selectActiveProjects,
   render,
 };
 

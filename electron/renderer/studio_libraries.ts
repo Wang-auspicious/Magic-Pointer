@@ -1508,6 +1508,10 @@
       render,
       changed,
       filterMenu,
+      openProject(root: string) {
+        selectedProjectRoot = root;
+        options.show('projects');
+      },
       setInventory(value: typeof customInventory) {
         customInventory = value;
         if (activeView === 'customize') {

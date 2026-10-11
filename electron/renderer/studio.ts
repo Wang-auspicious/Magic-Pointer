@@ -1017,8 +1017,17 @@ interface StudioHomeModule {
       state?: string;
       updatedAt?: number;
       hasPendingWork?: boolean;
+      lastOutcome?: string;
+      lastFailed?: boolean;
+      lastPendingInputKind?: string;
+      workspaceRoot?: string;
+      archived?: boolean;
+      pinned?: boolean;
+      acknowledgedAt?: number;
     }>;
     onOpenConversation?: (id: string) => void;
+    projects?: readonly MagicPointerProject[];
+    onOpenProject?: (root: string) => void;
   }): void;
 }
 const studioHomeGlobals = (globalThis as {StudioHome?: StudioHomeModule})
@@ -3533,23 +3542,32 @@ function setStudioHomeVisible(visible: boolean) {
     ?.classList.toggle('is-home', visible);
 }
 
+let homeRefreshSequence = 0;
+
 async function renderStudioHome() {
-  const [stats, conversations] = await Promise.all([
+  const sequence = ++homeRefreshSequence;
+  const [stats, conversations, projects] = await Promise.all([
     Data.conversationStats(),
     Data.conversations(),
+    Data.projects(),
   ]);
+  if (sequence !== homeRefreshSequence) {
+    return;
+  }
   studioHomeGlobals.render({
     stats,
+    projects,
     conversations: conversations.map(conversation => ({
-      id: conversation.id,
-      title: conversation.title,
-      updatedAt: conversation.updatedAt,
-      hasPendingWork: conversation.hasPendingWork,
-      state: conversation.hasPendingWork ? 'resumable' : '',
+      ...conversation,
+      archived: Boolean(studioLibraries.sessionPreference(conversation.id).archived),
+      pinned: Boolean(studioLibraries.sessionPreference(conversation.id).pinned),
+      acknowledgedAt: studioLibraries.sessionPreference(conversation.id).seenAt,
+      state: studioComposerBusy && conversation.id === activeConversationId ? 'running' : undefined,
     })),
     onOpenConversation: id => {
       void openConversation(id);
     },
+    onOpenProject: root => libraryUi.openProject(root),
   });
 }
 
@@ -3777,6 +3795,7 @@ async function openConversation(id: string) {
   if (!c || generation !== conversationOpenGeneration) {
     return;
   }
+  studioLibraries.setSessionPreference(c.id, {seenAt: Date.now()});
   const switchedTask = activeConversationId !== c.id;
   if (switchedTask) {
     detachPendingConversation();
@@ -9002,10 +9021,7 @@ document.addEventListener('click', e => {
 
   const open = target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) {
-    studioLibraries.setSessionPreference(open.dataset.open, {
-      seenAt: Date.now(),
-    });
-    openConversation(open.dataset.open);
+    void openConversation(open.dataset.open);
     return;
   }
 
