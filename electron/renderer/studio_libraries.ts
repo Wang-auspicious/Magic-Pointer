@@ -616,6 +616,7 @@
     const designContents = new Map<string, string>();
     let conversations: Row[] = [];
     let projects: MagicPointerProject[] = [];
+    let selectedProjectRoot = '';
     let catalog: MagicPointerSlashDirectory | null = null;
     let trackers: any[] = [];
     let error = '';
@@ -777,9 +778,15 @@
       return `<div class="mp-library-empty">${illustration}<h2>${title}</h2><p>${escape(note)}</p>${action}</div>`;
     }
     function projectPage() {
+      if (
+        selectedProjectRoot &&
+        projects.some(project => project.root === selectedProjectRoot)
+      ) {
+        return '<div class="mp-project-detail-host"></div>';
+      }
       const rows = sortProjects(
         projects.filter(project =>
-          `${project.name} ${project.root}`
+          `${project.name} ${project.description || ''} ${project.root}`
             .toLocaleLowerCase()
             .includes(query.toLocaleLowerCase()),
         ),
@@ -808,7 +815,7 @@
             )
           : rows.length === 0
             ? `<p class="mp-library-nomatch">No projects matching “${escape(query)}”</p>`
-            : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(project.root)}">${glyph('projects', 'large')}<strong>${escape(project.name)}</strong><p>${escape(project.root)}</p><small>${conversations.filter(row => row.workspaceRoot === project.root).length} conversations</small></button>`).join('')}</div>`;
+            : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(project.root)}">${glyph('projects', 'large')}<strong>${escape(project.name)}</strong><p>${escape(project.description || project.root)}</p><small>${conversations.filter(row => row.workspaceRoot === project.root).length} conversations</small></button>`).join('')}</div>`;
       return header + body;
     }
     const suggestions = [
@@ -1111,10 +1118,42 @@
                 ? chatsPage()
                 : designPage());
       mountPreviews(host);
+      const projectHost = host.querySelector<HTMLElement>(
+        '.mp-project-detail-host',
+      );
+      const project = projects.find(item => item.root === selectedProjectRoot);
+      document
+        .querySelector<HTMLElement>('.mp-shell')
+        ?.setAttribute(
+          'data-project-detail',
+          String(Boolean(projectHost && project)),
+        );
+      if (projectHost && project) {
+        globalThis.ProjectWorkspace.mount(projectHost, project, conversations, {
+          data: options.data,
+          onBack: () => {
+            selectedProjectRoot = '';
+            paint();
+          },
+          onCompose: (root, prompt) => {
+            options.selectProject(root);
+            options.compose(prompt);
+          },
+          onChanged: updated => {
+            projects = projects.map(item =>
+              item.root === updated.root ? updated : item,
+            );
+            void options.refreshSidebar();
+          },
+        });
+      }
     }
     async function render(view: string) {
       if (!hosts.includes(view)) {
         activeView = '';
+        document
+          .querySelector<HTMLElement>('.mp-shell')
+          ?.removeAttribute('data-project-detail');
         return;
       }
       if (activeView !== view) {
@@ -1298,11 +1337,29 @@
           paint();
         }
         if ('libraryOpenProject' in d) {
-          void options.openProject().then(() => render('projects'));
+          void options.data
+            .openProject()
+            .then(async result => {
+              if (result.canceled) {
+                return;
+              }
+              if (!result.ok || !result.project) {
+                error = result.error || 'Could not open project.';
+                paint();
+                return;
+              }
+              selectedProjectRoot = result.project.root;
+              await render('projects');
+              void options.refreshSidebar();
+            })
+            .catch(reason => {
+              error = String(reason);
+              paint();
+            });
         }
         if (d.libraryProject) {
-          options.selectProject(d.libraryProject);
-          options.compose('');
+          selectedProjectRoot = d.libraryProject;
+          paint();
         }
         if ('libraryCompose' in d) {
           options.compose(d.libraryCompose || '');
