@@ -41,6 +41,12 @@ const {spawn} = require('child_process');
 const {net} = require('electron');
 const {expandPassage} = require('./runtime/text');
 const {resolveModelConfig, listModels} = require('./runtime/model');
+const {installEnvironmentProxy} = require('./runtime/proxy');
+
+// This process lists models directly, and undici chooses its dispatcher on the
+// first request and cannot be corrected afterwards — so the proxy has to be in
+// place before anything here can fetch.
+installEnvironmentProxy();
 const {handleSession, handleSessionRead} = require('./runtime/session');
 const {PersonalActivityService} = require('./personal_activity_service');
 const {configureDesktop} = require('./runtime/desktop');
@@ -2110,8 +2116,16 @@ ipcMain.handle('projects:open', async (event: Electron.IpcMainInvokeEvent) => {
   }
   const parent =
     BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  // Without a default the dialog opens at the process working directory, which
+  // for a source run is this repository — so the picker looked like it would
+  // only ever offer Magic Pointer itself.
+  let defaultPath = '';
+  try {
+    defaultPath = conversations().listProjects()[0]?.root || '';
+  } catch {}
   const picked = await dialog.showOpenDialog(parent, {
     title: '打开项目文件夹',
+    defaultPath: defaultPath || app.getPath('home'),
     properties: ['openDirectory'],
   });
   if (picked.canceled || !picked.filePaths?.length) {
