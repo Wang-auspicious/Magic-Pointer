@@ -11,7 +11,6 @@ export default [
       'external/**',
       'external_zip/**',
       'data/**',
-      'app/**',
       'electron/renderer/assets/**',
       '.tmp/**',
       '.tmp*/**',

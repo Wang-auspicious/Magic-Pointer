@@ -19,10 +19,15 @@ function setup() {
     activeConversationTurnCount: 1, activeConversationTab: 'chat', conversationRefreshSequence: 0,
     conversationOpenGeneration: 0, recoveryRenderGeneration: 0, conversationNotificationSequence: 0,
     externalConversationRun: null, pendingConversation: null, composerPlan: { steps: [{ content: 'old plan' }] },
+    // startNewChat mints a fresh worktree id. The harness has to supply every
+    // module-level binding the extracted functions assign to, or the strict-mode
+    // assignment throws before any assertion runs.
+    newChatWorktreeId: 'new-harness',
     pendingRenderTimer: null, studioComposerBusy: false,
     pendingPermissionChoice: { grant: 'old authorization' }, composerAttachments: [],
     projectEnvironment: null, repositoryContextDismissedFor: '',
     artifactEditor: { state: () => ({}) },
+    inspectorState: { open: false }, activeInspectorTab: 'chat',
     document: { getElementById: (id: string) => id === 'conversation-recovery' ? recovery : id === 'conversation-activity' ? activity : null,
       querySelectorAll: () => [], querySelector: () => null },
     ExecutionView: { render: (host: unknown, input: { scope: string; turns: unknown[] }) => {
@@ -35,6 +40,12 @@ function setup() {
     setActiveProject() {}, show() {}, renderRepositoryContextBar: async () => {},
     renderConversationRecovery() {}, refreshBackgroundAgentTasks() {},
     stopPendingClock() {}, setComposerRunningState() {},
+    clearWorkspaceResources() {}, setInspector() {}, finishWorkspaceResourceRun() {},
+    composerWorktrees: new Map(),
+    currentComposerBranch: () => '', currentComposerWorktreeKey: () => '',
+    restoreWorkspaceResourceSnapshot() {}, refreshOpenConversation() {},
+    syncExternalConversationRun() {}, scheduleStreamRail() {},
+    chatCardNodes: () => [], emptyStateMarkup: () => '',
     Data: { conversation: async (id: string) => ({ id, turns: [] }) },
   };
   vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox);

@@ -31,11 +31,11 @@ assert(!/Shared with you|共享/.test(view), 'the reference tab with no data beh
 assert(!/收藏/.test(view), 'there is no favourite field on an artifact, so no favourite tab');
 assert.match(css, /\.mp-artifact-tab\.is-on[\s\S]*?background:\s*var\(--mp-active\)/, 'the selected tab is a filled pill');
 
-assert.match(view, /id="artifact-search-toggle"[^>]*aria-label="搜索产物"/);
+assert.match(view, /id="artifact-search-toggle"[^>]*aria-label="Search artifacts"/);
 assert(view.includes('href="#ic-search"'), 'the search button reuses the existing sprite icon');
-assert.match(view, /id="artifact-layout-toggle"[^>]*aria-label="切换为网格布局"/);
+assert.match(view, /id="artifact-layout-toggle"[^>]*aria-label="Switch to grid layout"/);
 assert(view.includes('href="#ic-layout-grid"'));
-assert.match(view, /id="artifact-kind-trigger"[\s\S]*?id="artifact-kind-label">全部类型</, 'the type control reads 全部类型');
+assert.match(view, /id="artifact-kind-trigger"[\s\S]*?id="artifact-kind-label">All types</, 'the type control reads All types');
 assert(view.includes('href="#ic-chev"'), 'the type control carries a chevron');
 assert.match(view, /id="artifact-kind-trigger"[^>]*aria-haspopup="menu"/);
 assert(view.includes('id="artifact-kind-menu"'));

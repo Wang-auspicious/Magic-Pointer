@@ -19,8 +19,8 @@ assert.strictEqual(normalizeView('hero'), 'chat', 'the removed marketing hero mu
 assert.strictEqual(normalizeView('unknown'), 'chat');
 assert.deepStrictEqual(shellState('artifacts'), {
   activeView: 'artifacts',
-  title: '产物',
-  description: '查看、复用和导出已经生成的本地产物。',
+  title: 'Artifacts',
+  description: 'View, reuse, and export generated local artifacts.',
   eyebrow: 'LOCAL OUTPUTS',
   allowsDetail: true,
 });

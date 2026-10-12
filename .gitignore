@@ -39,6 +39,7 @@ npm-debug.log*
 external/
 external_zip/
 *.zip
+/lcu_ref/
 
 # Third-party checkouts kept at the root while comparing compaction approaches
 /fast-jev-compaction-codex/

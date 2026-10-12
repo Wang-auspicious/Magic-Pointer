@@ -27,6 +27,10 @@ const context = {
   log() {}, cancelSelectionGesture() {}, setStageMouseCapture() {},
   disarmTemporaryDismissShortcut() {}, hideOverlay() {}, lastStageResult: null,
   invalidateSelectionSession() { cancelled = true; sessions.cancel(selected.token); },
+  // dismissTemporarySurfaces clears the cursor channel on its way out. The
+  // harness has to supply that seam, or the strict-mode reference throws before
+  // any of the assertions about session survival run.
+  sendAgentCursorCommand() {},
 };
 const lifecycle = handlers(['detachSelectionSurface', 'dismissTemporarySurfaces'], context);
 lifecycle.dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
@@ -44,6 +48,10 @@ const delivery = handlers(['safeSurfaceSend'], {
   resultTargetWindow: () => ({ isDestroyed: () => false, webContents: {
     isDestroyed: () => false, send() { stageSends++; },
   } }),
+  // safeSurfaceSend reaches the cursor channel for stage-bound payloads. The
+  // harness has to supply that seam, or the strict-mode reference throws before
+  // the send is judged.
+  sendAgentCursorCommand: () => false,
 });
 assert.equal(delivery.safeSurfaceSend('stage', 'stage:update', { selectionSessionToken: selected.token }), false);
 assert.equal(stageSends, 0, 'detached completion must not paint over a new selection');

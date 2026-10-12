@@ -39,6 +39,7 @@ const context = {
   followIfNearBottom: (_body, mutate) => mutate(),
   document: { getElementById: id => id === 'stream' ? {} : null },
   syncExternalConversationRun() {}, renderUsageMeter() {}, renderProjectTasks() { taskPaints++; },
+  finishWorkspaceResourceRun() {},
   renderConversationRecovery: async id => { recoveryCalls.push(id); },
   setActiveTaskContext() {},
   pendingPermissionAsk: null, pendingAskInput: null, renderPermissionAsk() {},
