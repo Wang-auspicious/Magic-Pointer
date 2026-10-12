@@ -4525,7 +4525,7 @@ function paintArtifactToolbar(list: ArtifactEntry[]) {
     menu.innerHTML = ['']
       .concat(kinds)
       .map(kind => {
-        const label = kind ? artifactKindLabel(kind) : '全部类型';
+        const label = kind ? artifactKindLabel(kind) : artifactText('artifact.kind_all');
         const count = kind
           ? list.filter(entry => String(entry.kind || '') === kind).length
           : list.length;

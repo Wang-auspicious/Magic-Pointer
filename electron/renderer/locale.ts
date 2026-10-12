@@ -51,6 +51,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'common.none': {en: 'None', zh: '无'},
   'common.untitled': {en: 'Untitled', zh: '未命名'},
   'common.unknown_error': {en: 'Unknown error', zh: '未知错误'},
+  'artifact.kind_all': {en: 'All types', zh: '全部类型'},
   'common.unknown_reason': {en: 'Unknown reason', zh: '未知原因'},
   'common.switch_failed': {en: 'Switch failed.', zh: '切换失败。'},
   'common.loading': {en: 'Loading…', zh: '正在读取…'},
