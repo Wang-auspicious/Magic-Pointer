@@ -119,14 +119,14 @@ function formatStatsNote(
   stats: Pick<HomeStatsLike, 'totalTokens'> | null,
 ): string {
   if (!stats) {
-    return '统计暂时读不到，任务仍然可以开始。';
+    return 'Stats unavailable. You can still start a task.';
   }
   const totalTokens = finite(stats.totalTokens);
   if (totalTokens <= 0) {
-    return '还没有用量。开始一个任务就能看到统计。';
+    return 'No usage yet. Start a task to see your stats.';
   }
   const books = Math.max(1, Math.round(totalTokens / 158_662));
-  return `你用的 token 大约是《傲慢与偏见》的 ${books} 倍。`;
+  return `You've used ~${books}× more tokens than Pride and Prejudice.`;
 }
 
 function compactNumber(value: unknown): string {
@@ -228,7 +228,7 @@ function heatLevel(messages: number, max: number): number {
 
 function renderStatsCard(stats: HomeStatsLike | null): string {
   if (!stats) {
-    return '<p class="mp-home-stats-unavailable">统计暂时读不到，任务仍然可以开始。</p>';
+    return '<p class="mp-home-stats-unavailable">Stats unavailable. You can still start a task.</p>';
   }
   const heatmap = Array.isArray(stats.heatmap) ? stats.heatmap : [];
   const max = Math.max(0, ...heatmap.map(day => finite(day.messages)));
@@ -236,16 +236,16 @@ function renderStatsCard(stats: HomeStatsLike | null): string {
     statTile('Sessions', countNumber(stats.sessions)),
     statTile('Messages', countNumber(stats.messages)),
     statTile('Total tokens', compactNumber(stats.totalTokens)),
-    statTile('活跃天数', countNumber(stats.activeDays)),
+    statTile('Active days', countNumber(stats.activeDays)),
     statTile('Current streak', `${countNumber(stats.currentStreak)}d`),
     statTile('Longest streak', `${countNumber(stats.longestStreak)}d`),
     statTile(
-      '最活跃时段',
+      'Peak hour',
       stats.peakHour === null
         ? '—'
         : `${((stats.peakHour + 11) % 12) + 1} ${stats.peakHour >= 12 ? 'PM' : 'AM'}`,
     ),
-    statTile('最常用模型', stats.favoriteModel || '—'),
+    statTile('Favorite model', stats.favoriteModel || '—'),
   ].join('');
   const cells = heatmap
     .map(day => {
@@ -290,11 +290,11 @@ function attentionLabel(state: string): string {
     case 'running':
       return 'Running';
     case 'review':
-      return '待审阅';
+      return 'Ready to review';
     case 'resumable':
       return 'Continue';
     case 'ready':
-      return '新结果';
+      return 'New result';
     default:
       return '';
   }
@@ -523,7 +523,7 @@ function render(options: HomeRenderOptions): void {
       toggle.type = 'button';
       toggle.className = 'mp-home-section-toggle';
       toggle.textContent = expanded
-        ? '收起'
+        ? 'Show less'
         : `Show ${nodes.length - limit} more`;
       toggle.setAttribute('aria-expanded', String(expanded));
       toggle.addEventListener('click', () => {

@@ -949,8 +949,8 @@ const ChatView = (() => {
     bash: 'Stopped running the command',
     bash_tool: 'Stopped running the command',
     power_shell: 'Stopped running the command',
-    web_search: '已停止联网搜索',
-    web_search_fast: '已停止联网搜索',
+    web_search: 'Stopped searching the web',
+    web_search_fast: 'Stopped searching the web',
   };
 
   /**
@@ -2342,9 +2342,9 @@ const ChatView = (() => {
   }
 
   /** The reference's "Results from the web" caption, verbatim. */
-  const WEB_RESULTS_CAPTION = '来自网络的结果';
-  const WEB_STEPS_ALL_LABEL = '查看全部步骤';
-  const WEB_STEPS_NEXT_LABEL = '下一步';
+  const WEB_RESULTS_CAPTION = 'Results from the web';
+  const WEB_STEPS_ALL_LABEL = 'View all steps';
+  const WEB_STEPS_NEXT_LABEL = 'Next';
   /** Claude refuses to build its grid below three images. */
   const WEB_MOSAIC_SIZE = 3;
 
@@ -2495,7 +2495,7 @@ const ChatView = (() => {
 
   /** `{count} result` / `{count} results`, the reference's own plural form. */
   function webCountLabel(count: number): string {
-    return `${count} 条结果`;
+    return `${count} result${count === 1 ? '' : 's'}`;
   }
 
   function webSearchTool(name: string): boolean {

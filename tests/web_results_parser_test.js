@@ -22,7 +22,7 @@ assert.equal(live.count, 3, 'three search results are counted');
 assert.equal(live.sources.length, 3, 'three sources parse');
 assert.equal(live.sources[0].url, 'https://example.org/a', 'source urls survive');
 assert.equal(live.images.length, 0, 'no images in a live payload means no tiles');
-assert.equal(webCountLabel(3), '3 条结果');
+assert.equal(webCountLabel(3), '3 results');
 
 const media = webResults('web_search', {
   query: 'furty-eared dwarf lemur',
