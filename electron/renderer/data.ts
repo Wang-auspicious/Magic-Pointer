@@ -549,11 +549,16 @@ declare global {
       icon?: string;
     }>;
     onMeta?: (id: string, btn: HTMLElement) => void;
+    onSuggestionUse?: ((text: string) => void) | null;
+    onSuggestionDismiss?: (() => void) | null;
   }
   interface MagicPointerComposerInstance {
     el: HTMLElement;
     focus(): void;
     setPlaceholder(text: string): void;
+    setSuggestion(text: string): void;
+    clearSuggestion(): void;
+    suggestion(): string;
     attach(item: MagicPointerAttachment): void;
     setAttachments(list: MagicPointerAttachment[]): void;
     attachments(): MagicPointerAttachment[];

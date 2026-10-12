@@ -21,6 +21,12 @@ import {
 import {ScreenMemory} from './context_memory';
 import {PersonalActivityStore, localActivityDate} from '../personal_activity';
 import {settingsStore} from './model_admin';
+import {
+  SUGGESTION_PROMPT,
+  acceptSuggestion,
+  suggestionGate,
+  type SuggestionGateState,
+} from './prompt_suggestion';
 import {EventSession, exactApprovedToolCall} from './session';
 import {searchExa} from './exa_search';
 
@@ -1083,19 +1089,31 @@ export function registerSkillTools(
   registry.alias('save_skill', 'SaveSkill');
 }
 
+/**
+ * Predict the next prompt.
+ *
+ * The instruction, the gates and the answer filter all live in
+ * `prompt_suggestion`, because each of them is a decision worth testing on its
+ * own. This function is the I/O: it asks the model once and hands the raw text
+ * to the filter. Anything it does not like comes back as an empty string —
+ * a missing suggestion is invisible, a bad one is not.
+ */
 export async function suggestNextPrompt(
   model: ModelRunner,
   request: Omit<ModelRequest, 'messages' | 'tools' | 'system'>,
   history: string,
+  gate: SuggestionGateState = {},
 ): Promise<string> {
   if (!history.trim()) {
+    return '';
+  }
+  if (!suggestionGate(gate).allowed) {
     return '';
   }
   try {
     const reply = await model({
       ...request,
-      system:
-        '预测用户接下来最可能输入的一句话。只输出该句话，不要解释、引号、编号和换行；保持对话语言，使用具体上下文，不写通用的继续或下一步。120字以内。',
+      system: SUGGESTION_PROMPT,
       messages: [
         {
           role: 'user',
@@ -1104,17 +1122,14 @@ export async function suggestNextPrompt(
           injected: true,
         },
       ],
+      // The reference denies every tool on this branch. A suggestion must never
+      // be able to act, and sending no definitions at all also keeps the
+      // request far smaller than the main turn's.
       tools: [],
       maxTokens: 80,
       timeoutMs: 20000,
     });
-    const value = reply.text
-      .trim()
-      .split('\n')[0]
-      .replace(/^(?:1[.、]\s*|[-*>]\s*)/, '')
-      .replace(/^["'「“《]|["'」”》]$/g, '')
-      .trim();
-    return value.length <= 120 ? value : '';
+    return acceptSuggestion(reply.text) ?? '';
   } catch {
     return '';
   }

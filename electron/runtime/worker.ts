@@ -15,6 +15,7 @@ import {handleContext, parseContextIntent} from './context_sessions';
 import {handleAction, handleDelivery} from './actions_delivery';
 import {configureDesktop, closeDesktop} from './desktop';
 import {resolveModelConfig, requestVision} from './model';
+import {installEnvironmentProxy} from './proxy';
 import {
   ExternalTasks,
   buildInvocation,
@@ -170,6 +171,11 @@ export async function dispatchRuntime(
 }
 
 async function main(): Promise<void> {
+  // Before the first request, because undici picks its dispatcher lazily and
+  // cannot be corrected afterwards. Every model call this process makes runs
+  // through it, so skipping this is what produced "fetch failed" on a machine
+  // whose proxy curl and Chromium were both already using.
+  installEnvironmentProxy();
   const controller = new AbortController();
   process.once('SIGTERM', () =>
     controller.abort(new DOMException('Interrupted', 'AbortError')),

@@ -8,12 +8,24 @@ const ts = require('typescript');
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
 const functionNames = ['applyComposerPlaceholder', 'clearComposerSuggestion', 'acceptComposerSuggestion', 'fitComposer'];
-const statements = ast.statements.filter(node =>
-  (ts.isFunctionDeclaration(node) && functionNames.includes(node.name?.text))
-  || (ts.isExpressionStatement(node) && (
-    node.getText(ast).startsWith("document.querySelectorAll('form.mpw-input-form')")
-    || node.getText(ast).startsWith("document.getElementById('composer-form')?.querySelector('button[type=\"submit\"]')?.addEventListener('click'")
-  )));
+// Compare with whitespace stripped. The formatter reflows these long member
+// chains over several lines, and matching the literal one-line spelling meant
+// this test failed on a reformat rather than on a behaviour change.
+const statements = ast.statements.filter(node => {
+  if (ts.isFunctionDeclaration(node) && functionNames.includes(node.name?.text)) {
+    return true;
+  }
+  if (!ts.isExpressionStatement(node)) {
+    return false;
+  }
+  const text = node.getText(ast).replace(/\s+/g, '');
+  return (
+    text.startsWith("document.querySelectorAll('form.mpw-input-form')") ||
+    text.startsWith(
+      `document.getElementById('composer-form')?.querySelector('button[type="submit"]')?.addEventListener('click'`,
+    )
+  );
+});
 const listeners = new Map();
 let stopClick;
 let submits = 0;
@@ -38,6 +50,9 @@ const form = {
 const context = {
   COMPOSER_PLACEHOLDER_HOME: 'Describe a task', COMPOSER_PLACEHOLDER_THREAD: 'Type / for commands',
   composerSuggestion: '请解释具体差异', composerSuggestionRequest: 0,
+  // acceptComposerSuggestion resets the unused-suggestion streak; the harness
+  // has to supply every module-level binding the extracted functions touch.
+  composerSuggestionUnused: 0, COMPOSER_SUGGESTION_UNUSED_LIMIT: 3,
   composerFitRaf: null, composerFitTarget: null,
   window: { requestAnimationFrame: callback => { fitFrame = callback; return 1; } },
   getComputedStyle: () => ({ maxHeight: '374px' }),

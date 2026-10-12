@@ -139,15 +139,35 @@ export async function runRuntime(
       ? Math.trunc(envContextTokens)
       : config.defaultContextWindow || contextWindowFor(config.model);
   if (payload.operation === 'suggest_next') {
+    const turns = Array.isArray(payload.turns) ? payload.turns : [];
+    // Only turns the assistant actually answered count. A session with one
+    // exchange has nothing to extrapolate from, and the reference waits for
+    // two before it predicts at all.
+    const assistantTurns = turns.filter(turn => {
+      if (!turn || typeof turn !== 'object') {
+        return false;
+      }
+      const record = turn as Data;
+      const answer = record.answer ?? record.liveProgress;
+      if (typeof answer === 'string') {
+        return answer.trim() !== '';
+      }
+      return Boolean(
+        answer &&
+          typeof answer === 'object' &&
+          String((answer as Data).answer || '').trim() !== '',
+      );
+    }).length;
     return {
       ok: true,
       suggestion: await suggestNextPrompt(
         streamModel,
         {root, userDataDir, config, signal},
         JSON.stringify({
-          turns: payload.turns || [],
+          turns,
           object: payload.object || {},
         }),
+        {assistantTurns, aborted: signal?.aborted === true},
       ),
     };
   }
