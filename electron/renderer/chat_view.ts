@@ -600,6 +600,11 @@ const ChatView = (() => {
    */
   const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
     AskUser: 'ask_user_question',
+    // MP spells the reference's `web_search` as `Search` (its runtime also
+    // accepts the `web_search` spelling). Both resolve to the reference's web
+    // tables, so the row reads "Searched the web" and the rich results path
+    // below reaches it through `toolCategory`.
+    Search: 'web_search',
   };
 
   function aliasToolName(raw: string): string {
@@ -944,6 +949,8 @@ const ChatView = (() => {
     bash: 'Stopped running the command',
     bash_tool: 'Stopped running the command',
     power_shell: 'Stopped running the command',
+    web_search: '已停止联网搜索',
+    web_search_fast: '已停止联网搜索',
   };
 
   /**
@@ -1847,15 +1854,26 @@ const ChatView = (() => {
       summary = '';
     }
 
+    // The reference replaces a failed search's whole header with its own
+    // wording, so the query the row was carrying goes away with it.
+    const webFailed =
+      state === 'error' && !isBlockedResult(result) && webSearchTool(name)
+        ? 'Couldn\u2019t complete this search.'
+        : null;
+    if (webFailed !== null) {
+      summary = '';
+    }
+
     const completedTitle = isBlockedResult(result)
       ? 'Blocked'
-      : errorUrl
-        ? 'Failed to fetch'
-        : SUBAGENT_TOOLS.has(name)
-          ? 'Subagent'
-          : (connector ??
-            sentence(toolLabel(name, input, 'done')) ??
-            mpCompleted);
+      : (webFailed ??
+        (errorUrl
+          ? 'Failed to fetch'
+          : SUBAGENT_TOOLS.has(name)
+            ? 'Subagent'
+            : (connector ??
+              sentence(toolLabel(name, input, 'done')) ??
+              mpCompleted)));
     // An unknown tool is shown by its raw name when settled, and keeps that
     // name mid-flight too — a wrong tense beats a wrong tool.
     // `||`, not `??`: an empty variant title means "no running form", and a
@@ -2272,9 +2290,561 @@ const ChatView = (() => {
     return root;
   }
 
+  /*
+   * Web results.
+   *
+   * The reference renders a search call as a header row plus a body. The body
+   * holds the first three image results in a 3-column grid with a 3px gap and
+   * `4/3` tiles, a source credit inside each tile, and a "Results from the
+   * web" caption under the grid; fewer than three images renders no grid at
+   * all. The field names read here are the payload's own -- `url`, `title`,
+   * `source`, `page_url`, `thumbnail_url` -- not invented ones.
+   *
+   * MP's search backends return `{query, results: [{title, url, snippet}]}`
+   * today and carry no images, so the mosaic waits for a backend that sends
+   * them while the source list renders now. Every part is data-gated: no
+   * payload, no card, and the raw JSON output row stays as it was.
+   */
+
+  interface WebResultImage {
+    id: string;
+    /** The thumbnail the tile paints, which the reference prefers to `url`. */
+    url: string;
+    title: string;
+    source: string;
+    pageUrl: string;
+  }
+
+  interface WebResultSource {
+    title: string;
+    url: string;
+    snippet: string;
+  }
+
+  interface WebResultStep {
+    title: string;
+    body: string;
+  }
+
+  interface WebResultPlace {
+    name: string;
+    address: string;
+    latitude: number;
+    longitude: number;
+  }
+
+  interface WebResults {
+    query: string;
+    /** Server-reported result count; `null` when the payload carries none. */
+    count: number | null;
+    images: WebResultImage[];
+    sources: WebResultSource[];
+  }
+
+  /** The reference's "Results from the web" caption, verbatim. */
+  const WEB_RESULTS_CAPTION = '来自网络的结果';
+  const WEB_STEPS_ALL_LABEL = '查看全部步骤';
+  const WEB_STEPS_NEXT_LABEL = '下一步';
+  /** Claude refuses to build its grid below three images. */
+  const WEB_MOSAIC_SIZE = 3;
+
+  function listOf(value: unknown): unknown[] {
+    return Array.isArray(value) ? (value as unknown[]) : [];
+  }
+
+  function recordOf(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  }
+
+  function textField(
+    record: Record<string, unknown>,
+    keys: readonly string[],
+  ): string {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim() !== '') {
+        return value.trim();
+      }
+    }
+    return '';
+  }
+
+  function numberField(
+    record: Record<string, unknown>,
+    keys: readonly string[],
+  ): number | null {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /** Search payloads are remote data, so only absolute http(s) is rendered. */
+  function webUrl(raw: string): string | null {
+    return /^https?:\/\//i.test(raw) ? raw : null;
+  }
+
+  function webHost(raw: string): string {
+    const url = webUrl(raw);
+    if (url === null) {
+      return '';
+    }
+    try {
+      return new URL(url).host.replace(/^www\./i, '');
+    } catch {
+      return '';
+    }
+  }
+
+  function webImages(value: unknown): WebResultImage[] {
+    const images: WebResultImage[] = [];
+    const seen = new Set<string>();
+    for (const entry of listOf(value)) {
+      const record = recordOf(entry);
+      if (record === null) {
+        continue;
+      }
+      const full = webUrl(textField(record, ['url', 'image_url', 'imageUrl']));
+      const thumb =
+        webUrl(textField(record, ['thumbnail_url', 'thumbnailUrl'])) ?? full;
+      if (thumb === null || seen.has(thumb)) {
+        continue;
+      }
+      seen.add(thumb);
+      images.push({
+        id: textField(record, ['id']) || thumb,
+        url: thumb,
+        title: textField(record, ['title']),
+        source: textField(record, ['source', 'domain']),
+        pageUrl: textField(record, ['page_url', 'pageUrl']),
+      });
+    }
+    return images;
+  }
+
+  function webSources(value: unknown): WebResultSource[] {
+    const sources: WebResultSource[] = [];
+    for (const entry of listOf(value)) {
+      const record = recordOf(entry);
+      if (record === null) {
+        continue;
+      }
+      const url = webUrl(textField(record, ['url']));
+      if (url === null) {
+        continue;
+      }
+      sources.push({
+        title: textField(record, ['title']) || webHost(url),
+        url,
+        snippet: textField(record, ['snippet']),
+      });
+    }
+    return sources;
+  }
+
+  function webSteps(value: unknown): WebResultStep[] {
+    const steps: WebResultStep[] = [];
+    for (const entry of listOf(value)) {
+      const record = recordOf(entry);
+      if (record === null) {
+        continue;
+      }
+      const step = {
+        title: textField(record, ['title', 'name', 'label']),
+        body: textField(record, ['body', 'text', 'detail']),
+      };
+      if (step.title !== '' || step.body !== '') {
+        steps.push(step);
+      }
+    }
+    return steps;
+  }
+
+  function webPlaceOf(value: unknown): WebResultPlace | null {
+    const record = recordOf(value);
+    if (record === null) {
+      return null;
+    }
+    const latitude = numberField(record, ['latitude', 'lat']);
+    const longitude = numberField(record, ['longitude', 'lng', 'lon']);
+    if (latitude === null || longitude === null) {
+      return null;
+    }
+    return {
+      name:
+        textField(record, ['name', 'title']) ||
+        webHost(textField(record, ['url', 'page_url', 'pageUrl'])),
+      address: textField(record, ['address', 'formatted_address']),
+      latitude,
+      longitude,
+    };
+  }
+
+  function webPlaces(record: Record<string, unknown>): WebResultPlace[] {
+    const found = [webPlaceOf(record.place), webPlaceOf(record.location)];
+    for (const entry of listOf(record.places)) {
+      found.push(webPlaceOf(entry));
+    }
+    return found.filter((place): place is WebResultPlace => place !== null);
+  }
+
+  /** `{count} result` / `{count} results`, the reference's own plural form. */
+  function webCountLabel(count: number): string {
+    return `${count} 条结果`;
+  }
+
+  function webSearchTool(name: string): boolean {
+    return toolCategory(name) === 'web';
+  }
+
+  /** The parsed output record, with a `ToolResult` blob's own value unwrapped. */
+  function outputRecord(output: string | null): Record<string, unknown> | null {
+    if (output === null) {
+      return null;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      return null;
+    }
+    const outer = recordOf(parsed);
+    if (outer === null) {
+      return null;
+    }
+    return recordOf(outer.value) ?? outer;
+  }
+
+  /**
+   * The reference's image payload inside a search call's output.
+   *
+   * `null` for every other tool, and for a search output that is not a JSON
+   * object -- a text-only result keeps its plain output row instead of
+   * growing an empty card.
+   */
+  function webResults(
+    name: string,
+    payload: Record<string, unknown> | null,
+  ): WebResults | null {
+    if (payload === null || !webSearchTool(name)) {
+      return null;
+    }
+    const rawImages = Array.isArray(payload.images) ? payload.images : null;
+    const rawSources = Array.isArray(payload.results)
+      ? payload.results
+      : Array.isArray(payload.sources)
+        ? payload.sources
+        : null;
+    const query = typeof payload.query === 'string' ? payload.query : '';
+    if (rawImages === null && rawSources === null && query === '') {
+      return null;
+    }
+    return {
+      query,
+      count:
+        rawSources !== null
+          ? rawSources.length
+          : rawImages !== null
+            ? rawImages.length
+            : null,
+      images: webImages(rawImages),
+      sources: webSources(rawSources),
+    };
+  }
+
+  /** Replace every child; the headless shim exposes no `replaceChildren`. */
+  function setChildren(host: ChatNode, children: ChatChild[]): void {
+    if (DOC) {
+      (host as Element).replaceChildren();
+    } else {
+      (host as ShimNode).children.length = 0;
+    }
+    for (const child of children) {
+      attach(host, child);
+    }
+  }
+
+  function bindClick(node: ChatNode, handler: () => void): void {
+    if (!DOC) {
+      return;
+    }
+    (node as Element).addEventListener('click', (event: Event) => {
+      event.preventDefault();
+      handler();
+    });
+  }
+
+  /** The credit the reference draws inside a tile: source, else the domain. */
+  function webCredit(image: WebResultImage): string {
+    return image.source || webHost(image.pageUrl) || webHost(image.url);
+  }
+
+  function webImageTile(
+    image: WebResultImage,
+    lead: boolean,
+    alt: string,
+  ): ChatNode {
+    const tile = h('div', {class: 'mp-chat-web-image'});
+    if (lead) {
+      tile.setAttribute('data-lead', 'true');
+    }
+    const href = webUrl(image.pageUrl) ?? webUrl(image.url);
+    const photo = h('img', {
+      class: 'mp-chat-web-photo',
+      src: image.url,
+      alt: image.title || alt,
+      loading: 'lazy',
+      decoding: 'async',
+    });
+    attach(
+      tile,
+      href === null
+        ? photo
+        : h(
+            'a',
+            {
+              class: 'mp-chat-web-photo-link',
+              href,
+              target: '_blank',
+              rel: 'noreferrer',
+            },
+            photo,
+          ),
+    );
+    const credit = webCredit(image);
+    if (credit !== '') {
+      attach(tile, h('span', {class: 'mp-chat-web-credit'}, credit));
+    }
+    return tile;
+  }
+
+  function webImagesNode(payload: WebResults): ChatNode | null {
+    if (payload.images.length === 0) {
+      return null;
+    }
+    const shown = payload.images.slice(0, WEB_MOSAIC_SIZE);
+    const mosaic = h('div', {class: 'mp-chat-web-images'});
+    mosaic.setAttribute('data-count', String(shown.length));
+    shown.forEach((image, index) => {
+      const lead = index === 0 && shown.length === WEB_MOSAIC_SIZE;
+      attach(mosaic, webImageTile(image, lead, payload.query));
+    });
+    const wrap = h('div', {class: 'mp-chat-web-media'});
+    attach(wrap, mosaic);
+    attach(wrap, h('div', {class: 'mp-chat-web-caption'}, WEB_RESULTS_CAPTION));
+    return wrap;
+  }
+
+  function webSourcesNode(payload: WebResults): ChatNode | null {
+    if (payload.sources.length === 0) {
+      return null;
+    }
+    const list = h('div', {class: 'mp-chat-web-sources'});
+    for (const source of payload.sources) {
+      const row = h('div', {class: 'mp-chat-web-source'});
+      attach(
+        row,
+        h('span', {class: 'mp-chat-web-domain'}, webHost(source.url)),
+      );
+      attach(
+        row,
+        h(
+          'a',
+          {
+            class: 'mp-chat-web-link',
+            href: source.url,
+            target: '_blank',
+            rel: 'noreferrer',
+          },
+          source.title,
+        ),
+      );
+      if (source.snippet !== '') {
+        attach(row, h('span', {class: 'mp-chat-web-snippet'}, source.snippet));
+      }
+      attach(list, row);
+    }
+    return list;
+  }
+
+  /**
+   * Claude's step card: one step at a time, a numbered strip, "View all
+   * steps", and "Next". Data-gated like the rest -- a payload without a
+   * non-empty `steps` array renders nothing.
+   */
+  function stepCardNode(steps: WebResultStep[]): ChatNode | null {
+    if (steps.length === 0) {
+      return null;
+    }
+    const card = h('div', {class: 'mp-chat-steps'});
+    const title = h('div', {class: 'mp-chat-steps-title'});
+    const detail = h('div', {class: 'mp-chat-steps-detail'});
+    const strip = h('div', {class: 'mp-chat-steps-strip'});
+    const dots: ChatNode[] = [];
+    for (let index = 0; index < steps.length; index += 1) {
+      const dot = h(
+        'button',
+        {class: 'mp-chat-step-dot', type: 'button'},
+        String(index + 1),
+      );
+      dot.setAttribute('aria-label', `Step ${index + 1}`);
+      attach(strip, dot);
+      dots.push(dot);
+    }
+    const foot = h('div', {class: 'mp-chat-steps-foot'});
+    const all = h(
+      'button',
+      {class: 'mp-chat-steps-all', type: 'button'},
+      WEB_STEPS_ALL_LABEL,
+    );
+    all.setAttribute('aria-expanded', 'false');
+    const next = h(
+      'button',
+      {class: 'mp-chat-steps-next', type: 'button'},
+      WEB_STEPS_NEXT_LABEL,
+    );
+    attach(foot, all);
+    attach(foot, next);
+    const list = h('div', {class: 'mp-chat-steps-list'});
+    steps.forEach((step, index) => {
+      const row = h('div', {class: 'mp-chat-step-row'});
+      attach(row, h('span', {class: 'mp-chat-step-index'}, String(index + 1)));
+      const copy = h('div', {class: 'mp-chat-step-copy'});
+      attach(copy, h('div', {class: 'mp-chat-step-name'}, step.title));
+      if (step.body !== '') {
+        attach(copy, h('div', {class: 'mp-chat-step-text'}, step.body));
+      }
+      attach(row, copy);
+      attach(list, row);
+    });
+    list.setAttribute('data-open', 'false');
+    attach(card, title);
+    attach(card, detail);
+    attach(card, strip);
+    attach(card, foot);
+    attach(card, list);
+
+    let active = 0;
+    let open = false;
+    const paint = () => {
+      const step = steps[active];
+      setChildren(title, [step.title || `Step ${active + 1}`]);
+      setChildren(detail, step.body === '' ? [] : [step.body]);
+      card.setAttribute('data-active', String(active + 1));
+      if (active >= steps.length - 1) {
+        next.setAttribute('hidden', 'true');
+      } else {
+        next.removeAttribute('hidden');
+      }
+      dots.forEach((dot, index) => {
+        dot.setAttribute('aria-current', index === active ? 'true' : 'false');
+      });
+      list.setAttribute('data-open', open ? 'true' : 'false');
+      all.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    dots.forEach((dot, index) => {
+      bindClick(dot, () => {
+        active = index;
+        paint();
+      });
+    });
+    bindClick(next, () => {
+      active = Math.min(active + 1, steps.length - 1);
+      paint();
+    });
+    bindClick(all, () => {
+      open = !open;
+      paint();
+    });
+    paint();
+    return card;
+  }
+
+  /**
+   * A searched place, drawn from coordinates only. The reference embeds an
+   * interactive map; that needs a map provider and a `frame-src` the renderer
+   * does not have, so this card links the coordinates out instead.
+   */
+  function placeCardNode(places: WebResultPlace[]): ChatNode | null {
+    if (places.length === 0) {
+      return null;
+    }
+    const list = h('div', {class: 'mp-chat-places'});
+    for (const place of places) {
+      const row = h('div', {class: 'mp-chat-place'});
+      if (place.name !== '') {
+        attach(row, h('span', {class: 'mp-chat-place-name'}, place.name));
+      }
+      if (place.address !== '') {
+        attach(row, h('span', {class: 'mp-chat-place-address'}, place.address));
+      }
+      const href = `https://www.openstreetmap.org/?mlat=${place.latitude}&mlon=${place.longitude}`;
+      attach(
+        row,
+        h(
+          'a',
+          {
+            class: 'mp-chat-web-link',
+            href,
+            target: '_blank',
+            rel: 'noreferrer',
+          },
+          `${place.latitude}, ${place.longitude}`,
+        ),
+      );
+      attach(list, row);
+    }
+    return list;
+  }
+
+  /**
+   * Everything the body of a result row can render from a tool's output.
+   *
+   * Returns `null` when the output carries neither web results nor a step or
+   * place payload, which leaves the row's existing body and output dump in
+   * place.
+   */
+  function resultBodyNode(
+    name: string,
+    payload: Record<string, unknown> | null,
+  ): ChatNode | null {
+    const web = webResults(name, payload);
+    const wrap = h('div', {class: 'mp-chat-results'});
+    let rendered = false;
+    const media = web === null ? null : webImagesNode(web);
+    if (media !== null) {
+      attach(wrap, media);
+      rendered = true;
+    }
+    const sources = web === null ? null : webSourcesNode(web);
+    if (sources !== null) {
+      attach(wrap, sources);
+      rendered = true;
+    }
+    if (web === null && payload !== null) {
+      const steps = stepCardNode(webSteps(payload.steps));
+      if (steps !== null) {
+        attach(wrap, steps);
+        rendered = true;
+      }
+      const places = placeCardNode(webPlaces(payload));
+      if (places !== null) {
+        attach(wrap, places);
+        rendered = true;
+      }
+    }
+    return rendered ? wrap : null;
+  }
+
   /**
    * Keep the shimmer clone's glyphs identical to the live label.
    *
+
    * A running label's text can be rewritten in place (a streaming summary, a
    * changing path), and the clone is a separate node — without this it would
    * freeze on the first frame's wording while the real text moved on.
@@ -2435,10 +3005,28 @@ const ChatView = (() => {
     const command = toolCommandOf(model);
     const singleLine = command !== null && command.rest === '';
     let outputInCard = false;
+    // A search row is the one row whose body is content rather than a command,
+    // a diff or a JSON dump: it renders the payload's own results, and the raw
+    // output row is dropped when it does. The count lives on the row itself,
+    // so an empty result set still reports "0 results".
+    const payload = outputRecord(model.output);
+    const results = resultBodyNode(model.name, payload);
+    const webCount = webResults(model.name, payload)?.count ?? null;
+    if (webCount !== null) {
+      const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
+      attach(sep, ' ');
+      collapsed.push(sep);
+      collapsed.push(
+        h('span', {class: 'mp-chat-web-count'}, webCountLabel(webCount)),
+      );
+    }
     const checklist = todoChecklist(model) || questionHistory(model);
     if (checklist !== null) {
       body.push(checklist);
       outputInCard = model.state !== 'error';
+    } else if (results !== null) {
+      body.push(results);
+      outputInCard = true;
     } else if (
       diff !== null &&
       (model.body !== null || model.output !== null)
@@ -2501,7 +3089,9 @@ const ChatView = (() => {
       collapsed,
       body: body.length ? body : null,
       expandable: !isSubagent && body.length > 0,
-      open: defaultOpenForTool(model),
+      // Rendered results are the point of the row, so they start visible the
+      // way the reference shows its own search results.
+      open: defaultOpenForTool(model) || results !== null,
       rowId: model.callId
         ? `tool:${scope ? `${scope}:` : ''}${model.callId}`
         : undefined,
@@ -4834,6 +5424,9 @@ const ChatView = (() => {
       thinkingDuration,
       connectorDisplayName,
       shortenPath,
+      webResults,
+      outputRecord,
+      webCountLabel,
     },
   };
 })();

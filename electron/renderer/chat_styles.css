@@ -658,6 +658,146 @@
 .mp-chat-todo-item[data-state="completed"] .mp-chat-todo-label { text-decoration: line-through; }
 .mp-chat-todo-item[data-state="in_progress"] .mp-chat-todo-check { color: var(--mp-clay); border-color: var(--mp-clay); }
 
+/* Web results.
+
+   The mosaic keeps the reference's shape: 3 columns, a 3px gap and `4/3`
+   tiles, with the first tile spanning two columns and two rows so the left
+   image is large and the two right images stack. A payload with fewer than
+   three images drops the lead span and lays the tiles out evenly. */
+.mp-chat-results { padding: 4px 0 6px; }
+.mp-chat-web-media { margin-top: 2px; }
+.mp-chat-web-images {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  max-width: 620px;
+  overflow: hidden;
+  border-radius: var(--mp-r6);
+}
+.mp-chat-web-image { position: relative; display: block; overflow: hidden; }
+.mp-chat-web-image[data-lead="true"] { grid-column: span 2; grid-row: span 2; }
+.mp-chat-web-images[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mp-chat-web-images[data-count="1"] { grid-template-columns: minmax(0, 1fr); max-width: 420px; }
+.mp-chat-web-photo-link { display: block; }
+.mp-chat-web-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--mp-panel-subtle);
+}
+.mp-chat-web-credit {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  color: rgba(255, 255, 255, .92);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
+  white-space: nowrap;
+}
+.mp-chat-web-caption {
+  margin-top: 6px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+  text-align: right;
+}
+.mp-chat-web-count { color: var(--mp-text-muted); }
+.mp-chat-web-sources { display: flex; flex-direction: column; margin-top: 4px; }
+.mp-chat-web-source { display: flex; flex-direction: column; gap: 2px; padding: 7px 0; }
+.mp-chat-web-source + .mp-chat-web-source { border-top: 1px solid var(--mp-rule); }
+.mp-chat-web-domain { color: var(--mp-text-muted); font-size: 12px; line-height: 16px; }
+.mp-chat-web-link { color: var(--mp-text); font-size: 13px; line-height: 19px; text-decoration: none; }
+.mp-chat-web-link:hover { text-decoration: underline; }
+.mp-chat-web-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--mp-text-secondary);
+  font-size: 12.5px;
+  line-height: 18px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Claude's step card: one step at a time, a numbered strip, and the two
+   controls. Only a payload that carries a real `steps` array reaches it. */
+.mp-chat-steps {
+  margin-top: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r7);
+  background: var(--mp-panel);
+}
+.mp-chat-steps-title { color: var(--mp-text); font-size: 15px; font-weight: 600; line-height: 22px; }
+.mp-chat-steps-detail { margin-top: 6px; color: var(--mp-text-secondary); font-size: 13px; line-height: 19px; }
+.mp-chat-steps-strip { display: flex; gap: 6px; margin-top: 12px; }
+.mp-chat-step-dot {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--mp-rule);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--mp-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mp-chat-step-dot[aria-current="true"] { border-color: transparent; background: var(--mp-clay-strong); color: #fff; }
+.mp-chat-steps-foot { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.mp-chat-steps-all {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mp-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mp-chat-steps-all:hover { color: var(--mp-text); }
+.mp-chat-steps-next {
+  height: 30px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--mp-r-pill);
+  background: var(--mp-clay-strong);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mp-chat-steps-next[hidden] { display: none; }
+.mp-chat-steps-list { display: none; flex-direction: column; margin-top: 12px; }
+.mp-chat-steps-list[data-open="true"] { display: flex; }
+.mp-chat-step-row { display: flex; gap: 10px; padding: 8px 0; }
+.mp-chat-step-row + .mp-chat-step-row { border-top: 1px solid var(--mp-rule); }
+.mp-chat-step-index {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--mp-panel-subtle);
+  color: var(--mp-text-secondary);
+  font-size: 12px;
+  line-height: 22px;
+  text-align: center;
+}
+.mp-chat-step-name { color: var(--mp-text); font-size: 13px; line-height: 19px; }
+.mp-chat-step-text { margin-top: 2px; color: var(--mp-text-secondary); font-size: 12.5px; line-height: 18px; }
+
+/* A searched place. The reference embeds a map; this card carries the
+   coordinates the payload gave and links them out instead. */
+.mp-chat-places { display: flex; flex-direction: column; margin-top: 4px; }
+.mp-chat-place { display: flex; flex-direction: column; gap: 2px; padding: 7px 0; }
+.mp-chat-place + .mp-chat-place { border-top: 1px solid var(--mp-rule); }
+.mp-chat-place-name { color: var(--mp-text); font-size: 13px; }
+.mp-chat-place-address { color: var(--mp-text-secondary); font-size: 12.5px; }
+
 /* Delivered file results. Only real files the agent wrote reach this card. */
 .mp-chat-files {
   width: 100%;
