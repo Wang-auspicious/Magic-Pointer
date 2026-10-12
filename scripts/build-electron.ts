@@ -30,10 +30,13 @@ function compileProject(project: string): void {
   }
 }
 
-compileProject('tsconfig.electron.json');
+// The renderer program compiles to ES modules and also emits any main-process
+// module it merely type-references, so the electron program must run last to
+// leave the CommonJS emit the main process actually requires.
 compileProject('tsconfig.browser-globals.json');
 compileProject('tsconfig.renderer.json');
 compileProject('tsconfig.scripts-build.json');
+compileProject('tsconfig.electron.json');
 
 cpSync(sourceRoot, outputRoot, {
   recursive: true,
@@ -103,6 +106,37 @@ function verifyBrowserGlobalScripts(): void {
 }
 
 verifyBrowserGlobalScripts();
+
+// Main-process modules are loaded with require(); an ES module emit here means a
+// second program overwrote them and the app cannot start.
+function verifyMainProcessModules(): void {
+  const offenders: string[] = [];
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, {withFileTypes: true})) {
+      const source = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== 'renderer') {
+          walk(source);
+        }
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.js')) {
+        continue;
+      }
+      if (/^\s*(?:import|export)\s/m.test(readFileSync(source, 'utf8'))) {
+        offenders.push(path.relative(outputRoot, source));
+      }
+    }
+  };
+  walk(outputRoot);
+  if (offenders.length > 0) {
+    throw new Error(
+      `Main-process modules must compile to CommonJS:\n  ${offenders.join('\n  ')}`,
+    );
+  }
+}
+
+verifyMainProcessModules();
 
 console.log(`Electron runtime built at ${path.relative(root, outputRoot)}`);
 console.log(
