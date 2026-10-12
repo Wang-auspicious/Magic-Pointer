@@ -186,7 +186,7 @@ function renderPluginsPage(page: any) {
   const heading = pluginInventory.length
     ? `${escSetting(settingsModel.formatSettingLabel('plugins.heading'))} <span>· ${pluginInventory.length}</span>`
     : escSetting(settingsModel.formatSettingLabel('plugins.heading'));
-  return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}">
+  return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}"${page.ref ? ` data-ref="${escSetting(page.ref)}"` : ''}>
     <header class="mp-settings-page-head mp-settings-plugin-head">
       <div><h2>${escSetting(page.title)}</h2></div>
       <label class="mp-settings-plugin-search">
@@ -213,7 +213,7 @@ function renderSettingsPage(page: any) {
   if (page.id === 'plugins') {
     return renderPluginsPage(page);
   }
-  return `<section class="mp-settings-page" data-page="${escSetting(page.id)}">
+  return `<section class="mp-settings-page" data-page="${escSetting(page.id)}"${page.ref ? ` data-ref="${escSetting(page.ref)}"` : ''}>
     <header class="mp-settings-page-head">
       <div><h2>${escSetting(page.title)}</h2><p>${escSetting(page.description)}</p></div>
     </header>
@@ -299,7 +299,7 @@ function renderSettings() {
     ${pages
       .map(
         page => `<button type="button" class="settings-nav-item${!settingsQuery && page.id === activeSettingsPage ? ' is-on' : ''}"
-      data-settings-page="${escSetting(page.id)}">${settingIcon(page.icon)}<span>${escSetting(page.title)}</span></button>`,
+      data-settings-page="${escSetting(page.id)}"${page.ref ? ` data-ref="${escSetting(page.ref)}" title="${escSetting(page.ref)}"` : ''}>${settingIcon(page.icon)}<span>${escSetting(page.title)}</span></button>`,
       )
       .join('')}
   </section>`,

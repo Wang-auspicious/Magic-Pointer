@@ -30,6 +30,10 @@
     group: 'Settings' | 'Agent' | 'Customize';
     icon: string;
     id: string;
+    /* Counterpart group on the reference settings surface
+     * (claude.settings IPC namespace), or null when Magic Pointer
+     * owns the page and the reference has no equivalent. */
+    ref: string | null;
     sections: SettingSection[];
     title: string;
   };
@@ -100,16 +104,31 @@
     return text;
   }
 
+  /* Page order, ids, groups and the pinned titles below are asserted by
+   * tests/settings_ui_model_test.ts — regrouping must happen in sections.
+   *
+   * Reference skeleton (claude.settings IPC surface, static evidence in
+   * D:/Desktop/ClaudeDesktopRE/report/13-ipc-catalog.md; chunk lines are
+   * pretty/main-index.chunk.js offsets): AppConfig 59400, Startup 59414,
+   * CcdCli 59422, GlobalShortcut 59429, MCP 59435, Extensions 59457,
+   * FilePickers 59549, AppPreferences 59555, AppFeatures 59568,
+   * DesktopInfo 59569, Custom3pSetup 59576, Custom3pHelperRun 59652,
+   * ClaudeAiImport 59677, HistoryImport 59726, SupportBundle 59773,
+   * WakeScheduler 59774, Custom3pUsage 59780.
+   * Pages with a real counterpart carry it in `ref` and use the
+   * reference section vocabulary; MP-only pages (models-agents, skills,
+   * permissions, memory-context) keep their own names — nothing invented. */
   const SETTINGS_PAGES: SettingsPage[] = [
     {
       id: 'general',
       group: 'Settings',
       icon: 'ic-window',
+      ref: 'claude.settings.Startup (59414)',
       title: 'General',
       description: 'Startup, background behavior, and updates.',
       sections: [
         {
-          title: 'Application',
+          title: 'Startup',
           rows: [
             {
               path: 'general.launch_at_login',
@@ -131,6 +150,7 @@
       id: 'interaction',
       group: 'Settings',
       icon: 'ic-cursor',
+      ref: 'claude.settings.AppPreferences (59555)',
       title: 'Interaction',
       description:
         'Choose how Magic Pointer wakes, captures intent, and accepts input.',
@@ -198,6 +218,7 @@
       id: 'models-agents',
       group: 'Agent',
       icon: 'ic-spark',
+      ref: null,
       title: 'Models & runtime',
       description:
         'Model selection, reasoning display, and Magic Pointer’s own execution runtime.',
@@ -300,6 +321,7 @@
       id: 'skills',
       group: 'Customize',
       icon: 'ic-spark',
+      ref: null,
       title: 'Skills',
       description: 'View and invoke Skills installed on this device.',
       sections: [
@@ -321,12 +343,13 @@
       id: 'plugins',
       group: 'Customize',
       icon: 'ic-plug',
+      ref: 'claude.settings.Extensions (59457)',
       title: 'Plugins',
       description:
         'Manage local Harness plugins that take effect only after approval.',
       sections: [
         {
-          title: 'Plugins',
+          title: 'Extensions',
           rows: [
             {
               control: 'info',
@@ -343,12 +366,13 @@
       id: 'connectors',
       group: 'Customize',
       icon: 'ic-globe',
+      ref: 'claude.settings.MCP (59435)',
       title: 'MCP & connectors',
       description:
         'Connect local MCP servers, browsers, and structured capabilities.',
       sections: [
         {
-          title: 'Connectors',
+          title: 'Servers',
           rows: [
             {
               control: 'info',
@@ -365,6 +389,7 @@
       id: 'perception-privacy',
       group: 'Agent',
       icon: 'ic-eye',
+      ref: 'claude.settings.AppPreferences (59555)',
       title: 'Perception & privacy',
       description:
         'Control what the Agent can inspect, what may leave the device, and which apps remain private.',
@@ -423,6 +448,7 @@
       id: 'permissions',
       group: 'Agent',
       icon: 'ic-shield',
+      ref: null,
       title: 'Permissions',
       description:
         'Choose whether each effect is allowed, asks first, or is denied.',
@@ -497,6 +523,7 @@
       id: 'memory-context',
       group: 'Customize',
       icon: 'ic-memory',
+      ref: null,
       title: 'Memory & context',
       description:
         'Control what the Agent remembers and inspect context formed on this device.',
@@ -543,6 +570,7 @@
       id: 'storage',
       group: 'Customize',
       icon: 'ic-stash',
+      ref: 'claude.settings.AppPreferences (59555)',
       title: 'Storage',
       description:
         'Choose how captures, artifacts, and audit data remain on this device.',
@@ -612,6 +640,7 @@
       id: 'appearance-accessibility',
       group: 'Customize',
       icon: 'ic-img',
+      ref: 'claude.settings.AppPreferences (59555)',
       title: 'Appearance',
       description: 'Theme, window material, and selection feedback.',
       sections: [
@@ -674,11 +703,12 @@
       id: 'shortcuts',
       group: 'Settings',
       icon: 'ic-cursor',
+      ref: 'claude.settings.GlobalShortcut (59429)',
       title: 'Shortcuts',
       description: 'Keyboard access for Studio and selections.',
       sections: [
         {
-          title: 'Shortcuts',
+          title: 'Global shortcut',
           rows: [
             {
               path: 'shortcuts.wake',
@@ -699,11 +729,12 @@
       id: 'updates',
       group: 'Settings',
       icon: 'ic-refresh',
+      ref: 'claude.settings.AppConfig (59400)',
       title: 'Updates',
       description: 'Update channel and installed application status.',
       sections: [
         {
-          title: 'Updates',
+          title: 'Application',
           rows: [
             {
               path: 'general.update_channel',
@@ -729,11 +760,12 @@
       id: 'diagnostics',
       group: 'Settings',
       icon: 'ic-term',
+      ref: 'claude.settings.DesktopInfo (59569)',
       title: 'Diagnostics & about',
       description: 'Version, runtime information, logs, and local diagnostics.',
       sections: [
         {
-          title: 'Diagnostics',
+          title: 'System information',
           rows: [
             {
               control: 'info',
