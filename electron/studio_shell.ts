@@ -4,6 +4,7 @@
     | 'design'
     | 'stash'
     | 'artifacts'
+    | 'dashboard'
     | 'settings'
     | 'projects'
     | 'scheduled'
@@ -56,6 +57,13 @@
       title: 'Artifacts',
       description: 'View, reuse, and export generated local artifacts.',
       eyebrow: 'LOCAL OUTPUTS',
+      allowsDetail: true,
+    }),
+    Object.freeze({
+      id: 'dashboard',
+      title: 'Dashboards',
+      description: 'Query-backed data panels that refresh on every open.',
+      eyebrow: 'LIVE PANELS',
       allowsDetail: true,
     }),
     Object.freeze({

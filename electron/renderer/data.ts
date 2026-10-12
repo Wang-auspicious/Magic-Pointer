@@ -1075,6 +1075,15 @@ declare global {
         nodeId: string,
       ): Promise<Record<string, any>>;
     };
+    dashboard?: {
+      list(): Promise<Array<Record<string, any>>>;
+      open(dashboardId: string): Promise<Record<string, any>>;
+      exportHtml(payload: {
+        title: string;
+        html: string;
+        css: string;
+      }): Promise<Record<string, any>>;
+    };
     stash: {
       list(): Promise<MagicPointerStashBurst[]>;
       addNote?(payload: Record<string, unknown>): Promise<Record<string, any>>;
@@ -1191,6 +1200,13 @@ declare global {
       name: string;
       description?: string;
     }): Promise<MagicPointerProjectUpdate>;
+    dashboardList(): Promise<Array<Record<string, any>>>;
+    dashboardOpen(dashboardId: string): Promise<Record<string, any>>;
+    dashboardExportHtml(payload: {
+      title: string;
+      html: string;
+      css: string;
+    }): Promise<Record<string, any>>;
     updateProject(
       root: string,
       patch: MagicPointerProjectPatch,
@@ -1750,6 +1766,35 @@ const Data: MagicPointerDataApi = {
       return {ok: false, error: 'Project creation is unavailable.'};
     }
     return projects.create(input);
+  },
+
+  async dashboardList(): Promise<Array<Record<string, any>>> {
+    const dashboard = bridge()?.dashboard;
+    if (!dashboard?.list) {
+      return [];
+    }
+    const items = await dashboard.list();
+    return Array.isArray(items) ? items : [];
+  },
+
+  async dashboardOpen(dashboardId: string): Promise<Record<string, any>> {
+    const dashboard = bridge()?.dashboard;
+    if (!dashboard?.open) {
+      return {ok: false, error: 'Dashboards are unavailable.'};
+    }
+    return dashboard.open(dashboardId);
+  },
+
+  async dashboardExportHtml(payload: {
+    title: string;
+    html: string;
+    css: string;
+  }): Promise<Record<string, any>> {
+    const dashboard = bridge()?.dashboard;
+    if (!dashboard?.exportHtml) {
+      return {ok: false, error: 'Dashboard export is unavailable.'};
+    }
+    return dashboard.exportHtml(payload);
   },
 
   async openProject(): Promise<{

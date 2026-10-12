@@ -41,6 +41,7 @@ const {spawn} = require('child_process');
 const {net} = require('electron');
 const {expandPassage} = require('./runtime/text');
 const {resolveModelConfig, listModels} = require('./runtime/model');
+const {listDashboards, runDashboard} = require('./runtime/dashboard');
 const {installEnvironmentProxy} = require('./runtime/proxy');
 
 // This process lists models directly, and undici chooses its dispatcher on the
@@ -1992,6 +1993,66 @@ ipcMain.handle('projects:list', (event: Electron.IpcMainInvokeEvent) => {
     return [];
   }
 });
+function dashboardRoot(): string {
+  return path.join(app.getPath('userData'), 'dashboards');
+}
+ipcMain.handle('dashboard:list', (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return [];
+  }
+  try {
+    return listDashboards(dashboardRoot());
+  } catch (_) {
+    return [];
+  }
+});
+ipcMain.handle(
+  'dashboard:open',
+  async (event: Electron.IpcMainInvokeEvent, dashboardId: unknown) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const {spec, snapshot} = await runDashboard(
+        dashboardRoot(),
+        String(dashboardId || ''),
+      );
+      return {ok: true, spec, snapshot};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'dashboard_open_failed',
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'dashboard:export',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {title?: unknown; html?: unknown; css?: unknown},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    const parent =
+      BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+    const safeTitle = String(payload?.title || 'dashboard')
+      .replace(/[<>:"/\\|?*]/g, '-')
+      .slice(0, 80);
+    const picked = await dialog.showSaveDialog(parent, {
+      title: 'Export dashboard',
+      defaultPath: `${safeTitle || 'dashboard'}.html`,
+      filters: [{name: 'HTML', extensions: ['html']}],
+    });
+    if (picked.canceled || !picked.filePath) {
+      return {ok: false, canceled: true};
+    }
+    const doc = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${safeTitle}</title><style>${String(payload?.css || '')}</style></head><body>${String(payload?.html || '')}</body></html>`;
+    await fs.promises.writeFile(picked.filePath, doc, 'utf8');
+    return {ok: true, path: picked.filePath};
+  },
+);
 ipcMain.handle(
   'projects:create',
   (event: Electron.IpcMainInvokeEvent, input: ProjectCreateInput) => {

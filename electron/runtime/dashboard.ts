@@ -27,7 +27,7 @@ export interface DashboardSelect {
   source: string;
   value: string;
   agg: DashboardAgg;
-  groupBy?: {column: string; truncateDay?: boolean};
+  groupBy?: {column: string; truncateDay?: boolean; and?: string};
   dateColumn?: string;
   filter?: DashboardFilter[];
   priorDays?: number;
@@ -47,6 +47,8 @@ export interface DashboardChart {
   type: DashboardChartType;
   queryText: string;
   select: DashboardSelect;
+  format?: 'money' | 'number' | 'percent';
+  columns?: Array<{label: string; select: DashboardSelect}>;
 }
 
 export interface DashboardSpec {
@@ -77,6 +79,7 @@ export interface DashboardChartSnapshot {
   groups: Array<{key: string; total: DashboardNumber}>;
   current?: DashboardNumber;
   prior?: DashboardNumber;
+  table?: {columns: string[]; rows: Array<{key: string; cells: DashboardNumber[]}>};
 }
 
 export interface DashboardSnapshot {
@@ -284,7 +287,9 @@ export function runSelect(
     for (const item of numbers) {
       const row = kept.find(k => k.index === item.index)?.row;
       const cell = row ? row[select.groupBy.column] : '';
-      const key = select.groupBy.truncateDay ? toDay(String(cell ?? '')) : String(cell ?? '');
+      const cell2 = select.groupBy.and && row ? row[select.groupBy.and] : '';
+      const base = select.groupBy.truncateDay ? toDay(String(cell ?? '')) : String(cell ?? '');
+      const key = select.groupBy.and ? `${base}|${String(cell2 ?? '')}` : base;
       const list = buckets.get(key) ?? [];
       list.push(item);
       buckets.set(key, list);
@@ -376,7 +381,30 @@ export function snapshotCharts(
   return spec.charts.map(chart => {
     const rows = loaded.get(chart.select.source) ?? [];
     const snap = runSelect(chart.select.source, rows, chart.select, generatedAt);
-    return {...snap, chartId: chart.chartId, queryText: chart.queryText};
+    const out: DashboardChartSnapshot = {
+      ...snap,
+      chartId: chart.chartId,
+      queryText: chart.queryText,
+    };
+    if (chart.type === 'table' && chart.columns?.length) {
+      const keys = new Map<string, DashboardNumber[]>();
+      const allSelects = [chart.select, ...chart.columns.map(col => col.select)];
+      allSelects.forEach((sel, selIndex) => {
+        const part = runSelect(sel.source, loaded.get(sel.source) ?? [], sel, generatedAt);
+        for (const group of part.groups) {
+          const cells = keys.get(group.key) ?? [];
+          cells[selIndex] = group.total;
+          keys.set(group.key, cells);
+        }
+      });
+      out.table = {
+        columns: [' ', ...chart.columns.map(col => col.label)],
+        rows: [...keys.entries()]
+          .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([key, cells]) => ({key, cells})),
+      };
+    }
+    return out;
   });
 }
 

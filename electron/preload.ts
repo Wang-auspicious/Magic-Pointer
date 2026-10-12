@@ -740,6 +740,17 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         revision: payload?.revision,
       }),
   },
+  dashboard: {
+    list: () => ipcRenderer.invoke('dashboard:list'),
+    open: (dashboardId: unknown) =>
+      ipcRenderer.invoke('dashboard:open', String(dashboardId || '')),
+    exportHtml: (payload: {title?: unknown; html?: unknown; css?: unknown}) =>
+      ipcRenderer.invoke('dashboard:export', {
+        title: String(payload?.title || '').slice(0, 120),
+        html: String(payload?.html ?? '').slice(0, 2_000_000),
+        css: String(payload?.css ?? '').slice(0, 200_000),
+      }),
+  },
   figma: {
     pair: (conversationId: unknown) =>
       ipcRenderer.invoke('figma:pair', {

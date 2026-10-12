@@ -4753,6 +4753,81 @@ function bindArtifactView() {
   });
 }
 
+let activeDashboardId = '';
+
+async function renderDashboardView(): Promise<void> {
+  const root = document.getElementById('dashboard-root');
+  if (!root) {
+    return;
+  }
+  const items = await Data.dashboardList();
+  const specs = items.filter(
+    item => item && typeof item === 'object' && item.dashboardId,
+  ) as Array<{dashboardId: string; title: string}>;
+  if (!activeDashboardId || !specs.some(s => s.dashboardId === activeDashboardId)) {
+    activeDashboardId = specs[0]?.dashboardId ?? '';
+  }
+  if (!activeDashboardId) {
+    root.innerHTML =
+      '<div class="mp-dash-empty">No dashboards yet. Ask the agent to build one from a CSV or Excel file.</div>';
+    return;
+  }
+  const opened = await Data.dashboardOpen(activeDashboardId);
+  if (!opened || opened.ok !== true) {
+    root.innerHTML = `<div class="mp-dash-empty">${String(opened?.error || 'Dashboard failed to open.')}</div>`;
+    return;
+  }
+  const spec = opened.spec as {
+    title: string;
+    charts: Array<{chartId: string; title: string; type: 'kpi' | 'line' | 'table'; format?: 'money' | 'number' | 'percent'}>;
+  };
+  const tabs = specs
+    .map(
+      s =>
+        `<button type="button" data-dash-open="${s.dashboardId}" class="${s.dashboardId === activeDashboardId ? 'is-on' : ''}">${s.title}</button>`,
+    )
+    .join('');
+  root.innerHTML = `<div class="mp-dash-tabs">${tabs}</div><div id="dashboard-panel"></div>`;
+  root.querySelectorAll('[data-dash-open]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeDashboardId = String((btn as HTMLElement).dataset.dashOpen || '');
+      void renderDashboardView();
+    });
+  });
+  const panel = document.getElementById('dashboard-panel');
+  if (!panel || typeof renderDashboard !== 'function') {
+    return;
+  }
+  renderDashboard(panel, String(spec.title || ''), opened.snapshot, spec.charts, {
+    onShare: () => void shareDashboard(spec.title, panel),
+    onClose: () => show('artifacts'),
+    onInspect: (chartId, trace) => void inspectDashboardTrace(chartId, trace),
+  });
+}
+
+async function shareDashboard(title: string, panel: HTMLElement): Promise<void> {
+  let css = '';
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      if (sheet.href && sheet.href.includes('dashboard.css')) {
+        css = Array.from(sheet.cssRules).map(rule => rule.cssText).join('\n');
+      }
+    } catch {}
+  }
+  const result = await Data.dashboardExportHtml({
+    title,
+    html: panel.innerHTML,
+    css,
+  });
+  if (result?.ok !== true && !result?.canceled) {
+    window.alert(String(result?.error || 'Dashboard export failed.'));
+  }
+}
+
+function inspectDashboardTrace(chartId: string, trace: string): void {
+  window.alert(`Chart ${chartId} · rows ${trace}`);
+}
+
 async function renderArtifacts(_force = false) {
   bindArtifactView();
   const host = document.getElementById('art-list');
@@ -5668,6 +5743,9 @@ function show(view: string, projectKey?: string) {
   }
   if (view === 'artifacts') {
     renderArtifacts();
+  }
+  if (view === 'dashboard') {
+    void renderDashboardView();
   }
   if (view === 'settings') {
     renderSettings();
