@@ -74,7 +74,7 @@
     }),
     Object.freeze({
       id: 'scheduled',
-      title: 'Scheduled tasks',
+      title: 'Routines',
       description: 'Follow real materials daily and generate reports.',
       eyebrow: 'SCHEDULED WORK',
       allowsDetail: false,

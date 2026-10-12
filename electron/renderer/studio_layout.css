@@ -461,6 +461,12 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   font-weight: 400;
 }
 
+.mpw-project-count {
+  flex: none;
+  color: var(--mp-text-muted);
+  font-size: 11px;
+}
+
 .mpw-project + .mpw-project {
   margin-top: 14px;
 }
@@ -1612,7 +1618,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 .mp-session-search { box-sizing: border-box; flex: 0 0 auto; width: calc(100% - 32px); min-width: 0; height: 30px; margin: 0 16px 12px; padding: 5px 8px; border: 1px solid var(--mp-rule); border-radius: 4px; background: transparent; color: var(--mp-text); font: inherit; }
 .mp-session-search::placeholder { color: var(--mp-text-muted); }
 .mp-session-list { flex: 1 1 auto; min-height: 90px; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--mp-rule); scrollbar-width: thin; scrollbar-color: var(--mp-rule) transparent; }
-.mp-session-list[data-empty="true"]::after { content: '没有匹配的记录'; display: block; padding: 22px 16px; color: var(--mp-text-muted); }
+.mp-session-list[data-empty="true"]::after { content: 'No matching sessions'; display: block; padding: 22px 16px; color: var(--mp-text-muted); }
 .mp-session-row { display: grid; grid-template-columns: 24px 67px minmax(0, 1fr) 40px; align-items: center; gap: 6px; box-sizing: border-box; width: 100%; height: 34px; padding: 0 12px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--mp-rule) 52%, transparent); border-radius: 0; background: transparent; color: var(--mp-text); font: inherit; text-align: left; cursor: pointer; }
 .mp-session-row[hidden] { display: none; }
 .mp-session-row[data-turn-start="true"]:not(:first-child) { border-top: 1px solid var(--mp-rule); }
@@ -3277,7 +3283,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mp-settings-row[data-save-state='saved']::after {
-  content: "已保存";
+  content: "Saved";
   position: absolute;
   right: 0;
   bottom: 2px;

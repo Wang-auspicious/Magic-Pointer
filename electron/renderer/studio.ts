@@ -140,6 +140,23 @@ function layoutBurst(b: MagicPointerStashEntry): LaidBurst {
   return {...b, nodes: placed, w, h: y + rowH + PAD};
 }
 
+function stashDayLabel(time: string): string {
+  if (time === '今天' || time === 'Today') {
+    return 'Today';
+  }
+  if (time === '昨天' || time === 'Yesterday') {
+    return 'Yesterday';
+  }
+  const dated = /^([0-9]+)月([0-9]+)日$/.exec(time);
+  if (dated) {
+    return `${dated[1]}/${dated[2]}`;
+  }
+  if (/^[0-9]+\/[0-9]+$/.test(time)) {
+    return time;
+  }
+  return 'Today';
+}
+
 async function renderStash(force = false) {
   const world = document.getElementById('canvas-world');
   if (!world || (world.childElementCount && !force)) {
@@ -222,7 +239,7 @@ function renderStashList(laid: LaidBurst[], force = false) {
   }
   const byTime: Record<string, LaidBurst[]> = {};
   laid.forEach(b => {
-    (byTime[/[今昨前]|月/.test(b.time) ? b.time : '今天'] ||= []).push(b);
+    (byTime[stashDayLabel(b.time)] ||= []).push(b);
   });
   list.innerHTML = Object.entries(byTime)
     .map(
@@ -2241,6 +2258,14 @@ async function renderSidebar() {
     projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
     toggle.append(chevron, projectName);
+    const count = document.createElement('span');
+    count.className = 'mpw-project-count';
+    count.textContent = String(group.items.length);
+    count.setAttribute(
+      'aria-label',
+      `${group.items.length} sessions`,
+    );
+    toggle.append(count);
     const actions = document.createElement('span');
     actions.className = 'mpw-project-actions';
     if (group.key && !group.virtual) {
@@ -2350,7 +2375,6 @@ function bindSidebarSearch() {
     input.value = '';
     sidebarQuery = '';
     syncClear();
-    setExpanded(false);
     void renderSidebar();
   });
   input.addEventListener('input', () => {
@@ -3024,10 +3048,10 @@ function ensureComposerQuota(force = false) {
 }
 
 const USAGE_CATEGORIES = [
-  {kind: 'cache-read', label: '缓存命中'},
-  {kind: 'cache-write', label: '缓存写入'},
-  {kind: 'input', label: '新输入'},
-  {kind: 'output', label: '输出'},
+  {kind: 'cache-read', label: 'Cache read'},
+  {kind: 'cache-write', label: 'Cache write'},
+  {kind: 'input', label: 'Input'},
+  {kind: 'output', label: 'Output'},
 ] as const;
 
 interface UsageCategoryRow {
@@ -4423,14 +4447,14 @@ function artifactDayKey(at: number) {
   const date = new Date(at);
   const today = new Date();
   if (date.toDateString() === today.toDateString()) {
-    return '今天';
+    return 'Today';
   }
   if (
     date.toDateString() === new Date(today.getTime() - 86400000).toDateString()
   ) {
-    return '昨天';
+    return 'Yesterday';
   }
-  return `${date.getMonth() + 1}月${date.getDate()}日`;
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function artifactMatches(entry: ArtifactEntry) {
@@ -4514,7 +4538,7 @@ function paintArtifactToolbar(list: ArtifactEntry[]) {
   if (kindLabel) {
     kindLabel.textContent = artifactKind
       ? artifactKindLabel(artifactKind)
-      : '全部类型';
+      : 'All types';
   }
   for (const tab of document.querySelectorAll<HTMLElement>(
     '[data-artifact-scope]',
@@ -4559,7 +4583,7 @@ function paintArtifacts() {
   const byLabel = new Map<string, ArtifactEntry[]>();
   for (const entry of filtered) {
     const at = Number(entry.at);
-    const label = Number.isFinite(at) && at > 0 ? artifactDayKey(at) : '更早';
+    const label = Number.isFinite(at) && at > 0 ? artifactDayKey(at) : 'Earlier';
     let bucket = byLabel.get(label);
     if (!bucket) {
       bucket = [];
@@ -6803,6 +6827,54 @@ document.getElementById('thread-more')?.addEventListener('click', event => {
     closeThreadMenu();
   } else {
     openThreadMenu(button);
+  }
+});
+
+function closeSidebarMenu() {
+  document.getElementById('sidebar-menu')?.remove();
+  document
+    .getElementById('sidebar-more')
+    ?.setAttribute('aria-expanded', 'false');
+}
+
+function openSidebarMenu(button: HTMLElement) {
+  closeSidebarMenu();
+  const menu = document.createElement('div');
+  menu.id = 'sidebar-menu';
+  menu.className = 'mp-thread-menu';
+  menu.setAttribute('role', 'menu');
+  for (const [label, view, id] of [
+    ['Review', 'personal', 'nav-personal'],
+    ['Design', 'designs', 'nav-designs'],
+  ] as Array<[string, string, string]>) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.id = id;
+    item.dataset.goto = view;
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.append(text);
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      closeSidebarMenu();
+      show(view);
+    });
+    menu.append(item);
+  }
+  document.body.appendChild(menu);
+  const rect = button.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.left = `${Math.max(8, rect.left)}px`;
+  button.setAttribute('aria-expanded', 'true');
+}
+
+document.getElementById('sidebar-more')?.addEventListener('click', event => {
+  event.stopPropagation();
+  const button = event.currentTarget as HTMLElement;
+  if (document.getElementById('sidebar-menu')) {
+    closeSidebarMenu();
+  } else {
+    openSidebarMenu(button);
   }
 });
 
@@ -9374,6 +9446,9 @@ document.addEventListener('click', e => {
   }
   if (!target.closest('#thread-menu') && !target.closest('#thread-more')) {
     closeThreadMenu();
+  }
+  if (!target.closest('#sidebar-menu') && !target.closest('#sidebar-more')) {
+    closeSidebarMenu();
   }
   if (target.closest('[data-settings-close]')) {
     show(lastNonSettingsView);
