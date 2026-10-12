@@ -1419,6 +1419,56 @@ const ChatView = (() => {
   }
 
   /**
+   * Elapsed-time wording for a row that is still running. Same rounding
+   * as the thinking duration, without its past-tense prefix.
+   */
+  function runningDuration(ms: number): string | undefined {
+    const seconds = Math.round(ms / 1000);
+    if (seconds <= 0) {
+      return undefined;
+    }
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    if (minutes < 60) {
+      return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const minutesRest = minutes % 60;
+    return minutesRest > 0 ? `${hours}h ${minutesRest}m` : `${hours}h`;
+  }
+
+  /**
+   * The elapsed span for an in-flight row. Chips carry the trajectory
+   * record's start time when the backend sent one; without it there is
+   * nothing truthful to count from, so the row renders with no timer
+   * instead of a fabricated one.
+   */
+  function runningElapsedNode(chips: TurnChip[]): ChatNode | null {
+    const starts = chips
+      .filter(chip => chip.result === undefined)
+      .map(chip => Number(chip.startedAtMs) || 0)
+      .filter(value => value > 0);
+    if (!starts.length) {
+      return null;
+    }
+    const wording = runningDuration(Date.now() - Math.min(...starts));
+    if (!wording) {
+      return null;
+    }
+    const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
+    attach(sep, ' · ');
+    const span = h('span', {class: 'mp-chat-tool-elapsed'});
+    attach(span, wording);
+    const wrap = h('span', {class: 'mp-chat-tool-elapsed-wrap'});
+    attach(wrap, sep);
+    attach(wrap, span);
+    return wrap;
+  }
+
+  /**
    * The category-level done wording with a count, from Claude's `BR`. A
    * single-entry row means the reference has no plural form, so the singular
    * stands for any count.
@@ -3196,6 +3246,35 @@ const ChatView = (() => {
     return root;
   }
 
+  /**
+   * A settled answer body. Long answers collapse behind the same
+   * Show more mechanism as long thinking blocks, with a higher bar:
+   * an answer under it renders whole, never half-hidden.
+   */
+  function deliveryNode(text: string): ChatNode {
+    const rendered = markdownRenderer.render(text);
+    if (text.length <= 1500 && text.split('\n').length <= 25) {
+      return rendered;
+    }
+    const root = h('div', {
+      class: 'mp-chat-delivery',
+      'data-long': 'true',
+      'data-expanded': 'false',
+    });
+    const viewport = h('div', {class: 'mp-chat-delivery-viewport'});
+    attach(viewport, rendered);
+    attach(
+      viewport,
+      h('span', {class: 'mp-chat-delivery-fade', 'aria-hidden': 'true'}),
+    );
+    attach(root, viewport);
+    const more = h('button', {type: 'button', class: 'mp-chat-delivery-more'});
+    more.setAttribute('data-mp-chat-act', 'delivery-more');
+    attach(more, 'Show more');
+    attach(root, more);
+    return root;
+  }
+
   function updateThinkingState(
     node: HTMLElement,
     text: string,
@@ -3371,10 +3450,10 @@ const ChatView = (() => {
     attach(
       label,
       decision === 'deny'
-        ? '已拒绝'
+        ? 'Denied'
         : decision === 'once'
-          ? '允许一次'
-          : '本会话允许',
+          ? 'Allowed once'
+          : 'Allowed for this session',
     );
     const target = h('code', {class: 'mp-chat-perm-receipt-rule'});
     attach(target, rule);
@@ -3740,6 +3819,7 @@ const ChatView = (() => {
     callId: string;
     groupLabel?: string;
     displayLabel?: string;
+    startedAtMs?: number;
     result?: {text: string; isError: boolean; interrupted?: boolean};
     subagent?: Record<string, unknown>;
   }
@@ -3801,6 +3881,7 @@ const ChatView = (() => {
         typeof record.groupLabel === 'string' ? record.groupLabel : undefined,
       displayLabel:
         typeof record.summary === 'string' ? record.summary : undefined,
+      startedAtMs: Number(record.startedAt) || undefined,
       subagent: record.subagent as Record<string, unknown> | undefined,
       result: hasResult
         ? {
@@ -3960,12 +4041,24 @@ const ChatView = (() => {
             );
           }
         }
+        if (model.state === 'running') {
+          const elapsed = runningElapsedNode(chips);
+          if (elapsed) {
+            attach(label, elapsed);
+          }
+        }
       } else {
         const inFlight = chips.some(chip => chip.result === undefined);
         attach(
           label,
           shimmerText(toolGroupLabel(chips), {shimmering: inFlight}),
         );
+        if (inFlight) {
+          const elapsed = runningElapsedNode(chips);
+          if (elapsed) {
+            attach(label, elapsed);
+          }
+        }
       }
     }
     if (model?.diffStat) {
@@ -4424,6 +4517,8 @@ const ChatView = (() => {
             typeof event.groupLabel === 'string' ? event.groupLabel : undefined,
           displayLabel:
             typeof event.summary === 'string' ? event.summary : undefined,
+          startedAtMs:
+            Number(event.startedAt ?? event.at ?? event.time) || undefined,
           result:
             event.result !== undefined
               ? {
@@ -4541,7 +4636,7 @@ const ChatView = (() => {
     const totalTokens = Number(turn.modelUsage?.totalTokens) || 0;
     const deliveryText = cleanDeliveryText(String(turn.answer || ''));
     if (deliveryText) {
-      attach(bodyHost, markdownRenderer.render(deliveryText));
+      attach(bodyHost, deliveryNode(deliveryText));
     }
 
     // A turn waiting on the user has not finished; its footer comes with the reply.
@@ -5326,6 +5421,14 @@ const ChatView = (() => {
         const expanded = disclosure.dataset.expanded === 'true';
         disclosure.dataset.expanded = expanded ? 'false' : 'true';
         act.textContent = expanded ? 'Show more' : 'Show less';
+      } else if (kind === 'delivery-more') {
+        const wrap = act.closest<HTMLElement>('.mp-chat-delivery');
+        if (!wrap) {
+          return;
+        }
+        const expanded = wrap.dataset.expanded === 'true';
+        wrap.dataset.expanded = expanded ? 'false' : 'true';
+        act.textContent = expanded ? 'Show more' : 'Show less';
       } else if (kind === 'copy') {
         const text = act.getAttribute('data-mp-chat-copy') || '';
         const button = act;
@@ -5336,7 +5439,7 @@ const ChatView = (() => {
           }
           button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
           if (!ok) {
-            button.setAttribute('aria-label', '复制失败');
+            button.setAttribute('aria-label', 'Copy failed');
           }
           window.setTimeout(() => {
             const check = button.querySelector('svg');
@@ -5449,6 +5552,7 @@ const ChatView = (() => {
       commandSummary,
       fileChangeMode,
       thinkingDuration,
+      runningDuration,
       connectorDisplayName,
       shortenPath,
       webResults,
