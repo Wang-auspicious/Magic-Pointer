@@ -20,82 +20,84 @@
     allowsDetail: boolean;
   }
 
+  // Shell copy is English by default; the locale layer owns any translation.
   const STUDIO_VIEWS: readonly StudioView[] = Object.freeze([
     Object.freeze({
       id: 'personal',
-      title: '工作回顾',
-      description: '活动、文件足迹与每天的小结。',
-      eyebrow: '个人记忆',
+      title: 'Review',
+      description: 'Activity, file traces, and daily summaries.',
+      eyebrow: 'PERSONAL MEMORY',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'chat',
-      title: '对话',
-      description: '围绕刚才指过的对象继续工作。',
-      eyebrow: '进行中的工作',
+      title: 'Chat',
+      description: 'Continue working from what you just pointed at.',
+      eyebrow: 'ACTIVE WORK',
       allowsDetail: true,
     }),
     Object.freeze({
       id: 'design',
-      title: '设计',
-      description: '从项目素材、可视化画布和设计产物开始。',
-      eyebrow: '设计工作区',
+      title: 'Design',
+      description:
+        'Start from project assets, visual canvases, and design outputs.',
+      eyebrow: 'DESIGN WORKSPACE',
       allowsDetail: true,
     }),
     Object.freeze({
       id: 'stash',
-      title: '收藏箱',
-      description: '整理本地保存的截图、文字与引用。',
-      eyebrow: '本地收藏',
+      title: 'Stash',
+      description: 'Organize locally saved screenshots, text, and quotes.',
+      eyebrow: 'LOCAL STASH',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'artifacts',
-      title: '产物',
-      description: '查看、复用和导出已经生成的本地产物。',
-      eyebrow: '本地产物',
+      title: 'Artifacts',
+      description: 'View, reuse, and export generated local artifacts.',
+      eyebrow: 'LOCAL OUTPUTS',
       allowsDetail: true,
     }),
     Object.freeze({
       id: 'settings',
-      title: '设置',
-      description: '控制交互、模型、权限、隐私与外观。',
-      eyebrow: '偏好设置',
+      title: 'Settings',
+      description: 'Control interaction, models, permissions, privacy, and appearance.',
+      eyebrow: 'PREFERENCES',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'projects',
-      title: '项目',
-      description: '保存在本机的项目与对话。',
-      eyebrow: '本地项目',
+      title: 'Projects',
+      description: 'Projects and conversations saved on this machine.',
+      eyebrow: 'LOCAL PROJECTS',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'scheduled',
-      title: '定时任务',
-      description: '每天关注真实材料并生成报告。',
-      eyebrow: '定时工作',
+      title: 'Scheduled tasks',
+      description: 'Follow real materials daily and generate reports.',
+      eyebrow: 'SCHEDULED WORK',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'customize',
-      title: '自定义',
-      description: '技能、连接和本地 Harness 插件。',
-      eyebrow: '自定义',
+      title: 'Customize',
+      description: 'Skills, connections, and local harness plugins.',
+      eyebrow: 'CUSTOMIZE',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'chats',
-      title: '对话与任务',
-      description: '查看和组织本机的全部对话。',
-      eyebrow: '本地任务',
+      title: 'Chats and tasks',
+      description: 'View and organize all local conversations.',
+      eyebrow: 'LOCAL TASKS',
       allowsDetail: false,
     }),
     Object.freeze({
       id: 'designs',
-      title: '设计库',
-      description: '设计产物、素材和设计系统。',
-      eyebrow: '设计库',
+      title: 'Design',
+      description: 'Design outputs, assets, and the design system.',
+      eyebrow: 'DESIGN LIBRARY',
       allowsDetail: false,
     }),
   ]);
@@ -109,19 +111,34 @@
     return VIEW_BY_ID.has(id) ? id : 'chat';
   }
 
+  // Claude truncates window titles to 80 code points (report/20 §2.4).
+  const TITLE_MAX_CODEPOINTS = 80;
+  function truncateTitle(title: string): string {
+    const points = Array.from(String(title));
+    return points.length > TITLE_MAX_CODEPOINTS
+      ? points.slice(0, TITLE_MAX_CODEPOINTS).join('') + '…'
+      : String(title);
+  }
+
   function shellState(value: unknown) {
     const activeView = normalizeView(value);
     const view = VIEW_BY_ID.get(activeView)!;
     return Object.freeze({
       activeView,
-      title: view.title,
+      title: truncateTitle(view.title),
       description: view.description,
       eyebrow: view.eyebrow,
       allowsDetail: view.allowsDetail,
     });
   }
 
-  const StudioShell = {STUDIO_VIEWS, normalizeView, shellState};
+  const StudioShell = {
+    STUDIO_VIEWS,
+    normalizeView,
+    shellState,
+    truncateTitle,
+    TITLE_MAX_CODEPOINTS,
+  };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = StudioShell;
   }

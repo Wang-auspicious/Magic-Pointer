@@ -13,6 +13,29 @@ const ChatView = (() => {
       : typeof require === 'function'
         ? require('./chat_icons')
         : null;
+  const StudioLocaleApi =
+    typeof require === 'function' ? require('./locale') : null;
+  function lt(
+    id: string,
+    params?: Record<string, string | number>,
+  ): string {
+    if (typeof studioT === 'function') {
+      return studioT(id, params);
+    }
+    if (StudioLocaleApi && typeof StudioLocaleApi.studioT === 'function') {
+      return StudioLocaleApi.studioT(id, params);
+    }
+    return id;
+  }
+  function ltCount(id: string, count: number): string {
+    if (typeof studioTCount === 'function') {
+      return studioTCount(id, count);
+    }
+    if (StudioLocaleApi && typeof StudioLocaleApi.studioTCount === 'function') {
+      return StudioLocaleApi.studioTCount(id, count);
+    }
+    return `${count}`;
+  }
 
   interface ShimNode {
     tagName: string;
@@ -1948,7 +1971,7 @@ const ChatView = (() => {
     }
     if (diff.hidden > 0) {
       const more = h('div', {class: 'mp-chat-diff-more'});
-      attach(more, `… 还有 ${diff.hidden} 行`);
+      attach(more, ltCount('chat.more_lines', diff.hidden));
       attach(card, more);
     }
     return card;
@@ -3283,7 +3306,7 @@ const ChatView = (() => {
     const copy = h('button', {
       type: 'button',
       class: 'mp-chat-action',
-      'aria-label': '复制',
+      'aria-label': lt('chat.copy'),
     });
     copy.setAttribute('data-mp-chat-act', 'copy');
     copy.setAttribute('data-mp-chat-copy', String(message || ''));
@@ -3293,7 +3316,7 @@ const ChatView = (() => {
     const retry = h('button', {
       type: 'button',
       class: 'mp-chat-action',
-      'aria-label': '重新发送',
+      'aria-label': lt('chat.resend'),
     });
     retry.setAttribute('data-mp-chat-act', 'retry');
     retry.setAttribute('data-mp-chat-retry', String(message || ''));
@@ -3304,7 +3327,7 @@ const ChatView = (() => {
       const fork = h('button', {
         type: 'button',
         class: 'mp-chat-action',
-        'aria-label': '从这里创建分支',
+        'aria-label': lt('chat.fork_here'),
       });
       fork.setAttribute('data-mp-chat-act', 'branch');
       fork.setAttribute(
@@ -3667,7 +3690,7 @@ const ChatView = (() => {
     if (tone === 'warning') {
       title.setAttribute('data-tone', 'warning');
     }
-    attach(title, tone === 'error' ? '这一轮没有完成。' : '注意');
+    attach(title, tone === 'error' ? lt('chat.round_failed') : lt('common.notice'));
     const body = h('span', {class: 'mp-chat-turn-error-message'});
     attach(body, message);
     attach(copy, title);
@@ -4538,7 +4561,7 @@ const ChatView = (() => {
     }
 
     if (turn.failed) {
-      attach(bodyHost, turnErrorNode(turn.error || '这次没能完成。'));
+      attach(bodyHost, turnErrorNode(turn.error || lt('chat.turn_failed')));
     }
 
     if (turn.running && !turn.answer && !turn.thinking) {
@@ -5167,18 +5190,20 @@ const ChatView = (() => {
   ): string {
     const turn = String(fields.turn || '');
     const labels: Record<string, string> = {
-      runtime_boot: '准备 Agent 运行环境',
-      runtime_ready: '运行环境已就绪',
-      session_ready: '会话已就绪',
-      agent_start: '开始处理本轮任务',
-      agent_turn: turn ? `第 ${turn} 轮推理中` : '推理中',
-      model_request: turn ? `第 ${turn} 轮推理中` : '推理中',
-      model_first_chunk: '模型开始响应',
-      model_response: '整理结果',
-      budget_renewed: '继续执行下一轮',
-      permission_review_started: `Auto 正在检查 ${String(fields.name || '操作')}`,
-      permission_review_finished: 'Auto 已完成权限检查',
-      total: '本轮处理完成',
+      runtime_boot: lt('phase.runtime_boot'),
+      runtime_ready: lt('phase.runtime_ready'),
+      session_ready: lt('phase.session_ready'),
+      agent_start: lt('phase.agent_start'),
+      agent_turn: turn ? lt('phase.agent_turn', {turn}) : lt('phase.reasoning'),
+      model_request: turn ? lt('phase.agent_turn', {turn}) : lt('phase.reasoning'),
+      model_first_chunk: lt('phase.model_first_chunk'),
+      model_response: lt('phase.model_response'),
+      budget_renewed: lt('phase.budget_renewed'),
+      permission_review_started: lt('phase.review_started', {
+        name: String(fields.name || lt('phase.review_default_target')),
+      }),
+      permission_review_finished: lt('phase.review_finished'),
+      total: lt('phase.total'),
     };
     if (labels[phase]) {
       return labels[phase];
@@ -5186,9 +5211,11 @@ const ChatView = (() => {
     const normalized = phase.replace(/[_-]turn[=_]\d+$/i, '');
     if (labels[normalized]) {
       const embedded = /turn[=_](\d+)$/i.exec(phase);
-      return embedded ? `第 ${embedded[1]} 轮推理中` : labels[normalized];
+      return embedded
+        ? lt('phase.agent_turn', {turn: embedded[1]})
+        : labels[normalized];
     }
-    return phase || '处理中';
+    return phase || lt('phase.fallback');
   }
 
   function toggleDisclosure(act: HTMLElement): void {
@@ -5317,7 +5344,7 @@ const ChatView = (() => {
               check.remove();
             }
             button.appendChild(icon('copy', 16) as Element);
-            button.setAttribute('aria-label', '复制');
+            button.setAttribute('aria-label', lt('chat.copy'));
           }, 2000);
         });
       } else if (kind === 'retry') {

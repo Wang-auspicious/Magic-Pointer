@@ -63,6 +63,19 @@ const KIND_TAG: Record<string, string> = {
   片段: 'tag-amber',
 };
 
+const STASH_KIND_LABEL_IDS: Record<string, string> = {
+  灵感: 'stash.kind.inspiration',
+  交接: 'stash.kind.handoff',
+  凭证: 'stash.kind.credential',
+  素材: 'stash.kind.material',
+  片段: 'stash.kind.snippet',
+};
+
+function stashKindLabel(kind: string): string {
+  const id = STASH_KIND_LABEL_IDS[kind];
+  return id ? studioT(id) : kind;
+}
+
 const PAD = 24;
 const GAP = 16;
 const CLUSTER_GAP = 48;
@@ -140,16 +153,18 @@ async function renderStash(force = false) {
   const bursts = stashKindFilter
     ? all.filter(b => b.kind === stashKindFilter)
     : all;
-  document.getElementById('stash-count')!.textContent =
-    bursts.reduce((n, b) => n + b.items.length, 0) + ' 项';
+  document.getElementById('stash-count')!.textContent = studioTCount(
+    'count.items',
+    bursts.reduce((n, b) => n + b.items.length, 0),
+  );
   if (!bursts.length) {
     world.innerHTML = stashKindFilter
-      ? `<span class="canvas-empty">这个分类里还没有素材。</span>`
+      ? `<span class="canvas-empty">${studioT('canvas.empty_filtered')}</span>`
       : emptyStateMarkup(
           'ic-stash',
-          '画布还没有素材',
-          '划过屏幕内容、复制图片或保存引用后，它们会在这里形成可整理的视觉上下文。',
-          {label: '回到对话', view: 'chat'},
+          studioT('canvas.empty_title'),
+          studioT('canvas.empty_body'),
+          {label: studioT('canvas.empty_action'), view: 'chat'},
         );
     renderStashList([], force);
     return;
@@ -183,7 +198,7 @@ async function renderStash(force = false) {
            ${n.summary ? `<span class="node-summary">${esc(n.summary)}</span>` : ''}`
               : `<span class="node-note">${esc(n.text)}</span>`;
           return `<span class="node" data-stash-id="${esc(n.id || '')}" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${(b.cx as number) + n.x}px;top:${(b.cy as number) + n.y}px;width:${n.w}px;height:${n.h}px">
-        <span class="node-cap">${icon(b.icon)}${esc(b.time)}<span class="kind ${KIND_TAG[b.kind] || ''}">${esc(b.kind)}</span></span>
+        <span class="node-cap">${icon(b.icon)}${esc(b.time)}<span class="kind ${KIND_TAG[b.kind] || ''}">${esc(stashKindLabel(b.kind))}</span></span>
         ${body}
       </span>`;
         })
@@ -212,7 +227,10 @@ function renderStashList(laid: LaidBurst[], force = false) {
   list.innerHTML = Object.entries(byTime)
     .map(
       ([day, bs]) =>
-        `<div class="stash-day">${day}<em>· ${bs.reduce((n, b) => n + b.items.length, 0)} 项</em></div>` +
+        `<div class="stash-day">${day}<em>· ${studioTCount(
+          'count.items',
+          bs.reduce((n, b) => n + b.items.length, 0),
+        )}</em></div>` +
         bs
           .map(b =>
             b.items
@@ -221,12 +239,12 @@ function renderStashList(laid: LaidBurst[], force = false) {
         <span class="sq" style="${it.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(it.src) ? `background-image:url('file:///${cssUrl(it.src)}');background-size:cover;background-position:center` : `background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}`}"></span>
         <span class="txt">${esc(it.desc || it.text)}</span>
         <span class="src">${esc(b.app)}</span>
-        <span class="kind ${KIND_TAG[b.kind] || ''}">${esc(b.kind)}</span>
+        <span class="kind ${KIND_TAG[b.kind] || ''}">${esc(stashKindLabel(b.kind))}</span>
         <span class="t">${esc(b.time)}</span>
         <span class="stash-row-actions">
-          <button type="button" data-stash-open="${esc(it.id || '')}">打开来源</button>
-          <button type="button" data-stash-category="${esc(it.id || '')}" data-category="${esc(it.userCategory || b.kind)}">分类</button>
-          <button type="button" data-stash-remove="${esc(it.id || '')}">删除</button>
+          <button type="button" data-stash-open="${esc(it.id || '')}">${studioT('stash.open_source')}</button>
+          <button type="button" data-stash-category="${esc(it.id || '')}" data-category="${esc(it.userCategory || b.kind)}">${studioT('stash.category')}</button>
+          <button type="button" data-stash-remove="${esc(it.id || '')}">${studioT('common.delete')}</button>
         </span>
       </div>`,
               )
@@ -582,7 +600,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
     baseBranch: currentComposerBranch(),
   });
   if (!result?.ok || !result.path) {
-    const message = String(result?.error || '无法创建 worktree。');
+    const message = String(result?.error || studioT('worktree.create_failed'));
     failComposerWorktree(document.getElementById('composer-worktree'), message);
     throw new Error(message);
   }
@@ -1332,16 +1350,16 @@ const studioSubagentGlobals = (
 ).StudioSubagents!;
 
 const STUDIO_SEARCH_ROUTES = [
-  {id: 'chat', label: '新建对话', keywords: ['首页', '会话', 'new']},
+  {id: 'chat', label: studioT('search.route.new_chat'), keywords: ['首页', '会话', 'new']},
   {id: 'design', label: 'Design', keywords: ['设计', '素材', '画布']},
   {
     id: 'settings',
-    label: '自定义',
+    label: studioT('search.route.customize'),
     keywords: ['设置', '插件', '模型', '权限', 'Skills', 'MCP'],
   },
-  {id: 'changes', label: '工作树变更', keywords: ['Git', 'Review', '拉取请求']},
-  {id: 'browser', label: '项目浏览器', keywords: ['站点', '网页', 'localhost']},
-  {id: 'tasks', label: '任务', keywords: ['已安排', '后台', '运行中']},
+  {id: 'changes', label: studioT('search.route.changes'), keywords: ['Git', 'Review', '拉取请求']},
+  {id: 'browser', label: studioT('search.route.browser'), keywords: ['站点', '网页', 'localhost']},
+  {id: 'tasks', label: studioT('search.route.tasks'), keywords: ['已安排', '后台', '运行中']},
 ] as const;
 let studioSearchIndex: StudioSearchItem[] = [];
 let visibleSearchResults: StudioSearchItem[] = [];
@@ -1396,7 +1414,10 @@ function conversationNode(
     row.dataset.taskState = status;
     row.setAttribute(
       'aria-label',
-      `${String(c.title || '未命名对话')}，${statusLabel}`,
+      studioT('convo.row_title', {
+        title: String(c.title || studioT('convo.untitled')),
+        status: statusLabel,
+      }),
     );
     if (c.hasPendingWork) {
       row.dataset.pendingWork = 'true';
@@ -1405,7 +1426,7 @@ function conversationNode(
   dot.setAttribute('aria-hidden', 'true');
   const title = document.createElement('span');
   title.className = 'side-title';
-  title.textContent = String(c.title || '未命名对话');
+  title.textContent = String(c.title || studioT('convo.untitled'));
   const stateLabel = document.createElement('span');
   stateLabel.className = 'side-state-label';
   stateLabel.textContent = statusLabel;
@@ -1415,7 +1436,7 @@ function conversationNode(
   ellipsis.className = 'side-ellipsis';
   ellipsis.setAttribute('role', 'button');
   ellipsis.setAttribute('tabindex', '0');
-  ellipsis.setAttribute('aria-label', '会话操作');
+  ellipsis.setAttribute('aria-label', studioT('convo.row_actions'));
   ellipsis.dataset.sessionMenu = String(c.id || '');
   ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
@@ -1544,7 +1565,7 @@ function buildSessionMenu(c: {
     });
     const apply = (group: string | null) => {
       if (group === null) {
-        void requestStudioText('分组名称', local.group || '', 60).then(name => {
+        void requestStudioText(studioT('prompt.group_name'), local.group || '', 60).then(name => {
           if (name === null) {
             return;
           }
@@ -1787,7 +1808,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     try {
       const result = await Data.setConversationProject(id, root);
       if (!result.ok) {
-        throw new Error(result.error || '项目没有更改。');
+        throw new Error(result.error || studioT('project.no_changes'));
       }
       if (activeConversationId === id) {
         setActiveProject(
@@ -1869,11 +1890,11 @@ function requestStudioText(
       resolve(value);
     };
     const cancel = document.createElement('button');
-    cancel.textContent = '取消';
+    cancel.textContent = studioT('common.cancel');
     cancel.addEventListener('click', () => finish(null));
     const save = document.createElement('button');
     save.className = 'is-primary';
-    save.textContent = '确定';
+    save.textContent = studioT('common.confirm');
     save.addEventListener('click', () => {
       if (input.value.trim()) {
         finish(input.value.trim());
@@ -1907,11 +1928,11 @@ function openRenameDialog(id: string, currentTitle: string) {
   overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', '重命名对话');
+  overlay.setAttribute('aria-label', studioT('convo.rename_title'));
   const card = document.createElement('div');
   card.className = 'mpw-perm-confirm-card';
   const titleEl = document.createElement('b');
-  titleEl.textContent = '重命名对话';
+  titleEl.textContent = studioT('convo.rename_title');
   const input = document.createElement('input');
   input.className = 'mpw-rename-input';
   input.value = currentTitle;
@@ -1923,16 +1944,16 @@ function openRenameDialog(id: string, currentTitle: string) {
   actionsEl.className = 'mpw-perm-confirm-actions';
   const cancel = document.createElement('button');
   cancel.type = 'button';
-  cancel.textContent = '取消';
+  cancel.textContent = studioT('common.cancel');
   cancel.addEventListener('click', () => overlay.remove());
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'is-primary';
-  save.textContent = '保存';
+  save.textContent = studioT('common.save');
   const submit = async () => {
     const value = input.value.trim();
     if (!value) {
-      err.textContent = '标题不能为空。';
+      err.textContent = studioT('convo.title_empty');
       err.hidden = false;
       return;
     }
@@ -1940,8 +1961,8 @@ function openRenameDialog(id: string, currentTitle: string) {
     if (!response?.ok) {
       err.textContent =
         response?.error === 'invalid_id_or_title'
-          ? '标题无效。'
-          : '重命名失败，请重试。';
+          ? studioT('convo.title_invalid')
+          : studioT('convo.rename_failed');
       err.hidden = false;
       return;
     }
@@ -2548,7 +2569,7 @@ document
     const button = event.currentTarget as HTMLButtonElement;
     button.classList.toggle('is-on', sidebarRecentOnly);
     button.setAttribute('aria-pressed', String(sidebarRecentOnly));
-    button.title = sidebarRecentOnly ? '只看近 7 天（已启用）' : '只看最近项目';
+    button.title = sidebarRecentOnly ? studioT('sidebar.recent_on') : studioT('sidebar.recent_off');
     void renderSidebar();
   });
 
@@ -2579,7 +2600,7 @@ function railEntries(): Array<{label: string; target: HTMLElement | null}> {
       message.querySelector('.mp-chat-bubble')?.textContent || ''
     ).trim();
     entries.push({
-      label: text.split('\n')[0].slice(0, 60) || '未命名',
+      label: text.split('\n')[0].slice(0, 60) || studioT('common.untitled'),
       target: message,
     });
   }
@@ -2672,7 +2693,7 @@ function renderStreamRail() {
     label.className = 'mpw-rail-label';
     label.textContent = entry.label;
     row.append(dash, label);
-    row.setAttribute('aria-label', `跳到：${entry.label}`);
+    row.setAttribute('aria-label', studioT('convo.jump_to', {label: entry.label}));
     row.addEventListener('click', () => railScrollTo(index));
     menu.appendChild(row);
   });
@@ -2707,7 +2728,7 @@ function quotedSelection(text: string): string {
   pill.className = 'mpw-select-pill';
   pill.hidden = true;
   pill.setAttribute('role', 'toolbar');
-  pill.setAttribute('aria-label', '选中内容的操作');
+  pill.setAttribute('aria-label', studioT('composer.selection_actions'));
   const side = document.createElement('button');
   side.type = 'button';
   side.textContent = 'Start a side chat';
@@ -3067,33 +3088,42 @@ function contextCategoryRows(
   const estimates = [
     {
       kind: 'system',
-      label: '系统提示词',
+      label: usageText('usage.system_prompt'),
       value: usage.systemTokensEstimate || 0,
     },
     {
       kind: 'tools',
-      label: '工具定义',
+      label: usageText('usage.tool_definitions'),
       value: usage.toolSchemaTokensEstimate || 0,
     },
     {
       kind: 'messages',
-      label: '对话消息',
+      label: usageText('usage.messages'),
       value: usage.messageTokensEstimate || 0,
     },
     {
       kind: 'results',
-      label: '工具结果',
+      label: usageText('usage.tool_results'),
       value: usage.toolResultTokensEstimate || 0,
     },
   ].filter(row => row.value > 0);
   const sum = estimates.reduce((total, row) => total + row.value, 0);
   if (sum === 0) {
-    return [{kind: 'input', label: '请求输入', value: usage.contextTokens}];
+    return [{kind: 'input', label: usageText('usage.request_input'), value: usage.contextTokens}];
   }
   return estimates.map(row => ({
     ...row,
     value: (row.value / sum) * usage.contextTokens!,
   }));
+}
+
+/* Slice-local label lookup: snippet tests evaluate contextCategoryRows
+ * without the locale script and never assert labels. */
+function usageText(
+  id: string,
+  params?: Record<string, string | number>,
+): string {
+  return typeof studioT === 'function' ? studioT(id, params) : id;
 }
 
 function latestContextUsage(
@@ -3249,7 +3279,10 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     for (const row of latestRows) {
       const segment = el('span', `mp-usage-seg is-${row.kind}`);
       segment.setAttribute('data-kind', row.kind);
-      segment.title = `${row.label}：约 ${Math.round(row.value).toLocaleString()} tokens`;
+      segment.title = studioT('usage.segment', {
+        label: row.label,
+        value: Math.round(row.value).toLocaleString(),
+      });
       segment.style.width = usageSegmentShare(row.value, contextWindow);
       bar.append(segment);
     }
@@ -3273,7 +3306,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       ? [
           {
             kind: 'available',
-            label: '剩余空间',
+            label: studioT('usage.remaining'),
             value: Math.max(0, contextWindow - contextTokens),
           },
         ]
@@ -3411,7 +3444,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
         reported += usage?.turnsReported || 0;
       }
       const row = el('div', 'mp-usage-row');
-      row.append(el('span', 'mp-usage-row-label', '本会话费用 (USD)'));
+      row.append(el('span', 'mp-usage-row-label', studioT('usage.session_cost')));
       row.append(
         el(
           'span',
@@ -3424,7 +3457,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
         el(
           'div',
           'mp-usage-note',
-          `已计价 ${priced}/${reported} 次请求。按 DeepSeek 官方 2026-09-19 价格、缓存与峰谷时段估算；以厂家账单为准。`,
+          studioT('quota.note', {priced, reported}),
         ),
       );
     }
@@ -3435,7 +3468,10 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       el(
         'div',
         'mp-usage-note',
-        `额度更新于 ${new Date(composerQuota.fetchedAt).toLocaleTimeString()} · ${composerQuota.source}`,
+        studioT('quota.updated', {
+          time: new Date(composerQuota.fetchedAt).toLocaleTimeString(),
+          source: composerQuota.source,
+        }),
       ),
     );
   } else if (composerQuotaError) {
@@ -3455,7 +3491,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
         'mp-usage-section',
         composerQuotaPending
           ? 'Loading usage…'
-          : 'Usage · 当前服务未提供额度接口',
+          : studioT('usage.quota_unavailable'),
       ),
     );
   }
@@ -3551,10 +3587,10 @@ async function refreshFigmaConnection(poll = false) {
   if (!conversationId) {
     stopFigmaStatusPolling();
     button.disabled = true;
-    button.textContent = '连接';
+    button.textContent = studioT('figma.connect');
     delete button.dataset.documentSessionId;
     code.hidden = true;
-    status.textContent = '先打开并运行一个任务，再连接当前 Figma 文档。';
+    status.textContent = studioT('figma.need_task');
     return;
   }
   button.disabled = true;
@@ -3571,33 +3607,36 @@ async function refreshFigmaConnection(poll = false) {
     figmaPairExpiresAt = 0;
     code.hidden = true;
     button.disabled = false;
-    button.textContent = '断开';
+    button.textContent = studioT('figma.disconnect');
     button.dataset.documentSessionId = String(
       connection.documentSessionId || '',
     );
     status.textContent = [
-      String(connection.documentName || '当前文档'),
+      String(connection.documentName || studioT('figma.current_document')),
       String(connection.pageName || ''),
-      `${Array.isArray(connection.selectionIds) ? connection.selectionIds.length : 0} 个选中节点`,
+      studioTCount(
+        'count.selected_nodes',
+        Array.isArray(connection.selectionIds) ? connection.selectionIds.length : 0,
+      ),
     ]
       .filter(Boolean)
       .join(' · ');
     return;
   }
   delete button.dataset.documentSessionId;
-  button.textContent = '连接';
+  button.textContent = studioT('figma.connect');
   button.disabled = false;
   if (!result.ok) {
     status.textContent =
       result.error === 'figma_connection_requires_started_task'
-        ? '这条对话尚未产生运行时任务；先发送一次任务。'
-        : String(result.error || '暂时无法读取 Figma 连接状态。');
+        ? studioT('figma.no_task')
+        : String(result.error || studioT('figma.status_failed'));
     code.hidden = true;
     stopFigmaStatusPolling();
     return;
   }
   if (!figmaPairExpiresAt || Date.now() >= figmaPairExpiresAt) {
-    status.textContent = '尚未连接当前 Figma 文档。';
+    status.textContent = studioT('figma.not_connected');
     code.hidden = true;
     stopFigmaStatusPolling();
     return;
@@ -3624,14 +3663,14 @@ async function toggleFigmaConnection() {
       documentSessionId,
     );
     if (!result.ok) {
-      status.textContent = String(result.error || 'Figma 断开失败。');
+      status.textContent = String(result.error || studioT('figma.disconnect_failed'));
     }
     await refreshFigmaConnection();
     return;
   }
   const result = await Data.pairFigma(conversationId);
   if (!result.ok) {
-    status.textContent = String(result.error || '无法启动 Figma 配对。');
+    status.textContent = String(result.error || studioT('figma.pair_failed'));
     button.disabled = false;
     return;
   }
@@ -3639,8 +3678,8 @@ async function toggleFigmaConnection() {
   code.textContent = `${String(result.pairCode || '')} · ${String(result.baseUrl || '')}`;
   code.hidden = false;
   status.textContent = result.installableManifestBuilt
-    ? '在 Magic Pointer Figma 插件中输入这组一次性配对码。'
-    : '插件代码已构建，但本机没有 Figma 分配的真实插件 ID；请先用 Create New Plugin 建立 ID，再生成可导入 manifest。';
+    ? studioT('figma.pair_hint')
+    : studioT('figma.no_plugin_id');
   button.disabled = false;
   stopFigmaStatusPolling();
   figmaStatusTimer = window.setTimeout(() => {
@@ -3744,15 +3783,15 @@ async function refreshGlobalSearchIndex() {
 function globalSearchKindLabel(kind: StudioSearchItem['kind']): string {
   switch (kind) {
     case 'conversation':
-      return '会';
+      return studioT('search.kind.conversation');
     case 'project':
-      return '项';
+      return studioT('search.kind.project');
     case 'command':
-      return '/';
+      return studioT('search.kind.command');
     case 'skill':
-      return '技';
+      return studioT('search.kind.skill');
     case 'route':
-      return '→';
+      return studioT('search.kind.route');
   }
 }
 
@@ -3772,11 +3811,11 @@ function renderGlobalSearchResults(query: string) {
   );
   if (!query.trim()) {
     host.innerHTML =
-      '<p class="mp-global-search-empty">输入内容以搜索会话、项目、命令、Skills 和设置。</p>';
+      '<p class="mp-global-search-empty">' + studioT('search.empty_hint') + '</p>';
     return;
   }
   if (!visibleSearchResults.length) {
-    host.innerHTML = '<p class="mp-global-search-empty">没有匹配结果。</p>';
+    host.innerHTML = '<p class="mp-global-search-empty">' + studioT('search.no_results') + '</p>';
     return;
   }
   const rows = visibleSearchResults.map((item, index) => {
@@ -4041,7 +4080,7 @@ async function openConversation(id: string) {
       preview.hidden = false;
       peek.hidden = false;
       if (peekLabel) {
-        peekLabel.textContent = c.object?.label || '选区预览';
+        peekLabel.textContent = c.object?.label || studioT('composer.peek_default');
       }
     } else {
       preview.hidden = true;
@@ -4071,8 +4110,8 @@ async function openConversation(id: string) {
   if (!turns.length) {
     stream.innerHTML = emptyStateMarkup(
       'ic-message-plus',
-      '这条对话还没有内容',
-      '继续输入任务，或从屏幕上划过一个对象作为上下文。',
+      studioT('chat.empty_title'),
+      studioT('chat.empty_body'),
     );
     syncConversationPendingInput(turns);
     renderUsageMeter([]);
@@ -4094,7 +4133,7 @@ async function openConversation(id: string) {
         kind: 'prose',
         state: t.failed ? 'failed' : 'done',
         answer: t.answer || '',
-        error: t.failed ? String(t.error || '这次没能完成。') : '',
+        error: t.failed ? String(t.error || studioT('chat.turn_failed')) : '',
         steps: (t.trace || []).map(x =>
           typeof x === 'string'
             ? {label: x, state: 'done'}
@@ -4150,7 +4189,7 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
       options: options.length ? options : undefined,
     };
   } else if (pending && (pending.questions?.length || pending.question)) {
-    const question = String(pending.question || '需要你的决定');
+    const question = String(pending.question || studioT('ask.default_question'));
     const detailed = optionObjects.some(
       option => option.description || option.preview,
     );
@@ -4328,12 +4367,21 @@ function artifactGlyph(name: string, size = 'small') {
 }
 
 const ARTIFACT_KIND_LABELS: Record<string, string> = {
-  file: '文件',
-  text: '文本',
-  document_patch: '文档补丁',
-  code: '代码',
-  image: '图片',
+  file: 'File',
+  text: 'Text',
+  document_patch: 'Document patch',
+  code: 'Code',
+  image: 'Image',
 };
+
+/* Slice-local label lookup: snippet tests evaluate the artifact library
+ * range without the locale script and never assert labels. */
+function artifactText(
+  id: string,
+  params?: Record<string, string | number>,
+): string {
+  return typeof studioT === 'function' ? studioT(id, params) : id;
+}
 
 function artifactKindLabel(kind: string) {
   return ARTIFACT_KIND_LABELS[kind] || kind;
@@ -4407,7 +4455,7 @@ function artifactRowMarkup(entry: ArtifactEntry) {
   const name =
     artifactPlainLine(entry.name) ||
     artifactPlainLine(entry.summary) ||
-    '未命名产物';
+    artifactText('artifact.untitled');
   const meta = [formatTime(entry.at)].filter(Boolean).join(' · ');
   const openAttrs = entry.artifactId
     ? `data-artifact-id="${esc(entry.artifactId)}" data-artifact-conversation="${esc(entry.conversationId)}"`
@@ -4421,9 +4469,9 @@ function artifactRowMarkup(entry: ArtifactEntry) {
       <span class="mp-artifact-tile" data-kind="${esc(kind)}" aria-hidden="true">${artifactGlyph(artifactKindIcon(kind))}</span>
       <span class="mp-artifact-name">${esc(name)}</span>
       <span class="mp-artifact-meta">${esc(meta)}</span>
-    </button><details class="mp-artifact-actions"><summary aria-label="产物操作">${artifactGlyph('more-horizontal')}</summary>
-      <div class="mp-artifact-action-menu"><button type="button" ${openAttrs}>${artifactGlyph('external')}打开产物</button>
-      ${entry.conversationId ? `<button type="button" data-open="${esc(entry.conversationId)}">${artifactGlyph('composer-aux1')}查看来源对话</button>` : ''}</div>
+    </button><details class="mp-artifact-actions"><summary aria-label="${artifactText('artifact.actions')}">${artifactGlyph('more-horizontal')}</summary>
+      <div class="mp-artifact-action-menu"><button type="button" ${openAttrs}>${artifactGlyph('external')}${artifactText('artifact.open')}</button>
+      ${entry.conversationId ? `<button type="button" data-open="${esc(entry.conversationId)}">${artifactGlyph('composer-aux1')}${artifactText('artifact.view_source')}</button>` : ''}</div>
     </details></div>`;
 }
 
@@ -4478,7 +4526,7 @@ function paintArtifactToolbar(list: ArtifactEntry[]) {
   const layout = document.getElementById('artifact-layout-toggle');
   if (layout) {
     const grid = artifactLayout === 'grid';
-    const text = grid ? '切换为列表布局' : '切换为网格布局';
+    const text = grid ? artifactText('artifact.view_list') : artifactText('artifact.view_grid');
     layout.setAttribute('aria-pressed', String(grid));
     layout.setAttribute('aria-label', text);
     layout.setAttribute('title', text);
@@ -4498,13 +4546,13 @@ function paintArtifacts() {
   paintArtifactToolbar(artifactCache);
   if (!artifactCache.length) {
     host.innerHTML = artifactEmptyMarkup(
-      '还没有产物。Agent 生成并落盘的文档、代码与草稿会出现在这里。',
+      artifactText('artifact.empty'),
     );
     return;
   }
   const filtered = artifactCache.filter(artifactMatches);
   if (!filtered.length) {
-    host.innerHTML = artifactEmptyMarkup('没有匹配的产物。');
+    host.innerHTML = artifactEmptyMarkup(artifactText('artifact.no_match'));
     return;
   }
   const groups: Array<{label: string; items: ArtifactEntry[]}> = [];
@@ -4826,7 +4874,7 @@ async function loadFigmaArtifactPreview(
   } else {
     figmaArtifactPreviews.set(coordinates.key, {
       status: 'error',
-      error: String(result.error || 'Figma 节点预览不可用。'),
+      error: String(result.error || studioT('figma.preview_unavailable')),
     });
   }
   renderArtifactPatchPreview(latest);
@@ -4892,7 +4940,7 @@ async function retargetFigmaArtifact(index: number): Promise<void> {
     figmaArtifactPreviews.set(coordinates.key, {
       status: 'error',
       error: String(
-        response.error || '请先在当前 Figma 文档中选择一个可写节点。',
+        response.error || studioT('figma.pick_writable'),
       ),
     });
     renderArtifactPatchPreview(artifactEditor.state());
@@ -4942,7 +4990,7 @@ function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
     : [];
   if (!operations.length) {
     host.innerHTML =
-      '<p class="mp-inspector-empty">普通文本草稿没有外部文件修改。</p>';
+      '<p class="mp-inspector-empty">' + studioT('inspector.no_file_changes') + '</p>';
     return;
   }
   const busy = ['loading', 'saving', 'accepting', 'applying'].includes(
@@ -4963,22 +5011,22 @@ function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
         : `<div class="mp-figma-artifact-preview">
       ${
         preview?.dataUrl
-          ? `<img src="${esc(preview.dataUrl)}" alt="当前 Figma 节点 ${esc(figmaCoordinates.nodeId)} 的导出预览" />`
-          : `<p>${esc(preview?.status === 'loading' ? '正在从当前文档导出节点预览…' : preview?.error || '节点预览尚未加载。')}</p>`
+          ? `<img src="${esc(preview.dataUrl)}" alt="${esc(studioT('figma.preview_alt', {id: figmaCoordinates.nodeId}))}" />`
+          : `<p>${esc(preview?.status === 'loading' ? studioT('figma.exporting') : preview?.error || studioT('figma.preview_pending'))}</p>`
       }
       <div>
-        <button type="button" data-figma-preview-index="${index}" ${busy ? 'disabled' : ''}>刷新预览</button>
-        <button type="button" data-figma-retarget-index="${index}" ${busy ? 'disabled' : ''}>改用当前选中节点</button>
+        <button type="button" data-figma-preview-index="${index}" ${busy ? 'disabled' : ''}>${studioT('figma.refresh_preview')}</button>
+        <button type="button" data-figma-retarget-index="${index}" ${busy ? 'disabled' : ''}>${studioT('figma.use_selection')}</button>
       </div>
     </div>`;
       return `<article class="mp-artifact-change">
       <header><strong>${esc(operation.operation || 'change')}</strong><code>${esc(operation.sourceId || '')}</code></header>
       <small>${esc(locator.kind || 'locator')} · ${esc(artifactValueText(locator.value || {}))}</small>
       ${figmaPreview}
-      <pre>之前：${esc(artifactValueText(operation.before))}</pre>
-      <label>之后（实际写入值）
+      <pre>${studioT('artifact.before')}${esc(artifactValueText(operation.before))}</pre>
+      <label>${studioT('artifact.after')}
         <textarea class="mp-artifact-after-value" data-artifact-operation-index="${index}"
-          aria-label="编辑第 ${index + 1} 项实际写入值" ${busy ? 'disabled' : ''}>${esc(artifactValueText(operation.after))}</textarea>
+          aria-label="${studioT('artifact.edit_index', {index: index + 1})}" ${busy ? 'disabled' : ''}>${esc(artifactValueText(operation.after))}</textarea>
       </label>
     </article>`;
     })
@@ -5049,22 +5097,22 @@ function renderArtifactEditor() {
     status.textContent =
       state.error ||
       (state.status === 'loading'
-        ? '正在读取当前版本…'
+        ? studioT('artifact.reading_version')
         : state.status === 'saving'
-          ? '正在保存新版本…'
+          ? studioT('artifact.saving_version')
           : state.status === 'accepting'
-            ? '正在绑定批准版本…'
+            ? studioT('artifact.binding_version')
             : state.status === 'applying'
-              ? '正在写入并读回验证…'
+              ? studioT('artifact.writing_verify')
               : resultStatus === 'succeeded'
                 ? state.applyResult?.undone
-                  ? '已撤销并通过读回验证。'
-                  : '已写入并通过读回验证。'
+                  ? studioT('artifact.reverted_verified')
+                  : studioT('artifact.written_verified')
                 : state.acceptedRevision === state.revision &&
                     state.revision > 0
-                  ? '当前版本已接受，可以应用。'
+                  ? studioT('artifact.version_accepted')
                   : state.dirty
-                    ? '有尚未保存的编辑。'
+                    ? studioT('artifact.unsaved_edits')
                     : '');
     status.dataset.tone = state.error ? 'error' : 'neutral';
   }
@@ -5143,7 +5191,7 @@ document
       });
       renderArtifactEditor();
     } catch {
-      field.setCustomValidity('请输入有效的 JSON 值；无效内容不会保存。');
+      field.setCustomValidity(studioT('artifact.invalid_json'));
       field.reportValidity();
     }
   });
@@ -5206,7 +5254,7 @@ document
   ?.addEventListener('click', async () => {
     if (
       !window.confirm(
-        '撤销本次应用？只有当前内容仍与应用结果匹配的部分会恢复，创建的文件会保留。',
+        studioT('artifact.confirm_revert'),
       )
     ) {
       return;
@@ -5219,6 +5267,38 @@ document
   });
 
 let recoveryRenderGeneration = 0;
+
+/* Slice-local copy of the recovery strings: snippet tests evaluate this
+ * range without the locale script, and one frozen test pins the Chinese
+ * fallback text. In the studio page this delegates to studioT. */
+const RECOVERY_TEXT_ZH: Record<string, string> = {
+  'recovery.no_record':
+    '找不到此任务的运行记录，暂时无法核对执行恢复状态。已保存的对话仍可查看。',
+  'recovery.read_failed': '无法读取执行恢复状态：{error}',
+  'recovery.pending_title': '待核对 · {title}',
+  'recovery.pick_readback': '选择用于核对的读取记录',
+  'recovery.read_first': '请先让 Agent 读取目标并核对现场，再允许重新执行。',
+  'task.allow_after_verify': '核对后允许重新执行',
+  'task.confirm_allow': '确认已核对显示的读回内容，并允许重新执行这项操作？',
+  'recovery.failed': '恢复失败',
+  'common.unknown_error': '未知错误',
+};
+
+function recoveryText(
+  id: string,
+  params?: Record<string, string | number>,
+): string {
+  if (typeof studioT === 'function') {
+    return studioT(id, params);
+  }
+  let out = RECOVERY_TEXT_ZH[id] ?? id;
+  if (params) {
+    for (const key of Object.keys(params)) {
+      out = out.split(`{${key}}`).join(String(params[key]));
+    }
+  }
+  return out;
+}
 async function renderConversationRecovery(
   conversationId: string,
 ): Promise<void> {
@@ -5250,8 +5330,10 @@ async function renderConversationRecovery(
     const message = document.createElement('p');
     message.textContent =
       response.error === 'session_not_found'
-        ? '找不到此任务的运行记录，暂时无法核对执行恢复状态。已保存的对话仍可查看。'
-        : `无法读取执行恢复状态：${String(response.error || '未知错误')}`;
+        ? recoveryText('recovery.no_record')
+        : recoveryText('recovery.read_failed', {
+            error: String(response.error || recoveryText('common.unknown_error')),
+          });
     host.appendChild(message);
     host.hidden = false;
     return;
@@ -5270,14 +5352,16 @@ async function renderConversationRecovery(
       String(operation.tool || ''),
       JSON.stringify(operation.arguments || {}),
     );
-    title.textContent = `待核对 · ${label.title}${label.summary ? ` · ${label.summary}` : ''}`;
+    title.textContent = label.summary
+      ? `${recoveryText('recovery.pending_title', {title: label.title})} · ${label.summary}`
+      : recoveryText('recovery.pending_title', {title: label.title});
     const details = document.createElement('pre');
     details.textContent = JSON.stringify(operation.arguments, null, 2);
     const candidates = Array.isArray(operation.verificationCandidates)
       ? operation.verificationCandidates
       : [];
     const select = document.createElement('select');
-    select.setAttribute('aria-label', '选择用于核对的读取记录');
+    select.setAttribute('aria-label', recoveryText('recovery.pick_readback'));
     candidates.forEach((candidate: any, index: number) => {
       const option = document.createElement('option');
       option.value = String(index);
@@ -5293,18 +5377,18 @@ async function renderConversationRecovery(
             null,
             2,
           )
-        : '请先让 Agent 读取目标并核对现场，再允许重新执行。';
+        : recoveryText('recovery.read_first');
     };
     select.addEventListener('change', showReadback);
     showReadback();
     const allow = document.createElement('button');
-    allow.textContent = '核对后允许重新执行';
+    allow.textContent = recoveryText('task.allow_after_verify');
     allow.disabled = !candidates.length;
     allow.addEventListener('click', async () => {
       const candidate = candidates[Number(select.value) || 0];
       if (
         !candidate ||
-        !window.confirm('确认已核对显示的读回内容，并允许重新执行这项操作？')
+        !window.confirm(recoveryText('task.confirm_allow'))
       ) {
         return;
       }
@@ -5319,7 +5403,7 @@ async function renderConversationRecovery(
       if (result.ok) {
         await renderConversationRecovery(conversationId);
       } else {
-        readback.textContent = String(result.error || '恢复失败');
+        readback.textContent = String(result.error || recoveryText('recovery.failed'));
         allow.disabled = false;
       }
     });
@@ -5978,7 +6062,7 @@ function applyTheme(theme: 'light' | 'dark') {
   if (toggle) {
     toggle.setAttribute(
       'aria-label',
-      theme === 'dark' ? '切换到浅色主题' : '切换到深色主题',
+      theme === 'dark' ? studioT('theme.to_light') : studioT('theme.to_dark'),
     );
   }
 }
@@ -6031,7 +6115,7 @@ function toggleAnimatedTheme(origin?: {x: number; y: number}) {
   use?.setAttribute('href', current === 'dark' ? '#ic-sun' : '#ic-moon');
   button?.setAttribute(
     'aria-label',
-    current === 'dark' ? '切换到浅色主题' : '切换到深色主题',
+    current === 'dark' ? studioT('theme.to_light') : studioT('theme.to_dark'),
   );
   button?.addEventListener('click', () => {
     const rect = button.getBoundingClientRect();
@@ -6059,7 +6143,7 @@ function openInformationDialog(title: string, detail: string) {
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'is-primary';
-  close.textContent = '完成';
+  close.textContent = studioT('common.done');
   close.addEventListener('click', () => overlay.remove());
   actions.appendChild(close);
   card.append(heading, body, actions);
@@ -6131,15 +6215,15 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   }
   if (command === 'shortcuts') {
     openInformationDialog(
-      '键盘快捷键',
-      'Ctrl+N  新建对话\nCtrl+O  打开项目\nCtrl+B  切换侧栏\nCtrl+Shift+B  切换项目面板\nCtrl+J  切换底部面板\nCtrl+,  设置\nCtrl+/  快捷键',
+      studioT('shortcuts.title'),
+      studioT('shortcuts.body'),
     );
     return;
   }
   if (command === 'about') {
     const result = await Data.windowCommand('about');
     openInformationDialog(
-      '关于',
+      studioT('help.about'),
       `Magic Pointer ${result.version || ''}\nElectron ${result.electron || ''}\nChromium ${result.chrome || ''}`,
     );
     return;
@@ -6512,9 +6596,9 @@ function renderSidebarLayout(): void {
   }
   const button = document.getElementById('sidebar-toggle');
   button?.setAttribute('aria-expanded', String(visible));
-  button?.setAttribute('aria-label', visible ? '折叠侧栏' : '展开侧栏');
+  button?.setAttribute('aria-label', visible ? studioT('sidebar.collapse') : studioT('sidebar.expand'));
   if (button instanceof HTMLElement) {
-    button.title = visible ? '折叠侧栏' : '展开侧栏';
+    button.title = visible ? studioT('sidebar.collapse') : studioT('sidebar.expand');
   }
 }
 
@@ -7249,7 +7333,7 @@ function renderProjectFileTree() {
   if (!roots.length) {
     const empty = document.createElement('p');
     empty.className = 'mp-inspector-empty';
-    empty.textContent = query ? '没有匹配文件。' : '项目中没有可显示的文件。';
+    empty.textContent = query ? studioT('files.no_match') : studioT('files.empty_project');
     roots.push(empty);
   }
   host.replaceChildren(...roots);
@@ -7257,12 +7341,12 @@ function renderProjectFileTree() {
 
 async function loadProjectDirectory(relativePath = '') {
   if (!activeProjectRoot) {
-    inspectorError('请先打开项目。');
+    inspectorError(studioT('project.open_first'));
     return;
   }
   const response = await Data.projectTree(activeProjectRoot, relativePath);
   if (!response?.ok) {
-    inspectorError(response?.error || '文件树读取失败。');
+    inspectorError(response?.error || studioT('files.tree_failed'));
     return;
   }
   projectTreeCache.set(relativePath, response.entries || []);
@@ -7294,7 +7378,7 @@ async function refreshProjectInspector() {
   if (activeProjectRoot) {
     await loadProjectDirectory('');
   } else {
-    inspectorError('请先打开项目。');
+    inspectorError(studioT('project.open_first'));
   }
   if (activeInspectorTab === 'changes') {
     await renderProjectChanges();
@@ -7372,7 +7456,7 @@ async function selectProjectFile(
   selectedProjectFile = relativePath;
   selectedProjectFileText = response?.ok
     ? String(response.text || '')
-    : String(response?.error || '文件读取失败。');
+    : String(response?.error || studioT('files.read_failed'));
   selectedProjectPreview =
     response?.ok && response.kind === 'document'
       ? {
@@ -7412,7 +7496,7 @@ async function selectProjectFile(
     inspectorTitle.textContent = 'File';
   }
   if (name) {
-    name.textContent = relativePath + (response?.truncated ? ' · 已截断' : '');
+    name.textContent = relativePath + (response?.truncated ? studioT('files.truncated') : '');
   }
   renderSelectedProjectFile();
   renderProjectFileTree();
@@ -7438,7 +7522,7 @@ async function _renderMagicBrain(force = false) {
   }
   const projectName =
     activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean).pop() ||
-    '当前项目';
+    studioT('project.current');
   const project = document.getElementById('magic-brain-project');
   if (project) {
     project.textContent = projectName;
@@ -7455,19 +7539,19 @@ async function _renderMagicBrain(force = false) {
   if (!activeProjectRoot) {
     projectEnvironment = null;
     document.getElementById('magic-brain-changes-detail')!.textContent =
-      '请先打开项目';
+      studioT('project.open_first_bare');
     document.getElementById('magic-brain-branch-name')!.textContent =
-      'Git 分支';
+      studioT('git.branch');
     document.getElementById('magic-brain-branch-detail')!.textContent =
-      '没有项目环境';
+      studioT('project.no_env');
     const sourceHost = document.getElementById('magic-brain-source-list')!;
     const materialNodes = magicBrainMaterialNodes();
     if (materialNodes.length) {
       sourceHost.replaceChildren(...materialNodes);
     } else {
       sourceHost.innerHTML = activeConversationId
-        ? '<p>当前任务还没有材料；可连接 Figma 或添加本机文件。</p>'
-        : '<p>启动任务后可连接 Figma 或添加本机材料。</p>';
+        ? '<p>' + studioT('materials.empty_task') + '</p>'
+        : '<p>' + studioT('materials.empty_started') + '</p>';
     }
     void refreshFigmaConnection();
     return;
@@ -7476,9 +7560,9 @@ async function _renderMagicBrain(force = false) {
     return;
   }
   document.getElementById('magic-brain-changes-detail')!.textContent =
-    '正在读取…';
+    studioT('common.loading');
   document.getElementById('magic-brain-branch-detail')!.textContent =
-    '正在读取…';
+    studioT('common.loading');
   const response = await Data.projectEnvironment(
     activeProjectRoot,
     activeConversationId,
@@ -7491,23 +7575,23 @@ async function _renderMagicBrain(force = false) {
   document.getElementById('magic-brain-changes-detail')!.textContent =
     response.ok
       ? changes
-        ? `${changes} 个文件 · +${added} −${deleted}`
-        : '工作树干净'
-      : String(response.error || '读取失败');
+        ? studioTCount('count.git_files', changes, {added, deleted})
+        : studioT('git.clean')
+      : String(response.error || studioT('git.read_failed'));
   document.getElementById('magic-brain-branch-name')!.textContent =
-    response.branch || (response.isGit ? 'Git 仓库' : '未初始化 Git');
+    response.branch || (response.isGit ? studioT('git.repo') : studioT('git.not_init'));
   const sync: string[] = [];
   if (response.upstream) {
     sync.push(response.upstream);
   }
   if (response.ahead) {
-    sync.push(`领先 ${response.ahead}`);
+    sync.push(studioT('git.ahead', {n: response.ahead}));
   }
   if (response.behind) {
-    sync.push(`落后 ${response.behind}`);
+    sync.push(studioT('git.behind', {n: response.behind}));
   }
   document.getElementById('magic-brain-branch-detail')!.textContent =
-    sync.join(' · ') || (response.remoteUrl ? '已连接远程仓库' : '仅本地项目');
+    sync.join(' · ') || (response.remoteUrl ? studioT('git.remote_connected') : studioT('git.local_only'));
   const sourceHost = document.getElementById('magic-brain-source-list');
   if (!sourceHost) {
     return;
@@ -7538,7 +7622,7 @@ async function _renderMagicBrain(force = false) {
     }),
   );
   if (!sources.length && !materialNodes.length) {
-    sourceHost.innerHTML = '<p>当前任务尚无材料或网页来源。</p>';
+    sourceHost.innerHTML = '<p>' + studioT('materials.empty_sources') + '</p>';
   }
 }
 
@@ -7601,25 +7685,28 @@ async function renderProjectChanges() {
     return;
   }
   if (!activeProjectRoot) {
-    host.innerHTML = '<p class="mp-inspector-empty">请先打开项目。</p>';
+    host.innerHTML = '<p class="mp-inspector-empty">' + studioT('project.open_first') + '</p>';
     return;
   }
-  host.innerHTML = '<p class="mp-inspector-empty">正在读取 Git 工作树…</p>';
+  host.innerHTML = '<p class="mp-inspector-empty">' + studioT('git.reading') + '</p>';
   const response = await Data.projectEnvironment(
     activeProjectRoot,
     activeConversationId,
   );
   projectEnvironment = response;
   if (!response.ok) {
-    host.innerHTML = `<p class="mp-inspector-empty">${esc(response.error || 'Git 环境读取失败。')}</p>`;
+    host.innerHTML = `<p class="mp-inspector-empty">${esc(response.error || studioT('git.env_failed'))}</p>`;
     return;
   }
   const header = document.createElement('header');
   header.className = 'mp-changes-header';
   const branch = document.createElement('span');
-  branch.innerHTML = `${icon('ic-branch', 'codex-icon')}<strong>${esc(response.branch || '本地项目')}</strong>`;
+  branch.innerHTML = `${icon('ic-branch', 'codex-icon')}<strong>${esc(response.branch || studioT('project.local'))}</strong>`;
   const count = document.createElement('small');
-  count.textContent = `${Number(response.changedFiles || 0)} 个变更 · +${Number(response.addedLines || 0)} −${Number(response.deletedLines || 0)}`;
+  count.textContent = studioTCount('count.git_changed', Number(response.changedFiles || 0), {
+    added: Number(response.addedLines || 0),
+    deleted: Number(response.deletedLines || 0),
+  });
   header.append(branch, count);
   const list = document.createElement('div');
   list.className = 'mp-change-list';
@@ -7629,11 +7716,11 @@ async function renderProjectChanges() {
     button.className = 'mp-change-row';
     button.dataset.changePath = change.path;
     button.style.setProperty('--item-index', String(index));
-    button.innerHTML = `<span class="mp-change-status">${esc(change.status || 'M')}</span><span>${esc(change.path)}</span>${change.staged ? '<small>已暂存</small>' : ''}`;
+    button.innerHTML = `<span class="mp-change-status">${esc(change.status || 'M')}</span><span>${esc(change.path)}</span>${change.staged ? `<small>${studioT('git.staged')}</small>` : ''}`;
     list.appendChild(button);
   }
   if (!list.childElementCount) {
-    list.innerHTML = '<p class="mp-inspector-empty">工作树干净。</p>';
+    list.innerHTML = '<p class="mp-inspector-empty">' + studioT('git.clean_sentence') + '</p>';
   }
   host.replaceChildren(header, list);
 }
@@ -7719,8 +7806,8 @@ function renderBrowserViewState(state: MagicPointerBrowserViewState) {
     forward.disabled = !state.canGoForward;
   }
   if (reload) {
-    reload.setAttribute('aria-label', state.loading ? '停止加载' : '重新加载');
-    reload.setAttribute('title', state.loading ? '停止加载' : '重新加载');
+    reload.setAttribute('aria-label', state.loading ? studioT('browser.stop_loading') : studioT('browser.reload'));
+    reload.setAttribute('title', state.loading ? studioT('browser.stop_loading') : studioT('browser.reload'));
   }
   if (state.title) {
     document
@@ -7789,7 +7876,7 @@ async function openProjectBrowser(
     empty.hidden = false;
     const message = empty.querySelector('p');
     if (message) {
-      message.textContent = String(response?.error || '网页打开失败。');
+      message.textContent = String(response?.error || studioT('browser.open_failed'));
     }
   }
 }
@@ -7879,14 +7966,14 @@ function subagentStatusLabel(status: string): string {
 }
 
 function subagentResumeText(task: StudioSubagentTask): string {
-  const continueInstruction = `在输入框发送“继续原后台任务（ID：${task.id}），不要新建任务”。`;
+  const continueInstruction = studioT('task.continue_instruction', {id: task.id});
   if (task.pendingInput) {
-    return `后台任务已中断。当前审批答复只会保存，不会执行旧动作；答复后仍需恢复任务。${continueInstruction}`;
+    return studioT('task.interrupted_note', {instruction: continueInstruction});
   }
   if (task.answerSaved) {
-    return `审批答复已保存，后台任务尚未恢复执行。${continueInstruction}`;
+    return studioT('task.saved_not_resumed', {instruction: continueInstruction});
   }
-  return `后台任务已中断，尚未继续。${continueInstruction}`;
+  return studioT('task.interrupted_idle', {instruction: continueInstruction});
 }
 
 function currentSubagentTasks() {
@@ -8577,7 +8664,7 @@ function syncInspectorGeometry() {
   maximize?.setAttribute('aria-pressed', String(inspectorState.maximized));
   maximize?.setAttribute(
     'aria-label',
-    inspectorState.maximized ? '还原任务面板' : '展开任务面板',
+    inspectorState.maximized ? studioT('tasks.collapse') : studioT('tasks.expand'),
   );
   try {
     localStorage.setItem(
@@ -8624,7 +8711,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
     inspectorTitle.textContent =
       (
         {
-          activity: '对话记录',
+          activity: studioT('activity.log'),
           materials: 'Materials',
           files: 'Files',
           browser: 'Browser',
@@ -9053,12 +9140,12 @@ async function runTerminalCommand(command: string) {
       activeTerminalRelativeDirectory,
     );
     if (!started.ok) {
-      throw new Error(started.error || '终端启动失败。');
+      throw new Error(started.error || studioT('terminal.start_failed'));
     }
     appendTerminalOutput(`\n> ${command}\n`);
     const written = await Data.writeProjectTerminal(command);
     if (!written.ok) {
-      throw new Error(written.error || '终端输入失败。');
+      throw new Error(written.error || studioT('terminal.write_failed'));
     }
   } catch (error) {
     appendTerminalOutput(
@@ -9194,15 +9281,15 @@ function renderPluginDirectory() {
       .includes(query),
   );
   document.getElementById('plugin-directory-kind-label')!.textContent =
-    pluginDirectoryKind === 'skills' ? '已安装技能' : '可用命令';
+    pluginDirectoryKind === 'skills' ? studioT('directory.installed_skills') : studioT('directory.available_commands');
   document.getElementById('plugin-directory-count')!.textContent =
-    `${filtered.length} 项`;
+    studioTCount('count.items', filtered.length);
   host.replaceChildren(
     ...filtered.map(entry => {
       const card = document.createElement('button');
       card.type = 'button';
       card.className = 'mp-directory-card';
-      card.innerHTML = `<strong>/${esc(entry.name)}</strong><p>${esc(entry.description || entry.whenToUse || '可在 Composer 中调用。')}</p><small>${esc(entry.source || entry.path || 'Magic Pointer')}</small>`;
+      card.innerHTML = `<strong>/${esc(entry.name)}</strong><p>${esc(entry.description || entry.whenToUse || studioT('directory.composer_hint'))}</p><small>${esc(entry.source || entry.path || 'Magic Pointer')}</small>`;
       card.addEventListener('click', () => {
         insertSlashToken(entry.name);
         closePluginDirectory();
@@ -9212,7 +9299,7 @@ function renderPluginDirectory() {
     }),
   );
   if (!filtered.length) {
-    host.innerHTML = '<p class="mp-inspector-empty">没有匹配项目。</p>';
+    host.innerHTML = '<p class="mp-inspector-empty">' + studioT('directory.no_projects') + '</p>';
   }
 }
 
@@ -9225,7 +9312,7 @@ async function openPluginDirectory() {
   document.getElementById('nav-plugins')?.classList.add('is-on');
   const host = document.getElementById('plugin-directory-list');
   if (host) {
-    host.innerHTML = '<p class="mp-inspector-empty">正在读取目录…</p>';
+    host.innerHTML = '<p class="mp-inspector-empty">' + studioT('directory.loading') + '</p>';
   }
   pluginDirectoryCatalog = await Data.slashDirectory();
   renderPluginDirectory();
@@ -9458,7 +9545,7 @@ document.addEventListener('click', e => {
       if (result.ok) {
         await renderStash(true);
       } else if (!result.canceled) {
-        window.alert(String(result.error || '文件没有加入收藏。'));
+        window.alert(String(result.error || studioT('stash.save_file_failed')));
       }
     })();
     return;
@@ -9466,11 +9553,11 @@ document.addEventListener('click', e => {
 
   if (target.closest('#stash-add-note')) {
     void (async () => {
-      const text = await requestStudioText('写下要收藏的笔记');
+      const text = await requestStudioText(studioT('stash.note_prompt'));
       if (!text?.trim()) {
         return;
       }
-      const category = await requestStudioText('分类', '笔记', 100);
+      const category = await requestStudioText(studioT('stash.category'), studioT('stash.note_default'), 100);
       if (category === null) {
         return;
       }
@@ -9478,7 +9565,7 @@ document.addEventListener('click', e => {
       if (result.ok) {
         await renderStash(true);
       } else {
-        window.alert(String(result.error || '笔记没有加入收藏。'));
+        window.alert(String(result.error || studioT('stash.note_failed')));
       }
     })();
     return;
@@ -9494,10 +9581,13 @@ document.addEventListener('click', e => {
         const at = Number(result.sourceTimeMs);
         const when =
           Number.isFinite(at) && at > 0
-            ? `（来源时间：${new Date(at).toLocaleString()}）`
+            ? studioT('stash.source_time', {
+                time: new Date(at).toLocaleString(),
+              })
             : '';
         window.alert(
-          `原应用或文件当前不可达${when}。${result.error ? `\n${result.error}` : ''}`,
+          studioT('stash.unreachable', {when}) +
+            (result.error ? `\n${result.error}` : ''),
         );
       }
     })();
@@ -9508,7 +9598,7 @@ document.addEventListener('click', e => {
   if (stashCategory?.dataset.stashCategory) {
     void (async () => {
       const category = await requestStudioText(
-        '修改分类',
+        studioT('stash.edit_category'),
         stashCategory.dataset.category || '',
         100,
       );
@@ -9522,7 +9612,7 @@ document.addEventListener('click', e => {
       if (result.ok) {
         await renderStash(true);
       } else {
-        window.alert(String(result.error || '分类没有更新。'));
+        window.alert(String(result.error || studioT('stash.category_failed')));
       }
     })();
     return;
@@ -9530,7 +9620,7 @@ document.addEventListener('click', e => {
 
   const stashRemove = target.closest<HTMLElement>('[data-stash-remove]');
   if (stashRemove?.dataset.stashRemove) {
-    if (!window.confirm('删除这条收藏？原始文件不会被删除。')) {
+    if (!window.confirm(studioT('stash.confirm_delete'))) {
       return;
     }
     void (async () => {
@@ -9540,7 +9630,7 @@ document.addEventListener('click', e => {
       if (result.ok) {
         await renderStash(true);
       } else {
-        window.alert(String(result.error || '收藏没有删除。'));
+        window.alert(String(result.error || studioT('stash.delete_failed')));
       }
     })();
     return;
@@ -9708,21 +9798,21 @@ function renderSlashRows(filter: string) {
   if (commands.length) {
     const head = document.createElement('div');
     head.className = 'mpw-slash-group';
-    head.textContent = '命令';
+    head.textContent = studioT('directory.commands');
     nodes.push(head, ...commands.map(e => slashRow(e, 'command')));
   }
   if (skills.length) {
     const head = document.createElement('div');
     head.className = 'mpw-slash-group';
-    head.textContent = '技能';
+    head.textContent = studioT('directory.skills');
     nodes.push(head, ...skills.map(e => slashRow(e, 'skill')));
   }
   if (!nodes.length) {
     const empty = document.createElement('div');
     empty.className = 'mpw-slash-empty';
     empty.textContent = slashDirectoryLoaded
-      ? '没有匹配的命令或技能。'
-      : '目录不可用（本机未接入桥）。';
+      ? studioT('directory.no_match')
+      : studioT('directory.unavailable');
     nodes.push(empty);
   }
   host.replaceChildren(...nodes);
@@ -9782,7 +9872,7 @@ async function openSlashMenu(inlineFilter?: string) {
     }
     const loading = document.createElement('div');
     loading.className = 'mpw-slash-empty';
-    loading.textContent = '正在加载目录…';
+    loading.textContent = studioT('directory.loading');
     if (rows) {
       rows.appendChild(loading);
     }
@@ -10232,7 +10322,7 @@ function renderTaskMaterials() {
   const sources = activeTaskContext?.sources || [];
   if (!sources.length) {
     host.innerHTML =
-      '<p class="mp-inspector-empty">当前任务还没有材料。用 + 加入文件，或在屏幕上指向内容。</p>';
+      '<p class="mp-inspector-empty">' + studioT('materials.empty_plus') + '</p>';
     detail.hidden = true;
     detail.replaceChildren();
     return;
@@ -10289,13 +10379,26 @@ function renderTaskMaterials() {
   const sourceId = document.createElement('code');
   sourceId.textContent = selected.sourceId;
   const scope = document.createElement('p');
-  scope.textContent = `可用能力：${selected.capabilities.join('、') || '无'}`;
+  scope.textContent = studioT('materials.capabilities', {
+    caps:
+      selected.capabilities.join(getStudioLanguage() === 'zh-CN' ? '、' : ', ') ||
+      studioT('common.none'),
+  });
   const provenance = document.createElement('pre');
   provenance.textContent = JSON.stringify(selected.identity, null, 2);
   const referenceSummary = document.createElement('p');
+  const referenceSeparator = getStudioLanguage() === 'zh-CN' ? '，' : ', ';
   referenceSummary.textContent = references.length
-    ? `引用：${references.map(reference => `${reference.label}（${reference.role}）`).join('，')}`
-    : '当前没有局部引用。';
+    ? studioT('materials.refs', {
+        text: references
+          .map(reference =>
+            getStudioLanguage() === 'zh-CN'
+              ? `${reference.label}（${reference.role}）`
+              : `${reference.label} (${reference.role})`,
+          )
+          .join(referenceSeparator),
+      })
+    : studioT('materials.no_refs');
   detail.replaceChildren(title, sourceId, scope, referenceSummary, provenance);
   if (selected.identity.absolutePath && activeConversationId) {
     const conversationId = activeConversationId;
@@ -10303,22 +10406,22 @@ function renderTaskMaterials() {
     controls.className = 'mp-material-watch';
     const task = document.createElement('input');
     task.className = 'mpw-rename-input';
-    task.value = '核对材料变化，生成更新草稿。';
+    task.value = studioT('watch.default_task');
     task.maxLength = 4000;
-    task.setAttribute('aria-label', '材料关注任务');
+    task.setAttribute('aria-label', studioT('watch.task_label'));
     const cadence = document.createElement('select');
-    cadence.setAttribute('aria-label', '关注时机');
+    cadence.setAttribute('aria-label', studioT('watch.cadence_label'));
     cadence.innerHTML =
-      '<option value="filesystem">材料变化时</option><option value="daily">每天此时</option>';
+      '<option value="filesystem">' + studioT('watch.on_change') + '</option><option value="daily">' + studioT('watch.daily') + '</option>';
     const follow = document.createElement('button');
     follow.type = 'button';
-    follow.textContent = '关注此材料';
+    follow.textContent = studioT('watch.follow');
     const stop = document.createElement('button');
     stop.type = 'button';
-    stop.textContent = '停止关注';
+    stop.textContent = studioT('watch.unfollow');
     stop.hidden = true;
     const status = document.createElement('p');
-    status.textContent = '应用运行时核对所选材料，结果出现在普通任务中。';
+    status.textContent = studioT('watch.hint');
     const update = async (action: string) => {
       follow.disabled = stop.disabled = true;
       try {
@@ -10333,27 +10436,29 @@ function renderTaskMaterials() {
           return;
         }
         if (!result.ok) {
-          status.textContent = String(result.error || '关注设置未保存。');
+          status.textContent = String(result.error || studioT('watch.save_failed'));
           return;
         }
         const tracker = result.tracker;
         stop.hidden = tracker?.enabled !== true;
-        follow.textContent = tracker?.enabled ? '更新关注' : '关注此材料';
+        follow.textContent = tracker?.enabled ? studioT('watch.update') : studioT('watch.follow');
         if (tracker) {
           task.value = tracker.task;
           cadence.value =
             tracker.trigger.kind === 'schedule' ? 'daily' : 'filesystem';
           status.textContent = tracker.enabled
-            ? '正在关注此材料；结果出现在普通任务中。'
-            : '已停止关注。';
+            ? studioT('watch.active')
+            : studioT('watch.stopped');
           if (tracker.lastRun) {
             status.textContent += tracker.lastRun.ok
-              ? ' 上次已生成草稿。'
-              : ` 上次未完成：${tracker.lastRun.error || '请查看任务结果'}`;
+              ? studioT('watch.draft_ready')
+              : studioT('watch.last_incomplete', {
+                  error: tracker.lastRun.error || studioT('watch.see_result'),
+                });
           }
         }
       } catch (error) {
-        status.textContent = `关注设置未保存：${String(error)}`;
+        status.textContent = studioT('watch.save_error', {error: String(error)});
       } finally {
         follow.disabled = stop.disabled = false;
       }
@@ -10388,7 +10493,10 @@ function renderComposerMaterials() {
       name.textContent = source.title;
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.setAttribute('aria-label', `不在下一步使用 ${source.title}`);
+      remove.setAttribute(
+        'aria-label',
+        studioT('watch.remove_source', {title: source.title}),
+      );
       remove.innerHTML = '<svg aria-hidden="true"><use href="#ic-x" /></svg>';
       remove.addEventListener('click', () =>
         selectTaskMaterial(source.sourceId),
@@ -10452,7 +10560,10 @@ function renderComposerAttachments() {
         filePath;
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.setAttribute('aria-label', `移除 ${name.textContent}`);
+      remove.setAttribute(
+        'aria-label',
+        studioT('common.remove_named', {name: String(name.textContent || '')}),
+      );
       remove.innerHTML = '<svg aria-hidden="true"><use href="#ic-x" /></svg>';
       remove.addEventListener('click', () => {
         composerAttachments = composerAttachments.filter(
@@ -10551,7 +10662,7 @@ async function selectComposerPermission(
   renderPermissionChip();
   if (!result.ok) {
     const menu = document.getElementById('composer-permission-menu');
-    menu?.replaceChildren(modelMenuNote(result.error || '切换失败。'));
+    menu?.replaceChildren(modelMenuNote(result.error || studioT('common.switch_failed')));
     positionAnchoredPopover('composer-permission-menu', 'composer-permission');
   }
 }
@@ -10655,18 +10766,18 @@ function confirmFullAccess() {
   const box = document.createElement('input');
   box.type = 'checkbox';
   const ackText = document.createElement('span');
-  ackText.textContent = '我已了解风险，并愿意继续';
+  ackText.textContent = studioT('risk.ack');
   ackRow.append(box, ackText);
   const actions = document.createElement('div');
   actions.className = 'mpw-perm-confirm-actions';
   const cancel = document.createElement('button');
   cancel.type = 'button';
-  cancel.textContent = '取消';
+  cancel.textContent = studioT('common.cancel');
   cancel.addEventListener('click', () => overlay.remove());
   const enable = document.createElement('button');
   enable.type = 'button';
   enable.className = 'is-primary';
-  enable.textContent = '启用 Full access';
+  enable.textContent = studioT('risk.enable_full');
   enable.disabled = true;
   box.addEventListener('change', () => {
     enable.disabled = !box.checked;
@@ -10835,7 +10946,7 @@ function renderPermissionAsk() {
         (pendingAskInput
           ? [
               {
-                question: pendingAskInput.question || '需要你的决定',
+                question: pendingAskInput.question || studioT('ask.default_question'),
                 options: (pendingAskInput.options || []).map(label => ({
                   label,
                 })),
@@ -10857,7 +10968,7 @@ async function respondToPendingInput(
   const host = document.getElementById('composer-permission-ask');
   if (studioComposerBusy || pendingConversation || externalConversationRun) {
     if (host) {
-      DecisionCard.pending(host, false, '任务状态正在更新，请稍后重试。');
+      DecisionCard.pending(host, false, studioT('task.updating'));
     }
     return;
   }
@@ -10868,7 +10979,7 @@ async function respondToPendingInput(
     DecisionCard.pending(
       host,
       false,
-      '无法找到这条请求的执行记录。请重新打开任务后重试。',
+      studioT('task.record_missing'),
     );
     return;
   }
@@ -10877,7 +10988,7 @@ async function respondToPendingInput(
     `.mp-chat-flow-item[data-turn-index="${turnIndex}"]`,
   );
   if (!body) {
-    DecisionCard.pending(host, false, '无法找到当前任务。请重新打开后重试。');
+    DecisionCard.pending(host, false, studioT('task.current_missing'));
     return;
   }
   const requestToken = `response-${Date.now()}-${++studioTaskInputSequence}`;
@@ -10925,7 +11036,7 @@ async function respondToPendingInput(
       DecisionCard.pending(
         host,
         false,
-        String(result.error || '未能保存这次回答，请重试。'),
+        String(result.error || studioT('ask.save_failed')),
       );
       return;
     }
@@ -11146,7 +11257,7 @@ function renderComposerModel() {
     ensureComposerQuota();
   }
   if (label) {
-    label.textContent = current || '默认模型';
+    label.textContent = current || studioT('model.default');
   }
   btn?.removeAttribute('title');
   renderUsageMeter(activeConversationTurns as MagicPointerTurn[]);
@@ -11180,7 +11291,7 @@ async function openModelMenu() {
       return;
     }
     menu.replaceChildren(
-      modelMenuNote('模型目录不可用（本机未接入 Electron 桥）。'),
+      modelMenuNote(studioT('model.dir_unavailable')),
     );
     return;
   }
@@ -11428,7 +11539,7 @@ function modelMenuRows(
   catalog: MagicPointerModelCatalog | null,
 ): HTMLElement[] {
   if (!catalog) {
-    return [modelMenuNote('正在读取模型…')];
+    return [modelMenuNote(studioT('model.loading'))];
   }
   const rows: HTMLElement[] = [];
   if (catalog.error) {
@@ -11436,7 +11547,7 @@ function modelMenuRows(
   }
   const entries = modelEntries(catalog);
   if (!entries.length) {
-    return rows.length ? rows : [modelMenuNote('没有可用模型。')];
+    return rows.length ? rows : [modelMenuNote(studioT('model.no_models'))];
   }
   const byKey = new Map(entries.map(entry => [entry.key, entry]));
   const pins = resolveModelPins(catalog);
@@ -11589,8 +11700,18 @@ function openAccountSubmenu(kind: string) {
   const rows =
     kind === 'language'
       ? [
-          compactMenuItem('English', '', () => setStudioLanguage('en'), '✓'),
-          compactMenuItem('中文', '', () => setStudioLanguage('zh-CN')),
+          compactMenuItem(
+            'English',
+            '',
+            () => setStudioLanguage('en'),
+            getStudioLanguage() === 'en' ? '✓' : '',
+          ),
+          compactMenuItem(
+            '中文',
+            '',
+            () => setStudioLanguage('zh-CN'),
+            getStudioLanguage() === 'zh-CN' ? '✓' : '',
+          ),
         ]
       : [
           compactMenuItem('About Magic Pointer', '', run('about')),
@@ -11610,21 +11731,22 @@ function openAccountSubmenu(kind: string) {
 }
 
 function setStudioLanguage(language: 'en' | 'zh-CN'): void {
-  document.documentElement.lang = language;
-  document.documentElement.dataset.language = language;
-  try {
-    localStorage.setItem('mp:language:v1', language);
-  } catch {
-    /* storage unavailable */
-  }
+  applyStudioLanguage(language);
   closeAccountMenu();
+  const view = shell.dataset.view || 'chat';
+  show(view);
+  if (view === 'chat' && activeConversationId) {
+    void openConversation(activeConversationId);
+  }
+  window.dispatchEvent(new CustomEvent('mp:language-change'));
 }
 
 try {
-  const storedLanguage = localStorage.getItem('mp:language:v1');
-  setStudioLanguage(storedLanguage === 'zh-CN' ? 'zh-CN' : 'en');
+  applyStudioLanguage(
+    localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en',
+  );
 } catch {
-  setStudioLanguage('en');
+  applyStudioLanguage('en');
 }
 
 function openSettingsPage(page: string) {
@@ -11798,7 +11920,7 @@ function bindModelSeat() {
       renderComposerModel();
       if (!result?.ok) {
         if (menu) {
-          menu.replaceChildren(modelMenuNote(result?.error || '切换失败。'));
+          menu.replaceChildren(modelMenuNote(result?.error || studioT('common.switch_failed')));
         }
         positionAnchoredPopover('composer-model-menu', 'composer-model');
         return;
@@ -12171,7 +12293,7 @@ async function stopActiveConversation() {
   pending.body.dataset.stopRequested = 'true';
   const note = document.createElement('div');
   note.className = 'mp-chat-turn-status';
-  note.textContent = '正在停止…';
+  note.textContent = studioT('run.stopping');
   pending.body.appendChild(note);
   const result = await ConversationControl.callConversationAction(() =>
     Data.stopConversation(pending.requestId),
@@ -12250,7 +12372,7 @@ async function steerActiveConversation(
   }
   const status = document.createElement('div');
   status.className = 'mp-chat-turn-status';
-  status.textContent = '正在排队…';
+  status.textContent = studioT('run.queued');
   pending?.body.appendChild(status);
   const transport = TaskInputTransport.createTaskInputTransport({
     send: (value: MagicPointerTaskInput) =>
@@ -12261,11 +12383,13 @@ async function steerActiveConversation(
       ),
     onState: (state: {status?: string; error?: string}) => {
       if (state.status === 'queueing') {
-        status.textContent = '正在排队…';
+        status.textContent = studioT('run.queued');
       } else if (state.status === 'accepted') {
-        status.textContent = '已接收，将在下一个安全边界生效。';
+        status.textContent = studioT('run.accepted');
       } else {
-        status.textContent = `插话未送达：${String(state.error || '未知原因')}`;
+        status.textContent = studioT('run.barge_failed', {
+          reason: String(state.error || studioT('common.unknown_reason')),
+        });
       }
     },
   });
@@ -12404,7 +12528,9 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
     const requestQuestion = attachmentPaths.length
-      ? `${question}\n\n附件：\n${attachmentPaths.map(filePath => `- ${filePath}`).join('\n')}`
+      ? question +
+        studioT('chat.attachments_prefix') +
+        attachmentPaths.map(filePath => `- ${filePath}`).join('\n')
       : question;
 
     const stream = document.getElementById('stream');
@@ -12599,7 +12725,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
           await openConversation(String(response.conversationId));
           await renderSidebar();
         }
-        throw new Error(response?.error || '这次没有答完。');
+        throw new Error(response?.error || studioT('chat.incomplete'));
       }
       renderComposerAttachments();
       renderComposerMaterials();
@@ -12871,8 +12997,8 @@ function openStashViewer(src: string, desc: string) {
         <div class="stash-viewer-head">
           <b class="stash-viewer-title"></b>
           <span class="stash-viewer-actions">
-            <button type="button" class="icon-btn is-plain" id="stash-viewer-copy" title="复制图片"><svg><use href="#ic-clip"/></svg></button>
-            <button type="button" class="icon-btn is-plain" id="stash-viewer-close" title="关闭"><svg><use href="#ic-x"/></svg></button>
+            <button type="button" class="icon-btn is-plain" id="stash-viewer-copy" title="${studioT('stash.copy_image')}"><svg><use href="#ic-clip"/></svg></button>
+            <button type="button" class="icon-btn is-plain" id="stash-viewer-close" title="${studioT('common.close')}"><svg><use href="#ic-x"/></svg></button>
           </span>
         </div>
         <img class="stash-viewer-img" alt="" />
@@ -12908,7 +13034,7 @@ function openStashViewer(src: string, desc: string) {
   const img = viewer.querySelector('.stash-viewer-img') as HTMLImageElement;
   img.src = 'file:///' + String(src).replace(/\\/g, '/');
   img.alt = desc || '';
-  viewer.querySelector('.stash-viewer-title')!.textContent = desc || '收藏图片';
+  viewer.querySelector('.stash-viewer-title')!.textContent = desc || studioT('stash.image_default');
   viewer.classList.add('is-visible');
 }
 
@@ -12939,7 +13065,7 @@ document.addEventListener('mouseover', e => {
     const rect = node.getBoundingClientRect();
     el.style.left = `${Math.min(rect.left, window.innerWidth - 340)}px`;
     el.style.top = `${rect.bottom + 10}px`;
-    el.textContent = '正在看这张图…';
+    el.textContent = studioT('stash.viewing');
     el.classList.add('is-visible');
     if (node.dataset.summary) {
       el.textContent = node.dataset.summary;

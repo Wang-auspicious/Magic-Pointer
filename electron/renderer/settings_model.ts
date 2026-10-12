@@ -39,6 +39,67 @@
     label,
   });
 
+  /* Stable-keyed English copy for the settings UI. Call sites use
+   * formatSettingLabel(id, params); the future locale pass keys zh-CN
+   * off these ids without touching render code. Values here are the
+   * exact strings the contract tests assert. */
+  const SETTINGS_UI_LABELS: Record<string, string> = Object.freeze({
+    'model.notConfigured': 'Not configured',
+    'model.waitingProfile': 'Waiting for model profile',
+    'model.noSecureStorage': 'Secure storage unavailable',
+    'model.storedSecurely': 'Stored securely',
+    'model.configured': 'Configured',
+    'model.terminalCommand': 'npm run model:groq',
+    'model.runtime': 'MPAgentRuntime',
+    'model.thinking': 'Stored reasoning',
+    'model.skills': 'Open Skills and commands',
+    'model.plugins': 'Effective after approval',
+    'model.connectors': 'Loaded lazily by task',
+    'model.updates': 'Provided by the updater',
+    'model.diagnostics': 'Local runtime information',
+    'model.readOnly': 'Read only',
+    'search.title': 'Search settings',
+    'search.results': '\u201c{query}\u201d \u00b7 {count} results',
+    'search.empty': 'No matching settings.',
+    'status.saving': 'Saving\u2026',
+    'status.saved': 'Saved',
+    'grants.active': '{count} active',
+    'memory.title': 'Memory files',
+    'memory.empty':
+      'No memory files yet. Repeated work on the same objects will appear here.',
+    'memory.untitled': 'Untitled object',
+    'memory.context': 'Local context',
+    'memory.uses': '{count} uses',
+    'plugins.heading': 'Personal plugins',
+    'plugins.empty': 'No installed plugins.',
+    'plugins.fallbackDescription':
+      'Local plugins become active after approval.',
+    'plugins.search': 'Search skills and plugins',
+    'plugins.add': 'Add',
+    'plugins.tabMine': 'Your plugins',
+    'plugins.scope': 'Plugin scope',
+    'plugins.tabDiscover': 'Discover',
+    'plugins.filter': 'Filter',
+    'plugins.sort': 'Sort \u00b7 Last edited',
+    'plugins.moreActions': 'More plugin actions',
+    'plugins.unnamed': 'Unnamed plugin',
+    'plugins.localDescription': 'Local Harness plugin',
+    'plugins.localMeta': 'Local',
+  });
+
+  function formatSettingLabel(
+    id: string,
+    params?: Record<string, string | number>,
+  ) {
+    let text = SETTINGS_UI_LABELS[id] ?? id;
+    if (params) {
+      for (const name of Object.keys(params)) {
+        text = text.split(`{${name}}`).join(String(params[name]));
+      }
+    }
+    return text;
+  }
+
   const SETTINGS_PAGES: SettingsPage[] = [
     {
       id: 'general',
@@ -714,50 +775,57 @@
   function modelInfoValue(key: string, status: Record<string, any>) {
     if (key === 'active-model') {
       if (!status?.configured) {
-        return 'Not configured';
+        return formatSettingLabel('model.notConfigured');
       }
       return String(
-        status.displayName || status.model || status.provider || 'Configured',
+        status.displayName ||
+          status.model ||
+          status.provider ||
+          formatSettingLabel('model.configured'),
       );
     }
     if (key === 'credential') {
       if (!status?.configured) {
-        return 'Waiting for model profile';
+        return formatSettingLabel('model.waitingProfile');
       }
       if (!status.credentialBackendAvailable) {
-        return 'Secure storage unavailable';
+        return formatSettingLabel('model.noSecureStorage');
       }
-      return status.credentialPresent ? 'Stored securely' : 'Not configured';
+      return status.credentialPresent
+        ? formatSettingLabel('model.storedSecurely')
+        : formatSettingLabel('model.notConfigured');
     }
     if (key === 'terminal') {
-      return 'npm run model:groq';
+      return formatSettingLabel('model.terminalCommand');
     }
     if (key === 'runtime') {
-      return 'MPAgentRuntime';
+      return formatSettingLabel('model.runtime');
     }
     if (key === 'thinking') {
-      return 'Stored reasoning';
+      return formatSettingLabel('model.thinking');
     }
     if (key === 'skills') {
-      return 'Open Skills and commands';
+      return formatSettingLabel('model.skills');
     }
     if (key === 'plugins') {
-      return 'Effective after approval';
+      return formatSettingLabel('model.plugins');
     }
     if (key === 'connectors') {
-      return 'Loaded lazily by task';
+      return formatSettingLabel('model.connectors');
     }
     if (key === 'updates') {
-      return 'Provided by the updater';
+      return formatSettingLabel('model.updates');
     }
     if (key === 'diagnostics') {
-      return 'Local runtime information';
+      return formatSettingLabel('model.diagnostics');
     }
-    return 'Read only';
+    return formatSettingLabel('model.readOnly');
   }
 
   const SettingsModel = {
     SETTINGS_PAGES,
+    SETTINGS_UI_LABELS,
+    formatSettingLabel,
     modelInfoValue,
     patchForSetting,
     valueForSetting,

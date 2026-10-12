@@ -36,11 +36,50 @@
     resourceKey: string;
     active: boolean;
     closable: boolean;
+    url?: string;
   }
 
   interface WorkspaceResourceState {
     activeId: string;
     tabs: WorkspaceResourceTab[];
+  }
+
+  interface WorkspaceResourceActions {
+    onNewTab?: () => void;
+    onMoreActions?: (anchor: HTMLElement) => void;
+  }
+
+  interface BrowserPaneInput {
+    url?: string;
+    title?: string;
+  }
+
+  /*
+   * Stable user-visible strings for the right pane, keyed by short ids so a
+   * future locale layer can map them without touching call sites. English is
+   * the default; every value here is the reference wording verbatim.
+   */
+  const RightPaneLabels = Object.freeze({
+    'workspace-tabs': 'Workspace resource tabs',
+    'new-tab': 'New tab',
+    'more-actions': 'More actions',
+    'browser-tab': 'Browser tab',
+    'page-thumbnail': 'Page thumbnail',
+    'browser-empty-dev-servers':
+      'Claude can start your dev servers, browse the web in a built-in ' +
+      'browser, and verify changes with screenshots, snapshots, and DOM ' +
+      'inspection.',
+    'browser-empty-preview':
+      'Claude can start dev servers, open a live preview, and verify code ' +
+      'changes with screenshots, snapshots, and DOM inspection.',
+    'start-dev-server': 'start a dev server',
+    'sheet-truncated': 'Showing the first 500 rows and 80 columns.',
+    'preview-truncated':
+      'Preview truncated. Open in the original app to see the full file.',
+  });
+
+  function closeTabLabel(title: string): string {
+    return `Close ${title}`;
   }
 
   function element<K extends keyof HTMLElementTagNameMap>(
@@ -59,9 +98,10 @@
     state: WorkspaceResourceState,
     onSelect: (tabId: string) => void,
     onClose: (tabId: string) => void,
+    actions?: WorkspaceResourceActions,
   ): void {
     const strip = element('nav', 'mpw-workspace-tabs');
-    strip.setAttribute('aria-label', '工作区资源标签');
+    strip.setAttribute('aria-label', RightPaneLabels['workspace-tabs']);
     state.tabs.forEach(tab => {
       const item = element('div', 'mpw-workspace-tab');
       item.dataset.tabId = tab.id;
@@ -70,7 +110,9 @@
       const select = element('button', 'mpw-workspace-tab-select');
       select.type = 'button';
       select.textContent = tab.title;
-      select.title = tab.title;
+      const hint =
+        tab.kind === 'browser' && tab.url ? tab.url : tab.title;
+      select.title = hint;
       select.setAttribute('aria-selected', String(tab.id === state.activeId));
       select.addEventListener('click', () => onSelect(tab.id));
       item.append(select);
@@ -78,8 +120,8 @@
         const close = element('button', 'mpw-workspace-tab-close');
         close.type = 'button';
         close.textContent = '×';
-        close.title = `关闭 ${tab.title}`;
-        close.setAttribute('aria-label', `关闭 ${tab.title}`);
+        close.title = closeTabLabel(tab.title);
+        close.setAttribute('aria-label', closeTabLabel(tab.title));
         close.addEventListener('click', event => {
           event.stopPropagation();
           onClose(tab.id);
@@ -88,7 +130,92 @@
       }
       strip.append(item);
     });
-    host.replaceChildren(strip);
+    if (!actions || (!actions.onNewTab && !actions.onMoreActions)) {
+      host.replaceChildren(strip);
+      return;
+    }
+    const bar = element('div', 'mpw-workspace-bar');
+    bar.append(strip);
+    const toolbar = element('div', 'mpw-workspace-toolbar');
+    toolbar.setAttribute('role', 'toolbar');
+    if (actions.onNewTab) {
+      const create = element('button', 'mpw-workspace-new-tab');
+      create.type = 'button';
+      create.textContent = '+';
+      create.title = RightPaneLabels['new-tab'];
+      create.setAttribute('aria-label', RightPaneLabels['new-tab']);
+      create.addEventListener('click', () => actions.onNewTab?.());
+      toolbar.append(create);
+    }
+    if (actions.onMoreActions) {
+      const more = element('button', 'mpw-workspace-more');
+      more.type = 'button';
+      more.textContent = '⋯';
+      more.title = RightPaneLabels['more-actions'];
+      more.setAttribute('aria-label', RightPaneLabels['more-actions']);
+      more.addEventListener('click', () => actions.onMoreActions?.(more));
+      toolbar.append(more);
+    }
+    bar.append(toolbar);
+    host.replaceChildren(bar);
+  }
+
+  function globeIcon(size: number): SVGSVGElement {
+    const svg = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'svg',
+    );
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'mpw-browser-globe');
+    const use = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'use',
+    );
+    use.setAttribute('href', '#cds-globe-20');
+    svg.append(use);
+    return svg;
+  }
+
+  /*
+   * Browser pane for a resource tab. Renders only from the passed input:
+   * a real URL produces the address line, anything else produces the
+   * truthful empty state. Never invents a URL or a dev server.
+   */
+  function renderBrowserPane(
+    host: HTMLElement,
+    input?: BrowserPaneInput,
+  ): void {
+    const url = String(input?.url || '').trim();
+    host.classList.toggle('is-browser-pane', true);
+    if (url) {
+      const bar = element('div', 'mpw-browser-address');
+      bar.append(globeIcon(16));
+      const text = element('span', 'mpw-browser-address-text');
+      text.textContent = url;
+      text.title = url;
+      bar.append(text);
+      host.replaceChildren(bar);
+      return;
+    }
+    const empty = element('div', 'mpw-browser-empty');
+    empty.append(globeIcon(20));
+    const heading = element('strong', 'mpw-browser-empty-title');
+    heading.textContent = String(
+      input?.title || RightPaneLabels['browser-tab'],
+    );
+    empty.append(heading);
+    const first = element('p');
+    first.textContent = RightPaneLabels['browser-empty-dev-servers'];
+    empty.append(first);
+    const second = element('p');
+    second.textContent = RightPaneLabels['browser-empty-preview'];
+    empty.append(second);
+    const hint = element('p', 'mpw-browser-empty-hint');
+    hint.textContent = RightPaneLabels['start-dev-server'];
+    empty.append(hint);
+    host.replaceChildren(empty);
   }
 
   function table(rows: string[][]): HTMLTableElement {
@@ -170,7 +297,7 @@
         scroll.append(table(sheet.rows));
         if (sheet.truncated) {
           const note = element('p', 'mp-preview-limit');
-          note.textContent = '仅显示前 500 行、80 列。';
+          note.textContent = RightPaneLabels['sheet-truncated'];
           scroll.prepend(note);
         }
         content.replaceChildren(scroll);
@@ -186,6 +313,7 @@
     host: HTMLElement,
     preview: ProjectPreview,
   ): void {
+    host.classList.toggle('is-browser-pane', false);
     host.classList.toggle('is-office-preview', preview.kind !== 'text');
     if (preview.kind === 'text') {
       const code = element('pre');
@@ -198,12 +326,17 @@
     }
     if (preview.truncated && preview.kind !== 'spreadsheet') {
       const note = element('p', 'mp-preview-limit');
-      note.textContent = '预览已截断；在原应用中打开可查看完整文件。';
+      note.textContent = RightPaneLabels['preview-truncated'];
       host.append(note);
     }
   }
 
-  const api = {renderProjectPreview, renderWorkspaceResourceTabs};
+  const api = {
+    renderProjectPreview,
+    renderWorkspaceResourceTabs,
+    renderBrowserPane,
+    RightPaneLabels,
+  };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   }

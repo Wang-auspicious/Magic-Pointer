@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file: http: https:;" />
@@ -27,30 +27,30 @@
   <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
     <header class="mp-window-titlebar mp-window-bar" id="window-titlebar">
       <div class="mp-window-titlebar-leading">
-        <button type="button" class="mp-toolbar-button" id="app-menu" aria-label="应用菜单" title="应用菜单" aria-haspopup="menu" aria-expanded="false">
+        <button type="button" class="mp-toolbar-button" id="app-menu" aria-label="App menu" title="App menu" aria-haspopup="menu" aria-expanded="false">
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-menu" /></svg>
         </button>
-        <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏" aria-controls="studio-sidebar" aria-expanded="true">
+        <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="Collapse sidebar" title="Collapse sidebar" aria-controls="studio-sidebar" aria-expanded="true">
           <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0DD;</span>
         </button>
-        <button type="button" class="mp-toolbar-button" id="global-search-toggle" aria-label="全局搜索" title="搜索会话、项目和命令">
+        <button type="button" class="mp-toolbar-button" id="global-search-toggle" aria-label="Global search" title="Search conversations, projects, and commands">
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-search" /></svg>
         </button>
-        <button type="button" class="mp-toolbar-button" id="window-back" aria-label="后退" title="后退" disabled>
+        <button type="button" class="mp-toolbar-button" id="window-back" aria-label="Back" title="Back" disabled>
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg>
         </button>
-        <button type="button" class="mp-toolbar-button" id="window-forward" aria-label="前进" title="前进" disabled>
+        <button type="button" class="mp-toolbar-button" id="window-forward" aria-label="Forward" title="Forward" disabled>
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
         </button>
       </div>
       <div class="mp-window-caption-safe" aria-hidden="true"></div>
     </header>
 
-    <button type="button" class="mp-sidebar-backdrop" id="sidebar-backdrop" tabindex="-1" aria-label="关闭侧栏" hidden></button>
+    <button type="button" class="mp-sidebar-backdrop" id="sidebar-backdrop" tabindex="-1" aria-label="Close sidebar" hidden></button>
     <aside class="mpw-sidebar-col" id="studio-sidebar" aria-label="Sidebar">
       <div class="mpw-sidebar">
         <div class="mpw-logo-row">
-          <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="工作模式">
+          <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="Mode">
             <button type="button" id="mode-design" data-product-mode="design" role="tab" aria-selected="false">
               <span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE0B8;" aria-hidden="true"></span><span>Work</span>
             </button>
@@ -69,9 +69,9 @@
         </button>
         <div class="mp-nav-row"><button class="mpw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
-        </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="创建产物" title="创建产物"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
+        </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="Create artifact" title="Create artifact"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
         <button class="mpw-customize" id="nav-personal" data-goto="personal">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">工作回顾</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Review</span>
         </button>
         <button class="mpw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Scheduled</span>
@@ -94,27 +94,27 @@
           <button type="button" data-goto="artifacts"><svg class="codex-icon" aria-hidden="true"><use href="#ic-docs" /></svg><span>Artifacts</span></button>
         </nav>
 
-        <section class="mpw-workspace-browser" aria-label="对话浏览器">
+        <section class="mpw-workspace-browser" aria-label="Conversation browser">
           <div class="mp-session-heading"><span>Projects</span><button type="button" data-goto="chats" aria-label="View all chats and tasks" title="View all"><span class="cds-icon" data-size="small" data-glyph="&#xE015;" aria-hidden="true"></span></button><button type="button" id="sidebar-group-sort" aria-label="Group and sort" title="Group and sort" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="small" data-glyph="&#xE070;" aria-hidden="true"></span></button></div>
           <div class="mpw-workspace-header">
-            <span class="mp-projects-label">项目</span>
+            <span class="mp-projects-label">Projects</span>
             <div class="mpw-workspace-search">
               <button type="button" class="mpw-workspace-search-button" id="side-search-toggle"
-                aria-label="搜索对话" aria-expanded="false" title="搜索对话">
+                aria-label="Search conversations" aria-expanded="false" title="Search conversations">
                 <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>
               </button>
-              <input id="side-search" type="search" autocomplete="off" placeholder="搜索对话" aria-label="搜索对话" />
+              <input id="side-search" type="search" autocomplete="off" placeholder="Search conversations" aria-label="Search conversations" />
               <button type="button" class="mpw-workspace-clear" id="side-search-clear"
-                aria-label="清除搜索" title="清除搜索" hidden>
+                aria-label="Clear search" title="Clear search" hidden>
                 <span class="cds-icon" data-size="large" aria-hidden="true">&#xE10F;</span>
               </button>
             </div>
             <button type="button" class="mpw-workspace-action" id="workspace-filter" hidden
-              aria-label="只看最近项目" title="只看最近项目">
+              aria-label="Show only recent projects" title="Show only recent projects">
               <span class="cds-icon" data-size="small" aria-hidden="true">&#xE070;</span>
             </button>
             <button type="button" class="mpw-workspace-action" id="workspace-add"
-              aria-label="打开项目" title="打开项目文件夹">
+              aria-label="Open project" title="Open project folder">
               <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
             </button>
           </div>
@@ -126,7 +126,7 @@
 
         <div class="mpw-foot">
           <button type="button" class="mp-update-card" id="update-card" hidden>
-            <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">重启以更新</strong><small id="update-card-detail"></small></span><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">Restart to update</strong><small id="update-card-detail"></small></span><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
           <button type="button" class="mp-account-footer" id="account-footer" aria-label="Local account and provider" aria-haspopup="menu" aria-expanded="false">
             <span class="mp-account-mark" aria-hidden="true"></span><span><strong>zjz65</strong><small>Gateway</small></span><span class="cds-icon" data-size="micro" aria-hidden="true">&#xE027;</span>
@@ -143,7 +143,7 @@
             <button type="button" role="menuitem" data-account-command="learn-more" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="large" data-glyph="&#xE08F;" aria-hidden="true"></span><span>Learn more</span><span class="cds-icon" data-size="small" data-glyph="&#xE02A;" aria-hidden="true"></span></button>
             <div class="mp-compact-menu mp-account-submenu" id="account-submenu" hidden role="menu"></div>
           </div>
-          <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="切换到深色主题" title="切换主题">
+          <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Toggle theme">
             <svg aria-hidden="true"><use id="theme-toggle-icon" href="#ic-moon" /></svg>
           </button>
         </div>
@@ -154,8 +154,8 @@
       <header class="workspace-header" id="workspace-header">
         <div>
           <p class="workspace-eyebrow" id="workspace-eyebrow">ACTIVE WORK</p>
-          <h1 id="workspace-title">对话</h1>
-          <p class="workspace-description" id="workspace-description">围绕刚才指过的对象继续工作。</p>
+          <h1 id="workspace-title">Chat</h1>
+          <p class="workspace-description" id="workspace-description">Continue working from what you just pointed at.</p>
         </div>
         <div class="workspace-header-actions" id="workspace-header-actions" aria-live="polite"></div>
       </header>
@@ -165,59 +165,59 @@
           <div class="mpw-title-row">
             <div class="mpw-title-cluster">
               <span class="cds-icon" data-size="small" data-glyph="&#xE093;" aria-hidden="true"></span>
-              <b class="mpw-title" id="chat-title">新对话</b>
+              <b class="mpw-title" id="chat-title">New chat</b>
               <span class="mp-chat-project"><span id="chat-project-label">Local</span></span>
             </div>
             <div class="mpw-header-actions">
               <div class="mpw-source-preview" id="chat-source-preview" hidden>
                 <button type="button" class="mpw-source-thumb" id="chat-origin"
-                  aria-label="预览划线选区" aria-describedby="chat-peek">
-                  <img id="chat-source-thumb" alt="划线选区缩略图" />
+                  aria-label="Preview selected region" aria-describedby="chat-peek">
+                  <img id="chat-source-thumb" alt="Selected region thumbnail" />
                 </button>
                 <span class="mpw-peek" role="tooltip" id="chat-peek" hidden>
-                  <span class="peek-top"><svg><use href="#ic-eye" /></svg>来源<em id="peek-label">选区预览</em></span>
-                  <img id="peek-image" class="peek-img" alt="划线选区预览" />
+                  <span class="peek-top"><svg><use href="#ic-eye" /></svg>Source<em id="peek-label">Selection preview</em></span>
+                  <img id="peek-image" class="peek-img" alt="Selected region preview" />
                 </span>
               </div>
               <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="Activity" title="Activity"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
           </div>
-          <section class="mp-magic-brain" id="magic-brain-popover" hidden aria-label="任务材料与连接">
-            <header><span>任务材料与连接</span><small id="magic-brain-project">当前任务</small></header>
+          <section class="mp-magic-brain" id="magic-brain-popover" hidden aria-label="Task materials and connections">
+            <header><span>Task materials and connections</span><small id="magic-brain-project">Current task</small></header>
             <button type="button" class="mp-brain-row" id="magic-brain-changes">
               <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-git-pull-request" /></svg></span>
-              <span><strong>工作树变更</strong><small id="magic-brain-changes-detail">正在读取…</small></span>
+              <span><strong>Worktree changes</strong><small id="magic-brain-changes-detail">Loading…</small></span>
               <svg class="codex-icon mp-brain-trailing" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
             </button>
             <button type="button" class="mp-brain-row" id="magic-brain-branch">
               <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-branch" /></svg></span>
-              <span><strong id="magic-brain-branch-name">Git 分支</strong><small id="magic-brain-branch-detail">正在读取…</small></span>
+              <span><strong id="magic-brain-branch-name">Git branch</strong><small id="magic-brain-branch-detail">Loading…</small></span>
               <svg class="codex-icon mp-brain-trailing" aria-hidden="true"><use href="#ic-open" /></svg>
             </button>
             <div class="mp-brain-sources" id="magic-brain-sources">
-              <div class="mp-brain-section-title">本任务来源</div>
-              <div id="magic-brain-source-list"><p>当前任务尚无网页来源。</p></div>
+              <div class="mp-brain-section-title">Sources for this task</div>
+              <div id="magic-brain-source-list"><p>No web sources for this task yet.</p></div>
               <div class="mp-figma-connection">
                 <div>
                   <strong>Figma Design Mode</strong>
-                  <small id="figma-connection-status">启动一次任务后，可把当前 Figma 文档连接到这里。</small>
+                  <small id="figma-connection-status">Run a task once to connect the current Figma document here.</small>
                   <code id="figma-pair-code" hidden></code>
                 </div>
-                <button type="button" id="figma-connect">连接</button>
+                <button type="button" id="figma-connect">Connect</button>
               </div>
             </div>
           </section>
         </header>
 
         <div class="mpw-scrollbody">
-          <section class="mp-studio-home" id="studio-home" aria-label="Studio 首页" hidden>
+          <section class="mp-studio-home" id="studio-home" aria-label="Studio home" hidden>
             <header class="mp-home-heading">
               <span class="mp-home-mark" aria-hidden="true"></span>
               <h1 id="studio-home-title">What's up next?</h1>
             </header>
             <div class="mp-home-attention" id="studio-home-attention" hidden></div>
-            <section class="mp-home-stats" id="studio-home-stats" aria-label="本机使用统计">
+            <section class="mp-home-stats" id="studio-home-stats" aria-label="Local usage stats">
               <div class="mp-home-stats-tabs">
                 <div class="mp-home-tab-group" role="tablist" aria-label="Stats view">
                   <button type="button" role="tab" data-home-view="overview" class="is-on" aria-selected="true">Overview</button>
@@ -231,13 +231,13 @@
                 </div>
               </div>
               <div class="mp-home-stat-grid" id="studio-home-stat-grid"></div>
-              <div class="mp-home-heatmap" id="studio-home-heatmap" aria-label="近半年活动热力图"></div>
+              <div class="mp-home-heatmap" id="studio-home-heatmap" aria-label="Activity heatmap, last 6 months"></div>
               <div class="mp-home-models" id="studio-home-models" hidden></div>
               <p class="mp-home-stats-note" id="studio-home-stats-note"></p>
               <div class="mp-home-tooltip" id="studio-home-tooltip" role="tooltip" hidden></div>
             </section>
           </section>
-          <button type="button" class="mpw-scroll-pill" id="scroll-pill" hidden aria-label="回到底部">
+          <button type="button" class="mpw-scroll-pill" id="scroll-pill" hidden aria-label="Back to bottom">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 11.5L2.5 6l1-1L8 9.5 12.5 5l1 1z" fill="currentColor"/></svg>
           </button>
           <div class="mpw-stream" id="stream">
@@ -245,13 +245,13 @@
           </div>
           <div class="mpw-rail" id="stream-rail" hidden>
             <div class="mpw-rail-marks" id="stream-rail-marks" aria-hidden="true"></div>
-            <div class="mpw-rail-menu" id="stream-rail-menu" role="menu" aria-label="跳到某一段"></div>
+            <div class="mpw-rail-menu" id="stream-rail-menu" role="menu" aria-label="Jump to section"></div>
           </div>
           <div class="mpw-trajectory-seat" id="trajectory" hidden></div>
 
           <div class="mpw-composer-seat">
             <div class="mpw-composer-stack">
-              <div class="mpw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="需要你的决定"></div>
+              <div class="mpw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="Needs your decision"></div>
               <div class="mp-repository-context" id="composer-repository-context" hidden aria-label="Repository status">
                 <div class="mp-repository-identity">
                   <button type="button" class="mp-repository-location" id="composer-repository-location" title="Open project changes">
@@ -275,7 +275,7 @@
                   </button>
                 </div>
               </div>
-              <div class="mp-composer-context-row" aria-label="运行环境">
+              <div class="mp-composer-context-row" aria-label="Runtime environment">
                 <button type="button" class="mp-composer-workspace" id="composer-project" aria-label="Open project" hidden>
                   <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-project-label"></span>
                 </button>
@@ -285,19 +285,19 @@
                 <button type="button" class="mp-composer-workspace" id="composer-workspace" aria-label="Select a folder for this session" aria-haspopup="menu" aria-expanded="false">
                   <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-workspace-label">Select folder…</span>
                 </button>
-                <div class="mp-workspace-menu" id="composer-workspace-menu" hidden role="menu" aria-label="选择工作目录"></div>
+                <div class="mp-workspace-menu" id="composer-workspace-menu" hidden role="menu" aria-label="Select working directory"></div>
                 <div class="mp-composer-git-context" id="composer-git-context" hidden>
                   <button type="button" class="mp-composer-branch" id="composer-branch" aria-label="Select a branch" aria-haspopup="menu" aria-expanded="false" hidden>
                     <svg aria-hidden="true"><use href="#ic-branch" /></svg><span id="composer-branch-label">main</span>
                   </button>
                   <span class="mp-composer-git-divider" aria-hidden="true"></span>
                   <button type="button" class="mp-composer-worktree" id="composer-worktree" role="checkbox" aria-checked="false"
-                    aria-label="在独立的 git worktree 中工作" title="在独立的 git worktree 中工作" hidden>
+                    aria-label="Work in an isolated git worktree" title="Work in an isolated git worktree" hidden>
                     <span class="mp-worktree-box" aria-hidden="true"><svg aria-hidden="true"><use href="#ic-check" /></svg></span>
                     <span>worktree</span>
                   </button>
                 </div>
-                <div class="mp-branch-menu" id="composer-branch-menu" hidden role="menu" aria-label="选择分支"></div>
+                <div class="mp-branch-menu" id="composer-branch-menu" hidden role="menu" aria-label="Select branch"></div>
                 <span class="mp-composer-additional-folders" id="composer-additional-folders"></span>
                 <button type="button" class="mp-composer-folder-add" id="composer-context-folder-add" aria-label="Add another folder" title="Add another folder" hidden>
                   <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
@@ -316,34 +316,34 @@
                         <span class="cds-icon" data-size="large" data-glyph="&#xE00F;" aria-hidden="true"></span>
                       </button>
                     </div>
-                    <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>
-                    <div class="mp-composer-attachments mp-composer-materials" id="composer-materials" hidden aria-label="下一步使用的任务材料"></div>
+                    <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="Attachments"></div>
+                    <div class="mp-composer-attachments mp-composer-materials" id="composer-materials" hidden aria-label="Task materials for the next step"></div>
                     <div class="mpw-row">
                       <div class="mpw-tools">
-                        <button type="button" class="mpw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
+                        <button type="button" class="mpw-add" id="composer-add" aria-label="Add attachment" aria-haspopup="menu" aria-expanded="false" title="Add attachment">
                           <span class="cds-icon" data-size="large" aria-hidden="true">&#xE001;</span>
                         </button>
                         <div class="mp-compact-menu" id="composer-attach-menu" hidden role="menu" aria-label="Add"></div>
-                        <div class="mpw-add-menu mpw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
-                          <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
+                        <div class="mpw-add-menu mpw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="Commands and skills">
+                          <input type="search" id="composer-slash-search" placeholder="Search commands and skills…" autocomplete="off" aria-label="Search commands and skills" />
                           <div class="mpw-slash-rows" id="composer-slash-rows"></div>
                         </div>
-                        <button type="button" class="mpw-add mp-composer-secondary" id="composer-mention" aria-label="提及上下文" title="提及文件或上下文">
+                        <button type="button" class="mpw-add mp-composer-secondary" id="composer-mention" aria-label="Mention context" title="Mention files or context">
                           <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
                         </button>
-                        <button type="button" class="mpw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
+                        <button type="button" class="mpw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="Agent permissions for this turn">
                           <svg class="mpw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                           <span class="mpw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
-                          <span class="mpw-perm-label" id="composer-permission-label">项目写入</span>
+                          <span class="mpw-perm-label" id="composer-permission-label">Auto</span>
                         </button>
-                        <div class="mpw-perm-menu mp-permission-menu-seat" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
+                        <div class="mpw-perm-menu mp-permission-menu-seat" id="composer-permission-menu" hidden role="listbox" aria-label="Permission presets"></div>
                       </div>
                       <div class="mpw-trailing">
-                        <button type="button" class="mpw-perm mpw-model" id="composer-model" aria-haspopup="listbox" aria-expanded="false" title="模型">
-                          <span class="mpw-perm-label" id="composer-model-label">默认模型</span>
+                        <button type="button" class="mpw-perm mpw-model" id="composer-model" aria-haspopup="listbox" aria-expanded="false" title="Model">
+                          <span class="mpw-perm-label" id="composer-model-label">Default model</span>
                           <svg class="mpw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                         </button>
-                        <div class="mpw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
+                        <div class="mpw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="Model catalog"></div>
                         <button type="button" class="mpw-add mp-composer-secondary" id="composer-effort" aria-label="Reasoning effort: Extra" aria-haspopup="listbox" aria-expanded="false" title="Reasoning effort"><span id="composer-effort-label">Extra</span></button>
                         <div class="mpw-perm-menu mp-effort-menu" id="composer-effort-menu" hidden role="listbox" aria-label="Reasoning effort"></div>
                         <button type="button" class="mpw-ring" id="composer-context" aria-label="Context usage"
@@ -354,8 +354,8 @@
                           </svg>
                           <span class="mp-visually-hidden" id="composer-usage-label"></span>
                         </button>
-                        <div class="mp-usage-popover" id="composer-usage-popover" role="dialog" aria-label="本会话模型用量" hidden></div>
-                        <div class="mp-usage-popover mp-usage-breakdown" id="composer-usage-breakdown" role="dialog" aria-label="Context window 明细" hidden></div>
+                        <div class="mp-usage-popover" id="composer-usage-popover" role="dialog" aria-label="Model usage for this session" hidden></div>
+                        <div class="mp-usage-popover mp-usage-breakdown" id="composer-usage-breakdown" role="dialog" aria-label="Context window breakdown" hidden></div>
                       </div>
                     </div>
                   </div>
@@ -404,23 +404,23 @@
 
       <section class="mpw-view" id="view-stash" hidden>
         <div class="page-toolbar">
-          <span class="pill" id="stash-count">0 项</span>
+          <span class="pill" id="stash-count">0 items</span>
           <label class="mpw-settings-search mp-stash-search">
             <svg aria-hidden="true"><use href="#ic-search" /></svg>
-            <input id="stash-search" type="search" autocomplete="off" placeholder="搜索收藏材料" aria-label="搜索收藏材料" />
+            <input id="stash-search" type="search" autocomplete="off" placeholder="Search stashed materials" aria-label="Search stashed materials" />
           </label>
-          <button type="button" class="mp-toolbar-button" id="stash-add-file">加入文件</button>
-          <button type="button" class="mp-toolbar-button" id="stash-add-note">加入笔记</button>
-          <div class="mpw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
+          <button type="button" class="mp-toolbar-button" id="stash-add-file">Add file</button>
+          <button type="button" class="mp-toolbar-button" id="stash-add-note">Add note</button>
+          <div class="mpw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">Canvas</button><button data-mode="list">List</button></div>
         </div>
-        <div class="stash-filters" aria-label="收藏分类">
-          <button class="mpw-tab is-on" data-kind="">全部</button><button class="mpw-tab" data-kind="灵感">灵感</button>
-          <button class="mpw-tab" data-kind="交接">交接</button><button class="mpw-tab" data-kind="凭证">凭证</button>
-          <button class="mpw-tab" data-kind="素材">素材</button><button class="mpw-tab" data-kind="片段">片段</button>
+        <div class="stash-filters" aria-label="Stash categories">
+          <button class="mpw-tab is-on" data-kind="">All</button><button class="mpw-tab" data-kind="灵感">Idea</button>
+          <button class="mpw-tab" data-kind="交接">Handoff</button><button class="mpw-tab" data-kind="凭证">Credential</button>
+          <button class="mpw-tab" data-kind="素材">Asset</button><button class="mpw-tab" data-kind="片段">Snippet</button>
         </div>
         <div class="canvas" id="canvas">
           <div class="canvas-rail">
-            <button class="crail-btn" title="回到全部" id="canvas-fit"><svg><use href="#ic-target" /></svg></button>
+            <button class="crail-btn" title="Back to all" id="canvas-fit"><svg><use href="#ic-target" /></svg></button>
           </div>
           <div class="canvas-world" id="canvas-world"></div>
           <div class="canvas-zoom"><button id="zoom-out">−</button><span id="zoom-val">100%</span><button id="zoom-in">＋</button></div>
@@ -431,34 +431,34 @@
       <section class="mpw-view" id="view-artifacts" hidden>
         <div class="mp-artifacts">
           <div class="mp-artifacts-bar">
-            <div class="mp-artifacts-tabs" role="group" aria-label="产物范围">
-              <button type="button" class="mp-artifact-tab is-on" data-artifact-scope="all" aria-pressed="true">全部</button>
-              <button type="button" class="mp-artifact-tab" data-artifact-scope="mine" aria-pressed="false">可编辑草稿</button>
+            <div class="mp-artifacts-tabs" role="group" aria-label="Artifact scope">
+              <button type="button" class="mp-artifact-tab is-on" data-artifact-scope="all" aria-pressed="true">All</button>
+              <button type="button" class="mp-artifact-tab" data-artifact-scope="mine" aria-pressed="false">Editable drafts</button>
             </div>
             <div class="mp-artifacts-tools">
-              <button type="button" class="mp-artifact-tool" id="artifact-search-toggle" aria-label="搜索产物" title="搜索产物" aria-expanded="false" aria-controls="artifact-search-field">
+              <button type="button" class="mp-artifact-tool" id="artifact-search-toggle" aria-label="Search artifacts" title="Search artifacts" aria-expanded="false" aria-controls="artifact-search-field">
                 <svg aria-hidden="true"><use href="#ic-search" /></svg>
               </button>
-              <button type="button" class="mp-artifact-tool" id="artifact-layout-toggle" aria-label="切换为网格布局" title="切换为网格布局" aria-pressed="false">
+              <button type="button" class="mp-artifact-tool" id="artifact-layout-toggle" aria-label="Switch to grid layout" title="Switch to grid layout" aria-pressed="false">
                 <svg aria-hidden="true"><use href="#ic-layout-grid" /></svg>
               </button>
-              <button type="button" class="mp-artifact-kind" id="artifact-kind-trigger" aria-label="按类型筛选产物" aria-haspopup="menu" aria-expanded="false" aria-controls="artifact-kind-menu">
-                <span id="artifact-kind-label">全部类型</span>
+              <button type="button" class="mp-artifact-kind" id="artifact-kind-trigger" aria-label="Filter artifacts by type" aria-haspopup="menu" aria-expanded="false" aria-controls="artifact-kind-menu">
+                <span id="artifact-kind-label">All types</span>
                 <svg aria-hidden="true"><use href="#ic-chev" /></svg>
               </button>
-              <div class="mp-artifact-kind-menu" id="artifact-kind-menu" role="menu" aria-label="产物类型" hidden></div>
+              <div class="mp-artifact-kind-menu" id="artifact-kind-menu" role="menu" aria-label="Artifact types" hidden></div>
             </div>
           </div>
           <label class="mp-artifact-search" id="artifact-search-field" hidden>
             <span class="mp-artifact-search-glyph" aria-hidden="true"><svg><use href="#ic-search" /></svg></span>
-            <input type="search" id="artifact-search-input" autocomplete="off" placeholder="搜索产物名称或来源" aria-label="搜索产物名称或来源" />
+            <input type="search" id="artifact-search-input" autocomplete="off" placeholder="Search artifact names or sources" aria-label="Search artifact names or sources" />
           </label>
           <div class="mp-artifact-create">
             <h2>Make something new</h2>
             <div class="mp-artifact-templates">
-              <button type="button" data-artifact-create="帮我创建一份文档。先确认主题、受众和需要使用的材料。"><span><strong>Docs</strong><small>文档与可编辑草稿</small></span><span class="mp-original-preview" data-original-preview="docs" aria-hidden="true"></span></button>
-              <button type="button" data-artifact-create="帮我制作一份演示文稿。先确认主题、受众、页数和参考材料。"><span><strong>Slides</strong><small>从主题和材料开始</small></span><span class="mp-original-preview" data-original-preview="slides" aria-hidden="true"></span></button>
-              <button type="button" data-artifact-create="帮我完成一项设计。先确认目标应用、设计目标和参考材料。"><span><strong>Design</strong><small>界面、图像与设计方案</small></span><span class="mp-original-preview" data-original-preview="design" aria-hidden="true"></span></button>
+              <button type="button" data-artifact-create="Help me create a document. Confirm the topic, audience, and materials to use first."><span><strong>Docs</strong><small>Documents and editable drafts</small></span><span class="mp-original-preview" data-original-preview="docs" aria-hidden="true"></span></button>
+              <button type="button" data-artifact-create="Help me make a slide deck. Confirm the topic, audience, page count, and reference materials first."><span><strong>Slides</strong><small>Start from a topic and materials</small></span><span class="mp-original-preview" data-original-preview="slides" aria-hidden="true"></span></button>
+              <button type="button" data-artifact-create="Help me complete a design. Confirm the target app, design goals, and reference materials first."><span><strong>Design</strong><small>Interfaces, images, and design proposals</small></span><span class="mp-original-preview" data-original-preview="design" aria-hidden="true"></span></button>
             </div>
           </div>
           <div class="view-body" id="art-list" data-layout="list"></div>
@@ -466,10 +466,10 @@
       </section>
 
       <section id="view-settings" hidden>
-        <div class="mpw-settings-overlay" role="dialog" aria-modal="true" aria-label="设置">
+        <div class="mpw-settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
           <div class="mpw-settings-mask" data-settings-close aria-hidden="true"></div>
           <div class="mpw-settings-panel">
-            <nav class="mpw-settings-nav" aria-label="设置分类">
+            <nav class="mpw-settings-nav" aria-label="Settings categories">
               <div class="mpw-settings-nav-title">Settings</div>
               <label class="mpw-settings-search">
                 <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>
@@ -483,7 +483,7 @@
             <div class="mpw-settings-content">
               <div class="mpw-settings-header">
                 <span></span>
-                <button class="mpw-settings-close" data-settings-close aria-label="关闭设置">
+                <button class="mpw-settings-close" data-settings-close aria-label="Close settings">
                   <span class="cds-icon" data-size="large" data-glyph="&#xE10F;" aria-hidden="true"></span>
                 </button>
               </div>
@@ -494,33 +494,33 @@
         <div id="settings-save-status" class="settings-save-status" data-state="idle" role="status" aria-live="polite"></div>
       </section>
 
-      <section class="mp-bottom-panel" id="bottom-panel" hidden aria-label="底部面板">
+      <section class="mp-bottom-panel" id="bottom-panel" hidden aria-label="Bottom panel">
         <header class="mp-bottom-panel-header">
-          <nav aria-label="底部工具"><button type="button" class="is-on">终端</button></nav>
-          <button type="button" class="mp-toolbar-button" id="bottom-panel-close" aria-label="关闭底部面板"><svg class="codex-icon" aria-hidden="true"><use href="#ic-x" /></svg></button>
+          <nav aria-label="Bottom tools"><button type="button" class="is-on">Terminal</button></nav>
+          <button type="button" class="mp-toolbar-button" id="bottom-panel-close" aria-label="Close bottom panel"><svg class="codex-icon" aria-hidden="true"><use href="#ic-x" /></svg></button>
         </header>
-        <div class="mp-terminal-output" id="bottom-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · 当前项目</span><pre class="mp-terminal-log"></pre></div>
+        <div class="mp-terminal-output" id="bottom-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · Current project</span><pre class="mp-terminal-log"></pre></div>
         <form class="mp-terminal-form" id="bottom-terminal-form"><span>&gt;</span><input id="bottom-terminal-input" autocomplete="off" spellcheck="false" aria-label="Terminal command" /><button type="submit">Run</button></form>
       </section>
     </main>
 
-    <aside class="mp-inspector" id="project-inspector" hidden aria-label="任务材料与项目面板">
-      <div class="mp-inspector-resize-handle" id="inspector-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整任务面板宽度"></div>
+    <aside class="mp-inspector" id="project-inspector" hidden aria-label="Task materials and project panel">
+      <div class="mp-inspector-resize-handle" id="inspector-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize task panel width"></div>
       <header class="mp-inspector-header">
-        <strong class="mp-inspector-title" id="inspector-title">文件</strong>
-        <div id="workspace-resource-tabs-host" aria-label="工作区资源标签" hidden></div>
+        <strong class="mp-inspector-title" id="inspector-title">Files</strong>
+        <div id="workspace-resource-tabs-host" aria-label="Workspace resource tabs" hidden></div>
         <div class="mp-inspector-actions">
-          <button type="button" class="mp-thread-action" id="inspector-maximize" aria-label="展开项目面板" aria-pressed="false"><svg aria-hidden="true"><use href="#ic-maximize" /></svg></button>
-          <button type="button" class="mp-thread-action" id="inspector-close" aria-label="关闭项目面板"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
+          <button type="button" class="mp-thread-action" id="inspector-maximize" aria-label="Expand project panel" aria-pressed="false"><svg aria-hidden="true"><use href="#ic-maximize" /></svg></button>
+          <button type="button" class="mp-thread-action" id="inspector-close" aria-label="Close project panel"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
         </div>
       </header>
-      <nav class="mp-inspector-tabs" aria-label="任务与项目工具">
-        <button type="button" data-inspector-tab="activity" aria-selected="false">执行</button>
-        <button type="button" data-inspector-tab="materials" aria-selected="false">材料</button>
-        <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">文件</button>
-        <button type="button" data-inspector-tab="browser" aria-selected="false">浏览器</button>
-        <button type="button" data-inspector-tab="terminal" aria-selected="false">终端</button>
-        <button type="button" data-inspector-tab="changes" aria-selected="false">更改</button>
+      <nav class="mp-inspector-tabs" aria-label="Task and project tools">
+        <button type="button" data-inspector-tab="activity" aria-selected="false">Activity</button>
+        <button type="button" data-inspector-tab="materials" aria-selected="false">Materials</button>
+        <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">Files</button>
+        <button type="button" data-inspector-tab="browser" aria-selected="false">Browser</button>
+        <button type="button" data-inspector-tab="terminal" aria-selected="false">Terminal</button>
+        <button type="button" data-inspector-tab="changes" aria-selected="false">Changes</button>
         <button type="button" data-inspector-tab="tasks" aria-selected="false">Background tasks</button>
       </nav>
       <section class="mp-inspector-panel" id="inspector-activity" data-inspector-panel="activity" hidden>
@@ -529,20 +529,20 @@
       </section>
       <section class="mp-inspector-panel" id="inspector-materials" data-inspector-panel="materials" hidden>
         <header class="mp-task-material-header">
-          <div><strong>当前任务材料</strong><p>点选后会作为下一步的明确来源；详情保留来源身份与局部引用。</p></div>
+          <div><strong>Current task materials</strong><p>Selected items become explicit sources for the next step; details keep source identity and local references.</p></div>
         </header>
-        <div class="mp-task-material-list" id="task-material-list"><p class="mp-inspector-empty">当前任务还没有材料。</p></div>
+        <div class="mp-task-material-list" id="task-material-list"><p class="mp-inspector-empty">No materials for this task yet.</p></div>
         <article class="mp-task-material-detail" id="task-material-detail" hidden></article>
       </section>
       <section class="mp-inspector-panel is-on" id="inspector-files" data-inspector-panel="files">
         <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="Filter files…" autocomplete="off" /></label>
-        <div class="mp-file-tree" id="project-file-tree" role="tree" tabindex="0"><p class="mp-inspector-empty">打开项目后显示文件。</p></div>
+        <div class="mp-file-tree" id="project-file-tree" role="tree" tabindex="0"><p class="mp-inspector-empty">Files appear after opening a project.</p></div>
         <article class="mp-file-preview" id="project-file-preview" hidden>
           <header>
             <span id="project-file-name"></span>
             <input id="project-file-search-input" type="search" placeholder="Search in file…" aria-label="Search in file" hidden />
             <div class="mp-file-preview-actions">
-              <button type="button" id="project-file-open" title="在原应用打开" aria-label="在原应用打开"><svg aria-hidden="true"><use href="#ic-open" /></svg></button>
+              <button type="button" id="project-file-open" title="Open in default app" aria-label="Open in default app"><svg aria-hidden="true"><use href="#ic-open" /></svg></button>
               <button type="button" id="project-file-code" title="Code" aria-pressed="false"><svg aria-hidden="true"><use href="#ic-code" /></svg></button>
               <button type="button" id="project-file-search" title="Search"><svg aria-hidden="true"><use href="#ic-search" /></svg></button>
               <button type="button" id="project-file-back" title="Show files"><svg aria-hidden="true"><use href="#ic-folder-open" /></svg></button>
@@ -554,40 +554,40 @@
       </section>
       <section class="mp-inspector-panel" id="inspector-browser" data-inspector-panel="browser" hidden>
         <div class="mp-browser-toolbar">
-          <button type="button" id="project-browser-back" aria-label="后退" title="后退" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg></button>
-          <button type="button" id="project-browser-forward" aria-label="前进" title="前进" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg></button>
-          <button type="button" id="project-browser-reload" aria-label="重新加载" title="重新加载"><svg class="codex-icon" aria-hidden="true"><use href="#ic-refresh" /></svg></button>
+          <button type="button" id="project-browser-back" aria-label="Back" title="Back" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg></button>
+          <button type="button" id="project-browser-forward" aria-label="Forward" title="Forward" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg></button>
+          <button type="button" id="project-browser-reload" aria-label="Reload" title="Reload"><svg class="codex-icon" aria-hidden="true"><use href="#ic-refresh" /></svg></button>
           <form class="mp-browser-bar" id="project-browser-form"><input id="project-browser-url" type="text" inputmode="url" placeholder="Enter a URL or localhost address" aria-label="Browser address" /><button type="submit" aria-label="Go" title="Go"><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg></button></form>
-          <button type="button" id="project-browser-external" aria-label="在 Web 浏览器中打开" title="在 Web 浏览器中打开"><svg class="codex-icon" aria-hidden="true"><use href="#ic-open" /></svg></button>
+          <button type="button" id="project-browser-external" aria-label="Open in web browser" title="Open in web browser"><svg class="codex-icon" aria-hidden="true"><use href="#ic-open" /></svg></button>
         </div>
-        <div class="mp-browser-host" id="project-browser-host" aria-label="内置网页浏览器">
-          <div class="mp-browser-empty" id="project-browser-empty"><svg class="codex-icon" aria-hidden="true"><use href="#ic-globe" /></svg><strong>项目浏览器</strong><p>输入网址即可在这里真实打开；链接右键可交给系统 Web 浏览器。</p></div>
+        <div class="mp-browser-host" id="project-browser-host" aria-label="Built-in web browser">
+          <div class="mp-browser-empty" id="project-browser-empty"><svg class="codex-icon" aria-hidden="true"><use href="#ic-globe" /></svg><strong>Project browser</strong><p>Enter a URL to open it here for real; right-click a link to hand it to the system web browser.</p></div>
         </div>
       </section>
       <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>
         <div class="mp-preview-sheet-tabs"><span>PowerShell</span><button type="button" data-terminal-stop>Stop terminal</button></div>
-        <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · 当前项目</span><pre class="mp-terminal-log"></pre></div>
+        <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · Current project</span><pre class="mp-terminal-log"></pre></div>
         <form class="mp-terminal-form" id="project-terminal-form"><span>&gt;</span><input id="project-terminal-input" autocomplete="off" spellcheck="false" aria-label="Terminal command" /><button type="submit">Run</button></form>
       </section>
-      <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">打开 Git 项目后显示工作树变更。</p></div></section>
-      <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><section id="project-plan" hidden></section><div id="project-tasks"><p class="mp-inspector-empty">这里显示当前项目的后台与已安排任务。</p></div></section>
+      <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">Worktree changes appear after opening a Git project.</p></div></section>
+      <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><section id="project-plan" hidden></section><div id="project-tasks"><p class="mp-inspector-empty">Background and scheduled tasks for this project appear here.</p></div></section>
       <section class="mp-inspector-panel" id="inspector-artifact" data-inspector-panel="artifact" hidden>
         <div class="mp-artifact-editor" id="artifact-editor">
           <header class="mp-artifact-editor-meta">
             <strong id="artifact-editor-kind">Draft</strong>
             <span id="artifact-editor-revision">revision —</span>
           </header>
-          <textarea id="artifact-editor-content" spellcheck="true" aria-label="可编辑产物正文" placeholder="选择一个产物后在这里编辑。"></textarea>
+          <textarea id="artifact-editor-content" spellcheck="true" aria-label="Editable artifact body" placeholder="Select an artifact to edit it here."></textarea>
           <section class="mp-artifact-patch-preview" aria-labelledby="artifact-patch-title">
-            <h3 id="artifact-patch-title">修改预览</h3>
-            <div id="artifact-patch-changes"><p class="mp-inspector-empty">普通文本草稿没有外部文件修改。</p></div>
+            <h3 id="artifact-patch-title">Patch preview</h3>
+            <div id="artifact-patch-changes"><p class="mp-inspector-empty">Plain text drafts have no external file changes.</p></div>
           </section>
           <p class="mp-artifact-editor-status" id="artifact-editor-status" role="status" aria-live="polite"></p>
           <footer class="mp-artifact-editor-actions">
-            <button type="button" id="artifact-editor-save">保存版本</button>
-            <button type="button" id="artifact-editor-accept">接受当前版本</button>
-            <button type="button" class="is-primary" id="artifact-editor-apply">应用并验证</button>
-            <button type="button" id="artifact-editor-undo" hidden>撤销本次应用</button>
+            <button type="button" id="artifact-editor-save">Save version</button>
+            <button type="button" id="artifact-editor-accept">Accept current version</button>
+            <button type="button" class="is-primary" id="artifact-editor-apply">Apply and verify</button>
+            <button type="button" id="artifact-editor-undo" hidden>Undo apply</button>
           </footer>
         </div>
       </section>
@@ -595,19 +595,19 @@
 
     <aside class="aux" id="aux" hidden>
       <header class="aux-top">
-        <div><p class="workspace-eyebrow">ARTIFACT PREVIEW</p><b>产物预览</b></div>
-        <button class="icon-btn is-plain" id="aux-close" aria-label="关闭预览"><svg><use href="#ic-x" /></svg></button>
+        <div><p class="workspace-eyebrow">ARTIFACT PREVIEW</p><b>Artifact preview</b></div>
+        <button class="icon-btn is-plain" id="aux-close" aria-label="Close preview"><svg><use href="#ic-x" /></svg></button>
       </header>
-      <div class="aux-body"><div class="doc"><h2>本地产物</h2><p>从对话或产物页选择一个项目后，会在这里显示完整内容。</p></div></div>
+      <div class="aux-body"><div class="doc"><h2>Local artifacts</h2><p>Select an item from chat or Artifacts to see its full contents here.</p></div></div>
     </aside>
   </div>
 
-  <section class="mp-global-search" id="global-search" hidden aria-label="全局搜索">
-    <button type="button" class="mp-global-search-mask" data-global-search-close aria-label="关闭搜索"></button>
+  <section class="mp-global-search" id="global-search" hidden aria-label="Global search">
+    <button type="button" class="mp-global-search-mask" data-global-search-close aria-label="Close search"></button>
     <div class="mp-global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-label">
       <label class="mp-global-search-field" id="global-search-label">
         <svg aria-hidden="true"><use href="#ic-search" /></svg>
-        <input id="global-search-input" type="search" autocomplete="off" placeholder="搜索会话、项目、文件和命令" aria-label="搜索会话、项目、文件和命令" />
+        <input id="global-search-input" type="search" autocomplete="off" placeholder="Search conversations, projects, files, and commands" aria-label="Search conversations, projects, files, and commands" />
         <kbd>Esc</kbd>
       </label>
       <div class="mp-global-search-results" id="global-search-results" role="listbox"></div>
@@ -616,57 +616,57 @@
 
   <div class="mp-window-menu-popover" id="window-menu-popover" role="menu" hidden>
     <div data-window-menu-panel="file" hidden>
-      <button type="button" data-window-command="new-chat"><span>新建对话</span><kbd>Ctrl+N</kbd></button>
-      <button type="button" data-window-command="open-project"><span>打开项目…</span><kbd>Ctrl+O</kbd></button>
-      <button type="button" data-window-command="add-files"><span>添加文件…</span><kbd></kbd></button>
+      <button type="button" data-window-command="new-chat"><span>New chat</span><kbd>Ctrl+N</kbd></button>
+      <button type="button" data-window-command="open-project"><span>Open project…</span><kbd>Ctrl+O</kbd></button>
+      <button type="button" data-window-command="add-files"><span>Add files…</span><kbd></kbd></button>
       <hr />
-      <button type="button" data-window-command="open-project-folder"><span>在资源管理器中显示</span><kbd></kbd></button>
-      <button type="button" data-window-command="close-window"><span>关闭窗口</span><kbd>Alt+F4</kbd></button>
+      <button type="button" data-window-command="open-project-folder"><span>Show in Explorer</span><kbd></kbd></button>
+      <button type="button" data-window-command="close-window"><span>Close window</span><kbd>Alt+F4</kbd></button>
     </div>
     <div data-window-menu-panel="edit" hidden>
-      <button type="button" data-window-command="undo"><span>撤销</span><kbd>Ctrl+Z</kbd></button>
-      <button type="button" data-window-command="redo"><span>重做</span><kbd>Ctrl+Y</kbd></button>
+      <button type="button" data-window-command="undo"><span>Undo</span><kbd>Ctrl+Z</kbd></button>
+      <button type="button" data-window-command="redo"><span>Redo</span><kbd>Ctrl+Y</kbd></button>
       <hr />
-      <button type="button" data-window-command="cut"><span>剪切</span><kbd>Ctrl+X</kbd></button>
-      <button type="button" data-window-command="copy"><span>复制</span><kbd>Ctrl+C</kbd></button>
-      <button type="button" data-window-command="paste"><span>粘贴</span><kbd>Ctrl+V</kbd></button>
-      <button type="button" data-window-command="select-all"><span>全选</span><kbd>Ctrl+A</kbd></button>
+      <button type="button" data-window-command="cut"><span>Cut</span><kbd>Ctrl+X</kbd></button>
+      <button type="button" data-window-command="copy"><span>Copy</span><kbd>Ctrl+C</kbd></button>
+      <button type="button" data-window-command="paste"><span>Paste</span><kbd>Ctrl+V</kbd></button>
+      <button type="button" data-window-command="select-all"><span>Select all</span><kbd>Ctrl+A</kbd></button>
     </div>
     <div data-window-menu-panel="view" hidden>
-      <button type="button" data-window-command="toggle-sidebar"><span>切换侧栏</span><kbd>Ctrl+B</kbd></button>
-      <button type="button" data-window-command="toggle-inspector"><span>切换项目面板</span><kbd>Ctrl+Shift+B</kbd></button>
-      <button type="button" data-window-command="toggle-bottom-panel"><span>切换底部面板</span><kbd>Ctrl+J</kbd></button>
+      <button type="button" data-window-command="toggle-sidebar"><span>Toggle sidebar</span><kbd>Ctrl+B</kbd></button>
+      <button type="button" data-window-command="toggle-inspector"><span>Toggle project panel</span><kbd>Ctrl+Shift+B</kbd></button>
+      <button type="button" data-window-command="toggle-bottom-panel"><span>Toggle bottom panel</span><kbd>Ctrl+J</kbd></button>
       <hr />
-      <button type="button" data-window-command="toggle-theme"><span>切换浅色 / 深色</span><kbd></kbd></button>
-      <button type="button" data-window-command="zoom-in"><span>放大</span><kbd>Ctrl++</kbd></button>
-      <button type="button" data-window-command="zoom-out"><span>缩小</span><kbd>Ctrl+-</kbd></button>
-      <button type="button" data-window-command="zoom-reset"><span>实际大小</span><kbd>Ctrl+0</kbd></button>
-      <button type="button" data-window-command="fullscreen"><span>全屏</span><kbd>F11</kbd></button>
+      <button type="button" data-window-command="toggle-theme"><span>Toggle light / dark</span><kbd></kbd></button>
+      <button type="button" data-window-command="zoom-in"><span>Zoom in</span><kbd>Ctrl++</kbd></button>
+      <button type="button" data-window-command="zoom-out"><span>Zoom out</span><kbd>Ctrl+-</kbd></button>
+      <button type="button" data-window-command="zoom-reset"><span>Actual size</span><kbd>Ctrl+0</kbd></button>
+      <button type="button" data-window-command="fullscreen"><span>Fullscreen</span><kbd>F11</kbd></button>
     </div>
     <div data-window-menu-panel="help" hidden>
-      <button type="button" data-window-command="shortcuts"><span>键盘快捷键</span><kbd>Ctrl+/</kbd></button>
-      <button type="button" data-window-command="diagnostics"><span>诊断与日志</span><kbd></kbd></button>
-      <button type="button" data-window-command="settings"><span>设置</span><kbd>Ctrl+,</kbd></button>
+      <button type="button" data-window-command="shortcuts"><span>Keyboard shortcuts</span><kbd>Ctrl+/</kbd></button>
+      <button type="button" data-window-command="diagnostics"><span>Diagnostics and logs</span><kbd></kbd></button>
+      <button type="button" data-window-command="settings"><span>Settings</span><kbd>Ctrl+,</kbd></button>
       <hr />
-      <button type="button" data-window-command="about"><span>关于</span><kbd></kbd></button>
+      <button type="button" data-window-command="about"><span>About</span><kbd></kbd></button>
     </div>
   </div>
 
-  <section class="mp-directory-overlay" id="plugin-directory" hidden aria-label="技能与命令目录">
+  <section class="mp-directory-overlay" id="plugin-directory" hidden aria-label="Skills and commands directory">
     <div class="mp-directory-mask" data-directory-close aria-hidden="true"></div>
     <div class="mp-directory-panel" role="dialog" aria-modal="true" aria-labelledby="plugin-directory-title">
       <header class="mp-directory-titlebar">
         <h2 id="plugin-directory-title">Directory</h2>
-        <button type="button" data-directory-close aria-label="关闭目录"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
+        <button type="button" data-directory-close aria-label="Close directory"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
       </header>
       <div class="mp-directory-body">
-        <nav class="mp-directory-nav" aria-label="目录分类">
-          <button type="button" class="is-on" data-directory-kind="skills"><svg aria-hidden="true"><use href="#ic-spark" /></svg><span>技能</span></button>
-          <button type="button" data-directory-kind="commands"><svg aria-hidden="true"><use href="#ic-term" /></svg><span>命令</span></button>
+        <nav class="mp-directory-nav" aria-label="Directory categories">
+          <button type="button" class="is-on" data-directory-kind="skills"><svg aria-hidden="true"><use href="#ic-spark" /></svg><span>Skills</span></button>
+          <button type="button" data-directory-kind="commands"><svg aria-hidden="true"><use href="#ic-term" /></svg><span>Commands</span></button>
         </nav>
         <main class="mp-directory-main">
-          <label class="mp-directory-search"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="plugin-directory-search" type="search" autocomplete="off" placeholder="搜索技能与命令…" /></label>
-          <div class="mp-directory-section-head"><strong id="plugin-directory-kind-label">已安装技能</strong><span id="plugin-directory-count"></span></div>
+          <label class="mp-directory-search"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="plugin-directory-search" type="search" autocomplete="off" placeholder="Search skills and commands…" /></label>
+          <div class="mp-directory-section-head"><strong id="plugin-directory-kind-label">Installed skills</strong><span id="plugin-directory-count"></span></div>
           <div class="mp-directory-list" id="plugin-directory-list"></div>
         </main>
       </div>
@@ -684,7 +684,9 @@
   <script defer src="cds_icons.js?v=1"></script>
   <script defer src="cds_svg_icons.js?v=1"></script>
   <script defer src="chat_highlight.js?v=1"></script>
+  <script defer src="locale.js?v=1"></script>
   <script defer src="chat_view.js?v=27"></script>
+  <script defer src="tool_verbs.js?v=1"></script>
   <script defer src="execution_view.js"></script>
   <script defer src="../conversation_control.js?v=23"></script>
   <script defer src="../slash_trigger.js?v=23"></script>

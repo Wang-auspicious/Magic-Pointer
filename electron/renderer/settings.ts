@@ -12,6 +12,8 @@ type SettingsApi = {
 
 type SettingsModelApi = {
   SETTINGS_PAGES: any[];
+  SETTINGS_UI_LABELS: Record<string, string>;
+  formatSettingLabel(id: string, params?: Record<string, string | number>): string;
   modelInfoValue(key: string, status: Record<string, any>): string;
   patchForSetting(path: string, value: unknown): Record<string, unknown>;
   valueForSetting(path: string, settings: Record<string, any>): unknown;
@@ -112,8 +114,8 @@ function controlForSetting(row: any, value: unknown) {
     : null;
   const displayValue =
     typeof infoValue === 'number'
-      ? `${infoValue} active`
-      : infoValue || 'Read only';
+      ? settingsModel.formatSettingLabel('grants.active', {count: infoValue})
+      : infoValue || settingsModel.formatSettingLabel('model.readOnly');
   return `<span class="settings-info-value" data-info-key="${escSetting(row.infoKey || '')}">${escSetting(displayValue)}</span>`;
 }
 
@@ -136,11 +138,12 @@ function renderSettingsSection(title: string, rows: any[]) {
 }
 
 function renderMemoryLibrary() {
+  const memoryTitle = escSetting(settingsModel.formatSettingLabel('memory.title'));
   if (!learnedMemories.length) {
-    return `<section class="mp-settings-section mp-memory-library"><h3>Memory files</h3>
-      <div class="mp-memory-empty">No memory files yet. Repeated work on the same objects will appear here.</div></section>`;
+    return `<section class="mp-settings-section mp-memory-library"><h3>${memoryTitle}</h3>
+      <div class="mp-memory-empty">${escSetting(settingsModel.formatSettingLabel('memory.empty'))}</div></section>`;
   }
-  return `<section class="mp-settings-section mp-memory-library"><h3>Memory files</h3><div class="mp-memory-list">
+  return `<section class="mp-settings-section mp-memory-library"><h3>${memoryTitle}</h3><div class="mp-memory-list">
     ${learnedMemories
       .slice(0, 12)
       .map(memory => {
@@ -148,14 +151,14 @@ function renderMemoryLibrary() {
           memory.object?.windowTitle ||
             memory.object?.label ||
             memory.object?.app ||
-            'Untitled object',
+            settingsModel.formatSettingLabel('memory.untitled'),
         );
         const questions = Array.isArray(memory.questions)
           ? memory.questions.slice(0, 2)
           : [];
         return `<article class="mp-memory-item"><span class="mp-memory-mark">${settingIcon('ic-memory')}</span>
-        <span class="mp-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || 'Local context')}</small></span>
-        <span class="mp-memory-count">${escSetting(memory.touches || 0)} uses</span></article>`;
+        <span class="mp-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || settingsModel.formatSettingLabel('memory.context'))}</small></span>
+        <span class="mp-memory-count">${escSetting(settingsModel.formatSettingLabel('memory.uses', {count: Number(memory.touches || 0)}))}</span></article>`;
       })
       .join('')}
   </div></section>`;
@@ -164,37 +167,40 @@ function renderMemoryLibrary() {
 function renderPluginsPage(page: any) {
   const pluginRow = page.sections[0]?.rows?.[0];
   const description =
-    pluginRow?.description || 'Local plugins become active after approval.';
+    pluginRow?.description ||
+    settingsModel.formatSettingLabel('plugins.fallbackDescription');
+  const pluginSearchLabel = escSetting(settingsModel.formatSettingLabel('plugins.search'));
+  const pluginAddLabel = escSetting(settingsModel.formatSettingLabel('plugins.add'));
   const rows = pluginInventory.length
     ? pluginInventory
         .map(
           item => `<article class="mp-settings-plugin-row">
         <span class="mp-settings-plugin-mark">${settingIcon('ic-plug')}</span>
-        <span class="mp-settings-plugin-copy"><strong>${escSetting(item.name || item.id || 'Unnamed plugin')}</strong><small>${escSetting(item.description || 'Local Harness plugin')}</small></span>
-        <span class="mp-settings-plugin-meta">${escSetting(item.status || item.source || 'Local')}</span>
-        <button type="button" class="mp-settings-plugin-more" aria-label="More plugin actions">${settingIcon('ic-dots-vertical')}</button>
+        <span class="mp-settings-plugin-copy"><strong>${escSetting(item.name || item.id || settingsModel.formatSettingLabel('plugins.unnamed'))}</strong><small>${escSetting(item.description || settingsModel.formatSettingLabel('plugins.localDescription'))}</small></span>
+        <span class="mp-settings-plugin-meta">${escSetting(item.status || item.source || settingsModel.formatSettingLabel('plugins.localMeta'))}</span>
+        <button type="button" class="mp-settings-plugin-more" aria-label="${escSetting(settingsModel.formatSettingLabel('plugins.moreActions'))}">${settingIcon('ic-dots-vertical')}</button>
       </article>`,
         )
         .join('')
-    : `<div class="mp-settings-plugin-empty">No installed plugins.<small>${escSetting(description)}</small></div>`;
+    : `<div class="mp-settings-plugin-empty">${escSetting(settingsModel.formatSettingLabel('plugins.empty'))}<small>${escSetting(description)}</small></div>`;
   const heading = pluginInventory.length
-    ? `Personal plugins <span>· ${pluginInventory.length}</span>`
-    : 'Personal plugins';
+    ? `${escSetting(settingsModel.formatSettingLabel('plugins.heading'))} <span>· ${pluginInventory.length}</span>`
+    : escSetting(settingsModel.formatSettingLabel('plugins.heading'));
   return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}">
     <header class="mp-settings-page-head mp-settings-plugin-head">
       <div><h2>${escSetting(page.title)}</h2></div>
       <label class="mp-settings-plugin-search">
-        ${settingIcon('ic-search')}<input type="search" placeholder="Search skills and plugins" aria-label="Search skills and plugins" />
+        ${settingIcon('ic-search')}<input type="search" placeholder="${pluginSearchLabel}" aria-label="${pluginSearchLabel}" />
       </label>
-      <button type="button" class="mp-settings-plugin-add">Add${settingIcon('ic-chev')}</button>
+      <button type="button" class="mp-settings-plugin-add">${pluginAddLabel}${settingIcon('ic-chev')}</button>
     </header>
-    <div class="mp-settings-plugin-tabs" role="tablist" aria-label="Plugin scope">
-      <button type="button" class="is-on" role="tab" aria-selected="true">Your plugins</button>
-      <button type="button" role="tab" aria-selected="false">Discover</button>
+    <div class="mp-settings-plugin-tabs" role="tablist" aria-label="${escSetting(settingsModel.formatSettingLabel('plugins.scope'))}">
+      <button type="button" class="is-on" role="tab" aria-selected="true">${escSetting(settingsModel.formatSettingLabel('plugins.tabMine'))}</button>
+      <button type="button" role="tab" aria-selected="false">${escSetting(settingsModel.formatSettingLabel('plugins.tabDiscover'))}</button>
     </div>
     <div class="mp-settings-plugin-filters">
       <span></span>
-      <div><button type="button">${settingIcon('ic-sliders')}Filter${settingIcon('ic-chev')}</button><button type="button">${settingIcon('ic-sort')}Sort · Last edited${settingIcon('ic-chev')}</button></div>
+      <div><button type="button">${settingIcon('ic-sliders')}${escSetting(settingsModel.formatSettingLabel('plugins.filter'))}${settingIcon('ic-chev')}</button><button type="button">${settingIcon('ic-sort')}${escSetting(settingsModel.formatSettingLabel('plugins.sort'))}${settingIcon('ic-chev')}</button></div>
     </div>
     <div class="mp-settings-plugin-list">
       <h3>${heading}</h3>
@@ -240,11 +246,11 @@ function renderSettingsSearchResults(query: string) {
     0,
   );
   return `<section class="mp-settings-page" data-page="search">
-    <header class="mp-settings-page-head"><div><h2>Search settings</h2><p>“${escSetting(query)}” · ${count} results</p></div></header>
+    <header class="mp-settings-page-head"><div><h2>${escSetting(settingsModel.formatSettingLabel('search.title'))}</h2><p>${escSetting(settingsModel.formatSettingLabel('search.results', {query, count}))}</p></div></header>
     ${
       matches.length
         ? `<div class="mp-settings-sections">${matches.map(section => renderSettingsSection(section.title, section.rows)).join('')}</div>`
-        : '<div class="mp-settings-search-empty">No matching settings.</div>'
+        : `<div class="mp-settings-search-empty">${escSetting(settingsModel.formatSettingLabel('search.empty'))}</div>`
     }
   </section>`;
 }
@@ -260,7 +266,11 @@ function setSettingsStatus(
   status.dataset.state = state;
   status.textContent =
     message ||
-    (state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : '');
+    (state === 'saving'
+      ? settingsModel.formatSettingLabel('status.saving')
+      : state === 'saved'
+        ? settingsModel.formatSettingLabel('status.saved')
+        : '');
 }
 
 function renderSettings() {
@@ -447,7 +457,9 @@ document.addEventListener('click', event => {
       '.mp-settings-plugin-list',
     );
     if (list) {
-      list.hidden = pluginTab.textContent?.trim() !== 'Your plugins';
+      list.hidden =
+        pluginTab.textContent?.trim() !==
+        settingsModel.formatSettingLabel('plugins.tabMine');
     }
     return;
   }

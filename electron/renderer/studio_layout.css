@@ -42,6 +42,16 @@
   -webkit-app-region: no-drag;
 }
 
+/* Claude modal state (report/20 section 2.4): while a modal is open the
+   titlebar grows 36px -> 44px and its background turns opaque -> blend. */
+body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) {
+  --mp-window-bar: 44px;
+}
+
+body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-window-bar {
+  background: color-mix(in srgb, var(--mp-sidebar) 55%, var(--mp-page));
+}
+
 .mp-toolbar-button {
   display: grid;
   width: 28px;

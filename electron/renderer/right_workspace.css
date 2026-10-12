@@ -105,6 +105,95 @@
   scrollbar-width: thin;
 }
 
+.mpw-workspace-bar {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.mpw-workspace-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.mpw-workspace-new-tab,
+.mpw-workspace-more {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mp-text-muted);
+  font: 14px/26px var(--mp-font);
+  cursor: pointer;
+}
+
+.mpw-workspace-new-tab:hover,
+.mpw-workspace-more:hover {
+  background: var(--mp-hover);
+  color: var(--mp-text);
+}
+
+.mpw-browser-address {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--mp-rule);
+  color: var(--mp-text-muted);
+}
+
+.mpw-browser-globe {
+  flex: 0 0 auto;
+  color: var(--mp-text-muted);
+}
+
+.mpw-browser-address-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font: 12px/1.5 var(--mp-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mpw-browser-empty {
+  box-sizing: border-box;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 48px 24px;
+  color: var(--mp-text-muted);
+  text-align: center;
+}
+
+.mpw-browser-empty .mpw-browser-globe {
+  width: 20px;
+  height: 20px;
+}
+
+.mpw-browser-empty-title {
+  display: block;
+  margin: 12px 0 8px;
+  color: var(--mp-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mpw-browser-empty p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mpw-browser-empty-hint {
+  color: var(--mp-text-muted);
+}
+
 .mpw-workspace-tab {
   display: flex;
   position: relative;

@@ -436,4 +436,39 @@
   .mp-trace-root * {
     scroll-behavior: auto;
   }
+  .mp-trace-spinner {
+    animation: none;
+  }
+}
+
+/* Live running line: one persistent node updated in place, never re-appended,
+   so the trace never shows a duplicate trajectory line while work is live. */
+.mp-trace-running {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 15px 6px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-trace-running[hidden] {
+  display: none;
+}
+.mp-trace-spinner {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  animation: mp-trace-spin 0.9s linear infinite;
+}
+@keyframes mp-trace-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

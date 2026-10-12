@@ -59,6 +59,8 @@ declare global {
     summary: HTMLElement;
     scopeLabel: HTMLElement;
     state: HTMLElement;
+    running: HTMLElement;
+    runningText: HTMLElement;
     mode: HTMLSelectElement;
     search: HTMLInputElement;
     list: HTMLElement;
@@ -135,7 +137,33 @@ declare global {
         ? `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`
         : ms < 3600000
           ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
-          : `${(ms / 3600000).toFixed(1)}h`;
+          : `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+  function verbFor(raw: string): string {
+    return typeof ToolVerbs !== 'undefined'
+      ? ToolVerbs.runningVerbFor(raw)
+      : raw;
+  }
+  function runningLine(
+    active: TraceEntry | undefined,
+    waiting: boolean | undefined,
+  ): string {
+    if (!active) {
+      return waiting ? 'Waiting for input' : 'Working';
+    }
+    const phrase =
+      active.kind === 'tool'
+        ? verbFor(active.title)
+        : active.kind === 'model'
+          ? 'Generating'
+          : active.kind === 'fork'
+            ? 'Running subtask'
+            : active.title || 'Working';
+    const elapsed =
+      active.startedAt === undefined
+        ? ''
+        : duration(Math.max(0, Date.now() - active.startedAt));
+    return elapsed ? `${phrase} · ${elapsed}` : phrase;
+  }
   const clock = (ms: number) =>
     new Date(ms).toLocaleTimeString([], {
       hour: '2-digit',
@@ -587,7 +615,7 @@ declare global {
     heading.append(el('strong', '', record.title));
     const close = el('button', 'mp-trace-control', '×');
     close.type = 'button';
-    close.setAttribute('aria-label', '关闭记录详情');
+    close.setAttribute('aria-label', 'Close record details');
     close.onclick = () => {
       view.selected = null;
       filter(view);
@@ -611,7 +639,7 @@ declare global {
       el('p', 'mp-trace-detail-meta', meta),
     ];
     if (view.input.onLocate) {
-      const locate = el('button', 'mp-trace-locate', '在对话中查看');
+      const locate = el('button', 'mp-trace-locate', 'View in conversation');
       locate.type = 'button';
       locate.onclick = () =>
         view.input.onLocate?.(
@@ -625,7 +653,7 @@ declare global {
         el(
           'p',
           'mp-trace-detail-meta',
-          `首字 ${duration(record.firstTokenMs)} · 后续 ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
+          `First token ${duration(record.firstTokenMs)} · rest ${duration(Math.max(0, record.durationMs - record.firstTokenMs))}`,
         ),
       );
     }
@@ -859,7 +887,7 @@ declare global {
           entry.status,
         ]
           .filter(Boolean)
-          .join('，'),
+          .join(', '),
       );
       const gutter = row.children[0] as HTMLElement;
       gutter.dataset.marker = entry.kind;
@@ -951,6 +979,13 @@ declare global {
     const state = el('span', 'mp-trace-state');
     heading.append(el('strong', '', 'Conversation history'), state);
     header.append(heading, summary, scopeLabel);
+    const running = el('div', 'mp-trace-running');
+    running.hidden = true;
+    running.setAttribute('role', 'status');
+    const spinner = el('span', 'mp-trace-spinner');
+    spinner.setAttribute('aria-hidden', 'true');
+    const runningText = el('span', 'mp-trace-running-text');
+    running.append(spinner, runningText);
     const controls = el('div', 'mp-trace-controls');
     const mode = el('select', 'mp-trace-mode');
     mode.setAttribute('aria-label', 'Event order');
@@ -989,8 +1024,8 @@ declare global {
     list.append(paths);
     const detail = el('section', 'mp-trace-detail');
     detail.hidden = true;
-    detail.setAttribute('aria-label', '轨迹事件详情');
-    root.append(header, controls, hint, search, columnHead, list, detail);
+    detail.setAttribute('aria-label', 'Trace event details');
+    root.append(header, running, controls, hint, search, columnHead, list, detail);
     host.replaceChildren(root);
     const view: View = {
       input,
@@ -998,6 +1033,8 @@ declare global {
       summary,
       scopeLabel,
       state,
+      running,
+      runningText,
       mode,
       search,
       list,
@@ -1111,6 +1148,17 @@ declare global {
         view.state,
         input.waiting ? 'Needs input' : input.running ? 'Running' : '',
       );
+      const active = [...view.entries]
+        .reverse()
+        .find(entry => entry.state === 'running');
+      const live =
+        input.running === true ||
+        input.waiting === true ||
+        active !== undefined;
+      view.running.hidden = !live;
+      if (live) {
+        setText(view.runningText, runningLine(active, input.waiting));
+      }
       renderRows(view);
       if (
         input.running &&
