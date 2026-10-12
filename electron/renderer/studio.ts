@@ -783,7 +783,7 @@ function renderComposerBranchMenu(branches: string[]): void {
   search.innerHTML = '<svg aria-hidden="true"><use href="#ic-search" /></svg>';
   const input = document.createElement('input');
   input.type = 'search';
-  input.placeholder = 'Search branches…';
+  input.placeholder = '搜索分支…';
   input.value = branchMenuSearch;
   input.setAttribute('aria-label', 'Search branches');
   search.append(input);
@@ -824,7 +824,7 @@ function renderComposerBranchMenu(branches: string[]): void {
   if (!filtered.length) {
     const empty = document.createElement('div');
     empty.className = 'mp-workspace-menu-section';
-    empty.textContent = 'No matching branches';
+    empty.textContent = '没有匹配的分支';
     list.append(empty);
   }
   menu.replaceChildren(list, search);
@@ -1002,7 +1002,7 @@ function renderProjectContext() {
       locationLabel.textContent = selectedProject?.name || 'Local';
     }
     if (workspaceLabel) {
-      workspaceLabel.textContent = 'Select folder…';
+      workspaceLabel.textContent = '选择文件夹…';
     }
     return;
   }
@@ -1531,14 +1531,14 @@ function buildSessionMenu(c: {
   });
   menu.append(project);
   if (inProject) {
-    const removeProject = item('remove-project', 'Remove from project', {
+    const removeProject = item('remove-project', '从项目中移出', {
       icon: 'arrow-out',
     });
     removeProject.addEventListener('click', run('remove-project'));
     menu.append(removeProject);
   }
   if (!local.pinned) {
-    const parent = item('group', 'Move to group', {
+    const parent = item('group', '移动到分组', {
       icon: 'folder',
       submenu: true,
     });
@@ -1583,7 +1583,7 @@ function buildSessionMenu(c: {
   menu.append(archive);
   menu.append(divider());
   if (local.pinned) {
-    const up = item('up', 'Move up', {icon: 'send'});
+    const up = item('up', '上移', {icon: 'send'});
     up.addEventListener('click', run('up'));
     const down = item('down', 'Move down', {icon: 'arrow-down'});
     down.addEventListener('click', run('down'));
@@ -1615,7 +1615,7 @@ function openGroupSubmenu(
   const panel = document.createElement('div');
   panel.className = 'side-session-submenu is-floating';
   panel.setAttribute('role', 'menu');
-  panel.setAttribute('aria-label', 'Move to group');
+  panel.setAttribute('aria-label', '移动到分组');
   panel.innerHTML =
     groups
       .map(
@@ -2188,7 +2188,7 @@ async function renderSidebar() {
     label.className = 'side-empty-label';
     label.textContent = projects.length
       ? 'No matching sessions'
-      : 'Sessions you start will show up here';
+      : '你开始的会话会出现在这里';
     empty.append(label);
     if (!projects.length) {
       empty.append(emptySessionsPictogram());
@@ -2231,7 +2231,7 @@ async function renderSidebar() {
       const tools = document.createElement('button');
       tools.type = 'button';
       tools.dataset.projectTools = group.key;
-      tools.setAttribute('aria-label', 'Project tools');
+      tools.setAttribute('aria-label', '项目工具');
       tools.innerHTML = icon('ic-sliders');
       actions.append(add, tools);
     }
@@ -2372,11 +2372,16 @@ async function openProjectFromPicker(preserveProjectId?: string) {
   if (!picked?.ok || !picked.project?.root) {
     // This used to return silently. Choosing a folder that could not be opened
     // then looked exactly like the button being broken, which is how "I pick a
-    // folder and nothing happens" was reported.
+    // folder and nothing happens" was reported. Show the real reason instead of
+    // blaming the folder: a broken bridge and a missing folder are not the same
+    // failure and must not read the same.
+    const code = picked?.error || '';
     setWorkspaceNote(
-      picked?.error === 'unauthorized_project_sender'
-        ? '界面状态异常，请重开工作室再试。'
-        : '无法打开这个文件夹，可能已被移动或删除。',
+      code === 'unauthorized_project_sender'
+        ? '界面状态异常，请重开工作台再试。'
+        : code === 'invalid_project_folder'
+          ? '这个文件夹打不开：它可能已被移动、删除，或当前账户没有访问权限。'
+          : code || '没有选中文件夹。',
     );
     return;
   }
@@ -2460,7 +2465,7 @@ async function openWorkspaceMenu() {
   rows.push(
     workspaceMenuRow(
       'mp-workspace-menu-row',
-      'No folder',
+      '不选文件夹',
       () => {
         close();
         setActiveProject('');
@@ -2472,7 +2477,7 @@ async function openWorkspaceMenu() {
   if (projects.length) {
     const label = document.createElement('div');
     label.className = 'mp-workspace-menu-section';
-    label.textContent = 'Recent';
+    label.textContent = '最近';
     rows.push(label);
     for (const project of projects.slice(0, 6)) {
       const root = String(project.root || '');
@@ -2504,7 +2509,7 @@ async function openWorkspaceMenu() {
   divider.className = 'mp-workspace-menu-divider';
   rows.push(divider);
   rows.push(
-    workspaceMenuRow('mp-workspace-menu-row', 'Open folder…', () => {
+    workspaceMenuRow('mp-workspace-menu-row', '打开文件夹…', () => {
       close();
       invalidateProjectCache();
       void openProjectFromPicker(preservedProjectId);
@@ -2705,10 +2710,10 @@ function quotedSelection(text: string): string {
   pill.setAttribute('aria-label', '选中内容的操作');
   const side = document.createElement('button');
   side.type = 'button';
-  side.textContent = 'Start a side chat';
+  side.textContent = '开始侧边对话';
   const reply = document.createElement('button');
   reply.type = 'button';
-  reply.textContent = 'Reply';
+  reply.textContent = '回复';
   pill.append(side, reply);
   document.body.appendChild(pill);
 
@@ -3459,7 +3464,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   const foot = document.createElement('button');
   foot.type = 'button';
   foot.className = 'mp-usage-foot';
-  foot.textContent = 'See detailed breakdown';
+  foot.textContent = '查看详细明细';
   foot.setAttribute('aria-controls', 'composer-usage-breakdown');
   foot.setAttribute('aria-expanded', String(usageDetailsOpen));
   foot.addEventListener('click', toggleDetails);
@@ -6633,16 +6638,14 @@ function openThreadMenu(button: HTMLElement) {
   const unavailable = !activeConversationId;
   menu.append(
     make(
-      'Files',
-      () => {
-        document
-          .getElementById('inspector-toggle')
-          ?.dispatchEvent(new MouseEvent('click', {bubbles: true}));
-      },
+      '会话材料与文件',
+      () => toggleMaterialsPanel(),
       {shortcut: 'Ctrl+Shift+F'},
     ),
+    make('终端', () => toggleTerminalPanel()),
+    make('预览窗口', () => setInspector(true, 'browser')),
     divider(),
-    make('Open project folder', () => {
+    make('打开项目文件夹', () => {
       if (activeProjectRoot) {
         void Data.openProjectPath(activeProjectRoot, '');
       } else {
@@ -6650,7 +6653,7 @@ function openThreadMenu(button: HTMLElement) {
       }
     }),
     make(
-      'Rename',
+      '重命名',
       () => {
         if (activeConversationId) {
           openRenameDialog(
@@ -6661,11 +6664,11 @@ function openThreadMenu(button: HTMLElement) {
       },
       {disabled: unavailable, shortcut: 'R'},
     ),
-    make('Transcript view', () => setConversationTab('trajectory'), {
+    make('完整对话记录', () => setConversationTab('trajectory'), {
       disabled: unavailable,
     }),
     make(
-      'Fork',
+      '分支',
       () => {
         if (!activeConversationId || activeConversationTurnCount < 1) {
           return;
@@ -6684,7 +6687,7 @@ function openThreadMenu(button: HTMLElement) {
       {disabled: unavailable || activeConversationTurnCount < 1, shortcut: 'F'},
     ),
     make(
-      'Export session log',
+      '导出会话日志',
       () => {
         if (activeConversationId) {
           void Data.exportConversation(activeConversationId);
@@ -6694,7 +6697,7 @@ function openThreadMenu(button: HTMLElement) {
     ),
     divider(),
     make(
-      'Delete',
+      '删除',
       () => {
         if (!activeConversationId) {
           return;
@@ -7410,7 +7413,7 @@ async function selectProjectFile(
   const name = document.getElementById('project-file-name');
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = 'File';
+    inspectorTitle.textContent = '文件';
   }
   if (name) {
     name.textContent = relativePath + (response?.truncated ? ' · 已截断' : '');
@@ -7838,45 +7841,45 @@ document
 
 function subagentStatusLabel(status: string): string {
   if (status === 'running') {
-    return 'Running';
+    return '运行中';
   }
   if (status === 'awaiting_user') {
-    return 'Needs approval';
+    return '等待批准';
   }
   if (status === 'needs_verification') {
-    return 'Needs verification';
+    return '等待验证';
   }
   if (status === 'partial') {
-    return 'Partially complete';
+    return '部分完成';
   }
   if (status === 'stalled') {
-    return 'Stalled';
+    return '已停住';
   }
   if (status === 'provider_unavailable') {
-    return 'Provider unavailable';
+    return '服务商不可用';
   }
   if (status === 'budget_exhausted') {
-    return 'Budget exhausted';
+    return '预算用尽';
   }
   if (status === 'invariant_failed') {
-    return 'Runtime error';
+    return '运行时错误';
   }
   if (status === 'user_interrupt') {
-    return 'Interrupted';
+    return '已中断';
   }
   if (status === 'stop_hook') {
-    return 'Stopped by hook';
+    return '被 hook 中止';
   }
   if (status === 'failed') {
-    return 'Failed';
+    return '失败';
   }
   if (status === 'stopped') {
-    return 'Stopped';
+    return '已停止';
   }
   if (status === 'completed') {
-    return 'Completed';
+    return '已完成';
   }
-  return 'Unknown status';
+  return '未知状态';
 }
 
 function subagentResumeText(task: StudioSubagentTask): string {
@@ -8050,7 +8053,7 @@ async function stopSubagentTask(row: HTMLElement) {
   row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent =
     'Stopping';
   button.disabled = true;
-  button.title = 'Stopping task…';
+  button.title = '正在停止任务…';
   button.setAttribute('aria-label', 'Stopping task');
   error.hidden = true;
   try {
@@ -8069,7 +8072,7 @@ async function stopSubagentTask(row: HTMLElement) {
     delete row.dataset.stopState;
     row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent = '';
     button.disabled = false;
-    button.title = 'Stop task';
+    button.title = '停止任务';
     button.setAttribute('aria-label', 'Stop task');
     error.textContent =
       failure instanceof Error ? failure.message : String(failure);
@@ -8219,7 +8222,7 @@ function renderProjectTasks() {
       setText(
         row.querySelector('.mp-subagent-state')!,
         task.resumeRequired
-          ? 'Needs resume'
+          ? '等待继续'
           : task.status === 'running'
             ? row.dataset.stopState
               ? 'Stopping'
@@ -8228,7 +8231,7 @@ function renderProjectTasks() {
       );
       setText(
         row.querySelector('.mp-subagent-tool-uses')!,
-        `${task.stepCount} tool ${task.stepCount === 1 ? 'use' : 'uses'}`,
+        `${task.stepCount} 次工具调用`,
       );
       setText(
         row.querySelector('.mp-subagent-current-tool')!,
@@ -8670,7 +8673,12 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   }
 }
 
-document.getElementById('inspector-toggle')?.addEventListener('click', () => {
+/**
+ * The thread header keeps one visible action besides the trajectory entry. The
+ * terminal, materials and preview toggles live in the `⋯` menu instead, which
+ * is where the reference keeps its secondary actions.
+ */
+function toggleMaterialsPanel(): void {
   const activeResource = workspaceResourceTabs.find(tab => tab.active);
   toggleSessionPane(
     activeResource
@@ -8679,10 +8687,12 @@ document.getElementById('inspector-toggle')?.addEventListener('click', () => {
         ? 'files'
         : 'materials',
   );
-});
-document
-  .getElementById('header-preview-toggle')
-  ?.addEventListener('click', () => setInspector(true, 'browser'));
+}
+
+function toggleTerminalPanel(): void {
+  setBottomPanel(shell.dataset.bottomPanel !== 'open');
+}
+
 document
   .getElementById('execution-toggle')
   ?.addEventListener('click', () => setInspector(true, 'activity'));
@@ -8931,7 +8941,7 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   projectFileCodeView = false;
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = 'Files';
+    inspectorTitle.textContent = '文件';
   }
   renderProjectFileTree();
 });
@@ -9926,14 +9936,14 @@ function openEffortMenu() {
   head.className = 'mp-effort-head';
   const headLabel = document.createElement('span');
   headLabel.className = 'mp-effort-head-label';
-  headLabel.textContent = 'Effort';
+  headLabel.textContent = '推理强度';
   const headValue = document.createElement('strong');
   headValue.className = 'mp-effort-head-value';
   headValue.textContent = levels[currentIndex].label;
   const help = document.createElement('button');
   help.type = 'button';
   help.className = 'mp-effort-help';
-  help.setAttribute('aria-label', 'About effort');
+  help.setAttribute('aria-label', '关于推理强度');
   help.setAttribute('title', levels[currentIndex].description);
   help.innerHTML = menuGlyph('help');
   head.append(headLabel, headValue, help);
@@ -9941,9 +9951,9 @@ function openEffortMenu() {
   const scale = document.createElement('div');
   scale.className = 'mp-effort-scale';
   const faster = document.createElement('span');
-  faster.textContent = 'Faster';
+  faster.textContent = '更快';
   const smarter = document.createElement('span');
-  smarter.textContent = 'Smarter';
+  smarter.textContent = '更聪明';
   scale.append(faster, smarter);
 
   const track = document.createElement('div');
@@ -10561,7 +10571,7 @@ function openPermissionMenu() {
   }
   const heading = document.createElement('div');
   heading.className = 'mpw-perm-heading';
-  heading.textContent = 'Mode';
+  heading.textContent = '模式';
   const rows = permPresets.PRESETS.map(option => {
     const row = document.createElement('button');
     row.type = 'button';
@@ -10994,7 +11004,7 @@ let composerSuggestionRequest = 0;
 const COMPOSER_SUGGESTION_UNUSED_LIMIT = 3;
 let composerSuggestionUnused = 0;
 
-const COMPOSER_PLACEHOLDER_HOME = 'Describe a task or ask a question';
+const COMPOSER_PLACEHOLDER_HOME = '描述一个任务或提出问题';
 const COMPOSER_PLACEHOLDER_THREAD = 'Type / for commands';
 
 function applyComposerPlaceholder(ta?: HTMLTextAreaElement | null) {
@@ -11358,7 +11368,7 @@ function modelMoreRow(open: boolean): HTMLElement {
   row.setAttribute('aria-expanded', String(open));
   const label = document.createElement('span');
   label.className = 'mpw-model-name';
-  label.textContent = 'More models';
+  label.textContent = '更多模型';
   row.appendChild(label);
   const chevron = document.createElement('span');
   chevron.className = 'mpw-model-chevron';
@@ -11589,8 +11599,8 @@ function openAccountSubmenu(kind: string) {
       : [
           compactMenuItem('About Magic Pointer', '', run('about')),
           compactMenuItem('Documentation', '', run('help')),
-          compactMenuItem('Check for updates', '', run('updates')),
-          compactMenuItem('Keyboard shortcuts', '', run('shortcuts'), 'Ctrl+/'),
+          compactMenuItem('检查更新', '', run('updates')),
+          compactMenuItem('键盘快捷键', '', run('shortcuts'), 'Ctrl+/'),
         ];
   menu.replaceChildren(...rows);
   menu.hidden = false;
@@ -11643,7 +11653,7 @@ function openAttachMenu() {
   const entries = [
     {
       id: 'files',
-      label: 'Add files or photos',
+      label: '添加文件或照片',
       icon: 'attach-file',
       key: 'Ctrl+U',
       run: () => {
@@ -11652,7 +11662,7 @@ function openAttachMenu() {
     },
     {
       id: 'folder',
-      label: 'Add folder',
+      label: '添加文件夹',
       icon: 'folder',
       run: () => {
         void executeWindowMenuCommand('add-folder');
@@ -12795,7 +12805,7 @@ function startNewChat(draftId?: string) {
     .forEach(n => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) {
-    title.textContent = 'New chat';
+    title.textContent = '新对话';
   }
   projectEnvironment = null;
   renderProjectContext();

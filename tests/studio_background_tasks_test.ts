@@ -19,12 +19,12 @@ async function main() {
     Data: { stopSubagent(payload: Record<string, string>) { calls.push(payload); return new Promise(done => { resolve = done; }); } },
   };
   vm.runInNewContext(code, context);
-  assert.equal(context.subagentStatusLabel('partial'), 'Partially complete');
-  assert.equal(context.subagentStatusLabel('needs_verification'), 'Needs verification');
-  assert.equal(context.subagentStatusLabel('stalled'), 'Stalled');
-  assert.equal(context.subagentStatusLabel('user_interrupt'), 'Interrupted');
-  assert.equal(context.subagentStatusLabel('provider_unavailable'), 'Provider unavailable');
-  assert.equal(context.subagentStatusLabel('future_state'), 'Unknown status');
+  assert.equal(context.subagentStatusLabel('partial'), '部分完成');
+  assert.equal(context.subagentStatusLabel('needs_verification'), '等待验证');
+  assert.equal(context.subagentStatusLabel('stalled'), '已停住');
+  assert.equal(context.subagentStatusLabel('user_interrupt'), '已中断');
+  assert.equal(context.subagentStatusLabel('provider_unavailable'), '服务商不可用');
+  assert.equal(context.subagentStatusLabel('future_state'), '未知状态');
   const first = context.backgroundTaskView();
   first.finishedOpen = true;
   first.cleared.add('finished-child');

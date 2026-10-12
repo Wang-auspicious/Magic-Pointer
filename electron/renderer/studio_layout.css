@@ -2513,6 +2513,16 @@
   color: var(--mp-text-muted);
 }
 
+/* The search row is an inline SVG plus an input: without an explicit size the
+   SVG falls back to the 300x150 replaced-element default and the icon fills the
+   whole panel. */
+.mpw-settings-search > svg,
+.mp-directory-search > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
 .mpw-settings-search input,
 .mp-directory-search input {
   min-width: 0;

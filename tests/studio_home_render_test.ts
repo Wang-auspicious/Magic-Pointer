@@ -44,9 +44,9 @@ const referenceStats = renderStatsCard({
 });
 assert(referenceStats.includes('>52,275<'), 'messages keep the exact reference comma formatting');
 assert(referenceStats.includes('>2.5B<'), 'large token totals use the compact reference notation');
-assert(renderStatsCard(null).includes('Stats unavailable'));
-assert.strictEqual(formatStatsNote({ totalTokens: 0 }), 'No usage yet. Start a task to see your stats.');
-assert.strictEqual(formatStatsNote({ totalTokens: 158_662 }), "You've used ~1× more tokens than Pride and Prejudice.");
+assert(renderStatsCard(null).includes('统计暂时读不到'));
+assert.strictEqual(formatStatsNote({ totalTokens: 0 }), '还没有用量。开始一个任务就能看到统计。');
+assert.strictEqual(formatStatsNote({ totalTokens: 158_662 }), '你用的 token 大约是《傲慢与偏见》的 1 倍。');
 
 const interactiveHeatmap = renderStatsCard({
   sessions: 1,
