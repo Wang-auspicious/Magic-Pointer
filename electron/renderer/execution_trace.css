@@ -128,7 +128,7 @@
   scrollbar-color: var(--mp-rule) transparent;
 }
 .mp-trace-list[data-empty='true']::after {
-  content: '没有匹配的记录';
+  content: 'No matching records';
   display: block;
   padding: 22px 16px;
   color: var(--mp-text-muted);

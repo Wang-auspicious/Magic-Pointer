@@ -1291,6 +1291,54 @@
   color: var(--mp-text-secondary);
 }
 
+.mp-chat-tool-elapsed-wrap {
+  flex: none;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.mp-chat-delivery-viewport {
+  position: relative;
+}
+
+.mp-chat-delivery {
+  display: flex;
+  flex-direction: column;
+}
+
+.mp-chat-delivery[data-long="true"][data-expanded="false"] .mp-chat-delivery-viewport {
+  max-height: 320px;
+  overflow: hidden;
+}
+
+.mp-chat-delivery-fade {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, var(--mp-page));
+  pointer-events: none;
+}
+
+.mp-chat-delivery[data-expanded="true"] .mp-chat-delivery-fade {
+  display: none;
+}
+
+.mp-chat-delivery-more {
+  align-self: flex-start;
+  margin-top: 3px;
+  color: color-mix(in srgb, var(--mp-text-muted) 82%, transparent);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.mp-chat-delivery-more:hover {
+  color: var(--mp-text-secondary);
+}
+
 .mp-chat-run-meta {
   display: flex;
   align-items: center;
