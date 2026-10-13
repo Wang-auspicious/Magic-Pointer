@@ -19,6 +19,30 @@
     seenAt?: number;
     order?: number;
   };
+  interface RoutineRecord {
+    trackerId: string;
+    task: string;
+    sourceIds: string[];
+    folderRoot: string;
+    enabled: boolean;
+    running: boolean;
+    outputType: 'draft' | 'report';
+    nextRunAtMs: number | null;
+    trigger: {
+      kind: 'schedule';
+      startAtMs: number;
+      calendar?: string;
+      everyMs?: number;
+    };
+    lastRun: {startedAtMs: number} | null;
+    runHistory: Array<{
+      ok: boolean;
+      finishedAtMs: number;
+      triggerKind: string;
+      conversationId?: string;
+      error?: string;
+    }>;
+  }
   type Filters = {
     type: string;
     status: string;
@@ -205,6 +229,7 @@
         .map((source: any) => ({
           conversationId: row.id,
           sourceId: String(source.sourceId),
+          absolutePath: String(source.identity.absolutePath),
           label: `${source.title || source.identity.absolutePath} · ${row.title || 'Task'}`,
         })),
     );
@@ -213,13 +238,7 @@
     if (!row.enabled || row.trigger?.kind !== 'schedule') {
       return Infinity;
     }
-    const prior =
-      row.lastRun?.triggerKind === 'schedule'
-        ? Number(row.lastRun.dueThroughMs)
-        : NaN;
-    return Number.isFinite(prior)
-      ? prior + Number(row.trigger.everyMs)
-      : Number(row.trigger.startAtMs);
+    return typeof row.nextRunAtMs === 'number' ? row.nextRunAtMs : Infinity;
   }
   function sortProjects(
     items: MagicPointerProject[],
@@ -628,7 +647,8 @@
     let renderGeneration = 0;
     let projectStatus: 'active' | 'archived' = 'active';
     let catalog: MagicPointerSlashDirectory | null = null;
-    let trackers: any[] = [];
+    let trackers: RoutineRecord[] = [];
+    const pendingTrackers = new Set<string>();
     let error = '';
     let customInventory: {plugins?: any[]; connectors?: any[]} = {};
     let figmaConnected = false;
@@ -638,6 +658,11 @@
     root.hidden = true;
     root.setAttribute('role', 'menu');
     document.body.append(root);
+    window.magicPointerDashboard?.contextTrackers?.onChanged?.(() => {
+      if (activeView === 'scheduled') {
+        void render('scheduled');
+      }
+    });
     let anchor: HTMLElement | null = null;
     function closeMenu() {
       root.hidden = true;
@@ -830,37 +855,13 @@
             : `<div class="mp-library-cards">${rows.map(project => `<button type="button" class="mp-library-card" data-library-project="${escape(ProjectScope.key(project))}"><span class="mp-project-card-heading">${glyph('projects', 'large')}${project.starred ? `<span aria-label="Starred" title="Starred">${glyph('pinned-star')}</span>` : ''}</span><strong>${escape(project.name)}</strong><p>${escape(project.description || project.root)}</p><small>${conversations.filter(row => ProjectScope.contains(project, row)).length} conversations</small></button>`).join('')}</div>`;
       return header + body;
     }
-    const suggestions = [
-      [
-        'Daily briefing',
-        '整理所选材料最近的变化，给我一份简洁的每日简报。',
-        'sunrise',
-      ],
-      [
-        'Inbox triage',
-        '检查所选收件箱导出材料，整理需要我回复和处理的项目。',
-        'mailbox',
-      ],
-      [
-        'Meeting prep',
-        '阅读所选会议材料，整理议程、背景和需要确认的问题。',
-        'calendar',
-      ],
-      [
-        'Weekly review',
-        '阅读所选工作材料，整理本周进展、未完成事项和下一步。',
-        'checklist',
-      ],
-      [
-        'Content ideas',
-        '根据所选素材提出可执行的内容选题，并列出来源。',
-        'lightbulb',
-      ],
-      [
-        'Monitor a topic',
-        '跟踪所选主题材料的变化，只报告新的信息和需要我处理的事项。',
-        'binoculars',
-      ],
+    const routineSuggestionKeys = [
+      ['brief', 'sunrise'],
+      ['inbox', 'mailbox'],
+      ['meeting', 'calendar'],
+      ['review', 'checklist'],
+      ['ideas', 'lightbulb'],
+      ['monitor', 'binoculars'],
     ];
     function scheduledPreview(index: number) {
       const bar = (width: string) => `<i style="width:${width}"></i>`;
@@ -879,6 +880,11 @@
       return `<span class="mp-scheduled-preview" aria-hidden="true"><span class="mp-scheduled-preview-card">${content}</span></span>`;
     }
     function scheduledPage() {
+      const suggestions = routineSuggestionKeys.map(([key, mark]) => [
+        studioT(`routine.${key}_title`),
+        studioT(`routine.${key}_prompt`),
+        mark,
+      ]);
       const rows = trackers
         .filter(
           row =>
@@ -898,21 +904,40 @@
       return (
         toolbar(
           sortControl('scheduled', scheduleSort, [
-            ['next', 'Next run'],
-            ['name', 'Name'],
-            ['last', 'Last run'],
+            ['next', studioT('routine.next')],
+            ['name', studioT('routine.name')],
+            ['last', studioT('routine.last')],
           ]) +
-            `<details class="mp-library-new-menu"><summary class="mp-library-primary">New task${glyph('account-chevron', 'micro')}</summary><div><button type="button" data-schedule-new="agent">${glyph('composer-aux1')}<span>Create with Agent</span></button><button type="button" data-schedule-new="manual">${glyph('settings')}<span>Set up manually</span></button></div></details>`,
+            `<button type="button" class="mp-library-primary" data-schedule-new>${studioT('routine.new')}</button>`,
         ) +
         (rows.length
-          ? `<div class="mp-library-list">${rows.map(row => `<div class="mp-library-list-row">${glyph('scheduled', 'large')}<div><strong>${escape(row.task)}</strong><small>${row.enabled ? `Next run: ${nextScheduledRun(row) <= Date.now() ? 'Due now · app running' : new Date(nextScheduledRun(row)).toLocaleString()} · 每天` : 'Paused'}${row.lastRun ? ` · ${row.lastRun.ok ? '最近运行完成' : '最近运行失败'}` : ''}</small>${Array.isArray(row.runHistory) && row.runHistory.length ? `<details class="mp-tracker-history"><summary>运行历史（${row.runHistory.length}）</summary><ul>${row.runHistory.slice(0, 10).map((run: any) => `<li>${run.ok ? '完成' : '失败'} · ${run.finishedAtMs ? new Date(Number(run.finishedAtMs)).toLocaleString() : ''}${run.error ? ` · ${escape(String(run.error))}` : ''}</li>`).join('')}</ul></details>` : ''}</div><button type="button" data-tracker-toggle="${escape(row.trackerId)}" data-enabled="${!row.enabled}">${row.enabled ? 'Pause' : 'Resume'}</button><button type="button" data-tracker-remove="${escape(row.trackerId)}" aria-label="删除定时任务">${glyph('dismiss')}</button></div>`).join('')}</div>`
+          ? `<div class="mp-library-list">${rows.map(routineRow).join('')}</div>`
           : empty(
               'scheduled',
-              'No scheduled tasks',
-              '让 Agent 每天检查你选择的本机材料。任务会使用现有材料关注执行器。',
+              studioT('routine.empty'),
+              studioT('routine.empty_hint'),
             )) +
-        `<div class="mp-library-suggestions"><h2>Try a scheduled task</h2><p>以下建议均以所选本机材料为来源，当前支持每天运行。</p><div>${suggestions.map(([title, prompt, mark], index) => `<button type="button" data-schedule-prompt="${escape(prompt)}"><span class="mp-suggestion-mark">${glyph(mark, 'large')}<span class="mp-suggestion-plus">${glyph('attach', 'large')}</span></span><span><strong>${title}</strong><p>${escape(prompt)}</p><small>${glyph('scheduled', 'micro')}Daily · selected materials</small></span>${scheduledPreview(index)}</button>`).join('')}</div></div>`
+        `<div class="mp-library-suggestions"><h2>${studioT('routine.suggestions')}</h2><p>${studioT('routine.empty_hint')}</p><div>${suggestions.map(([title, prompt, mark], index) => `<button type="button" data-schedule-prompt="${escape(prompt)}" data-schedule-cadence="${index === 3 ? 'weekly' : 'daily'}"><span class="mp-suggestion-mark">${glyph(mark, 'large')}<span class="mp-suggestion-plus">${glyph('attach', 'large')}</span></span><span><strong>${title}</strong><p>${escape(prompt)}</p><small>${glyph('scheduled', 'micro')}${studioT('routine.materials')}</small></span>${scheduledPreview(index)}</button>`).join('')}</div></div>`
       );
+    }
+
+    function routineRow(row: RoutineRecord): string {
+      const busy = pendingTrackers.has(row.trackerId) || row.running;
+      const cadence = row.trigger.calendar
+        ? studioT(`routine.${row.trigger.calendar}`)
+        : studioT('routine.interval', {
+            minutes: Number(row.trigger.everyMs) / 60_000,
+          });
+      const next = row.enabled
+        ? `${studioT('routine.next')}: ${nextScheduledRun(row) <= Date.now() ? studioT('routine.due') : new Date(nextScheduledRun(row)).toLocaleString()}`
+        : studioT('routine.paused');
+      const history = (row.runHistory || [])
+        .map(
+          run =>
+            `<li><span>${studioT(run.ok ? 'routine.completed' : 'routine.failed')} · ${escape(new Date(run.finishedAtMs).toLocaleString(getStudioLanguage()))}${run.triggerKind === 'manual' ? ` · ${studioT('routine.manual')}` : ''}</span>${run.error ? `<p>${escape(run.error)}</p>` : ''}${run.conversationId ? `<button type="button" data-open="${escape(run.conversationId)}">${studioT('routine.open_result')}</button>` : ''}</li>`,
+        )
+        .join('');
+      return `<div class="mp-library-list-row mp-routine-row">${glyph('scheduled', 'large')}<div><strong>${escape(row.task)}</strong><small>${escape(cadence)} · ${escape(next)}${row.running ? ` · ${studioT('routine.running')}` : ''}</small><small>${escape(row.folderRoot || (row.sourceIds || []).map((id: string) => id.replace(/^source:attachment:/, '')).join(', '))}</small>${history ? `<details class="mp-tracker-history"><summary>${studioT('routine.history', {count: row.runHistory.length})}</summary><ul>${history}</ul></details>` : ''}<div class="mp-routine-actions"><button type="button" data-tracker-run="${escape(row.trackerId)}" ${busy ? 'disabled' : ''}>${studioT(row.running ? 'routine.running' : 'routine.run_now')}</button><button type="button" data-tracker-edit="${escape(row.trackerId)}">${studioT('routine.edit')}</button><button type="button" data-tracker-toggle="${escape(row.trackerId)}" data-enabled="${!row.enabled}">${studioT(row.enabled ? 'routine.pause' : 'routine.resume')}</button><button type="button" data-tracker-remove="${escape(row.trackerId)}">${studioT('routine.remove')}</button></div></div></div>`;
     }
     function customizePage() {
       const tabs = ['skills', 'connectors', 'plugins'];
@@ -1245,21 +1270,97 @@
         paint();
       }
     }
-    async function newSchedule(prompt = '') {
+    async function newSchedule(prompt = '', existing?: RoutineRecord, cadence = 'daily') {
       const sources = scheduledSources(conversations);
       const dialog = document.createElement('div');
       dialog.className = 'mp-library-dialog-mask';
-      dialog.innerHTML = `<form class="mp-library-dialog" role="dialog" aria-modal="true" aria-label="New scheduled task"><h2>New scheduled task</h2><label>Task<textarea name="task" rows="4" required>${escape(prompt)}</textarea></label><label>Source<select name="source" required>${sources.map((source, index) => `<option value="${index}">${escape(source.label)}</option>`).join('')}</select></label><p>每天运行一次，首次运行在创建后一天。应用需保持运行；生成草稿，不会自动写回源文件。</p><p class="mp-library-error" role="status">${sources.length ? '' : '先在对话中添加本机文件或文件夹，再为该材料创建定时任务。'}</p><footer><button type="button" data-schedule-cancel>Cancel</button>${sources.length ? '<button type="submit" class="mp-library-primary">Create task</button>' : '<button type="button" data-schedule-attach>Open a conversation</button>'}</footer></form>`;
+      const initialDate = existing
+        ? new Date(existing.trigger.startAtMs)
+        : new Date();
+      if (!existing) {
+        initialDate.setDate(initialDate.getDate() + 1);
+        initialDate.setHours(9, 0, 0, 0);
+      }
+      const pad = (value: number) => String(value).padStart(2, '0');
+      const initialStart = `${initialDate.getFullYear()}-${pad(initialDate.getMonth() + 1)}-${pad(initialDate.getDate())}T${pad(initialDate.getHours())}:${pad(initialDate.getMinutes())}`;
+      const title = studioT(existing ? 'routine.edit' : 'routine.new');
+      const currentSource =
+        existing?.folderRoot ||
+        existing?.sourceIds
+          ?.map((id: string) => id.replace(/^source:attachment:/, ''))
+          .join(', ') ||
+        '';
+      dialog.innerHTML = `<form class="mp-library-dialog mp-routine-dialog" role="dialog" aria-modal="true" aria-label="${title}"><h2>${title}</h2><fieldset><label>${studioT('routine.task')}<textarea name="task" rows="4" maxlength="4000" required>${escape(existing?.task || prompt)}</textarea></label><label>${studioT('routine.source')}${existing ? `<output>${escape(currentSource)}</output>` : '<select name="source"></select>'}</label>${existing ? '' : `<div class="mp-routine-actions"><button type="button" data-schedule-pick="files">${studioT('routine.file')}</button><button type="button" data-schedule-pick="folder">${studioT('routine.folder')}</button></div>`}<label>${studioT('routine.cadence')}<select name="cadence">${['daily', 'weekly', 'monthly'].map(value => `<option value="${value}">${studioT(`routine.${value}`)}</option>`).join('')}${existing && !existing.trigger.calendar ? `<option value="interval">${studioT('routine.interval', {minutes: Number(existing.trigger.everyMs) / 60_000})}</option>` : ''}</select></label><label>${studioT('routine.first_run')}<input type="datetime-local" name="start" value="${initialStart}" required /></label><p data-month-hint hidden>${studioT('routine.month_hint')}</p><label>${studioT('routine.output')}<select name="output"><option value="draft">${studioT('routine.draft')}</option><option value="report">${studioT('routine.report')}</option></select></label></fieldset><p>${studioT('routine.hint')}</p><p class="mp-library-error" role="status"></p><footer><button type="button" data-schedule-cancel>${studioT('routine.cancel')}</button><button type="submit" class="mp-library-primary">${studioT(existing ? 'routine.save' : 'routine.new')}</button></footer></form>`;
       document.body.append(dialog);
+      const cadenceField =
+        dialog.querySelector<HTMLSelectElement>('[name=cadence]')!;
+      const outputField =
+        dialog.querySelector<HTMLSelectElement>('[name=output]')!;
+      cadenceField.value = existing
+        ? existing.trigger.calendar || 'interval'
+        : cadence;
+      outputField.value = existing?.outputType || 'draft';
+      const showMonthHint = () => {
+        dialog.querySelector<HTMLElement>('[data-month-hint]')!.hidden =
+          cadenceField.value !== 'monthly';
+      };
+      cadenceField.addEventListener('change', showMonthHint);
+      showMonthHint();
+      const refreshSources = (selectedIndex = 0) => {
+        const select = dialog.querySelector<HTMLSelectElement>('[name=source]');
+        if (select) {
+          select.innerHTML = sources.length
+            ? sources
+                .map(
+                  (source, index) =>
+                    `<option value="${index}">${escape(source.label)}</option>`,
+                )
+                .join('')
+            : `<option value="">${studioT('routine.choose_source')}</option>`;
+          select.value = sources.length ? String(selectedIndex) : '';
+        }
+      };
+      refreshSources();
+      dialog
+        .querySelectorAll<HTMLButtonElement>('[data-schedule-pick]')
+        .forEach(button => {
+          button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+              const picked = await options.data.pickProjectFiles(
+                '',
+                button.dataset.schedulePick === 'folder' ? 'folder' : 'files',
+              );
+              if (!dialog.isConnected || picked.canceled) {
+                return;
+              }
+              if (!picked.ok || !picked.paths?.length) {
+                throw new Error(
+                  picked.error || studioT('routine.choose_source'),
+                );
+              }
+              for (const absolutePath of picked.paths) {
+                sources.push({
+                  absolutePath,
+                  label: absolutePath,
+                  sourceId: '',
+                  conversationId: '',
+                });
+              }
+              refreshSources(sources.length - picked.paths.length);
+              dialog.querySelector('.mp-library-error')!.textContent = '';
+            } catch (reason) {
+              dialog.querySelector('.mp-library-error')!.textContent = String(
+                reason instanceof Error ? reason.message : reason,
+              );
+            } finally {
+              button.disabled = false;
+            }
+          });
+        });
       dialog
         .querySelector('[data-schedule-cancel]')
         ?.addEventListener('click', () => dialog.remove());
-      dialog
-        .querySelector('[data-schedule-attach]')
-        ?.addEventListener('click', () => {
-          dialog.remove();
-          options.compose(prompt);
-        });
       dialog.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
           dialog.remove();
@@ -1270,35 +1371,70 @@
         const source =
           sources[
             Number(
-              (dialog.querySelector('[name=source]') as HTMLSelectElement)
-                .value,
+              dialog.querySelector<HTMLSelectElement>('[name=source]')?.value,
             )
           ];
         const task = (
           dialog.querySelector('[name=task]') as HTMLTextAreaElement
         ).value.trim();
-        if (!source || !task) {
+        if (!task) {
           return;
         }
         const submit =
           dialog.querySelector<HTMLButtonElement>('[type=submit]')!;
         submit.disabled = true;
+        dialog.querySelector('fieldset')!.disabled = true;
+        submit.textContent = studioT('routine.saving');
         try {
-          const result = await options.data.trackMaterial({
-            ...source,
-            action: 'follow',
-            task,
-            cadence: 'daily',
-          });
-          if (!result.ok) {
-            throw new Error(result.error || '创建失败');
+          const startValue =
+            dialog.querySelector<HTMLInputElement>('[name=start]')!.value;
+          const startAtMs =
+            existing && startValue === initialStart
+              ? existing.trigger.startAtMs
+              : new Date(startValue).getTime();
+          if (!Number.isFinite(startAtMs)) {
+            throw new Error(studioT('routine.invalid_start'));
+          }
+          if (!existing && !source) {
+            throw new Error(studioT('routine.choose_source'));
+          }
+          const api = window.magicPointerDashboard?.contextTrackers;
+          const result = existing
+            ? await api?.update({
+                trackerId: existing.trackerId,
+                task,
+                outputType: outputField.value,
+                trigger:
+                  cadenceField.value === 'interval'
+                    ? {...existing.trigger, startAtMs}
+                    : {
+                        kind: 'schedule',
+                        startAtMs,
+                        calendar: cadenceField.value,
+                      },
+              })
+            : await api?.create({
+                task,
+                sourcePath: source.absolutePath,
+                cadence: cadenceField.value,
+                startAtMs,
+                outputType: outputField.value,
+              });
+          if (!result?.ok) {
+            throw new Error(result?.error || studioT('routine.save_failed'));
           }
           dialog.remove();
-          await render('scheduled');
+          if (activeView === 'scheduled') {
+            await render('scheduled');
+          }
         } catch (reason) {
           dialog.querySelector('.mp-library-error')!.textContent =
             reason instanceof Error ? reason.message : String(reason);
           submit.disabled = false;
+          dialog.querySelector('fieldset')!.disabled = false;
+          submit.textContent = studioT(
+            existing ? 'routine.save' : 'routine.new',
+          );
         }
       });
       dialog.querySelector('textarea')?.focus();
@@ -1476,21 +1612,49 @@
           filterMenu(target);
         }
         if ('scheduleNew' in d || 'schedulePrompt' in d) {
-          void newSchedule(d.schedulePrompt || '');
+          void newSchedule(d.schedulePrompt || '', undefined, d.scheduleCadence);
         }
-        if (d.trackerToggle || d.trackerRemove) {
-          const api = window.magicPointerDashboard?.contextTrackers;
-          const action = d.trackerToggle
-            ? api?.setEnabled(d.trackerToggle, d.enabled === 'true')
-            : api?.remove(d.trackerRemove!);
-          void action?.then(response => {
-            if (!response.ok) {
-              error = response.error || '更新失败';
-              paint();
-            } else {
-              void render('scheduled');
+        if (d.trackerEdit) {
+          const existing = trackers.find(
+            row => row.trackerId === d.trackerEdit,
+          );
+          if (existing) {
+            void newSchedule('', existing);
+          }
+        }
+        if (d.trackerToggle || d.trackerRemove || d.trackerRun) {
+          const id = d.trackerToggle || d.trackerRemove || d.trackerRun!;
+          if (pendingTrackers.has(id)) {
+            return;
+          }
+          pendingTrackers.add(id);
+          paint();
+          void (async () => {
+            let failure = '';
+            try {
+              const api = window.magicPointerDashboard?.contextTrackers;
+              const response = await (d.trackerRun
+                ? api?.runNow(id)
+                : d.trackerToggle
+                  ? api?.setEnabled(id, d.enabled === 'true')
+                  : api?.remove(id));
+              if (!response?.ok) {
+                failure = response?.error || studioT('routine.run_failed');
+              }
+            } catch (reason) {
+              failure =
+                reason instanceof Error ? reason.message : String(reason);
+            } finally {
+              pendingTrackers.delete(id);
             }
-          });
+            if (activeView === 'scheduled') {
+              await render('scheduled');
+              if (failure) {
+                error = failure;
+                paint();
+              }
+            }
+          })();
         }
         if (d.libraryChatMenu) {
           const row = conversations.find(item => item.id === d.libraryChatMenu);

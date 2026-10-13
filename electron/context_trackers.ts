@@ -1,5 +1,12 @@
 'use strict';
 
+import {
+  dueSchedule,
+  normalizeScheduleTrigger,
+  scheduleOccurrence,
+  type ScheduleTrigger,
+} from './context_tracker_schedule';
+
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -23,20 +30,15 @@ type FilesystemTrigger = {
   debounceMs: number;
 };
 
-type ScheduleTrigger = {
-  kind: 'schedule';
-  startAtMs: number;
-  everyMs: number;
-};
-
 type TrackerRun = {
   startedAtMs: number;
   finishedAtMs: number;
   ok: boolean;
-  triggerKind: 'filesystem' | 'schedule';
+  triggerKind: 'filesystem' | 'schedule' | 'manual';
   dueThroughMs?: number;
   conversationId?: string;
   error?: string;
+  task?: string;
 };
 
 const MAX_RUN_HISTORY = 20;
@@ -52,6 +54,7 @@ type ContextTracker = {
   lastObserved: FileObservation | null;
   lastRun: TrackerRun | null;
   runHistory: TrackerRun[];
+  lastScheduledAtMs: number | null;
   authorizationRevision: number;
 };
 
@@ -187,15 +190,7 @@ function normalizeContextTracker(value: unknown): ContextTracker {
     );
     trigger = {kind: 'filesystem', paths, debounceMs};
   } else if (inputTrigger.kind === 'schedule') {
-    const startAtMs = Number(inputTrigger.startAtMs);
-    const everyMs = Number(inputTrigger.everyMs);
-    if (!Number.isFinite(startAtMs) || startAtMs < 0) {
-      throw new Error('schedule tracker startAtMs is invalid');
-    }
-    if (!Number.isFinite(everyMs) || everyMs <= 0) {
-      throw new Error('schedule tracker everyMs is invalid');
-    }
-    trigger = {kind: 'schedule', startAtMs, everyMs};
+    trigger = normalizeScheduleTrigger(inputTrigger);
   } else {
     throw new Error('context tracker trigger kind is unsupported');
   }
@@ -206,11 +201,13 @@ function normalizeContextTracker(value: unknown): ContextTracker {
       ? (raw.lastRun as Record<string, unknown>)
       : null;
   const parsedLastRun = normalizeRun(rawLastRun);
-  const parsedHistory = (Array.isArray(raw.runHistory)
-    ? raw.runHistory
-        .map(item => normalizeRun(item))
-        .filter((item): item is TrackerRun => item !== null)
-    : []).sort((a, b) => b.startedAtMs - a.startedAtMs);
+  const parsedHistory = (
+    Array.isArray(raw.runHistory)
+      ? raw.runHistory
+          .map(item => normalizeRun(item))
+          .filter((item): item is TrackerRun => item !== null)
+      : []
+  ).sort((a, b) => b.startedAtMs - a.startedAtMs);
   const boundedHistory = parsedHistory.slice(0, MAX_RUN_HISTORY);
   const runHistory =
     boundedHistory.length > 0
@@ -230,6 +227,16 @@ function normalizeContextTracker(value: unknown): ContextTracker {
     lastObserved: normalizedObservation(raw.lastObserved),
     lastRun,
     runHistory,
+    lastScheduledAtMs:
+      raw.lastScheduledAtMs === null
+        ? null
+        : Number.isFinite(raw.lastScheduledAtMs)
+          ? raw.lastScheduledAtMs
+          : (runHistory.find(
+              run =>
+                run.triggerKind === 'schedule' &&
+                Number.isFinite(run.dueThroughMs),
+            )?.dueThroughMs ?? null),
     authorizationRevision: Math.max(
       1,
       Math.floor(Number(raw.authorizationRevision) || 1),
@@ -247,18 +254,19 @@ function normalizeRun(value: unknown): TrackerRun | null {
     finishedAtMs: Math.max(0, Number(raw.finishedAtMs) || 0),
     ok: raw.ok === true,
     triggerKind:
-      raw.triggerKind === 'schedule'
-        ? ('schedule' as const)
-        : ('filesystem' as const),
+      raw.triggerKind === 'manual'
+        ? 'manual'
+        : raw.triggerKind === 'schedule'
+          ? 'schedule'
+          : 'filesystem',
+    ...(cleanText(raw.task, 4000) ? {task: cleanText(raw.task, 4000)} : {}),
     ...(Number.isFinite(Number(raw.dueThroughMs))
       ? {dueThroughMs: Math.max(0, Number(raw.dueThroughMs))}
       : {}),
     ...(cleanText(raw.conversationId, 160)
       ? {conversationId: cleanText(raw.conversationId, 160)}
       : {}),
-    ...(cleanText(raw.error, 1000)
-      ? {error: cleanText(raw.error, 1000)}
-      : {}),
+    ...(cleanText(raw.error, 1000) ? {error: cleanText(raw.error, 1000)} : {}),
   };
 }
 
@@ -279,20 +287,22 @@ function createMaterialTracker({
   nowMs = Date.now(),
   trackerId,
   isDirectory = false,
+  startAtMs,
 }: {
   source: {identity: Record<string, unknown>};
   task: string;
-  cadence: 'filesystem' | 'daily';
+  cadence: 'filesystem' | 'daily' | 'weekly' | 'monthly';
   nowMs?: number;
   trackerId: string;
   isDirectory?: boolean;
+  startAtMs?: number;
 }): ContextTracker {
   const materialPath = cleanPath(source.identity.absolutePath);
   if (!materialPath || !path.isAbsolute(materialPath)) {
     throw new Error('请选择本机文件或文件夹。');
   }
-  if (!['filesystem', 'daily'].includes(cadence)) {
-    throw new Error('请选择材料变化或每天关注。');
+  if (!['filesystem', 'daily', 'weekly', 'monthly'].includes(cadence)) {
+    throw new Error('Choose file changes, daily, weekly, or monthly.');
   }
   return normalizeContextTracker({
     trackerId,
@@ -304,8 +314,12 @@ function createMaterialTracker({
         ? {kind: 'filesystem', paths: [materialPath], debounceMs: 500}
         : {
             kind: 'schedule',
-            startAtMs: nowMs + 86_400_000,
-            everyMs: 86_400_000,
+            startAtMs:
+              startAtMs ??
+              new Date(
+                new Date(nowMs).setDate(new Date(nowMs).getDate() + 1),
+              ).getTime(),
+            calendar: cadence,
           },
     outputType: 'draft',
     enabled: true,
@@ -429,21 +443,23 @@ function buildContextTrackerConversationRequest(
   const change =
     request?.change && typeof request.change === 'object' ? request.change : {};
   const changeSummary =
-    change.kind === 'filesystem'
-      ? {
-          kind: 'filesystem',
-          eventCount: Number(change.eventCount) || 0,
-          eventFromMs: Number(change.eventFromMs) || 0,
-          eventToMs: Number(change.eventToMs) || 0,
-          changedEntries: changedObservationEntries(change),
-        }
-      : {
-          kind: 'schedule',
-          missedCount: Math.max(1, Number(change.missedCount) || 1),
-          missedFromMs: Number(change.missedFromMs) || 0,
-          missedToMs: Number(change.missedToMs) || 0,
-          observedAtMs: Number(change.observedAtMs) || capturedAtMs,
-        };
+    change.kind === 'manual'
+      ? {kind: 'manual', observedAtMs: capturedAtMs}
+      : change.kind === 'filesystem'
+        ? {
+            kind: 'filesystem',
+            eventCount: Number(change.eventCount) || 0,
+            eventFromMs: Number(change.eventFromMs) || 0,
+            eventToMs: Number(change.eventToMs) || 0,
+            changedEntries: changedObservationEntries(change),
+          }
+        : {
+            kind: 'schedule',
+            missedCount: Math.max(1, Number(change.missedCount) || 1),
+            missedFromMs: Number(change.missedFromMs) || 0,
+            missedToMs: Number(change.missedToMs) || 0,
+            observedAtMs: Number(change.observedAtMs) || capturedAtMs,
+          };
   const scope = {sourceIds, folderRoot: folderRoot || null};
   const question = [
     '这是用户明确创建的材料关注任务。',
@@ -451,7 +467,9 @@ function buildContextTrackerConversationRequest(
     `输出要求：只生成可预览的${outputLabel}；不要发送消息、提交内容、删除材料或执行其他外部动作。`,
     `授权材料范围：${JSON.stringify(scope)}`,
     `本次变化：${JSON.stringify(changeSummary)}`,
-    '请基于授权材料核对真实变化；证据不足时明确指出缺口。',
+    change.kind === 'manual'
+      ? '本次由用户立即运行，请完成原始任务。未提供前后对照时，不要推断材料发生了变化。'
+      : '请基于授权材料核对真实变化；证据不足时明确指出缺口。',
   ]
     .join('\n')
     .slice(0, 4000);
@@ -494,6 +512,7 @@ function createContextTrackerRuntime({
   clearTimer = (handle: TimerHandle) =>
     clearTimeout(handle as ReturnType<typeof setTimeout>),
   onError = () => {},
+  onChanged = () => {},
 }: {
   loadTrackers?: () => unknown[];
   persistTrackers?: (trackers: ContextTracker[]) => void;
@@ -507,6 +526,7 @@ function createContextTrackerRuntime({
   setTimer?: (callback: () => void, delayMs: number) => TimerHandle;
   clearTimer?: (handle: TimerHandle) => void;
   onError?: (error: unknown, trackerId: string) => void;
+  onChanged?: () => void;
 }) {
   if (typeof runTask !== 'function') {
     throw new Error('context tracker runTask is required');
@@ -524,6 +544,7 @@ function createContextTrackerRuntime({
   >();
   const inFlight = new Set<Promise<unknown>>();
   const running = new Set<string>();
+  const observing = new Set<string>();
   let started = false;
 
   for (const raw of loadTrackers() || []) {
@@ -578,9 +599,14 @@ function createContextTrackerRuntime({
     dueThroughMs?: number,
   ) {
     const tracker = trackers.get(trackerId);
-    if (!tracker?.enabled) {
-      return;
+    if (!tracker || (!tracker.enabled && change.kind !== 'manual')) {
+      return {ok: false, error: 'tracker_unavailable'};
     }
+    if (running.has(trackerId)) {
+      return {ok: false, error: 'tracker_already_running'};
+    }
+    running.add(trackerId);
+    onChanged();
     const startedAtMs = now();
     let result: Record<string, unknown> = {};
     let errorText = '';
@@ -606,14 +632,26 @@ function createContextTrackerRuntime({
       onError(error, trackerId);
     }
     const current = trackers.get(trackerId);
-    if (current !== tracker) {
-      return;
+    running.delete(trackerId);
+    if (!current) {
+      onChanged();
+      return {
+        ok: !errorText,
+        ...result,
+        ...(errorText ? {error: errorText} : {}),
+      };
     }
     current.lastRun = {
       startedAtMs,
       finishedAtMs: now(),
       ok: !errorText,
-      triggerKind: change.kind === 'schedule' ? 'schedule' : 'filesystem',
+      triggerKind:
+        change.kind === 'manual'
+          ? 'manual'
+          : change.kind === 'schedule'
+            ? 'schedule'
+            : 'filesystem',
+      task: tracker.task,
       ...(dueThroughMs == null ? {} : {dueThroughMs}),
       ...(cleanText(result?.conversationId, 160)
         ? {conversationId: cleanText(result.conversationId, 160)}
@@ -624,12 +662,36 @@ function createContextTrackerRuntime({
       0,
       MAX_RUN_HISTORY,
     );
-    persist();
+    if (
+      dueThroughMs !== undefined &&
+      JSON.stringify(current.trigger) === JSON.stringify(tracker.trigger)
+    ) {
+      current.lastScheduledAtMs = dueThroughMs;
+    }
+    try {
+      persist();
+    } catch (error) {
+      errorText = error instanceof Error ? error.message : String(error);
+      onError(error, trackerId);
+    }
+    scheduleNext(trackerId);
+    schedulePendingFilesystem(trackerId);
+    onChanged();
+    return {
+      ...result,
+      ok: !errorText,
+      ...(errorText ? {error: errorText} : {}),
+    };
   }
 
   function scheduleNext(trackerId: string) {
     const tracker = trackers.get(trackerId);
-    if (!started || !tracker?.enabled || tracker.trigger.kind !== 'schedule') {
+    if (
+      !started ||
+      !tracker?.enabled ||
+      tracker.trigger.kind !== 'schedule' ||
+      running.has(trackerId)
+    ) {
       return;
     }
     const resource = resources.get(trackerId) || {
@@ -643,51 +705,44 @@ function createContextTrackerRuntime({
       clearTimer(resource.timer);
     }
     resources.set(trackerId, resource);
-    const lastDue =
-      tracker.lastRun?.triggerKind === 'schedule'
-        ? Number(tracker.lastRun.dueThroughMs)
-        : Number.NaN;
-    const firstDue = Number.isFinite(lastDue)
-      ? lastDue + tracker.trigger.everyMs
-      : tracker.trigger.startAtMs;
-    const delayMs = Math.max(0, firstDue - now());
+    const firstDue = dueSchedule(
+      tracker.trigger,
+      tracker.lastScheduledAtMs,
+      now(),
+    ).nextAtMs;
+    const delayMs = Math.min(2_147_483_647, Math.max(0, firstDue - now()));
     resource.timer = setTimer(() => {
       resource.timer = null;
       const current = trackers.get(trackerId);
       if (
         !started ||
         !current?.enabled ||
-        current.trigger.kind !== 'schedule'
+        current.trigger.kind !== 'schedule' ||
+        running.has(trackerId)
       ) {
         return;
       }
       const observedAtMs = now();
-      const priorDue =
-        current.lastRun?.triggerKind === 'schedule'
-          ? Number(current.lastRun.dueThroughMs)
-          : Number.NaN;
-      const missedFromMs = Number.isFinite(priorDue)
-        ? priorDue + current.trigger.everyMs
-        : current.trigger.startAtMs;
-      if (observedAtMs < missedFromMs) {
+      const due = dueSchedule(
+        current.trigger,
+        current.lastScheduledAtMs,
+        observedAtMs,
+      );
+      if (!due.missedCount || due.missedToMs === null) {
         scheduleNext(trackerId);
         return;
       }
-      const missedCount =
-        Math.floor((observedAtMs - missedFromMs) / current.trigger.everyMs) + 1;
-      const missedToMs =
-        missedFromMs + (missedCount - 1) * current.trigger.everyMs;
       const promise = executeTask(
         trackerId,
         {
           kind: 'schedule',
-          missedCount,
-          missedFromMs,
-          missedToMs,
+          missedCount: due.missedCount,
+          missedFromMs: due.missedFromMs,
+          missedToMs: due.missedToMs,
           observedAtMs,
         },
-        missedToMs,
-      ).finally(() => scheduleNext(trackerId));
+        due.missedToMs,
+      );
       track(promise);
     }, delayMs);
   }
@@ -703,10 +758,10 @@ function createContextTrackerRuntime({
     ) {
       return;
     }
-    if (running.has(trackerId)) {
+    if (running.has(trackerId) || observing.has(trackerId)) {
       return;
     }
-    running.add(trackerId);
+    observing.add(trackerId);
     try {
       const eventCount = resource.eventCount;
       const eventFromMs = resource.eventFromMs;
@@ -740,22 +795,31 @@ function createContextTrackerRuntime({
         current,
       });
     } finally {
-      running.delete(trackerId);
-      if (
-        started &&
-        resources.get(trackerId) === resource &&
-        tracker.enabled &&
-        resource.eventCount > 0
-      ) {
-        if (resource.timer != null) {
-          clearTimer(resource.timer);
-        }
-        resource.timer = setTimer(() => {
-          resource.timer = null;
-          track(fireFilesystem(trackerId));
-        }, tracker.trigger.debounceMs);
-      }
+      observing.delete(trackerId);
+      schedulePendingFilesystem(trackerId);
     }
+  }
+
+  function schedulePendingFilesystem(trackerId: string) {
+    const tracker = trackers.get(trackerId);
+    const resource = resources.get(trackerId);
+    if (
+      !started ||
+      !tracker?.enabled ||
+      tracker.trigger.kind !== 'filesystem' ||
+      !resource ||
+      !resource.eventCount ||
+      running.has(trackerId)
+    ) {
+      return;
+    }
+    if (resource.timer != null) {
+      clearTimer(resource.timer);
+    }
+    resource.timer = setTimer(() => {
+      resource.timer = null;
+      track(fireFilesystem(trackerId));
+    }, tracker.trigger.debounceMs);
   }
 
   function onFilesystemEvent(trackerId: string) {
@@ -841,8 +905,16 @@ function createContextTrackerRuntime({
     await idle();
   }
 
-  function list(): ContextTracker[] {
-    return clonedTrackers();
+  function list() {
+    return clonedTrackers().map(tracker => ({
+      ...tracker,
+      running: running.has(tracker.trackerId),
+      nextRunAtMs:
+        tracker.enabled && tracker.trigger.kind === 'schedule'
+          ? dueSchedule(tracker.trigger, tracker.lastScheduledAtMs, now())
+              .nextAtMs
+          : null,
+    }));
   }
 
   function upsert(raw: unknown): ContextTracker {
@@ -850,23 +922,35 @@ function createContextTrackerRuntime({
     const existing = trackers.get(normalized.trackerId);
     if (existing && configIdentity(existing) !== configIdentity(normalized)) {
       normalized.authorizationRevision = existing.authorizationRevision + 1;
-      normalized.lastRun = null;
-      normalized.runHistory = [];
-      if (
-        existing.trigger.kind !== normalized.trigger.kind ||
-        JSON.stringify(existing.trigger) !== JSON.stringify(normalized.trigger)
-      ) {
-        normalized.lastObserved = null;
-      }
     } else if (existing) {
       normalized.authorizationRevision = existing.authorizationRevision;
     }
+    if (existing) {
+      normalized.lastRun = existing.lastRun;
+      normalized.runHistory = [...existing.runHistory];
+      const sameTrigger =
+        JSON.stringify(existing.trigger) === JSON.stringify(normalized.trigger);
+      normalized.lastScheduledAtMs = sameTrigger
+        ? existing.lastScheduledAtMs
+        : null;
+      normalized.lastObserved = sameTrigger ? existing.lastObserved : null;
+    }
     trackers.set(normalized.trackerId, normalized);
-    persist();
+    try {
+      persist();
+    } catch (error) {
+      if (existing) {
+        trackers.set(existing.trackerId, existing);
+      } else {
+        trackers.delete(normalized.trackerId);
+      }
+      throw error;
+    }
     if (started) {
       track(armTracker(normalized.trackerId));
     }
-    return JSON.parse(JSON.stringify(normalized));
+    onChanged();
+    return list().find(tracker => tracker.trackerId === normalized.trackerId)!;
   }
 
   function setEnabled(
@@ -877,21 +961,35 @@ function createContextTrackerRuntime({
     if (!tracker) {
       return null;
     }
+    const previous = tracker.enabled;
     tracker.enabled = enabled === true;
-    persist();
+    try {
+      persist();
+    } catch (error) {
+      tracker.enabled = previous;
+      throw error;
+    }
     clearResources(tracker.trackerId);
     if (started && tracker.enabled) {
       track(armTracker(tracker.trackerId));
     }
-    return JSON.parse(JSON.stringify(tracker));
+    onChanged();
+    return list().find(item => item.trackerId === tracker.trackerId)!;
   }
 
   function remove(trackerId: string): boolean {
     const cleanId = cleanText(trackerId, 160);
-    clearResources(cleanId);
+    const previous = trackers.get(cleanId);
     const removed = trackers.delete(cleanId);
     if (removed) {
-      persist();
+      try {
+        persist();
+      } catch (error) {
+        trackers.set(cleanId, previous!);
+        throw error;
+      }
+      clearResources(cleanId);
+      onChanged();
     }
     return removed;
   }
@@ -902,7 +1000,16 @@ function createContextTrackerRuntime({
     }
   }
 
-  return {start, stop, list, upsert, setEnabled, remove, idle};
+  function runNow(trackerId: string) {
+    return track(
+      executeTask(cleanText(trackerId, 160), {
+        kind: 'manual',
+        observedAtMs: now(),
+      }),
+    );
+  }
+
+  return {start, stop, list, upsert, setEnabled, remove, runNow, idle};
 }
 
 module.exports = {
@@ -912,4 +1019,6 @@ module.exports = {
   normalizeContextTracker,
   observationsEqual,
   readFileObservation,
+  scheduleOccurrence,
+  dueSchedule,
 };

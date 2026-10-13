@@ -240,8 +240,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     ipcRenderer.invoke('models:catalog', {refresh: options.refresh === true}),
   connectModel: (input: import('./model_connection').ModelConnectionInput) =>
     ipcRenderer.invoke('models:connect', input),
-  testModelConnection: (input: import('./model_connection').ModelConnectionInput) =>
-    ipcRenderer.invoke('models:test-connection', input),
+  testModelConnection: (
+    input: import('./model_connection').ModelConnectionInput,
+  ) => ipcRenderer.invoke('models:test-connection', input),
   selectModel: (model: unknown, profileId?: string) =>
     ipcRenderer.invoke('models:select', {model, profileId}),
   modelQuota: (options: {force?: unknown; selection?: unknown} = {}) =>
@@ -667,6 +668,14 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   contextTrackers: {
     list: () => ipcRenderer.invoke('context-trackers:list'),
+    create: (payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('context-trackers:create', payload),
+    update: (payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('context-trackers:update', payload),
+    runNow: (trackerId: string) =>
+      ipcRenderer.invoke('context-trackers:run-now', {trackerId}),
+    onChanged: (callback: () => void) =>
+      onPayload('context-trackers:changed', callback),
     setEnabled: (trackerId: string, enabled: boolean) =>
       ipcRenderer.invoke('context-trackers:set-enabled', {trackerId, enabled}),
     remove: (trackerId: string) =>
@@ -677,6 +686,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       action: string;
       task?: string;
       cadence?: string;
+      startAtMs?: number;
     }) =>
       ipcRenderer.invoke('context-trackers:material', {
         conversationId: String(payload.conversationId || '').slice(0, 120),
@@ -684,6 +694,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         action: String(payload.action || ''),
         task: String(payload.task || '').slice(0, 4000),
         cadence: String(payload.cadence || 'filesystem'),
+        startAtMs: payload.startAtMs,
       }),
   },
   extensions: {

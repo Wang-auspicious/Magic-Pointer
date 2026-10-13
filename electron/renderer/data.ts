@@ -1033,6 +1033,10 @@ declare global {
     };
     contextTrackers?: {
       list(): Promise<Record<string, any>>;
+      create(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      update(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      runNow(trackerId: string): Promise<Record<string, any>>;
+      onChanged?(callback: () => void): void;
       setEnabled(
         trackerId: string,
         enabled: boolean,

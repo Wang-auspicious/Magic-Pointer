@@ -10657,7 +10657,7 @@ function renderTaskMaterials() {
     const cadence = document.createElement('select');
     cadence.setAttribute('aria-label', studioT('watch.cadence_label'));
     cadence.innerHTML =
-      '<option value="filesystem">' + studioT('watch.on_change') + '</option><option value="daily">' + studioT('watch.daily') + '</option>';
+      '<option value="filesystem">' + studioT('watch.on_change') + '</option>' + ['daily', 'weekly', 'monthly'].map(value => `<option value="${value}">${studioT(`routine.${value}`)}</option>`).join('');
     const follow = document.createElement('button');
     follow.type = 'button';
     follow.textContent = studioT('watch.follow');
@@ -10690,7 +10690,7 @@ function renderTaskMaterials() {
         if (tracker) {
           task.value = tracker.task;
           cadence.value =
-            tracker.trigger.kind === 'schedule' ? 'daily' : 'filesystem';
+            tracker.trigger.kind === 'schedule' ? tracker.trigger.calendar || 'daily' : 'filesystem';
           status.textContent = tracker.enabled
             ? studioT('watch.active')
             : studioT('watch.stopped');

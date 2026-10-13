@@ -7,6 +7,9 @@ const file = 'electron/renderer/studio_libraries.ts';
 assert.ok(fs.existsSync(file), 'Projects, Scheduled and Customize need a real library controller');
 const cells = new Map();
 const sandbox = { module: { exports: {} }, localStorage: { getItem: k => cells.get(k) || null, setItem: (k, v) => cells.set(k, v) } };
+for (const dependency of ['project_scope', 'conversation_state']) {
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(`electron/renderer/${dependency}.ts`, 'utf8'), {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, sandbox);
+}
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox);
 const lib = sandbox.module.exports;
 sandbox.CdsIcons = {html: name => `<i data-icon="${name}"></i>`};
@@ -65,7 +68,7 @@ assert.match(htmlPreview, /default-src/);
 assert.match(htmlPreview, /Real saved page/);
 assert.equal(lib.artifactDateGroups([{at:now,name:'a'},{at:now-86400000,name:'b'}],now).length,2);
 assert.equal(typeof lib.applyBulkConversationAction, 'function');
-assert.equal(lib.nextScheduledRun({enabled:true,trigger:{kind:'schedule',startAtMs:100,everyMs:50},lastRun:{triggerKind:'schedule',dueThroughMs:200}}),250);
+assert.equal(lib.nextScheduledRun({enabled:true,trigger:{kind:'schedule',startAtMs:100,everyMs:50},nextRunAtMs:250}),250);
 assert.equal(lib.nextScheduledRun({enabled:false,trigger:{kind:'schedule',startAtMs:100,everyMs:50}}),Infinity);
 assert.deepEqual(Array.from(lib.sortProjects([{root:'a',name:'Z',addedAt:10,lastOpenedAt:30},{root:'b',name:'A',addedAt:20,lastOpenedAt:25}], [{workspaceRoot:'b',updatedAt:40}], 'activity')).map(x=>x.root),['b','a']);
 assert.deepEqual(Array.from(lib.sortProjects([{root:'a',name:'Z',addedAt:10},{root:'b',name:'A',addedAt:20}], [], 'created')).map(x=>x.root),['b','a']);

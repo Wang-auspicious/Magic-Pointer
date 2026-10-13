@@ -4676,10 +4676,19 @@ function initializeContextTrackers() {
       fabricSettingsStore!.save(next);
       fabricSettings = next;
     },
-    runTask: (request: any) =>
-      sendConversation(buildContextTrackerConversationRequest(request)),
+    runTask: (request: any) => {
+      if (request.folderRoot && !knownProjectRoot(request.folderRoot)) {
+        conversations().registerProject(request.folderRoot);
+      }
+      return sendConversation(buildContextTrackerConversationRequest(request));
+    },
     onError: (error: unknown, trackerId: string) =>
       log(`material tracker ${trackerId}: ${String(error)}`),
+    onChanged: () => {
+      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        dashboardWindow.webContents.send('context-trackers:changed');
+      }
+    },
   });
   void contextTrackerRuntime
     .start()
@@ -4745,6 +4754,98 @@ ipcMain.handle(
   },
 );
 ipcMain.handle(
+  'context-trackers:create',
+  (event: Electron.IpcMainInvokeEvent, raw: Record<string, unknown> = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    if (!contextTrackerRuntime) {
+      return {ok: false, error: 'Routines are not ready.'};
+    }
+    try {
+      const sourcePath = String(raw.sourcePath || '').trim();
+      if (!path.isAbsolute(sourcePath)) {
+        return {ok: false, error: 'Choose a local file or folder.'};
+      }
+      const info = fs.statSync(sourcePath);
+      if (!info.isFile() && !info.isDirectory()) {
+        return {ok: false, error: 'Choose a local file or folder.'};
+      }
+      const tracker = createMaterialTracker({
+        source: {identity: {absolutePath: path.resolve(sourcePath)}},
+        trackerId: crypto.randomUUID(),
+        task: String(raw.task || ''),
+        cadence: raw.cadence,
+        startAtMs: Number(raw.startAtMs),
+        isDirectory: info.isDirectory(),
+      });
+      return {
+        ok: true,
+        tracker: contextTrackerRuntime.upsert({
+          ...tracker,
+          outputType: raw.outputType ?? 'draft',
+        }),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'context-trackers:update',
+  (event: Electron.IpcMainInvokeEvent, raw: Record<string, unknown> = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    const existing = contextTrackerRuntime
+      ?.list()
+      .find((item: {trackerId: string}) => item.trackerId === raw.trackerId);
+    if (!existing) {
+      return {ok: false, error: 'Routine not found.'};
+    }
+    try {
+      return {
+        ok: true,
+        tracker: contextTrackerRuntime!.upsert({
+          ...existing,
+          task: raw.task ?? existing.task,
+          trigger: raw.trigger ?? existing.trigger,
+          outputType: raw.outputType ?? existing.outputType,
+        }),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'context-trackers:run-now',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {trackerId?: string} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    try {
+      return contextTrackerRuntime
+        ? await contextTrackerRuntime.runNow(String(raw.trackerId || ''))
+        : {ok: false, error: 'Routines are not ready.'};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
   'context-trackers:material',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isDashboardSender(event)) {
@@ -4783,6 +4884,12 @@ ipcMain.handle(
           source: {identity: {absolutePath: materialPath}},
           task: String(raw.task || ''),
           cadence: raw.cadence,
+          startAtMs:
+            raw.startAtMs === undefined
+              ? existing?.trigger.kind === 'schedule'
+                ? existing.trigger.startAtMs
+                : undefined
+              : Number(raw.startAtMs),
           trackerId: existing?.trackerId || crypto.randomUUID(),
           isDirectory: fs.statSync(materialPath).isDirectory(),
         });
