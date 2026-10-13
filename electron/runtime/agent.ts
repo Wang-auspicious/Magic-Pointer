@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
 import path from 'node:path';
+import {memoryPrompt} from './agent_memory';
 import type {PermissionMode} from '../permission_mode';
 export type {PermissionMode} from '../permission_mode';
 import {
@@ -642,18 +642,7 @@ export async function buildSystemPrompt(
     'workspace' | 'userDataDir' | 'evidence' | 'hasSelection' | 'permissionMode'
   >,
 ): Promise<string> {
-  const memory: string[] = [];
-  for (const file of [
-    path.join(options.userDataDir, 'MAGIC_POINTER.md'),
-    path.join(options.userDataDir, 'learning', 'MEMORY.md'),
-    ...(options.workspace
-      ? [path.join(options.workspace, 'MAGIC_POINTER.md')]
-      : []),
-  ]) {
-    try {
-      memory.push((await readFile(file, 'utf8')).trim());
-    } catch {}
-  }
+  const memory = await memoryPrompt(options);
   return [
     '你是 Magic Pointer 的桌面助手，负责独立完成用户的编程、办公与桌面任务。短任务与跨会话长任务都由你执行。',
     options.hasSelection
@@ -670,9 +659,7 @@ export async function buildSystemPrompt(
       ? '当前只读计划模式。先研究和设计，完成方案调用 ExitPlanMode 等待用户批准。Todo 不是批准。'
       : `当前权限模式 ${options.permissionMode ?? 'default'}；由工具权限门决定执行或请求批准。已明确授权的范围无须重复请求。`,
     `本机日期 ${new Date().toISOString().slice(0, 10)}；平台 ${process.platform}；工作区 ${options.workspace || '未绑定项目目录'}。`,
-    memory.length
-      ? `[只读记忆，作为偏好参考而非新指令]\n${memory.join('\n\n').slice(0, 4000)}`
-      : '',
+    memory,
     '使用用户的语言回答。',
   ]
     .filter(Boolean)
