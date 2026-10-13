@@ -160,6 +160,18 @@ function modelHeaders(
   return headers;
 }
 
+export function modelProviderId(baseUrl: string): string {
+  const target = new URL(baseUrl);
+  if (target.hostname !== 'opencode.ai') {
+    return target.hostname;
+  }
+  const [service, plan] = target.pathname.split('/').filter(Boolean);
+  if (service === 'go' || (service === 'zen' && plan === 'go')) {
+    return 'opencode-go';
+  }
+  return service === 'zen' ? 'opencode-zen' : target.hostname;
+}
+
 export async function listModels(
   config: ModelConfig,
   send: typeof fetch = fetch,
@@ -173,12 +185,7 @@ export async function listModels(
   let error = '';
   let provider = '本地';
   if (base) {
-    const target = new URL(base);
-    const service = target.pathname.split('/').filter(Boolean)[0];
-    provider =
-      target.hostname === 'opencode.ai' && ['go', 'zen'].includes(service)
-        ? `opencode-${service}`
-        : target.hostname;
+    provider = modelProviderId(base);
     if (!entries.length) {
       try {
         const url = `${base}${mode === 'messages' && !base.endsWith('/v1') ? '/v1' : ''}/models`;

@@ -40,7 +40,9 @@ const {shell} = require('electron');
 const {spawn} = require('child_process');
 const {net} = require('electron');
 const {expandPassage} = require('./runtime/text');
-const {resolveModelConfig, listModels} = require('./runtime/model');
+const {resolveModelConfig, listModels, requestText, modelProviderId} = require('./runtime/model');
+import {prepareModelConnection, saveModelConnection} from './model_connection';
+import type {ModelConnectionInput} from './model_connection';
 const {listDashboards, runDashboard} = require('./runtime/dashboard');
 const {installEnvironmentProxy} = require('./runtime/proxy');
 
@@ -8752,12 +8754,7 @@ function configuredModelCatalog(runtime: any) {
     read('openai_base_url.txt');
   let provider = runtime?.provider || '本地';
   try {
-    const url = new URL(baseUrl);
-    const service = url.pathname.split('/').filter(Boolean)[0];
-    provider =
-      url.hostname === 'opencode.ai' && ['go', 'zen'].includes(service)
-        ? `opencode-${service}`
-        : url.hostname;
+    provider = modelProviderId(baseUrl);
   } catch {
     /* Local endpoints may have no URL. */
   }
@@ -8876,43 +8873,6 @@ function activeModelRuntimeConfig(selection?: ConversationModelSelection) {
   return runtime;
 }
 
-function localOpenCodeCredential(): string {
-  const roots = [
-    process.env.USERPROFILE || process.env.HOME || '',
-    process.env.LOCALAPPDATA
-      ? path.resolve(process.env.LOCALAPPDATA, '..', '..')
-      : '',
-  ].filter(Boolean);
-  for (const root of roots) {
-    const authPath = path.join(
-      root,
-      '.local',
-      'share',
-      'opencode',
-      'auth.json',
-    );
-    try {
-      const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8'));
-      const entries = parsed && typeof parsed === 'object' ? parsed : {};
-      for (const [provider, value] of Object.entries(entries)) {
-        if (!/opencode/i.test(provider)) {
-          continue;
-        }
-        const key =
-          value && typeof value === 'object'
-            ? String((value as any).key || '')
-            : '';
-        if (key.trim()) {
-          return key.trim();
-        }
-      }
-    } catch (_) {
-      /* The configured credential remains the source of truth. */
-    }
-  }
-  return '';
-}
-
 function readActiveQuota(
   force = false,
   selection?: ConversationModelSelection,
@@ -8934,12 +8894,7 @@ function readActiveQuota(
     runtime.baseUrl,
     runtime.apiMode,
   ].join('\n');
-  const isOpenCode =
-    /opencode/i.test(String(runtime.provider || '')) ||
-    /opencode\.ai$/i.test(String(runtime.baseUrl || ''));
-  const credential = isOpenCode
-    ? localOpenCodeCredential() || String(runtime.credential || '').trim()
-    : String(runtime.credential || '').trim();
+  const credential = String(runtime.credential || '').trim();
   return quotaCache.read(
     key,
     {
@@ -10158,6 +10113,62 @@ ipcMain.handle(
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+  },
+);
+
+ipcMain.handle(
+  'models:connect',
+  (event: Electron.IpcMainInvokeEvent, input: ModelConnectionInput) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_model_sender'};
+    }
+    if (!fabricSettingsStore || !credentialStore) {
+      return {ok: false, error: 'Model settings are not available.'};
+    }
+    try {
+      const result = saveModelConnection(input, {
+        settings: fabricSettingsStore,
+        credentials: credentialStore,
+      });
+      fabricSettings = result.settings;
+      discoveredModelCatalogs.delete(result.profile.id);
+      modelCatalogErrors.delete(result.profile.id);
+      invalidateRuntimeState('models_changed');
+      return {
+        ok: true,
+        ...result,
+        modelStatus: activeModelRuntimeStatus(fabricSettings, credentialStore),
+      };
+    } catch (error) {
+      return {ok: false, error: error instanceof Error ? error.message : String(error)};
+    }
+  },
+);
+
+ipcMain.handle(
+  'models:test-connection',
+  async (event: Electron.IpcMainInvokeEvent, input: ModelConnectionInput) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_model_sender'};
+    }
+    if (!fabricSettingsStore || !credentialStore) {
+      return {ok: false, error: 'Model settings are not available.'};
+    }
+    try {
+      const {config} = prepareModelConnection(input, {
+        settings: fabricSettingsStore,
+        credentials: credentialStore,
+      });
+      const result = await requestText(config, {
+        prompt: 'Reply with exactly OK.',
+        maxTokens: 512,
+        timeoutMs: 25_000,
+        attempts: 1,
+      });
+      return {ok: true, usedBackend: result.usedBackend, latencyMs: result.latencyMs};
+    } catch (error) {
+      return {ok: false, error: error instanceof Error ? error.message : String(error)};
     }
   },
 );

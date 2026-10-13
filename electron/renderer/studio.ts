@@ -11401,6 +11401,10 @@ async function refreshComposerModel() {
   renderComposerModel();
 }
 
+window.addEventListener('mp:model-connections-changed', () => {
+  void refreshComposerModel();
+});
+
 function renderComposerModel() {
   const label = document.getElementById('composer-model-label');
   const btn = document.getElementById('composer-model');

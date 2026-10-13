@@ -8,7 +8,6 @@
     infoKey?:
       | 'active-model'
       | 'credential'
-      | 'terminal'
       | 'runtime'
       | 'thinking'
       | 'grants'
@@ -53,7 +52,6 @@
     'model.noSecureStorage': 'Secure storage unavailable',
     'model.storedSecurely': 'Stored securely',
     'model.configured': 'Configured',
-    'model.terminalCommand': 'npm run model:groq',
     'model.runtime': 'MPAgentRuntime',
     'model.thinking': 'Stored reasoning',
     'model.skills': 'Open Skills and commands',
@@ -581,13 +579,6 @@
               description:
                 'Shows only whether a credential exists. The value is never displayed.',
             },
-            {
-              control: 'info',
-              infoKey: 'terminal',
-              label: 'Configure model',
-              description:
-                'Run the command in Terminal; secret input is not echoed.',
-            },
           ],
         },
         {
@@ -829,9 +820,6 @@
       return status.credentialPresent
         ? formatSettingLabel('model.storedSecurely')
         : formatSettingLabel('model.notConfigured');
-    }
-    if (key === 'terminal') {
-      return formatSettingLabel('model.terminalCommand');
     }
     if (key === 'runtime') {
       return formatSettingLabel('model.runtime');

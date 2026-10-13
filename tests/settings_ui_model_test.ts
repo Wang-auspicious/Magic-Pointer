@@ -51,7 +51,7 @@ assert.strictEqual(SETTINGS_PAGES.find((page: any) => page.id === 'models-agents
 const modelRows = SETTINGS_PAGES.find((page: any) => page.id === 'models-agents')
   .sections.find((section: any) => section.title === 'Model').rows;
 assert.deepStrictEqual(modelRows.map((row: any) => row.infoKey), [
-  'active-model', 'credential', 'terminal',
+  'active-model', 'credential',
 ]);
 assert.strictEqual(modelInfoValue('active-model', {
   configured: true, displayName: 'Groq · GPT OSS 120B', provider: 'groq', model: 'openai/gpt-oss-120b',
@@ -59,7 +59,6 @@ assert.strictEqual(modelInfoValue('active-model', {
 assert.strictEqual(modelInfoValue('credential', {
   configured: true, credentialPresent: false, credentialBackendAvailable: true,
 }), 'Not configured');
-assert.strictEqual(modelInfoValue('terminal', {}), 'npm run model:groq');
 assert.strictEqual(modelInfoValue('runtime', {}), 'MPAgentRuntime');
 assert.strictEqual(modelInfoValue('thinking', {}), 'Stored reasoning');
 const externalClientSection = SETTINGS_PAGES.find((page: any) => page.id === 'models-agents')

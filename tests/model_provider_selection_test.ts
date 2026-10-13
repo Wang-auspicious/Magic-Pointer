@@ -35,4 +35,45 @@ void (async () => {
   assert.equal(partial.groups.length, 2, 'a failing provider must not erase other providers');
   assert.match(partial.groups[1].error, /offline/);
   console.log('Model catalog keeps provider identity, per-model metadata and partial failures');
+  const {saveModelConnection, prepareModelConnection} = require('../electron/model_connection');
+  let stored: any = {models: {schemaVersion: 1, defaultProfileId: null, profiles: []}};
+  const secrets = new Map<string, string>();
+  const stores = {
+    settings: {load: () => structuredClone(stored), save: (next: any) => {stored = next;}},
+    credentials: {
+      get: (ref: string) => secrets.get(ref) || null,
+      set: (ref: string, value: string) => secrets.set(ref, value),
+      delete: (ref: string) => secrets.delete(ref),
+    },
+    readOpenCodeGo: () => 'local-go-key',
+  };
+  const input = {
+    displayName: 'OpenCode Go', provider: 'opencode-go',
+    baseUrl: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4.1-flash',
+    apiMode: 'chat-completions', useLocalOpenCode: true, makeDefault: true,
+  };
+  const connected = saveModelConnection(input, stores);
+  assert.equal(stored.models.defaultProfileId, connected.profile.id);
+  assert.equal(secrets.get(connected.profile.credentialRef), 'local-go-key');
+  assert(!JSON.stringify(connected).includes('local-go-key'));
+  const edited = saveModelConnection({...input, profileId: connected.profile.id, useLocalOpenCode: false, model: 'mimo-v2.5'}, stores);
+  assert.equal(edited.profile.id, connected.profile.id);
+  assert.equal(stored.models.profiles.length, 1);
+  assert.equal(prepareModelConnection({...input, profileId: connected.profile.id, useLocalOpenCode: false}, stores).config.credential, 'local-go-key');
+  assert.throws(() => prepareModelConnection({...input, baseUrl: 'https://example.com/v1'}, stores), /OpenCode Go/);
+  const before = structuredClone(stored);
+  assert.throws(() => saveModelConnection({...input, profileId: connected.profile.id, credential: 'replacement', useLocalOpenCode: false}, {
+    ...stores, settings: {...stores.settings, save() {throw new Error('disk full');}},
+  }), /disk full/);
+  assert.deepEqual(stored, before);
+  assert.equal(secrets.get(connected.profile.credentialRef), 'local-go-key');
+  console.log('Model connections save, edit, import and roll back without exposing credentials');
+  const repaired = saveModelConnection({...input, profileId: connected.profile.id}, {
+    ...stores,
+    credentials: {...stores.credentials, get() {throw new Error('credential_decryption_failed');}},
+  });
+  assert.equal(secrets.get(repaired.profile.credentialRef), 'local-go-key', 'explicit replacement repairs an unreadable old key');
+  const {listModels} = require('../electron/runtime/model');
+  const goCatalog = await listModels({...input, models: [{id: input.model}]});
+  assert.equal(goCatalog.provider, 'opencode-go', 'the Go endpoint must not be labeled as Zen');
 })().catch((error: Error) => { console.error(error); process.exitCode = 1; });

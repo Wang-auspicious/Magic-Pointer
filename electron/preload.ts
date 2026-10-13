@@ -238,6 +238,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
   modelsCatalog: (options: {refresh?: boolean} = {}) =>
     ipcRenderer.invoke('models:catalog', {refresh: options.refresh === true}),
+  connectModel: (input: import('./model_connection').ModelConnectionInput) =>
+    ipcRenderer.invoke('models:connect', input),
+  testModelConnection: (input: import('./model_connection').ModelConnectionInput) =>
+    ipcRenderer.invoke('models:test-connection', input),
   selectModel: (model: unknown, profileId?: string) =>
     ipcRenderer.invoke('models:select', {model, profileId}),
   modelQuota: (options: {force?: unknown; selection?: unknown} = {}) =>

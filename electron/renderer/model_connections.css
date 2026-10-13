@@ -1,0 +1,102 @@
+.model-connections {
+  margin-bottom: 28px;
+}
+.model-connections-heading,
+.model-connection-row,
+.model-connection-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.model-connections h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.model-connections button {
+  padding: 6px 12px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 6px;
+  color: var(--mp-text);
+  background: var(--mp-panel);
+  font: inherit;
+  cursor: pointer;
+}
+.model-connections button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.model-connections button:hover:not(:disabled) {
+  background: var(--mp-hover);
+}
+.model-connection-row {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--mp-rule);
+}
+.model-connection-row > div {
+  min-width: 0;
+}
+.model-connection-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--mp-text-secondary);
+  overflow-wrap: anywhere;
+}
+.model-connection-default {
+  margin-left: 8px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+}
+.model-connection-form fieldset {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.model-connection-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.model-connection-form input:not([type='checkbox']),
+.model-connection-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 6px;
+  background: var(--mp-panel);
+  color: var(--mp-text);
+  font: inherit;
+}
+.model-connection-form .model-connection-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.model-connection-hint {
+  margin: 8px 0;
+  color: var(--mp-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.model-connection-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.model-connection-actions [type='submit'] {
+  background: var(--mp-text);
+  color: var(--mp-panel);
+}
+.model-connection-status {
+  margin: 12px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.model-connection-status[data-error='true'] {
+  color: var(--cds-color-text-danger, #a83f3f);
+}

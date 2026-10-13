@@ -8,6 +8,8 @@ type SettingsApi = {
   setTheme?: (theme: unknown) => void;
   conversations?: {memories?: () => Promise<any[]>};
   extensions?: {inventory?: () => Promise<any>};
+  connectModel?: MagicPointerDashboardApi['connectModel'];
+  testModelConnection?: MagicPointerDashboardApi['testModelConnection'];
 };
 
 type SettingsModelApi = {
@@ -319,6 +321,14 @@ function renderSettings() {
     entry => entry.id === activeSettingsPage,
   );
   body.innerHTML = renderSettingsPage(page);
+  if (page.id === 'models-agents') {
+    const container = document.createElement('div');
+    body.querySelector('.mp-settings-page-head')?.after(container);
+    window.ModelConnections.mount(container, canonicalSettings, settingsApi(), response => {
+      hydrateCanonical(response.settings, response.modelStatus);
+      window.dispatchEvent(new Event('mp:model-connections-changed'));
+    });
+  }
 }
 
 function hydrateCanonical(

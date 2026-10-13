@@ -13,7 +13,9 @@ const SETTINGS_PATH = path.join(USER_DATA_DIR, 'fabric-settings.json');
 const CREDENTIALS_PATH = path.join(USER_DATA_DIR, 'credentials.v1.json');
 const COMMAND = String(process.argv[2] || 'status').trim().toLowerCase();
 
-app.setPath('userData', USER_DATA_DIR);
+app.setPath('userData', process.env.MAGIC_POINTER_USER_DATA_DIR
+  ? USER_DATA_DIR
+  : path.join(app.getPath('appData'), 'magic-pointer'));
 
 function builtModule(name) {
   const file = path.join(ROOT, 'build', 'electron', `${name}.js`);
@@ -47,31 +49,26 @@ function publicStatus(settings, credentialStore) {
 }
 
 async function testProfile(settings, credentialStore) {
-  const profileId = String(settings?.models?.defaultProfileId || '');
-  const profile = (settings?.models?.profiles || []).find((item) => item?.id === profileId) || null;
-  if (!profile) return { ok: false, error: 'model_profile_not_found' };
-  const credential = credentialStore.get(profile.credentialRef);
-  if (!credential) return { ok: false, error: 'credential_missing', profileId };
-  const response = await fetch(`${String(profile.baseUrl || '').replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    redirect: 'error',
-    headers: {
-      Authorization: `Bearer ${credential}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: profile.model,
-      messages: [{ role: 'user', content: 'Reply with exactly OK.' }],
-      max_tokens: 8,
-    }),
+  const {resolveActiveModelRuntimeConfig} = builtModule('model_runtime_config');
+  const {requestText} = builtModule('runtime/model');
+  const {installEnvironmentProxy} = builtModule('runtime/proxy');
+  const config = resolveActiveModelRuntimeConfig(settings, credentialStore);
+  if (!config) return {ok: false, error: 'model_profile_not_found'};
+  installEnvironmentProxy();
+  const response = await requestText(config, {
+    prompt: 'Reply with exactly OK.',
+    maxTokens: 512,
+    timeoutMs: 25_000,
+    attempts: 1,
   });
   return {
-    ok: response.ok,
-    status: response.status,
-    profileId,
-    provider: profile.provider,
-    model: profile.model,
-    error: response.ok ? null : `runtime_http_${response.status}`,
+    ok: true,
+    profileId: config.profileId,
+    provider: config.provider,
+    model: config.model,
+    apiMode: config.apiMode,
+    usedBackend: response.usedBackend,
+    latencyMs: response.latencyMs,
   };
 }
 
