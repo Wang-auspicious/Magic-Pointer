@@ -30,7 +30,8 @@ assert.equal(title('read', {path: 'a.txt'}, ok), 'Read',
 
 assert.equal(title('write', {path: 'a.txt'}, running), 'Creating',
   'the reference runs Write as "Creating", not "Writing" — the gerund is a lookup, not a suffix');
-assert.equal(title('write', {path: 'a.txt'}, ok), 'Wrote');
+assert.equal(title('write', {path: 'a.txt'}, ok), 'Created',
+  'the reference past-tenses settled Write as "Created" (group singular "Created a file"), not "Wrote"');
 
 assert.equal(title('edit_file', {path: 'a.txt'}, running), 'Editing');
 assert.equal(title('bash', {command: 'ls'}, running), 'Running');

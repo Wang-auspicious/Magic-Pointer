@@ -27,12 +27,13 @@ const chip = (name, result) => ({
 const running = name => chip(name, undefined);
 const done = name => chip(name, {text: 'ok'});
 
-// Completed forms match the reference verbatim.
-assert.equal(toolGroupLabel([done('bash')]), 'Ran 1 command');
+// Completed forms match the reference verbatim (report 32 §2: singulars use
+// "a", not "1" — `Ran a command`, `Read a file`, `Edited a file`).
+assert.equal(toolGroupLabel([done('bash')]), 'Ran a command');
 assert.equal(toolGroupLabel([done('bash'), done('bash')]), 'Ran 2 commands');
-assert.equal(toolGroupLabel([done('read')]), 'Read 1 file');
+assert.equal(toolGroupLabel([done('read')]), 'Read a file');
 assert.equal(toolGroupLabel([done('read'), done('read'), done('read')]), 'Read 3 files');
-assert.equal(toolGroupLabel([done('edit')]), 'Edited 1 file');
+assert.equal(toolGroupLabel([done('edit')]), 'Edited a file');
 assert.equal(
   toolGroupLabel([done('bash'), chip('bash', {text: 'x', isError: true})]),
   'Ran 2 commands (1 failed)',
@@ -63,7 +64,7 @@ assert.equal(
 // The count is of what is still in flight, not of the whole run.
 assert.equal(
   toolGroupLabel([done('bash'), running('read'), running('read')]),
-  'Reading 2 files… · Ran 1 command',
+  'Reading 2 files… · Ran a command',
   'settled members move into the completed clause instead of inflating the running count',
 );
 
