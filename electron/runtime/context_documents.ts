@@ -10,6 +10,7 @@ import {
   sep,
 } from 'node:path';
 import AdmZip from 'adm-zip';
+import sharp from 'sharp';
 import {XMLParser, XMLBuilder} from 'fast-xml-parser';
 import {
   array,
@@ -348,6 +349,18 @@ interface DirectoryFrame {
   relativePath: string;
   index: number;
 }
+
+const IMAGE_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.avif',
+  '.tif',
+  '.tiff',
+]);
+
 export class DocumentReader implements SourceReader {
   private cache = new Map<string, {version: string; document: Parsed}>();
   constructor(
@@ -1135,6 +1148,98 @@ export class DocumentReader implements SourceReader {
       structure: {kind: 'directory', searchedEntries: scanned},
     };
   }
+  private async readImage(
+    source: SourceRef,
+    options: ReadOptions,
+    started: number,
+  ): Promise<ReadResult> {
+    const bytes = await readFile(sourcePath(source));
+    options.signal?.throwIfAborted();
+    const metadata = await sharp(bytes).metadata();
+    const frameCount = metadata.pages || 1;
+    const structure = {kind: 'image', format: metadata.format, frameCount};
+    if (options.query !== undefined) {
+      return {
+        sourceId: source.sourceId,
+        fragments: [],
+        structure,
+        coverage: {
+          extent: 'query-results',
+          readRanges: [],
+          totalUnits: frameCount,
+          complete: false,
+          nextCursor: null,
+          missingReason:
+            'Visual search requires Context.read to inspect the image pixels.',
+        },
+        evidenceStatus: 'unsupported',
+        usedBackend: 'document.image',
+        latencyMs: performance.now() - started,
+      };
+    }
+    const cursor = options.cursor ? /^frame:(\d+)$/.exec(options.cursor) : null;
+    if (options.cursor && !cursor) {
+      throw new Error('Invalid image frame cursor.');
+    }
+    if (options.locator && options.locator.kind !== 'image-frame') {
+      throw new Error(
+        'Image reads use an image-frame locator with frameIndex.',
+      );
+    }
+    const frameIndex = Number(
+      cursor?.[1] ?? options.locator?.value.frameIndex ?? 0,
+    );
+    if (
+      !Number.isInteger(frameIndex) ||
+      frameIndex < 0 ||
+      frameIndex >= frameCount
+    ) {
+      throw new Error(`Image frame must be between 0 and ${frameCount - 1}.`);
+    }
+    const decoded = await sharp(bytes, {page: frameIndex})
+      .rotate()
+      .png()
+      .toBuffer({resolveWithObject: true});
+    options.signal?.throwIfAborted();
+    const locator = {kind: 'image-frame', value: {frameIndex}};
+    const fragment = {
+      fragmentId: `fragment:${source.sourceId}:frame:${frameIndex}`,
+      locator,
+      text: `${source.title}: image frame ${frameIndex + 1} of ${frameCount}, ${decoded.info.width} × ${decoded.info.height} pixels. Inspect the attached pixels for its contents.`,
+      metadata: {
+        sourceRevision: source.revision,
+        width: decoded.info.width,
+        height: decoded.info.height,
+      },
+      citations: [{sourceId: source.sourceId, locator}],
+    };
+    return {
+      sourceId: source.sourceId,
+      fragments: [fragment],
+      structure: {
+        ...structure,
+        frameIndex,
+        width: decoded.info.width,
+        height: decoded.info.height,
+      },
+      coverage: {
+        extent: 'image-frame',
+        readRanges: [locator],
+        totalUnits: frameCount,
+        complete: frameIndex === frameCount - 1,
+        nextCursor:
+          frameIndex + 1 < frameCount ? `frame:${frameIndex + 1}` : null,
+        missingReason: null,
+      },
+      evidenceStatus: 'ok',
+      usedBackend: 'document.image.sharp',
+      latencyMs: performance.now() - started,
+      image: decoded.data.toString('base64'),
+      mimeType: 'image/png',
+      imageLabel: `${source.title} · ${source.sourceId} · frame ${frameIndex + 1}/${frameCount}`,
+    };
+  }
+
   async read(
     source: SourceRef,
     options: ReadOptions = {},
@@ -1146,6 +1251,9 @@ export class DocumentReader implements SourceReader {
       if (live) {
         return live;
       }
+    }
+    if (IMAGE_EXTENSIONS.has(extname(sourcePath(source)).toLowerCase())) {
+      return this.readImage(source, options, started);
     }
     if (
       options.query !== undefined &&
