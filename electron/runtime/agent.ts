@@ -36,7 +36,11 @@ import {
 import type {ModelConfig} from './model';
 import type {AccessRequest} from './context';
 import {taskSources, taskReferences, scopeFromEvents} from './context';
-import {projectArtifacts} from './artifacts';
+import {
+  createArtifact,
+  latestTurnArtifactSummaries,
+  projectArtifacts,
+} from './artifacts';
 import {
   contextWindowFor,
   estimateCostUsd,
@@ -110,6 +114,7 @@ export interface AgentOptions {
   registry: ToolRegistry;
   model: ModelRunner;
   instruction?: string;
+  outputArtifact?: {title: string; kind: 'text' | 'markdown'} | null;
   projectContext?: ProjectContext | null;
   evidence?: string;
   hasSelection?: boolean;
@@ -797,8 +802,24 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
   let tokenEscalations = 0;
   const timeout = options.timeoutMs ?? 120000;
   let interval: ReturnType<typeof setInterval> | undefined;
+  let outputArtifact = [...session.events]
+    .reverse()
+    .find(event => event.type === 'task/output')?.data
+    .output as AgentOptions['outputArtifact'];
   await session.startTurn();
   try {
+    const previousReceipt = [...session.events]
+      .reverse()
+      .find(event => event.type === 'receipt/issued');
+    if (
+      options.outputArtifact !== undefined ||
+      (outputArtifact &&
+        options.instruction &&
+        previousReceipt?.data.status === 'succeeded')
+    ) {
+      outputArtifact = options.outputArtifact ?? null;
+      await session.append('task/output', {output: outputArtifact});
+    }
     const priorEnd = [...session.events]
       .reverse()
       .find(event => event.type === 'turn/end');
@@ -896,8 +917,8 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       (options.system ?? (await buildSystemPrompt(options))) +
         (skills ? '\n\n' + skills : ''),
     );
-    const modelMessages = () =>
-      withWorkspaceSettings(
+    const modelMessages = (): AgentMessage[] => {
+      const messages = withWorkspaceSettings(
         withProjectSettings(
           pruneToolResults(
             projectContextMessages(session.deriveMessages()),
@@ -907,6 +928,18 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         ),
         workspaceSettings,
       );
+      return outputArtifact
+        ? [
+            ...messages,
+            {
+              role: 'user',
+              origin: 'instruction',
+              injected: true,
+              content: `Deliver the requested content as an editable ${outputArtifact.kind} artifact titled ${JSON.stringify(outputArtifact.title)}. Use Artifact.create or Artifact.update when appropriate. If you finish with text only, that text will become the artifact: include only the deliverable, without status reports, introductions, or offers.`,
+            },
+          ]
+        : messages;
+    };
     for (const event of session.events) {
       if (
         event.type === 'operation/settled' &&
@@ -1674,7 +1707,29 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     }
   }
   const recoveryPending = session.pendingRecovery().length > 0;
-  const outcomes = taskOutcomes(session.events);
+  let outcomes = taskOutcomes(session.events);
+  if (
+    outputArtifact &&
+    reason === 'completed' &&
+    !recoveryPending &&
+    !outcomes.unfinished.length &&
+    (!outcomes.wrote || outcomes.verified) &&
+    answer.trim() &&
+    latestTurnArtifactSummaries(session.events).length === 0
+  ) {
+    try {
+      await createArtifact(
+        session,
+        answer,
+        outputArtifact.title,
+        outputArtifact.kind,
+      );
+      outcomes = taskOutcomes(session.events);
+    } catch (error) {
+      reason = 'artifact_save_failed';
+      answer += `\n\nCould not save the requested artifact: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
   wrote = outcomes.wrote;
   verified = outcomes.verified;
   const artifactIds = outcomes.artifactIds;

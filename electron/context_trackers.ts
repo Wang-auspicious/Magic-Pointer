@@ -34,11 +34,13 @@ type TrackerRun = {
   startedAtMs: number;
   finishedAtMs: number;
   ok: boolean;
+  status: 'completed' | 'failed' | 'waiting' | 'incomplete';
   triggerKind: 'filesystem' | 'schedule' | 'manual';
   dueThroughMs?: number;
   conversationId?: string;
   error?: string;
   task?: string;
+  artifacts?: Array<{artifactId: string; name: string; revision: number}>;
 };
 
 const MAX_RUN_HISTORY = 20;
@@ -253,6 +255,13 @@ function normalizeRun(value: unknown): TrackerRun | null {
     startedAtMs: Math.max(0, Number(raw.startedAtMs) || 0),
     finishedAtMs: Math.max(0, Number(raw.finishedAtMs) || 0),
     ok: raw.ok === true,
+    status: ['completed', 'failed', 'waiting', 'incomplete'].includes(
+      String(raw.status),
+    )
+      ? (raw.status as TrackerRun['status'])
+      : raw.ok === true
+        ? 'completed'
+        : 'failed',
     triggerKind:
       raw.triggerKind === 'manual'
         ? 'manual'
@@ -260,6 +269,7 @@ function normalizeRun(value: unknown): TrackerRun | null {
           ? 'schedule'
           : 'filesystem',
     ...(cleanText(raw.task, 4000) ? {task: cleanText(raw.task, 4000)} : {}),
+    artifacts: runArtifacts(raw.artifacts),
     ...(Number.isFinite(Number(raw.dueThroughMs))
       ? {dueThroughMs: Math.max(0, Number(raw.dueThroughMs))}
       : {}),
@@ -268,6 +278,42 @@ function normalizeRun(value: unknown): TrackerRun | null {
       : {}),
     ...(cleanText(raw.error, 1000) ? {error: cleanText(raw.error, 1000)} : {}),
   };
+}
+
+function runStatus(
+  result: Record<string, unknown>,
+  error = '',
+): TrackerRun['status'] {
+  if (result.awaitingUserInput || result.pendingInput) {
+    return 'waiting';
+  }
+  if (error || result.ok === false) {
+    return 'failed';
+  }
+  return result.hasPendingWork ? 'incomplete' : 'completed';
+}
+
+function runArtifacts(value: unknown): NonNullable<TrackerRun['artifacts']> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(
+      item =>
+        item && typeof item === 'object' && typeof item.artifactId === 'string',
+    )
+    .map(item => ({
+      artifactId: item.artifactId,
+      name: String(item.name || item.title || 'Artifact'),
+      revision: Number(item.revision) || 1,
+    }));
+}
+
+function needsAttention(tracker: ContextTracker): boolean {
+  return (
+    tracker.lastRun?.status === 'waiting' ||
+    tracker.lastRun?.status === 'incomplete'
+  );
 }
 
 function observationsEqual(
@@ -483,6 +529,7 @@ function buildContextTrackerConversationRequest(
       : {}),
     question,
     attachments,
+    outputArtifact: {title: task.slice(0, 160), kind: 'markdown'},
     taskInput: {
       inputId: `input:tracker:${trackerId}:${capturedAtMs}`,
       taskId: `tracker:${trackerId}`,
@@ -513,6 +560,7 @@ function createContextTrackerRuntime({
     clearTimeout(handle as ReturnType<typeof setTimeout>),
   onError = () => {},
   onChanged = () => {},
+  onRun = () => {},
 }: {
   loadTrackers?: () => unknown[];
   persistTrackers?: (trackers: ContextTracker[]) => void;
@@ -527,6 +575,7 @@ function createContextTrackerRuntime({
   clearTimer?: (handle: TimerHandle) => void;
   onError?: (error: unknown, trackerId: string) => void;
   onChanged?: () => void;
+  onRun?: (tracker: ContextTracker, run: TrackerRun) => void;
 }) {
   if (typeof runTask !== 'function') {
     throw new Error('context tracker runTask is required');
@@ -605,6 +654,13 @@ function createContextTrackerRuntime({
     if (running.has(trackerId)) {
       return {ok: false, error: 'tracker_already_running'};
     }
+    if (needsAttention(tracker)) {
+      return {
+        ok: false,
+        error: 'routine_requires_attention',
+        conversationId: tracker.lastRun?.conversationId,
+      };
+    }
     running.add(trackerId);
     onChanged();
     const startedAtMs = now();
@@ -641,10 +697,12 @@ function createContextTrackerRuntime({
         ...(errorText ? {error: errorText} : {}),
       };
     }
+    const status = runStatus(result, errorText);
     current.lastRun = {
       startedAtMs,
       finishedAtMs: now(),
-      ok: !errorText,
+      ok: status === 'completed',
+      status,
       triggerKind:
         change.kind === 'manual'
           ? 'manual'
@@ -652,6 +710,7 @@ function createContextTrackerRuntime({
             ? 'schedule'
             : 'filesystem',
       task: tracker.task,
+      artifacts: runArtifacts(result.artifacts),
       ...(dueThroughMs == null ? {} : {dueThroughMs}),
       ...(cleanText(result?.conversationId, 160)
         ? {conversationId: cleanText(result.conversationId, 160)}
@@ -672,11 +731,15 @@ function createContextTrackerRuntime({
       persist();
     } catch (error) {
       errorText = error instanceof Error ? error.message : String(error);
+      current.lastRun.status = 'failed';
+      current.lastRun.ok = false;
+      current.lastRun.error = `Could not save run history: ${errorText}`;
       onError(error, trackerId);
     }
     scheduleNext(trackerId);
     schedulePendingFilesystem(trackerId);
     onChanged();
+    onRun(JSON.parse(JSON.stringify(current)), {...current.lastRun});
     return {
       ...result,
       ok: !errorText,
@@ -690,7 +753,8 @@ function createContextTrackerRuntime({
       !started ||
       !tracker?.enabled ||
       tracker.trigger.kind !== 'schedule' ||
-      running.has(trackerId)
+      running.has(trackerId) ||
+      needsAttention(tracker)
     ) {
       return;
     }
@@ -718,7 +782,8 @@ function createContextTrackerRuntime({
         !started ||
         !current?.enabled ||
         current.trigger.kind !== 'schedule' ||
-        running.has(trackerId)
+        running.has(trackerId) ||
+        needsAttention(current)
       ) {
         return;
       }
@@ -758,7 +823,11 @@ function createContextTrackerRuntime({
     ) {
       return;
     }
-    if (running.has(trackerId) || observing.has(trackerId)) {
+    if (
+      running.has(trackerId) ||
+      observing.has(trackerId) ||
+      needsAttention(tracker)
+    ) {
       return;
     }
     observing.add(trackerId);
@@ -809,7 +878,8 @@ function createContextTrackerRuntime({
       tracker.trigger.kind !== 'filesystem' ||
       !resource ||
       !resource.eventCount ||
-      running.has(trackerId)
+      running.has(trackerId) ||
+      needsAttention(tracker)
     ) {
       return;
     }
@@ -837,6 +907,9 @@ function createContextTrackerRuntime({
     resource.eventCount += 1;
     resource.eventFromMs = resource.eventFromMs || observedAtMs;
     resource.eventToMs = observedAtMs;
+    if (needsAttention(tracker)) {
+      return;
+    }
     if (resource.timer != null) {
       clearTimer(resource.timer);
     }
@@ -910,7 +983,9 @@ function createContextTrackerRuntime({
       ...tracker,
       running: running.has(tracker.trackerId),
       nextRunAtMs:
-        tracker.enabled && tracker.trigger.kind === 'schedule'
+        tracker.enabled &&
+        tracker.trigger.kind === 'schedule' &&
+        !needsAttention(tracker)
           ? dueSchedule(tracker.trigger, tracker.lastScheduledAtMs, now())
               .nextAtMs
           : null,
@@ -1009,7 +1084,68 @@ function createContextTrackerRuntime({
     );
   }
 
-  return {start, stop, list, upsert, setEnabled, remove, runNow, idle};
+  function reconcileConversation(result: Record<string, unknown>) {
+    const conversationId = cleanText(result.conversationId, 160);
+    if (!conversationId) {
+      return;
+    }
+    for (const tracker of trackers.values()) {
+      if (
+        !needsAttention(tracker) ||
+        tracker.lastRun?.conversationId !== conversationId
+      ) {
+        continue;
+      }
+      const previous = tracker.lastRun!;
+      const status = runStatus(result, cleanText(result.error, 1000));
+      const updated: TrackerRun = {
+        ...previous,
+        status,
+        ok: status === 'completed',
+        finishedAtMs: now(),
+        artifacts: runArtifacts(result.artifacts),
+      };
+      if (result.error) {
+        updated.error = cleanText(result.error, 1000);
+      } else {
+        delete updated.error;
+      }
+      tracker.lastRun = updated;
+      const index = tracker.runHistory.findIndex(
+        run =>
+          run.startedAtMs === previous.startedAtMs &&
+          run.conversationId === conversationId,
+      );
+      if (index >= 0) {
+        tracker.runHistory[index] = updated;
+      }
+      try {
+        persist();
+      } catch (error) {
+        tracker.lastRun = previous;
+        if (index >= 0) {
+          tracker.runHistory[index] = previous;
+        }
+        throw error;
+      }
+      scheduleNext(tracker.trackerId);
+      schedulePendingFilesystem(tracker.trackerId);
+      onChanged();
+      onRun(JSON.parse(JSON.stringify(tracker)), {...updated});
+    }
+  }
+
+  return {
+    start,
+    stop,
+    list,
+    upsert,
+    setEnabled,
+    remove,
+    runNow,
+    reconcileConversation,
+    idle,
+  };
 }
 
 module.exports = {

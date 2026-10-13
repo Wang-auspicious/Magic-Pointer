@@ -277,3 +277,41 @@ test('question pause and answered continuation preserve successful UI state and 
   assert.equal(session.pendingInput(), null);
   assert.equal(session.events.filter(event => event.type === 'user_input/answered').length, 1);
 });
+
+test('Runtime returns current-turn artifacts instead of the pre-run snapshot', async () => {
+  const f = await fixture();
+  await plugin(f, `module.exports={name:'artifact-provider',async apply(ctx){let calls=0;await ctx.provideUp('llm',async request=>request.messages.some(m=>(m.content||'').includes('Follow up without a deliverable'))?{text:'Just an answer',tool_calls:[]}:++calls===1?{text:'',tool_calls:[{id:'draft',name:'Artifact.create',arguments:{title:'New draft',kind:'markdown',content:'Complete draft body'}}]}:{text:'Created the draft',tool_calls:[]})}}`, {'llm-provider': {disabled: true}});
+  const options = {root: f.root, userDataDir: f.userData};
+  const first = await runRuntime({question: 'Create a draft', conversationId: 'artifact-output'}, options);
+  assert.equal(first.ok, true, first.error);
+  assert.equal(first.artifacts.length, 1, 'the artifact created in this turn must reach the conversation');
+  assert.equal(first.artifacts[0].name, 'New draft');
+  const next = await runRuntime({question: 'Follow up without a deliverable', conversationId: 'artifact-output'}, options);
+  assert.deepEqual(next.artifacts, [], 'old artifacts must not appear as new output on every turn');
+});
+
+test('requested routine output becomes a durable editable artifact before the receipt', async () => {
+  const f = await fixture();
+  await plugin(f, `module.exports={name:'plain-provider',async apply(ctx){await ctx.provideUp('llm',async()=>({text:'The complete weekly report.',tool_calls:[]}))}}`, {'llm-provider': {disabled: true}});
+  const result = await runRuntime({question: 'Prepare the report', outputArtifact: {title: 'Weekly report', kind: 'markdown'}}, {root: f.root, userDataDir: f.userData});
+  assert.equal(result.artifacts.length, 1, 'an explicitly requested routine deliverable must not remain only chat text');
+  assert.equal(result.artifacts[0].name, 'Weekly report');
+  assert.deepEqual(result.receipts[0].artifactIds, [result.artifacts[0].artifactId]);
+  const session = await EventSession.open(f.userData, result.agentSessionId, false);
+  const created = session.events.find(event => event.type === 'artifact/generated')!;
+  const receipt = session.events.find(event => event.type === 'receipt/issued')!;
+  assert.equal(created.data.content, 'The complete weekly report.');
+  assert.ok(created.seq! < receipt.seq!);
+});
+
+test('paused output requests survive an answered continuation without producing a question as a draft', async () => {
+  const f = await fixture();
+  await plugin(f, `module.exports={name:'paused-output',async apply(ctx){await ctx.provideUp('llm',async request=>request.messages.some(m=>(m.content||'').includes('chosen-fixture'))?{text:'The requested report.',tool_calls:[]}:{text:'',tool_calls:[{id:'question',name:'AskUser',arguments:{question:'Choose a reporting period',options:['A','B']}}]})}}`, {'llm-provider': {disabled: true}});
+  const options = {root: f.root, userDataDir: f.userData};
+  const first = await runRuntime({question: 'Prepare a report', conversationId: 'paused-output', outputArtifact: {title: 'Report', kind: 'markdown'}}, options);
+  assert.equal(first.awaitingUserInput, true);
+  assert.deepEqual(first.artifacts, []);
+  const resumed = await runRuntime({conversationId: 'paused-output', inputResponse: {requestId: first.pendingInput.requestId, response: {answer: 'chosen-fixture'}}}, options);
+  assert.equal(resumed.artifacts.length, 1);
+  assert.equal(resumed.artifacts[0].name, 'Report');
+});

@@ -46,6 +46,8 @@ import {EventSession} from './session';
 import {ToolRegistry} from './tools';
 import {resolveModelConfig, streamModel, requestVision} from './model';
 import {bindDesktopWindow, prepareTaskContext} from './context_prepare';
+import {latestTurnArtifactSummaries} from './artifacts';
+import {taskSources, taskReferences, referenceRevision} from './context';
 import {registerBrowserTools} from './desktop_browser';
 import {
   configureDesktop,
@@ -497,6 +499,18 @@ export async function runRuntime(
       session,
       registry,
       instruction,
+      outputArtifact:
+        payload.outputArtifact === undefined
+          ? undefined
+          : payload.outputArtifact === null
+            ? null
+            : {
+                title: String(payload.outputArtifact.title || 'Result')
+                  .trim()
+                  .slice(0, 160),
+                kind:
+                  payload.outputArtifact.kind === 'text' ? 'text' : 'markdown',
+              },
       projectContext: payload.projectContext,
       additionalFolders,
       evidence: prepared.evidence,
@@ -690,9 +704,12 @@ export async function runRuntime(
       pendingInput: terminal.pending_input,
       taskContext: {
         ...prepared.taskContext,
+        sources: taskSources(session.events),
+        references: taskReferences(session.events),
+        referenceRevision: referenceRevision(session.events),
         permissionMode: session.permissionMode(permissionMode),
       },
-      artifacts: prepared.artifacts,
+      artifacts: latestTurnArtifactSummaries(session.events),
       runtimeTurn:
         [...session.events].reverse().find(event => event.type === 'turn/end')
           ?.data.turn ?? null,

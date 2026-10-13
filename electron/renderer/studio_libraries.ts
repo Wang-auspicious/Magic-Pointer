@@ -19,6 +19,16 @@
     seenAt?: number;
     order?: number;
   };
+  interface RoutineRun {
+    ok: boolean;
+    status: 'completed' | 'failed' | 'waiting' | 'incomplete';
+    startedAtMs: number;
+    finishedAtMs: number;
+    triggerKind: string;
+    conversationId?: string;
+    error?: string;
+    artifacts?: Array<{artifactId: string; name: string; revision: number}>;
+  }
   interface RoutineRecord {
     trackerId: string;
     task: string;
@@ -34,14 +44,8 @@
       calendar?: string;
       everyMs?: number;
     };
-    lastRun: {startedAtMs: number} | null;
-    runHistory: Array<{
-      ok: boolean;
-      finishedAtMs: number;
-      triggerKind: string;
-      conversationId?: string;
-      error?: string;
-    }>;
+    lastRun: RoutineRun | null;
+    runHistory: RoutineRun[];
   }
   type Filters = {
     type: string;
@@ -923,21 +927,31 @@
 
     function routineRow(row: RoutineRecord): string {
       const busy = pendingTrackers.has(row.trackerId) || row.running;
+      const attention =
+        row.lastRun?.status === 'waiting' ||
+        row.lastRun?.status === 'incomplete';
       const cadence = row.trigger.calendar
         ? studioT(`routine.${row.trigger.calendar}`)
         : studioT('routine.interval', {
             minutes: Number(row.trigger.everyMs) / 60_000,
           });
-      const next = row.enabled
-        ? `${studioT('routine.next')}: ${nextScheduledRun(row) <= Date.now() ? studioT('routine.due') : new Date(nextScheduledRun(row)).toLocaleString()}`
-        : studioT('routine.paused');
+      const next = attention
+        ? studioT(`routine.${row.lastRun!.status}`) +
+          (row.enabled ? '' : ` · ${studioT('routine.paused')}`)
+        : row.enabled
+          ? `${studioT('routine.next')}: ${nextScheduledRun(row) <= Date.now() ? studioT('routine.due') : new Date(nextScheduledRun(row)).toLocaleString()}`
+          : studioT('routine.paused');
       const history = (row.runHistory || [])
         .map(
           run =>
-            `<li><span>${studioT(run.ok ? 'routine.completed' : 'routine.failed')} · ${escape(new Date(run.finishedAtMs).toLocaleString(getStudioLanguage()))}${run.triggerKind === 'manual' ? ` · ${studioT('routine.manual')}` : ''}</span>${run.error ? `<p>${escape(run.error)}</p>` : ''}${run.conversationId ? `<button type="button" data-open="${escape(run.conversationId)}">${studioT('routine.open_result')}</button>` : ''}</li>`,
+            `<li><span>${studioT(`routine.${run.status}`)} · ${escape(new Date(run.finishedAtMs).toLocaleString(getStudioLanguage()))}${run.triggerKind === 'manual' ? ` · ${studioT('routine.manual')}` : ''}</span>${run.error ? `<p>${escape(run.error)}</p>` : ''}${run.conversationId ? `<button type="button" data-open="${escape(run.conversationId)}">${studioT('routine.open_result')}</button>` : ''}${run.conversationId ? (run.artifacts || []).map(artifact => `<button type="button" data-artifact-id="${escape(artifact.artifactId)}" data-artifact-conversation="${escape(run.conversationId)}">${studioT('routine.open_artifact')} · ${escape(artifact.name)}</button>`).join('') : ''}</li>`,
         )
         .join('');
-      return `<div class="mp-library-list-row mp-routine-row">${glyph('scheduled', 'large')}<div><strong>${escape(row.task)}</strong><small>${escape(cadence)} · ${escape(next)}${row.running ? ` · ${studioT('routine.running')}` : ''}</small><small>${escape(row.folderRoot || (row.sourceIds || []).map((id: string) => id.replace(/^source:attachment:/, '')).join(', '))}</small>${history ? `<details class="mp-tracker-history"><summary>${studioT('routine.history', {count: row.runHistory.length})}</summary><ul>${history}</ul></details>` : ''}<div class="mp-routine-actions"><button type="button" data-tracker-run="${escape(row.trackerId)}" ${busy ? 'disabled' : ''}>${studioT(row.running ? 'routine.running' : 'routine.run_now')}</button><button type="button" data-tracker-edit="${escape(row.trackerId)}">${studioT('routine.edit')}</button><button type="button" data-tracker-toggle="${escape(row.trackerId)}" data-enabled="${!row.enabled}">${studioT(row.enabled ? 'routine.pause' : 'routine.resume')}</button><button type="button" data-tracker-remove="${escape(row.trackerId)}">${studioT('routine.remove')}</button></div></div></div>`;
+      const runAction =
+        attention && row.lastRun?.conversationId
+          ? `<button type="button" data-open="${escape(row.lastRun.conversationId)}">${studioT('routine.continue')}</button>`
+          : `<button type="button" data-tracker-run="${escape(row.trackerId)}" ${busy || attention ? 'disabled' : ''}>${studioT(row.running ? 'routine.running' : 'routine.run_now')}</button>`;
+      return `<div class="mp-library-list-row mp-routine-row">${glyph('scheduled', 'large')}<div><strong>${escape(row.task)}</strong><small>${escape(cadence)} · ${escape(next)}${row.running ? ` · ${studioT('routine.running')}` : ''}</small><small>${escape(row.folderRoot || (row.sourceIds || []).map((id: string) => id.replace(/^source:attachment:/, '')).join(', '))}</small>${history ? `<details class="mp-tracker-history"><summary>${studioT('routine.history', {count: row.runHistory.length})}</summary><ul>${history}</ul></details>` : ''}<div class="mp-routine-actions">${runAction}<button type="button" data-tracker-edit="${escape(row.trackerId)}">${studioT('routine.edit')}</button><button type="button" data-tracker-toggle="${escape(row.trackerId)}" data-enabled="${!row.enabled}">${studioT(row.enabled ? 'routine.pause' : 'routine.resume')}</button><button type="button" data-tracker-remove="${escape(row.trackerId)}">${studioT('routine.remove')}</button></div></div></div>`;
     }
     function customizePage() {
       const tabs = ['skills', 'connectors', 'plugins'];
@@ -1270,7 +1284,11 @@
         paint();
       }
     }
-    async function newSchedule(prompt = '', existing?: RoutineRecord, cadence = 'daily') {
+    async function newSchedule(
+      prompt = '',
+      existing?: RoutineRecord,
+      cadence = 'daily',
+    ) {
       const sources = scheduledSources(conversations);
       const dialog = document.createElement('div');
       dialog.className = 'mp-library-dialog-mask';
@@ -1612,7 +1630,11 @@
           filterMenu(target);
         }
         if ('scheduleNew' in d || 'schedulePrompt' in d) {
-          void newSchedule(d.schedulePrompt || '', undefined, d.scheduleCadence);
+          void newSchedule(
+            d.schedulePrompt || '',
+            undefined,
+            d.scheduleCadence,
+          );
         }
         if (d.trackerEdit) {
           const existing = trackers.find(
