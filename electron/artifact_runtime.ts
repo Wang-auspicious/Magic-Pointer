@@ -14,7 +14,7 @@ interface ArtifactRuntimeOptions {
   runBridge(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
-type ArtifactAction = 'read' | 'edit' | 'accept' | 'apply' | 'undo';
+type ArtifactAction = 'read' | 'edit' | 'accept' | 'apply' | 'undo' | 'restore';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -63,6 +63,23 @@ function createArtifactRuntime(options: ArtifactRuntimeOptions) {
       sessionId,
       ...(artifactId ? {artifactId} : {}),
     };
+    if (
+      (action === 'read' && raw.revision !== undefined) ||
+      action === 'restore'
+    ) {
+      const requestedRevision = revision(raw.revision);
+      if (!artifactId || requestedRevision === null) {
+        return {ok: false, error: 'artifact_revision_invalid'};
+      }
+      payload.revision = requestedRevision;
+    }
+    if (action === 'restore') {
+      const expectedRevision = revision(raw.expectedRevision);
+      if (expectedRevision === null) {
+        return {ok: false, error: 'artifact_revision_invalid'};
+      }
+      payload.expectedRevision = expectedRevision;
+    }
     if (action === 'edit') {
       const expectedRevision = revision(raw.expectedRevision);
       if (expectedRevision === null) {
@@ -115,6 +132,7 @@ function createArtifactRuntime(options: ArtifactRuntimeOptions) {
     accept: (raw: Record<string, unknown> = {}) => invoke('accept', raw),
     apply: (raw: Record<string, unknown> = {}) => invoke('apply', raw),
     undo: (raw: Record<string, unknown> = {}) => invoke('undo', raw),
+    restore: (raw: Record<string, unknown> = {}) => invoke('restore', raw),
   };
 }
 

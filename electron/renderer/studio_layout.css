@@ -2105,6 +2105,39 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   font-size: 12px;
 }
 
+#artifact-version-select,
+#artifact-version-restore {
+  max-width: 100%;
+  border: 1px solid var(--mp-rule);
+  border-radius: 6px;
+  background: var(--mp-panel);
+  color: var(--mp-text);
+  padding: 5px 8px;
+  font: inherit;
+}
+.mp-artifact-editor-meta {
+  flex-wrap: wrap;
+}
+.mp-artifact-version-preview {
+  padding: 12px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 8px;
+  background: var(--mp-panel-subtle);
+}
+.mp-artifact-version-preview strong {
+  font-size: 12px;
+  color: var(--mp-text-secondary);
+}
+.mp-artifact-version-preview pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+  font: inherit;
+  line-height: 1.6;
+}
+
 #artifact-editor-content {
   width: 100%;
   min-height: 180px;

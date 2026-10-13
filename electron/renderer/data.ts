@@ -492,6 +492,12 @@ declare global {
     status: string;
     error: string;
     applyResult: Record<string, unknown> | null;
+    preview: {
+      revision: number;
+      content: string;
+      kind: string;
+      patchPayload: Record<string, unknown> | null;
+    } | null;
   }
   interface MagicPointerArtifactEditorController {
     select(
@@ -504,6 +510,9 @@ declare global {
     accept(): Promise<Record<string, any>>;
     apply(): Promise<Record<string, any>>;
     undo(confirmed: boolean): Promise<Record<string, any>>;
+    versions(): Array<{revision: number; author: string}>;
+    previewVersion(revision: number): Promise<Record<string, any>>;
+    restoreVersion(revision: number): Promise<Record<string, any>>;
     clear(): void;
     state(): MagicPointerArtifactEditorState;
   }
@@ -514,6 +523,7 @@ declare global {
       accept(payload: Record<string, unknown>): Promise<Record<string, any>>;
       apply(payload: Record<string, unknown>): Promise<Record<string, any>>;
       undo?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      restore?(payload: Record<string, unknown>): Promise<Record<string, any>>;
     }): MagicPointerArtifactEditorController;
     retargetFigmaPatch(
       patchPayload: Record<string, unknown>,
@@ -1041,6 +1051,13 @@ declare global {
       read(payload: {
         conversationId: string;
         artifactId?: string;
+        revision?: number;
+      }): Promise<Record<string, any>>;
+      restore(payload: {
+        conversationId: string;
+        artifactId: string;
+        revision: number;
+        expectedRevision: number;
       }): Promise<Record<string, any>>;
       edit(payload: {
         conversationId: string;
@@ -1437,6 +1454,13 @@ declare global {
     readArtifact(
       conversationId: string,
       artifactId: string,
+      revision?: number,
+    ): Promise<Record<string, any>>;
+    restoreArtifact(
+      conversationId: string,
+      artifactId: string,
+      revision: number,
+      expectedRevision: number,
     ): Promise<Record<string, any>>;
     trackMaterial(
       payload: Record<string, unknown>,
@@ -2369,12 +2393,24 @@ const Data: MagicPointerDataApi = {
   async readArtifact(
     conversationId: string,
     artifactId: string,
+    revision?: number,
   ): Promise<Record<string, any>> {
     const artifacts = bridge()?.artifacts;
     if (!hasBridge() || !artifacts?.read) {
       return {ok: false, error: '产物读取通道不可用。'};
     }
-    return artifacts.read({conversationId, artifactId});
+    return artifacts.read({conversationId, artifactId, revision});
+  },
+  async restoreArtifact(
+    conversationId,
+    artifactId,
+    revision,
+    expectedRevision,
+  ) {
+    const restore = bridge()?.artifacts?.restore;
+    return restore
+      ? restore({conversationId, artifactId, revision, expectedRevision})
+      : {ok: false, error: 'Artifact restore is unavailable.'};
   },
   async undoArtifact(
     conversationId: string,

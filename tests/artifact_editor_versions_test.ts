@@ -1,84 +1,129 @@
-'use strict';
+import assert from 'node:assert/strict';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {EventSession} from '../electron/runtime/session';
+import {
+  createArtifact,
+  patchArtifact,
+  handleArtifact,
+} from '../electron/runtime/artifacts';
+const {createArtifactEditor} = require('../electron/renderer/artifact_editor');
 
-// Artifact version list + rollback: revisions seen in-session carry content
-// and can be restored through the normal edit path; anything else refuses
-// instead of guessing.
-
-const assert = require('node:assert/strict');
-const {
-  createArtifactEditor,
-} = require('../electron/renderer/artifact_editor');
-
-const calls = [];
-let artifact = {
-  artifactId: 'artifact-1',
-  revision: 1,
-  content: 'draft one',
-  kind: 'text',
-  state: 'generated',
-  acceptedRevision: null,
-  patchPayload: null,
-};
-
-const client = {
-  async read() {
-    calls.push({action: 'read'});
-    return {ok: true, artifact: {...artifact}};
-  },
-  async edit(payload) {
-    calls.push({action: 'edit', payload});
-    artifact = {
-      ...artifact,
-      revision: artifact.revision + 1,
-      content: String(payload.content),
+async function main() {
+  const directory = await mkdtemp(path.join(tmpdir(), 'mp-artifact-versions-'));
+  try {
+    const sessionId = `agent-${randomUUID()}`;
+    const session = await EventSession.open(directory, sessionId);
+    const draft = await createArtifact(session, 'draft one', 'Original title');
+    await patchArtifact(session, draft.artifactId, 1, 'draft two', {
+      title: 'Revised title',
+    });
+    const invoke = (action: string, payload: Record<string, unknown>) =>
+      handleArtifact({...payload, action, sessionId}, directory);
+    const client = {
+      read: (payload: Record<string, unknown>) => invoke('read', payload),
+      edit: (payload: Record<string, unknown>) => invoke('edit', payload),
+      restore: (payload: Record<string, unknown>) => invoke('restore', payload),
+      accept: (payload: Record<string, unknown>) => invoke('accept', payload),
+      apply: (payload: Record<string, unknown>) => invoke('apply', payload),
     };
-    return {ok: true, artifact: {...artifact}};
-  },
-  async accept() {
-    return {ok: true, artifact: {...artifact}};
-  },
-  async apply() {
-    return {ok: true, result: {status: 'succeeded'}};
-  },
-};
+    const editor = createArtifactEditor(client);
+    await editor.select('conversation-1', draft.artifactId);
+    assert.deepEqual(
+      editor.versions().map((v: {revision: number}) => v.revision),
+      [2, 1],
+      'a fresh editor must list durable revisions it has never seen',
+    );
+    const preview = await editor.previewVersion(1);
+    assert.equal(preview.artifact.content, 'draft one');
+    assert.equal(
+      editor.state().revision,
+      2,
+      'preview must not replace the editable revision',
+    );
+    assert.equal(editor.state().content, 'draft two');
+    const restored = await editor.restoreVersion(1);
+    assert.equal(restored.ok, true);
+    assert.equal(restored.artifact.revision, 3);
+    assert.equal(restored.artifact.content, 'draft one');
+    assert.equal(restored.artifact.title, 'Original title');
+    assert.equal(restored.artifact.acceptedRevision, null);
+    assert.equal(editor.state().preview, null);
+    const reopened = await invoke('read', {artifactId: draft.artifactId});
+    assert.equal(reopened.artifact.revision, 3);
+    assert.equal((await editor.restoreVersion(99)).ok, false);
+    assert.equal((await editor.restoreVersion(3)).ok, true);
+    editor.updateContent('unsaved work');
+    assert.equal((await editor.restoreVersion(1)).ok, false);
+    assert.equal(editor.state().content, 'unsaved work');
+    assert.equal(
+      (
+        await invoke('restore', {
+          artifactId: draft.artifactId,
+          revision: 1,
+          expectedRevision: 2,
+        })
+      ).error,
+      'stale_revision',
+    );
 
-(async () => {
-  const editor = createArtifactEditor(client);
-  await editor.select('conversation-1', 'artifact-1');
-  editor.updateContent('draft two');
-  await editor.save();
-  assert.equal(editor.state().revision, 2);
-  const seen = editor.versions().map(v => v.revision);
-  assert.ok(seen.includes(1), 'revision 1 content was cached on read');
-  assert.ok(
-    editor.versions().find(v => v.revision === 1)?.hasContent === true,
-  );
-
-  // Restoring the older revision re-sends its cached content as a new edit.
-  const restored = await editor.restoreVersion(1);
-  assert.equal(restored.ok, true);
-  const lastEdit = calls.filter(c => c.action === 'edit').pop();
-  assert.equal(lastEdit.payload.content, 'draft one');
-  assert.equal(lastEdit.payload.expectedRevision, 2);
-
-  // Unknown revisions refuse; the current revision is a no-op.
-  const missing = await editor.restoreVersion(99);
-  assert.equal(missing.ok, false);
-  const same = await editor.restoreVersion(editor.state().revision);
-  assert.equal(same.ok, true);
-  assert.equal(
-    calls.filter(c => c.action === 'edit').length,
-    2,
-    'no-op restore must not send another edit',
-  );
-
-  // Dirty editors must save first instead of silently discarding edits.
-  editor.updateContent('unsaved work');
-  const dirty = await editor.restoreVersion(1);
-  assert.equal(dirty.ok, false);
-
-  console.log('artifact editor versions test ok');
-})().catch(error => {
+    const locator = {
+      kind: 'text-range',
+      value: {path: '/document.txt', start: 0, end: 3},
+    };
+    const patch = {
+      patchId: 'patch-one',
+      references: [
+        {referenceId: 'target', sourceId: 'source', locator, role: 'target'},
+      ],
+      operations: [
+        {
+          operationId: 'op',
+          operation: 'replace_text',
+          referenceId: 'target',
+          sourceId: 'source',
+          locator,
+          before: 'old',
+          after: 'first',
+        },
+      ],
+    };
+    const patchDraft = await createArtifact(
+      session,
+      'first proposal',
+      'Patch',
+      'document_patch',
+      patch,
+    );
+    await patchArtifact(session, patchDraft.artifactId, 1, 'second proposal', {
+      patchPayload: {
+        ...patch,
+        operations: [{...patch.operations[0], after: 'second'}],
+      },
+    });
+    const restoredPatch = await invoke('restore', {
+      artifactId: patchDraft.artifactId,
+      revision: 1,
+      expectedRevision: 2,
+    });
+    assert.equal(restoredPatch.ok, true);
+    assert.equal(
+      restoredPatch.artifact.patchPayload.operations[0].after,
+      'first',
+    );
+    assert.equal(restoredPatch.artifact.patchPayload.artifactRevision, 3);
+    assert.equal(restoredPatch.artifact.acceptedRevision, null);
+    console.log(
+      'Durable artifact history, preview, text/patch restore and stale/dirty protection passed',
+    );
+  } finally {
+    assert.equal(path.dirname(path.resolve(directory)), path.resolve(tmpdir()));
+    await rm(directory, {recursive: true, force: true});
+  }
+}
+void main().catch(error => {
   console.error(error);
   process.exitCode = 1;
 });

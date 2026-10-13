@@ -5162,6 +5162,15 @@ ipcMain.handle(
   },
 );
 ipcMain.handle(
+  'artifacts:restore',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    return artifactCommands().restore(raw);
+  },
+);
+ipcMain.handle(
   'artifacts:accept',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isDashboardSender(event)) {

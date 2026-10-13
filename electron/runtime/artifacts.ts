@@ -267,6 +267,31 @@ export function latestTurnArtifactSummaries(
       summary: draft.content.replace(/\s+/g, ' ').slice(0, 240),
     }));
 }
+
+export function artifactRevision(
+  events: readonly ContextEvent[],
+  artifactId: string,
+  revision: number,
+): DraftArtifact {
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new Error('artifact_revision_invalid');
+  }
+  const end = events.findIndex(
+    event =>
+      ['artifact/generated', 'artifact/patched'].includes(event.type) &&
+      event.data.artifactId === artifactId &&
+      Number(event.data.revision ?? 1) === revision,
+  );
+  if (end < 0) {
+    throw new Error('artifact_revision_not_found');
+  }
+  return projectArtifacts(
+    events
+      .slice(0, end + 1)
+      .filter(event => event.data.artifactId === artifactId),
+  )[0];
+}
+
 export async function createArtifact(
   session: ContextSessionLike,
   content: string,
@@ -298,7 +323,12 @@ export async function patchArtifact(
   id: string,
   expectedRevision: number,
   content: string,
-  options: {title?: string; author?: string; patchPayload?: unknown} = {},
+  options: {
+    title?: string;
+    author?: string;
+    patchPayload?: unknown;
+    kind?: string;
+  } = {},
 ): Promise<DraftArtifact> {
   const current = projectArtifacts(session.events).find(
     item => item.artifactId === id,
@@ -308,7 +338,10 @@ export async function patchArtifact(
   }
   requiredText(content, 'content');
   const revision = current.revision + 1;
-  const raw = options.patchPayload ?? current.patchPayload;
+  const raw =
+    options.patchPayload === undefined
+      ? current.patchPayload
+      : options.patchPayload;
   const patchPayload = raw
     ? documentPatch({
         ...record(raw),
@@ -322,7 +355,7 @@ export async function patchArtifact(
     content,
     contentHash: contentHash(content),
     title: options.title ?? current.title,
-    kind: current.kind,
+    kind: options.kind ?? current.kind,
     author: options.author ?? 'agent',
     patchPayload,
   });
@@ -923,6 +956,16 @@ export async function handleArtifact(
       };
     };
     if (action === 'read') {
+      if (id && payload.revision !== undefined) {
+        return {
+          ok: true,
+          artifact: artifactRevision(
+            session.events,
+            id,
+            Number(payload.revision),
+          ),
+        };
+      }
       return id
         ? current
           ? {ok: true, artifact: wire(current)}
@@ -933,13 +976,35 @@ export async function handleArtifact(
       return {ok: false, error: 'artifact_not_found'};
     }
     const revision = Number(
-      action === 'edit' ? payload.expectedRevision : payload.revision,
+      action === 'edit' || action === 'restore'
+        ? payload.expectedRevision
+        : payload.revision,
     );
     if (revision !== current.revision) {
       return {
         ok: false,
         error: 'stale_revision',
         currentRevision: current.revision,
+      };
+    }
+    if (action === 'restore') {
+      const restored = artifactRevision(
+        session.events,
+        id,
+        Number(payload.revision),
+      );
+      return {
+        ok: true,
+        artifact: wire(
+          restored.revision === current.revision
+            ? current
+            : await patchArtifact(session, id, revision, restored.content, {
+                title: restored.title,
+                kind: restored.kind,
+                patchPayload: restored.patchPayload,
+                author: 'user',
+              }),
+        ),
       };
     }
     if (action === 'edit') {
