@@ -5,6 +5,8 @@ const {
   buildContextTrackerConversationRequest,
   createMaterialTracker,
   createContextTrackerRuntime,
+  scheduleOccurrence,
+  dueSchedule,
 } = require('../electron/context_trackers');
 const { defaultSettings, validate: validateSettings } = require('../electron/settings_store');
 
@@ -77,7 +79,7 @@ async function fileEventsFromOneSaveLaunchOneScopedTask() {
   const runs: Array<Record<string, any>> = [];
   let revision = 1;
   const runtime = createContextTrackerRuntime({
-    loadTrackers: () => [fileTracker()],
+    loadTrackers: () => [fileTracker({lastObserved: null})],
     persistTrackers: () => {},
     now: clock.now,
     setTimer: clock.setTimer,
@@ -120,7 +122,7 @@ async function fileEventsFromOneSaveLaunchOneScopedTask() {
   assert.strictEqual(runs[0].permissionPreset, 'read-only');
   assert.strictEqual(runs[0].change.kind, 'filesystem');
   assert.strictEqual(runs[0].change.eventCount, 3);
-  assert.strictEqual(runs[0].change.previous.entries['D:/work/brief.pptx'].size, 100);
+  assert.strictEqual(runs[0].change.previous.entries['D:/work/brief.pptx'].size, 101);
   assert.strictEqual(runs[0].change.current.entries['D:/work/brief.pptx'].size, 102);
   await runtime.stop();
 }
@@ -174,7 +176,7 @@ async function disabledTrackerNeverTriggers() {
   const callbacks: Array<(event: { eventType: string }) => void> = [];
   const runs: unknown[] = [];
   const runtime = createContextTrackerRuntime({
-    loadTrackers: () => [fileTracker()],
+    loadTrackers: () => [fileTracker({lastObserved: null})],
     persistTrackers: () => {},
     now: clock.now,
     setTimer: clock.setTimer,
@@ -244,6 +246,8 @@ function persistedSettingsAndNormalRuntimeRequestStayNarrow() {
 }
 
 async function main() {
+  await routineEditsAndManualRunsKeepHistory();
+  calendarSchedulesKeepTheirLocalDateAndTime();
   await savesDuringOneRunAreCoalesced();
   const material = createMaterialTracker({
     source: { sourceId: 'selected-ppt', identity: { absolutePath: 'D:/work/brief.pptx' } },
@@ -259,6 +263,63 @@ async function main() {
   console.log('context trackers test ok');
 }
 
+function calendarSchedulesKeepTheirLocalDateAndTime() {
+  const start = new Date(2026, 0, 31, 9, 15).getTime();
+  const monthly = {kind: 'schedule', startAtMs: start, calendar: 'monthly'};
+  assert.equal(scheduleOccurrence(monthly, 1), new Date(2026, 1, 28, 9, 15).getTime());
+  assert.equal(scheduleOccurrence(monthly, 2), new Date(2026, 2, 31, 9, 15).getTime());
+  assert.equal(dueSchedule(monthly, start, new Date(2026, 3, 1).getTime()).missedCount, 2);
+  const daily = {kind: 'schedule', startAtMs: new Date(2026, 2, 7, 9).getTime(), calendar: 'daily'};
+  assert.equal(new Date(scheduleOccurrence(daily, 2)).getHours(), 9, 'calendar days keep local time across daylight saving');
+  const weekly = {...daily, calendar: 'weekly'};
+  assert.equal(new Date(scheduleOccurrence(weekly, 1)).getDay(), new Date(daily.startAtMs).getDay());
+}
+
+async function routineEditsAndManualRunsKeepHistory() {
+  const clock = fakeClock(1500);
+  let saved: any[] = [];
+  let failSave = false;
+  const requests: any[] = [];
+  let finish: (() => void) | undefined;
+  const runtime = createContextTrackerRuntime({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+    persistTrackers: (value: any[]) => {if (failSave) throw new Error('disk unavailable'); saved = value;},
+    runTask: async (request: any) => {
+      requests.push(request);
+      if (request.change.kind === 'manual') await new Promise<void>(resolve => {finish = resolve;});
+      return {ok: true, conversationId: 'routine-result'};
+    },
+  });
+  runtime.upsert(fileTracker({trigger: {kind: 'schedule', startAtMs: 1000, everyMs: 1000}}));
+  await runtime.start();
+  clock.runDue(); await runtime.idle();
+  const original = runtime.list()[0];
+  runtime.upsert({...original, task: 'Updated instructions'});
+  assert.equal(runtime.list()[0].runHistory.length, 1, 'editing instructions must retain completed runs');
+  assert.equal(runtime.list()[0].lastScheduledAtMs, 1000, 'editing instructions must not replay a consumed occurrence');
+  failSave = true;
+  assert.throws(() => runtime.setEnabled(original.trackerId, false), /disk unavailable/);
+  assert.equal(runtime.list()[0].enabled, true, 'a rejected save must not silently pause the live task');
+  failSave = false;
+  const manual = runtime.runNow(original.trackerId);
+  await new Promise(resolve => setImmediate(resolve));
+  clock.advance(1000);
+  assert.equal(requests.length, 2, 'scheduled and manual runs cannot overlap');
+  assert.equal((await runtime.runNow(original.trackerId)).error, 'tracker_already_running');
+  finish!(); await manual; await runtime.idle();
+  clock.runDue(); await runtime.idle();
+  assert.equal(requests.length, 3, 'a scheduled occurrence delayed by a manual run must still run');
+  assert.equal(runtime.list()[0].lastScheduledAtMs, 2000);
+  assert.equal(saved[0].runHistory.length, 3);
+  assert.equal(saved[0].runHistory[1].triggerKind, 'manual');
+  runtime.setEnabled(original.trackerId, false);
+  const pausedRun = runtime.runNow(original.trackerId);
+  await new Promise(resolve => setImmediate(resolve));
+  finish!(); await pausedRun;
+  assert.equal(runtime.list()[0].enabled, false, 'running once must preserve a paused schedule');
+  await runtime.stop();
+}
+
 async function savesDuringOneRunAreCoalesced() {
   const clock = fakeClock(1000);
   let emit: () => void = () => {};
@@ -266,7 +327,7 @@ async function savesDuringOneRunAreCoalesced() {
   const runs: Array<Record<string, any>> = [];
   let finish: () => void = () => {};
   const runtime = createContextTrackerRuntime({
-    loadTrackers: () => [fileTracker()],
+    loadTrackers: () => [fileTracker({lastObserved: null})],
     now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
     watchPath: (_path: string, callback: () => void) => { emit = callback; return { close() {} }; },
     readObservation: async () => ({ observedAtMs: clock.now(), entries: {
@@ -279,7 +340,7 @@ async function savesDuringOneRunAreCoalesced() {
     },
   });
   await runtime.start();
-  emit(); clock.advance(200);
+  revision = 2; emit(); clock.advance(200);
   await new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(runs.length, 1);
   revision = 2; emit(); clock.advance(200);
