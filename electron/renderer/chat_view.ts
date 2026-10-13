@@ -3326,16 +3326,16 @@ const ChatView = (() => {
     }
     const delta = Math.max(0, now - ms);
     if (delta < 45 * 1000) {
-      return 'just now';
+      return lt('chat.time_just_now');
     }
     if (delta < HOUR_MS) {
-      return `${Math.round(delta / MINUTE_MS)} minutes ago`;
+      return lt('chat.time_minutes_ago', {n: Math.round(delta / MINUTE_MS)});
     }
     if (delta < DAY_MS) {
-      return `${Math.round(delta / HOUR_MS)} hours ago`;
+      return lt('chat.time_hours_ago', {n: Math.round(delta / HOUR_MS)});
     }
     if (delta < 7 * DAY_MS) {
-      return `${Math.round(delta / DAY_MS)} days ago`;
+      return lt('chat.time_days_ago', {n: Math.round(delta / DAY_MS)});
     }
     return formatClock(ms);
   }
@@ -5439,7 +5439,7 @@ const ChatView = (() => {
           }
           button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
           if (!ok) {
-            button.setAttribute('aria-label', 'Copy failed');
+            button.setAttribute('aria-label', lt('chat.copy_failed'));
           }
           window.setTimeout(() => {
             const check = button.querySelector('svg');

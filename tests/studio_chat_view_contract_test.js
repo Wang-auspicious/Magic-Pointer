@@ -19,14 +19,14 @@ assert(!ChatView.userNode('<script>alert(1)</script>').outerHTML.includes('<scri
   'user text must be structural text, never concatenated HTML');
 
 const model = ChatView.toolRowModel('write', JSON.stringify({ path: 'a.txt', content: 'x' }), { text: 'ok', isError: false });
-assert.strictEqual(model.title, 'Wrote');
+assert.strictEqual(model.title, 'Created', 'settled Write is "Created" per the reference (group singular "Created a file"), not "Wrote"');
 assert.strictEqual(model.summary, 'a.txt');
 assert.strictEqual(model.state, 'ok');
 const row = html(ChatView.toolRowNode(model));
 assert(row.includes('class="mp-chat-tool"'), 'tool row root');
 assert(row.includes('class="mp-chat-row"'), 'tool rows must share the 24px disclosure row chrome');
-assert(row.includes('class="mp-chat-title">Wrote</span>'),
-  'row title is the completed action ("Wrote a.txt"), never the bare noun');
+assert(row.includes('class="mp-chat-title">Created</span>'),
+  'row title is the completed action ("Created a.txt"), never the bare noun');
 assert(row.includes('class="mp-chat-diff"'), 'the expanded write body renders its actual added lines');
 assert(row.includes('class="mp-chat-tool-output"'), 'the result renders as plain output text below the card');
 assert(!row.includes('mp-chat-io-label'), 'the IN/OUT gutter labels are gone');
@@ -57,7 +57,7 @@ assert(!css.includes('.mp-chat-tool[data-state=\'running\'] .mp-chat-row::after'
   'the Studio activity row must not use a perpetual sweep glare');
 
 const failed = html(ChatView.toolRowNode(ChatView.toolRowModel('read', JSON.stringify({ path: 'b.txt' }), { text: 'no such file\nmore', isError: true })));
-assert(failed.includes('mp-chat-tool-caret'), 'failed tools retain the same disclosure caret as successful tools');
+assert(failed.includes('data-mp-chat-act="toggle"'), 'failed tools retain the same disclosure toggle as successful tools (the old caret class is gone)');
 assert(failed.includes('data-state="error"'), 'error state must ride the root');
 assert(failed.includes('b.txt'), 'a failed read keeps the requested file visible');
 assert(failed.includes('no such file'));
@@ -216,8 +216,8 @@ assert(!/<details[^>]*class="mp-chat-tool-group"[^>]*\sopen(?:=|\s|>)/.test(refe
   'completed groups collapse as in the final user reference, including two-item groups');
 assert(referenceFlow.indexOf('读完了。') < referenceFlow.indexOf('1m 7s · 417 tokens'),
   'the final answer appears before the run meta, as in the reference transcript');
-assert(referenceFlow.includes('mp-chat-tool-caret'),
-  'tool chips expose a trailing disclosure caret rather than a leading generic chevron');
+assert(referenceFlow.includes('mp-chat-disclosure'),
+  'tool chips expose a trailing disclosure row rather than a leading generic chevron (the old caret class is gone)');
 
 const explicitActionLabels = ChatView.assistantTurnNode({
   trajectory: [
@@ -248,11 +248,11 @@ assert(!css.includes('@keyframes mp-chat-turn-status-shimmer'), 'perpetual statu
 
 assert(tokens.includes('--mp-page: #FCFCFB'), 'light page token matches the measured reference');
 assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (full platform)');
-assert(tokens.includes('--mp-page: #20201F'), 'dark page token matches the September 21 supplied reference');
+assert(tokens.includes('--mp-page: #151515'), 'dark page token matches the measured CDS surface (was #20201F before token alignment)');
 assert.match(css, /\.mp-chat-bubble\s*\{[^}]*border-radius:\s*12px/s, 'user bubble uses the measured restrained radius');
 assert.match(css, /\.mp-chat-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Studio height');
-assert.match(css, /\.mp-chat-tool \.mp-chat-tool-caret\s*\{[^}]*margin-left:\s*4px/s,
-  'tool disclosure arrows sit directly after the action text');
+assert.match(css, /\.mp-chat-disclosure > \.mp-chat-row\[data-expandable\]::after[\s\S]*?margin-left:\s*5px/s,
+  'tool disclosure arrows sit directly after the action text (chevron ::after, caret class gone)');
 assert.match(css, /\.mp-chat-tool-group-title,[^}]*\{[^}]*flex:\s*0 1 auto/s,
   'group disclosure arrows sit directly after the group label');
 assert.match(css, /\.mp-chat-disclosure:not\(\[data-open='true'\]\) > \.mp-chat-body-wrap\s*\{[^}]*display:\s*none/s);
@@ -271,7 +271,7 @@ assert.match(ChatView.__test.formatClock(1729857600000), /^\d{2}:\d{2}$/, 'clock
 const src = fs.readFileSync('electron/renderer/chat_view.ts', 'utf8');
 assert(src.includes('copyToClipboard(text).then((ok: boolean) =>'), 'copy must wait on the clipboard promise');
 assert(src.includes('fallbackCopyText(text)'), 'clipboard failure must fall back to execCommand');
-assert(src.includes('button.setAttribute(\'aria-label\', \'复制失败\')'),
+assert(src.includes("button.setAttribute('aria-label', lt('chat.copy_failed'))"),
   'a failed copy must not show the success checkmark');
 assert(src.includes('document.execCommand(\'copy\')'), 'the fallback must use the textarea copy trick');
 
@@ -295,7 +295,7 @@ const mixedGroup = ChatView.assistantTurnNode({
     { kind: 'tool', name: 'Grep', callId: 's1', state: 'done', isError: false, text: '{"pattern":"x"}', result: 'ok' },
   ],
 }).map(html).join('');
-assert(mixedGroup.includes('Ran 1 command (1 failed)'),
+assert(mixedGroup.includes('Ran a command (1 failed)'),
   `the failure count rides the clause it belongs to, got ${mixedGroup}`);
 assert(/ran|read|searched/.test(mixedGroup),
   'later clauses stay lowercase so the line reads as one sentence');
@@ -310,9 +310,9 @@ assert.strictEqual(ChatView.formatRunMeta(12000, null), '12s',
   'with no token count the clock must not invent one');
 
 const now = 1_700_000_000_000;
-assert.strictEqual(ChatView.__test.relativeTime(now - 30_000, now), '刚刚');
-assert.strictEqual(ChatView.__test.relativeTime(now - 23 * 60_000, now), '23 分钟前');
-assert.strictEqual(ChatView.__test.relativeTime(now - 3 * 3_600_000, now), '3 小时前');
+assert.strictEqual(ChatView.__test.relativeTime(now - 30_000, now), 'just now');
+assert.strictEqual(ChatView.__test.relativeTime(now - 23 * 60_000, now), '23 minutes ago');
+assert.strictEqual(ChatView.__test.relativeTime(now - 3 * 3_600_000, now), '3 hours ago');
 assert.match(ChatView.__test.relativeTime(now - 30 * 86_400_000, now), /^\d{2}:\d{2}$/,
   'beyond a week the clock falls back to an absolute time rather than counting days');
 
@@ -321,7 +321,7 @@ assert(stampedUser.includes('class="mp-chat-action-time"'), 'user hover row carr
 assert(stampedUser.indexOf('mp-chat-action-time') < stampedUser.indexOf('mp-chat-action"'),
   'the user timestamp leads its icons, as in the reference');
 const stampedTurn = ChatView.assistantTurnNode({ answer: '答', at: Date.now() - 3 * 3_600_000 }).map(html).join('');
-assert(stampedTurn.includes('3 小时前'), 'assistant hover row carries its own timestamp');
+assert(stampedTurn.includes('3 hours ago'), 'assistant hover row carries its own timestamp');
 assert(stampedTurn.indexOf('mp-chat-action-time') > stampedTurn.indexOf('class="mp-chat-action"'),
   'the assistant timestamp trails its icons, as in the reference');
 assert(!html(ChatView.userNode('问题')).includes('mp-chat-action-time'),
@@ -341,11 +341,11 @@ assert(!narration.includes('**StarDojo'),
 
 const receipt = html(ChatView.permissionAnswerNode({ decision: 'grant', rule: 'Bash(curl -L)' }));
 assert(receipt.includes('class="mp-chat-perm-receipt"'), 'a permission answer renders as a receipt');
-assert(receipt.includes('本会话允许') && receipt.includes('Bash(curl -L)'),
+assert(receipt.includes('Allowed for this session') && receipt.includes('Bash(curl -L)'),
   'the receipt names both the decision and the rule it landed on');
 assert(receipt.includes('data-decision="grant"'));
-assert(html(ChatView.permissionAnswerNode({ decision: 'deny', rule: 'Bash' })).includes('已拒绝'));
-assert(html(ChatView.permissionAnswerNode({ decision: 'once', rule: 'Bash' })).includes('允许一次'));
+assert(html(ChatView.permissionAnswerNode({ decision: 'deny', rule: 'Bash' })).includes('Denied'));
+assert(html(ChatView.permissionAnswerNode({ decision: 'once', rule: 'Bash' })).includes('Allowed once'));
 
 const liveDone = html(ChatView.liveActivityNode({
   phase: 'tool_result',
