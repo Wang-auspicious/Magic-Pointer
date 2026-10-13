@@ -1,262 +1,318 @@
-/* Dashboard panel: KPI cards, SVG line charts, data tables.
- *
- * Classic browser script: exposes renderDashboard on the global scope.
- * Numbers come from a DashboardSnapshot; chart titles/types/formats ride
- * alongside in DashboardChartMeta. No chart dependency: the line chart is
- * hand-built SVG.
- */
-
 interface DashboardChartMeta {
   chartId: string;
   title: string;
   type: 'kpi' | 'line' | 'table';
   format?: 'money' | 'number' | 'percent';
-  subtitle?: string;
-  columnFormats?: Array<'money' | 'number' | 'percent'>;
+  currency?: string;
+  columns?: Array<{format?: 'money' | 'number' | 'percent'; currency?: string}>;
 }
-
 interface DashboardViewCallbacks {
-  onShare: () => void;
-  onClose: () => void;
-  onInspect: (chartId: string, trace: string) => void;
+  onShare(): void;
+  onClose(): void;
+  onInspect(chartId: string, traceId: string): void;
+  onRefresh?(): void;
+  onEdit?(): void;
+}
+interface DashboardViewNumber {
+  value: number | null;
+  trace: {traceId?: string; excludedCount?: number};
+}
+interface DashboardViewGroup {
+  key: string;
+  dimensions: string[];
+  total: DashboardViewNumber;
+}
+interface DashboardViewSnapshot {
+  generatedAt: string;
+  charts: Array<{
+    chartId: string;
+    queryText: string;
+    error?: string;
+    warnings?: string[];
+    groups: DashboardViewGroup[];
+    current?: DashboardViewNumber;
+    prior?: DashboardViewNumber;
+    table?: {
+      columns: string[];
+      rows: Array<{key: string; cells: Array<DashboardViewNumber | null>}>;
+    };
+  }>;
 }
 
 declare global {
   function renderDashboard(
     container: HTMLElement,
     title: string,
-    snapshot: unknown,
+    snapshot: DashboardViewSnapshot,
     metas: DashboardChartMeta[],
     callbacks: DashboardViewCallbacks,
   ): void;
 }
 
-function dashboardRelTime(iso: string): string {
-  const ms = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(ms) || ms < 0) {
-    return 'just now';
-  }
-  const minutes = Math.floor(ms / 60000);
-  if (minutes < 1) {
-    return 'just now';
-  }
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-  return `${Math.floor(hours / 24)}d ago`;
+function dashboardEscape(value: unknown): string {
+  return String(value ?? '').replace(
+    /[&<>"']/g,
+    char =>
+      ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[
+        char
+      ]!,
+  );
 }
 
 function dashboardFormat(
-  value: number,
-  format: 'money' | 'number' | 'percent' | undefined,
+  value: number | null,
+  format?: DashboardChartMeta['format'],
+  currency = 'USD',
 ): string {
+  if (value === null || !Number.isFinite(value)) {
+    return '—';
+  }
   if (format === 'percent') {
-    return `${value.toFixed(2)}%`;
+    return `${value.toLocaleString(getStudioLanguage(), {maximumFractionDigits: 2})}%`;
   }
-  if (format === 'money') {
-    const abs = Math.abs(value);
-    if (abs >= 1000000) {
-      return `$${(value / 1000000).toFixed(1)}M`;
-    }
-    if (abs >= 1000) {
-      return `$${(value / 1000).toFixed(1)}K`;
-    }
-    return `$${value.toFixed(2)}`;
-  }
-  return value.toLocaleString('en-US', {maximumFractionDigits: 2});
+  return new Intl.NumberFormat(
+    getStudioLanguage(),
+    format === 'money'
+      ? {
+          style: 'currency',
+          currency,
+          maximumFractionDigits: 2,
+          notation: Math.abs(value) >= 1000000 ? 'compact' : 'standard',
+        }
+      : {maximumFractionDigits: 2},
+  ).format(value);
 }
 
-function dashboardDelta(current: number, prior: number): string {
-  if (!Number.isFinite(prior) || prior === 0) {
+function dashboardDelta(current: number | null, prior: number | null): string {
+  if (current === null || prior === null || prior === 0) {
     return '';
   }
-  const pct = ((current - prior) / Math.abs(prior)) * 100;
-  const sign = pct > 0 ? '+' : '';
-  return `${sign}${pct.toFixed(1)}% vs prior period`;
+  const percent = ((current - prior) / Math.abs(prior)) * 100;
+  return studioT('dashboard.delta', {
+    percent: `${percent > 0 ? '+' : ''}${percent.toFixed(1)}`,
+  });
+}
+
+interface DashboardSeries {
+  label: string;
+  points: Array<{x: string; y: number | null; traceId?: string}>;
+}
+
+function splitLineSeries(groups: DashboardViewGroup[]): DashboardSeries[] {
+  const series = new Map<string, DashboardSeries['points']>();
+  for (const group of groups) {
+    const [x, label = ''] = group.dimensions;
+    const points = series.get(label) ?? [];
+    points.push({x, y: group.total.value, traceId: group.total.trace.traceId});
+    series.set(label, points);
+  }
+  return [...series].map(([label, points]) => ({
+    label,
+    points: points.sort((a, b) => a.x.localeCompare(b.x)),
+  }));
 }
 
 function dashboardLineSvg(
-  series: Array<{label: string; points: Array<{x: string; y: number}>}>,
-  colors: string[],
+  series: DashboardSeries[],
+  meta: DashboardChartMeta,
 ): string {
+  const colors = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#0891b2'];
+  const points = series
+    .flatMap(item => item.points)
+    .filter(point => point.y !== null);
+  if (!points.length) {
+    return `<p class="mp-dash-note">${studioT('dashboard.no_query_values')}</p>`;
+  }
   const width = 720;
-  const height = 260;
-  const padLeft = 44;
-  const padBottom = 24;
-  const padTop = 8;
-  const padRight = 8;
-  const all = series.flatMap(s => s.points.map(p => p.y));
-  const max = Math.max(...all, 0);
-  const top = max === 0 ? 1 : max * 1.1;
-  const innerW = width - padLeft - padRight;
-  const innerH = height - padTop - padBottom;
-  const n = Math.max(...series.map(s => s.points.length), 1);
-  const pos = (i: number): number =>
-    n === 1 ? padLeft : padLeft + (i / (n - 1)) * innerW;
-  const val = (y: number): number =>
-    padTop + innerH - (y / top) * innerH;
-  let out = `<svg viewBox="0 0 ${width} ${height}" class="mp-dash-line" role="img">`;
-  for (let g = 0; g <= 4; g++) {
-    const y = padTop + (innerH / 4) * g;
-    const label = top * (1 - g / 4);
-    const text =
-      label >= 1000 ? `$${(label / 1000).toFixed(1)}k` : `$${label.toFixed(1)}`;
-    out += `<line x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" class="mp-dash-grid"/>`;
-    out += `<text x="${padLeft - 6}" y="${y + 4}" class="mp-dash-axis" text-anchor="end">${text}</text>`;
+  const height = 280;
+  const left = 76;
+  const right = 18;
+  const top = 16;
+  const bottom = 38;
+  const domain = [
+    ...new Set(series.flatMap(item => item.points.map(point => point.x))),
+  ].sort();
+  const dateAxis = domain.every(
+    value =>
+      /^\d{4}-\d{2}-\d{2}/.test(value) && Number.isFinite(Date.parse(value)),
+  );
+  const coordinates = domain.map((value, index) =>
+    dateAxis ? Date.parse(value) : index,
+  );
+  const first = coordinates[0];
+  const last = coordinates.at(-1)!;
+  const positions = new Map(
+    domain.map((value, index) => [
+      value,
+      first === last
+        ? left + (width - left - right) / 2
+        : left +
+          ((coordinates[index] - first) / (last - first)) *
+            (width - left - right),
+    ]),
+  );
+  const values = points.map(point => point.y!);
+  const low = Math.min(0, ...values);
+  const high = Math.max(0, ...values);
+  const span = high - low || 1;
+  const maximum = high + span * 0.08;
+  const minimum = low < 0 ? low - span * 0.08 : 0;
+  const y = (value: number) =>
+    top + ((maximum - value) / (maximum - minimum)) * (height - top - bottom);
+  let svg = `<svg viewBox="0 0 ${width} ${height}" class="mp-dash-line" role="img" aria-label="${dashboardEscape(meta.title)}">`;
+  for (let index = 0; index <= 4; index += 1) {
+    const value = minimum + ((maximum - minimum) * index) / 4;
+    svg += `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}" class="mp-dash-grid"/><text x="${left - 8}" y="${y(value) + 4}" class="mp-dash-axis" text-anchor="end">${dashboardEscape(dashboardFormat(value, meta.format, meta.currency))}</text>`;
   }
-  const step = Math.max(1, Math.floor(n / 7));
-  const endLabels: Array<{y: number; color: string; text: string}> = [];
-  series.forEach((s, si) => {
-    const color = colors[si % colors.length];
-    const d = s.points
-      .map((p, i) => `${i === 0 ? 'M' : 'L'}${pos(i).toFixed(1)},${val(p.y).toFixed(1)}`)
-      .join(' ');
-    out += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`;
-    s.points.forEach((p, i) => {
-      out += `<circle cx="${pos(i).toFixed(1)}" cy="${val(p.y).toFixed(1)}" r="2.5" fill="${color}"><title>${s.label} ${p.x}: ${p.y.toLocaleString('en-US')}</title></circle>`;
-    });
-    const last = s.points[s.points.length - 1];
-    if (last) {
-      endLabels.push({
-        y: val(last.y),
-        color,
-        text: `${s.label} ${last.y.toLocaleString('en-US', {maximumFractionDigits: 2})}`,
-      });
+  const step = Math.max(1, Math.ceil(domain.length / 7));
+  domain.forEach((value, index) => {
+    if (index % step && index !== domain.length - 1) {
+      return;
     }
-    s.points.forEach((p, i) => {
-      const isLast = i === n - 1;
-      if (i % step === 0 || isLast) {
-        const short = p.x.length > 6 ? p.x.slice(5).replace('-', ' ') : p.x;
-        const anchor = isLast ? 'end' : 'middle';
-        const tx = isLast ? width - padRight : pos(i).toFixed(1);
-        out += `<text x="${tx}" y="${height - 6}" class="mp-dash-axis" text-anchor="${anchor}">${short}</text>`;
-      }
-    });
+    const label = dateAxis ? value.slice(5, 10) : value;
+    svg += `<text x="${positions.get(value)}" y="${height - 10}" class="mp-dash-axis" text-anchor="${index === 0 ? 'start' : index === domain.length - 1 ? 'end' : 'middle'}">${dashboardEscape(label)}</text>`;
   });
-  endLabels.sort((a, b) => a.y - b.y);
-  for (let i = 1; i < endLabels.length; i++) {
-    if (endLabels[i].y - endLabels[i - 1].y < 14) {
-      endLabels[i].y = endLabels[i - 1].y + 14;
+  series.forEach((item, index) => {
+    const color = colors[index % colors.length];
+    let connected = false;
+    const segments = item.points
+      .map(point => {
+        if (point.y === null) {
+          connected = false;
+          return '';
+        }
+        const command = `${connected ? 'L' : 'M'}${positions.get(point.x)},${y(point.y)}`;
+        connected = true;
+        return command;
+      })
+      .join(' ');
+    svg += `<path d="${segments}" fill="none" stroke="${color}" stroke-width="2"/>`;
+    for (const point of item.points) {
+      if (point.y === null) {
+        continue;
+      }
+      svg += `<circle cx="${positions.get(point.x)}" cy="${y(point.y)}" r="4" fill="${color}" data-dash-x="${dashboardEscape(point.x)}" data-dash-series="${dashboardEscape(item.label)}" ${point.traceId ? `data-dash-trace="${dashboardEscape(point.traceId)}" tabindex="0" role="button" aria-label="${dashboardEscape(`${item.label} ${point.x}: ${dashboardFormat(point.y, meta.format, meta.currency)}. ${studioT('dashboard.view_rows')}.`)}"` : ''}><title>${dashboardEscape(`${item.label} ${point.x}: ${dashboardFormat(point.y, meta.format, meta.currency)}`)}</title></circle>`;
     }
-  }
-  for (const label of endLabels) {
-    out += `<text x="${width - padRight}" y="${label.y.toFixed(1)}" class="mp-dash-series" fill="${label.color}" text-anchor="end">${label.text}</text>`;
-  }
-  return out + '</svg>';
+  });
+  svg += '</svg><div class="mp-dash-legend">';
+  series.forEach((item, index) => {
+    const lastPoint = item.points.filter(point => point.y !== null).at(-1);
+    svg += `<span><i style="background:${colors[index % colors.length]}"></i>${dashboardEscape(item.label || meta.title)}${lastPoint ? ` · ${dashboardEscape(dashboardFormat(lastPoint.y, meta.format, meta.currency))}` : ''}</span>`;
+  });
+  return svg + '</div>';
+}
+
+function dashboardNumber(
+  value: DashboardViewNumber | null | undefined,
+  meta: {format?: DashboardChartMeta['format']; currency?: string},
+): string {
+  const label = dashboardEscape(
+    dashboardFormat(value?.value ?? null, meta.format, meta.currency),
+  );
+  return value?.trace.traceId
+    ? `<button type="button" class="mp-dash-value-button" data-dash-trace="${dashboardEscape(value.trace.traceId)}" title="${studioT('dashboard.view_rows')}">${label}</button>`
+    : label;
 }
 
 function renderDashboard(
   container: HTMLElement,
   title: string,
-  snapshot: {
-    generatedAt: string;
-    charts: Array<{
-      chartId: string;
-      queryText: string;
-      formula: string;
-      groups: Array<{
-        key: string;
-        total: {value: number; trace: {sourceId: string; rowIndexes: number[]; formula: string}};
-      }>;
-      current?: {value: number; trace: {sourceId: string; rowIndexes: number[]; formula: string}};
-      prior?: {value: number; trace: {sourceId: string; rowIndexes: number[]; formula: string}};
-      table?: {columns: string[]; rows: Array<{key: string; cells: Array<{value: number; trace: {sourceId: string; rowIndexes: number[]; formula: string}}>}>};
-    }>;
-  },
+  snapshot: DashboardViewSnapshot,
   metas: DashboardChartMeta[],
   callbacks: DashboardViewCallbacks,
 ): void {
-  const metaById = new Map(metas.map(m => [m.chartId, m]));
-  const colors = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#0891b2'];
-  let html = `<div class="mp-dash-head"><div class="mp-dash-title">${title}</div>`;
-  html += `<div class="mp-dash-head-right"><span class="mp-dash-updated">Updated ${dashboardRelTime(snapshot.generatedAt)}</span>`;
-  html += `<button class="mp-dash-share" data-dash-act="share">Share</button>`;
-  html += `<button class="mp-dash-close" data-dash-act="close" aria-label="Close">×</button></div></div>`;
-  html += '<div class="mp-dash-body">';
-  const kpis = snapshot.charts.filter(c => metaById.get(c.chartId)?.type === 'kpi');
-  if (kpis.length) {
-    html += '<div class="mp-dash-kpis">';
-    for (const chart of kpis) {
-      const meta = metaById.get(chart.chartId);
-      const cur = chart.current?.value ?? 0;
-      const pri = chart.prior?.value ?? 0;
-      const delta = dashboardDelta(cur, pri);
-      const up = cur >= pri;
-      const trace = chart.current?.trace;
-      html += `<div class="mp-dash-kpi" data-dash-chart="${chart.chartId}">`;
-      html += `<div class="mp-dash-kpi-title">${meta?.title ?? ''}</div>`;
-      html += `<div class="mp-dash-kpi-value" data-dash-trace="${trace ? `${trace.sourceId}:${trace.rowIndexes.length}` : ''}">${dashboardFormat(cur, meta?.format)}</div>`;
+  const byId = new Map(metas.map(meta => [meta.chartId, meta]));
+  const updated = new Date(snapshot.generatedAt).toLocaleString(
+    getStudioLanguage(),
+  );
+  let html = `<header class="mp-dash-head"><strong class="mp-dash-title">${dashboardEscape(title)}</strong><div class="mp-dash-head-right"><span class="mp-dash-updated">${dashboardEscape(studioT('dashboard.updated', {time: updated}))}</span>${callbacks.onRefresh ? `<button type="button" data-dash-act="refresh">${studioT('dashboard.refresh')}</button>` : ''}${callbacks.onEdit ? `<button type="button" data-dash-act="edit">${studioT('dashboard.edit')}</button>` : ''}<button type="button" data-dash-act="share">${studioT('dashboard.export_html')}</button><button type="button" data-dash-act="close" aria-label="${studioT('common.close')}">×</button></div></header><div class="mp-dash-body">`;
+  const card = (chart: DashboardViewSnapshot['charts'][number]): string => {
+    const meta = byId.get(chart.chartId);
+    if (!meta) {
+      return '';
+    }
+    let body = `<article class="${meta.type === 'kpi' ? 'mp-dash-kpi' : 'mp-dash-card'}" data-dash-chart="${dashboardEscape(chart.chartId)}"><h2 class="mp-dash-card-title">${dashboardEscape(meta.title)}</h2>`;
+    if (chart.error) {
+      body += `<p class="mp-dash-error">${dashboardEscape(chart.error)}</p>`;
+    } else if (meta.type === 'kpi') {
+      const current = chart.current?.value ?? null;
+      const prior = chart.prior?.value ?? null;
+      const delta = dashboardDelta(current, prior);
+      body += `<div class="mp-dash-kpi-value">${dashboardNumber(chart.current, meta)}</div>`;
       if (delta) {
-        html += `<div class="mp-dash-delta ${up ? 'up' : 'down'}">${delta}</div>`;
+        body += `<div class="mp-dash-delta ${current! >= prior! ? 'up' : 'down'}">${dashboardEscape(delta)}</div>`;
       }
-      html += `<details class="mp-dash-query"><summary>Query</summary><code>${chart.queryText}</code><div>${chart.formula}</div></details></div>`;
-    }
-    html += '</div>';
-  }
-  for (const chart of snapshot.charts) {
-    const meta = metaById.get(chart.chartId);
-    if (!meta || meta.type === 'kpi') {
-      continue;
-    }
-    html += `<div class="mp-dash-card" data-dash-chart="${chart.chartId}">`;
-    html += `<div class="mp-dash-card-title">${meta.title}</div>`;
-    if (meta.subtitle) {
-      html += `<div class="mp-dash-card-sub">${meta.subtitle}</div>`;
-    }
-    if (meta.type === 'line') {
-      const seriesColors = colors.slice();
-      const series = splitLineSeries(chart.groups);
-      html += dashboardLineSvg(series, seriesColors);
-    } else if (meta.type === 'table' && chart.table) {
-      html += '<table class="mp-dash-table"><thead><tr>';
-      for (const col of chart.table.columns) {
-        html += `<th>${col}</th>`;
+      if (chart.prior) {
+        body += `<small>${studioT('dashboard.prior')}: ${dashboardNumber(chart.prior, meta)}</small>`;
       }
-      html += '</tr></thead><tbody>';
+      if (current === null) {
+        body += `<p class="mp-dash-note">${studioT('dashboard.no_values')}</p>`;
+      }
+    } else if (meta.type === 'line') {
+      body += dashboardLineSvg(splitLineSeries(chart.groups), meta);
+    } else if (chart.table) {
+      body += `<div class="mp-dash-table-scroll"><table class="mp-dash-table"><thead><tr>${chart.table.columns.map(column => `<th>${dashboardEscape(column)}</th>`).join('')}</tr></thead><tbody>`;
       for (const row of chart.table.rows) {
-        html += `<tr><td>${row.key}</td>`;
-        row.cells.forEach((cell, ci) => {
-          const fmt = meta.columnFormats?.[ci + 1] ?? (ci === 0 ? meta.format : undefined) ?? 'number';
-          html += `<td data-dash-trace="${cell.trace.sourceId}:${cell.trace.rowIndexes.length}">${dashboardFormat(cell.value, fmt)}</td>`;
-        });
-        html += '</tr>';
+        body += `<tr><th scope="row">${dashboardEscape(row.key)}</th>${row.cells.map((value, index) => `<td>${dashboardNumber(value, index === 0 ? meta : (meta.columns?.[index - 1] ?? {}))}</td>`).join('')}</tr>`;
       }
-      html += '</tbody></table>';
+      body += '</tbody></table></div>';
     }
-    html += `<details class="mp-dash-query"><summary>Query</summary><code>${chart.queryText}</code><div>${chart.formula}</div></details></div>`;
+    if (chart.warnings?.length) {
+      body += `<details class="mp-dash-note"><summary>Data notes (${chart.warnings.length})</summary><ul>${chart.warnings.map(warning => `<li>${dashboardEscape(warning)}</li>`).join('')}</ul></details>`;
+    }
+    return (
+      body +
+      `<details class="mp-dash-query"><summary>${studioT('dashboard.query')}</summary><code>${dashboardEscape(chart.queryText)}</code></details></article>`
+    );
+  };
+  const kpis = snapshot.charts.filter(
+    chart => byId.get(chart.chartId)?.type === 'kpi',
+  );
+  if (kpis.length) {
+    html += `<div class="mp-dash-kpis">${kpis.map(card).join('')}</div>`;
   }
-  html += '</div>';
+  html +=
+    snapshot.charts
+      .filter(chart => byId.get(chart.chartId)?.type !== 'kpi')
+      .map(card)
+      .join('') + '</div>';
   container.innerHTML = html;
-  container.querySelector('[data-dash-act="share"]')?.addEventListener('click', () => callbacks.onShare());
-  container.querySelector('[data-dash-act="close"]')?.addEventListener('click', () => callbacks.onClose());
-  container.querySelectorAll('[data-dash-trace]').forEach(el => {
-    el.addEventListener('click', () => {
-      const card = (el.closest('[data-dash-chart]') as HTMLElement | null)?.dataset.dashChart ?? '';
-      callbacks.onInspect(card, String((el as HTMLElement).dataset.dashTrace ?? ''));
-    });
-  });
-}
-
-/** Split flat day-channel groups ("2026-10-01|Search") into chart series. */
-function splitLineSeries(
-  groups: Array<{key: string; total: {value: number}}>,
-): Array<{label: string; points: Array<{x: string; y: number}>}> {
-  const byLabel = new Map<string, Array<{x: string; y: number}>>();
-  for (const group of groups) {
-    const pipe = group.key.indexOf('|');
-    const x = pipe >= 0 ? group.key.slice(0, pipe) : group.key;
-    const label = pipe >= 0 ? group.key.slice(pipe + 1) : '';
-    const list = byLabel.get(label) ?? [];
-    list.push({x, y: group.total.value});
-    byLabel.set(label, list);
+  for (const [action, callback] of Object.entries({
+    share: callbacks.onShare,
+    close: callbacks.onClose,
+    refresh: callbacks.onRefresh,
+    edit: callbacks.onEdit,
+  })) {
+    if (callback) {
+      container
+        .querySelector(`[data-dash-act="${action}"]`)
+        ?.addEventListener('click', callback);
+    }
   }
-  return [...byLabel.entries()].map(([label, points]) => ({label, points}));
+  container
+    .querySelectorAll<HTMLElement | SVGElement>('[data-dash-trace]')
+    .forEach(element => {
+      const inspect = () =>
+        callbacks.onInspect(
+          element.closest<HTMLElement>('[data-dash-chart]')?.dataset
+            .dashChart || '',
+          element.dataset.dashTrace || '',
+        );
+      element.addEventListener('click', inspect);
+      if (element.tagName.toLowerCase() === 'circle') {
+        element.addEventListener('keydown', event => {
+          if (
+            (event as KeyboardEvent).key === 'Enter' ||
+            (event as KeyboardEvent).key === ' '
+          ) {
+            event.preventDefault();
+            inspect();
+          }
+        });
+      }
+    });
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {renderDashboard};
+  module.exports = {renderDashboard, dashboardLineSvg, dashboardFormat};
 }

@@ -774,13 +774,15 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   dashboard: {
     list: () => ipcRenderer.invoke('dashboard:list'),
+    trace: (payload: {snapshotId: string; traceId: string; offset?: number}) => ipcRenderer.invoke('dashboard:trace', payload),
+    exportCsv: (payload: {snapshotId: string; traceId: string}) => ipcRenderer.invoke('dashboard:export-csv', payload),
     open: (dashboardId: unknown) =>
       ipcRenderer.invoke('dashboard:open', String(dashboardId || '')),
     exportHtml: (payload: {title?: unknown; html?: unknown; css?: unknown}) =>
       ipcRenderer.invoke('dashboard:export', {
         title: String(payload?.title || '').slice(0, 120),
-        html: String(payload?.html ?? '').slice(0, 2_000_000),
-        css: String(payload?.css ?? '').slice(0, 200_000),
+        html: String(payload?.html ?? ''),
+        css: String(payload?.css ?? ''),
       }),
   },
   figma: {

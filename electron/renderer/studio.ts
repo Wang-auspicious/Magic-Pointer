@@ -4754,78 +4754,306 @@ function bindArtifactView() {
 }
 
 let activeDashboardId = '';
+let activeDashboardSnapshotId = '';
+let dashboardRenderGeneration = 0;
+let dashboardTraceDialog: HTMLDialogElement | null = null;
 
 async function renderDashboardView(): Promise<void> {
   const root = document.getElementById('dashboard-root');
   if (!root) {
     return;
   }
-  const items = await Data.dashboardList();
-  const specs = items.filter(
-    item => item && typeof item === 'object' && item.dashboardId,
-  ) as Array<{dashboardId: string; title: string}>;
-  if (!activeDashboardId || !specs.some(s => s.dashboardId === activeDashboardId)) {
-    activeDashboardId = specs[0]?.dashboardId ?? '';
-  }
-  if (!activeDashboardId) {
-    root.innerHTML =
-      '<div class="mp-dash-empty">No dashboards yet. Ask the agent to build one from a CSV or Excel file.</div>';
-    return;
-  }
-  const opened = await Data.dashboardOpen(activeDashboardId);
-  if (!opened || opened.ok !== true) {
-    root.innerHTML = `<div class="mp-dash-empty">${String(opened?.error || 'Dashboard failed to open.')}</div>`;
-    return;
-  }
-  const spec = opened.spec as {
-    title: string;
-    charts: Array<{chartId: string; title: string; type: 'kpi' | 'line' | 'table'; format?: 'money' | 'number' | 'percent'}>;
-  };
-  const tabs = specs
-    .map(
-      s =>
-        `<button type="button" data-dash-open="${s.dashboardId}" class="${s.dashboardId === activeDashboardId ? 'is-on' : ''}">${s.title}</button>`,
-    )
-    .join('');
-  root.innerHTML = `<div class="mp-dash-tabs">${tabs}</div><div id="dashboard-panel"></div>`;
-  root.querySelectorAll('[data-dash-open]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeDashboardId = String((btn as HTMLElement).dataset.dashOpen || '');
-      void renderDashboardView();
+  const generation = ++dashboardRenderGeneration;
+  closeDashboardTrace();
+  root.innerHTML = `<p class="mp-dash-note">${studioT('dashboard.loading')}</p>`;
+  try {
+    const items = await Data.dashboardList();
+    if (
+      generation !== dashboardRenderGeneration ||
+      shell.dataset.view !== 'dashboard'
+    ) {
+      return;
+    }
+    const specs = items.filter(
+      item => item && typeof item === 'object' && item.dashboardId,
+    ) as Array<{dashboardId: string; title: string}>;
+    if (
+      !activeDashboardId ||
+      !specs.some(s => s.dashboardId === activeDashboardId)
+    ) {
+      activeDashboardId = specs[0]?.dashboardId ?? '';
+    }
+    if (!activeDashboardId) {
+      root.innerHTML = `<div class="mp-dash-empty"><h2>${studioT('dashboard.empty')}</h2><p>${studioT('dashboard.empty_hint')}</p><button type="button" data-dash-new>${studioT('dashboard.new')}</button></div>`;
+      root
+        .querySelector('[data-dash-new]')
+        ?.addEventListener('click', () => void createDashboardWithAgent());
+      return;
+    }
+    const opened = await Data.dashboardOpen(activeDashboardId);
+    if (
+      generation !== dashboardRenderGeneration ||
+      shell.dataset.view !== 'dashboard'
+    ) {
+      return;
+    }
+    if (!opened || opened.ok !== true) {
+      throw new Error(
+        String(opened?.error || studioT('dashboard.open_failed')),
+      );
+    }
+    const spec = opened.spec as {
+      title: string;
+      sources: Array<{path?: string}>;
+      charts: Array<{
+        chartId: string;
+        title: string;
+        type: 'kpi' | 'line' | 'table';
+        format?: 'money' | 'number' | 'percent';
+      }>;
+    };
+    const tabs = specs
+      .map(
+        s =>
+          `<button type="button" data-dash-open="${esc(s.dashboardId)}" class="${s.dashboardId === activeDashboardId ? 'is-on' : ''}">${esc(s.title)}</button>`,
+      )
+      .join('');
+    activeDashboardSnapshotId = String(opened.snapshot.snapshotId);
+    root.innerHTML = `<div class="mp-dash-tabs">${tabs}<button type="button" data-dash-new>+ ${studioT('dashboard.new')}</button></div><div id="dashboard-panel"></div>`;
+    root
+      .querySelector('[data-dash-new]')
+      ?.addEventListener('click', () => void createDashboardWithAgent());
+    root.querySelectorAll('[data-dash-open]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeDashboardId = String((btn as HTMLElement).dataset.dashOpen || '');
+        void renderDashboardView();
+      });
     });
-  });
-  const panel = document.getElementById('dashboard-panel');
-  if (!panel || typeof renderDashboard !== 'function') {
-    return;
+    const panel = document.getElementById('dashboard-panel');
+    if (!panel || typeof renderDashboard !== 'function') {
+      return;
+    }
+    renderDashboard(
+      panel,
+      String(spec.title || ''),
+      opened.snapshot,
+      spec.charts,
+      {
+        onShare: () => void shareDashboard(spec.title, panel),
+        onClose: () => show('artifacts'),
+        onInspect: (chartId, trace) =>
+          void inspectDashboardTrace(chartId, trace),
+        onRefresh: () => void renderDashboardView(),
+        onEdit: () => {
+          composeLibraryPrompt(
+            studioT('dashboard.edit_prompt', {
+              title: spec.title,
+              id: activeDashboardId,
+            }),
+          );
+          composerAttachments = spec.sources
+            .map(source => source.path)
+            .filter((file): file is string => Boolean(file));
+          renderComposerAttachments();
+          captureComposerDraft();
+        },
+      },
+    );
+  } catch (error) {
+    if (
+      generation !== dashboardRenderGeneration ||
+      shell.dataset.view !== 'dashboard'
+    ) {
+      return;
+    }
+    root.innerHTML = `<div class="mp-dash-empty"><p class="mp-dash-error">${esc(error instanceof Error ? error.message : String(error))}</p><button type="button" data-dash-retry>${studioT('dashboard.retry')}</button></div>`;
+    root
+      .querySelector('[data-dash-retry]')
+      ?.addEventListener('click', () => void renderDashboardView());
   }
-  renderDashboard(panel, String(spec.title || ''), opened.snapshot, spec.charts, {
-    onShare: () => void shareDashboard(spec.title, panel),
-    onClose: () => show('artifacts'),
-    onInspect: (chartId, trace) => void inspectDashboardTrace(chartId, trace),
-  });
 }
 
-async function shareDashboard(title: string, panel: HTMLElement): Promise<void> {
+async function createDashboardWithAgent(): Promise<void> {
+  const generation = dashboardRenderGeneration;
+  const button = document.querySelector<HTMLButtonElement>('[data-dash-new]');
+  if (button) {
+    button.disabled = true;
+  }
+  try {
+    const picked = await Data.pickProjectFiles('', 'files');
+    if (
+      generation !== dashboardRenderGeneration ||
+      shell.dataset.view !== 'dashboard' ||
+      picked.canceled
+    ) {
+      return;
+    }
+    if (!picked.ok || !picked.paths?.length) {
+      throw new Error(picked.error || studioT('dashboard.choose_file'));
+    }
+    if (picked.paths.some(file => !/\.(csv|xlsx)$/i.test(file))) {
+      throw new Error(studioT('dashboard.file_types'));
+    }
+    composeLibraryPrompt(studioT('dashboard.create_prompt'));
+    composerAttachments = [...picked.paths];
+    renderComposerAttachments();
+    captureComposerDraft();
+    (
+      document.getElementById('composer-form') as HTMLFormElement
+    ).requestSubmit();
+  } catch (error) {
+    const notice = document.createElement('p');
+    notice.className = 'mp-dash-error';
+    notice.textContent = error instanceof Error ? error.message : String(error);
+    document.getElementById('dashboard-root')?.prepend(notice);
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function shareDashboard(
+  title: string,
+  panel: HTMLElement,
+): Promise<void> {
   let css = '';
   for (const sheet of Array.from(document.styleSheets)) {
     try {
       if (sheet.href && sheet.href.includes('dashboard.css')) {
-        css = Array.from(sheet.cssRules).map(rule => rule.cssText).join('\n');
+        css = Array.from(sheet.cssRules)
+          .map(rule => rule.cssText)
+          .join('\n');
       }
     } catch {}
   }
-  const result = await Data.dashboardExportHtml({
-    title,
-    html: panel.innerHTML,
-    css,
+  const copy = panel.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('[data-dash-act]').forEach(control => control.remove());
+  copy.querySelectorAll('button[data-dash-trace]').forEach(control => {
+    const label = document.createElement('span');
+    label.textContent = control.textContent;
+    control.replaceWith(label);
   });
-  if (result?.ok !== true && !result?.canceled) {
-    window.alert(String(result?.error || 'Dashboard export failed.'));
+  copy.querySelectorAll('[data-dash-trace]').forEach(control => {
+    control.removeAttribute('data-dash-trace');
+    control.removeAttribute('tabindex');
+    control.removeAttribute('role');
+  });
+  try {
+    const result = await Data.dashboardExportHtml({
+      title,
+      html: copy.innerHTML,
+      css:
+        'body{margin:0;font:14px system-ui,sans-serif;color:#202020;background:#fff}*{box-sizing:border-box}' +
+        css,
+    });
+    if (result?.ok !== true && !result?.canceled) {
+      window.alert(String(result?.error || studioT('dashboard.export_failed')));
+    }
+  } catch (error) {
+    window.alert(String(error instanceof Error ? error.message : error));
   }
 }
 
-function inspectDashboardTrace(chartId: string, trace: string): void {
-  window.alert(`Chart ${chartId} · rows ${trace}`);
+function closeDashboardTrace(): void {
+  dashboardTraceDialog?.close();
+  dashboardTraceDialog?.remove();
+  dashboardTraceDialog = null;
+}
+
+async function inspectDashboardTrace(
+  chartId: string,
+  traceId: string,
+  offset = 0,
+): Promise<void> {
+  const snapshotId = activeDashboardSnapshotId;
+  const dialog = dashboardTraceDialog || document.createElement('dialog');
+  dashboardTraceDialog = dialog;
+  dialog.className = 'mp-dash-trace-dialog';
+  dialog.innerHTML = `<p>${studioT('dashboard.reading_rows')}</p>`;
+  if (!dialog.isConnected) {
+    document.body.append(dialog);
+  }
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+  dialog.oncancel = closeDashboardTrace;
+  try {
+    const response = await Data.dashboardTrace({snapshotId, traceId, offset});
+    if (
+      !dialog.isConnected ||
+      snapshotId !== activeDashboardSnapshotId ||
+      shell.dataset.view !== 'dashboard'
+    ) {
+      closeDashboardTrace();
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(response.error || studioT('dashboard.rows_unavailable'));
+    }
+    const detail = response.detail as {
+      generatedAt: string;
+      source: {sourceId: string; kind: string; path?: string; sheet?: string};
+      formula: string;
+      value: number | null;
+      columns: string[];
+      rows: Array<{rowNumber: number; values: Record<string, unknown>}>;
+      totalRows: number;
+      offset: number;
+      excludedCount: number;
+      warnings: string[];
+    };
+    dialog.innerHTML = `<header><h2>${studioT('dashboard.source_rows')} · ${esc(chartId)}</h2><button type="button" data-trace-close aria-label="${studioT('common.close')}">×</button></header><p>${esc(detail.source.path || studioT('dashboard.inline_data'))}${detail.source.sheet ? ` · ${esc(detail.source.sheet)}` : ''}</p><p>${studioT('dashboard.snapshot')}: ${esc(new Date(detail.generatedAt).toLocaleString(getStudioLanguage()))} · ${studioT('dashboard.value')}: ${detail.value === null ? studioT('dashboard.no_value') : esc(String(detail.value))}</p><pre>${esc(detail.formula)}</pre>${detail.excludedCount ? `<p>${studioT('dashboard.excluded', {count: detail.excludedCount})}</p>` : ''}${detail.warnings.length ? `<ul>${detail.warnings.map(warning => `<li>${esc(warning)}</li>`).join('')}</ul>` : ''}<div class="mp-dash-table-scroll"><table class="mp-dash-table"><thead><tr><th>${studioT('dashboard.source_row')}</th>${detail.columns.map(column => `<th>${esc(column)}</th>`).join('')}</tr></thead><tbody>${detail.rows.map(row => `<tr><th>${row.rowNumber}</th>${detail.columns.map(column => `<td>${esc(String(row.values[column] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></div><footer><span>${studioT('dashboard.row_count', {range: detail.totalRows ? `${detail.offset + 1}–${detail.offset + detail.rows.length}` : '0', total: detail.totalRows})}</span><button type="button" data-trace-prev ${detail.offset === 0 ? 'disabled' : ''}>${studioT('dashboard.previous')}</button><button type="button" data-trace-next ${detail.offset + detail.rows.length >= detail.totalRows ? 'disabled' : ''}>${studioT('dashboard.next')}</button><button type="button" data-trace-export>${studioT('dashboard.export_csv')}</button></footer><p role="status" data-trace-status></p>`;
+    dialog
+      .querySelector('[data-trace-close]')
+      ?.addEventListener('click', closeDashboardTrace);
+    dialog
+      .querySelector('[data-trace-prev]')
+      ?.addEventListener(
+        'click',
+        () =>
+          void inspectDashboardTrace(
+            chartId,
+            traceId,
+            Math.max(0, detail.offset - 100),
+          ),
+      );
+    dialog
+      .querySelector('[data-trace-next]')
+      ?.addEventListener(
+        'click',
+        () =>
+          void inspectDashboardTrace(
+            chartId,
+            traceId,
+            detail.offset + detail.rows.length,
+          ),
+      );
+    dialog
+      .querySelector('[data-trace-export]')
+      ?.addEventListener('click', async event => {
+        const button = event.currentTarget as HTMLButtonElement;
+        button.disabled = true;
+        try {
+          const result = await Data.dashboardExportCsv({snapshotId, traceId});
+          dialog.querySelector('[data-trace-status]')!.textContent = result.ok
+            ? studioT('dashboard.saved', {path: String(result.path)})
+            : result.canceled
+              ? ''
+              : String(result.error);
+        } catch (error) {
+          dialog.querySelector('[data-trace-status]')!.textContent =
+            String(error);
+        } finally {
+          button.disabled = false;
+        }
+      });
+  } catch (error) {
+    dialog.innerHTML = `<p class="mp-dash-error">${esc(error instanceof Error ? error.message : String(error))}</p><button type="button" data-trace-close>${studioT('common.close')}</button>`;
+    dialog
+      .querySelector('[data-trace-close]')
+      ?.addEventListener('click', closeDashboardTrace);
+  }
 }
 
 async function renderArtifacts(_force = false) {
@@ -5802,6 +6030,10 @@ function show(view: string, projectKey?: string) {
   dismissSidebar();
   const current = studioShell.shellState(view);
   view = current.activeView;
+  if (view !== 'dashboard') {
+    dashboardRenderGeneration += 1;
+    closeDashboardTrace();
+  }
   if (view !== 'chat') {
     captureComposerDraft();
     conversationOpenGeneration += 1;

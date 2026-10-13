@@ -43,7 +43,7 @@ const {expandPassage} = require('./runtime/text');
 const {resolveModelConfig, listModels, requestText, modelProviderId} = require('./runtime/model');
 import {prepareModelConnection, saveModelConnection} from './model_connection';
 import type {ModelConnectionInput} from './model_connection';
-const {listDashboards, runDashboard} = require('./runtime/dashboard');
+const {listDashboards, runDashboard, dashboardTrace, dashboardTraceCsv} = require('./runtime/dashboard');
 const {installEnvironmentProxy} = require('./runtime/proxy');
 
 // This process lists models directly, and undici chooses its dispatcher on the
@@ -1996,17 +1996,23 @@ ipcMain.handle('projects:list', (event: Electron.IpcMainInvokeEvent) => {
   }
 });
 function dashboardRoot(): string {
-  return path.join(app.getPath('userData'), 'dashboards');
+  return FABRIC_DATA_DIR;
 }
-ipcMain.handle('dashboard:list', (event: Electron.IpcMainInvokeEvent) => {
+let openDashboardSnapshot: import('./runtime/dashboard').DashboardRun | null =
+  null;
+let dashboardOpenGeneration = 0;
+ipcMain.handle('dashboard:list', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) {
     return [];
   }
-  try {
-    return listDashboards(dashboardRoot());
-  } catch (_) {
-    return [];
-  }
+  const dashboards: Array<import('./runtime/dashboard').DashboardSpec> =
+    await listDashboards(dashboardRoot());
+  return dashboards.map(({dashboardId, title, updatedAt, revision}) => ({
+    dashboardId,
+    title,
+    updatedAt,
+    revision,
+  }));
 });
 ipcMain.handle(
   'dashboard:open',
@@ -2014,16 +2020,95 @@ ipcMain.handle(
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_dashboard_sender'};
     }
+    const generation = ++dashboardOpenGeneration;
     try {
-      const {spec, snapshot} = await runDashboard(
+      const opened = await runDashboard(
         dashboardRoot(),
         String(dashboardId || ''),
       );
-      return {ok: true, spec, snapshot};
+      if (generation === dashboardOpenGeneration) {
+        openDashboardSnapshot = opened;
+      }
+      return {ok: true, spec: opened.spec, snapshot: opened.snapshot};
     } catch (error) {
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'dashboard_open_failed',
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'dashboard:trace',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {snapshotId?: string; traceId?: string; offset?: number} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    if (
+      !openDashboardSnapshot ||
+      openDashboardSnapshot.snapshot.snapshotId !== raw.snapshotId
+    ) {
+      return {
+        ok: false,
+        error: 'The dashboard was refreshed. Select the value again.',
+      };
+    }
+    try {
+      return {
+        ok: true,
+        detail: dashboardTrace(
+          openDashboardSnapshot,
+          String(raw.traceId || ''),
+          Number(raw.offset) || 0,
+        ),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'dashboard:export-csv',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {snapshotId?: string; traceId?: string} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    const opened = openDashboardSnapshot;
+    if (!opened || opened.snapshot.snapshotId !== raw.snapshotId) {
+      return {
+        ok: false,
+        error: 'The dashboard was refreshed. Select the value again.',
+      };
+    }
+    try {
+      const content = dashboardTraceCsv(opened, String(raw.traceId || ''));
+      const parent =
+        BrowserWindow.fromWebContents(event.sender) ||
+        dashboardWindow ||
+        undefined;
+      const picked = await dialog.showSaveDialog(parent, {
+        title: 'Export source rows',
+        defaultPath: 'dashboard-source-rows.csv',
+        filters: [{name: 'CSV', extensions: ['csv']}],
+      });
+      if (picked.canceled || !picked.filePath) {
+        return {ok: false, canceled: true};
+      }
+      await fs.promises.writeFile(picked.filePath, content, 'utf8');
+      return {ok: true, path: picked.filePath};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   },
@@ -2038,7 +2123,9 @@ ipcMain.handle(
       return {ok: false, error: 'unauthorized_dashboard_sender'};
     }
     const parent =
-      BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+      BrowserWindow.fromWebContents(event.sender) ||
+      dashboardWindow ||
+      undefined;
     const safeTitle = String(payload?.title || 'dashboard')
       .replace(/[<>:"/\\|?*]/g, '-')
       .slice(0, 80);

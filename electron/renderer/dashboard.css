@@ -15,6 +15,139 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.mp-dash-head-right button,
+[data-dash-new],
+[data-dash-retry],
+.mp-dash-trace-dialog button {
+  padding: 6px 10px;
+  border: 1px solid var(--mp-rule, #ddd);
+  border-radius: 7px;
+  background: var(--mp-panel, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.mp-dash-head-right button:hover,
+[data-dash-new]:hover,
+.mp-dash-trace-dialog button:hover {
+  background: var(--mp-hover, #f4f4f4);
+}
+.mp-dash-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.mp-dash-tabs button {
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.mp-dash-tabs button.is-on {
+  background: var(--mp-hover, #f4f4f4);
+}
+.mp-dash-empty {
+  padding: 32px;
+}
+.mp-dash-note {
+  color: var(--mp-text-dim, #6b6b6b);
+  font-size: 12px;
+}
+.mp-dash-error {
+  color: #b42318;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mp-dash-value-button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.mp-dash-value-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.mp-dash-line [data-dash-trace] {
+  cursor: pointer;
+}
+.mp-dash-line [data-dash-trace]:focus {
+  outline: 2px solid var(--mp-focus, #2563eb);
+}
+.mp-dash-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  font-size: 12px;
+}
+.mp-dash-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mp-dash-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.mp-dash-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+}
+.mp-dash-trace-dialog {
+  width: min(940px, calc(100vw - 48px));
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid var(--mp-rule, #ddd);
+  border-radius: 14px;
+  padding: 20px;
+  background: var(--mp-panel, #fff);
+  color: var(--mp-text, #202020);
+  font: inherit;
+}
+.mp-dash-trace-dialog::backdrop {
+  background: #0006;
+}
+.mp-dash-trace-dialog header,
+.mp-dash-trace-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.mp-dash-trace-dialog h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.mp-dash-trace-dialog p {
+  overflow-wrap: anywhere;
+}
+.mp-dash-trace-dialog pre {
+  white-space: pre-wrap;
+  padding: 12px;
+  background: var(--mp-panel-subtle, #f6f6f6);
+  border-radius: 8px;
+}
+.mp-dash-trace-dialog .mp-dash-table-scroll {
+  max-height: 45vh;
+}
+.mp-dash-trace-dialog .mp-dash-table {
+  white-space: pre-wrap;
+}
+.mp-dash-trace-dialog footer {
+  margin-top: 16px;
+  font-size: 12px;
+}
+.mp-dash-trace-dialog button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .mp-dash-updated {
@@ -99,6 +232,16 @@
 .mp-dash-line {
   width: 100%;
   height: auto;
+  stroke: none;
+}
+.mp-dash-line text {
+  stroke: none;
+  font-family: inherit;
+  font-weight: 400;
+}
+.mp-dash-line circle {
+  stroke: var(--mp-panel, #fff);
+  stroke-width: 1.5px;
 }
 
 .mp-dash-grid {
