@@ -14,6 +14,19 @@ async function main() {
   await editor.undo(true);
   assert.equal(editor.state().undoAvailable, false, 'a successful undo cannot be submitted twice');
   assert.equal(editor.state().applyResult.undone, true);
+  const written = {artifactId: 'b', revision: 1, content: 'cells', kind: 'document_patch', acceptedRevision: 1, applied: true, undoAvailable: true};
+  const partial = createArtifactEditor({
+    read: async () => ({ok: true, artifact: {...written, applied: false, undoAvailable: false}}),
+    apply: async () => ({ok: false, artifact: written, result: {status: 'partial', wrote: true, verified: false, error: 'second_cell_locked'}}),
+    undo: async () => ({ok: true, artifact: {...written, applied: false, undoAvailable: false}, result: {status: 'succeeded', verified: true}}),
+  });
+  await partial.select('c', 'b');
+  await partial.apply();
+  assert.equal(partial.state().undoAvailable, true, 'partial writes must be undoable immediately, without reopening the draft');
+  assert.equal(partial.state().applied, true);
+  assert.equal((await partial.apply()).error, 'artifact_already_applied');
+  await partial.undo(true);
+  assert.equal(partial.state().applied, false);
   console.log('artifact_undo_ui_contract_test: passed');
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

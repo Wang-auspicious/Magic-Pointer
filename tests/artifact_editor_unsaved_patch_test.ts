@@ -9,7 +9,15 @@ async function main() {
     accept: async () => ({ ok: true, artifact }),
   });
   await editor.select('c', 'a');
+  editor.setPatchError('Enter a valid number.');
+  assert.equal(editor.state().dirty, true, 'an invalid visible edit must count as unsaved work');
+  assert.equal((await editor.save()).error, 'Enter a valid number.');
+  assert.equal((await editor.accept()).error, 'Enter a valid number.');
+  assert.equal((await editor.apply()).error, 'Enter a valid number.');
+  editor.updateContent('draft');
+  assert.equal(editor.state().dirty, true, 'editing the summary must not discard an invalid patch field');
   editor.updatePatchPayload({ operations: [{ after: 'first edit' }] });
+  assert.equal(editor.state().patchError, '');
   editor.updateContent('temporary');
   editor.updateContent('draft');
   assert.equal(editor.state().dirty, true, 'restoring text must not discard a pending patch edit');

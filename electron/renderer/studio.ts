@@ -5311,17 +5311,6 @@ async function retargetFigmaArtifact(index: number): Promise<void> {
   }
 }
 
-function artifactValueText(value: unknown): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value ?? '');
-  }
-}
-
 function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
   const host = document.getElementById('artifact-patch-changes');
   if (!host) {
@@ -5332,7 +5321,9 @@ function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
     : [];
   if (!operations.length) {
     host.innerHTML =
-      '<p class="mp-inspector-empty">' + studioT('inspector.no_file_changes') + '</p>';
+      '<p class="mp-inspector-empty">' +
+      studioT('inspector.no_file_changes') +
+      '</p>';
     return;
   }
   const busy = ['loading', 'saving', 'accepting', 'applying'].includes(
@@ -5340,10 +5331,6 @@ function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
   );
   host.innerHTML = operations
     .map((operation, index) => {
-      const locator =
-        operation.locator && typeof operation.locator === 'object'
-          ? (operation.locator as Record<string, unknown>)
-          : {};
       const figmaCoordinates = figmaPatchCoordinates(state, operation, index);
       const preview = figmaCoordinates
         ? figmaArtifactPreviews.get(figmaCoordinates.key)
@@ -5362,21 +5349,18 @@ function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
       </div>
     </div>`;
       return `<article class="mp-artifact-change">
-      <header><strong>${esc(operation.operation || 'change')}</strong><code>${esc(operation.sourceId || '')}</code></header>
-      <small>${esc(locator.kind || 'locator')} · ${esc(artifactValueText(locator.value || {}))}</small>
+      ${ArtifactPatchFields.render(operation, index, busy)}
       ${figmaPreview}
-      <pre>${studioT('artifact.before')}${esc(artifactValueText(operation.before))}</pre>
-      <label>${studioT('artifact.after')}
-        <textarea class="mp-artifact-after-value" data-artifact-operation-index="${index}"
-          aria-label="${studioT('artifact.edit_index', {index: index + 1})}" ${busy ? 'disabled' : ''}>${esc(artifactValueText(operation.after))}</textarea>
-      </label>
     </article>`;
     })
     .join('');
 }
 
-function renderArtifactEditor() {
+function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   const state = artifactEditor.state();
+  document
+    .getElementById('artifact-editor')
+    ?.classList.toggle('is-document-patch', state.kind === 'document_patch');
   const content = document.getElementById(
     'artifact-editor-content',
   ) as HTMLTextAreaElement | null;
@@ -5420,7 +5404,11 @@ function renderArtifactEditor() {
     content.hidden = Boolean(state.preview);
   }
   if (save) {
-    save.disabled = busy || !state.dirty || Boolean(state.preview);
+    save.disabled =
+      busy ||
+      Boolean(state.patchError) ||
+      !state.dirty ||
+      Boolean(state.preview);
   }
   if (accept) {
     accept.disabled =
@@ -5436,11 +5424,13 @@ function renderArtifactEditor() {
       Boolean(state.preview) ||
       state.dirty ||
       state.kind !== 'document_patch' ||
+      state.applied ||
       state.acceptedRevision !== state.revision;
   }
   if (status) {
     const resultStatus = String(state.applyResult?.status || '');
     status.textContent =
+      state.patchError ||
       (state.error === 'stale_revision'
         ? studioT('artifact.newer_version')
         : state.error) ||
@@ -5462,9 +5452,11 @@ function renderArtifactEditor() {
                   : state.dirty
                     ? studioT('artifact.unsaved_edits')
                     : '');
-    status.dataset.tone = state.error ? 'error' : 'neutral';
+    status.dataset.tone = state.error || state.patchError ? 'error' : 'neutral';
   }
-  renderArtifactPatchPreview(state);
+  if (!options.preservePatchFields && !state.patchError) {
+    renderArtifactPatchPreview(state);
+  }
   const patchPreview = document.querySelector<HTMLElement>(
     '#artifact-editor .mp-artifact-patch-preview',
   );
@@ -5495,7 +5487,7 @@ function renderArtifactVersions(
       }),
     );
     select.value = String(state.preview?.revision || state.revision);
-    select.disabled = busy || versions.length < 2;
+    select.disabled = busy || Boolean(state.patchError) || versions.length < 2;
     select.setAttribute('aria-label', studioT('artifact.version_history'));
   }
   if (restore) {
@@ -5586,41 +5578,61 @@ document
     );
     renderArtifactEditor();
   });
+function updateArtifactPatchFields(event: Event): void {
+  const target = event.target as HTMLElement | null;
+  const host = document.getElementById('artifact-patch-changes');
+  if (
+    !host ||
+    !target?.closest('[data-value-path], [data-cell-type], [data-color-none]')
+  ) {
+    return;
+  }
+  const cell = target.closest('[data-cell-editor]');
+  const cellInput = cell?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    '[data-value-path]',
+  );
+  if (cellInput && target.matches('[data-cell-type]')) {
+    cellInput.readOnly = (target as HTMLSelectElement).value === 'blank';
+    if (cellInput.readOnly) {
+      cellInput.value = '';
+    }
+  }
+  if (target.matches('[data-color-none]')) {
+    const color = target
+      .closest('[data-optional-color]')
+      ?.querySelector<HTMLInputElement>('[type="color"]');
+    if (color) {
+      color.disabled = (target as HTMLInputElement).checked;
+    }
+  }
+  const state = artifactEditor.state();
+  const operations = Array.isArray(state.patchPayload?.operations)
+    ? (state.patchPayload.operations as Array<Record<string, unknown>>)
+    : [];
+  try {
+    artifactEditor.updatePatchPayload({
+      ...state.patchPayload,
+      operations: ArtifactPatchFields.read(host, operations),
+    });
+  } catch (error) {
+    artifactEditor.setPatchError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  renderArtifactEditor({preservePatchFields: true});
+}
 document
   .getElementById('artifact-patch-changes')
-  ?.addEventListener('change', event => {
-    const field = (
-      event.target as Element | null
-    )?.closest<HTMLTextAreaElement>('[data-artifact-operation-index]');
-    if (!field) {
-      return;
-    }
-    const state = artifactEditor.state();
-    const operations = Array.isArray(state.patchPayload?.operations)
-      ? (state.patchPayload.operations as Array<Record<string, unknown>>)
-      : [];
-    const index = Number(field.dataset.artifactOperationIndex);
-    if (!Number.isInteger(index) || index < 0 || index >= operations.length) {
-      return;
-    }
-    try {
-      const after =
-        typeof operations[index].after === 'string'
-          ? field.value
-          : (JSON.parse(field.value) as unknown);
-      field.setCustomValidity('');
-      artifactEditor.updatePatchPayload({
-        ...state.patchPayload,
-        operations: operations.map((operation, operationIndex) =>
-          operationIndex === index ? {...operation, after} : operation,
-        ),
-      });
-      renderArtifactEditor();
-    } catch {
-      field.setCustomValidity(studioT('artifact.invalid_json'));
-      field.reportValidity();
-    }
-  });
+  ?.addEventListener('input', updateArtifactPatchFields);
+document
+  .getElementById('artifact-patch-changes')
+  ?.addEventListener('change', updateArtifactPatchFields);
+document
+  .getElementById('artifact-patch-changes')
+  ?.addEventListener('keydown', ArtifactPatchFields.editText);
+document
+  .getElementById('artifact-patch-changes')
+  ?.addEventListener('paste', ArtifactPatchFields.editText);
 document
   .getElementById('artifact-patch-changes')
   ?.addEventListener('click', event => {
