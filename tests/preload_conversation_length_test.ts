@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { transformSync } from 'esbuild';
 const exposed: any[] = [], calls: any[] = [];
-const source = fs.readFileSync(path.resolve(__dirname, '../electron/preload.ts'), 'utf8');
-vm.runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs' }).code, {
-  require: () => ({ contextBridge: { exposeInMainWorld: (_name: string, api: any) => exposed.push(api) },
-    ipcRenderer: { invoke: (...args: any[]) => { calls.push(args); return Promise.resolve({}); }, on() {}, removeListener() {}, send() {} } }),
+const source = fs.readFileSync(path.resolve(__dirname, '../build/electron/preload.js'), 'utf8');
+vm.runInNewContext(source, {
+  exports: {},
+  require: (name: string) => {
+    assert.equal(name, 'electron', 'sandbox preload only loads Electron');
+    return { contextBridge: { exposeInMainWorld: (_name: string, api: any) => exposed.push(api) },
+      ipcRenderer: { invoke: (...args: any[]) => { calls.push(args); return Promise.resolve({}); }, on() {}, removeListener() {}, send() {} } };
+  },
   process, console, setTimeout, clearTimeout,
 });
 const api = exposed.find((value) => value.conversations?.send);

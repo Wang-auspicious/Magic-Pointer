@@ -3,6 +3,9 @@
 
 const assert = require('assert');
 const Module = require('module');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 
 type Listener = (...args: unknown[]) => void;
 
@@ -85,4 +88,32 @@ assert.deepStrictEqual(
   'payload channels must forward the payload alone, without the IpcRendererEvent',
 );
 
-console.log('preload signal bridge test ok');
+const sandboxSurfaces = new Map<string, Record<string, unknown>>();
+vm.runInNewContext(
+  fs.readFileSync(path.join(__dirname, '../build/electron/preload.js'), 'utf8'),
+  {
+    exports: {},
+    require(request: string) {
+      if (request !== 'electron') {
+        throw new Error(`Sandbox preload cannot load ${request}`);
+      }
+      return {
+        ...electronStub,
+        contextBridge: {
+          exposeInMainWorld(key: string, api: Record<string, unknown>) {
+            sandboxSurfaces.set(key, api);
+          },
+        },
+      };
+    },
+  },
+);
+const dashboard = sandboxSurfaces.get('magicPointerDashboard');
+assert.strictEqual(typeof dashboard?.modelsCatalog, 'function');
+assert.strictEqual(
+  typeof (dashboard?.projects as Record<string, unknown>)?.open,
+  'function',
+);
+assert.strictEqual(sandboxSurfaces.size, exposed.size);
+
+console.log('preload signal and sandbox bridge test ok');

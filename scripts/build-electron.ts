@@ -1,6 +1,7 @@
 import {cpSync, readFileSync, readdirSync, rmSync} from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {buildSync} from 'esbuild';
 
 const root = path.resolve(__dirname, '..');
 const sourceRoot = path.join(root, 'electron');
@@ -66,6 +67,18 @@ function verifyCopiedJavaScript(directory: string): void {
 }
 
 verifyCopiedJavaScript(sourceRoot);
+
+// Sandboxed preloads can require Electron, but cannot resolve local modules.
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'preload.ts')],
+  outfile: path.join(outputRoot, 'preload.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'cjs',
+  target: 'es2022',
+  external: ['electron'],
+  sourcemap: true,
+});
 
 // CommonJS preamble throws `exports is not defined` on line 1 and every global
 function verifyBrowserGlobalScripts(): void {
