@@ -313,3 +313,62 @@
 .mpw-customize {
   gap: 0;
 }
+
+.mp-preview-pdf {
+  display: block;
+  width: 100%;
+  height: 60vh;
+  min-height: 240px;
+  border: 0;
+  background: #525659;
+}
+
+.mp-preview-image-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.mp-preview-image-toolbar button {
+  border: 1px solid var(--mp-rule-strong);
+  border-radius: 6px;
+  padding: 5px 10px;
+  background: var(--mp-panel);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mp-preview-image-toolbar button[aria-pressed='true'] {
+  background: var(--mp-active);
+}
+
+.mp-preview-image-toolbar span {
+  margin-left: auto;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+}
+
+.mp-preview-image-viewport {
+  max-height: 55vh;
+  overflow: auto;
+  text-align: center;
+  background: var(--mp-app);
+}
+
+.mp-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 55vh;
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.mp-preview-image-viewport.is-actual-size .mp-preview-image {
+  max-width: none;
+  max-height: none;
+}

@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import AdmZip from 'adm-zip';
 import {XMLParser} from 'fast-xml-parser';
 
@@ -45,7 +46,10 @@ interface ProjectSpreadsheetPreview {
 }
 
 type ProjectFilePreview =
-  ProjectTextPreview | ProjectDocumentPreview | ProjectSpreadsheetPreview;
+  | ProjectTextPreview
+  | ProjectDocumentPreview
+  | ProjectSpreadsheetPreview
+  | {kind: 'image' | 'pdf'; url: string; name: string; truncated: false};
 
 const xmlParser = new XMLParser({
   preserveOrder: true,
@@ -230,6 +234,31 @@ async function readProjectPreview(
 ): Promise<ProjectFilePreview> {
   const filePath = projectPath(root, relativePath);
   const extension = path.extname(filePath).toLowerCase();
+  if (
+    extension === '.pdf' ||
+    [
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.webp',
+      '.gif',
+      '.bmp',
+      '.avif',
+      '.ico',
+      '.svg',
+    ].includes(extension)
+  ) {
+    const info = await fs.promises.stat(filePath);
+    if (!info.isFile()) {
+      throw new Error('Choose a file to preview.');
+    }
+    return {
+      kind: extension === '.pdf' ? 'pdf' : 'image',
+      url: pathToFileURL(filePath).href,
+      name: path.basename(filePath),
+      truncated: false,
+    };
+  }
   if (extension === '.docx') {
     return readWordPreview(filePath);
   }

@@ -209,7 +209,10 @@ declare global {
     permissionGrantOnce?: string;
   }
 
+  type MagicPointerProjectMaterialRef = import('../project_context').ProjectMaterialRef;
+
   type MagicPointerProjectPreview =
+    | {kind: 'image' | 'pdf'; url: string; name: string; truncated: false}
     | {kind: 'text'; text: string; truncated: boolean}
     | {
         kind: 'document';
@@ -228,6 +231,8 @@ declare global {
     ok?: boolean;
     error?: string;
     kind?: MagicPointerProjectPreview['kind'];
+    url?: string;
+    name?: string;
     text?: string;
     blocks?: Array<
       {kind: 'paragraph'; text: string} | {kind: 'table'; rows: string[][]}
@@ -831,13 +836,13 @@ declare global {
         projectId: string,
         documentId: string,
       ): Promise<MagicPointerProjectUpdate>;
-      readDocument(
+      readMaterial(
         projectId: string,
-        documentId: string,
+        reference: MagicPointerProjectMaterialRef,
       ): Promise<MagicPointerProjectFileResponse>;
-      openDocument(
+      openMaterial(
         projectId: string,
-        documentId: string,
+        reference: MagicPointerProjectMaterialRef,
       ): Promise<{ok: boolean; error?: string}>;
       tree(
         projectRoot: string,
@@ -1265,13 +1270,13 @@ declare global {
       projectId: string,
       documentId: string,
     ): Promise<MagicPointerProjectUpdate>;
-    readProjectDocument(
+    readProjectMaterial(
       projectId: string,
-      documentId: string,
+      reference: MagicPointerProjectMaterialRef,
     ): Promise<MagicPointerProjectFileResponse>;
-    openProjectDocument(
+    openProjectMaterial(
       projectId: string,
-      documentId: string,
+      reference: MagicPointerProjectMaterialRef,
     ): Promise<{ok: boolean; error?: string}>;
     projectTree(
       projectRoot: string,
@@ -1781,16 +1786,16 @@ const Data: MagicPointerDataApi = {
       ? projects.removeDocument(projectId, documentId)
       : {ok: false, error: 'Project files are unavailable.'};
   },
-  async readProjectDocument(projectId: string, documentId: string) {
+  async readProjectMaterial(projectId: string, reference: MagicPointerProjectMaterialRef) {
     const projects = bridge()?.projects;
-    return projects?.readDocument
-      ? projects.readDocument(projectId, documentId)
+    return projects?.readMaterial
+      ? projects.readMaterial(projectId, reference)
       : {ok: false, error: 'Project file preview is unavailable.'};
   },
-  async openProjectDocument(projectId: string, documentId: string) {
+  async openProjectMaterial(projectId: string, reference: MagicPointerProjectMaterialRef) {
     const projects = bridge()?.projects;
-    return projects?.openDocument
-      ? projects.openDocument(projectId, documentId)
+    return projects?.openMaterial
+      ? projects.openMaterial(projectId, reference)
       : {ok: false, error: 'Project file opening is unavailable.'};
   },
 

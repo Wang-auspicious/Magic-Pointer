@@ -2,7 +2,8 @@ import {BrowserViewRegistry} from './browser_view_registry';
 import {
   projectAttachments,
   type ProjectDetailsPatch,
-  type ProjectDocument,
+  type ProjectMaterialRef,
+  resolveProjectMaterial,
   type ProjectTextInput,
 } from './project_context';
 import {validateAdditionalFolders} from './workspace_folders';
@@ -2163,18 +2164,6 @@ ipcMain.handle(
     return conversations().updateProject(raw.root, raw.patch);
   },
 );
-function projectDocument(
-  projectId: string,
-  documentId: string,
-): ProjectDocument {
-  const project: ProjectRecord | undefined =
-    conversations().getProject(projectId);
-  const document = project?.documents?.find(item => item.id === documentId);
-  if (!document) {
-    throw new Error('Project file not found.');
-  }
-  return document;
-}
 
 ipcMain.handle(
   'projects:add-documents',
@@ -2213,16 +2202,19 @@ ipcMain.handle(
   },
 );
 ipcMain.handle(
-  'projects:read-document',
+  'projects:read-material',
   async (
     event: Electron.IpcMainInvokeEvent,
-    raw: {projectId: string; documentId: string},
+    raw: {projectId: string; reference: ProjectMaterialRef},
   ) => {
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_project_sender'};
     }
     try {
-      const document = projectDocument(raw.projectId, raw.documentId);
+      const document = resolveProjectMaterial(
+        conversations().getProject(raw.projectId),
+        raw.reference,
+      );
       return {
         ok: true,
         ...(await readProjectPreview(
@@ -2239,16 +2231,19 @@ ipcMain.handle(
   },
 );
 ipcMain.handle(
-  'projects:open-document',
+  'projects:open-material',
   async (
     event: Electron.IpcMainInvokeEvent,
-    raw: {projectId: string; documentId: string},
+    raw: {projectId: string; reference: ProjectMaterialRef},
   ) => {
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_project_sender'};
     }
     try {
-      const document = projectDocument(raw.projectId, raw.documentId);
+      const document = resolveProjectMaterial(
+        conversations().getProject(raw.projectId),
+        raw.reference,
+      );
       const error = await shell.openPath(document.path);
       return error ? {ok: false, error} : {ok: true};
     } catch (error) {

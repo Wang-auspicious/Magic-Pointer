@@ -13,6 +13,32 @@ export interface ProjectTextInput {
   content: string;
 }
 
+export type ProjectMaterialRef =
+  {kind: 'document'; documentId: string} | {kind: 'linked'; path: string};
+
+export function resolveProjectMaterial(
+  project: ProjectContext | undefined,
+  reference: ProjectMaterialRef,
+): {name: string; path: string} {
+  if (reference.kind === 'document') {
+    const document = project?.documents?.find(
+      item => item.id === reference.documentId,
+    );
+    if (document) {
+      return {name: document.name, path: document.path};
+    }
+  } else if (reference.kind === 'linked') {
+    const file = project?.sharedFiles?.find(
+      item =>
+        path.relative(path.resolve(item), path.resolve(reference.path)) === '',
+    );
+    if (file) {
+      return {name: path.basename(file), path: file};
+    }
+  }
+  throw new Error('This file is no longer part of the project.');
+}
+
 export interface ProjectContext {
   id?: string;
   root: string;
