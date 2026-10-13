@@ -293,6 +293,10 @@
   width: min(760px, calc(100vw - 48px));
   max-width: min(760px, calc(100vw - 48px));
 }
+.mp-project-editor.mp-project-file-preview.is-media-preview {
+  width: min(1120px, calc(100vw - 48px));
+  max-width: min(1120px, calc(100vw - 48px));
+}
 .mp-project-file-preview [data-preview-body] {
   max-height: 60vh;
   overflow: auto;

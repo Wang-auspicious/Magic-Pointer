@@ -204,7 +204,7 @@ declare global {
             <section>
               <div class="mp-project-section-heading"><h2>Files <span>${(project.documents?.length || 0) + (project.sharedFiles?.length || 0)}</span></h2><details class="mp-project-menu"><summary class="mp-project-button">Add files</summary><div>${action('Upload files', 'files')}${action('Add text content', 'add-text')}${action('Link local files', 'link-files')}</div></details></div>
               <p class="mp-project-context-note">Available to every chat in this project.</p>
-              <ul class="mp-project-files">${(project.documents || []).map(document => `<li><button class="mp-project-file-name" type="button" data-project-action="preview-file" data-document-id="${escape(document.id)}"><span>${escape(document.name)}</span><small>${document.size < 1024 ? `${document.size} B` : `${Math.ceil(document.size / 1024)} KB`}</small></button><button type="button" data-project-action="remove-document" data-document-id="${escape(document.id)}" aria-label="Remove ${escape(document.name)} from project">×</button></li>`).join('')}${(project.sharedFiles || []).map((file, index) => `<li title="${escape(file)}"><span>${escape(fileName(file))}<small>Linked file</small></span><button type="button" data-project-action="remove-file" data-file-index="${index}" aria-label="Remove ${escape(fileName(file))} from project">×</button></li>`).join('')}</ul>
+              <ul class="mp-project-files">${(project.documents || []).map(document => `<li><button class="mp-project-file-name" type="button" data-project-action="preview-file" data-document-id="${escape(document.id)}"><span>${escape(document.name)}</span><small>${document.size < 1024 ? `${document.size} B` : `${Math.ceil(document.size / 1024)} KB`}</small></button><button type="button" data-project-action="remove-document" data-document-id="${escape(document.id)}" aria-label="Remove ${escape(document.name)} from project">×</button></li>`).join('')}${(project.sharedFiles || []).map((file, index) => `<li title="${escape(file)}"><button class="mp-project-file-name" type="button" data-project-action="preview-linked" data-file-index="${index}"><span>${escape(fileName(file))}</span><small>Linked file</small></button><button type="button" data-project-action="remove-file" data-file-index="${index}" aria-label="Remove ${escape(fileName(file))} from project">×</button></li>`).join('')}</ul>
               ${pendingTextTitle ? `<div class="mp-project-pending-file" aria-busy="true" role="status"><span>${escape(pendingTextTitle)}</span><small>Adding…</small></div>` : ''}
               ${project.sharedFiles?.length || project.documents?.length || pendingTextTitle ? '' : '<p class="mp-project-empty">Add reference documents, notes, or images.</p>'}
             </section>
@@ -329,8 +329,12 @@ declare global {
       remember();
     }
 
-    async function previewDocument(id: string): Promise<void> {
-      const document = project.documents?.find(item => item.id === id);
+    async function previewMaterial(
+      reference: MagicPointerProjectMaterialRef,
+    ): Promise<void> {
+      const document = reference.kind === 'document'
+        ? project.documents?.find(item => item.id === reference.documentId)
+        : project.sharedFiles?.includes(reference.path) ? {name: fileName(reference.path)} : undefined;
       if (!document) {
         return;
       }
@@ -350,7 +354,7 @@ declare global {
         .querySelector('[data-preview-open]')!
         .addEventListener('click', () => {
           void options.data
-            .openProjectDocument(projectId, id)
+            .openProjectMaterial(projectId, reference)
             .then(result => {
               error.textContent = result.error || '';
             })
@@ -360,7 +364,7 @@ declare global {
         });
       dialog.showModal();
       try {
-        const result = await options.data.readProjectDocument(projectId, id);
+        const result = await options.data.readProjectMaterial(projectId, reference);
         if (!dialog.isConnected) {
           return;
         }
@@ -371,6 +375,10 @@ declare global {
           error.textContent = result.error || '';
           return;
         }
+        dialog.classList.toggle(
+          'is-media-preview',
+          result.kind === 'image' || result.kind === 'pdf',
+        );
         ProjectPreviewView.renderProjectPreview(
           body,
           result as MagicPointerProjectPreview,
@@ -585,7 +593,15 @@ declare global {
             button.disabled = false;
           });
       } else if (key === 'preview-file') {
-        void previewDocument(button.dataset.documentId || '');
+        void previewMaterial({
+          kind: 'document',
+          documentId: button.dataset.documentId || '',
+        });
+      } else if (key === 'preview-linked') {
+        const file = project.sharedFiles?.[Number(button.dataset.fileIndex)];
+        if (file) {
+          void previewMaterial({kind: 'linked', path: file});
+        }
       } else if (key === 'remove-document') {
         void mutate(() =>
           options.data.removeProjectDocument(

@@ -350,10 +350,16 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     ) => ipcRenderer.invoke('projects:add-text', {projectId, input}),
     removeDocument: (projectId: string, documentId: string) =>
       ipcRenderer.invoke('projects:remove-document', {projectId, documentId}),
-    readDocument: (projectId: string, documentId: string) =>
-      ipcRenderer.invoke('projects:read-document', {projectId, documentId}),
-    openDocument: (projectId: string, documentId: string) =>
-      ipcRenderer.invoke('projects:open-document', {projectId, documentId}),
+    readMaterial: (
+      projectId: string,
+      reference: import('./project_context').ProjectMaterialRef,
+    ) =>
+      ipcRenderer.invoke('projects:read-material', {projectId, reference}),
+    openMaterial: (
+      projectId: string,
+      reference: import('./project_context').ProjectMaterialRef,
+    ) =>
+      ipcRenderer.invoke('projects:open-material', {projectId, reference}),
     pickFiles: (projectRoot: unknown, kind: unknown = 'files') =>
       ipcRenderer.invoke('projects:pick-files', {
         projectRoot: String(projectRoot || '')

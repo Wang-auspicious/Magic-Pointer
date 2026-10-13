@@ -14,6 +14,7 @@
   };
   type TableBlock = {kind: 'table'; rows: string[][]};
   type ProjectPreview =
+    | {kind: 'image' | 'pdf'; url: string; name: string; truncated: false}
     | {kind: 'text'; text: string; truncated: boolean}
     | {
         kind: 'document';
@@ -66,11 +67,11 @@
     'browser-tab': 'Browser tab',
     'page-thumbnail': 'Page thumbnail',
     'browser-empty-dev-servers':
-      'Claude can start your dev servers, browse the web in a built-in ' +
+      'Magic Pointer can start your dev servers, browse the web in a built-in ' +
       'browser, and verify changes with screenshots, snapshots, and DOM ' +
       'inspection.',
     'browser-empty-preview':
-      'Claude can start dev servers, open a live preview, and verify code ' +
+      'Magic Pointer can start dev servers, open a live preview, and verify code ' +
       'changes with screenshots, snapshots, and DOM inspection.',
     'start-dev-server': 'start a dev server',
     'sheet-truncated': 'Showing the first 500 rows and 80 columns.',
@@ -110,8 +111,7 @@
       const select = element('button', 'mpw-workspace-tab-select');
       select.type = 'button';
       select.textContent = tab.title;
-      const hint =
-        tab.kind === 'browser' && tab.url ? tab.url : tab.title;
+      const hint = tab.kind === 'browser' && tab.url ? tab.url : tab.title;
       select.title = hint;
       select.setAttribute('aria-selected', String(tab.id === state.activeId));
       select.addEventListener('click', () => onSelect(tab.id));
@@ -161,18 +161,12 @@
   }
 
   function globeIcon(size: number): SVGSVGElement {
-    const svg = document.createElementNS(
-      'http://www.w3.org/2000/svg',
-      'svg',
-    );
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', String(size));
     svg.setAttribute('height', String(size));
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('class', 'mpw-browser-globe');
-    const use = document.createElementNS(
-      'http://www.w3.org/2000/svg',
-      'use',
-    );
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
     use.setAttribute('href', '#cds-globe-20');
     svg.append(use);
     return svg;
@@ -309,6 +303,59 @@
     buttons[0]?.click();
   }
 
+  function renderMedia(
+    host: HTMLElement,
+    preview: Extract<ProjectPreview, {kind: 'image' | 'pdf'}>,
+  ): void {
+    if (preview.kind === 'pdf') {
+      const frame = element('iframe', 'mp-preview-pdf');
+      frame.title = preview.name;
+      frame.src = preview.url;
+      host.replaceChildren(frame);
+      return;
+    }
+    const toolbar = element('div', 'mp-preview-image-toolbar');
+    const viewport = element('div', 'mp-preview-image-viewport');
+    const image = element('img', 'mp-preview-image');
+    image.alt = preview.name;
+    const status = element('span');
+    status.setAttribute('role', 'status');
+    status.textContent = studioT('common.loading');
+    const fit = element('button');
+    fit.type = 'button';
+    fit.textContent = studioT('preview.fit');
+    const actual = element('button');
+    actual.type = 'button';
+    actual.textContent = '100%';
+    let fitImage = true;
+    const update = () => {
+      viewport.classList.toggle('is-actual-size', !fitImage);
+      fit.setAttribute('aria-pressed', String(fitImage));
+      actual.setAttribute('aria-pressed', String(!fitImage));
+    };
+    fit.addEventListener('click', () => {
+      fitImage = true;
+      update();
+    });
+    actual.addEventListener('click', () => {
+      fitImage = false;
+      update();
+    });
+    image.onload = () => {
+      status.textContent = `${image.naturalWidth} × ${image.naturalHeight}`;
+    };
+    image.onerror = () => {
+      status.textContent = studioT('preview.image_failed');
+      fit.disabled = true;
+      actual.disabled = true;
+    };
+    toolbar.append(fit, actual, status);
+    viewport.append(image);
+    host.replaceChildren(toolbar, viewport);
+    update();
+    image.src = preview.url;
+  }
+
   function renderProjectPreview(
     host: HTMLElement,
     preview: ProjectPreview,
@@ -321,8 +368,10 @@
       host.replaceChildren(code);
     } else if (preview.kind === 'document') {
       renderDocument(host, preview);
-    } else {
+    } else if (preview.kind === 'spreadsheet') {
       renderSpreadsheet(host, preview);
+    } else {
+      renderMedia(host, preview);
     }
     if (preview.truncated && preview.kind !== 'spreadsheet') {
       const note = element('p', 'mp-preview-limit');

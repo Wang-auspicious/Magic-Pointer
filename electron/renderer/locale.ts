@@ -40,6 +40,8 @@ interface StudioCountEntry {
 }
 
 const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
+  'preview.fit': {en: 'Fit', zh: '适应窗口'},
+  'preview.image_failed': {en: 'Could not display this image. Open it in its application.', zh: '无法显示此图片，请使用关联应用打开。'},
   'dashboard.new': {en: 'New dashboard', zh: '新建数据看板'},
   'dashboard.loading': {en: 'Loading dashboard data…', zh: '正在读取看板数据…'},
   'dashboard.empty': {en: 'No dashboards yet', zh: '还没有数据看板'},
