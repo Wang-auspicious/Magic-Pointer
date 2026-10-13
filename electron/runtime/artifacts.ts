@@ -951,15 +951,15 @@ export async function handleArtifact(
             array<string>(record(event.data.result).succeededOperationIds),
           ),
       );
+      const remaining = array<InverseRecord>(
+        record(applied?.data.result).inverseRecords,
+      ).filter(entry => !undone.has(entry.operationId));
       return {
         ...draft,
         latestApply: applied?.data ?? null,
-        undoAvailable: array<InverseRecord>(
-          record(applied?.data.result).inverseRecords,
-        ).some(
-          entry =>
-            entry.strategy !== 'retain_created_file' &&
-            !undone.has(entry.operationId),
+        applied: remaining.length > 0,
+        undoAvailable: remaining.some(
+          entry => entry.strategy !== 'retain_created_file',
         ),
       };
     };

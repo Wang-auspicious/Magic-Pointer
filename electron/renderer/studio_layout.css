@@ -2156,6 +2156,159 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   border-color: var(--mp-focus);
 }
 
+.is-document-patch #artifact-editor-content {
+  min-height: 72px;
+  height: 84px;
+}
+
+.mp-artifact-change > header {
+  flex-direction: column;
+}
+
+.mp-artifact-change > header > span {
+  color: var(--mp-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mp-patch-table-scroll {
+  overflow-x: auto;
+}
+
+.mp-patch-cell-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mp-patch-cell-table th,
+.mp-patch-cell-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--mp-rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mp-patch-cell-table td:nth-child(2) {
+  max-width: 130px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--mp-text-secondary);
+}
+
+.mp-patch-cell-input {
+  display: grid;
+  min-width: 120px;
+  gap: 4px;
+}
+
+.mp-patch-cell-input select {
+  font-size: 11px;
+}
+
+.mp-patch-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.mp-patch-fields fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mp-patch-fields legend,
+.mp-patch-before h4,
+.mp-patch-after h4 {
+  margin: 0 0 6px;
+  padding: 0;
+  color: var(--mp-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.mp-patch-before,
+.mp-patch-after {
+  margin-top: 10px;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mp-patch-values {
+  margin: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.mp-patch-values > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mp-patch-values dt {
+  color: var(--mp-text-secondary);
+}
+
+.mp-patch-values dd {
+  margin: 0;
+}
+
+.mp-artifact-change input:not([type="checkbox"]),
+.mp-artifact-change textarea,
+.mp-artifact-change select {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 5px;
+  background: var(--mp-panel);
+  color: var(--mp-text);
+  font: inherit;
+}
+
+.mp-artifact-change textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.mp-artifact-change [aria-invalid="true"] {
+  border-color: var(--mp-danger, #b53b3b);
+}
+
+.mp-patch-color {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mp-patch-color input[type="color"] {
+  width: 44px;
+  height: 32px;
+  padding: 3px;
+}
+
+.mp-patch-color label {
+  display: flex;
+  align-items: center;
+}
+
+.mp-patch-rich-text {
+  min-height: 44px;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--mp-panel);
+}
+
+.mp-patch-rich-text[contenteditable] {
+  min-height: 80px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 5px;
+}
+
 .mp-artifact-patch-preview {
   min-height: 0;
   flex: 1 1 auto;

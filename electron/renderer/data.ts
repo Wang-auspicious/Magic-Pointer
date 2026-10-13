@@ -485,6 +485,8 @@ declare global {
   const LiveCards: MagicPointerLiveCardsApi;
 
   interface MagicPointerArtifactEditorState {
+    applied: boolean;
+    patchError: string;
     undoAvailable: boolean;
     selectionGeneration: number;
     conversationId: string;
@@ -513,6 +515,7 @@ declare global {
     ): Promise<Record<string, any>>;
     updateContent(content: unknown): void;
     updatePatchPayload(payload: Record<string, unknown>): void;
+    setPatchError(error: string): void;
     save(): Promise<Record<string, any>>;
     accept(): Promise<Record<string, any>>;
     apply(): Promise<Record<string, any>>;

@@ -30,6 +30,7 @@
   }
 
   interface EditorState {
+    applied: boolean;
     undoAvailable: boolean;
     conversationId: string;
     artifactId: string;
@@ -40,6 +41,7 @@
     patchPayload: Record<string, unknown> | null;
     acceptedRevision: number | null;
     dirty: boolean;
+    patchError: string;
     status:
       | 'idle'
       | 'loading'
@@ -55,6 +57,7 @@
   }
 
   const emptyState = (): EditorState => ({
+    applied: false,
     undoAvailable: false,
     conversationId: '',
     artifactId: '',
@@ -65,6 +68,7 @@
     patchPayload: null,
     acceptedRevision: null,
     dirty: false,
+    patchError: '',
     status: 'idle',
     error: '',
     applyResult: null,
@@ -267,16 +271,19 @@
     ) {
       const priorContent = current.content;
       const priorPatch = current.patchPayload;
+      const priorPatchError = current.patchError;
       savedPatchPayload = cloneValue(artifact.patchPayload);
       current = {
         ...current,
         artifactId: artifact.artifactId,
+        applied: artifact.applied === true,
         undoAvailable: artifact.undoAvailable === true,
         revision: artifact.revision,
         content: options.keepContent ? priorContent : artifact.content,
         savedContent: artifact.content,
         kind: artifact.kind,
         patchPayload: options.keepPatch ? priorPatch : artifact.patchPayload,
+        patchError: options.keepPatch ? priorPatchError : '',
         acceptedRevision: artifact.acceptedRevision,
         dirty: false,
         status: 'ready',
@@ -288,7 +295,9 @@
         ],
       };
       current.dirty =
-        current.content !== current.savedContent || hasUnsavedPatch();
+        current.content !== current.savedContent ||
+        hasUnsavedPatch() ||
+        Boolean(current.patchError);
       if (current.dirty) {
         current.acceptedRevision = null;
       }
@@ -344,7 +353,10 @@
       current = {
         ...current,
         content: value,
-        dirty: value !== current.savedContent || hasUnsavedPatch(),
+        dirty:
+          value !== current.savedContent ||
+          hasUnsavedPatch() ||
+          Boolean(current.patchError),
         acceptedRevision:
           value === current.savedContent ? current.acceptedRevision : null,
         status: 'ready',
@@ -364,6 +376,7 @@
       current = {
         ...current,
         patchPayload,
+        patchError: '',
         dirty:
           current.content !== current.savedContent ||
           JSON.stringify(patchPayload) !== JSON.stringify(savedPatchPayload),
@@ -374,7 +387,25 @@
       };
     }
 
+    function setPatchError(error: string): void {
+      current = {
+        ...current,
+        patchError: error,
+        dirty:
+          Boolean(error) ||
+          current.content !== current.savedContent ||
+          hasUnsavedPatch(),
+        acceptedRevision: null,
+        status: 'ready',
+        error: '',
+        applyResult: null,
+      };
+    }
+
     async function save(): Promise<ArtifactResponse> {
+      if (current.patchError) {
+        return fail(current.patchError);
+      }
       if (!current.artifactId || current.revision < 1) {
         return fail('artifact_not_selected');
       }
@@ -414,6 +445,9 @@
     }
 
     async function accept(): Promise<ArtifactResponse> {
+      if (current.patchError) {
+        return fail(current.patchError);
+      }
       if (!current.artifactId || current.revision < 1) {
         return fail('artifact_not_selected');
       }
@@ -445,12 +479,50 @@
       }
     }
 
+    function settleApplication(
+      response: ArtifactResponse,
+      undone = false,
+    ): ArtifactResponse {
+      if (!response.result) {
+        return fail(
+          response.error ||
+            (undone ? 'artifact_undo_failed' : 'artifact_apply_failed'),
+        );
+      }
+      const succeeded =
+        response.ok === true &&
+        response.result.status === 'succeeded' &&
+        response.result.verified === true;
+      current = {
+        ...current,
+        status: succeeded ? 'ready' : 'error',
+        error: succeeded
+          ? ''
+          : String(
+              response.error ||
+                response.result.error ||
+                response.result.status ||
+                'artifact_apply_failed',
+            ),
+        applyResult: {...response.result, ...(undone ? {undone: true} : {})},
+        undoAvailable: response.artifact?.undoAvailable === true,
+        applied: response.artifact?.applied === true,
+      };
+      return response;
+    }
+
     async function apply(): Promise<ArtifactResponse> {
+      if (current.patchError) {
+        return fail(current.patchError);
+      }
       if (!current.artifactId || current.revision < 1) {
         return fail('artifact_not_selected');
       }
       if (current.dirty) {
         return fail('save_required_before_apply');
+      }
+      if (current.applied) {
+        return fail('artifact_already_applied');
       }
       if (current.acceptedRevision !== current.revision) {
         return fail('accept_required_before_apply');
@@ -466,24 +538,7 @@
         if (generation !== selectionGeneration) {
           return {ok: false, error: 'selection_changed'};
         }
-        if (response?.ok !== true || !response.result) {
-          return fail(response?.error || 'artifact_apply_failed');
-        }
-        current = {
-          ...current,
-          status: response.result.status === 'succeeded' ? 'ready' : 'error',
-          error:
-            response.result.status === 'succeeded'
-              ? ''
-              : String(
-                  response.result.error ||
-                    response.result.status ||
-                    'artifact_apply_failed',
-                ),
-          applyResult: response.result,
-          undoAvailable: response.result.undoAvailable === true,
-        };
-        return response;
+        return settleApplication(response);
       } catch (error) {
         if (generation !== selectionGeneration) {
           return {ok: false, error: 'selection_changed'};
@@ -493,6 +548,9 @@
     }
 
     async function undo(confirmed: boolean): Promise<ArtifactResponse> {
+      if (current.patchError || current.dirty) {
+        return fail(current.patchError || 'save_required_before_undo');
+      }
       if (!confirmed || !current.undoAvailable || !client.undo) {
         return fail('artifact_undo_unavailable');
       }
@@ -508,22 +566,7 @@
         if (generation !== selectionGeneration) {
           return {ok: false, error: 'selection_changed'};
         }
-        if (
-          response.ok !== true ||
-          response.result?.status !== 'succeeded' ||
-          response.result?.verified !== true
-        ) {
-          return fail(
-            response.error || response.result?.error || 'artifact_undo_failed',
-          );
-        }
-        current = {
-          ...current,
-          status: 'ready',
-          undoAvailable: false,
-          applyResult: {...response.result, undone: true},
-        };
-        return response;
+        return settleApplication(response, true);
       } catch (error) {
         return generation !== selectionGeneration
           ? {ok: false, error: 'selection_changed'}
@@ -535,6 +578,7 @@
       select,
       updateContent,
       updatePatchPayload,
+      setPatchError,
       save,
       accept,
       apply,
