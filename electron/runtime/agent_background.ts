@@ -20,6 +20,7 @@ import {
   modelPlugins,
 } from './agent_plugins';
 import {registerCodingTools} from './agent_files';
+import {registerDurableMemoryTools} from './agent_memory';
 import {RuntimeActivitySink} from './agent_activity';
 import {EventSession} from './session';
 import {
@@ -804,6 +805,14 @@ export async function runBackgroundAgent(
             name: 'tool-result-reader',
             apply: (ctx: import('./agent_plugins').PluginContext) =>
               registerToolResultReader(ctx.get('tools'), session),
+          },
+          {
+            name: 'saved-memory',
+            apply: (ctx: import('./agent_plugins').PluginContext) =>
+              registerDurableMemoryTools(ctx.get('tools'), {
+                userDataDir,
+                workspace: payload.workspace,
+              }),
           },
           {
             name: 'web-tools',

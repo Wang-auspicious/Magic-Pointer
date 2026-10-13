@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {EventSession} from '../electron/runtime/session';
@@ -59,6 +59,84 @@ test('ordinary task metadata is not described as a user screen selection', async
     evidence: 'Current task sources and references: []',
   });
   assert.doesNotMatch(prompt, /用户圈选了对象/);
+});
+
+test('long saved memory keeps every source discoverable and can retrieve omitted content', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'mp-long-memory-'));
+  const userDataDir = path.join(directory, 'user');
+  const workspace = path.join(directory, 'project');
+  await mkdir(path.join(userDataDir, 'learning'), {recursive: true});
+  await mkdir(workspace);
+  const long =
+    '# Personal preferences\n' +
+    'Older preference.\n'.repeat(800) +
+    'tail-marker: use ISO dates.\n';
+  await writeFile(path.join(userDataDir, 'MAGIC_POINTER.md'), long);
+  await writeFile(
+    path.join(userDataDir, 'learning', 'MEMORY.md'),
+    '# Learned\nKeep original citations.\n',
+  );
+  await writeFile(
+    path.join(workspace, 'MAGIC_POINTER.md'),
+    '# Project\nUse the project glossary.\n',
+  );
+  const prompt = await buildSystemPrompt({userDataDir, workspace});
+  assert.match(prompt, /Memory\.read/);
+  assert.match(prompt, /Keep original citations/);
+  assert.match(prompt, /Use the project glossary/);
+  assert.ok(
+    prompt.length < 8000,
+    'long preferences must not make the system prompt unbounded',
+  );
+  const {registerDurableMemoryTools} =
+    await import('../electron/runtime/agent_memory');
+  const registry = new ToolRegistry();
+  registerDurableMemoryTools(registry, {userDataDir, workspace});
+  const search = await registry.execute({
+    id: 'find-memory',
+    name: 'Memory.search',
+    arguments: {query: 'tail-marker'},
+  });
+  assert.equal(search.is_error, false);
+  const match = (
+    search.value as {matches: Array<{name: string; offset: number}>}
+  ).matches[0];
+  assert.equal(match.name, 'user');
+  assert.ok(match.offset > 4000);
+  const result = await registry.execute({
+    id: 'read-memory',
+    name: 'Memory.read',
+    arguments: {name: match.name, offset: match.offset, limit: 200},
+  });
+  assert.equal(result.is_error, false);
+  assert.match(
+    (result.value as {content: string}).content,
+    /tail-marker: use ISO dates/,
+  );
+  const listed = await registry.execute({
+    id: 'list-memory',
+    name: 'Memory.read',
+    arguments: {},
+  });
+  assert.deepEqual(
+    (listed.value as {notes: Array<{name: string}>}).notes.map(
+      note => note.name,
+    ),
+    ['user', 'learned', 'workspace'],
+  );
+  await writeFile(
+    path.join(workspace, 'MAGIC_POINTER.md'),
+    'Updated project preference.',
+  );
+  const updated = await registry.execute({
+    id: 'latest-memory',
+    name: 'Memory.read',
+    arguments: {name: 'workspace'},
+  });
+  assert.equal(
+    (updated.value as {content: string}).content,
+    'Updated project preference.',
+  );
 });
 
 test('structured source and desktop target add only their direct readers without text routing', () => {
@@ -238,10 +316,13 @@ test('a document edit pauses at one reviewable draft and resumes after its verif
     registry: new ToolRegistry(),
     system: 'Test',
     model: async request => {
-      const proposal = [...request.messages].reverse().find(
-        message =>
-          message.role === 'tool' && message.name === 'Document.propose_patch',
-      );
+      const proposal = [...request.messages]
+        .reverse()
+        .find(
+          message =>
+            message.role === 'tool' &&
+            message.name === 'Document.propose_patch',
+        );
       const reviewed = JSON.parse(proposal!.content!);
       assert.equal(reviewed.applied, true);
       assert.deepEqual(

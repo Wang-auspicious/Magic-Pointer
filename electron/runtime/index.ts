@@ -18,6 +18,7 @@ import {
   presetForPermissionMode,
 } from '../permission_mode';
 import {registerCodingTools} from './agent_files';
+import {registerDurableMemoryTools} from './agent_memory';
 import {validateAdditionalFolders} from '../workspace_folders';
 import {savedWorkspaceSettings} from './workspace_settings';
 import {registerSubagentTools} from './agent_background';
@@ -309,7 +310,10 @@ export async function runRuntime(
     },
     {
       name: 'memory-tools',
-      apply: ctx => registerMemoryTools(ctx.get('tools'), userDataDir, session),
+      apply: ctx => {
+        registerMemoryTools(ctx.get('tools'), userDataDir, session);
+        registerDurableMemoryTools(ctx.get('tools'), {userDataDir, workspace});
+      },
     },
     {
       name: 'context-tools',
