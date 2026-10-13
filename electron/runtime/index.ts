@@ -58,6 +58,7 @@ import {
 import {
   registerPerceptionTools,
   registerLookTool,
+  lookStaleness,
   createSnapshotPerceptionBackend,
   closeOcr,
   agentModelVision,
@@ -242,6 +243,13 @@ export async function runRuntime(
   const selectionSnapshot =
     payload.selectionSnapshot || payload.object?.selectionSnapshot || {};
   const perception = createSnapshotPerceptionBackend(selectionSnapshot);
+  const lookFreshness = (): {stale: boolean; detail?: string} => {
+    const frame = selectionSnapshot.frame_lease || selectionSnapshot.frameLease;
+    return lookStaleness(
+      session.events,
+      String(frame?.capturedAtUtc || selectionSnapshot.captured_at || ''),
+    );
+  };
   const vision: VisionBackend = agentModelVision((images, prompt, signal) =>
     requestVision(config, {images, prompt, signal, timeoutMs: 30000}),
   );
@@ -403,6 +411,7 @@ export async function runRuntime(
         registerLookTool(ctx.get('tools'), {
           ...perceptionOptions,
           vision: ctx.get<VisionBackend>('vision'),
+          freshness: lookFreshness,
         }),
     },
     {

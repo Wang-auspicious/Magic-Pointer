@@ -1,5 +1,6 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {readFile, mkdir, open, stat, truncate, unlink} from 'node:fs/promises';
+import {mkdirSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import type {AgentMessage} from './agent';
@@ -275,6 +276,73 @@ function messages(events: Event[]): Message[] {
     }
   }
   return surface;
+}
+
+export interface PruneStats {
+  demoted: number;
+  deduped: number;
+  spilled: number;
+}
+
+export function pruneToolResults(
+  input: AgentMessage[],
+  spillDir: string,
+): {messages: AgentMessage[]; stats: PruneStats} {
+  const stats: PruneStats = {demoted: 0, deduped: 0, spilled: 0};
+  const KEEP_FULL_TOOL_RESULTS = 10;
+  const SPILL_CHARS = 65536;
+  const seen = new Map<string, string>();
+  let fullKept = 0;
+  const out: AgentMessage[] = [];
+  const spill = (name: string, content: string): string => {
+    const hash = createHash('md5').update(content).digest('hex');
+    const file = `${hash}.txt`;
+    try {
+      mkdirSync(spillDir, {recursive: true});
+      writeFileSync(path.join(spillDir, file), content);
+    } catch {
+      return `[${name} output too large (${content.length} chars, spill failed); truncated]\n${content.slice(0, SPILL_CHARS)}`;
+    }
+    stats.spilled++;
+    return `[${name} output spilled to ${file} (${content.length} chars)]`;
+  };
+  for (let index = input.length - 1; index >= 0; index--) {
+    const message = input[index];
+    if (message.role !== 'tool' || typeof message.content !== 'string') {
+      out.unshift(message);
+      continue;
+    }
+    const name = String(message.name || 'tool');
+    const hash = createHash('md5').update(message.content).digest('hex');
+    if (seen.has(hash)) {
+      stats.deduped++;
+      out.unshift({
+        ...message,
+        content: `[duplicate ${name} output ${hash.slice(0, 8)} omitted]`,
+      });
+      continue;
+    }
+    seen.set(hash, message.tool_call_id || '');
+    if (message.content.length > SPILL_CHARS && fullKept < KEEP_FULL_TOOL_RESULTS) {
+      fullKept++;
+      out.unshift({...message, content: spill(name, message.content)});
+      continue;
+    }
+    if (fullKept < KEEP_FULL_TOOL_RESULTS) {
+      fullKept++;
+      out.unshift(message);
+      continue;
+    }
+    stats.demoted++;
+    const head = message.content.slice(0, 200).replace(/\s+/g, ' ');
+    out.unshift({
+      ...message,
+      content: message.is_error
+        ? `[${name} failed: ${head}]`
+        : `[${name} output demoted: ${head}]`,
+    });
+  }
+  return {messages: out, stats};
 }
 
 export function normalizedInput(value: Data): Data {
@@ -1137,6 +1205,15 @@ export class EventSession {
   deriveMessages(): AgentMessage[] {
     return structuredClone(messages(this.events)) as AgentMessage[];
   }
+  /**
+   * Shrink tool results for the model projection without touching history.
+   *
+   * Messages are never dropped or reordered (tool_call_id matching stays
+   * intact); only tool content shrinks: repeated results collapse to a
+   * content-hash note, results older than the newest KEEP_FULL_TOOL_RESULTS
+   * collapse to one line, and results over SPILL_CHARS go to a spill file.
+   * Error results keep their flag; only their content shrinks when old.
+   */
   pendingInput(): Data | null {
     return pendingInput(this.events, messages(this.events));
   }
