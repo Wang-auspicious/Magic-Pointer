@@ -753,6 +753,8 @@ declare global {
     setTheme?(theme: unknown): void;
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
+    connectModel?(input: import('../model_connection').ModelConnectionInput): Promise<import('../model_connection').ModelConnectionResponse>;
+    testModelConnection?(input: import('../model_connection').ModelConnectionInput): Promise<import('../model_connection').ModelConnectionResponse>;
     modelsCatalog?(options?: {refresh?: boolean}): Promise<{
       ok?: boolean;
       catalog?: MagicPointerModelCatalog;
