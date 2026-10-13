@@ -22,6 +22,7 @@ import {
   canonicalJson,
   estimateTokens,
   normalizedInput,
+  pruneToolResults,
   resumeSourceAvailability,
 } from './session';
 import {
@@ -898,7 +899,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     const modelMessages = () =>
       withWorkspaceSettings(
         withProjectSettings(
-          projectContextMessages(session.deriveMessages()),
+          pruneToolResults(
+            projectContextMessages(session.deriveMessages()),
+            path.join(options.userDataDir, 'agent-sessions', 'spills'),
+          ).messages,
           projectSettings,
         ),
         workspaceSettings,
@@ -1148,6 +1152,27 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       });
       if (reply.stop_reason === 'max_output_tokens') {
         for (const call of calls) {
+          let effect: Effect = 'destructive';
+          try {
+            effect = registry.effect(call.name, asObject(call.arguments));
+          } catch {}
+          const operationId = randomUUID();
+          await session.append('operation/prepared', {
+            operationId,
+            turn: session.openTurn,
+            step: turns,
+            callId: call.id,
+            name: call.name,
+            arguments: asObject(call.arguments),
+            effect,
+            dispatched: false,
+          });
+          await session.append('operation/settled', {
+            operationId,
+            callId: call.id,
+            outcome: 'not_started',
+            failureType: 'model_output_truncated',
+          });
           await session.appendMessage({
             role: 'tool',
             tool_call_id: call.id,

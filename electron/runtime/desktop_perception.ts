@@ -1876,6 +1876,14 @@ export interface PerceptionToolOptions {
   sources?: (id: string) => DesktopRecord | undefined;
   uploadScreenshots?: boolean;
   windowReadScope?: (hwnd: number) => boolean;
+  /**
+   * Mid-loop staleness probe. When it reports stale, a bare look (no
+   * anchor/box/reference) is denied and redirected to the live tools —
+   * the frozen frame predates a newer live observation, so reading it as
+   * the current screen would be dishonest. Anchored reads of the original
+   * frozen detail stay allowed and stay labelled historical.
+   */
+  freshness?: () => {stale: boolean; detail?: string};
 }
 function frozenEvidence(snapshot: DesktopRecord, value: string): Evidence {
   const frame: FrozenFrame | undefined =
@@ -2156,6 +2164,45 @@ export function registerPerceptionTools(
   });
 }
 
+export interface LookStalenessEvent {
+  type: string;
+  data: {outcome?: unknown; message?: {name?: unknown}};
+  time?: number;
+}
+
+const LIVE_OBSERVE_TOOLS = new Set([
+  'get_app_state',
+  'observe_ui',
+  'observe_source',
+]);
+
+/**
+ * True when a successful live observation is newer than the frozen frame.
+ * Pure over the event list so the loop can answer it per look call.
+ */
+export function lookStaleness(
+  events: LookStalenessEvent[],
+  capturedAtUtc: string,
+): {stale: boolean; detail?: string} {
+  const captured = Date.parse(String(capturedAtUtc || ''));
+  if (!Number.isFinite(captured)) {
+    return {stale: false};
+  }
+  for (const event of events) {
+    if (event.type !== 'operation/settled' || event.data.outcome !== 'succeeded') {
+      continue;
+    }
+    const name = String(event.data.message?.name || '');
+    if (!LIVE_OBSERVE_TOOLS.has(name)) {
+      continue;
+    }
+    if (typeof event.time === 'number' && event.time > captured) {
+      return {stale: true, detail: `${name} observed newer state`};
+    }
+  }
+  return {stale: false};
+}
+
 export function registerLookTool(
   registry: ToolRegistry,
   options: PerceptionToolOptions = {},
@@ -2168,7 +2215,7 @@ export function registerLookTool(
   registry.register({
     name: 'look',
     description:
-      'Inspect the historical frozen image or a referenced region. The same historical full frame provides context; this is not a current screen observation.',
+      'Inspect the historical frozen image or a referenced region. The same historical full frame provides context; this is not a current screen observation. A bare look with no anchor is denied once a newer live observation exists; use get_app_state for the current screen.',
     input_schema: {
       type: 'object',
       properties: {
@@ -2206,6 +2253,14 @@ export function registerLookTool(
       }
       let box = args.box_ltrb as Rect | undefined;
       const anchor = String(args.anchor || args.reference || '');
+      if (!box && !anchor) {
+        const fresh = options.freshness?.();
+        if (fresh?.stale) {
+          return evidence(null, 'denied', 'vision', 0, {
+            note: `frozen_frame_stale${fresh.detail ? `:${fresh.detail}` : ''}; use get_app_state or observe_ui for the current screen`,
+          });
+        }
+      }
       if (!box && anchor.startsWith('bbox:')) {
         box = anchor.slice(5).split(',').map(Number) as Rect;
       }
