@@ -40,6 +40,84 @@ interface StudioCountEntry {
 }
 
 const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
+  'dashboard.new': {en: 'New dashboard', zh: '新建数据看板'},
+  'dashboard.loading': {en: 'Loading dashboard data…', zh: '正在读取看板数据…'},
+  'dashboard.empty': {en: 'No dashboards yet', zh: '还没有数据看板'},
+  'dashboard.empty_hint': {
+    en: 'Choose CSV or XLSX files. The Agent will inspect the columns and build a dashboard from the actual data.',
+    zh: '选择 CSV 或 XLSX 文件，Agent 会读取列信息，使用实际数据生成看板。',
+  },
+  'dashboard.open_failed': {
+    en: 'Dashboard failed to open.',
+    zh: '无法打开数据看板。',
+  },
+  'dashboard.retry': {en: 'Retry', zh: '重试'},
+  'dashboard.refresh': {en: 'Refresh', zh: '刷新'},
+  'dashboard.edit': {en: 'Edit with Agent', zh: '让 Agent 修改'},
+  'dashboard.export_html': {en: 'Export HTML', zh: '导出 HTML'},
+  'dashboard.updated': {en: 'Updated {time}', zh: '更新于 {time}'},
+  'dashboard.query': {en: 'Query', zh: '计算方式'},
+  'dashboard.prior': {en: 'Prior period', zh: '上一周期'},
+  'dashboard.delta': {
+    en: '{percent}% vs prior period',
+    zh: '较上一周期 {percent}%',
+  },
+  'dashboard.no_values': {en: 'No measured values.', zh: '没有可计算的数值。'},
+  'dashboard.no_query_values': {
+    en: 'No measured values for this query.',
+    zh: '此查询没有可计算的数值。',
+  },
+  'dashboard.no_rows': {en: 'No matching rows.', zh: '没有匹配的数据行。'},
+  'dashboard.view_rows': {en: 'View source rows', zh: '查看源数据行'},
+  'dashboard.choose_file': {
+    en: 'Choose a CSV or XLSX file.',
+    zh: '请选择 CSV 或 XLSX 文件。',
+  },
+  'dashboard.file_types': {
+    en: 'Dashboards currently support CSV and XLSX files.',
+    zh: '数据看板目前支持 CSV 和 XLSX 文件。',
+  },
+  'dashboard.create_prompt': {
+    en: 'Build a useful dashboard from the attached tables and save it in my Dashboards library. Use the actual data for suitable summary metrics, trends, and grouped comparisons. Preserve the source files.',
+    zh: '根据附件中的表格生成实用的数据看板，保存到我的数据看板库。使用实际数据选择合适的汇总指标、趋势和分组对比，保持源文件不变。',
+  },
+  'dashboard.edit_prompt': {
+    en: 'Update the saved dashboard “{title}” (ID: {id}). Preserve its other charts and source files.\n\nChanges: ',
+    zh: '修改已保存的数据看板“{title}”（ID：{id}），保留其他图表和源文件。\n\n修改要求：',
+  },
+  'dashboard.export_failed': {
+    en: 'Dashboard export failed.',
+    zh: '数据看板导出失败。',
+  },
+  'dashboard.reading_rows': {
+    en: 'Reading source rows…',
+    zh: '正在读取源数据行…',
+  },
+  'dashboard.rows_unavailable': {
+    en: 'Source rows are unavailable.',
+    zh: '无法读取源数据行。',
+  },
+  'dashboard.source_rows': {en: 'Source rows', zh: '源数据行'},
+  'dashboard.inline_data': {en: 'Inline data', zh: '内嵌数据'},
+  'dashboard.snapshot': {en: 'Snapshot', zh: '数据快照'},
+  'dashboard.value': {en: 'Value', zh: '数值'},
+  'dashboard.no_value': {en: 'No measured value', zh: '没有可计算的数值'},
+  'dashboard.excluded': {
+    en: '{count} blank or nonnumeric values were excluded.',
+    zh: '已排除 {count} 个空值或非数值。',
+  },
+  'dashboard.source_row': {en: 'Source row', zh: '原始行号'},
+  'dashboard.row_count': {
+    en: '{range} of {total} contributing rows',
+    zh: '参与计算的行：{range}，共 {total} 行',
+  },
+  'dashboard.previous': {en: 'Previous', zh: '上一页'},
+  'dashboard.next': {en: 'Next', zh: '下一页'},
+  'dashboard.export_csv': {
+    en: 'Export all source rows as CSV',
+    zh: '导出全部源数据行 CSV',
+  },
+  'dashboard.saved': {en: 'Saved to {path}', zh: '已保存到 {path}'},
   'routine.new': {en: 'New routine', zh: '新建例行任务'},
   'routine.edit': {en: 'Edit routine', zh: '编辑例行任务'},
   'routine.task': {en: 'Instructions', zh: '任务说明'},

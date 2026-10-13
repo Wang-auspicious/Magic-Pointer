@@ -1099,6 +1099,8 @@ declare global {
       ): Promise<Record<string, any>>;
     };
     dashboard?: {
+      trace(payload: {snapshotId: string; traceId: string; offset?: number}): Promise<Record<string, any>>;
+      exportCsv(payload: {snapshotId: string; traceId: string}): Promise<Record<string, any>>;
       list(): Promise<Array<Record<string, any>>>;
       open(dashboardId: string): Promise<Record<string, any>>;
       exportHtml(payload: {
@@ -1225,6 +1227,8 @@ declare global {
     }): Promise<MagicPointerProjectUpdate>;
     dashboardList(): Promise<Array<Record<string, any>>>;
     dashboardOpen(dashboardId: string): Promise<Record<string, any>>;
+    dashboardTrace(payload: {snapshotId: string; traceId: string; offset?: number}): Promise<Record<string, any>>;
+    dashboardExportCsv(payload: {snapshotId: string; traceId: string}): Promise<Record<string, any>>;
     dashboardExportHtml(payload: {
       title: string;
       html: string;
@@ -1813,6 +1817,14 @@ const Data: MagicPointerDataApi = {
       return {ok: false, error: 'Dashboards are unavailable.'};
     }
     return dashboard.open(dashboardId);
+  },
+  async dashboardTrace(payload) {
+    const dashboard = bridge()?.dashboard;
+    return dashboard?.trace ? dashboard.trace(payload) : {ok: false, error: 'Dashboard sources are unavailable.'};
+  },
+  async dashboardExportCsv(payload) {
+    const dashboard = bridge()?.dashboard;
+    return dashboard?.exportCsv ? dashboard.exportCsv(payload) : {ok: false, error: 'Dashboard export is unavailable.'};
   },
 
   async dashboardExportHtml(payload: {
