@@ -28,7 +28,16 @@ async function main() {
     const context: any = { path, Buffer, console, Date, Set, Map, FABRIC_DATA_DIR: baseDir,
       crypto: { randomUUID: () => 'response-stream' }, inputResponseRuns: new Set(),
       normalizeConversationEffort: () => 'medium', ...control,
+      ...require('../electron/permission_mode'),
+      ...require('../electron/conversation_model'),
+      ...require('../electron/project_context'),
+      ...require('../electron/workspace_folders'),
+      ROOT: path.resolve('.'), resolveModelConfig: (config: unknown) => config,
+      combineModelUsage: require('../electron/runtime/model').combineModelUsage,
+      contextTrackerRuntime: null,
       resolveConversationWorkspace: () => '', studioConversationSessionId: ({ existing }: any) => existing,
+      canonicalProjectRoot: async () => '', knownProjectRoot: (root: string) => root,
+      samePath: (left: string, right: string) => left === right,
       activeModelRuntimeConfig: () => ({ model: 'fake' }),
       TaskSources: { bindConversationTaskInput: () => { throw new Error('Response is not a user instruction'); } },
       conversations: () => store, activeConversations: new Map(),
@@ -44,7 +53,7 @@ async function main() {
     const request = { conversationId: initial.id, requestId: 'ask-1', requestToken: 'stream-1', response: { answers: { 'Format?': 'Detailed' } } };
     const response = context.respondConversation(request, sender);
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(calls, 1);
+    assert.equal(calls, 1, calls ? undefined : JSON.stringify(await response));
     assert.equal(store.get(initial.id).turns.length, 1, 'answer continues the original visible turn');
     assert.equal(bridgePayload.question, '');
     assert.equal(bridgePayload.inputResponse.requestId, 'ask-1');
@@ -74,6 +83,30 @@ async function main() {
     assert.equal(duplicate.accepted, true);
     assert.equal(duplicate.alreadyAccepted, true);
     assert.equal(calls, 2, 'duplicate acknowledgement never starts another model loop');
+    const interrupted = store.appendTurn({newConversation: true, question: 'Read the remaining pages', answer: 'Read page 1',
+      agentSessionId: 'agent-studio-new-restart', outcome: '进行中', hasPendingWork: true,
+      modelUsage: {inputTokens: 90, outputTokens: 10, totalTokens: 100, contextTokens: 90}, timingMs: 100,
+      trajectory: [{kind: 'tool', turn: 1, callId: 'page-1', name: 'Context.read', state: 'done'}]});
+    store.recoverInterruptedTurns();
+    const resumed = context.sendConversation({conversationId: interrupted.id, resume: true}, sender);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 3, 'startup continuation must reach the Runtime without a fabricated user question');
+    assert.equal(bridgePayload.resume, true);
+    assert.equal(bridgePayload.question, '');
+    assert.equal(bridgePayload.taskInput, undefined);
+    assert.equal(store.get(interrupted.id).turns.length, 1);
+    assert.equal(store.get(interrupted.id).turns[0].outcome, '进行中');
+    callbacks.onComplete({ok: true, answer: 'All pages read', hasPendingWork: false,
+      modelUsage: {inputTokens: 40, outputTokens: 10, totalTokens: 50, contextTokens: 40}, timingMs: 200,
+      trajectory: [{kind: 'message', turn: 1, text: 'All pages read'}]});
+    assert.equal((await resumed).ok, true);
+    assert.equal(store.get(interrupted.id).turns[0].question, 'Read the remaining pages');
+    assert.equal(store.get(interrupted.id).turns[0].trajectory[0].callId, 'page-1');
+    assert.equal(store.get(interrupted.id).turns[0].trajectory[1].turn, 2);
+    assert.equal(store.get(interrupted.id).resumePending, undefined);
+    assert.equal(store.get(interrupted.id).turns[0].modelUsage.totalTokens, 150);
+    assert.equal(store.get(interrupted.id).turns[0].modelUsage.contextTokens, 40);
+    assert.equal(store.get(interrupted.id).turns[0].timingMs, 300);
     console.log('Conversation structured responses passed');
   } finally { fs.rmSync(baseDir, { recursive: true, force: true }); }
 }

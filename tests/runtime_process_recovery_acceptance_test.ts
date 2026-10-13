@@ -57,6 +57,12 @@ test('an interrupted task survives independent worker processes with its plan, s
     assert.equal(status.pendingInput?.requestId, 'approval-fixture');
     assert.deepEqual(status.pendingRecovery.map((item: Record<string, any>) => [item.operationId, item.recoveryPolicy]), [['unknown-write', 'never_replay']]);
 
+    const waiting = await bridge('conversation', {agentSessionId: sessionId, workspaceRoot: workspace, resume: true,
+      modelRuntime: {model: 'fixture', credential: 'fixture', baseUrl: 'http://127.0.0.1:1'}}, root, userDataDir);
+    assert.equal(waiting.ok, true, 'restart must restore a pending question without calling a model');
+    assert.equal(waiting.awaitingUserInput, true);
+    assert.equal(waiting.pendingInput.requestId, 'approval-fixture');
+
     const answered = await bridge('agent_session', { action: 'answer', sessionId, requestId: 'approval-fixture', response: { decision: 'once' } }, root, userDataDir);
     assert.equal(answered.ok, true, answered.error);
     assert.equal(answered.answer.requestId, 'approval-fixture');
@@ -90,16 +96,20 @@ test('an interrupted task survives independent worker processes with its plan, s
     const messages = await readFile(capture, 'utf8');
     for (const marker of ['核验写入状态', 'source-fixture', 'ref-fixture', 'unknown-write']) assert.ok(messages.includes(marker), `resume omitted ${marker}`);
     const finalStatus = await bridge('agent_session', { action: 'status', sessionId }, root, userDataDir);
+    assert.equal(finalStatus.terminal?.answer, resumed.answer, 'the final response must survive loss of the bridge reply');
     assert.equal(finalStatus.pendingInput, null);
     assert.equal(finalStatus.pendingRecovery.length, 1, 'the unknown external effect still needs explicit recovery');
     assert.equal(finalStatus.hasPendingWork, true);
 
     const variants = await bridge('conversation', { agentSessionId: sessionId, workspaceRoot: workspace, question: 'Check delivery targets', permissionPreset: 'danger-full-access',
+      taskInput: {inputId: 'variant-input', taskId: sessionId, target: 'next-step', instruction: 'Check delivery targets', sourceIds: [], referenceUpdates: [], timeline: []},
       modelRuntime: { model: 'fixture', credential: 'fixture', baseUrl: 'http://127.0.0.1:1' } }, root, userDataDir,
     { MP_RECOVERY_SCENARIO: 'variants', MP_RECOVERY_CAPTURE: capture, MP_RECOVERY_EXTERNAL_WRITE: externalWrite });
     assert.match(String(variants.events[0]?.value), /RECOVERY_RETRY_BLOCKED/, 'changed text must not bypass an unknown send to the same target');
     assert.match(String(variants.events[1]?.value), /RECOVERY_RETRY_BLOCKED/, 'a second desktop send tool cannot repeat the same target');
     assert.equal(variants.events[2]?.is_error, false, 'a different proven target remains available');
+    const recorded = await bridge('agent_session', {action: 'status', sessionId, inputId: 'variant-input'}, root, userDataDir);
+    assert.equal(recorded.inputRecorded, true, 'restart can distinguish a delivered user instruction from a merely queued request');
     assert.deepEqual((await readFile(externalWrite, 'utf8')).trim().split('\n').map(line => JSON.parse(line).target), ['room-b']);
     const journal = await EventSession.open(userDataDir, sessionId, false);
     const differentTarget = journal.events.find(event => event.type === 'operation/prepared' && event.data.callId === 'different-target');

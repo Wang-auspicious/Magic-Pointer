@@ -52,6 +52,37 @@ export interface ToolImage {
   mimeType?: string;
   label?: string;
 }
+
+export function combineModelUsage(
+  previous: Readonly<Record<string, unknown>>,
+  current: Readonly<Record<string, unknown>>,
+): Record<string, number> {
+  const combined: Record<string, number> = {};
+  for (const [key, value] of Object.entries({...previous, ...current})) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      combined[key] = value;
+    }
+  }
+  for (const key of [
+    'inputTokens',
+    'outputTokens',
+    'totalTokens',
+    'cacheReadTokens',
+    'cacheWriteTokens',
+    'turnsReported',
+    'estimatedCostUsd',
+    'pricedRequests',
+    'permissionReviewRequests',
+    'permissionReviewInputTokens',
+    'permissionReviewOutputTokens',
+    'permissionReviewTotalTokens',
+  ]) {
+    if (typeof current[key] === 'number' && Number.isFinite(current[key])) {
+      combined[key] = (Number(previous[key]) || 0) + current[key];
+    }
+  }
+  return combined;
+}
 /** Screenshots are the heaviest context; only the newest ones stay in the request, older ones become a pointer. */
 export const LIVE_TOOL_IMAGES = 2;
 function imageDataUrl(image: ToolImage): string | null {

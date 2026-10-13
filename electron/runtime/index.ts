@@ -158,8 +158,8 @@ export async function runRuntime(
       }
       return Boolean(
         answer &&
-          typeof answer === 'object' &&
-          String((answer as Data).answer || '').trim() !== '',
+        typeof answer === 'object' &&
+        String((answer as Data).answer || '').trim() !== '',
       );
     }).length;
     return {
@@ -193,6 +193,24 @@ export async function runRuntime(
     presetForPermissionMode(session.permissionMode('default')) ??
     'workspace-write';
   const permissionMode = PERMISSION_MODES[preset];
+  if (payload.resume && !instruction && !payload.inputResponse) {
+    const pendingInput = session.pendingInput();
+    if (pendingInput) {
+      return {
+        ok: true,
+        answer: String(
+          pendingInput.question || 'This task is waiting for your answer.',
+        ),
+        agentSessionId: session.id,
+        permissionPreset: preset,
+        hasPendingWork: true,
+        awaitingUserInput: true,
+        pendingInput,
+        usedBackend: 'magic_pointer.session_recovery',
+        timingMs: performance.now() - started,
+      };
+    }
+  }
   const savedFolders = savedWorkspaceSettings(session);
   const workspaceState = path.join(userDataDir, 'workspace.txt');
   const savedWorkspace = (
@@ -306,9 +324,12 @@ export async function runRuntime(
     },
     {
       name: 'dashboard-tools',
-      apply: ctx => registerDashboardTools(ctx.get('tools'), {
-        userDataDir, authorizeAccess: prepared.authorizeAccess, sources: () => taskSources(session.events),
-      }),
+      apply: ctx =>
+        registerDashboardTools(ctx.get('tools'), {
+          userDataDir,
+          authorizeAccess: prepared.authorizeAccess,
+          sources: () => taskSources(session.events),
+        }),
     },
     {
       name: 'skill-writer',
@@ -506,6 +527,7 @@ export async function runRuntime(
       session,
       registry,
       instruction,
+      inputId: String(payload.taskInput?.inputId || '') || undefined,
       outputArtifact:
         payload.outputArtifact === undefined
           ? undefined

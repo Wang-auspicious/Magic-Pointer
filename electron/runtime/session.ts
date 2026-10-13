@@ -4,6 +4,7 @@ import {mkdirSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import type {AgentMessage} from './agent';
+import {combineModelUsage} from './model';
 import {normalizePermissionPreset, PERMISSION_MODES} from '../permission_mode';
 import {
   validateContextUpdate,
@@ -323,7 +324,10 @@ export function pruneToolResults(
       continue;
     }
     seen.set(hash, message.tool_call_id || '');
-    if (message.content.length > SPILL_CHARS && fullKept < KEEP_FULL_TOOL_RESULTS) {
+    if (
+      message.content.length > SPILL_CHARS &&
+      fullKept < KEEP_FULL_TOOL_RESULTS
+    ) {
       fullKept++;
       out.unshift({...message, content: spill(name, message.content)});
       continue;
@@ -918,6 +922,71 @@ export async function handleSessionRead(
         .status,
     ) || null;
   const permissionMode = currentPermissionMode(events, '');
+  const acceptedInput = payload.inputId
+    ? events.find(
+        event =>
+          event.type === 'user/message' &&
+          event.data.inputId === payload.inputId,
+      )
+    : undefined;
+  const usageByTurn = new Map<number, Record<string, unknown>>();
+  if (acceptedInput) {
+    for (const event of events.slice(acceptedInput.seq)) {
+      if (
+        ['model/response', 'permission/reviewed', 'turn/result'].includes(
+          event.type,
+        ) &&
+        event.data.modelUsage
+      ) {
+        usageByTurn.set(Number(event.data.turn), object(event.data.modelUsage));
+      }
+    }
+  }
+  let taskModelUsage: Record<string, number> | undefined;
+  for (const values of usageByTurn.values()) {
+    taskModelUsage = combineModelUsage(taskModelUsage || {}, values);
+  }
+  const latestTurn = [...events]
+    .reverse()
+    .find(event => event.type === 'turn/start')?.data.turn;
+  let terminal = [...events]
+    .reverse()
+    .find(
+      event => event.type === 'turn/result' && event.data.turn === latestTurn,
+    )?.data;
+  if (!terminal && openTurn === null && lastTurnReason) {
+    const start = [...events]
+      .reverse()
+      .find(event => event.type === 'turn/start');
+    const end = [...events].reverse().find(event => event.type === 'turn/end');
+    const assistant = [...events].reverse().find(event => {
+      const message = object(event.data.message);
+      return (
+        event.type === 'assistant/message' &&
+        event.seq > Number(start?.seq ?? -1) &&
+        !array(message.tool_calls).length
+      );
+    });
+    terminal = {
+      turn: latestTurn,
+      reason: lastTurnReason,
+      answer:
+        lastTurnReason === 'completed' && assistant
+          ? text(object(assistant.data.message).content)
+          : text(end?.data.detail),
+    };
+  }
+  const cancelRequested = events.some(
+    event => event.type === 'cancel/request' && event.data.turn === latestTurn,
+  );
+  if (terminal && openTurn === null) {
+    terminal = {
+      ...terminal,
+      completedAt: [...events]
+        .reverse()
+        .find(event => event.type === 'turn/end')?.time,
+    };
+  }
   return {
     ...result,
     hasPendingWork:
@@ -928,6 +997,9 @@ export async function handleSessionRead(
       ['partial', 'unverified'].includes(lastReceiptStatus ?? ''),
     lastTurnReason,
     lastReceiptStatus,
+    terminal: terminal ?? null,
+    ...(taskModelUsage ? {taskModelUsage} : {}),
+    cancelRequested,
     ...(permissionMode ? {permissionMode} : {}),
     openTurn,
     pendingInput: outstandingInput,
@@ -936,6 +1008,15 @@ export async function handleSessionRead(
       ? {requestId: last.requestId, message: last.message}
       : null,
     pendingRecovery,
+    ...(payload.inputId
+      ? {
+          inputRecorded: events.some(
+            event =>
+              event.type === 'user/message' &&
+              event.data.inputId === payload.inputId,
+          ),
+        }
+      : {}),
   };
 }
 
