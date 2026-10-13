@@ -702,10 +702,27 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         revision: payload.revision,
         confirmed: payload.confirmed === true,
       }),
-    read: (payload: {conversationId?: unknown; artifactId?: unknown}) =>
+    read: (payload: {
+      conversationId?: unknown;
+      artifactId?: unknown;
+      revision?: unknown;
+    }) =>
       ipcRenderer.invoke('artifacts:read', {
         conversationId: String(payload?.conversationId || '').slice(0, 120),
         artifactId: String(payload?.artifactId || '').slice(0, 128),
+        revision: payload?.revision,
+      }),
+    restore: (payload: {
+      conversationId?: unknown;
+      artifactId?: unknown;
+      revision?: unknown;
+      expectedRevision?: unknown;
+    }) =>
+      ipcRenderer.invoke('artifacts:restore', {
+        conversationId: String(payload?.conversationId || '').slice(0, 120),
+        artifactId: String(payload?.artifactId || '').slice(0, 128),
+        revision: payload?.revision,
+        expectedRevision: payload?.expectedRevision,
       }),
     edit: (payload: {
       conversationId?: unknown;

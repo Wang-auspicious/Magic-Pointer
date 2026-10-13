@@ -202,6 +202,18 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '还没有产物。Agent 生成并落盘的文档、代码与草稿会出现在这里。',
   },
   'artifact.no_match': {en: 'No matching artifacts.', zh: '没有匹配的产物。'},
+  'artifact.version_number': {en: 'Version {revision}', zh: '版本 {revision}'},
+  'artifact.current_version': {en: 'current', zh: '当前'},
+  'artifact.version_history': {en: 'Version history', zh: '版本历史'},
+  'artifact.restore_version': {en: 'Restore this version', zh: '恢复此版本'},
+  'artifact.historical_preview': {
+    en: 'Historical preview · read only',
+    zh: '历史版本预览 · 只读',
+  },
+  'artifact.newer_version': {
+    en: 'A newer version was saved. Reopen the artifact before restoring.',
+    zh: '已有新版本保存，请重新打开产物后再恢复。',
+  },
   'artifact.reading_version': {
     en: 'Reading the current version…',
     zh: '正在读取当前版本…',

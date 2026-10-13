@@ -10,7 +10,10 @@ async function main() {
   const editor = createArtifactEditor({ read: async (payload: any) => ({ ok: true, artifact: artifact(payload.artifactId) }) });
   await editor.select('c', 'a');
   let handler: any;
-  const changeHandler = studio.slice(studio.indexOf("document.getElementById('artifact-patch-changes')?.addEventListener('change'"), studio.indexOf("document.getElementById('artifact-patch-changes')?.addEventListener('click'"));
+  const changeStart = studio.search(/document\s*\.getElementById\('artifact-patch-changes'\)\s*\?\.addEventListener\('change'/);
+  const clickStart = studio.search(/document\s*\.getElementById\('artifact-patch-changes'\)\s*\?\.addEventListener\('click'/);
+  assert.ok(changeStart >= 0 && clickStart > changeStart, 'patch handlers must exist');
+  const changeHandler = studio.slice(changeStart, clickStart);
   vm.runInNewContext(transformSync(changeHandler, { loader: 'ts' }).code, {
     artifactEditor: editor,
     document: { getElementById: () => ({ addEventListener: (_event: string, callback: any) => { handler = callback; } }) },

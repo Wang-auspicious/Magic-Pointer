@@ -579,7 +579,23 @@
           <header class="mp-artifact-editor-meta">
             <strong id="artifact-editor-kind">Draft</strong>
             <span id="artifact-editor-revision">revision —</span>
+            <select
+                id="artifact-version-select"
+                aria-label="Version history"
+                disabled
+              ></select>
+              <button type="button" id="artifact-version-restore" hidden>
+                Restore this version
+              </button>
           </header>
+          <section
+              id="artifact-version-preview"
+              class="mp-artifact-version-preview"
+              hidden
+            >
+              <strong>Historical preview · read only</strong>
+              <pre></pre>
+            </section>
           <textarea id="artifact-editor-content" spellcheck="true" aria-label="Editable artifact body" placeholder="Select an artifact to edit it here."></textarea>
           <section class="mp-artifact-patch-preview" aria-labelledby="artifact-patch-title">
             <h3 id="artifact-patch-title">Patch preview</h3>

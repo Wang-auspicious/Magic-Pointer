@@ -4852,6 +4852,14 @@ const artifactEditor = ArtifactEditor.createArtifactEditor({
     Data.readArtifact(
       String(payload.conversationId || ''),
       String(payload.artifactId || ''),
+      payload.revision === undefined ? undefined : Number(payload.revision),
+    ),
+  restore: payload =>
+    Data.restoreArtifact(
+      String(payload.conversationId || ''),
+      String(payload.artifactId || ''),
+      Number(payload.revision),
+      Number(payload.expectedRevision),
     ),
   edit: payload =>
     Data.editArtifact({
@@ -5167,19 +5175,22 @@ function renderArtifactEditor() {
   const busy = ['loading', 'saving', 'accepting', 'applying'].includes(
     state.status,
   );
+  renderArtifactVersions(state, busy);
   if (undo) {
     undo.hidden = !state.undoAvailable;
-    undo.disabled = busy || state.dirty;
+    undo.disabled = busy || state.dirty || Boolean(state.preview);
   }
   if (content) {
     content.disabled = busy || !state.artifactId;
+    content.hidden = Boolean(state.preview);
   }
   if (save) {
-    save.disabled = busy || !state.dirty;
+    save.disabled = busy || !state.dirty || Boolean(state.preview);
   }
   if (accept) {
     accept.disabled =
       busy ||
+      Boolean(state.preview) ||
       state.dirty ||
       !state.artifactId ||
       state.acceptedRevision === state.revision;
@@ -5187,6 +5198,7 @@ function renderArtifactEditor() {
   if (apply) {
     apply.disabled =
       busy ||
+      Boolean(state.preview) ||
       state.dirty ||
       state.kind !== 'document_patch' ||
       state.acceptedRevision !== state.revision;
@@ -5194,7 +5206,9 @@ function renderArtifactEditor() {
   if (status) {
     const resultStatus = String(state.applyResult?.status || '');
     status.textContent =
-      state.error ||
+      (state.error === 'stale_revision'
+        ? studioT('artifact.newer_version')
+        : state.error) ||
       (state.status === 'loading'
         ? studioT('artifact.reading_version')
         : state.status === 'saving'
@@ -5216,7 +5230,85 @@ function renderArtifactEditor() {
     status.dataset.tone = state.error ? 'error' : 'neutral';
   }
   renderArtifactPatchPreview(state);
+  const patchPreview = document.querySelector<HTMLElement>(
+    '#artifact-editor .mp-artifact-patch-preview',
+  );
+  if (patchPreview) {
+    patchPreview.hidden = Boolean(state.preview);
+  }
 }
+
+function renderArtifactVersions(
+  state: MagicPointerArtifactEditorState,
+  busy: boolean,
+): void {
+  const select = document.getElementById(
+    'artifact-version-select',
+  ) as HTMLSelectElement | null;
+  const restore = document.getElementById(
+    'artifact-version-restore',
+  ) as HTMLButtonElement | null;
+  const preview = document.getElementById('artifact-version-preview');
+  if (select) {
+    const versions = artifactEditor.versions();
+    select.replaceChildren(
+      ...versions.map(version => {
+        const option = document.createElement('option');
+        option.value = String(version.revision);
+        option.textContent = `${studioT('artifact.version_number', {revision: version.revision})}${version.revision === state.revision ? ` · ${studioT('artifact.current_version')}` : ''}`;
+        return option;
+      }),
+    );
+    select.value = String(state.preview?.revision || state.revision);
+    select.disabled = busy || versions.length < 2;
+    select.setAttribute('aria-label', studioT('artifact.version_history'));
+  }
+  if (restore) {
+    restore.hidden = !state.preview;
+    restore.disabled = busy || state.dirty;
+    restore.textContent = studioT('artifact.restore_version');
+  }
+  if (preview) {
+    preview.hidden = !state.preview;
+    const text = preview.querySelector('pre');
+    const label = preview.querySelector('strong');
+    if (label) {
+      label.textContent = studioT('artifact.historical_preview');
+    }
+    if (text) {
+      text.textContent = state.preview
+        ? state.preview.content +
+          (state.preview.patchPayload
+            ? `\n\n${JSON.stringify(state.preview.patchPayload.operations || [], null, 2)}`
+            : '')
+        : '';
+    }
+  }
+}
+
+document
+  .getElementById('artifact-version-select')
+  ?.addEventListener('change', async event => {
+    const select = event.currentTarget as HTMLSelectElement;
+    const revision = Number(select.value);
+    const pending = artifactEditor.previewVersion(revision);
+    renderArtifactEditor();
+    select.value = String(revision);
+    await pending;
+    renderArtifactEditor();
+  });
+document
+  .getElementById('artifact-version-restore')
+  ?.addEventListener('click', async () => {
+    const revision = artifactEditor.state().preview?.revision;
+    if (!revision) {
+      return;
+    }
+    const pending = artifactEditor.restoreVersion(revision);
+    renderArtifactEditor();
+    await pending;
+    renderArtifactEditor();
+  });
 
 async function openArtifactEditor(
   conversationId: string,
