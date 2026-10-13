@@ -35,7 +35,12 @@ import {
 } from './tools';
 import type {ModelConfig} from './model';
 import type {AccessRequest} from './context';
-import {taskSources, taskReferences, scopeFromEvents} from './context';
+import {
+  taskSources,
+  taskReferences,
+  referenceRevision,
+  scopeFromEvents,
+} from './context';
 import {
   createArtifact,
   latestTurnArtifactSummaries,
@@ -114,6 +119,7 @@ export interface AgentOptions {
   registry: ToolRegistry;
   model: ModelRunner;
   instruction?: string;
+  inputId?: string;
   outputArtifact?: {title: string; kind: 'text' | 'markdown'} | null;
   projectContext?: ProjectContext | null;
   evidence?: string;
@@ -894,13 +900,27 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     if (requested !== previous) {
       await session.append('permission/mode', {mode: requested, requested});
     }
-    if (options.instruction?.trim()) {
+    const inputRecorded =
+      options.inputId &&
+      session.events.some(
+        event =>
+          event.type === 'user/message' &&
+          event.data.inputId === options.inputId,
+      );
+    if (options.instruction?.trim() && !inputRecorded) {
       await session.cancelPermissions();
-      await session.appendMessage({
-        role: 'user',
-        content: options.instruction.trim(),
-        origin: 'instruction',
-      });
+      await session.append(
+        'user/message',
+        {
+          inputId: options.inputId,
+          message: {
+            role: 'user',
+            content: options.instruction.trim(),
+            origin: 'instruction',
+          },
+        },
+        'append',
+      );
     }
     if (options.evidence?.trim()) {
       await session.appendMessage({
@@ -1115,6 +1135,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           step: turns,
           outcome: reply.stop_reason ?? 'completed',
           usage: reply.usage ?? {},
+          modelUsage: {...usage},
           outputTextChars: reply.text.length,
           toolCallCount: reply.tool_calls.length,
         });
@@ -1410,10 +1431,12 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
               }
             }
             await session.append('permission/reviewed', {
+              turn: session.openTurn,
               callId: call.id,
               tool: call.name,
               arguments: args,
               ...review,
+              modelUsage: {...usage},
             });
             emit({
               kind: 'permission_review_finished',
@@ -1785,6 +1808,26 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
   }
   try {
     await session.append('receipt/issued', receipt);
+    await session.append('turn/result', {
+      turn: session.openTurn,
+      reason,
+      answer,
+      pendingInput: pending,
+      modelUsage: usage,
+      usedBackend: backend,
+      timingMs: performance.now() - started,
+      artifacts: latestTurnArtifactSummaries(session.events),
+      receipts: [receipt],
+      taskContext: {
+        taskId: session.id,
+        sources: taskSources(session.events),
+        references: taskReferences(session.events),
+        referenceRevision: referenceRevision(session.events),
+        permissionMode: session.permissionMode(
+          options.permissionMode ?? 'default',
+        ),
+      },
+    });
   } finally {
     await session.endTurn(reason, answer.slice(0, 2000));
   }

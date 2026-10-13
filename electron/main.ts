@@ -41,7 +41,7 @@ const {shell} = require('electron');
 const {spawn} = require('child_process');
 const {net} = require('electron');
 const {expandPassage} = require('./runtime/text');
-const {resolveModelConfig, listModels, requestText, modelProviderId} = require('./runtime/model');
+const {resolveModelConfig, listModels, requestText, modelProviderId, combineModelUsage} = require('./runtime/model');
 import {prepareModelConnection, saveModelConnection} from './model_connection';
 import type {ModelConnectionInput} from './model_connection';
 const {listDashboards, runDashboard, dashboardTrace, dashboardTraceCsv} = require('./runtime/dashboard');
@@ -1578,6 +1578,148 @@ function flushConversations() {
     // Shutdown must reach the end: a failed flush cannot be allowed to skip
     // the remaining cleanup.
   }
+}
+
+async function resumeInterruptedConversations(): Promise<void> {
+  const store = conversations();
+  await Promise.all(
+    store.pendingResumeIds().map(async (conversationId: string) => {
+      const original = store.get(conversationId);
+      const last = original?.turns?.at(-1);
+      if (!original?.agentSessionId || !last) {
+        return;
+      }
+      const savedRequest = last.request;
+      const inputId =
+        savedRequest?.taskInput && typeof savedRequest.taskInput === 'object'
+          ? (savedRequest.taskInput as Record<string, unknown>).inputId
+          : undefined;
+      const stillPending = () => {
+        const current = store.get(conversationId);
+        return current?.resumePending && current.turns?.at(-1)?.id === last.id;
+      };
+      const settle = (fields: Record<string, unknown>) => {
+        store.updateTurn({
+          conversationId,
+          resumePending: false,
+          completedAt: fields.completedAt ?? null,
+          ...fields,
+        });
+        store.flush();
+        notifyConversationChanged(conversationId);
+        contextTrackerRuntime?.reconcileConversation({
+          conversationId,
+          ...fields,
+        });
+      };
+      try {
+        const status = await handleSessionRead(
+          {action: 'status', sessionId: original.agentSessionId, inputId},
+          FABRIC_DATA_DIR,
+        );
+        if (!stillPending()) {
+          return;
+        }
+        if (
+          savedRequest &&
+          (status.error === 'session_not_found' ||
+            (status.ok && status.inputRecorded === false))
+        ) {
+          const result = await sendConversation({
+            ...savedRequest,
+            conversationId,
+            resume: true,
+            question: last.question,
+          });
+          if (result.ok !== true && stillPending() && !result.active) {
+            throw new Error(
+              String(result.error || 'The saved request could not start.'),
+            );
+          }
+          return;
+        }
+        if (!status.ok) {
+          throw new Error(
+            String(status.error || 'The saved task could not be read.'),
+          );
+        }
+        const terminalSnapshot =
+          status.terminal && typeof status.terminal === 'object'
+            ? (status.terminal as Record<string, unknown>)
+            : {};
+        const terminal: Record<string, unknown> = {
+          ...terminalSnapshot,
+          ...(status.taskModelUsage ? {modelUsage: status.taskModelUsage} : {}),
+        };
+        if (
+          status.cancelRequested ||
+          status.lastTurnReason === 'user_interrupt'
+        ) {
+          settle({
+            ...terminal,
+            ok: false,
+            outcome: '已停止',
+            failed: true,
+            error: '',
+            hasPendingWork: true,
+          });
+        } else if (status.pendingInput) {
+          settle({
+            ...terminal,
+            ok: true,
+            outcome: '等待输入',
+            failed: false,
+            error: '',
+            hasPendingWork: true,
+            pendingInput: status.pendingInput,
+          });
+        } else if (
+          status.openTurn === null &&
+          status.lastTurnReason &&
+          status.lastTurnReason !== 'interrupted'
+        ) {
+          const completed = status.lastTurnReason === 'completed';
+          settle({
+            ...terminal,
+            ok: completed,
+            outcome: completed
+              ? status.hasPendingWork
+                ? '待核对'
+                : '已完成'
+              : '失败',
+            failed: !completed,
+            error: completed ? '' : terminal.answer || status.lastTurnReason,
+            pendingInput: null,
+            hasPendingWork: status.hasPendingWork === true,
+          });
+        } else {
+          if (status.taskModelUsage) {
+            store.updateTurn({
+              conversationId,
+              modelUsage: status.taskModelUsage,
+            });
+          }
+          const result = await sendConversation({conversationId, resume: true});
+          if (result.ok !== true && stillPending() && !result.active) {
+            throw new Error(
+              String(result.error || 'The task could not resume.'),
+            );
+          }
+        }
+      } catch (error) {
+        if (stillPending()) {
+          settle({
+            ok: false,
+            outcome: '可恢复',
+            failed: true,
+            hasPendingWork: true,
+            error: `Automatic resume failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+        log(`conversation recovery ${conversationId}: ${String(error)}`);
+      }
+    }),
+  );
 }
 
 function artifactCommands() {
@@ -3936,7 +4078,9 @@ async function sendConversation(
 ): Promise<any> {
   const inputResponse = raw?.inputResponse;
   const question = String(raw?.question || '').trim();
-  if (!question && !inputResponse) {
+  const resume = raw.resume === true && !inputResponse;
+  const continuation = Boolean(inputResponse || resume);
+  if (!question && !continuation) {
     return {ok: false, error: '问题不能为空。'};
   }
   if (question.length > 12000) {
@@ -3977,8 +4121,23 @@ async function sendConversation(
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  if (inputResponse && !existing?.turns?.length) {
+  if (continuation && !existing?.turns?.length) {
     return {ok: false, accepted: false, error: 'unknown_conversation'};
+  }
+  if (resume && !existing?.hasPendingWork) {
+    return {ok: false, error: 'This conversation has no unfinished task.'};
+  }
+  if (
+    resume &&
+    [...activeConversations.values()].some(
+      run => run.conversationId === conversationId,
+    )
+  ) {
+    return {
+      ok: false,
+      active: true,
+      error: 'This conversation is already running.',
+    };
   }
   const grantNow = sanitizePermissionRule(raw?.permissionGrant);
   const denyNow = sanitizePermissionRule(raw?.permissionDeny);
@@ -4160,14 +4319,15 @@ async function sendConversation(
   }
   let taskInput: Record<string, unknown> | undefined;
   try {
-    taskInput = inputResponse
-      ? undefined
-      : TaskSources.bindConversationTaskInput(rawTaskInput, {
-          taskId: effectiveAgentSessionId,
-          instruction: question,
-          attachments: taskAttachments,
-          capturedAtMs,
-        });
+    taskInput =
+      continuation && !question
+        ? undefined
+        : TaskSources.bindConversationTaskInput(rawTaskInput, {
+            taskId: effectiveAgentSessionId,
+            instruction: question,
+            attachments: taskAttachments,
+            capturedAtMs,
+          });
   } catch (error: any) {
     return {
       ok: false,
@@ -4201,11 +4361,14 @@ async function sendConversation(
     effort,
     requestId,
     attachments: taskAttachments,
-    ...(raw.outputArtifact !== undefined ? {outputArtifact: raw.outputArtifact} : {}),
+    ...(raw.outputArtifact !== undefined
+      ? {outputArtifact: raw.outputArtifact}
+      : {}),
     projectContext: projectContext ?? null,
     additionalFolders,
     taskInput,
     ...(inputResponse ? {inputResponse} : {}),
+    ...(resume ? {resume: true} : {}),
     ...(conversationId ? {conversationId} : {}),
     agentSessionId: effectiveAgentSessionId,
     _figmaRuntimeConnections: figmaRuntime
@@ -4219,13 +4382,22 @@ async function sendConversation(
     ...(threadDenials.length ? {permissionDenials: threadDenials} : {}),
     ...(onceNow ? {permissionGrantOnce: [onceNow]} : {}),
   };
-  const conversation = inputResponse
+  const conversation = continuation
     ? existing!
     : conversations().appendTurn({
         conversationId: existing?.id,
         newConversation: !existing,
         capturedAt: capturedAtMs,
         question,
+        request: {
+          taskInput,
+          attachments: taskAttachments,
+          executionWorkspaceRoot: effectiveExecutionWorkspaceRoot,
+          effort,
+          ...(raw.outputArtifact !== undefined
+            ? {outputArtifact: raw.outputArtifact}
+            : {}),
+        },
         answer: '',
         outcome: '进行中',
         agentSessionId: effectiveAgentSessionId,
@@ -4249,9 +4421,8 @@ async function sendConversation(
         permissionGrantOnce: onceNow || undefined,
       });
   const turnIndex = conversation.turns.length - 1;
-  const previousTurn = inputResponse
-    ? {...conversation.turns[turnIndex]}
-    : null;
+  conversations().flush();
+  const previousTurn = continuation ? {...conversation.turns[turnIndex]} : null;
   const priorTrajectory = (previousTurn?.trajectory || []).map((item: any) => ({
     ...item,
   }));
@@ -4307,6 +4478,17 @@ async function sendConversation(
     requestId,
     agentSessionId: effectiveAgentSessionId,
   };
+  if (resume) {
+    conversations().updateTurn({
+      conversationId: conversation.id,
+      turnIndex,
+      resumePending: false,
+      outcome: '进行中',
+      failed: false,
+      error: '',
+    });
+    conversations().flush();
+  }
   let progressTimer: ReturnType<typeof setTimeout> | null = null;
   const flushProgress = () => {
     progressTimer = null;
@@ -4377,6 +4559,21 @@ async function sendConversation(
       const error = failed ? conversationFailureMessage(parsed) : '';
       const settled = {
         ...parsed,
+        ...(previousTurn
+          ? {
+              modelUsage: combineModelUsage(
+                previousTurn.modelUsage || {},
+                parsed?.modelUsage || {},
+              ),
+              ...(typeof previousTurn.timingMs === 'number' ||
+              typeof parsed?.timingMs === 'number'
+                ? {
+                    timingMs:
+                      (previousTurn.timingMs || 0) + (parsed?.timingMs || 0),
+                  }
+                : {}),
+            }
+          : {}),
         ok: !failed,
         conversationId: conversation.id,
         turnIndex,
@@ -4452,6 +4649,7 @@ async function sendConversation(
       return;
     }
     const child = runRuntimeBridge(payload, 'conversation', 'dashboard', {
+      allowWithoutSurface: true,
       timeoutMs: 120_000,
       onProgress: (record: any) => {
         if (record?.phase === 'user_input_accepted') {
@@ -8278,6 +8476,9 @@ if (gotLock) {
     );
     if (!captureMode) {
       initializeUpdateManager({automatic: true});
+      void resumeInterruptedConversations().catch(error => {
+        log(`startup task recovery: ${String(error)}`);
+      });
     }
     let wasOpenedAtLogin = false;
     try {

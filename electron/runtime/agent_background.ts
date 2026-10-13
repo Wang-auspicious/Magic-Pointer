@@ -28,7 +28,7 @@ import {
 } from './project_knowledge';
 import {authorizeAccess, scopeFromEvents} from './context';
 import {ToolRegistry} from './tools';
-import {streamModel} from './model';
+import {combineModelUsage, streamModel} from './model';
 import {
   initialToolNames,
   registerToolResultReader,
@@ -698,28 +698,6 @@ export async function runBackgroundAgent(
   const steps: Data[] = [];
   let stepCount = Number(state.stepCount) || 0;
   let usageBeforeRun = asObject(state.modelUsage);
-  const combinedUsage = (current: Data): Data => {
-    const combined = {...usageBeforeRun, ...current};
-    for (const key of [
-      'inputTokens',
-      'outputTokens',
-      'totalTokens',
-      'cacheReadTokens',
-      'cacheWriteTokens',
-      'turnsReported',
-      'estimatedCostUsd',
-      'pricedRequests',
-      'permissionReviewRequests',
-      'permissionReviewInputTokens',
-      'permissionReviewOutputTokens',
-      'permissionReviewTotalTokens',
-    ]) {
-      if (typeof current[key] === 'number') {
-        combined[key] = (Number(usageBeforeRun[key]) || 0) + current[key];
-      }
-    }
-    return combined;
-  };
   const publish = (patch: Data) => {
     state = {
       ...state,
@@ -762,7 +740,7 @@ export async function runBackgroundAgent(
     } else if (event.kind === 'model_usage') {
       const usage = asObject(event.usage);
       if (typeof usage.turnsReported === 'number') {
-        publish({modelUsage: combinedUsage(usage)});
+        publish({modelUsage: combineModelUsage(usageBeforeRun, usage)});
       }
     } else if (event.kind === 'tool_call_started') {
       steps.push({
@@ -913,7 +891,7 @@ export async function runBackgroundAgent(
         phase: status,
         summary,
         receiptStatus,
-        modelUsage: combinedUsage(result.model_usage),
+        modelUsage: combineModelUsage(usageBeforeRun, result.model_usage),
         pendingInput: result.pending_input,
         completedAt: Date.now(),
       });

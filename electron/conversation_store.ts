@@ -26,6 +26,7 @@ interface ReferencedObject {
 type Artifact = Record<string, unknown>;
 
 interface TurnEntry {
+  request?: Record<string, unknown>;
   runtimeTurn?: number;
   id: string;
   at: number;
@@ -94,12 +95,14 @@ interface Conversation {
   projectId?: string;
   agentSessionId?: string;
   hasPendingWork?: boolean;
+  resumePending?: boolean;
   permissionGrants?: string[];
   permissionDenials?: string[];
   taskContext?: Record<string, unknown>;
 }
 
 interface TurnInput {
+  request?: Record<string, unknown>;
   runtimeTurn?: unknown;
   capturedAt?: number;
   conversationId?: string;
@@ -562,6 +565,7 @@ function createConversationStore(
           );
 
     const entry: TurnEntry = {
+      ...(turn.request ? {request: structuredClone(turn.request)} : {}),
       id: `t${at}`,
       at,
       startedAt: at,
@@ -616,6 +620,7 @@ function createConversationStore(
         target.turns = [];
       }
       target.turns.push(entry);
+      delete target.resumePending;
       if (modelSelection) {
         target.modelSelection = modelSelection;
       }
@@ -777,11 +782,13 @@ function createConversationStore(
   }
 
   function updateTurn(input: {
+    completedAt?: unknown;
     runtimeTurn?: unknown;
     conversationId?: unknown;
     turnIndex?: unknown;
     agentSessionId?: unknown;
     hasPendingWork?: unknown;
+    resumePending?: boolean;
     answer?: unknown;
     taskContext?: unknown;
     outcome?: unknown;
@@ -827,6 +834,9 @@ function createConversationStore(
     }
     if (typeof input.hasPendingWork === 'boolean') {
       target.hasPendingWork = input.hasPendingWork;
+    }
+    if (input.resumePending === false && index === target.turns.length - 1) {
+      delete target.resumePending;
     }
     const taskContext = sanitizeTaskContext(input.taskContext);
     if (taskContext) {
@@ -892,7 +902,13 @@ function createConversationStore(
     turn.at = turn.startedAt;
     if (input.outcome !== undefined) {
       if (isTurnSettled(turn.outcome)) {
-        turn.completedAt = updatedAt;
+        if (input.completedAt === null) {
+          delete turn.completedAt;
+        } else {
+          turn.completedAt = Number.isFinite(Number(input.completedAt))
+            ? Number(input.completedAt)
+            : updatedAt;
+        }
       } else {
         delete turn.completedAt;
       }
@@ -956,6 +972,9 @@ function createConversationStore(
           '上次客户端会话已中断，可以继续此任务。此前操作结果需恢复后核实。';
         if (index === turns.length - 1) {
           conversation.hasPendingWork = true;
+          if (conversation.agentSessionId) {
+            conversation.resumePending = true;
+          }
         }
         recovered = true;
       }
@@ -967,6 +986,12 @@ function createConversationStore(
     if (changed) {
       persist();
     }
+  }
+
+  function pendingResumeIds(): string[] {
+    return load()
+      .filter(conversation => conversation.resumePending)
+      .map(conversation => conversation.id);
   }
 
   function list(limit = Number.POSITIVE_INFINITY) {
@@ -1360,6 +1385,7 @@ function createConversationStore(
     updateTurn,
     recordPermissionDecision,
     recoverInterruptedTurns,
+    pendingResumeIds,
     list,
     get,
     branch,
