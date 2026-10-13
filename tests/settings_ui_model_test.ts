@@ -8,10 +8,10 @@ const {
 } = require('../electron/renderer/settings_model');
 
 assert.deepStrictEqual(SETTINGS_PAGES.map((page: any) => page.id), [
-  'general', 'interaction', 'models-agents',
-  'skills', 'plugins', 'connectors',
-  'perception-privacy', 'permissions', 'memory-context', 'storage', 'appearance-accessibility',
-  'shortcuts', 'updates', 'diagnostics',
+  'general', 'interaction', 'perception-privacy', 'storage',
+  'appearance-accessibility', 'shortcuts', 'connectors',
+  'plugins', 'skills', 'updates', 'diagnostics',
+  'models-agents', 'permissions', 'memory-context',
 ]);
 assert.strictEqual(new Set(SETTINGS_PAGES.map((page: any) => page.id)).size, SETTINGS_PAGES.length);
 
@@ -43,7 +43,10 @@ assert(memoryRows.some((row: any) => row.path === 'privacy.screen_memory_enabled
   'recent screen context must live in the dedicated memory page');
 assert(memoryRows.some((row: any) => row.path === 'privacy.background_learning_enabled'),
   'background learning proposals must live in the dedicated memory page');
-assert.deepStrictEqual([...new Set(SETTINGS_PAGES.map((page: any) => page.group))], ['Settings', 'Agent', 'Customize']);
+assert.deepStrictEqual([...new Set(SETTINGS_PAGES.map((page: any) => page.group))], [
+  'Startup', 'AppPreferences', 'GlobalShortcut', 'MCP', 'Extensions',
+  'AppConfig', 'DesktopInfo', 'AppFeatures', 'HistoryImport',
+]);
 assert.strictEqual(SETTINGS_PAGES.find((page: any) => page.id === 'models-agents').title, 'Models & runtime');
 const modelRows = SETTINGS_PAGES.find((page: any) => page.id === 'models-agents')
   .sections.find((section: any) => section.title === 'Model').rows;
