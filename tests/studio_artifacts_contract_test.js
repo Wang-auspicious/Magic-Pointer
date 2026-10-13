@@ -44,10 +44,10 @@ assert(source.includes("artifactScope = scope.dataset.artifactScope === 'mine' ?
 assert(source.includes("artifactLayout = artifactLayout === 'grid' ? 'list' : 'grid'"));
 assert(source.includes('searchInput.addEventListener(\'input\''), 'the search field filters as you type');
 assert(
-  /const kinds = Array\.from\(new Set\(list\.map\(\(entry\) => String\(entry\.kind \|\| ''\)\)\.filter\(Boolean\)\)\)/.test(source),
+  /Array\.from\(\s*new Set\(list\.map\(\(entry\) => String\(entry\.kind \|\| ''\)\)\.filter\(Boolean\)\)/.test(source),
   'the type menu is built from the kinds the data actually has',
 );
-assert(source.includes("const label = kind ? artifactKindLabel(kind) : '全部类型'"));
+assert(source.includes("const label = kind ? artifactKindLabel(kind) : artifactText('artifact.kind_all')"));
 assert(
   source.includes('function artifactKindLabel(kind: string)') && source.includes('return ARTIFACT_KIND_LABELS[kind] || kind;'),
   'an unknown kind keeps its own name instead of being mapped to an invented one',
