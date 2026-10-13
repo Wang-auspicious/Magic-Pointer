@@ -67,6 +67,9 @@ export interface ReadResult {
   usedBackend: string;
   latencyMs: number;
   structure?: Json;
+  image?: string;
+  mimeType?: string;
+  imageLabel?: string;
 }
 export interface ReadOptions {
   locator?: FragmentLocator | null;
@@ -823,7 +826,7 @@ export function registerContextTools(
       name,
       description: search
         ? 'Search all authorized document content, with continuation and source locators.'
-        : 'Read a task source, project:// document UUID or unambiguous project:// filename. Continue using the returned cursor.',
+        : 'Read text, Office/PDF content, or image pixels from a task source, project:// document UUID or unambiguous project:// filename. Images are attached for visual inspection. Continue documents or image frames using the returned cursor.',
       input_schema: schema(
         {
           source_id: string,
