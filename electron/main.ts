@@ -4119,6 +4119,7 @@ async function sendConversation(
     effort,
     requestId,
     attachments: taskAttachments,
+    ...(raw.outputArtifact !== undefined ? {outputArtifact: raw.outputArtifact} : {}),
     projectContext: projectContext ?? null,
     additionalFolders,
     taskInput,
@@ -4343,6 +4344,11 @@ async function sendConversation(
       });
       conversations().flush();
       notifyConversationChanged(conversation.id);
+      try {
+        contextTrackerRuntime?.reconcileConversation(settled);
+      } catch (error) {
+        log(`routine continuation: ${String(error)}`);
+      }
       resolve(settled);
     };
     const modelCommand = /^\/model +(\S[\s\S]*)$/i.exec(question);
@@ -4687,6 +4693,57 @@ function initializeContextTrackers() {
     onChanged: () => {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('context-trackers:changed');
+      }
+    },
+    onRun: (
+      tracker: {task: string},
+      run: {
+        status: string;
+        conversationId?: string;
+        artifacts?: Array<{artifactId: string}>;
+      },
+    ) => {
+      const enabled =
+        run.status === 'completed'
+          ? fabricSettings.notifications?.completion !== false
+          : fabricSettings.notifications?.failure !== false;
+      if (!enabled || dashboardWindow?.isFocused()) {
+        return;
+      }
+      const {Notification} = require('electron');
+      if (!Notification.isSupported()) {
+        return;
+      }
+      const title =
+        run.status === 'completed'
+          ? 'Routine completed'
+          : run.status === 'waiting'
+            ? 'Routine needs your answer'
+            : run.status === 'incomplete'
+              ? 'Routine needs attention'
+              : 'Routine failed';
+      try {
+        const notification = new Notification({
+          title,
+          body: tracker.task.slice(0, 160),
+        });
+        notification.on('click', () =>
+          showDashboard(
+            run.conversationId
+              ? {
+                  view: 'chat',
+                  conversationId: run.conversationId,
+                  ...(run.status === 'completed' && run.artifacts?.[0]
+                    ? {artifactId: run.artifacts[0].artifactId}
+                    : {}),
+                }
+              : {view: 'scheduled'},
+            {activate: true},
+          ),
+        );
+        notification.show();
+      } catch (error) {
+        log(`routine notification: ${String(error)}`);
       }
     },
   });
