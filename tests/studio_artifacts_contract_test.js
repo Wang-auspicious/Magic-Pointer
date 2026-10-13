@@ -44,7 +44,7 @@ assert(source.includes("artifactScope = scope.dataset.artifactScope === 'mine' ?
 assert(source.includes("artifactLayout = artifactLayout === 'grid' ? 'list' : 'grid'"));
 assert(source.includes('searchInput.addEventListener(\'input\''), 'the search field filters as you type');
 assert(
-  /Array\.from\(\s*new Set\(list\.map\(\(entry\) => String\(entry\.kind \|\| ''\)\)\.filter\(Boolean\)\)/.test(source),
+  /Array\.from\(\s*new Set\(list\.map\(entry => String\(entry\.kind \|\| ''\)\)\.filter\(Boolean\)\)/.test(source),
   'the type menu is built from the kinds the data actually has',
 );
 assert(source.includes("const label = kind ? artifactKindLabel(kind) : artifactText('artifact.kind_all')"));
@@ -52,7 +52,7 @@ assert(
   source.includes('function artifactKindLabel(kind: string)') && source.includes('return ARTIFACT_KIND_LABELS[kind] || kind;'),
   'an unknown kind keeps its own name instead of being mapped to an invented one',
 );
-assert(source.includes('function bindArtifactView()') && source.includes('if (artifactViewBound) return;'),
+assert(source.includes('function bindArtifactView()') && /if \(artifactViewBound\) \{\s*return;/.test(source),
   'the view binds its handlers once, not once per render');
 
 assert.match(css, /\.mp-artifact-row\s*\{[^}]*min-height:\s*56px/s, 'rows keep the reference height');
@@ -68,12 +68,12 @@ assert(!view.includes('data-artifact-more'), 'no overflow button without a delet
 assert(!source.includes('data-artifact-delete'), 'nothing wires a delete that does not exist');
 
 assert(source.includes('function artifactDayKey(at: number)'));
-assert(source.includes("? artifactDayKey(at) : '更早'"), 'a timestamp-less entry still lands in a group');
-assert(source.includes('按「第一次出现的日期」排序') || source.includes('groups.push({ label, items: bucket })'),
+assert(source.includes("? artifactDayKey(at) : 'Earlier'"), 'a timestamp-less entry still lands in a group');
+assert(source.includes('按「第一次出现的日期」排序') || /groups\.push\(\{\s*label,\s*items:\s*bucket\s*\}\)/.test(source),
   'groups keep the newest-first order of the cache');
 
 assert(source.includes('function artifactEmptyMarkup(message: string)'));
-assert.match(source, /host\.innerHTML = artifactEmptyMarkup\('还没有产物/);
+assert.match(source, /host\.innerHTML = artifactEmptyMarkup\(\s*artifactText\('artifact\.empty'\)/);
 assert(!source.includes("emptyStateMarkup('ic-docs'"), 'the empty state no longer draws the giant pictogram');
 
 function extractFunction(name, nextMarker) {
@@ -96,7 +96,7 @@ assert.strictEqual(plainLine('`code` 与 [链接](https://example.test)'), 'code
 assert.strictEqual(plainLine(undefined), '');
 assert(plainLine('-').length <= 1, 'a lone bullet does not throw');
 
-assert(source.includes('const name = artifactPlainLine(entry.name)'), 'the row title goes through the stripper');
+assert(/const name =\s*artifactPlainLine\(entry\.name\)/.test(source), 'the row title goes through the stripper');
 assert(!source.includes('${esc(a.name)}'), 'the old raw-name interpolation is gone');
 
 assert(!source.includes('class="card artifact enter"'), 'the unstyled card markup is gone');
