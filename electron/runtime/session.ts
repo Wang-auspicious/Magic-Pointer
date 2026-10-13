@@ -350,6 +350,25 @@ export function pruneToolResults(
 }
 
 export function normalizedInput(value: Data): Data {
+  if (value.kind === 'artifact' && value.tool === 'Document.propose_patch') {
+    const artifactId = text(value.artifactId).trim();
+    const artifactRevision = Number(value.artifactRevision);
+    if (
+      !artifactId ||
+      !Number.isSafeInteger(artifactRevision) ||
+      artifactRevision < 1
+    ) {
+      throw new Error('invalid_artifact_review');
+    }
+    return {
+      kind: 'artifact',
+      tool: 'Document.propose_patch',
+      artifactId,
+      artifactRevision,
+      question: text(value.question).trim(),
+      ...(value.requestId ? {requestId: text(value.requestId)} : {}),
+    };
+  }
   const questions = array(
     value.questions || [
       {
@@ -499,6 +518,7 @@ function pendingInput(events: Event[], surface: Message[]): Data | null {
           'AskUserQuestion',
           'ask_user_question',
           'ExitPlanMode',
+          'Document.propose_patch',
         ].includes(message.name ?? '') &&
           !(
             value.kind === 'desktop_wait' &&
@@ -512,6 +532,9 @@ function pendingInput(events: Event[], surface: Message[]): Data | null {
         ...normalizedInput(value),
         requestId: message.tool_call_id,
       } as Data;
+      if (answered.has(pending.requestId)) {
+        continue;
+      }
       if (pending.kind === 'desktop_wait') {
         pending.tool = message.name;
         const call = reversed
@@ -1837,6 +1860,17 @@ export class EventSession {
       throw new Error('pending_input_mismatch');
     }
     const normalized = normalizeResponse(pending, response);
+    if (pending.kind === 'artifact') {
+      const applied = this.verifiedArtifactApplication(pending);
+      if (
+        !applied ||
+        applied.data.receiptId !== normalized.receiptId ||
+        applied.data.artifactRevision !== normalized.artifactRevision
+      ) {
+        throw new Error('artifact_application_not_verified');
+      }
+      normalized.applicationResult = applied.data.result;
+    }
     return this.append('user_input/answered', {
       requestId,
       pendingInput: pending,
@@ -1845,7 +1879,9 @@ export class EventSession {
         role: 'tool',
         tool_call_id: requestId,
         name:
-          pending.harnessPermission || pending.kind === 'desktop_wait'
+          pending.harnessPermission ||
+          pending.kind === 'desktop_wait' ||
+          pending.kind === 'artifact'
             ? pending.tool
             : pending.kind === 'plan'
               ? 'ExitPlanMode'
@@ -1859,6 +1895,43 @@ export class EventSession {
         }),
       },
     });
+  }
+  private verifiedArtifactApplication(pending: Data): SessionEvent | undefined {
+    const latest = [...this.events]
+      .reverse()
+      .find(
+        event =>
+          ['artifact/applied', 'artifact/undone'].includes(event.type) &&
+          event.data.artifactId === pending.artifactId &&
+          Number(event.data.artifactRevision) >=
+            Number(pending.artifactRevision),
+      );
+    return latest?.type === 'artifact/applied' &&
+      object(latest.data.result).verified === true
+      ? latest
+      : undefined;
+  }
+  async resolveArtifactReviews(): Promise<string[]> {
+    await this.refresh();
+    const answered: string[] = [];
+    for (;;) {
+      const pending = this.pendingInput();
+      if (pending?.kind !== 'artifact') {
+        break;
+      }
+      const applied = this.verifiedArtifactApplication(pending);
+      if (!applied) {
+        break;
+      }
+      const requestId = text(pending.requestId);
+      await this.answer(requestId, {
+        applied: true,
+        artifactRevision: applied.data.artifactRevision,
+        receiptId: applied.data.receiptId,
+      });
+      answered.push(requestId);
+    }
+    return answered;
   }
   approvedCalls(): Data[] {
     const started = new Set(
@@ -2008,6 +2081,22 @@ export class EventSession {
 }
 
 export function normalizeResponse(pending: Data, response: Data): Data {
+  if (pending.kind === 'artifact') {
+    if (
+      response.applied !== true ||
+      !text(response.receiptId) ||
+      !Number.isSafeInteger(response.artifactRevision) ||
+      Number(response.artifactRevision) < Number(pending.artifactRevision)
+    ) {
+      throw new Error('artifact_application_not_verified');
+    }
+    return {
+      applied: true,
+      verified: true,
+      artifactRevision: response.artifactRevision,
+      receiptId: response.receiptId,
+    };
+  }
   if (pending.kind === 'permission' || pending.kind === 'plan') {
     const decision = text(response.decision);
     if (!['once', 'grant', 'deny'].includes(decision)) {

@@ -729,7 +729,7 @@ export function registerArtifactTools(
           locator,
           role,
         }));
-      return createArtifact(
+      const artifact = await createArtifact(
         session,
         String(args.summary),
         'Document changes',
@@ -740,6 +740,14 @@ export function registerArtifactTools(
           operations: args.operations,
         },
       );
+      return {
+        ...artifact,
+        kind: 'artifact',
+        tool: 'Document.propose_patch',
+        artifactRevision: artifact.revision,
+        question: String(args.summary),
+        awaitingUserInput: true,
+      };
     },
   });
 }
@@ -1263,12 +1271,19 @@ export async function handleArtifact(
         );
       }
     }
+    const reviewAnswers =
+      action === 'apply' && result.verified
+        ? await session.resolveArtifactReviews()
+        : [];
     return {
       ok: result.verified,
       result,
       receipt,
       artifact: wire(current),
       artifacts: registered,
+      reviewAnswers,
+      readyToResume: reviewAnswers.length > 0 && !session.pendingInput(),
+      pendingInput: session.pendingInput(),
     };
   } catch (error) {
     return {

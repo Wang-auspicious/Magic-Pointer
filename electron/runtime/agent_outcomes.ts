@@ -210,6 +210,30 @@ export function taskOutcomes(events: readonly SessionEvent[]): {
       .map(event => String(event.data.operationId)),
   );
   for (const event of scope) {
+    if (['artifact/applied', 'artifact/undone'].includes(event.type)) {
+      const result = object(event.data.result);
+      const succeeded = new Set(rows(result.succeededOperationIds));
+      for (const raw of rows(result.inverseRecords)) {
+        const record = object(raw);
+        const operationId = String(record.forwardOperationId);
+        const target = `source:${record.sourceId}:${canonicalJson(record.locator)}`;
+        current.set(`document:${target}`, {
+          operationId,
+          callId: String(event.data.receiptId),
+          tool:
+            event.type === 'artifact/undone'
+              ? 'Document.undo'
+              : 'Document.apply',
+          target,
+          status: succeeded.has(operationId) ? 'verified' : 'unverified',
+          method: 'document_patch_readback',
+          scope: 'target_state',
+          usedBackend: String(result.usedBackend || '') || null,
+          effect: 'reversible_write',
+        });
+      }
+      continue;
+    }
     if (event.type === 'operation/prepared') {
       prepared.set(String(event.data.operationId), event.data);
     }

@@ -223,6 +223,19 @@ export function initialToolNames(context: {
   }
   if (context.taskContext?.sources?.length) {
     names.push('Context.read', 'Context.search');
+    if (
+      context.taskContext.sources.some(source => {
+        const capabilities = asObject(source).capabilities;
+        return (
+          Array.isArray(capabilities) &&
+          capabilities.some(capability =>
+            ['patch', 'move_file'].includes(String(capability)),
+          )
+        );
+      })
+    ) {
+      names.push('Document.propose_patch');
+    }
   }
   if (
     context.selectionSnapshot ||

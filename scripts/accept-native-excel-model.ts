@@ -321,6 +321,20 @@ $ownerPid=[uint32]0
       'model must actually read both live B2 and C2 values before proposing',
     );
     assert.ok(proposalEvent, 'model must actually create the patch proposal');
+    assert.equal(
+      runtime.awaitingUserInput,
+      true,
+      'a proposal must pause for editor review',
+    );
+    assert.equal(runtime.pendingInput?.kind, 'artifact');
+    assert.ok(
+      !toolResults.some(tool =>
+        ['launch_app', 'activate_window', 'click', 'type_text'].includes(
+          String(tool.name),
+        ),
+      ),
+      'an exact document edit must not detour through desktop input',
+    );
 
     const drafts = (await handleArtifact(
       {action: 'read', sessionId},
@@ -428,6 +442,7 @@ $ownerPid=[uint32]0
       usedBackend: applied.result?.usedBackend ?? null,
     };
     assert.equal(applied.ok, true, JSON.stringify(applied));
+    assert.equal(applied.readyToResume, true);
     assert.equal(applied.result.status, 'succeeded');
     assert.deepEqual(applied.result.succeededOperationIds, [
       operation.operationId,
@@ -454,6 +469,24 @@ $ownerPid=[uint32]0
       diskExists: false,
       usedBackend: 'excel.com.independent',
     });
+    const continued = await runRuntime(
+      {agentSessionId: sessionId, resume: true, modelRuntime: {...config, effort: 'high'}},
+      {root, userDataDir: runDir, signal: AbortSignal.timeout(180000)},
+    );
+    report.continuation = {
+      ok: continued.ok,
+      answer: continued.answer,
+      pendingInput: continued.pendingInput,
+      receipt: continued.receipts?.[0],
+      usedBackend: continued.usedBackend,
+      timingMs: continued.timingMs,
+      modelUsage: continued.modelUsage,
+    };
+    assert.equal(continued.ok, true);
+    assert.equal(continued.awaitingUserInput, false);
+    assert.equal(continued.receipts?.[0]?.status, 'succeeded');
+    assert.equal(continued.receipts?.[0]?.wrote, true);
+    assert.equal(continued.receipts?.[0]?.verified, true);
     report.status = 'passed';
   } catch (error) {
     report.error = briefError(error);
@@ -480,6 +513,7 @@ $ownerPid=[uint32]0
         proposal: report.proposal,
         application: report.application,
         readback: report.readback,
+        continuation: report.continuation,
         cleanup: report.cleanup,
         timingsMs: report.timingsMs,
         error: report.error ?? null,

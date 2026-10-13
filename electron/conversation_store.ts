@@ -62,6 +62,8 @@ export interface TurnEvidence {
 }
 
 export interface TurnPendingInput {
+  artifactId?: string;
+  artifactRevision?: number;
   actionPreview?: string;
   plan?: string;
   requestId?: string;
@@ -768,6 +770,12 @@ function createConversationStore(
           }
         : {}),
       kind: kind || undefined,
+      ...(kind === 'artifact'
+        ? {
+            artifactId: String(raw.artifactId || ''),
+            artifactRevision: Number(raw.artifactRevision),
+          }
+        : {}),
       ...(kind === 'plan'
         ? {plan: String(raw.plan || '').slice(0, 32000)}
         : {}),
@@ -835,8 +843,15 @@ function createConversationStore(
     if (typeof input.hasPendingWork === 'boolean') {
       target.hasPendingWork = input.hasPendingWork;
     }
-    if (input.resumePending === false && index === target.turns.length - 1) {
-      delete target.resumePending;
+    if (
+      typeof input.resumePending === 'boolean' &&
+      index === target.turns.length - 1
+    ) {
+      if (input.resumePending) {
+        target.resumePending = true;
+      } else {
+        delete target.resumePending;
+      }
     }
     const taskContext = sanitizeTaskContext(input.taskContext);
     if (taskContext) {

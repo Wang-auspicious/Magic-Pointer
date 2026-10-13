@@ -89,6 +89,8 @@ declare global {
     timingMs?: number;
     usedBackend?: string;
     pendingInput?: {
+      artifactId?: string;
+      artifactRevision?: number;
       plan?: string;
       actionPreview?: string;
       action?: {tool?: string; arguments?: Record<string, unknown>};
