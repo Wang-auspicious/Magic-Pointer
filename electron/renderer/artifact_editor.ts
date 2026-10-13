@@ -247,6 +247,12 @@
     let current = emptyState();
     let selectionGeneration = 0;
     let savedPatchPayload: Record<string, unknown> | null = null;
+    // Contents of revisions seen in this session, keyed by artifact+revision.
+    // Server-side history carries author/hash but no content, so revisions
+    // never opened here are listed as metadata-only and cannot be restored.
+    const versionContents = new Map<string, string>();
+    const versionKey = (artifactId: string, revision: number): string =>
+      `${artifactId}#${revision}`;
 
     function hasUnsavedPatch(): boolean {
       return (
@@ -280,6 +286,19 @@
         current.content !== current.savedContent || hasUnsavedPatch();
       if (current.dirty) {
         current.acceptedRevision = null;
+      }
+      if (!options.keepContent && artifact.revision >= 1) {
+        versionContents.set(
+          versionKey(artifact.artifactId, artifact.revision),
+          artifact.content,
+        );
+        while (versionContents.size > 50) {
+          const oldest = versionContents.keys().next();
+          if (oldest.done) {
+            break;
+          }
+          versionContents.delete(oldest.value);
+        }
       }
     }
 
@@ -528,6 +547,71 @@
       accept,
       apply,
       undo,
+      versions: (): Array<{revision: number; hasContent: boolean}> => {
+        const seen = new Map<number, boolean>();
+        if (current.revision >= 1) {
+          seen.set(
+            current.revision,
+            versionContents.has(versionKey(current.artifactId, current.revision)),
+          );
+        }
+        for (const key of versionContents.keys()) {
+          const sep = key.lastIndexOf('#');
+          if (sep < 0 || key.slice(0, sep) !== current.artifactId) {
+            continue;
+          }
+          seen.set(Number(key.slice(sep + 1)), true);
+        }
+        return [...seen.entries()]
+          .map(([revision, hasContent]) => ({revision, hasContent}))
+          .sort((a, b) => b.revision - a.revision);
+      },
+      restoreVersion: async (
+        revision: number,
+      ): Promise<ArtifactResponse> => {
+        if (!current.artifactId || current.revision < 1) {
+          return fail('artifact_not_selected');
+        }
+        if (!Number.isInteger(revision) || revision < 1) {
+          return fail('artifact_revision_invalid');
+        }
+        if (revision === current.revision) {
+          return {ok: true, artifact: undefined};
+        }
+        const content = versionContents.get(
+          versionKey(current.artifactId, revision),
+        );
+        if (content === undefined) {
+          return fail('artifact_revision_content_unavailable');
+        }
+        if (current.dirty) {
+          return fail('save_required_before_restore');
+        }
+        const generation = selectionGeneration;
+        current = {...current, status: 'saving', error: ''};
+        try {
+          const response = await client.edit({
+            conversationId: current.conversationId,
+            artifactId: current.artifactId,
+            expectedRevision: current.revision,
+            content,
+            patchPayload: null,
+          });
+          if (generation !== selectionGeneration) {
+            return {ok: false, error: 'selection_changed'};
+          }
+          const artifact = artifactValue(response?.artifact);
+          if (response?.ok !== true || artifact === null) {
+            return fail(response?.error || 'artifact_restore_failed');
+          }
+          adopt(artifact, {keepContent: false, keepPatch: false});
+          return response;
+        } catch (error) {
+          return generation !== selectionGeneration
+            ? {ok: false, error: 'selection_changed'}
+            : fail(error instanceof Error ? error.message : error);
+        }
+      },
       clear: () => {
         selectionGeneration += 1;
         current = emptyState();

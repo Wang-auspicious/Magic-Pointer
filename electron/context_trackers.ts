@@ -29,6 +29,18 @@ type ScheduleTrigger = {
   everyMs: number;
 };
 
+type TrackerRun = {
+  startedAtMs: number;
+  finishedAtMs: number;
+  ok: boolean;
+  triggerKind: 'filesystem' | 'schedule';
+  dueThroughMs?: number;
+  conversationId?: string;
+  error?: string;
+};
+
+const MAX_RUN_HISTORY = 20;
+
 type ContextTracker = {
   trackerId: string;
   task: string;
@@ -38,15 +50,8 @@ type ContextTracker = {
   outputType: 'draft' | 'report';
   enabled: boolean;
   lastObserved: FileObservation | null;
-  lastRun: {
-    startedAtMs: number;
-    finishedAtMs: number;
-    ok: boolean;
-    triggerKind: 'filesystem' | 'schedule';
-    dueThroughMs?: number;
-    conversationId?: string;
-    error?: string;
-  } | null;
+  lastRun: TrackerRun | null;
+  runHistory: TrackerRun[];
   authorizationRevision: number;
 };
 
@@ -200,26 +205,20 @@ function normalizeContextTracker(value: unknown): ContextTracker {
     !Array.isArray(raw.lastRun)
       ? (raw.lastRun as Record<string, unknown>)
       : null;
-  const lastRun = rawLastRun
-    ? {
-        startedAtMs: Math.max(0, Number(rawLastRun.startedAtMs) || 0),
-        finishedAtMs: Math.max(0, Number(rawLastRun.finishedAtMs) || 0),
-        ok: rawLastRun.ok === true,
-        triggerKind:
-          rawLastRun.triggerKind === 'schedule'
-            ? ('schedule' as const)
-            : ('filesystem' as const),
-        ...(Number.isFinite(Number(rawLastRun.dueThroughMs))
-          ? {dueThroughMs: Math.max(0, Number(rawLastRun.dueThroughMs))}
-          : {}),
-        ...(cleanText(rawLastRun.conversationId, 160)
-          ? {conversationId: cleanText(rawLastRun.conversationId, 160)}
-          : {}),
-        ...(cleanText(rawLastRun.error, 1000)
-          ? {error: cleanText(rawLastRun.error, 1000)}
-          : {}),
-      }
-    : null;
+  const parsedLastRun = normalizeRun(rawLastRun);
+  const parsedHistory = (Array.isArray(raw.runHistory)
+    ? raw.runHistory
+        .map(item => normalizeRun(item))
+        .filter((item): item is TrackerRun => item !== null)
+    : []).sort((a, b) => b.startedAtMs - a.startedAtMs);
+  const boundedHistory = parsedHistory.slice(0, MAX_RUN_HISTORY);
+  const runHistory =
+    boundedHistory.length > 0
+      ? boundedHistory
+      : parsedLastRun
+        ? [parsedLastRun]
+        : [];
+  const lastRun = runHistory[0] ?? null;
   return {
     trackerId,
     task,
@@ -230,10 +229,36 @@ function normalizeContextTracker(value: unknown): ContextTracker {
     enabled: raw.enabled !== false,
     lastObserved: normalizedObservation(raw.lastObserved),
     lastRun,
+    runHistory,
     authorizationRevision: Math.max(
       1,
       Math.floor(Number(raw.authorizationRevision) || 1),
     ),
+  };
+}
+
+function normalizeRun(value: unknown): TrackerRun | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    startedAtMs: Math.max(0, Number(raw.startedAtMs) || 0),
+    finishedAtMs: Math.max(0, Number(raw.finishedAtMs) || 0),
+    ok: raw.ok === true,
+    triggerKind:
+      raw.triggerKind === 'schedule'
+        ? ('schedule' as const)
+        : ('filesystem' as const),
+    ...(Number.isFinite(Number(raw.dueThroughMs))
+      ? {dueThroughMs: Math.max(0, Number(raw.dueThroughMs))}
+      : {}),
+    ...(cleanText(raw.conversationId, 160)
+      ? {conversationId: cleanText(raw.conversationId, 160)}
+      : {}),
+    ...(cleanText(raw.error, 1000)
+      ? {error: cleanText(raw.error, 1000)}
+      : {}),
   };
 }
 
@@ -595,6 +620,10 @@ function createContextTrackerRuntime({
         : {}),
       ...(errorText ? {error: errorText} : {}),
     };
+    current.runHistory = [current.lastRun, ...current.runHistory].slice(
+      0,
+      MAX_RUN_HISTORY,
+    );
     persist();
   }
 
@@ -822,6 +851,7 @@ function createContextTrackerRuntime({
     if (existing && configIdentity(existing) !== configIdentity(normalized)) {
       normalized.authorizationRevision = existing.authorizationRevision + 1;
       normalized.lastRun = null;
+      normalized.runHistory = [];
       if (
         existing.trigger.kind !== normalized.trigger.kind ||
         JSON.stringify(existing.trigger) !== JSON.stringify(normalized.trigger)
