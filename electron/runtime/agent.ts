@@ -1684,6 +1684,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         });
       }
       if (pending) {
+        pending = session.pendingInput() ?? pending;
         reason = 'awaiting_user';
         answer = str(pending.question);
         break;

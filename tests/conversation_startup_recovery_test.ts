@@ -81,11 +81,14 @@ test('startup redispatches only unfinished work and restores terminal, waiting, 
   try {
     let clock = 1000;
     const store = createConversationStore({baseDir: dir, now: () => ++clock});
-    const entries = ['unfinished', 'completed', 'question', 'stopped', 'unavailable', 'queued', 'unstarted'].map(kind => store.appendTurn({
+    const entries = ['unfinished', 'completed', 'question', 'stopped', 'unavailable', 'queued', 'unstarted', 'answered'].map(kind => store.appendTurn({
       newConversation: true, question: kind, outcome: '进行中', answer: 'Saved partial answer',
       agentSessionId: `agent-${kind}`, hasPendingWork: true,
       ...(['queued', 'unstarted'].includes(kind) ? {request: {taskInput: {inputId: `${kind}-input`}, attachments: ['original.csv']}} : {}),
     }));
+    store.updateTurn({conversationId: entries[7].id, outcome: '继续执行', resumePending: true});
+    store.flush();
+    assert.equal(createConversationStore({baseDir: dir}).get(entries[7].id).resumePending, true);
     store.recoverInterruptedTurns();
     const resumed: unknown[] = [];
     const notified: string[] = [];
@@ -103,6 +106,7 @@ test('startup redispatches only unfinished work and restores terminal, waiting, 
         if (sessionId === 'agent-unavailable') return {ok: false, error: 'session_not_found'};
         if (sessionId === 'agent-unstarted') return {ok: false, error: 'session_not_found'};
         if (sessionId === 'agent-queued') return {ok: true, openTurn: null, lastTurnReason: 'completed', inputRecorded: false, terminal: {answer: 'The previous task result'}};
+        if (sessionId === 'agent-answered') return {ok: true, openTurn: null, lastTurnReason: 'awaiting_user', pendingInput: null, hasPendingWork: true};
         return {ok: true, openTurn: 1, hasPendingWork: true};
       },
       sendConversation: async (raw: {conversationId: string; resume: boolean}) => {
@@ -115,8 +119,9 @@ test('startup redispatches only unfinished work and restores terminal, waiting, 
     await recover();
     assert.deepEqual(snapshot(resumed).sort((left: {conversationId: string}, right: {conversationId: string}) => left.conversationId.localeCompare(right.conversationId)), [
       {conversationId: entries[0].id, resume: true},
+      {conversationId: entries[7].id, resume: true},
       ...['queued', 'unstarted'].map((kind, index) => ({taskInput: {inputId: `${kind}-input`}, attachments: ['original.csv'], conversationId: entries[index + 5].id, resume: true, question: kind})),
-    ]);
+    ].sort((left, right) => left.conversationId.localeCompare(right.conversationId)));
     const completed = store.get(entries[1].id).turns[0];
     assert.equal(completed.answer, 'Full durable result');
     assert.equal(completed.completedAt, 700, 'the restart time must not replace the actual completion time');
@@ -127,7 +132,7 @@ test('startup redispatches only unfinished work and restores terminal, waiting, 
     assert.match(store.get(entries[4].id).turns[0].error, /session_not_found/);
     assert.deepEqual(store.pendingResumeIds(), []);
     await recover();
-    assert.equal(resumed.length, 3, 'a second startup drain must not repeat dispatch');
+    assert.equal(resumed.length, 4, 'a second startup drain must not repeat dispatch');
     assert.equal(notified.length, 4);
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});

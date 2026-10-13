@@ -13,6 +13,20 @@ function pendingInputFromBridge(value: unknown): UnknownRecord | null {
   const question = String(pending.question || '')
     .trim()
     .slice(0, 1000);
+  if (
+    pending.kind === 'artifact' &&
+    pending.artifactId &&
+    Number.isSafeInteger(pending.artifactRevision)
+  ) {
+    return {
+      kind: 'artifact',
+      question,
+      tool: 'Document.propose_patch',
+      artifactId: String(pending.artifactId),
+      artifactRevision: Number(pending.artifactRevision),
+      requestId: String(pending.requestId || ''),
+    };
+  }
   if (pending.kind === 'plan' && pending.plan) {
     return {
       kind: 'plan',

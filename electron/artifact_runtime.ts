@@ -12,6 +12,10 @@ interface ArtifactConversationStore {
 interface ArtifactRuntimeOptions {
   conversationStore: ArtifactConversationStore;
   runBridge(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
+  onReviewResolved?(
+    conversationId: string,
+    result: Record<string, unknown>,
+  ): Promise<void>;
 }
 
 type ArtifactAction = 'read' | 'edit' | 'accept' | 'apply' | 'undo' | 'restore';
@@ -117,7 +121,16 @@ function createArtifactRuntime(options: ArtifactRuntimeOptions) {
       payload.revision = currentRevision;
     }
     try {
-      return await runBridge(payload);
+      const result = await runBridge(payload);
+      if (
+        action === 'apply' &&
+        result.ok &&
+        Array.isArray(result.reviewAnswers) &&
+        result.reviewAnswers.length
+      ) {
+        await options.onReviewResolved?.(conversationId, result);
+      }
+      return result;
     } catch (error) {
       return {
         ok: false,

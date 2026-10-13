@@ -4212,8 +4212,15 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
       question: String(pending.question || '').trim() || undefined,
       options: options.length ? options : undefined,
     };
-  } else if (pending && (pending.questions?.length || pending.question)) {
-    const question = String(pending.question || studioT('ask.default_question'));
+  } else if (
+    pending &&
+    (pending.kind === 'artifact' ||
+      pending.questions?.length ||
+      pending.question)
+  ) {
+    const question = String(
+      pending.question || studioT('ask.default_question'),
+    );
     const detailed = optionObjects.some(
       option => option.description || option.preview,
     );
@@ -11403,6 +11410,16 @@ function renderPermissionAsk() {
       kind: pendingPermissionAsk
         ? 'permission'
         : pendingAskInput?.kind || 'ask',
+      ...(pendingAskInput?.kind === 'artifact'
+        ? {
+            openArtifact: () => {
+              void openArtifactEditor(
+                conversationId,
+                pendingAskInput?.artifactId || '',
+              );
+            },
+          }
+        : {}),
       historySources: isDailyWrap
         ? pendingDailyWrapSources?.sources
         : undefined,
@@ -11420,10 +11437,11 @@ function renderPermissionAsk() {
         : undefined,
       questions:
         pendingAskInput?.questions ||
-        (pendingAskInput
+        (pendingAskInput && pendingAskInput.kind !== 'artifact'
           ? [
               {
-                question: pendingAskInput.question || studioT('ask.default_question'),
+                question:
+                  pendingAskInput.question || studioT('ask.default_question'),
                 options: (pendingAskInput.options || []).map(label => ({
                   label,
                 })),

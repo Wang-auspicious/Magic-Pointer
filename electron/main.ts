@@ -1676,7 +1676,9 @@ async function resumeInterruptedConversations(): Promise<void> {
         } else if (
           status.openTurn === null &&
           status.lastTurnReason &&
-          status.lastTurnReason !== 'interrupted'
+          !['interrupted', 'awaiting_user'].includes(
+            String(status.lastTurnReason),
+          )
         ) {
           const completed = status.lastTurnReason === 'completed';
           settle({
@@ -1735,6 +1737,37 @@ function artifactCommands() {
           'artifact',
           {target: null, timeoutMs: 120_000},
         ),
+      onReviewResolved: async (
+        conversationId: string,
+        result: Record<string, unknown>,
+      ) => {
+        const store = conversations();
+        const pending = store.get(conversationId)?.turns?.at(-1)?.pendingInput;
+        if (
+          !pending?.requestId ||
+          !(result.reviewAnswers as unknown[]).includes(pending.requestId)
+        ) {
+          return;
+        }
+        const ready = result.readyToResume === true;
+        store.updateTurn({
+          conversationId,
+          pendingInput: result.pendingInput || null,
+          hasPendingWork: true,
+          resumePending: ready,
+          completedAt: null,
+          failed: false,
+          error: '',
+          outcome: ready ? '继续执行' : '等待输入',
+        });
+        store.flush();
+        notifyConversationChanged(conversationId);
+        if (ready) {
+          void sendConversation({conversationId, resume: true}).catch(error => {
+            log(`artifact continuation ${conversationId}: ${String(error)}`);
+          });
+        }
+      },
     });
   }
   return artifactRuntime;

@@ -8,6 +8,9 @@ declare global {
   interface MagicPointerDecisionRequest {
     key: string;
     kind?: string;
+    artifactId?: string;
+    artifactRevision?: number;
+    openArtifact?: () => void;
     tool?: string;
     prefix?: string;
     plan?: string;
@@ -497,11 +500,13 @@ declare global {
     const inline = request.presentation === 'inline';
     card.dataset.presentation = inline ? 'inline' : 'dock';
     card.dataset.kind =
-      request.kind === 'plan'
-        ? 'plan'
-        : request.kind === 'permission'
-          ? 'permission'
-          : 'question';
+      request.kind === 'artifact'
+        ? 'artifact'
+        : request.kind === 'plan'
+          ? 'plan'
+          : request.kind === 'permission'
+            ? 'permission'
+            : 'question';
     card.setAttribute(
       'aria-label',
       request.kind === 'permission'
@@ -537,7 +542,27 @@ declare global {
       paint(host, view);
       view.submit(response);
     };
-    if (request.kind === 'plan') {
+    if (request.kind === 'artifact') {
+      const label =
+        typeof studioT === 'function'
+          ? studioT('artifact.review_changes')
+          : 'Review changes';
+      const hint =
+        typeof studioT === 'function'
+          ? studioT('artifact.review_continue')
+          : 'Review and apply this version in the editor. The task will continue after the changes are verified.';
+      card.setAttribute('aria-label', label);
+      card.append(
+        element('div', 'mp-decision-heading', label),
+        element('p', 'mp-decision-question', request.question || ''),
+        element('p', 'mp-decision-caption', hint),
+      );
+      const actions = element('div', 'mp-decision-actions');
+      actions.append(
+        button(label, () => request.openArtifact?.(), 'is-primary'),
+      );
+      card.append(actions);
+    } else if (request.kind === 'plan') {
       card.setAttribute('aria-label', 'Plan approval');
       const heading = element('div', 'mp-decision-heading');
       heading.append(

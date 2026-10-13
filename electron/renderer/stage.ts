@@ -2315,6 +2315,13 @@
       {
         ...input,
         key,
+        ...(input.kind === 'artifact'
+          ? {
+              openArtifact: () => {
+                void openStageArtifact(input.artifactId || '');
+              },
+            }
+          : {}),
         ...(dailyWrap
           ? {
               historySources: stageHistorySources?.sources,
@@ -2328,7 +2335,7 @@
           : {}),
         questions:
           input.questions ||
-          (input.kind !== 'permission'
+          (input.kind !== 'permission' && input.kind !== 'artifact'
             ? [
                 {
                   question: input.question || '需要你的决定',

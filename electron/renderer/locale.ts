@@ -40,6 +40,8 @@ interface StudioCountEntry {
 }
 
 const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
+  'artifact.review_changes': {en: 'Review changes', zh: '审阅修改'},
+  'artifact.review_continue': {en: 'Review and apply this version in the editor. The task will continue after the changes are verified.', zh: '在编辑器中审阅并应用此版本。修改验证成功后，任务会自动继续。'},
   'preview.fit': {en: 'Fit', zh: '适应窗口'},
   'preview.image_failed': {en: 'Could not display this image. Open it in its application.', zh: '无法显示此图片，请使用关联应用打开。'},
   'dashboard.new': {en: 'New dashboard', zh: '新建数据看板'},
