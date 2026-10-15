@@ -146,6 +146,8 @@ app.whenReady().then(async () => {
     const draggedWidth = await studio.webContents.executeJavaScript('inspectorState.width');
     if (Math.abs(draggedWidth - 480) > 1) failures.push('splitter did not follow the captured pointer: ' + draggedWidth);
     studio.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Escape'});
+    studio.webContents.sendInputEvent({type: 'keyUp', keyCode: 'Escape'});
+    await studio.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
     failures.push(...await studio.webContents.executeJavaScript(`(() => {
       const failures = [];
       if (inspectorState.width !== 560 || localStorage.getItem('mp:inspector-width') !== '560') failures.push('Escape did not restore the split width');
@@ -204,6 +206,7 @@ app.whenReady().then(async () => {
       if (!contained) failures.push('modal allows focus behind it: ' + opener);
       await studio.webContents.executeJavaScript("document.querySelector('.mpw-perm-confirm button')?.focus()");
       studio.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Escape'});
+      studio.webContents.sendInputEvent({type: 'keyUp', keyCode: 'Escape'});
       await studio.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
       failures.push(...await studio.webContents.executeJavaScript(`(() => {
         const failures = [];
@@ -230,6 +233,23 @@ app.whenReady().then(async () => {
     await capture(studio, 'split-light');
     for (const theme of ['light', 'dark']) {
       await studio.webContents.executeJavaScript(`document.documentElement.dataset.theme = '${theme}'; document.body.toggleAttribute('data-ds-dark-theme', '${theme}' === 'dark'); openRenameDialog('reference-preview', 'UI 验证样例');`);
+      await studio.webContents.executeJavaScript('Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})))');
+      failures.push(...await studio.webContents.executeJavaScript(`(() => {
+        const failures = [];
+        const style = selector => getComputedStyle(document.querySelector(selector));
+        const dark = '${theme}' === 'dark';
+        if (style('#stream').backgroundColor !== 'rgba(0, 0, 0, 0)') failures.push('message stream adds a second background');
+        if (style('.mpw-scrollbody').backgroundColor !== (dark ? 'rgb(11, 11, 10)' : 'rgb(245, 245, 243)')) failures.push('${theme} canvas does not use reference surface 0');
+        if (style('.mpw-sidebar-col').backgroundColor !== (dark ? 'rgb(21, 21, 21)' : 'rgb(252, 252, 251)')) failures.push('${theme} sidebar does not use reference surface 1');
+        if (style('.mpw-scroll').backgroundColor !== (dark ? 'rgb(32, 32, 30)' : 'rgb(255, 255, 255)')) failures.push('${theme} composer does not use reference surface 3');
+        if (style('.mpw-scroll').borderRadius !== '20px') failures.push('composer radius differs from reference 20px');
+        if (style('.mp-chat-bubble').borderRadius !== '18px') failures.push('user message radius differs from reference 18px');
+        const send = document.querySelector('.mpw-primary');
+        send.disabled = false;
+        if (style('.mpw-primary').width !== '32px' || style('.mpw-primary').height !== '32px') failures.push('send target is smaller than reference 32px');
+        if (style('.mpw-primary').backgroundColor !== 'rgb(217, 119, 87)') failures.push('idle send lacks the reference clay accent');
+        return failures;
+      })()`));
       await capture(studio, 'modal-' + theme);
       await studio.webContents.executeJavaScript("document.querySelector('dialog.mpw-perm-confirm').close(); new Promise(resolve => requestAnimationFrame(resolve))");
     }
