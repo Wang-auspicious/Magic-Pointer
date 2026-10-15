@@ -16,7 +16,7 @@ const buildRoot = path.resolve('build/electron/renderer');
 
 async function open(page, preload) {
   const win = new BrowserWindow({width: 1440, height: 900, show: false,
-    webPreferences: {offscreen: true, sandbox: false, contextIsolation: false,
+    webPreferences: {offscreen: true, sandbox: false, contextIsolation: false, backgroundThrottling: false,
       ...(preload ? {preload: path.resolve(preload)} : {})}});
   await win.loadFile(path.join(buildRoot, page + '.html'));
   return win;
@@ -67,6 +67,46 @@ app.whenReady().then(async () => {
       check(submitted === 0, 'Shift+Enter submitted a draft');
       key('Enter');
       check(submitted === 1, 'normal Enter no longer submits');
+      return failures;
+    })()`));
+    failures.push(...await studio.webContents.executeJavaScript(`(async () => {
+      const failures = [];
+      const check = (ok, message) => { if (!ok) failures.push(message); };
+      document.getElementById('studio-home').hidden = true;
+      const scroller = document.getElementById('stream');
+      scroller.hidden = false;
+      const content = document.createElement('div');
+      content.style.height = '2400px';
+      document.getElementById('stream').replaceChildren(content);
+      const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const bottom = () => { document.getElementById('scroll-pill').click(); };
+      bottom();
+      await settle();
+      check(scroller.scrollHeight > scroller.clientHeight + 500, 'scroll fixture is not overflowing');
+      scroller.dispatchEvent(new WheelEvent('wheel', {deltaY: -20, bubbles: true}));
+      scroller.scrollTop -= 20;
+      const readingPosition = scroller.scrollTop;
+      followIfNearBottom(content, () => { content.style.height = '2600px'; });
+      check(Math.abs(scroller.scrollTop - readingPosition) <= 1, 'streaming pulled a small upward scroll back to the bottom');
+      scroller.scrollTop = readingPosition;
+      await new Promise(resolve => setTimeout(resolve, 180));
+      followIfNearBottom(content, () => { content.style.height = '2800px'; });
+      check(Math.abs(scroller.scrollTop - readingPosition) <= 1, 'reading position was lost after the input cooldown');
+      await settle();
+      check(!document.getElementById('scroll-pill').hidden, 'jump to latest is missing while reading history');
+      bottom();
+      await settle();
+      followIfNearBottom(content, () => { content.style.height = '3000px'; });
+      check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1, 'jump to latest did not restore streaming follow');
+      scroller.dispatchEvent(new KeyboardEvent('keydown', {key: 'PageUp', bubbles: true}));
+      const keyboardPosition = scroller.scrollTop;
+      followIfNearBottom(content, () => { content.style.height = '3200px'; });
+      check(Math.abs(scroller.scrollTop - keyboardPosition) <= 1, 'streaming raced ahead of a keyboard scroll');
+      bottom();
+      await settle();
+      scroller.scrollTop -= 150;
+      await settle();
+      check(!document.getElementById('scroll-pill').hidden, 'jump to latest requires scrolling more than 120 pixels');
       return failures;
     })()`));
     studio.destroy();
@@ -122,7 +162,7 @@ app.whenReady().then(async () => {
     })()`));
     companion.destroy();
     assert.deepEqual(failures, []);
-    console.log('IME input isolation passed in Studio, Stage and Companion');
+    console.log('Reference interactions passed: IME isolation and streaming scroll');
   } catch (error) {
     console.error(error);
     process.exitCode = 1;

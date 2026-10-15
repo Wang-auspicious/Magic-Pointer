@@ -4169,7 +4169,7 @@ async function openConversation(id: string) {
   }
   stream.replaceChildren(flow);
   syncConversationPendingInput(turns);
-  stream.scrollTop = stream.scrollHeight;
+  scrollChatToBottom();
   ChatView.bindDelegation(stream);
   syncExternalConversationRun(c);
   scheduleStreamRail();
@@ -12593,7 +12593,10 @@ function acceptComposerSuggestion(textarea: HTMLTextAreaElement): boolean {
   return true;
 }
 
-const SCROLL_FOLLOW_THRESHOLD_PX = 48;
+const SCROLL_FOLLOW_THRESHOLD_PX = 40;
+let streamFollowPinned = true;
+let streamLastInputAt = -Infinity;
+let streamLastScrollTop = 0;
 
 function isNearBottom(
   el: HTMLElement,
@@ -12603,13 +12606,25 @@ function isNearBottom(
 }
 
 function updateScrollPill() {
-  const scroller = document.querySelector<HTMLElement>('.mpw-scrollbody');
+  const scroller = document.getElementById('stream');
   const pill = document.getElementById('scroll-pill');
   if (!scroller || !pill) {
     return;
   }
   pill.hidden =
-    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 240;
+    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 120;
+}
+
+function scrollChatToBottom() {
+  const scroller = document.getElementById('stream');
+  if (!scroller) {
+    return;
+  }
+  streamFollowPinned = true;
+  streamLastInputAt = -Infinity;
+  scroller.scrollTo({top: scroller.scrollHeight, behavior: 'instant'});
+  streamLastScrollTop = scroller.scrollTop;
+  updateScrollPill();
 }
 
 let pendingClockTimer: number | null = null;
@@ -12646,27 +12661,67 @@ function stopPendingClock() {
 }
 
 function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
-  const scroller = body.closest('.mpw-scrollbody') as HTMLElement | null;
-  const near = scroller ? isNearBottom(scroller) : true;
+  const scroller = body.closest('#stream');
+  const follow =
+    streamFollowPinned && performance.now() - streamLastInputAt > 150;
   mutate();
-  if (near && scroller) {
-    scroller.scrollTo({top: scroller.scrollHeight});
-    updateScrollPill();
+  if (follow && scroller) {
+    scrollChatToBottom();
   }
+  updateScrollPill();
 }
 
 (function bindScrollPill() {
-  const scroller = document.querySelector<HTMLElement>('.mpw-scrollbody');
+  const scroller = document.getElementById('stream');
   const pill = document.getElementById('scroll-pill');
   if (!scroller || !pill || scroller.dataset.pillBound) {
     return;
   }
   scroller.dataset.pillBound = '1';
-  scroller.addEventListener('scroll', updateScrollPill, {passive: true});
-  pill.addEventListener('click', () => {
-    scroller.scrollTo({top: scroller.scrollHeight});
-    updateScrollPill();
+  const release = () => {
+    streamLastInputAt = performance.now();
+    streamFollowPinned = false;
+  };
+  scroller.addEventListener('wheel', release, {passive: true});
+  scroller.addEventListener('touchstart', release, {passive: true});
+  scroller.addEventListener('pointerdown', event => {
+    if (event.target === scroller) {
+      release();
+    }
   });
+  scroller.addEventListener('keydown', event => {
+    if (
+      !(event.target as Element)?.closest(
+        'input, textarea, select, [contenteditable]',
+      ) &&
+      [
+        'ArrowUp',
+        'ArrowDown',
+        'PageUp',
+        'PageDown',
+        'Home',
+        'End',
+        ' ',
+      ].includes(event.key)
+    ) {
+      release();
+    }
+  });
+  scroller.addEventListener(
+    'scroll',
+    () => {
+      const top = scroller.scrollTop;
+      if (top < streamLastScrollTop) {
+        streamFollowPinned = false;
+      } else if (top > streamLastScrollTop && isNearBottom(scroller)) {
+        streamFollowPinned = true;
+      }
+      streamLastScrollTop = top;
+      updateScrollPill();
+    },
+    {passive: true},
+  );
+  pill.addEventListener('click', scrollChatToBottom);
 })();
 
 function appendLiveStreamText(text: string) {
@@ -12925,7 +12980,7 @@ async function steerActiveConversation(
         const node = ChatView.userNode(question);
         node.setAttribute('data-queued', 'true');
         flow.appendChild(node);
-        flow.closest('.mpw-scrollbody')?.scrollTo({top: 1_000_000});
+        scrollChatToBottom();
       }
     },
   });
@@ -13093,7 +13148,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     );
     pending.appendChild(pendingBody);
     flow.appendChild(pending);
-    stream.scrollTop = stream.scrollHeight;
+    scrollChatToBottom();
     scheduleStreamRail();
 
     textarea.value = '';
