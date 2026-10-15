@@ -11,15 +11,28 @@ app.setPath('userData', profile);
 app.disableHardwareAcceleration();
 app.on('window-all-closed', () => {});
 const failures = [];
+const output = path.resolve('data/runtime/open-claude-ui-20261014');
+fs.mkdirSync(output, {recursive: true});
 const deadline = setTimeout(() => app.exit(1), 40000);
 const buildRoot = path.resolve('build/electron/renderer');
 
 async function open(page, preload) {
   const win = new BrowserWindow({width: 1440, height: 900, useContentSize: true, show: false,
-    webPreferences: {offscreen: true, sandbox: false, contextIsolation: false, backgroundThrottling: false,
+    webPreferences: {offscreen: true, sandbox: false, contextIsolation: preload !== 'scripts/probe_stage_input_preload.cjs', backgroundThrottling: false,
       ...(preload ? {preload: path.resolve(preload)} : {})}});
+  win.webContents.on('console-message', event => {
+    if (event.level === 'error') failures.push(page + ' renderer error: ' + event.message);
+  });
+  win.webContents.on('preload-error', (_event, _path, error) => failures.push(page + ' preload error: ' + error.message));
   await win.loadFile(path.join(buildRoot, page + '.html'));
   return win;
+}
+
+async function capture(win, name) {
+  await win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const image = await win.webContents.capturePage(undefined, {stayHidden: true, stayAwake: true});
+  fs.writeFileSync(path.join(output, name + '.png'), image.toPNG());
 }
 
 app.whenReady().then(async () => {
@@ -176,6 +189,55 @@ app.whenReady().then(async () => {
       return failures;
     })()`));
     studio.webContents.sendInputEvent({type: 'mouseUp', x: browserStart.x - 50, y: browserStart.y, button: 'left', clickCount: 1});
+    for (const opener of [
+      "openRenameDialog('modal-fixture', '原会话标题')",
+      "void requestStudioText('编辑备注', '保留输入', 500)",
+      "openInformationDialog('键盘操作', 'Tab 切换控件，Escape 关闭')",
+      'confirmFullAccess()',
+    ]) {
+      await studio.webContents.executeJavaScript(`setInspector(false); document.querySelector('#composer-form textarea').focus(); ${opener};`);
+      const contained = await studio.webContents.executeJavaScript(`(() => {
+        const overlay = document.querySelector('.mpw-perm-confirm');
+        document.getElementById('sidebar-toggle').focus();
+        return overlay.contains(document.activeElement);
+      })()`);
+      if (!contained) failures.push('modal allows focus behind it: ' + opener);
+      await studio.webContents.executeJavaScript("document.querySelector('.mpw-perm-confirm button')?.focus()");
+      studio.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Escape'});
+      await studio.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
+      failures.push(...await studio.webContents.executeJavaScript(`(() => {
+        const failures = [];
+        if (document.querySelector('.mpw-perm-confirm')) failures.push('Escape left a modal open');
+        if (__resizeProbe.stops) failures.push('modal Escape stopped the running task');
+        if (document.activeElement !== document.querySelector('#composer-form textarea')) failures.push('modal did not restore the invoking focus');
+        document.querySelectorAll('.mpw-perm-confirm').forEach(node => node.remove());
+        __resizeProbe.stops = 0;
+        return failures;
+      })()`));
+    }
+    await studio.webContents.executeJavaScript(`(async () => {
+      studioComposerBusy = false;
+      externalConversationRun = null;
+      Data.conversation = async () => ({id: 'reference-preview', title: 'UI 验证样例', turns: [{
+        at: Date.now(), question: '核对输入、阅读与分栏的交互。',
+        answer: '中文候选确认由输入法处理。\\n\\n向上阅读时保留当前位置；点击回到底部后继续跟随新消息。\\n\\n分栏支持 **Escape 撤销**、双击等分和键盘调整。',
+      }]});
+      Data.recovery = async () => ({ok: true, pendingRecovery: []});
+      await openConversation('reference-preview');
+      setInspector(true, 'files');
+      document.getElementById('inspector-resize-handle').focus();
+    })()`);
+    await capture(studio, 'split-light');
+    for (const theme of ['light', 'dark']) {
+      await studio.webContents.executeJavaScript(`document.documentElement.dataset.theme = '${theme}'; document.body.toggleAttribute('data-ds-dark-theme', '${theme}' === 'dark'); openRenameDialog('reference-preview', 'UI 验证样例');`);
+      await capture(studio, 'modal-' + theme);
+      await studio.webContents.executeJavaScript("document.querySelector('dialog.mpw-perm-confirm').close(); new Promise(resolve => requestAnimationFrame(resolve))");
+    }
+    studio.setContentSize(760, 600);
+    await studio.webContents.executeJavaScript("openInformationDialog('键盘操作', '方向键调整分栏，双击等分；Escape 关闭弹窗，不停止任务。')");
+    const overflows = await studio.webContents.executeJavaScript('document.querySelector(".mpw-perm-confirm-card").getBoundingClientRect().right > innerWidth');
+    if (overflows) failures.push('narrow modal overflows the viewport');
+    await capture(studio, 'modal-narrow');
     studio.destroy();
 
     const stage = await open('stage', 'scripts/probe_stage_input_preload.cjs');
@@ -229,7 +291,8 @@ app.whenReady().then(async () => {
     })()`));
     companion.destroy();
     assert.deepEqual(failures, []);
-    console.log('Reference interactions passed: IME isolation, streaming scroll and pane resize');
+    fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({failures, backend: 'isolated-electron-renderer', realModel: false}));
+    console.log('Reference interactions passed: IME isolation, streaming scroll, pane resize and modal focus');
   } catch (error) {
     console.error(error);
     process.exitCode = 1;

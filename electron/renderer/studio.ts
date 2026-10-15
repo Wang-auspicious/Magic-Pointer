@@ -1879,13 +1879,27 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.querySelector<HTMLInputElement>('input')?.focus();
 }
 
+function showStudioDialog(
+  dialog: HTMLDialogElement,
+  cancel = () => dialog.close(),
+) {
+  dialog.addEventListener('keydown', event => event.stopPropagation());
+  dialog.addEventListener('cancel', event => {
+    event.preventDefault();
+    cancel();
+  });
+  dialog.addEventListener('close', () => dialog.remove(), {once: true});
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
 function requestStudioText(
   title: string,
   initial = '',
   maxLength = 32000,
 ): Promise<string | null> {
   return new Promise(resolve => {
-    const overlay = document.createElement('div');
+    const overlay = document.createElement('dialog');
     overlay.className = 'mpw-perm-confirm';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
@@ -1903,7 +1917,7 @@ function requestStudioText(
     const actions = document.createElement('div');
     actions.className = 'mpw-perm-confirm-actions';
     const finish = (value: string | null) => {
-      overlay.remove();
+      overlay.close();
       resolve(value);
     };
     const cancel = document.createElement('button');
@@ -1932,7 +1946,7 @@ function requestStudioText(
     actions.append(cancel, save);
     card.append(label, input, actions);
     overlay.append(card);
-    document.body.append(overlay);
+    showStudioDialog(overlay, () => finish(null));
     input.focus();
   });
 }
@@ -1941,7 +1955,7 @@ function openRenameDialog(id: string, currentTitle: string) {
   if (!id) {
     return;
   }
-  const overlay = document.createElement('div');
+  const overlay = document.createElement('dialog');
   overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
@@ -1962,7 +1976,7 @@ function openRenameDialog(id: string, currentTitle: string) {
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.textContent = studioT('common.cancel');
-  cancel.addEventListener('click', () => overlay.remove());
+  cancel.addEventListener('click', () => overlay.close());
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'is-primary';
@@ -1983,7 +1997,7 @@ function openRenameDialog(id: string, currentTitle: string) {
       err.hidden = false;
       return;
     }
-    overlay.remove();
+    overlay.close();
     await renderSidebar();
     const head = document.getElementById('chat-title');
     if (head && activeConversationId === id) {
@@ -2000,7 +2014,7 @@ function openRenameDialog(id: string, currentTitle: string) {
   actionsEl.append(cancel, save);
   card.append(titleEl, input, err, actionsEl);
   overlay.appendChild(card);
-  document.body.appendChild(overlay);
+  showStudioDialog(overlay);
   input.focus();
   input.select();
 }
@@ -6572,10 +6586,11 @@ function toggleAnimatedTheme(origin?: {x: number; y: number}) {
 })();
 
 function openInformationDialog(title: string, detail: string) {
-  const overlay = document.createElement('div');
+  const overlay = document.createElement('dialog');
   overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', title);
   const card = document.createElement('div');
   card.className = 'mpw-perm-confirm-card';
   const heading = document.createElement('b');
@@ -6589,16 +6604,16 @@ function openInformationDialog(title: string, detail: string) {
   close.type = 'button';
   close.className = 'is-primary';
   close.textContent = studioT('common.done');
-  close.addEventListener('click', () => overlay.remove());
+  close.addEventListener('click', () => overlay.close());
   actions.appendChild(close);
   card.append(heading, body, actions);
   overlay.appendChild(card);
   overlay.addEventListener('click', event => {
     if (event.target === overlay) {
-      overlay.remove();
+      overlay.close();
     }
   });
-  document.body.appendChild(overlay);
+  showStudioDialog(overlay);
   close.focus();
 }
 
@@ -11345,7 +11360,7 @@ function confirmFullAccess() {
   if (!confirmSpec) {
     return;
   }
-  const overlay = document.createElement('div');
+  const overlay = document.createElement('dialog');
   overlay.className = 'mpw-perm-confirm';
   overlay.setAttribute('role', 'alertdialog');
   overlay.setAttribute('aria-modal', 'true');
@@ -11368,7 +11383,7 @@ function confirmFullAccess() {
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.textContent = studioT('common.cancel');
-  cancel.addEventListener('click', () => overlay.remove());
+  cancel.addEventListener('click', () => overlay.close());
   const enable = document.createElement('button');
   enable.type = 'button';
   enable.className = 'is-primary';
@@ -11379,12 +11394,12 @@ function confirmFullAccess() {
   });
   enable.addEventListener('click', () => {
     void selectComposerPermission('danger-full-access', owner);
-    overlay.remove();
+    overlay.close();
   });
   actions.append(cancel, enable);
   card.append(title, desc, ackRow, actions);
   overlay.appendChild(card);
-  document.body.appendChild(overlay);
+  showStudioDialog(overlay);
 }
 
 function bindPermissionChip() {
