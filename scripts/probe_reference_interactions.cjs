@@ -242,12 +242,12 @@ app.whenReady().then(async () => {
         if (style('.mpw-scrollbody').backgroundColor !== (dark ? 'rgb(11, 11, 10)' : 'rgb(245, 245, 243)')) failures.push('${theme} canvas does not use reference surface 0');
         if (style('.mpw-sidebar-col').backgroundColor !== (dark ? 'rgb(21, 21, 21)' : 'rgb(252, 252, 251)')) failures.push('${theme} sidebar does not use reference surface 1');
         if (style('.mpw-scroll').backgroundColor !== (dark ? 'rgb(32, 32, 30)' : 'rgb(255, 255, 255)')) failures.push('${theme} composer does not use reference surface 3');
-        if (style('.mpw-scroll').borderRadius !== '20px') failures.push('composer radius differs from reference 20px');
+        if (style('.mpw-scroll').borderRadius !== '14px') failures.push('composer did not retain the user-selected 14px radius');
         if (style('.mp-chat-bubble').borderRadius !== '18px') failures.push('user message radius differs from reference 18px');
         const send = document.querySelector('.mpw-primary');
         send.disabled = false;
-        if (style('.mpw-primary').width !== '32px' || style('.mpw-primary').height !== '32px') failures.push('send target is smaller than reference 32px');
-        if (style('.mpw-primary').backgroundColor !== 'rgb(217, 119, 87)') failures.push('idle send lacks the reference clay accent');
+        if (style('.mpw-primary').width !== '22px' || style('.mpw-primary').height !== '22px') failures.push('send target did not retain the user-selected 22px size');
+        if (style('.mpw-primary').backgroundColor !== 'rgba(0, 0, 0, 0)') failures.push('idle send did not retain its transparent background');
         return failures;
       })()`));
       await capture(studio, 'modal-' + theme);

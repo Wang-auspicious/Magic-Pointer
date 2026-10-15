@@ -2292,7 +2292,7 @@
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--mp-rule-strong);
-  border-radius: var(--mp-r-composer);
+  border-radius: 14px;
   background: var(--mp-composer);
   transition: border-color var(--mp-dur-fast), box-shadow var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
@@ -2312,7 +2312,7 @@
   width: 100%;
   min-height: 44px;
   max-height: 218px;
-  padding: 13px 52px 13px 16px;
+  padding: 13px 46px 13px 10px;
   overflow: auto;
   border: 0;
   resize: none;
@@ -2455,25 +2455,27 @@
   position: absolute;
   top: auto;
   right: 8px;
-  bottom: 6px;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
+  bottom: 8px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
   padding: 0;
-  border-radius: 8px;
-  color: #FFFFFF;
-  background: var(--mp-clay);
+  border-radius: 5px;
+  color: var(--mp-text);
+  background: transparent;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
 .mpw-primary:hover:not(:disabled) {
-  background: var(--mp-clay-strong);
+  background: var(--mp-hover);
 }
 
-.mpw-primary:active:not(:disabled) { background: var(--mp-clay-strong); }
+.mpw-primary:active:not(:disabled) { background: var(--mp-active); }
 
 .mpw-primary:disabled {
   opacity: .4;
+  color: var(--mp-text);
+  background: transparent;
 }
 
 .mpw-primary svg,
