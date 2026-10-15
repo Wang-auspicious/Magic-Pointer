@@ -1535,8 +1535,21 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mp-inspector-resize-handle:hover::after,
+.mp-inspector-resize-handle:focus-visible::after,
 .mp-inspector-resize-handle[data-dragging="true"]::after {
   background: var(--mp-focus);
+}
+
+.mp-shell[data-pane-dragging="true"] {
+  user-select: none;
+}
+
+.mp-shell[data-pane-dragging="true"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: var(--cds-z-modal, 40);
+  cursor: col-resize;
 }
 
 .mp-inspector-header {

@@ -8376,6 +8376,7 @@ async function openProjectBrowser(
 
 function resizeProjectBrowser() {
   if (
+    shell.dataset.paneDragging === 'true' ||
     !browserViewVisible ||
     activeInspectorTab !== 'browser' ||
     shell.dataset.inspector !== 'open'
@@ -9143,6 +9144,22 @@ function syncInspectorGeometry() {
   const resizeHandle = document.getElementById('inspector-resize-handle');
   if (resizeHandle) {
     resizeHandle.hidden = taskRail;
+    resizeHandle.setAttribute('aria-valuenow', String(inspectorState.width));
+    resizeHandle.setAttribute(
+      'aria-valuemin',
+      String(
+        inspectorStatePolicy.clampInspectorWidth(0, inspectorAvailableWidth()),
+      ),
+    );
+    resizeHandle.setAttribute(
+      'aria-valuemax',
+      String(
+        inspectorStatePolicy.clampInspectorWidth(
+          Number.MAX_SAFE_INTEGER,
+          inspectorAvailableWidth(),
+        ),
+      ),
+    );
   }
   if (inspectorState.open) {
     shell.dataset.inspector = 'open';
@@ -9157,7 +9174,9 @@ function syncInspectorGeometry() {
   maximize?.setAttribute('aria-pressed', String(inspectorState.maximized));
   maximize?.setAttribute(
     'aria-label',
-    inspectorState.maximized ? studioT('tasks.collapse') : studioT('tasks.expand'),
+    inspectorState.maximized
+      ? studioT('tasks.collapse')
+      : studioT('tasks.expand'),
   );
   try {
     localStorage.setItem(
@@ -9304,39 +9323,119 @@ document
     workspaceAutoOpenedResourceKey = '';
   });
 
-document
-  .getElementById('inspector-resize-handle')
-  ?.addEventListener('pointerdown', event => {
-    if (inspectorState.maximized) {
+(function bindInspectorResize() {
+  const handle = document.getElementById('inspector-resize-handle');
+  if (!handle) {
+    return;
+  }
+  let cancelDrag: (() => void) | null = null;
+  const resize = (width: number) => {
+    workspaceAutoOpenedResourceKey = '';
+    inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
+      type: 'resize',
+      width,
+      availableWidth: inspectorAvailableWidth(),
+    });
+    syncInspectorGeometry();
+  };
+  const balance = () => resize((inspectorAvailableWidth() - 8) / 2);
+  handle.addEventListener('dblclick', balance);
+  handle.addEventListener('keydown', event => {
+    if (
+      cancelDrag ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      inspectorState.maximized
+    ) {
       return;
     }
-    workspaceAutoOpenedResourceKey = '';
-    const handle = event.currentTarget as HTMLElement;
+    const step = event.shiftKey ? 64 : 16;
+    const width =
+      event.key === 'ArrowLeft'
+        ? inspectorState.width + step
+        : event.key === 'ArrowRight'
+          ? inspectorState.width - step
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? Number.MAX_SAFE_INTEGER
+              : null;
+    if (width !== null || event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (width === null) {
+        balance();
+      } else {
+        resize(width);
+      }
+    }
+  });
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || inspectorState.maximized || cancelDrag) {
+      return;
+    }
+    event.preventDefault();
+    handle.focus({preventScroll: true});
     const startX = event.clientX;
     const startWidth = inspectorState.width;
-    handle.dataset.dragging = 'true';
+    const previousWidth = inspectorState.previousWidth;
+    let moved = false;
     handle.setPointerCapture(event.pointerId);
     const move = (moveEvent: PointerEvent) => {
-      inspectorState = inspectorStatePolicy.reduceInspectorState(
-        inspectorState,
-        {
-          type: 'resize',
-          width: startWidth + startX - moveEvent.clientX,
-          availableWidth: inspectorAvailableWidth(),
-        },
-      );
-      syncInspectorGeometry();
+      if (
+        moveEvent.pointerId !== event.pointerId ||
+        (!moved && Math.abs(moveEvent.clientX - startX) < 4)
+      ) {
+        return;
+      }
+      if (!moved) {
+        moved = true;
+        handle.dataset.dragging = 'true';
+        shell.dataset.paneDragging = 'true';
+        if (browserViewVisible) {
+          void Data.browserViewCommand('hide');
+        }
+      }
+      resize(startWidth + startX - moveEvent.clientX);
     };
-    const finish = () => {
+    const finish = (cancel: boolean) => {
+      cancelDrag = null;
       delete handle.dataset.dragging;
+      delete shell.dataset.paneDragging;
       handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', finish);
-      handle.removeEventListener('pointercancel', finish);
+      handle.removeEventListener('pointerup', commit);
+      handle.removeEventListener('pointercancel', cancelResize);
+      handle.removeEventListener('lostpointercapture', cancelResize);
+      window.removeEventListener('keydown', escape, true);
+      window.removeEventListener('blur', cancelResize);
+      if (handle.hasPointerCapture(event.pointerId)) {
+        handle.releasePointerCapture(event.pointerId);
+      }
+      if (cancel && moved) {
+        inspectorState = {...inspectorState, width: startWidth, previousWidth};
+        syncInspectorGeometry();
+      }
+      scheduleProjectBrowserResize();
     };
+    const commit = () => finish(false);
+    const cancelResize = () => finish(true);
+    const escape = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key === 'Escape') {
+        keyEvent.preventDefault();
+        keyEvent.stopImmediatePropagation();
+        cancelResize();
+      }
+    };
+    cancelDrag = cancelResize;
     handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', finish);
-    handle.addEventListener('pointercancel', finish);
+    handle.addEventListener('pointerup', commit);
+    handle.addEventListener('pointercancel', cancelResize);
+    handle.addEventListener('lostpointercapture', cancelResize);
+    window.addEventListener('keydown', escape, true);
+    window.addEventListener('blur', cancelResize);
   });
+})();
 document
   .getElementById('project-file-tree')
   ?.addEventListener('click', event => {

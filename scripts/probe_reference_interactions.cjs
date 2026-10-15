@@ -15,7 +15,7 @@ const deadline = setTimeout(() => app.exit(1), 40000);
 const buildRoot = path.resolve('build/electron/renderer');
 
 async function open(page, preload) {
-  const win = new BrowserWindow({width: 1440, height: 900, show: false,
+  const win = new BrowserWindow({width: 1440, height: 900, useContentSize: true, show: false,
     webPreferences: {offscreen: true, sandbox: false, contextIsolation: false, backgroundThrottling: false,
       ...(preload ? {preload: path.resolve(preload)} : {})}});
   await win.loadFile(path.join(buildRoot, page + '.html'));
@@ -109,6 +109,73 @@ app.whenReady().then(async () => {
       check(!document.getElementById('scroll-pill').hidden, 'jump to latest requires scrolling more than 120 pixels');
       return failures;
     })()`));
+    await studio.webContents.executeJavaScript(`(() => {
+      window.__resizeProbe = {stops: 0};
+      stopActiveConversation = async () => { __resizeProbe.stops++; };
+      studioComposerBusy = true;
+      externalConversationRun = {requestId: 'resize-running'};
+      setInspector(true, 'files');
+      inspectorState = {...inspectorState, width: 560, previousWidth: 560};
+      syncInspectorGeometry();
+    })()`);
+    const handlePoint = async () => studio.webContents.executeJavaScript(`(async () => {
+      await Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+      const rect = document.getElementById('inspector-resize-handle').getBoundingClientRect();
+      return {x: Math.round(rect.right - 2), y: Math.round(rect.top + 80)};
+    })()`);
+    const start = await handlePoint();
+    studio.webContents.sendInputEvent({type: 'mouseDown', ...start, button: 'left', clickCount: 1});
+    studio.webContents.sendInputEvent({type: 'mouseMove', x: start.x + 2, y: start.y, modifiers: ['leftButtonDown'], movementX: 2, movementY: 0});
+    await studio.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
+    if (await studio.webContents.executeJavaScript('inspectorState.width !== 560')) failures.push('splitter resizes during a 2px click tremor');
+    studio.webContents.sendInputEvent({type: 'mouseMove', x: start.x + 80, y: start.y, modifiers: ['leftButtonDown'], movementX: 78, movementY: 0});
+    await studio.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
+    const draggedWidth = await studio.webContents.executeJavaScript('inspectorState.width');
+    if (Math.abs(draggedWidth - 480) > 1) failures.push('splitter did not follow the captured pointer: ' + draggedWidth);
+    studio.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Escape'});
+    failures.push(...await studio.webContents.executeJavaScript(`(() => {
+      const failures = [];
+      if (inspectorState.width !== 560 || localStorage.getItem('mp:inspector-width') !== '560') failures.push('Escape did not restore the split width');
+      if (__resizeProbe.stops !== 0) failures.push('Escape during resize stopped the running task');
+      const handle = document.getElementById('inspector-resize-handle');
+      if (handle.dataset.dragging || shell.dataset.paneDragging) failures.push('cancelled resize kept pointer shields');
+      if (handle.tabIndex !== 0 || handle.getAttribute('aria-valuenow') !== '560') failures.push('splitter has no keyboard and accessible value');
+      handle.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+      if (inspectorState.width !== 572) failures.push('double click did not balance the two panes');
+      handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true}));
+      if (inspectorState.width !== 588) failures.push('keyboard cannot resize the right pane');
+      handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'Home', bubbles: true}));
+      if (inspectorState.width !== 420) failures.push('keyboard resize ignored minimum width');
+      handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'End', bubbles: true}));
+      if (inspectorState.width !== 724) failures.push('keyboard resize did not preserve the primary pane minimum');
+      return failures;
+    })()`));
+    studio.webContents.sendInputEvent({type: 'mouseUp', x: start.x + 80, y: start.y, button: 'left', clickCount: 1});
+    await studio.webContents.executeJavaScript(`(() => {
+      inspectorState = {...inspectorState, width: 560, previousWidth: 560};
+      latestBrowserViewState = {url: 'https://example.invalid/preview'};
+      Data.browserViewCommand = async command => { __resizeProbe.commands = [...(__resizeProbe.commands || []), command]; return {ok: true}; };
+      Data.resizeBrowserView = async () => { __resizeProbe.resizeCalls = (__resizeProbe.resizeCalls || 0) + 1; return {ok: true}; };
+      setInspector(true, 'browser');
+      document.getElementById('inspector-resize-handle').addEventListener('pointerdown', event => { __resizeProbe.pointerId = event.pointerId; }, {once: true});
+    })()`);
+    const browserStart = await handlePoint();
+    await studio.webContents.executeJavaScript('__resizeProbe.resizeCalls = 0');
+    studio.webContents.sendInputEvent({type: 'mouseDown', ...browserStart, button: 'left', clickCount: 1});
+    studio.webContents.sendInputEvent({type: 'mouseMove', x: browserStart.x - 50, y: browserStart.y, modifiers: ['leftButtonDown']});
+    await studio.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    failures.push(...await studio.webContents.executeJavaScript(`(async () => {
+      const failures = [];
+      const handle = document.getElementById('inspector-resize-handle');
+      if (!__resizeProbe.commands?.includes('hide') || __resizeProbe.resizeCalls !== 0) failures.push('native browser was not suspended during resize');
+      if (getComputedStyle(shell, '::after').content === 'none') failures.push('preview iframe has no pointer shield');
+      handle.dispatchEvent(new PointerEvent('pointercancel', {pointerId: __resizeProbe.pointerId}));
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (inspectorState.width !== 560 || shell.dataset.paneDragging || handle.hasPointerCapture(__resizeProbe.pointerId)) failures.push('pointer cancellation did not restore and release the splitter');
+      if (!__resizeProbe.resizeCalls) failures.push('browser view was not restored after resize');
+      return failures;
+    })()`));
+    studio.webContents.sendInputEvent({type: 'mouseUp', x: browserStart.x - 50, y: browserStart.y, button: 'left', clickCount: 1});
     studio.destroy();
 
     const stage = await open('stage', 'scripts/probe_stage_input_preload.cjs');
@@ -162,7 +229,7 @@ app.whenReady().then(async () => {
     })()`));
     companion.destroy();
     assert.deepEqual(failures, []);
-    console.log('Reference interactions passed: IME isolation and streaming scroll');
+    console.log('Reference interactions passed: IME isolation, streaming scroll and pane resize');
   } catch (error) {
     console.error(error);
     process.exitCode = 1;
