@@ -2,12 +2,7 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import {ToolRegistry, type ToolSpec} from './tools';
 import type {SurfaceAdapter} from './desktop_adapters';
 import type {RuntimeModule} from './runtime_modules';
-import {
-  HookManager,
-  type Data,
-  type ToolHook,
-  type AgentOptions,
-} from './agent';
+import type {HookManager, Data, ToolHook, AgentOptions} from './agent';
 
 type Disposer = () => void | Promise<void>;
 type Listener = (

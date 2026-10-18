@@ -2,10 +2,10 @@ import {readdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {validate, type JsonSchema} from './tools';
-import {asObject, type Data, type ModelRunner} from './agent';
+import type {Data, ModelRunner} from './agent';
+import {record as asObject} from './context';
 import {PluginContext} from './plugin_context';
 import {RuntimeModules} from './runtime_modules';
-import {taskContextModule} from './task_context_module';
 import type {EventSession} from './session';
 import type {ToolRegistry} from './tools';
 import type {HookManager} from './agent';
@@ -125,6 +125,8 @@ export async function bootPlugins(options: {
   const warnings: string[] = [];
   const rows = [...(options.rows ?? [])];
   if ((options.scope ?? 'agent') === 'agent' && context.has('session')) {
+    const {taskContextModule} =
+      require('./task_context_module') as typeof import('./task_context_module');
     specs.set('task-context-module', {
       name: 'task-context-module',
       inject: ['modules', 'session'],

@@ -1,28 +1,6 @@
 import path from 'node:path';
-import {runRuntime, type RuntimeOptions, type Data} from './index';
-import {handleFabric} from './fabric_api';
-import {Fabric} from './fabric';
-import {handleSession, EventSession} from './session';
-import {handleArtifact} from './artifacts';
-import {handleLearning, reviewLearning} from './learning';
-import {
-  handleSelection,
-  captureSnapshot,
-  probeElement,
-  closeOcr,
-} from './desktop_perception';
-import {handleContext, parseContextIntent} from './context_sessions';
-import {handleAction, handleDelivery} from './actions_delivery';
+import type {RuntimeOptions, Data} from './index';
 import {configureDesktop, closeDesktop} from './desktop';
-import {resolveModelConfig, requestVision} from './model';
-import {installEnvironmentProxy} from './proxy';
-import {
-  ExternalTasks,
-  buildInvocation,
-  discoverProviders,
-  locateExecutable,
-} from './external';
-import {handleReview, isReviewCommand} from './review';
 
 interface RuntimeDispatchOptions extends RuntimeOptions {
   deferSnapshotCleanup?: (cleanup: () => Promise<void>) => void;
@@ -35,21 +13,33 @@ export async function dispatchRuntime(
 ): Promise<Data> {
   configureDesktop(options.root);
   if (kind === 'conversation') {
+    const {runRuntime} = require('./index') as typeof import('./index');
     return runRuntime(payload, options);
   }
   if (kind === 'fabric') {
+    const {handleFabric} =
+      require('./fabric_api') as typeof import('./fabric_api');
     return handleFabric(payload, options);
   }
   if (kind === 'agent_session') {
+    const {handleSession} = require('./session') as typeof import('./session');
     return handleSession(payload, options.userDataDir);
   }
   if (kind === 'artifact') {
+    const {handleArtifact} =
+      require('./artifacts') as typeof import('./artifacts');
     return handleArtifact(payload, options.userDataDir);
   }
   if (kind === 'learning_candidates') {
+    const {handleLearning} =
+      require('./learning') as typeof import('./learning');
     return handleLearning(payload, options.userDataDir);
   }
   if (kind === 'learning_review') {
+    const {EventSession} = require('./session') as typeof import('./session');
+    const {reviewLearning} =
+      require('./learning') as typeof import('./learning');
+    const {resolveModelConfig} = require('./model') as typeof import('./model');
     const session = await EventSession.open(
       options.userDataDir,
       payload.sessionId,
@@ -69,6 +59,8 @@ export async function dispatchRuntime(
     );
   }
   if (kind === 'selection_snapshot') {
+    const {captureSnapshot} =
+      require('./desktop_perception') as typeof import('./desktop_perception');
     return captureSnapshot(
       payload,
       options.signal,
@@ -80,9 +72,15 @@ export async function dispatchRuntime(
     );
   }
   if (kind === 'element_probe') {
+    const {probeElement} =
+      require('./desktop_perception') as typeof import('./desktop_perception');
     return probeElement(payload, options.signal);
   }
   if (kind === 'selection' || kind === 'electron') {
+    const {captureSnapshot, handleSelection} =
+      require('./desktop_perception') as typeof import('./desktop_perception');
+    const {handleReview, isReviewCommand} =
+      require('./review') as typeof import('./review');
     if (isReviewCommand(String(payload.command || ''))) {
       const captured = payload.selectionSnapshot
         ? {selectionSnapshot: payload.selectionSnapshot}
@@ -93,6 +91,8 @@ export async function dispatchRuntime(
         options.userDataDir,
       ))!;
     }
+    const {handleContext, parseContextIntent} =
+      require('./context_sessions') as typeof import('./context_sessions');
     if (
       payload.workflow === 'runtime_issue' ||
       parseContextIntent(String(payload.command || ''))
@@ -109,24 +109,36 @@ export async function dispatchRuntime(
       root: options.root,
       userDataDir: options.userDataDir,
       signal: options.signal,
-      runRuntime: next => runRuntime(next, options),
+      runRuntime: next => {
+        const {runRuntime} = require('./index') as typeof import('./index');
+        return runRuntime(next, options);
+      },
     });
   }
   if (kind === 'action') {
+    const {handleAction} =
+      require('./actions_delivery') as typeof import('./actions_delivery');
     return handleAction(payload, {
       ...options,
-      executeRecipe: async proposal => ({
-        fabric_receipt: await new Fabric(options).execute(
-          proposal.parameters?.plan || proposal.metadata?.plan,
-          true,
-        ),
-      }),
+      executeRecipe: async proposal => {
+        const {Fabric} = require('./fabric') as typeof import('./fabric');
+        return {
+          fabric_receipt: await new Fabric(options).execute(
+            proposal.parameters?.plan || proposal.metadata?.plan,
+            true,
+          ),
+        };
+      },
     });
   }
   if (kind === 'deliver_text') {
+    const {handleDelivery} =
+      require('./actions_delivery') as typeof import('./actions_delivery');
     return handleDelivery(payload, options);
   }
   if (kind === 'stash_describe') {
+    const {requestVision, resolveModelConfig} =
+      require('./model') as typeof import('./model');
     const reply = await requestVision(
       resolveModelConfig(
         payload.modelRuntime,
@@ -143,6 +155,12 @@ export async function dispatchRuntime(
     return {ok: true, summary: reply.text, usedBackend: reply.usedBackend};
   }
   if (kind === 'agent') {
+    const {
+      ExternalTasks,
+      buildInvocation,
+      discoverProviders,
+      locateExecutable,
+    } = require('./external') as typeof import('./external');
     const operation = String(payload.operation || 'providers');
     const store = new ExternalTasks(options.userDataDir);
     if (operation === 'providers') {
@@ -194,6 +212,14 @@ async function flushResult(result: Data): Promise<void> {
   });
 }
 
+function closeWorkerResources(): void {
+  // A route that never used perception must not load it just to close it.
+  const perception = require.cache[require.resolve('./desktop_perception')]
+    ?.exports as typeof import('./desktop_perception') | undefined;
+  perception?.closeOcr();
+  closeDesktop();
+}
+
 async function finishSnapshotCleanup(
   cleanups: Array<() => Promise<void>>,
 ): Promise<{state: 'completed' | 'timeout' | 'error'; error?: string}> {
@@ -224,6 +250,8 @@ async function main(): Promise<void> {
   // cannot be corrected afterwards. Every model call this process makes runs
   // through it, so skipping this is what produced "fetch failed" on a machine
   // whose proxy curl and Chromium were both already using.
+  const {installEnvironmentProxy} =
+    require('./proxy') as typeof import('./proxy');
   installEnvironmentProxy();
   const controller = new AbortController();
   process.once('SIGTERM', () =>
@@ -281,8 +309,7 @@ async function main(): Promise<void> {
         await finishSnapshotCleanup(snapshotCleanups),
       );
     }
-    closeOcr();
-    closeDesktop();
+    closeWorkerResources();
   }
   if (kind === 'selection_snapshot') {
     process.exit(0);
@@ -291,8 +318,7 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch(async error => {
-    closeOcr();
-    closeDesktop();
+    closeWorkerResources();
     await flushResult({
       ok: false,
       error: error instanceof Error ? error.message : String(error),

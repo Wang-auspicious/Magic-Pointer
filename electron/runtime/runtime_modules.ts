@@ -1,6 +1,11 @@
 import {randomUUID} from 'node:crypto';
-import {asObject, permissionFor, type Data, type HookManager} from './agent';
-import {authorizeAccess, scopeFromEvents, type AccessRequest} from './context';
+import type {Data, HookManager} from './agent';
+import {
+  authorizeAccess,
+  scopeFromEvents,
+  record as asObject,
+  type AccessRequest,
+} from './context';
 import type {PluginContext} from './plugin_context';
 import type {EventSession} from './session';
 import type {ToolRegistry, ToolSpec} from './tools';
@@ -262,6 +267,7 @@ export class RuntimeModules {
       if (errors.length) {
         throw new Error(errors.join('; '));
       }
+      const {permissionFor} = require('./agent') as typeof import('./agent');
       if (
         this.tools.effect(name, args) !== 'read' ||
         permissionFor(
