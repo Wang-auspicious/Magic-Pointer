@@ -230,6 +230,154 @@ test('disposing one module retracts its commands without unloading sibling modul
   await plugins.close();
 });
 
+test('the builtin task-context registration belongs to its plugin scope', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mp-module-owner-'));
+  try {
+    const session = await EventSession.open(root, 'module-owner');
+    const registry = new ToolRegistry();
+    const plugins = await bootPlugins({
+      directory: '',
+      core: {session, tools: registry},
+    });
+    plugins.modules.register({id: 'other', title: 'Other module'});
+    assert.ok(registry.get('Modules.task_context.inspect'));
+    await plugins.unmount('task-context-module');
+    assert.throws(
+      () => registry.get('Modules.task_context.inspect'),
+      /Unknown tool/,
+    );
+    assert.deepEqual(
+      (await plugins.modules.snapshot()).modules.map(module => module.id),
+      ['other'],
+    );
+    await plugins.close();
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
+test('a module preserves existing tool names and formats their result for the interface', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mp-module-named-'));
+  try {
+    const session = await EventSession.open(root, 'module-named');
+    const registry = new ToolRegistry();
+    const plugins = await bootPlugins({
+      directory: '',
+      core: {session, tools: registry},
+    });
+    const definition = {
+      id: 'existing',
+      title: 'Existing feature',
+      commands: [
+        {
+          id: 'inspect',
+          label: 'Inspect',
+          tool: {
+            name: 'Existing.inspect',
+            description: 'Inspect existing data',
+            input_schema: {type: 'object', properties: {}, required: []},
+            execute: () => ({count: 7}),
+          },
+          present: (value: unknown) => ({
+            text: `Items: ${(value as {count: number}).count}`,
+          }),
+        },
+      ],
+      panels: [
+        {
+          id: 'existing',
+          render: () => ({
+            id: 'existing',
+            title: 'Existing feature',
+            status: {state: 'ready' as const},
+            sections: [
+              {
+                id: 'actions',
+                rows: [],
+                actions: [{id: 'inspect', label: 'Inspect'}],
+              },
+            ],
+          }),
+          actions: {inspect: {commandId: 'inspect'}},
+        },
+      ],
+    };
+    plugins.modules.register(definition);
+    assert.ok(registry.get('Existing.inspect'));
+    assert.throws(
+      () => registry.get('Modules.existing.inspect'),
+      /Unknown tool/,
+    );
+    const result = await plugins.modules.invoke({
+      sessionId: session.id,
+      moduleId: 'existing',
+      panelId: 'existing',
+      actionId: 'inspect',
+    });
+    assert.equal(result.result?.text, 'Items: 7');
+    await plugins.close();
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
+test('a fresh module host resolves actions from the current panel render', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mp-module-dynamic-'));
+  try {
+    const session = await EventSession.open(root, 'module-dynamic');
+    const plugins = await bootPlugins({
+      directory: '',
+      core: {session, tools: new ToolRegistry()},
+    });
+    const panel = {
+      id: 'dynamic',
+      actions: {} as Record<string, {commandId: string}>,
+      render: () => {
+        panel.actions = {latest: {commandId: 'inspect'}};
+        return {
+          id: 'dynamic',
+          title: 'Dynamic',
+          status: {state: 'ready' as const},
+          sections: [
+            {
+              id: 'actions',
+              rows: [],
+              actions: [{id: 'latest', label: 'Latest data'}],
+            },
+          ],
+        };
+      },
+    };
+    plugins.modules.register({
+      id: 'dynamic',
+      title: 'Dynamic',
+      commands: [
+        {
+          id: 'inspect',
+          label: 'Inspect',
+          tool: {
+            description: 'Read latest data',
+            input_schema: {type: 'object', properties: {}, required: []},
+            execute: () => ({text: 'current'}),
+          },
+        },
+      ],
+      panels: [panel],
+    });
+    const result = await plugins.modules.invoke({
+      sessionId: session.id,
+      moduleId: 'dynamic',
+      panelId: 'dynamic',
+      actionId: 'latest',
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.result?.text, 'current');
+    await plugins.close();
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
 test('a failing request extension is visible while healthy panels remain usable and writes stay behind Agent permissions', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mp-module-boundary-'));
   try {

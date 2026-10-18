@@ -3598,6 +3598,61 @@ let activeTaskContext: MagicPointerTaskContext | null = null;
 let desktopPerceptionController: DesktopPerceptionController | null = null;
 let modsWorkspaceController: ModsWorkspaceController | null = null;
 let modsConversationId = '';
+let modsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let modsProgressConversationId = '';
+const modsProgressMarkers = new Map<string, {b64: string; state: string; atMs: number; origin: number}>();
+
+function modulesVisible(): boolean {
+  return inspectorState.open && activeInspectorTab === 'modules' && shell.dataset.view === 'chat';
+}
+
+function queueModulesRefresh(conversationId: string): void {
+  if (!conversationId || conversationId !== activeConversationId || !modulesVisible() || modsRefreshTimer !== null) {
+    return;
+  }
+  modsRefreshTimer = setTimeout(() => {
+    modsRefreshTimer = null;
+    if (conversationId === activeConversationId && modulesVisible()) {
+      modsWorkspaceController?.invalidate();
+    }
+  }, 120);
+}
+
+function modulesProgress(conversationId: string | undefined, record: Record<string, unknown>): void {
+  if (!conversationId || conversationId !== activeConversationId || !modulesVisible()) {
+    return;
+  }
+  const phase = String(record.phase || '');
+  if (!['plan', 'session_ready', 'steer_absorbed', 'tool_result', 'model_response'].includes(phase)) {
+    return;
+  }
+  const fields = record.fields && typeof record.fields === 'object' ? record.fields as Record<string, unknown> : {};
+  if (phase === 'model_response' && (!fields.state || fields.state === 'tool_result')) {
+    return;
+  }
+  if (modsProgressConversationId !== conversationId) {
+    modsProgressConversationId = conversationId;
+    modsProgressMarkers.clear();
+  }
+  const marker = {b64: String(fields.b64 || ''), state: String(fields.state || ''), atMs: Number(fields.atMs) || 0, origin: Number(fields.timeOriginMs) || 0};
+  const previous = modsProgressMarkers.get(phase);
+  if (previous && previous.b64 === marker.b64 && previous.state === marker.state && previous.atMs === marker.atMs && previous.origin === marker.origin) {
+    return;
+  }
+  modsProgressMarkers.set(phase, marker);
+  if (phase === 'tool_result') {
+    try {
+      const result = JSON.parse(ConversationControl.decodeChunkBlob({b64: marker.b64})) as {name?: string};
+      const name = result.name || '';
+      if (!name.startsWith('Context.') && !name.startsWith('Modules.') && !name.startsWith('Dashboard.') && name !== 'TodoWrite') {
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+  queueModulesRefresh(conversationId);
+}
 const composerSelectedSourceIds = new Set<string>();
 let figmaStatusTimer: number | null = null;
 let figmaPairExpiresAt = 0;
@@ -4326,6 +4381,13 @@ async function refreshOpenConversation(
     !activeConversationView
   ) {
     return;
+  }
+  if (!change.liveProgress) {
+    const previous = activeConversationRecord?.turns?.at(-1);
+    const latest = conversation.turns?.at(-1);
+    if (latest && (previous?.at !== latest.at || previous?.outcome !== latest.outcome || Boolean(previous?.liveProgress) || previous?.receipts?.length !== latest.receipts?.length)) {
+      queueModulesRefresh(id);
+    }
   }
   activeConversationRecord = conversation;
   activeConversationTurns = conversation.turns || [];
@@ -9279,7 +9341,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   if (activeInspectorTab === 'activity') {
     renderConversationActivity();
   }
-  if (activeInspectorTab === 'modules') {
+  if (open && activeInspectorTab === 'modules') {
     modsConversationId = activeConversationId || '';
     void modsWorkspaceController?.refresh();
   }
@@ -10888,7 +10950,14 @@ function setActiveTaskContext(value: unknown, resetSelection = false) {
       type: 'clear-content',
     });
   }
+  const previousTaskContext = activeTaskContext;
   activeTaskContext = next;
+  if (next && previousTaskContext?.taskId === next.taskId && (previousTaskContext.referenceRevision !== next.referenceRevision || previousTaskContext.sources.length !== next.sources.length || next.sources.some((source, index) => {
+    const previous = previousTaskContext.sources[index];
+    return source.sourceId !== previous?.sourceId || source.title !== previous.title || source.kind !== previous.kind || source.origin !== previous.origin;
+  }))) {
+    queueModulesRefresh(activeConversationId || '');
+  }
   desktopPerceptionController?.updateContext(next);
   desktopPerceptionController?.updateEvidence(activeConversationRecord?.object);
   if (inspectorState.open && activeInspectorTab === 'modules' && modsConversationId !== (activeConversationId || '')) {
@@ -12406,6 +12475,7 @@ if (modulesHost && globalThis.ModsWorkspace) {
     error: getStudioLanguage() === 'zh-CN' ? '请先打开一个已开始的任务。' : 'Open a started task to use its modules.',
   });
   modsWorkspaceController = ModsWorkspace.create(modulesHost, {
+    visible: modulesVisible,
     list: async () => activeConversationId && window.magicPointerDashboard?.modules
       ? window.magicPointerDashboard.modules.list({conversationId: activeConversationId})
       : unavailableModules(),
@@ -13063,6 +13133,9 @@ async function stopActiveConversation() {
 }
 
 Data.onConversationProgress(payload => {
+  if (payload.record) {
+    modulesProgress(payload.conversationId, payload.record);
+  }
   if (payload.requestId && payload.conversationId) {
     acceptSubmissionNavigation(
       payload.requestId,
@@ -13870,6 +13943,9 @@ void boot(
 
 let conversationChangeRaf: number | null = null;
 Data.onChange(change => {
+  for (const record of change?.liveProgress?.records || []) {
+    modulesProgress(change?.id, record);
+  }
   if (change?.id) {
     conversationNotificationSequence += 1;
   }

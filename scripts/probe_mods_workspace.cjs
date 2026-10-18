@@ -67,9 +67,9 @@ app.whenReady().then(async () => {
         const checks=[]; const check=(value,message)=>{if(!value)throw Error(message);checks.push(message)};
         let language='en';let calls=0;let fail=false;let resolveAction;let asynchronous=false;
         const snapshot={ok:true,modules:[{id:'task-context',title:'Task context',status:'active',commands:[],panels:[{id:'sources',moduleId:'task-context',title:'Task materials',description:'From the current task event log',status:{state:'ready',label:'Ready'},sections:[{id:'materials',title:'Sources',rows:[{id:'file',label:'Quarterly report <b>draft</b>',value:'User attached · Readable'}],actions:[{id:'refresh',label:'Read latest evidence',primary:true}]}]},{id:'receipt',moduleId:'task-context',title:'Latest receipt',status:{state:'ready',label:'Ready'},sections:[{id:'receipt',rows:[{id:'outcome',label:'Outcome',value:'Partial'}]}]}]}],errors:[]};
-        let currentSnapshot=snapshot;
+        let currentSnapshot=snapshot;let listCalls=0;
         snapshot.modules[0].panels[1].sections.push({id:'empty',title:'Outstanding work',rows:[]});
-        const controller=ModsWorkspace.create(document.getElementById('host'),{language:()=>language,list:async()=>currentSnapshot,invoke:async request=>{calls++;check(request.moduleId==='task-context'&&request.panelId==='sources'&&request.actionId==='refresh','action is bound to module/panel/action identity');if(asynchronous)return new Promise(resolve=>resolveAction=resolve);return fail?{ok:false,error:'source_read_failed'}:{...snapshot,result:{text:'Read the current source record'},usedBackend:'event-session',timingMs:12};}});
+        const controller=ModsWorkspace.create(document.getElementById('host'),{language:()=>language,list:async()=>{listCalls++;return currentSnapshot},invoke:async request=>{calls++;check(request.moduleId==='task-context'&&request.panelId==='sources'&&request.actionId==='refresh','action is bound to module/panel/action identity');if(asynchronous)return new Promise(resolve=>resolveAction=resolve);return fail?{ok:false,error:'source_read_failed'}:{...snapshot,result:{text:'Read the current source record'},usedBackend:'event-session',timingMs:12};}});
         await controller.refresh();
         check(document.querySelector('.mp-mods-header').getBoundingClientRect().left-document.querySelector('.mp-mods-workspace').getBoundingClientRect().left>=12,'module content has its own inset');
         check(document.querySelectorAll('[data-mod-panel]').length===2,'registered panels appear');
@@ -82,8 +82,11 @@ app.whenReady().then(async () => {
         check(!document.querySelector('[data-mod-action=refresh]').disabled,'failed action allows retry');
         fail=false;asynchronous=true;document.querySelector('[data-mod-action=refresh]').click();document.querySelector('[data-mod-action=refresh]').click();await Promise.resolve();
         check(calls===3,'pending action cannot be submitted twice');
+        const beforePendingRefresh=listCalls;controller.invalidate();controller.invalidate();await new Promise(r=>setTimeout(r,20));
+        check(listCalls===beforePendingRefresh&&document.querySelector('[data-mod-action=refresh]').disabled,'invalidation waits without interrupting the running module action');
         document.querySelector('[data-mod-panel=receipt]').click();resolveAction({...snapshot,result:{text:'Finished previous panel'},usedBackend:'event-session',timingMs:15});await new Promise(r=>setTimeout(r,20));
         check(document.querySelector('[data-mod-panel=receipt]').getAttribute('aria-selected')==='true','late action result does not navigate away from selected panel');
+        check(listCalls===beforePendingRefresh+1,'pending invalidations become one reload after action completion');
         check(document.querySelector('.mp-mods-section-empty')?.textContent==='Nothing recorded.','empty durable sections are explicit');
         await controller.refresh();
         check(document.querySelector('[data-mod-panel=receipt]').getAttribute('aria-selected')==='true','refresh preserves the selected registered panel');

@@ -23,7 +23,8 @@ export function taskContextModule(session: EventSession): RuntimeModule {
         'Current task materials, references, plan and verified results from the saved session.',
       status: {
         state: session.openTurn === null ? 'ready' : 'running',
-        label: receipt ? String(receipt.status) : 'No result receipt yet',
+        label: session.openTurn !== null ? 'Running' : receipt ? String(receipt.status) : 'No result receipt yet',
+        ...(session.openTurn !== null && receipt ? {detail: `Previous result: ${String(receipt.status)}`} : {}),
       },
       sections: [
         {

@@ -15,7 +15,12 @@ import type {
 export interface RuntimeModuleCommand {
   id: string;
   label: string;
-  tool: Omit<ToolSpec, 'name'>;
+  tool: Omit<ToolSpec, 'name'> & {name?: string};
+  present?(
+    value: unknown,
+  ):
+    | NonNullable<ModuleActionResult['result']>
+    | Promise<NonNullable<ModuleActionResult['result']>>;
 }
 export interface RuntimeModulePanel {
   id: string;
@@ -85,7 +90,9 @@ export class RuntimeModules {
       if (!this.tools) {
         throw new Error('Module commands require the tools service');
       }
-      const name = `Modules.${definition.id.replaceAll('-', '_')}.${command.id.replaceAll('-', '_')}`;
+      const name =
+        command.tool.name ??
+        `Modules.${definition.id.replaceAll('-', '_')}.${command.id.replaceAll('-', '_')}`;
       moduleScope.registerTool({
         ...command.tool,
         name,
@@ -224,11 +231,14 @@ export class RuntimeModules {
       const panel = module?.definition.panels?.find(
         row => row.id === request.panelId,
       );
-      const action = panel?.actions?.[request.actionId];
-      if (!module || !panel || !action) {
+      if (!module || !panel) {
         throw new Error('Unknown module action');
       }
       const current = await module.owner.run(() => panel.render());
+      const action = panel.actions?.[request.actionId];
+      if (!action) {
+        throw new Error('Unknown module action');
+      }
       const button = current.sections
         .flatMap(section => section.actions ?? [])
         .find(row => row.id === request.actionId);
@@ -301,9 +311,15 @@ export class RuntimeModules {
         );
       }
       const value = asObject(result.value);
+      const command = module.definition.commands?.find(
+        row => row.id === action.commandId,
+      );
+      const presented = command?.present
+        ? await module.owner.run(() => command.present!(result.value))
+        : undefined;
       return {
         ...(await this.snapshot()),
-        result: {
+        result: presented ?? {
           text:
             typeof value.text === 'string'
               ? value.text

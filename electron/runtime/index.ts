@@ -48,7 +48,7 @@ import {ToolRegistry} from './tools';
 import {resolveModelConfig, streamModel, requestVision} from './model';
 import {bindDesktopWindow, prepareTaskContext} from './context_prepare';
 import {latestTurnArtifactSummaries} from './artifacts';
-import {registerDashboardTools} from './dashboard_tools';
+import {dashboardModulePlugin} from './dashboard_module';
 import {taskSources, taskReferences, referenceRevision} from './context';
 import {registerBrowserTools} from './desktop_browser';
 import {
@@ -326,15 +326,12 @@ export async function runRuntime(
         }
       },
     },
-    {
-      name: 'dashboard-tools',
-      apply: ctx =>
-        registerDashboardTools(ctx.get('tools'), {
-          userDataDir,
-          authorizeAccess: prepared.authorizeAccess,
-          sources: () => taskSources(session.events),
-        }),
-    },
+    dashboardModulePlugin({
+      userDataDir,
+      session,
+      authorizeAccess: prepared.authorizeAccess,
+      sources: () => taskSources(session.events),
+    }),
     {
       name: 'skill-writer',
       apply: ctx => {

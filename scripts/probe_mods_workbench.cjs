@@ -4,6 +4,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const ts = require('typescript');
+const {buildSync} = require('esbuild');
+require('tsx/cjs');
 const root = path.resolve(__dirname, '..');
 const out = path.join(root, 'data/runtime/mods-workbench-ui');
 const fixture = path.join(out, `fixture-${Date.now()}`);
@@ -12,17 +14,42 @@ app.setPath('userData', path.join(fixture, 'profile'));
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const deadline = setTimeout(() => app.exit(2), 60000);
+const deadline = setTimeout(() => app.exit(2), 180000);
+const workerChildren = new Set();
+app.on('will-quit', () => {
+  for (const child of workerChildren) child.kill();
+});
+const probePreload = path.join(fixture, 'preload.cjs');
+buildSync({
+  entryPoints: [path.join(root, 'electron/preload.ts')],
+  outfile: probePreload,
+  bundle: true,
+  platform: 'browser',
+  format: 'cjs',
+  target: 'es2022',
+  external: ['electron'],
+});
 
 app.whenReady().then(async () => {
   const {EventSession} = require(
-    path.join(root, 'build/electron/runtime/session.js'),
+    path.join(root, 'electron/runtime/session.ts'),
   );
   const {updateContext} = require(
-    path.join(root, 'build/electron/runtime/context.js'),
+    path.join(root, 'electron/runtime/context.ts'),
   );
-  const {handleFabric} = require(
-    path.join(root, 'build/electron/runtime/fabric_api.js'),
+  const {createRuntimeBridgeRunner} = require(
+    path.join(root, 'electron/runtime_bridge_runner.ts'),
+  );
+  const {saveDashboard} = require(
+    path.join(root, 'electron/runtime/dashboard.ts'),
+  );
+  const {RuntimeActivitySink} = require(
+    path.join(root, 'electron/runtime/agent_activity.ts'),
+  );
+  const nodeExecutable = process.env.MP_ACCEPTANCE_NODE;
+  assert(
+    nodeExecutable && fs.existsSync(nodeExecutable),
+    'MP_ACCEPTANCE_NODE must point to the real Node executable',
   );
   const session = await EventSession.open(
     fixture,
@@ -30,6 +57,23 @@ app.whenReady().then(async () => {
   );
   const note = path.join(fixture, 'source-note.txt');
   fs.writeFileSync(note, 'The latest evidence is 173 orders.');
+  const csv = path.join(fixture, 'sales.csv');
+  fs.writeFileSync(csv, 'region,revenue\nNorth,12\nSouth,18\n');
+  const dashboard = await saveDashboard(fixture, {
+    schemaVersion: 1,
+    dashboardId: '',
+    title: 'Sales',
+    updatedAt: '',
+    sources: [{sourceId: 'sales', kind: 'csv', path: csv}],
+    charts: [
+      {
+        chartId: 'revenue',
+        title: 'Revenue',
+        type: 'kpi',
+        select: {source: 'sales', value: 'revenue', agg: 'sum'},
+      },
+    ],
+  });
   const folder = path.join(fixture, 'data/plugins/source-note');
   fs.mkdirSync(folder, {recursive: true});
   fs.writeFileSync(
@@ -83,7 +127,7 @@ app.whenReady().then(async () => {
       contextIsolation: true,
       offscreen: true,
       backgroundThrottling: false,
-      preload: path.join(root, 'build/electron/preload.js'),
+      preload: probePreload,
     },
   });
   const errors = [];
@@ -128,8 +172,38 @@ app.whenReady().then(async () => {
       get: id => (id === conversation.id ? conversation : undefined),
     }),
     runRuntimeBridgePromise: payload => {
-      requests.push({runtime: payload});
-      return handleFabric(payload, {root: fixture, userDataDir: fixture});
+      const request = {runtime: payload, workerPid: null, progress: []};
+      requests.push(request);
+      return new Promise(resolve => {
+        let child;
+        child = createRuntimeBridgeRunner().run({
+          executable: nodeExecutable,
+          args: [
+            '--require',
+            'tsx/cjs',
+            path.join(root, 'electron/runtime/worker.ts'),
+            'fabric',
+          ],
+          input: {...payload, root},
+          spawnOptions: {
+            cwd: root,
+            windowsHide: true,
+            env: {
+              ...process.env,
+              MAGIC_POINTER_USER_DATA_DIR: fixture,
+              MAGIC_POINTER_PLUGIN_DIR: path.join(fixture, 'data/plugins'),
+            },
+          },
+          timeoutMs: 30000,
+          onProgress: record => request.progress.push(record.phase),
+          onComplete: result => {
+            workerChildren.delete(child);
+            resolve(result);
+          },
+        });
+        request.workerPid = child.pid;
+        workerChildren.add(child);
+      });
     },
   });
   const helpers = ['handleModuleWorkspace'];
@@ -190,7 +264,7 @@ app.whenReady().then(async () => {
     checks.push(message);
   };
   async function waitFor(expression) {
-    for (let attempt = 0; attempt < 125; attempt++) {
+    for (let attempt = 0; attempt < 500; attempt++) {
       if (await js(expression).catch(() => false)) return;
       await delay(40);
     }
@@ -201,12 +275,25 @@ app.whenReady().then(async () => {
     await waitFor("typeof openConversation==='function'");
     await js("openConversation('mods-conversation')");
     await js("document.getElementById('thread-more').click()");
-    check(await js("Array.from(document.querySelectorAll('#thread-menu button')).some(button=>button.textContent.trim()==='Mods'&&!button.disabled)"),'real conversation More menu exposes the module workspace');
-    await js("Array.from(document.querySelectorAll('#thread-menu button')).find(button=>button.textContent.trim()==='Mods').click()");
+    check(
+      await js(
+        "Array.from(document.querySelectorAll('#thread-menu button')).some(button=>button.textContent.trim()==='Mods'&&!button.disabled)",
+      ),
+      'real conversation More menu exposes the module workspace',
+    );
+    await js(
+      "Array.from(document.querySelectorAll('#thread-menu button')).find(button=>button.textContent.trim()==='Mods').click()",
+    );
     await waitFor(
       "document.querySelector('[data-mod-panel=task-context]')!==null",
     );
-    check(await js("document.querySelector('.mp-mods-header').getBoundingClientRect().left-document.querySelector('.mp-mods-workspace').getBoundingClientRect().left>=12"),'workspace content has readable inset inside the production inspector');
+    await js("document.querySelector('[data-mod-panel=task-context]').click()");
+    check(
+      await js(
+        "document.querySelector('.mp-mods-header').getBoundingClientRect().left-document.querySelector('.mp-mods-workspace').getBoundingClientRect().left>=12",
+      ),
+      'workspace content has readable inset inside the production inspector',
+    );
     check(
       await js(
         "document.querySelector('.mp-mods-content').textContent.includes('Quarterly report')&&document.querySelector('.mp-mods-content').textContent.includes('Reconcile orders against the report')",
@@ -216,6 +303,66 @@ app.whenReady().then(async () => {
     await session.append('plan/updated', {
       plan: [{content: 'Verify the amended invoice', status: 'pending'}],
     });
+    const progress = [];
+    const sink = new RuntimeActivitySink((phase, fields) =>
+      progress.push({phase, fields}),
+    );
+    const listCount = () =>
+      requests.filter(request => request.channel === 'modules:list').length;
+    const beforeTokens = listCount();
+    for (let index = 0; index < 30; index++)
+      win.webContents.send('conversations:progress', {
+        conversationId: conversation.id,
+        record: {
+          phase: 'answer_chunk',
+          fields: {b64: Buffer.from('text').toString('base64')},
+        },
+      });
+    await delay(250);
+    check(
+      listCount() === beforeTokens,
+      'token chunks do not reload module panels',
+    );
+    sink.onEvent({
+      kind: 'plan_updated',
+      plan: [{content: 'Verify the amended invoice', status: 'pending'}],
+    });
+    for (let index = 0; index < 3; index++)
+      win.webContents.send('conversations:progress', {
+        conversationId: conversation.id,
+        record: progress.at(-1),
+      });
+    await waitFor(
+      "document.querySelector('.mp-mods-content').textContent.includes('Verify the amended invoice')",
+    );
+    check(
+      listCount() === beforeTokens + 1,
+      'actual plan notifications merge into one visible workspace reload',
+    );
+    const acceptedCount=listCount();
+    win.webContents.send('conversations:progress',{conversationId:'another-task',record:progress.at(-1)});
+    for(let index=0;index<3;index++)win.webContents.send('conversations:turn',{id:conversation.id,turnIndex:0,liveProgress:{requestId:'external-stream',answer:'More streamed text',trajectory:[],records:[progress.at(-1)]}});
+    await delay(250);
+    check(listCount()===acceptedCount,'another task and repeated external stream snapshots do not reload current modules');
+    await js('setInspector(false)');
+    const hiddenCount = listCount();
+    sink.onEvent({
+      kind: 'plan_updated',
+      plan: [{content: 'Hidden update', status: 'pending'}],
+    });
+    win.webContents.send('conversations:progress', {
+      conversationId: conversation.id,
+      record: progress.at(-1),
+    });
+    await delay(250);
+    check(
+      listCount() === hiddenCount,
+      'hidden module workspace does not make background requests',
+    );
+    await js("setInspector(true,'modules')");
+    await waitFor(
+      "document.querySelector('[data-mod-action=summary]')&&!document.querySelector('[data-mod-refresh]').disabled",
+    );
     await js("document.querySelector('[data-mod-action=summary]').click()");
     await waitFor(
       "document.querySelector('[data-mod-result]')?.textContent.includes('Verify the amended invoice')",
@@ -276,6 +423,55 @@ app.whenReady().then(async () => {
         .every(request => request.runtime.sessionId === session.id),
       'main handler binds all module requests to conversation-owned session',
     );
+    check(
+      requests
+        .filter(request => request.runtime)
+        .every(
+          request =>
+            request.workerPid && request.progress.includes('runtime_ready'),
+        ),
+      'all module requests crossed an independently started production worker',
+    );
+    await js("document.querySelector('[data-mod-panel=dashboards]').click()");
+    await js(
+      `document.querySelector('[data-mod-action="open-${dashboard.dashboardId}"]').click()`,
+    );
+    const revenue =
+      "Array.from(document.querySelectorAll('.mp-mods-rows dt')).find(node=>node.textContent==='Revenue')?.nextElementSibling?.textContent";
+    await waitFor(`(${revenue})==='30'`);
+    check(
+      await js(
+        "document.querySelector('.mp-mods-content').textContent.includes('Revenue query')&&/SUM|sum/.test(document.querySelector('.mp-mods-content').textContent)",
+      ),
+      'real Dashboard module exposes its saved query and computed value',
+    );
+    fs.writeFileSync(csv, 'region,revenue\nNorth,112\nSouth,18\n');
+    const beforeRead = listCount();
+    await js("document.querySelector('[data-mod-refresh]').click()");
+    await waitFor("!document.querySelector('[data-mod-refresh]').disabled");
+    await delay(100);
+    check(
+      listCount() === beforeRead + 1 && (await js(`(${revenue})==='30'`)),
+      'module refresh retains the actual last query snapshot instead of silently requerying data',
+    );
+    await js(
+      "document.querySelector('[data-mod-action=refresh-values]').click()",
+    );
+    await waitFor(`(${revenue})==='130'`);
+    check(
+      true,
+      'explicit Dashboard refresh recomputes the changed CSV in another worker',
+    );
+    await js("document.querySelector('[data-mod-action=inspect-0]').click()");
+    await waitFor(
+      "document.querySelector('.mp-mods-content').textContent.includes('Row 2')",
+    );
+    check(
+      await js(
+        "document.querySelector('.mp-mods-content').textContent.includes('revenue: 112')",
+      ),
+      'source inspection displays the physical row and original cell value',
+    );
     for (const [theme, width] of [
       ['light', 1280],
       ['dark', 1280],
@@ -307,7 +503,7 @@ app.whenReady().then(async () => {
           fixture,
           sessionFile: session.file,
           backend:
-            'production Studio/preload/main handlers/handleFabric/module registry/EventSession; unrelated app data and worker process boundary isolated',
+            'production Studio/preload/main handlers/createRuntimeBridgeRunner/independent Node worker/module registry/EventSession/real CSV; unrelated app data isolated',
         },
         null,
         2,

@@ -9,6 +9,7 @@ import type {
 declare global {
   interface ModsWorkspaceController {
     refresh(): Promise<void>;
+    invalidate(): void;
     updateLanguage(): void;
     dispose(): void;
   }
@@ -18,6 +19,7 @@ declare global {
       request: Omit<ModuleActionRequest, 'sessionId'>,
     ): Promise<ModuleActionResult>;
     language(): string;
+    visible?(): boolean;
   }
   var ModsWorkspace: {
     create(
@@ -39,6 +41,9 @@ declare global {
     let error = '';
     let generation = 0;
     let disposed = false;
+    let updating = false;
+    let invalidated = false;
+    let updateQueued = false;
     const pending = new Set<string>();
     const results = new Map<string, ModuleActionResult>();
     const contentId = `mp-module-content-${++sequence}`;
@@ -105,10 +110,11 @@ declare global {
         return;
       }
       heading.textContent = text('Modules', '模块');
-      refresh.textContent = loading
-        ? text('Refreshing…', '正在刷新…')
-        : text('Refresh', '刷新');
-      refresh.disabled = loading;
+      refresh.textContent =
+        loading || updating
+          ? text('Refreshing…', '正在刷新…')
+          : text('Refresh', '刷新');
+      refresh.disabled = loading || updating;
       description.textContent = text(
         'Live module panels for the current task. Actions run through Magic Pointer’s own Runtime.',
         '当前任务的模块面板。操作由 Magic Pointer 自有 Runtime 执行。',
@@ -230,6 +236,7 @@ declare global {
           button.disabled =
             busy ||
             loading ||
+            updating ||
             action.disabled === true ||
             panel.status.state === 'disabled';
           button.addEventListener(
@@ -288,7 +295,7 @@ declare global {
       actionId: string,
     ): Promise<void> {
       const identity = key(moduleId, panelId);
-      if (pending.has(identity) || disposed || loading) {
+      if (pending.has(identity) || disposed || loading || updating) {
         return;
       }
       const requestGeneration = generation;
@@ -319,12 +326,15 @@ declare global {
         if (requestGeneration === generation) {
           pending.delete(identity);
           render();
+          scheduleUpdate();
         }
       }
     }
 
     async function read(): Promise<void> {
       const requestGeneration = ++generation;
+      invalidated = false;
+      updating = false;
       pending.clear();
       results.clear();
       snapshot = null;
@@ -353,10 +363,73 @@ declare global {
         if (requestGeneration === generation) {
           loading = false;
           render();
+          scheduleUpdate();
         }
       }
     }
-    refresh.addEventListener('click', () => void read());
+    function scheduleUpdate(): void {
+      if (
+        !invalidated ||
+        updateQueued ||
+        disposed ||
+        loading ||
+        updating ||
+        pending.size ||
+        options.visible?.() === false
+      ) {
+        return;
+      }
+      updateQueued = true;
+      queueMicrotask(() => {
+        updateQueued = false;
+        if (
+          invalidated &&
+          !disposed &&
+          !loading &&
+          !updating &&
+          !pending.size &&
+          options.visible?.() !== false
+        ) {
+          void update();
+        }
+      });
+    }
+    async function update(): Promise<void> {
+      const requestGeneration = generation;
+      invalidated = false;
+      updating = true;
+      render();
+      try {
+        const next = await options.list();
+        if (disposed || requestGeneration !== generation) {
+          return;
+        }
+        if (next.ok) {
+          snapshot = next;
+          error = '';
+        } else {
+          error =
+            next.error ||
+            text('Could not refresh module state.', '无法刷新模块状态。');
+        }
+      } catch (failure) {
+        if (disposed || requestGeneration !== generation) {
+          return;
+        }
+        error = failure instanceof Error ? failure.message : String(failure);
+      } finally {
+        if (requestGeneration === generation) {
+          updating = false;
+          render();
+          scheduleUpdate();
+        }
+      }
+    }
+    function invalidate(): void {
+      invalidated = true;
+      scheduleUpdate();
+    }
+    refresh.addEventListener('click', invalidate);
     navigation.addEventListener('keydown', event => {
       const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
       if (!keys.includes(event.key)) {
@@ -385,6 +458,7 @@ declare global {
     render();
     return {
       refresh: read,
+      invalidate,
       updateLanguage: render,
       dispose() {
         disposed = true;

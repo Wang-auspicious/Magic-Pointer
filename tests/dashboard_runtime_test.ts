@@ -13,7 +13,7 @@ import {
   runSelect,
   snapshotCharts,
 } from '../electron/runtime/dashboard';
-import {registerDashboardTools} from '../electron/runtime/dashboard_tools';
+import {createDashboardTools} from '../electron/runtime/dashboard_tools';
 import {ToolRegistry} from '../electron/runtime/tools';
 import {EventSession} from '../electron/runtime/session';
 import {prepareTaskContext} from '../electron/runtime/context_prepare';
@@ -158,14 +158,16 @@ test('Dashboard tools create and edit real data without replacing other charts o
   const file = path.join(folder, 'orders.csv');
   await writeFile(file, 'id,value\nA,10\nB,20\n');
   const registry = new ToolRegistry();
-  registerDashboardTools(registry, {
+  for (const tool of createDashboardTools({
     userDataDir: folder,
     sources: () => [],
     authorizeAccess: request => ({
       allowed:
         request.paths?.every(item => path.resolve(item) === file) === true,
     }),
-  });
+  })) {
+    registry.register(tool);
+  }
   const chart = {
     chartId: 'total',
     title: 'Total',
@@ -226,9 +228,23 @@ test('Dashboard tools honor the exact source grant for a projectless attachment'
   await writeFile(file, 'id,value\nA,10\n');
   const session = await EventSession.open(folder, 'dashboard-attachment');
   const registry = new ToolRegistry();
-  const prepared = await prepareTaskContext(session, {attachments: [file], workspacePath: ''}, {root: folder, userDataDir: folder, registry});
-  registerDashboardTools(registry, {userDataDir: folder, authorizeAccess: prepared.authorizeAccess, sources: () => taskSources(session.events)});
-  const result = await registry.execute({id: 'read-selected', name: 'Dashboard.inspect_source', arguments: {source: {sourceId: 'selected', kind: 'csv', path: file}}});
+  const prepared = await prepareTaskContext(
+    session,
+    {attachments: [file], workspacePath: ''},
+    {root: folder, userDataDir: folder, registry},
+  );
+  for (const tool of createDashboardTools({
+    userDataDir: folder,
+    authorizeAccess: prepared.authorizeAccess,
+    sources: () => taskSources(session.events),
+  })) {
+    registry.register(tool);
+  }
+  const result = await registry.execute({
+    id: 'read-selected',
+    name: 'Dashboard.inspect_source',
+    arguments: {source: {sourceId: 'selected', kind: 'csv', path: file}},
+  });
   assert.equal(result.is_error, false, result.error_message);
   assert.equal((result.value as any).rows[0].values.id, 'A');
   await registry.close();

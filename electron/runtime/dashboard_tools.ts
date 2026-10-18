@@ -1,5 +1,5 @@
 import {isAbsolute, relative, resolve} from 'node:path';
-import {ActionFailure, type ToolRegistry} from './tools';
+import {ActionFailure, type ToolSpec} from './tools';
 import type {AccessRequest, SourceRef} from './context';
 import {
   dashboardTrace,
@@ -208,17 +208,18 @@ function summary(run: DashboardRun) {
   };
 }
 
-export function registerDashboardTools(
-  registry: ToolRegistry,
-  options: {
-    userDataDir: string;
-    sources(): readonly SourceRef[];
-    authorizeAccess(request: AccessRequest): {
-      allowed: boolean;
-      reason?: string;
-    };
-  },
-): void {
+export interface DashboardToolOptions {
+  userDataDir: string;
+  sources(): readonly SourceRef[];
+  authorizeAccess(request: AccessRequest): {
+    allowed: boolean;
+    reason?: string;
+  };
+}
+export function createDashboardTools(
+  options: DashboardToolOptions,
+): ToolSpec[] {
+  const tools: ToolSpec[] = [];
   const snapshots = new Map<string, DashboardRun>();
   const authorize = (sources: DashboardSource[]) => {
     for (const source of sources) {
@@ -286,7 +287,7 @@ export function registerDashboardTools(
     used_backend: 'local.dashboard',
     resource_keys: ['dashboards'],
   };
-  registry.register({
+  tools.push({
     ...common,
     name: 'Dashboard.list',
     description:
@@ -302,7 +303,7 @@ export function registerDashboardTools(
         }),
       ),
   });
-  registry.register({
+  tools.push({
     ...common,
     name: 'Dashboard.inspect_source',
     description:
@@ -343,7 +344,7 @@ export function registerDashboardTools(
       };
     },
   });
-  registry.register({
+  tools.push({
     ...common,
     name: 'Dashboard.create',
     description:
@@ -366,7 +367,7 @@ export function registerDashboardTools(
         charts: args.charts as DashboardChart[],
       }),
   });
-  registry.register({
+  tools.push({
     ...common,
     name: 'Dashboard.open',
     description:
@@ -374,7 +375,7 @@ export function registerDashboardTools(
     input_schema: object({dashboard_id: text}, ['dashboard_id']),
     execute: async args => summary(await open(String(args.dashboard_id))),
   });
-  registry.register({
+  tools.push({
     ...common,
     name: 'Dashboard.update',
     description:
@@ -418,7 +419,7 @@ export function registerDashboardTools(
         Number(args.expected_revision),
       ),
   });
-  registry.register({
+  tools.push({
     ...common,
     name: 'Dashboard.trace',
     description:
@@ -447,4 +448,5 @@ export function registerDashboardTools(
       );
     },
   });
+  return tools;
 }
