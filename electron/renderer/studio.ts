@@ -3596,6 +3596,8 @@ let externalConversationRun: {
 let activeConversationObject: Record<string, unknown> = {};
 let activeTaskContext: MagicPointerTaskContext | null = null;
 let desktopPerceptionController: DesktopPerceptionController | null = null;
+let modsWorkspaceController: ModsWorkspaceController | null = null;
+let modsConversationId = '';
 const composerSelectedSourceIds = new Set<string>();
 let figmaStatusTimer: number | null = null;
 let figmaPairExpiresAt = 0;
@@ -7185,6 +7187,7 @@ function openThreadMenu(button: HTMLElement) {
     make('Files', () => toggleMaterialsPanel(), {shortcut: 'Ctrl+Shift+F'}),
     make('Terminal', () => toggleTerminalPanel()),
     make('Preview', () => setInspector(true, 'browser')),
+    make('Mods', () => setInspector(true, 'modules')),
     divider(),
     make('Open project folder', () => {
       if (activeProjectRoot) {
@@ -9250,6 +9253,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
               ? 'Background tasks'
               : 'Tasks',
           artifact: 'Artifact',
+          modules: 'Mods',
         } as Record<string, string>
       )[activeInspectorTab] || 'Task';
   }
@@ -9274,6 +9278,10 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   }
   if (activeInspectorTab === 'activity') {
     renderConversationActivity();
+  }
+  if (activeInspectorTab === 'modules') {
+    modsConversationId = activeConversationId || '';
+    void modsWorkspaceController?.refresh();
   }
   if (activeInspectorTab === 'artifact') {
     renderArtifactEditor();
@@ -10883,6 +10891,10 @@ function setActiveTaskContext(value: unknown, resetSelection = false) {
   activeTaskContext = next;
   desktopPerceptionController?.updateContext(next);
   desktopPerceptionController?.updateEvidence(activeConversationRecord?.object);
+  if (inspectorState.open && activeInspectorTab === 'modules' && modsConversationId !== (activeConversationId || '')) {
+    modsConversationId = activeConversationId || '';
+    void modsWorkspaceController?.refresh();
+  }
   const known = new Set(next?.sources.map(source => source.sourceId) || []);
   for (const sourceId of [...composerSelectedSourceIds]) {
     if (!known.has(sourceId)) {
@@ -12387,6 +12399,25 @@ function openSettingsPage(page: string) {
 }
 
 const desktopPerceptionHost = document.getElementById('desktop-perception');
+const modulesHost = document.getElementById('modules-workspace');
+if (modulesHost && globalThis.ModsWorkspace) {
+  const unavailableModules = () => ({
+    ok: false, sessionId: '', modules: [], errors: [],
+    error: getStudioLanguage() === 'zh-CN' ? '请先打开一个已开始的任务。' : 'Open a started task to use its modules.',
+  });
+  modsWorkspaceController = ModsWorkspace.create(modulesHost, {
+    list: async () => activeConversationId && window.magicPointerDashboard?.modules
+      ? window.magicPointerDashboard.modules.list({conversationId: activeConversationId})
+      : unavailableModules(),
+    invoke: async request => activeConversationId && window.magicPointerDashboard?.modules
+      ? window.magicPointerDashboard.modules.invoke({...request, conversationId: activeConversationId})
+      : unavailableModules(),
+    language: () => getStudioLanguage(),
+  });
+  const controller = modsWorkspaceController;
+  window.addEventListener('mp:language-change', () => controller.updateLanguage());
+  window.addEventListener('beforeunload', () => controller.dispose(), {once: true});
+}
 const desktopPerceptionBridge = window.magicPointerDashboard?.desktopPerception;
 desktopPerceptionController = desktopPerceptionHost && globalThis.DesktopPerception
   ? DesktopPerception.create(desktopPerceptionHost, {

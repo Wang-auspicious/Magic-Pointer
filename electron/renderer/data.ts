@@ -759,6 +759,10 @@ declare global {
   }
 
   interface MagicPointerDashboardApi {
+    modules?: {
+      list(payload: {conversationId: string}): Promise<import('../runtime/module_contract').ModuleWorkspaceSnapshot>;
+      invoke(payload: {conversationId: string; moduleId: string; panelId: string; actionId: string}): Promise<import('../runtime/module_contract').ModuleActionResult>;
+    };
     desktopPerception?: {
       status(): Promise<DesktopPerceptionStatus>;
       activate(): Promise<{ok: boolean; error?: string; state?: string}>;

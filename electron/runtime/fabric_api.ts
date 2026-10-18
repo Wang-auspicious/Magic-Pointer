@@ -28,6 +28,7 @@ import {
 import {readJson} from './learning';
 import {handleSkillCandidates} from './context_skill_candidates';
 import type {RuntimeOptions} from './index';
+import {handleModuleWorkspace} from './module_workspace';
 
 type Data = Record<string, any>;
 export async function handleFabric(
@@ -36,6 +37,18 @@ export async function handleFabric(
 ): Promise<Data> {
   const {root, userDataDir, signal} = options;
   const operation = String(payload.operation || 'catalog');
+  if (operation === 'modules.list' || operation === 'modules.invoke') {
+    return handleModuleWorkspace(
+      {
+        operation,
+        sessionId: String(payload.sessionId || ''),
+        moduleId: payload.moduleId,
+        panelId: payload.panelId,
+        actionId: payload.actionId,
+      },
+      options,
+    );
+  }
   const fabric = new Fabric(options);
   const settings = fabric.settings;
   const store = settingsStore(userDataDir);

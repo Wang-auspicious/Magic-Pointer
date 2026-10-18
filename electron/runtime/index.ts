@@ -556,6 +556,7 @@ export async function runRuntime(
       ),
       model: request =>
         plugins.context.get<AgentOptions['model']>('model_client')(request),
+      requestContext: request => plugins.modules.requestContext(request),
       config,
       workspace: workspace || '',
       permissionMode,

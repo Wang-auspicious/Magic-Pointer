@@ -1,6 +1,7 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {ToolRegistry, type ToolSpec} from './tools';
 import type {SurfaceAdapter} from './desktop_adapters';
+import type {RuntimeModule} from './runtime_modules';
 import {
   HookManager,
   type Data,
@@ -48,7 +49,7 @@ export class PluginContext {
     if (
       !value ||
       typeof value !== 'object' ||
-      !['tools', 'hooks', 'prompt', 'surface_adapters'].includes(key)
+      !['tools', 'hooks', 'prompt', 'surface_adapters', 'modules'].includes(key)
     ) {
       return value;
     }
@@ -64,6 +65,10 @@ export class PluginContext {
         const member = Reflect.get(target, property);
         if (typeof member !== 'function') {
           return member;
+        }
+        if (key === 'modules' && property === 'register') {
+          return (definition: RuntimeModule) =>
+            member.call(target, definition, this);
         }
         if (key === 'hooks' && property === 'add') {
           return (phase: 'pre' | 'post' | 'stop', hook: ToolHook) =>

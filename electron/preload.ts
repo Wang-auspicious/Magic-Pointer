@@ -717,6 +717,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     inventory: () => ipcRenderer.invoke('extensions:inventory'),
     setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('extensions:set-enabled', {id, enabled}),
   },
+  modules: {
+    list: (payload: {conversationId: string}) => ipcRenderer.invoke('modules:list', payload),
+    invoke: (payload: {conversationId: string; moduleId: string; panelId: string; actionId: string}) => ipcRenderer.invoke('modules:invoke', payload),
+  },
   artifacts: {
     undo: (payload: {
       conversationId?: unknown;

@@ -34,6 +34,7 @@ import {
   type Effect,
 } from './tools';
 import type {ModelConfig} from './model';
+import type {ModuleRequestContext} from './module_contract';
 import type {AccessRequest} from './context';
 import {
   taskSources,
@@ -118,6 +119,7 @@ export interface AgentOptions {
   session: EventSession;
   registry: ToolRegistry;
   model: ModelRunner;
+  requestContext?: (request: {sessionId: string; turn: number; signal: AbortSignal}) => Promise<ModuleRequestContext[]>;
   instruction?: string;
   inputId?: string;
   outputArtifact?: {title: string; kind: 'text' | 'markdown'} | null;
@@ -368,8 +370,8 @@ function historyRecipeCall(call: ToolCall): boolean {
   );
 }
 
-function permissionFor(
-  options: AgentOptions,
+export function permissionFor(
+  options: Pick<AgentOptions, 'registry' | 'session' | 'permissionMode' | 'allowedEffects' | 'allowedTools' | 'deniedTools' | 'onceTools'>,
   call: ToolCall,
   claimedOnce: Set<string>,
 ): 'allow' | 'ask' | 'deny' | 'review' {
@@ -1018,10 +1020,20 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           ? '\n\n可按名字用 Tools 加载的工具：\n' + registry.directory()
           : '') +
         `\n\n当前生效权限模式：${session.permissionMode(options.permissionMode ?? 'default')}。以本条运行状态为准，历史模式描述不代表当前权限。`;
+      const contexts = await options.requestContext?.({sessionId: session.id, turn: turns, signal}) ?? [];
+      const projectRequestMessages = (): AgentMessage[] => [
+        ...modelMessages(),
+        ...contexts.map(context => ({
+          role: 'user' as const,
+          origin: 'data' as const,
+          injected: true,
+          content: `[Module context: ${context.moduleId}]\n${context.text}`,
+        })),
+      ];
       const estimated = estimateTokens(
         requestSystem +
           JSON.stringify(schemas) +
-          JSON.stringify(modelMessages()),
+          JSON.stringify(projectRequestMessages()),
       );
       if (
         estimated >=
@@ -1053,7 +1065,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           })),
         };
       } else {
-        const requestMessages = modelMessages();
+        const requestMessages = projectRequestMessages();
+        if (contexts.length) {
+          await session.append('module/request_context', {turn: session.openTurn, step: turns, contexts});
+        }
         await session.recordRequest(
           turns,
           requestSystem,

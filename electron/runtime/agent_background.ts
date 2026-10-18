@@ -862,6 +862,7 @@ export async function runBackgroundAgent(
             session,
             registry,
             hooks,
+            requestContext: request => plugins.modules.requestContext(request),
             model: request =>
               plugins.context.get<AgentOptions['model']>('model_client')(
                 request,

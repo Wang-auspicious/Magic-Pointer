@@ -10577,6 +10577,34 @@ ipcMain.handle(
     );
   },
 );
+async function handleModuleWorkspace(
+  event: Electron.IpcMainInvokeEvent,
+  operation: 'modules.list' | 'modules.invoke',
+  payload: {conversationId?: unknown; moduleId?: unknown; panelId?: unknown; actionId?: unknown} = {},
+) {
+  const failed = (error: string) => ({ok: false, sessionId: '', modules: [], errors: [], error});
+  if (!isDashboardSender(event)) {
+    return failed('unauthorized_modules_sender');
+  }
+  const conversation = typeof payload.conversationId === 'string'
+    ? conversations().get(payload.conversationId) : undefined;
+  const sessionId = conversation?.agentSessionId;
+  if (!sessionId) {
+    return failed('This task has no runtime session yet. Start the task before opening its modules.');
+  }
+  if (operation === 'modules.invoke' &&
+      ![payload.moduleId, payload.panelId, payload.actionId].every(value => typeof value === 'string' && value.length > 0)) {
+    return failed('invalid_module_action');
+  }
+  return runRuntimeBridgePromise({
+    operation, sessionId,
+    ...(operation === 'modules.invoke' ? {
+      moduleId: payload.moduleId, panelId: payload.panelId, actionId: payload.actionId,
+    } : {}),
+  }, 'fabric', {target: null, timeoutMs: 30_000});
+}
+ipcMain.handle('modules:list', (event: Electron.IpcMainInvokeEvent, payload: Parameters<typeof handleModuleWorkspace>[2]) => handleModuleWorkspace(event, 'modules.list', payload));
+ipcMain.handle('modules:invoke', (event: Electron.IpcMainInvokeEvent, payload: Parameters<typeof handleModuleWorkspace>[2]) => handleModuleWorkspace(event, 'modules.invoke', payload));
 ipcMain.handle('extensions:set-enabled', async (event: Electron.IpcMainInvokeEvent, payload: {id?: unknown; enabled?: unknown} = {}) => {
   if (!isDashboardSender(event)) {
     return {ok: false, error: 'unauthorized_extensions_writer'};

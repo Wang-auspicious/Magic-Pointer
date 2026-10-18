@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="dashboard.css?v=1" />
   <link rel="stylesheet" href="model_connections.css?v=1" />
   <link rel="stylesheet" href="desktop_perception.css" />
+  <link rel="stylesheet" href="mods_workspace.css" />
 </head>
 <body class="studio">
   <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -528,6 +529,7 @@
         <button type="button" data-inspector-tab="terminal" aria-selected="false">Terminal</button>
         <button type="button" data-inspector-tab="changes" aria-selected="false">Changes</button>
         <button type="button" data-inspector-tab="tasks" aria-selected="false">Background tasks</button>
+        <button type="button" data-inspector-tab="modules" aria-selected="false">Mods</button>
       </nav>
       <section class="mp-inspector-panel" id="inspector-activity" data-inspector-panel="activity" hidden>
         <div id="conversation-recovery" class="mp-execution-recovery" hidden></div>
@@ -577,6 +579,7 @@
       </section>
       <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">Worktree changes appear after opening a Git project.</p></div></section>
       <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><section id="project-plan" hidden></section><div id="project-tasks"><p class="mp-inspector-empty">Background and scheduled tasks for this project appear here.</p></div></section>
+      <section class="mp-inspector-panel" id="inspector-modules" data-inspector-panel="modules" hidden><div id="modules-workspace"></div></section>
       <section class="mp-inspector-panel" id="inspector-artifact" data-inspector-panel="artifact" hidden>
         <div class="mp-artifact-editor" id="artifact-editor">
           <header class="mp-artifact-editor-meta">
@@ -743,6 +746,7 @@
   <script defer src="settings.js?v=23"></script>
   <script defer src="right_workspace.js"></script>
   <script defer src="desktop_perception.js"></script>
+  <script defer src="mods_workspace.js"></script>
   <script defer src="studio.js?v=26"></script>
 </body>
 </html>

@@ -4,6 +4,11 @@ import {pathToFileURL} from 'node:url';
 import {validate, type JsonSchema} from './tools';
 import {asObject, type Data, type ModelRunner} from './agent';
 import {PluginContext} from './plugin_context';
+import {RuntimeModules} from './runtime_modules';
+import {taskContextModule} from './task_context_module';
+import type {EventSession} from './session';
+import type {ToolRegistry} from './tools';
+import type {HookManager} from './agent';
 export {PluginContext, PromptSections} from './plugin_context';
 
 export interface RuntimePlugin {
@@ -104,8 +109,33 @@ export async function bootPlugins(options: {
   for (const [key, value] of Object.entries(options.core ?? {})) {
     await context.provide(key, value);
   }
+  const modules = context.has('modules')
+    ? context.get<RuntimeModules>('modules')
+    : new RuntimeModules(
+        context,
+        context.has('tools') ? context.get<ToolRegistry>('tools') : undefined,
+        context.has('session')
+          ? context.get<EventSession>('session')
+          : undefined,
+        context.has('hooks') ? context.get<HookManager>('hooks') : undefined,
+      );
+  if (!context.has('modules')) {
+    await context.provide('modules', modules);
+  }
   const warnings: string[] = [];
   const rows = [...(options.rows ?? [])];
+  if ((options.scope ?? 'agent') === 'agent' && context.has('session')) {
+    specs.set('task-context-module', {
+      name: 'task-context-module',
+      inject: ['modules', 'session'],
+      apply: ctx => {
+        ctx
+          .get<RuntimeModules>('modules')
+          .register(taskContextModule(ctx.get<EventSession>('session')));
+      },
+    });
+    rows.push({id: 'task-context-module', plugin: 'task-context-module'});
+  }
   const disabledDirectories: Data[] = [];
   for (const entry of await readdir(options.directory, {
     withFileTypes: true,
@@ -220,6 +250,7 @@ export async function bootPlugins(options: {
   }
   return {
     context,
+    modules,
     warnings,
     rows: reports,
     dumpConfig: () => reports.map(row => ({...row})),
