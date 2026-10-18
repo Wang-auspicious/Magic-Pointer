@@ -3595,6 +3595,7 @@ let externalConversationRun: {
 } | null = null;
 let activeConversationObject: Record<string, unknown> = {};
 let activeTaskContext: MagicPointerTaskContext | null = null;
+let desktopPerceptionController: DesktopPerceptionController | null = null;
 const composerSelectedSourceIds = new Set<string>();
 let figmaStatusTimer: number | null = null;
 let figmaPairExpiresAt = 0;
@@ -10880,6 +10881,8 @@ function setActiveTaskContext(value: unknown, resetSelection = false) {
     });
   }
   activeTaskContext = next;
+  desktopPerceptionController?.updateContext(next);
+  desktopPerceptionController?.updateEvidence(activeConversationRecord?.object);
   const known = new Set(next?.sources.map(source => source.sourceId) || []);
   for (const sourceId of [...composerSelectedSourceIds]) {
     if (!known.has(sourceId)) {
@@ -12381,6 +12384,47 @@ function openSettingsPage(page: string) {
       .querySelector<HTMLElement>(`[data-settings-page="${page}"]`)
       ?.click(),
   );
+}
+
+const desktopPerceptionHost = document.getElementById('desktop-perception');
+const desktopPerceptionBridge = window.magicPointerDashboard?.desktopPerception;
+desktopPerceptionController = desktopPerceptionHost && globalThis.DesktopPerception
+  ? DesktopPerception.create(desktopPerceptionHost, {
+      readStatus: async () => {
+        if (!desktopPerceptionBridge) {
+          throw new Error('Desktop pointing is unavailable in this window.');
+        }
+        return desktopPerceptionBridge.status();
+      },
+      activate: async () => desktopPerceptionBridge
+        ? desktopPerceptionBridge.activate()
+        : {ok: false, error: 'Desktop pointing is unavailable in this window.'},
+      setPaused: async paused => desktopPerceptionBridge
+        ? desktopPerceptionBridge.setPaused(paused)
+        : {ok: false, error: 'Desktop pointing is unavailable in this window.'},
+      openSettings: openSettingsPage,
+      openMaterials: sourceId => {
+        if (sourceId) {
+          inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
+            type: 'select-content', contentKind: 'material', contentId: sourceId,
+          });
+        }
+        setInspector(true, 'materials');
+        renderTaskMaterials();
+      },
+      language: () => getStudioLanguage(),
+    })
+  : null;
+if (desktopPerceptionController) {
+  const controller = desktopPerceptionController;
+  controller.updateContext(activeTaskContext);
+  const unsubscribe = desktopPerceptionBridge?.onChanged(status => controller.updateStatus(status));
+  window.addEventListener('focus', () => { void controller.refresh(); });
+  window.addEventListener('mp:language-change', () => controller.updateLanguage());
+  window.addEventListener('beforeunload', () => {
+    unsubscribe?.();
+    controller.dispose();
+  }, {once: true});
 }
 
 function openAttachMenu() {

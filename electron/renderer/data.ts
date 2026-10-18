@@ -759,6 +759,12 @@ declare global {
   }
 
   interface MagicPointerDashboardApi {
+    desktopPerception?: {
+      status(): Promise<DesktopPerceptionStatus>;
+      activate(): Promise<{ok: boolean; error?: string; state?: string}>;
+      setPaused(paused: boolean): Promise<{ok: boolean; error?: string}>;
+      onChanged(callback: (status: DesktopPerceptionStatus) => void): () => void;
+    };
     personalActivity?: {
       read(date?: string): Promise<Record<string, any>>;
       configure(patch: Record<string, any>): Promise<Record<string, any>>;
@@ -1054,7 +1060,10 @@ declare global {
       remove(trackerId: string): Promise<Record<string, any>>;
       material(payload: Record<string, unknown>): Promise<Record<string, any>>;
     };
-    extensions?: {inventory(): Promise<Record<string, any>>};
+    extensions?: {
+      inventory(): Promise<Record<string, any>>;
+      setEnabled(id: string, enabled: boolean): Promise<Record<string, any>>;
+    };
     artifacts?: {
       undo?(payload: {
         conversationId: string;

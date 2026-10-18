@@ -7,7 +7,7 @@ type SettingsApi = {
   saveFabricSettings?: (patch: unknown) => Promise<any>;
   setTheme?: (theme: unknown) => void;
   conversations?: {memories?: () => Promise<any[]>};
-  extensions?: {inventory?: () => Promise<any>};
+  extensions?: MagicPointerDashboardApi['extensions'];
   connectModel?: MagicPointerDashboardApi['connectModel'];
   testModelConnection?: MagicPointerDashboardApi['testModelConnection'];
 };
@@ -15,7 +15,10 @@ type SettingsApi = {
 type SettingsModelApi = {
   SETTINGS_PAGES: any[];
   SETTINGS_UI_LABELS: Record<string, string>;
-  formatSettingLabel(id: string, params?: Record<string, string | number>): string;
+  formatSettingLabel(
+    id: string,
+    params?: Record<string, string | number>,
+  ): string;
   modelInfoValue(key: string, status: Record<string, any>): string;
   patchForSetting(path: string, value: unknown): Record<string, unknown>;
   valueForSetting(path: string, settings: Record<string, any>): unknown;
@@ -26,6 +29,11 @@ let canonicalSettings: Record<string, any> = {};
 let activeModelStatus: Record<string, any> = {};
 let learnedMemories: Array<Record<string, any>> = [];
 let pluginInventory: Array<Record<string, any>> = [];
+let pluginInventoryError = '';
+let pluginFilter = 'all';
+let pluginSort = 'name';
+let pluginSearchQuery = '';
+const pluginSavePending = new Set<string>();
 let activeSettingsPage = 'general';
 let settingsQuery = '';
 let settingsSaveQueue: Promise<void> = Promise.resolve();
@@ -140,7 +148,9 @@ function renderSettingsSection(title: string, rows: any[]) {
 }
 
 function renderMemoryLibrary() {
-  const memoryTitle = escSetting(settingsModel.formatSettingLabel('memory.title'));
+  const memoryTitle = escSetting(
+    settingsModel.formatSettingLabel('memory.title'),
+  );
   if (!learnedMemories.length) {
     return `<section class="mp-settings-section mp-memory-library"><h3>${memoryTitle}</h3>
       <div class="mp-memory-empty">${escSetting(settingsModel.formatSettingLabel('memory.empty'))}</div></section>`;
@@ -171,44 +181,89 @@ function renderPluginsPage(page: any) {
   const description =
     pluginRow?.description ||
     settingsModel.formatSettingLabel('plugins.fallbackDescription');
-  const pluginSearchLabel = escSetting(settingsModel.formatSettingLabel('plugins.search'));
-  const pluginAddLabel = escSetting(settingsModel.formatSettingLabel('plugins.add'));
-  const rows = pluginInventory.length
-    ? pluginInventory
+  const pluginSearchLabel = escSetting(studioT('plugins.search'));
+  const visible = pluginInventory
+    .filter(item => {
+      const matchesState =
+        pluginFilter === 'all' ||
+        (pluginFilter === 'enabled' && item.enabled === true) ||
+        (pluginFilter === 'disabled' && item.enabled === false) ||
+        (pluginFilter === 'invalid' && item.status === 'invalid');
+      return (
+        matchesState &&
+        `${item.name || item.id} ${item.description || ''}`
+          .toLocaleLowerCase()
+          .includes(pluginSearchQuery.toLocaleLowerCase())
+      );
+    })
+    .sort(
+      (a, b) =>
+        (pluginSort === 'status'
+          ? String(a.status).localeCompare(String(b.status))
+          : 0) || String(a.name || a.id).localeCompare(String(b.name || b.id)),
+    );
+  const rows = visible.length
+    ? visible
         .map(
           item => `<article class="mp-settings-plugin-row">
         <span class="mp-settings-plugin-mark">${settingIcon('ic-plug')}</span>
-        <span class="mp-settings-plugin-copy"><strong>${escSetting(item.name || item.id || settingsModel.formatSettingLabel('plugins.unnamed'))}</strong><small>${escSetting(item.description || settingsModel.formatSettingLabel('plugins.localDescription'))}</small></span>
-        <span class="mp-settings-plugin-meta">${escSetting(item.status || item.source || settingsModel.formatSettingLabel('plugins.localMeta'))}</span>
-        <button type="button" class="mp-settings-plugin-more" aria-label="${escSetting(settingsModel.formatSettingLabel('plugins.moreActions'))}">${settingIcon('ic-dots-vertical')}</button>
+        <span class="mp-settings-plugin-copy"><strong>${escSetting(item.name || item.id || settingsModel.formatSettingLabel('plugins.unnamed'))}</strong><small>${escSetting(item.error || item.toggleReason || item.description || settingsModel.formatSettingLabel('plugins.localDescription'))}</small></span>
+        <span class="mp-settings-plugin-meta">${escSetting(['configured', 'disabled', 'invalid'].includes(item.status) ? studioT(`plugins.state.${item.status}`) : item.status || item.source || settingsModel.formatSettingLabel('plugins.localMeta'))}</span>
+        ${item.canToggle === true ? `<button type="button" class="settings-switch${item.enabled ? ' is-on' : ''}" role="switch" aria-label="${escSetting(item.name || item.id)}" aria-checked="${item.enabled === true}" data-plugin-toggle="${escSetting(item.id)}" ${pluginSavePending.has(item.id) ? 'disabled' : ''}><span></span></button>` : ''}
       </article>`,
         )
         .join('')
-    : `<div class="mp-settings-plugin-empty">${escSetting(settingsModel.formatSettingLabel('plugins.empty'))}<small>${escSetting(description)}</small></div>`;
+    : `<div class="mp-settings-plugin-empty">${escSetting(studioT('plugins.empty'))}<small>${escSetting(description)}</small></div>`;
   const heading = pluginInventory.length
-    ? `${escSetting(settingsModel.formatSettingLabel('plugins.heading'))} <span>· ${pluginInventory.length}</span>`
-    : escSetting(settingsModel.formatSettingLabel('plugins.heading'));
+    ? `${escSetting(studioT('plugins.heading'))} <span>· ${pluginInventory.length}</span>`
+    : escSetting(studioT('plugins.heading'));
   return `<section class="mp-settings-page mp-settings-plugins" data-page="${escSetting(page.id)}"${page.ref ? ` data-ref="${escSetting(page.ref)}"` : ''}>
     <header class="mp-settings-page-head mp-settings-plugin-head">
-      <div><h2>${escSetting(page.title)}</h2></div>
+      <div><h2>${escSetting(studioT('plugins.title'))}</h2></div>
       <label class="mp-settings-plugin-search">
-        ${settingIcon('ic-search')}<input type="search" placeholder="${pluginSearchLabel}" aria-label="${pluginSearchLabel}" />
+        ${settingIcon('ic-search')}<input type="search" value="${escSetting(pluginSearchQuery)}" placeholder="${pluginSearchLabel}" aria-label="${pluginSearchLabel}" />
       </label>
-      <button type="button" class="mp-settings-plugin-add">${pluginAddLabel}${settingIcon('ic-chev')}</button>
+      <button type="button" class="mp-settings-plugin-add">${escSetting(studioT('plugins.browse'))}</button>
     </header>
-    <div class="mp-settings-plugin-tabs" role="tablist" aria-label="${escSetting(settingsModel.formatSettingLabel('plugins.scope'))}">
-      <button type="button" class="is-on" role="tab" aria-selected="true">${escSetting(settingsModel.formatSettingLabel('plugins.tabMine'))}</button>
-      <button type="button" role="tab" aria-selected="false">${escSetting(settingsModel.formatSettingLabel('plugins.tabDiscover'))}</button>
-    </div>
+    <p>${escSetting(studioT('plugins.next_task'))}</p>
+    ${pluginInventoryError ? `<p role="alert">${escSetting(pluginInventoryError)}</p>` : ''}
     <div class="mp-settings-plugin-filters">
-      <span></span>
-      <div><button type="button">${settingIcon('ic-sliders')}${escSetting(settingsModel.formatSettingLabel('plugins.filter'))}${settingIcon('ic-chev')}</button><button type="button">${settingIcon('ic-sort')}${escSetting(settingsModel.formatSettingLabel('plugins.sort'))}${settingIcon('ic-chev')}</button></div>
+      <button type="button" data-plugin-refresh>${escSetting(studioT('plugins.refresh'))}</button>
+      <div><select data-plugin-filter aria-label="${escSetting(studioT('plugins.filter'))}">${['all', 'enabled', 'disabled', 'invalid'].map(value => `<option value="${value}" ${pluginFilter === value ? 'selected' : ''}>${escSetting(studioT(`plugins.filter.${value}`))}</option>`).join('')}</select>
+      <select data-plugin-sort aria-label="${escSetting(studioT('plugins.sort'))}">${['name', 'status'].map(value => `<option value="${value}" ${pluginSort === value ? 'selected' : ''}>${escSetting(studioT(`plugins.sort.${value}`))}</option>`).join('')}</select></div>
     </div>
     <div class="mp-settings-plugin-list">
       <h3>${heading}</h3>
       ${rows}
     </div>
   </section>`;
+}
+
+async function setPluginEnabledFromSettings(id: string): Promise<void> {
+  const item = pluginInventory.find(plugin => plugin.id === id);
+  const api = settingsApi()?.extensions;
+  if (!item?.canToggle || !api?.setEnabled || pluginSavePending.has(id)) {
+    return;
+  }
+  pluginSavePending.add(id);
+  renderSettings();
+  try {
+    const result = await api.setEnabled(id, item.enabled !== true);
+    if (!result.ok) {
+      throw new Error(result.error || studioT('plugins.save_failed'));
+    }
+    pluginInventory = result.plugins.items;
+    pluginInventoryError = result.plugins.error || '';
+    setSettingsStatus('saved', studioT('plugins.next_task'));
+  } catch (error) {
+    setSettingsStatus(
+      'error',
+      error instanceof Error ? error.message : String(error),
+    );
+  } finally {
+    pluginSavePending.delete(id);
+    renderSettings();
+  }
 }
 
 function renderSettingsPage(page: any) {
@@ -324,10 +379,15 @@ function renderSettings() {
   if (page.id === 'models-agents') {
     const container = document.createElement('div');
     body.querySelector('.mp-settings-page-head')?.after(container);
-    window.ModelConnections.mount(container, canonicalSettings, settingsApi(), response => {
-      hydrateCanonical(response.settings, response.modelStatus);
-      window.dispatchEvent(new Event('mp:model-connections-changed'));
-    });
+    window.ModelConnections.mount(
+      container,
+      canonicalSettings,
+      settingsApi(),
+      response => {
+        hydrateCanonical(response.settings, response.modelStatus);
+        window.dispatchEvent(new Event('mp:model-connections-changed'));
+      },
+    );
   }
 }
 
@@ -453,6 +513,15 @@ function parseSettingValue(element: HTMLInputElement | HTMLSelectElement) {
 
 document.addEventListener('click', event => {
   const target = event.target as HTMLElement;
+  const pluginToggle = target.closest<HTMLElement>('[data-plugin-toggle]');
+  if (pluginToggle) {
+    void setPluginEnabledFromSettings(pluginToggle.dataset.pluginToggle || '');
+    return;
+  }
+  if (target.closest('[data-plugin-refresh]')) {
+    void hydrateSettings();
+    return;
+  }
   const pluginTab = target.closest<HTMLButtonElement>(
     '.mp-settings-plugin-tabs [role="tab"]',
   );
@@ -502,13 +571,16 @@ document.addEventListener('input', event => {
   );
   if (pluginSearch) {
     const query = pluginSearch.value.trim().toLocaleLowerCase();
-    document
-      .querySelectorAll<HTMLElement>('.mp-settings-plugin-row')
-      .forEach(row => {
-        row.hidden =
-          Boolean(query) &&
-          !row.textContent?.toLocaleLowerCase().includes(query);
-      });
+    pluginSearchQuery = query;
+    const caret = pluginSearch.selectionStart;
+    renderSettings();
+    const replacement = document.querySelector<HTMLInputElement>(
+      '.mp-settings-plugin-search input',
+    );
+    replacement?.focus();
+    if (caret !== null) {
+      replacement?.setSelectionRange(caret, caret);
+    }
     return;
   }
   const search = (event.target as HTMLElement).closest<HTMLInputElement>(
@@ -532,6 +604,18 @@ document.addEventListener('input', event => {
 });
 
 document.addEventListener('change', event => {
+  const pluginControl = (
+    event.target as HTMLElement
+  ).closest<HTMLSelectElement>('[data-plugin-filter], [data-plugin-sort]');
+  if (pluginControl) {
+    if (pluginControl.hasAttribute('data-plugin-filter')) {
+      pluginFilter = pluginControl.value;
+    } else {
+      pluginSort = pluginControl.value;
+    }
+    renderSettings();
+    return;
+  }
   const control = (event.target as HTMLElement).closest<
     HTMLInputElement | HTMLSelectElement
   >('[data-setting]');
@@ -553,11 +637,14 @@ async function hydrateSettings() {
     const [response, memories, inventory] = await Promise.all([
       api.getFabricSettings(),
       memoryPromise,
-      api.extensions?.inventory ? api.extensions.inventory() : Promise.resolve(null),
+      api.extensions?.inventory
+        ? api.extensions.inventory()
+        : Promise.resolve(null),
     ]);
     learnedMemories = Array.isArray(memories) ? memories : [];
     const items = inventory?.plugins?.items || inventory?.items;
     pluginInventory = Array.isArray(items) ? items : [];
+    pluginInventoryError = inventory?.error || inventory?.plugins?.error || '';
     if (response?.ok && response.settings) {
       hydrateCanonical(response.settings, response.modelStatus);
     } else {

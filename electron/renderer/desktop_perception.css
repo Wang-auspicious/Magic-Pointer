@@ -1,0 +1,186 @@
+.mp-desktop-perception {
+  color: var(--mp-text, #292927);
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+}
+.mp-perception-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 2px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.mp-perception-summary::-webkit-details-marker {
+  display: none;
+}
+.mp-perception-summary::after {
+  content: '⌄';
+  margin-left: auto;
+}
+.mp-desktop-perception[open] > .mp-perception-summary::after {
+  transform: rotate(180deg);
+}
+.mp-perception-mark {
+  font-size: 18px;
+  color: var(--mp-clay, #c36b4d);
+}
+.mp-perception-title {
+  font-weight: 550;
+}
+.mp-perception-state,
+.mp-perception-count {
+  color: var(--mp-text-secondary, #73726c);
+}
+.mp-perception-state::before {
+  content: '·';
+  margin-right: 8px;
+}
+.mp-desktop-perception[data-state='unavailable'] .mp-perception-state,
+.mp-perception-channels .is-warning {
+  color: var(--text-warning, #a76a27);
+}
+.mp-perception-body {
+  border-top: 1px solid var(--mp-rule, #dfded8);
+  padding: 12px 0 4px;
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mp-perception-intro,
+.mp-perception-notice,
+.mp-perception-evidence-note,
+.mp-perception-empty {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--mp-text-secondary, #73726c);
+}
+.mp-perception-channels {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 7px 14px;
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+.mp-perception-channels dt {
+  color: var(--mp-text-secondary, #73726c);
+}
+.mp-perception-channels dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.mp-perception-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.mp-perception-action,
+.mp-perception-link {
+  font: inherit;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: inherit;
+  border: 1px solid var(--mp-rule, #dfded8);
+  background: transparent;
+}
+.mp-perception-action {
+  background: var(--mp-text, #292927);
+  color: var(--mp-panel, #fcfcfb);
+}
+.mp-perception-link {
+  border-color: transparent;
+}
+.mp-perception-action:disabled,
+.mp-perception-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.mp-perception-link:hover,
+.mp-perception-source:hover {
+  background: var(--mp-hover, rgba(128, 128, 128, 0.09));
+}
+.mp-perception-notice.is-error {
+  color: var(--text-error, #c34f42);
+}
+.mp-perception-materials,
+.mp-perception-evidence {
+  border-top: 1px solid var(--mp-rule, #dfded8);
+  padding-top: 12px;
+}
+.mp-perception-materials h3,
+.mp-perception-evidence h3 {
+  margin: 0 0 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mp-perception-providers {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(0, 3fr);
+  gap: 8px 12px;
+  font-size: 12px;
+}
+.mp-perception-providers dt {
+  overflow-wrap: anywhere;
+}
+.mp-perception-providers dd {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+.mp-perception-providers small {
+  color: var(--mp-text-secondary, #73726c);
+  font-size: 11px;
+}
+.mp-perception-providers .is-warning > span {
+  color: var(--text-warning, #a76a27);
+}
+.mp-perception-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mp-perception-source {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+.mp-perception-source strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.mp-perception-source small {
+  font-size: 11px;
+  color: var(--mp-text-secondary, #73726c);
+  overflow-wrap: anywhere;
+}
+.mp-desktop-perception :focus-visible {
+  outline: 2px solid var(--mp-clay, #c36b4d);
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .mp-perception-count {
+    display: none;
+  }
+  .mp-perception-channels {
+    grid-template-columns: 90px minmax(0, 1fr);
+  }
+}

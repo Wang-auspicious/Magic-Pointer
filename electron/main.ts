@@ -294,6 +294,10 @@ let credentialStore: InstanceType<typeof CredentialStore> | null = null;
 let pointerStateChild:
   import('child_process').ChildProcessWithoutNullStreams | null = null;
 let pointerStateRestartTimer: NodeJS.Timeout | null = null;
+let pointerStateReceived = false;
+let pointerStateSequence = 0;
+let pointerStateError = '';
+let desktopPerceptionActivating = false;
 let pointerInputState = {
   buttons: 0,
   foregroundApp: '',
@@ -588,6 +592,8 @@ function startPointerInputStateStream() {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   pointerStateChild = child;
+  pointerStateReceived = false;
+  pointerStateError = '';
   child.stdin.on('error', (error: Error) => {
     log(`pointer hook command stream error ${error.name}: ${error.message}`);
   });
@@ -603,6 +609,9 @@ function startPointerInputStateStream() {
       }
       try {
         const parsed = JSON.parse(line);
+        const firstSample = !pointerStateReceived;
+        pointerStateReceived = true;
+        pointerStateSequence++;
         pointerInputState = {
           buttons: Number(parsed.buttons || 0),
           foregroundApp: String(parsed.foregroundApp || ''),
@@ -613,6 +622,9 @@ function startPointerInputStateStream() {
           swallowingLeft: parsed.swallowingLeft === true,
           captureArmed: parsed.captureArmed === true,
         };
+        if (firstSample) {
+          publishDesktopPerceptionStatus();
+        }
         if (!isTransientShell(pointerInputState.foregroundApp)) {
           lastStableForegroundApp = pointerInputState.foregroundApp;
           lastStableForegroundWindow = {
@@ -626,6 +638,8 @@ function startPointerInputStateStream() {
   });
   child.on('close', () => {
     pointerStateChild = null;
+    pointerStateReceived = false;
+    publishDesktopPerceptionStatus();
     pointerInputState = {
       buttons: 0,
       foregroundApp: '',
@@ -644,6 +658,8 @@ function startPointerInputStateStream() {
     }
   });
   child.on('error', (error: Error) => {
+    pointerStateError = error.message;
+    publishDesktopPerceptionStatus();
     log(`pointer state stream error ${error.name}: ${error.message}`);
   });
   syncPointerEpisodeChord();
@@ -6998,6 +7014,7 @@ function isSelectionGestureActivation(reason: string) {
   return (
     value === 'wiggle' ||
     value === 'shortcut-wake' ||
+    value === 'studio-perception' ||
     value === 'episode-continue' ||
     value.startsWith('mouse-button-')
   );
@@ -7723,8 +7740,8 @@ function startMouseShakePolling() {
       return;
     }
     if (
-      !overlayWindow ||
-      overlayWindow.isDestroyed() ||
+      overlayWindow &&
+      !overlayWindow.isDestroyed() &&
       overlayWindow.isVisible()
     ) {
       return;
@@ -7787,6 +7804,7 @@ function applyConfiguredWakeState() {
   log(
     `pointer activation polling=${policy.shouldPoll} wiggle=${policy.detectWiggle} mouseButton=${policy.detectMouseButton} wakeMode=${fabricSettings?.activation?.wake_mode} paused=${inputPaused} sensitivity=${fabricSettings?.activation?.sensitivity}`,
   );
+  publishDesktopPerceptionStatus();
   return policy.shouldPoll;
 }
 
@@ -7800,6 +7818,74 @@ function currentPointerPollingPolicy() {
     onboardingRequired,
     inputPaused,
   });
+}
+
+function desktopPerceptionStatus() {
+  const policy = currentPointerPollingPolicy();
+  return {
+    paused: inputPaused,
+    onboardingRequired,
+    wakeMode: String(fabricSettings?.activation?.wake_mode || 'wiggle'),
+    detectWiggle: policy.detectWiggle,
+    detectMouseButton: policy.detectMouseButton,
+    polling: Boolean(mousePollTimer),
+    pointerStateFresh: Boolean(pointerStateChild && !pointerStateChild.killed && pointerStateReceived),
+    hotkeys: [
+      {name: 'wake', accelerator: fabricSettings?.shortcuts?.wake || 'Control+Alt+M'},
+      {name: 'text_mode', accelerator: fabricSettings?.shortcuts?.text_mode || 'Control+Alt+T'},
+    ].map(key => ({...key, registered: globalShortcut.isRegistered(key.accelerator)})),
+    lastError: pointerStateError,
+  };
+}
+
+function publishDesktopPerceptionStatus() {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send('desktop-perception:changed', desktopPerceptionStatus());
+  }
+}
+
+async function activateDesktopPerception() {
+  if (onboardingRequired || inputPaused || isQuitting) {
+    return {ok: false, error: onboardingRequired ? 'Complete setup before pointing.' : 'Desktop pointing is paused.'};
+  }
+  if (desktopPerceptionActivating) {
+    return {ok: false, error: 'Desktop pointing is already starting.'};
+  }
+  desktopPerceptionActivating = true;
+  const window = dashboardWindow;
+  try {
+    startPointerInputStateStream();
+    const beforeHideSequence = pointerStateSequence;
+    window?.hide();
+    // Let the native foreground sample move off Studio before arming capture.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      if (inputPaused || isQuitting || onboardingRequired) {
+        break;
+      }
+      if (pointerStateReceived && pointerStateSequence > beforeHideSequence && pointerInputState.foregroundHwnd &&
+        pointerInputState.foregroundProcessId && pointerInputState.foregroundProcessId !== process.pid) {
+        const state = requestActivation('studio-perception');
+        if (['activate', 'continue', 'renderer_warming'].includes(state)) {
+          return {ok: true, state};
+        }
+        break;
+      }
+    }
+    if (window && !window.isDestroyed() && !isQuitting) {
+      window.show();
+      window.focus();
+    }
+    return {ok: false, error: 'No target window is ready. Open the target app, then use the wake shortcut.'};
+  } catch (error) {
+    if (window && !window.isDestroyed() && !isQuitting) {
+      window.show();
+      window.focus();
+    }
+    return {ok: false, error: error instanceof Error ? error.message : String(error)};
+  } finally {
+    desktopPerceptionActivating = false;
+  }
 }
 
 function inputModeForReason(_reason: string) {
@@ -7864,6 +7950,7 @@ function registerConfigurableHotkeys() {
     applyConfiguredWakeState();
     refreshTrayMenu();
   });
+  publishDesktopPerceptionStatus();
   return results;
 }
 
@@ -10450,6 +10537,33 @@ ipcMain.handle(
     return runtimeSnapshot.get({force: options?.force === true});
   },
 );
+ipcMain.handle('desktop-perception:status', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    throw new Error('unauthorized_desktop_perception_reader');
+  }
+  return desktopPerceptionStatus();
+});
+ipcMain.handle('desktop-perception:activate', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_desktop_perception_sender'};
+  }
+  return activateDesktopPerception();
+});
+ipcMain.handle('desktop-perception:set-paused', async (event: Electron.IpcMainInvokeEvent, payload: {paused?: unknown} = {}) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_desktop_perception_sender'};
+  }
+  if (typeof payload.paused !== 'boolean') {
+    return {ok: false, error: 'invalid_pause_state'};
+  }
+  inputPaused = payload.paused;
+  if (inputPaused) {
+    dismissTemporarySurfaces({invalidateSession: true, hideObserver: true});
+  }
+  applyConfiguredWakeState();
+  refreshTrayMenu();
+  return {ok: true};
+});
 ipcMain.handle(
   'extensions:inventory',
   async (event: Electron.IpcMainInvokeEvent) => {
@@ -10463,6 +10577,18 @@ ipcMain.handle(
     );
   },
 );
+ipcMain.handle('extensions:set-enabled', async (event: Electron.IpcMainInvokeEvent, payload: {id?: unknown; enabled?: unknown} = {}) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_extensions_writer'};
+  }
+  if (typeof payload.id !== 'string' || !payload.id || typeof payload.enabled !== 'boolean') {
+    return {ok: false, error: 'invalid_extension_selection'};
+  }
+  return runRuntimeBridgePromise(
+    {operation: 'extensions.set-enabled', id: payload.id, enabled: payload.enabled},
+    'fabric', {target: null, timeoutMs: 10_000},
+  );
+});
 ipcMain.handle(
   'dashboard:settings:get',
   async (event: Electron.IpcMainInvokeEvent) => {

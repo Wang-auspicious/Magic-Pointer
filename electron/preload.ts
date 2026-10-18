@@ -229,6 +229,16 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
 });
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
+  desktopPerception: {
+    status: () => ipcRenderer.invoke('desktop-perception:status'),
+    activate: () => ipcRenderer.invoke('desktop-perception:activate'),
+    setPaused: (paused: boolean) => ipcRenderer.invoke('desktop-perception:set-paused', {paused}),
+    onChanged: (callback: PayloadCallback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
+      ipcRenderer.on('desktop-perception:changed', listener);
+      return () => ipcRenderer.removeListener('desktop-perception:changed', listener);
+    },
+  },
   hide: () => ipcRenderer.send('dashboard:hide'),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', {theme}),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) =>
@@ -705,6 +715,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   extensions: {
     inventory: () => ipcRenderer.invoke('extensions:inventory'),
+    setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('extensions:set-enabled', {id, enabled}),
   },
   artifacts: {
     undo: (payload: {

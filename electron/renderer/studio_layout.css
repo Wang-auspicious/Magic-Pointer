@@ -3231,7 +3231,8 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   justify-content: space-between;
 }
 .mp-settings-plugin-filters > div { display: flex; gap: 8px; }
-.mp-settings-plugin-filters button {
+.mp-settings-plugin-filters button,
+.mp-settings-plugin-filters select {
   display: inline-flex;
   height: 32px;
   align-items: center;
@@ -3240,6 +3241,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   border: 1px solid var(--mp-rule);
   border-radius: 8px;
   color: var(--mp-text-secondary);
+  background: var(--mp-panel);
   font-size: 14px;
 }
 .mp-settings-plugin-filters button svg { width: 14px; height: 14px; }
