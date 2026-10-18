@@ -7,7 +7,8 @@ import {
   access,
 } from 'node:fs/promises';
 import path from 'node:path';
-import {extensionPaths} from './agent_plugins';
+import {extensionPaths, loadHarnessConfiguration} from './agent_plugins';
+import {writeAtomic} from './learning';
 import os from 'node:os';
 import {setTimeout as delay} from 'node:timers/promises';
 import {ActionFailure, ToolRegistry} from './tools';
@@ -27,7 +28,7 @@ import {
   suggestionGate,
   type SuggestionGateState,
 } from './prompt_suggestion';
-import {EventSession, exactApprovedToolCall} from './session';
+import {EventSession, exactApprovedToolCall, withFileLock} from './session';
 import {searchExa} from './exa_search';
 
 const str = (value: unknown) => String(value ?? '');
@@ -434,32 +435,106 @@ export async function directoryPayload(
   };
 }
 
-export async function extensionsInventory(userDataDir: string): Promise<Data> {
+export interface PluginInventoryItem extends Data {
+  id: string;
+  name: string;
+  pluginName: string;
+  description: string;
+  version: string;
+  path: string;
+  status: 'configured' | 'disabled' | 'invalid';
+  enabled: boolean;
+  canToggle: boolean;
+  disabledBy: Array<'directory' | 'row'>;
+  toggleReason?: string;
+  error?: string;
+}
+export interface ExtensionInventory extends Data {
+  ok: true;
+  plugins: {
+    directory: string;
+    configPath: string;
+    exists: boolean;
+    items: PluginInventoryItem[];
+    error?: string;
+  };
+  mcp: Data;
+}
+export async function extensionsInventory(
+  userDataDir: string,
+): Promise<ExtensionInventory> {
   const paths = extensionPaths(userDataDir);
   const directory = paths.plugins;
-  const items: Data[] = [];
+  const items: PluginInventoryItem[] = [];
+  let configuration;
+  let configError = '';
+  try {
+    configuration = await loadHarnessConfiguration(paths.patch);
+  } catch (error) {
+    configError = (error as Error).message;
+  }
   for (const entry of await list(directory)) {
     if (!entry.isDirectory()) {
       continue;
     }
     const folder = path.join(directory, entry.name);
     const manifest = path.join(folder, 'plugin.json');
-    const row: Data = {
+    const row: PluginInventoryItem = {
       id: entry.name,
       name: entry.name,
+      pluginName: '',
       description: '',
+      version: '',
       path: folder,
       status: 'configured',
+      enabled: true,
+      canToggle: true,
+      disabledBy: [],
     };
     try {
       const metadata = asObject(JSON.parse(await readFile(manifest, 'utf8')));
+      row.name = str(metadata.name || entry.name);
+      row.pluginName = str(metadata.name);
       row.description = str(metadata.description);
+      row.version = str(metadata.version);
       const main = str(metadata.main || 'plugin.js');
       if (!(await exists(path.resolve(folder, main)))) {
         throw new Error(`Plugin code is missing: ${main}`);
       }
+      if (configError) {
+        throw new Error(configError);
+      }
+      if (configuration?.disabledPluginDirectories.includes(entry.name)) {
+        row.disabledBy.push('directory');
+      }
+      const pluginRow = row.pluginName
+        ? configuration?.patch[`user:${row.pluginName}`]
+        : undefined;
+      if (pluginRow?.disabled === true) {
+        row.disabledBy.push('row');
+      }
+      if (row.disabledBy.length) {
+        row.enabled = false;
+        row.status = 'disabled';
+      }
+      if (
+        !row.pluginName &&
+        Object.entries(configuration?.patch ?? {}).some(
+          ([id, patch]) => id.startsWith('user:') && patch.disabled === true,
+        )
+      ) {
+        row.canToggle = false;
+        row.toggleReason =
+          'Add the exported plugin name to plugin.json to resolve row-level enablement.';
+      }
+      if (pluginRow?.plugin && pluginRow.plugin !== row.pluginName) {
+        row.canToggle = false;
+        row.toggleReason =
+          'This plugin row is replaced in the Harness configuration.';
+      }
     } catch (error) {
       row.status = 'invalid';
+      row.canToggle = false;
       row.error = (error as Error).message;
     }
     items.push(row);
@@ -496,9 +571,55 @@ export async function extensionsInventory(userDataDir: string): Promise<Data> {
   }
   return {
     ok: true,
-    plugins: {directory, exists: await exists(directory), items},
+    plugins: {
+      directory,
+      configPath: paths.patch,
+      exists: await exists(directory),
+      items,
+      ...(configError ? {error: configError} : {}),
+    },
     mcp,
   };
+}
+
+export async function setPluginEnabled(
+  userDataDir: string,
+  id: string,
+  enabled: boolean,
+): Promise<ExtensionInventory & {appliesTo: 'next_task'}> {
+  if (typeof id !== 'string' || typeof enabled !== 'boolean') {
+    throw new Error('Plugin id and boolean enabled are required');
+  }
+  const file = extensionPaths(userDataDir).patch;
+  await withFileLock(`${file}.lock`, async () => {
+    const inventory = await extensionsInventory(userDataDir);
+    const item = inventory.plugins.items.find(row => row.id === id);
+    if (!item) {
+      throw new Error(`Unknown plugin: ${id}`);
+    }
+    if (!item.canToggle) {
+      throw new Error(
+        item.error || item.toggleReason || 'Plugin cannot be configured',
+      );
+    }
+    const configuration = await loadHarnessConfiguration(file);
+    const disabled = new Set(configuration.disabledPluginDirectories);
+    if (enabled) {
+      disabled.delete(id);
+      const rowId = `user:${item.pluginName}`;
+      if (item.pluginName && configuration.patch[rowId]?.disabled === true) {
+        configuration.patch[rowId] = {
+          ...configuration.patch[rowId],
+          disabled: false,
+        };
+      }
+    } else {
+      disabled.add(id);
+    }
+    configuration.disabledPluginDirectories = [...disabled];
+    writeAtomic(file, configuration);
+  });
+  return {...(await extensionsInventory(userDataDir)), appliesTo: 'next_task'};
 }
 
 export function registerWaitTool(

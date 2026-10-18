@@ -37,7 +37,7 @@ import {
 import {
   bootPlugins,
   extensionPaths,
-  loadHarnessPatch,
+  loadHarnessConfiguration,
   PromptSections,
   modelPlugins,
   type RuntimePlugin,
@@ -492,7 +492,7 @@ export async function runRuntime(
   ];
   const plugins = await bootPlugins({
     directory: extensions.plugins,
-    patch: await loadHarnessPatch(extensions.patch),
+    ...(await loadHarnessConfiguration(extensions.patch)),
     scope: 'agent',
     builtins,
     rows: builtins.map(plugin => ({id: plugin.name, plugin: plugin.name})),

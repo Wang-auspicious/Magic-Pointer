@@ -23,6 +23,7 @@ import {
   directoryPayload,
   listSkills,
   extensionsInventory,
+  setPluginEnabled,
 } from './agent_services';
 import {readJson} from './learning';
 import {handleSkillCandidates} from './context_skill_candidates';
@@ -219,6 +220,13 @@ export async function handleFabric(
       skills: skills.skills,
       warnings: skills.errors,
     };
+  }
+  if (operation === 'extensions.set-enabled') {
+    try {
+      return await setPluginEnabled(userDataDir, payload.id, payload.enabled);
+    } catch (error) {
+      return {ok: false, error: (error as Error).message};
+    }
   }
   if (operation === 'capabilities.search') {
     return {

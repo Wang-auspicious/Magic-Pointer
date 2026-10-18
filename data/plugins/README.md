@@ -5,10 +5,10 @@
 每个插件一个子目录，包含 `plugin.json` 和代码文件。`plugin.json` 示例：
 
 ```json
-{"description":"示例工具", "main":"plugin.cjs"}
+{"name":"example", "description":"示例工具", "main":"plugin.cjs"}
 ```
 
-`main` 缺省为 `plugin.js`，也支持 `.mjs`。CommonJS 导出对象或 ESM 默认导出对象：
+`main` 缺省为 `plugin.js`，也支持 `.mjs`。可选 `name` 与代码导出的名称一致，供界面在不执行代码时识别行级配置；不填写仍可加载。CommonJS 导出对象或 ESM 默认导出对象：
 
 ```javascript
 module.exports = {
@@ -35,7 +35,7 @@ module.exports = {
 
 `inject` 中的服务都存在后才调用 `apply`。常用服务为 `tools`、`hooks`、`prompt`、`session`、`runtime`、`llm`、`model_client`、`perception`、`vision`；感知域提供 `surface_adapters`。`perception` 是主任务的感知后端，提供 `read_around(anchor, radius, signal)`、`dump_subtree(anchor, depth, signal)`、`find_in_window(pattern, signal)`、`list_windows(signal)`、`get_focused(signal)`，返回感知证据。`vision(images, prompt, signal)` 使用当前所选模型分析图像，`images` 中可带 `dataUrl` 或 `path`。默认运行域为 `agent`，依赖 `surface_adapters` 时默认推断为 `surface`。需要两个域时显式声明 `scopes: ['agent', 'surface']`，依赖应符合各域实际提供的服务。
 
-通过 `tools.register`、`hooks.add`、`prompt.add`、`surface_adapters.register` 注册的内容随插件卸载撤回。其他资源用 `ctx.effect(() => close())` 清理。卸载会等待已进入的工具调用。依赖缺失为 `waiting`；撤销依赖会卸载消费者，重新提供后再激活。配置或执行失败记录在该行。
+通过 `tools.register`、`hooks.add`、`prompt.add`、`surface_adapters.register` 注册的内容随插件卸载撤回。其他资源用 `ctx.effect(() => close())` 清理。卸载会等待已进入的工具、hook、提示词渲染、感知解析、事件监听及会话结束回调，之后才释放资源；回调不能卸载自身所在的 scope。依赖缺失为 `waiting`；撤销依赖会卸载消费者，重新提供后再激活。配置或执行失败记录在该行。
 
 提示词扩展通过 `ctx.get('prompt').add({ id: 'guidance', order: 100, render: options => '项目提示词' })` 注册。提示词按会话冻结，插件修改在新会话生效。
 
@@ -54,6 +54,8 @@ module.exports = {
 ```
 
 支持 `disabled`、`plugin`、`config`；有 `plugin` 的新 id 会插入新行。`config` 替换该行配置，再与插件 `defaults` 合并，并按可选 `config_schema` 校验。
+
+界面启停使用同一配置文件中的 `disabledPluginDirectories` 数组，值为插件子目录名。禁用目录在导入代码前跳过，下一次主任务、子任务或感知任务启动时生效，进行中的任务保持原模块实例。启用具备 `name` 元数据的插件会同时解除对应 `user:<name>` 行的禁用，保留其他配置。缺少名称且存在无法对应的用户行禁用时，界面要求先补全名称，不虚报启用成功。
 
 主任务内置行：`harness-tools`、`coding-tools`、`memory-tools`、`context-tools`、`skill-writer`、`web-tools`、`desktop-action-tools`、`local-action-tools`、`perception-provider`、`vision-provider`、`perception-tools`、`look-tool`、`mcp-provider`、`system-prompt`、`delegate-tool`、`llm-provider`、`model-client`。`perception-tools` 消费 `perception` 服务，`look-tool` 消费 `vision` 服务；可以单独禁用 `look-tool`，保留其余感知工具。编码、技能写入和子任务需要绑定工作区。`mcp-provider.config.config_path` 可覆盖 MCP 文件，默认使用 `MAGIC_POINTER_MCP_CONFIG` 或用户数据目录的 `data/mcp.json`。
 
@@ -77,6 +79,6 @@ module.exports = {
 
 ## 检视
 
-主任务 `/help` 返回实际插件行、状态、配置、依赖和加载警告。普通任务结果的 `pluginReport` 同样携带诊断信息。应用插件页通过 `extensions.inventory` 检查入口文件和 MCP 配置。
+主任务 `/help` 返回实际插件行、状态、配置、依赖和加载警告。普通任务结果的 `pluginReport` 同样携带诊断信息。应用插件页通过 `extensions.inventory` 只读检查入口文件、配置禁用项和 MCP 配置；`configured` 仅表示已配置，不代表运行时已激活。`extensions.set-enabled` 接收目录 `id` 与布尔 `enabled`，保存成功返回 `appliesTo: next_task`；配置损坏或保存失败不会返回成功。
 
 插件与本机用户同权限，请只安装可信代码。旧 Python `plugin.py` 需要改写为上述 JS/TS 插件；运行时不再启动 Python。

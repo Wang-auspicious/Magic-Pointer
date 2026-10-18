@@ -15,7 +15,7 @@ import {
 import {
   bootPlugins,
   extensionPaths,
-  loadHarnessPatch,
+  loadHarnessConfiguration,
   PromptSections,
   modelPlugins,
 } from './agent_plugins';
@@ -827,7 +827,7 @@ export async function runBackgroundAgent(
         ];
         const plugins = await bootPlugins({
           directory: paths.plugins,
-          patch: await loadHarnessPatch(paths.patch),
+          ...(await loadHarnessConfiguration(paths.patch)),
           builtins,
           rows: builtins.map(plugin => ({
             id: plugin.name,
