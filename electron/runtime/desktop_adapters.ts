@@ -78,9 +78,19 @@ export class SurfaceAdapterRegistry {
     signal?: AbortSignal,
   ): Promise<DesktopRecord[]> {
     return Promise.all(
-      this.matching(window).map(adapter =>
-        adapter.resolve(window, request, signal),
-      ),
+      this.matching(window).map(async adapter => {
+        try {
+          return await adapter.resolve(window, request, signal);
+        } catch (error) {
+          signal?.throwIfAborted();
+          return {
+            adapter: adapter.id,
+            objects: [],
+            complete: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }),
     );
   }
 }

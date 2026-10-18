@@ -5,7 +5,7 @@ const { join } = require('node:path');
 const sharp = require('sharp');
 const { perceiveFrozenFrame, closeOcr } = require('../electron/runtime/desktop_perception');
 const { closeDesktop } = require('../electron/runtime/desktop');
-const { officeSelectionError, uiaContextFromProbe } = require('../electron/runtime/desktop_adapters');
+const { officeSelectionError, uiaContextFromProbe, SurfaceAdapterRegistry } = require('../electron/runtime/desktop_adapters');
 const { EventSession } = require('../electron/runtime/session');
 const { ToolRegistry } = require('../electron/runtime/tools');
 const { prepareTaskContext } = require('../electron/runtime/context_prepare');
@@ -31,6 +31,35 @@ async function main() {
     assert.equal(result.content, 'Selected text');
     assert.equal(result.context.adapter, 'office');
     assert.equal(ocrCancelled, true);
+    const degradedFirst = await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
+      ...providers,
+      selection: async () => [
+        { adapter: 'office', app: 'demo.exe', window, content: 'Selected text', method: 'office:com', artifacts: {}, error: 'partial_com_read' },
+        { adapter: 'uia', app: 'demo.exe', window, content: 'Selected text', method: 'uia:selection', artifacts: {} },
+      ],
+      ocr: async () => ({ blocks: [] }),
+    });
+    assert.equal(degradedFirst.context.adapter, 'uia', 'a clean matching read must outrank a partial Office read');
+    assert.equal(degradedFirst.status, 'ok');
+    assert.equal(degradedFirst.perception_trace.attempts.find((attempt: { adapter: string }) => attempt.adapter === 'office').status, 'degraded');
+    const isolated = new SurfaceAdapterRegistry();
+    isolated.register({ id: 'broken-plugin', matches: () => true, resolve: async () => { throw new Error('plugin_read_failed'); } });
+    isolated.register({ id: 'healthy-plugin', matches: () => true, resolve: async () => ({ adapter: 'healthy-plugin', objects: [{ id: 'selected-file' }], complete: true, usedBackend: 'fixture.surface' }) });
+    const isolatedResult = await perceiveFrozenFrame(frame, {}, abort.signal, isolated, {
+      ...providers, ocr: async () => ({ blocks: [] }),
+    });
+    assert.deepEqual(isolatedResult.surface_objects, [{ id: 'selected-file' }], 'one failing surface plugin must not erase another plugin object');
+    const failedAdapter = isolatedResult.perception_trace.attempts.find((attempt: { adapter: string }) => attempt.adapter === 'broken-plugin');
+    assert.equal(failedAdapter?.status, 'error');
+    assert.match(failedAdapter.reason, /plugin_read_failed/);
+    const cancelledRegistry = new SurfaceAdapterRegistry();
+    const cancelled = new AbortController();
+    cancelledRegistry.register({ id: 'cancelled-plugin', matches: () => true, resolve: async () => {
+      cancelled.abort(new Error('user_cancelled'));
+      throw new Error('provider_aborted');
+    } });
+    await assert.rejects(cancelledRegistry.resolve(window, {}, cancelled.signal), /user_cancelled/,
+      'isolating provider errors must not convert user cancellation into a successful observation');
     const fallback = await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
       ...providers,
       selection: async () => [],

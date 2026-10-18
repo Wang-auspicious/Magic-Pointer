@@ -941,7 +941,11 @@ export async function perceiveFrozenFrame(
   }));
   const best = observations
     .filter(item => item.covers && item.context.content)
-    .sort((a, b) => a.priority - b.priority)[0];
+    .sort(
+      (a, b) =>
+        Number(a.status !== 'ok') - Number(b.status !== 'ok') ||
+        a.priority - b.priority,
+    )[0];
   const comparable = observations.filter(
     item => item.covers && item.context.content && item.status !== 'error',
   );
@@ -1158,6 +1162,16 @@ export async function perceiveFrozenFrame(
           status: item.status,
           reason: item.reason,
           coversMark: item.covers,
+        })),
+        ...surfaces.map(surface => ({
+          adapter: surface.adapter,
+          status: surface.error
+            ? 'error'
+            : surface.complete === false
+              ? 'degraded'
+              : 'ok',
+          reason: surface.error || surface.limitations?.join('; ') || '',
+          usedBackend: surface.usedBackend,
         })),
         {
           adapter: 'pixel-ocr',
