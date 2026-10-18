@@ -54,6 +54,7 @@ const context = vm.createContext({
   onboardingRequired: false,
   isQuitting: false,
   desktopPerceptionActivating: false,
+  desktopPerceptionActivity: undefined,
   pointerStateReceived: true,
   pointerStateSequence: 1,
   pointerStateError: '',

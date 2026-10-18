@@ -92,6 +92,10 @@ app.whenReady().then(async () => {
         detail.open = true;
         await new Promise(resolve => setTimeout(resolve, 50));
         check(document.querySelector('.mp-perception-state').textContent === 'Ready to point', 'actual listener and registered shortcut appear');
+        controller.updateStatus({...status,activity:{token:'gesture',state:'reading',providers:[{provider:'uia',state:'fulfilled',latencyMs:125},{provider:'office',state:'slow',latencyMs:301}]}});
+        check(document.querySelector('[data-perception-live]')?.textContent.includes('125 ms') && document.querySelector('[data-perception-live]').textContent.includes('Still reading'), 'live provider progress distinguishes completed and slow concurrent reads');
+        controller.updateStatus({...status,activity:{token:'gesture',state:'ready',providers:[{provider:'office',state:'timeout',latencyMs:8000,error:'com_timeout'}]}});
+        check(document.querySelector('[data-perception-live]').textContent.includes('com_timeout') && document.querySelector('[data-perception-live]').textContent.includes('Timed out'), 'completed capture preserves actual reader timeout');
         await document.querySelector('.mp-perception-action').click();
         await Promise.resolve();
         check(activations === 1 && document.querySelector('.mp-perception-notice').textContent === 'target unavailable', 'failed activation displays actual error and permits retry');

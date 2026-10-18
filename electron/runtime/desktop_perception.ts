@@ -3,6 +3,7 @@ import {join, resolve} from 'node:path';
 import {randomUUID, createHash} from 'node:crypto';
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import sharp from 'sharp';
+import {runPerceptionProviders, type PerceptionProgress} from './perception_broker';
 import {
   desktopRuntimeRoot,
   desktopDataRoot,
@@ -74,6 +75,7 @@ export interface PerceptionProviders {
     window: DesktopWindow,
     request: DesktopRecord,
     signal?: AbortSignal,
+    options?: {onProgress?: (event: PerceptionProgress) => void},
   ) => Promise<AdapterContext[]>;
   ocr?: typeof recognizeText;
 }
@@ -728,6 +730,7 @@ export async function perceiveFrozenFrame(
   signal?: AbortSignal,
   adapters = surfaceAdapters,
   providers: PerceptionProviders = {},
+  onProgress?: (event: PerceptionProgress) => void,
 ): Promise<DesktopRecord> {
   const started = performance.now();
   const bytes = await readFile(frame.localArtifact.path);
@@ -814,19 +817,12 @@ export async function perceiveFrozenFrame(
         ),
       ]
     : undefined;
-  let sameWindow = false;
-  try {
-    const live = await (providers.nativeWindow
+  const identityPromise = runPerceptionProviders<DesktopWindow>([{
+    id: 'window-identity', softDeadlineMs: 300, hardDeadlineMs: 4000,
+    read: signal => providers.nativeWindow
       ? providers.nativeWindow(window.hwnd, signal)
-      : nativeRequest<DesktopWindow>('window', {hwnd: window.hwnd}, signal));
-    sameWindow =
-      live.pid === window.pid &&
-      (!window.processStartTime ||
-        live.processStartTime === window.processStartTime) &&
-      JSON.stringify(live.bbox) === JSON.stringify(window.bbox);
-  } catch {
-    signal?.throwIfAborted();
-  }
+      : nativeRequest<DesktopWindow>('window', {hwnd: window.hwnd}, signal),
+  }], {signal, onProgress});
   const region = mark
     ? {x: mark[0], y: mark[1], width: mark[2], height: mark[3]}
     : undefined;
@@ -838,23 +834,37 @@ export async function perceiveFrozenFrame(
     signal?.addEventListener('abort', abortOcr, {once: true});
   }
   let completedOcr: PromiseSettledResult<DesktopRecord> | undefined;
-  const ocrPromise = (providers.ocr || recognizeText)(
-    frame.localArtifact.path,
-    {bounds: frame.surfaceBoundsPx, signal: ocrController.signal},
-  ).then(
+  let ocrLatencyMs: number | undefined;
+  const ocrPromise: Promise<PromiseSettledResult<DesktopRecord>> = runPerceptionProviders<DesktopRecord>([{
+    id: 'pixel-ocr', softDeadlineMs: 300, hardDeadlineMs: 8000,
+    read: signal => (providers.ocr || recognizeText)(frame.localArtifact.path, {bounds: frame.surfaceBoundsPx, signal}),
+  }], {signal: ocrController.signal, onProgress}).then(results => {
+    const result = results[0];
+    ocrLatencyMs = result.latencyMs;
+    if (result.status !== 'fulfilled') {
+      throw new Error(result.error);
+    }
+    return {...result.value!, latencyMs: result.latencyMs};
+  }).then(
     value => (completedOcr = {status: 'fulfilled', value}),
     reason => (completedOcr = {status: 'rejected', reason}),
   );
+  const [identity] = await identityPromise;
+  const live = identity.value;
+  const sameWindow = !!live && live.pid === window.pid &&
+    (!window.processStartTime || live.processStartTime === window.processStartTime) &&
+    JSON.stringify(live.bbox) === JSON.stringify(window.bbox);
   const results = await Promise.allSettled([
     sameWindow
       ? (providers.selection || resolveSelection)(
           window,
           {...request, gesture, point, region},
           signal,
+          {onProgress},
         )
       : Promise.resolve([]),
     sameWindow
-      ? adapters.resolve(window, {...request, gesture, point, region}, signal)
+      ? adapters.resolve(window, {...request, gesture, point, region}, signal, onProgress)
       : Promise.resolve([]),
   ]);
   signal?.throwIfAborted();
@@ -928,7 +938,7 @@ export async function perceiveFrozenFrame(
     status: context.error
       ? context.content
         ? 'degraded'
-        : 'error'
+        : context.evidenceStatus || 'error'
       : context.content
         ? 'ok'
         : 'empty_confirmed',
@@ -994,7 +1004,7 @@ export async function perceiveFrozenFrame(
     : await ocrPromise;
   signal?.removeEventListener('abort', abortOcr);
   signal?.throwIfAborted();
-  const ocr =
+  const ocr: DesktopRecord =
     ocrResult.status === 'fulfilled'
       ? {
           ...ocrResult.value,
@@ -1007,6 +1017,7 @@ export async function perceiveFrozenFrame(
       : {
           blocks: [],
           error: String(ocrResult.reason),
+          latencyMs: ocrLatencyMs,
           usedBackend: 'windows-ocr',
           status: ocrFailureStatus(String(ocrResult.reason)),
         };
@@ -1157,26 +1168,32 @@ export async function perceiveFrozenFrame(
       selectedMethod: context.method,
       pixelFallbackUsed: context.adapter === 'pixel-ocr',
       attempts: [
+        {adapter: 'window-identity', status: sameWindow ? 'ok' : identity.status === 'timeout' ? 'timeout' : 'error',
+          reason: identity.error || (sameWindow ? 'identity_matched' : 'live_window_changed'), latencyMs: identity.latencyMs},
         ...observations.map(item => ({
           adapter: item.context.adapter,
           status: item.status,
-          reason: item.reason,
+          reason: item.context.error || item.reason,
+          latencyMs: item.context.latencyMs,
+          usedBackend: item.context.method,
           coversMark: item.covers,
         })),
         ...surfaces.map(surface => ({
           adapter: surface.adapter,
           status: surface.error
-            ? 'error'
+            ? surface.evidenceStatus || 'error'
             : surface.complete === false
               ? 'degraded'
               : 'ok',
           reason: surface.error || surface.limitations?.join('; ') || '',
           usedBackend: surface.usedBackend,
+          latencyMs: surface.latencyMs,
         })),
         {
           adapter: 'pixel-ocr',
           status: ocr.status,
           reason: ocr.error || ocr.status,
+          latencyMs: ocr.latencyMs,
         },
       ],
       observations: publishedObservations.map(item => ({
@@ -1744,7 +1761,10 @@ export function measureLengthTarget(
 export async function captureSnapshot(
   payload: DesktopRecord,
   signal?: AbortSignal,
+  onProgress?: (event: PerceptionProgress) => void,
+  deferCleanup?: (cleanup: () => Promise<void>) => void,
 ): Promise<DesktopRecord> {
+  signal?.throwIfAborted();
   const frame = payload.frameLease || payload.frame_lease;
   if (!frame) {
     return {
@@ -1786,6 +1806,8 @@ export async function captureSnapshot(
       },
       signal,
       adapters,
+      {},
+      onProgress,
     );
     const snapshot = {
       ...result,
@@ -1844,7 +1866,11 @@ export async function captureSnapshot(
       },
     };
   } finally {
-    await plugins.close();
+    if (deferCleanup) {
+      deferCleanup(() => plugins.close());
+    } else {
+      await plugins.close();
+    }
   }
 }
 

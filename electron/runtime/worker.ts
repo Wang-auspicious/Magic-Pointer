@@ -24,10 +24,14 @@ import {
 } from './external';
 import {handleReview, isReviewCommand} from './review';
 
+interface RuntimeDispatchOptions extends RuntimeOptions {
+  deferSnapshotCleanup?: (cleanup: () => Promise<void>) => void;
+}
+
 export async function dispatchRuntime(
   kind: string,
   payload: Data,
-  options: RuntimeOptions,
+  options: RuntimeDispatchOptions,
 ): Promise<Data> {
   configureDesktop(options.root);
   if (kind === 'conversation') {
@@ -65,7 +69,15 @@ export async function dispatchRuntime(
     );
   }
   if (kind === 'selection_snapshot') {
-    return captureSnapshot(payload, options.signal);
+    return captureSnapshot(
+      payload,
+      options.signal,
+      progress =>
+        options.onProgress?.('perception_provider', {
+          b64: Buffer.from(JSON.stringify(progress)).toString('base64'),
+        }),
+      options.deferSnapshotCleanup,
+    );
   }
   if (kind === 'element_probe') {
     return probeElement(payload, options.signal);
@@ -170,6 +182,43 @@ export async function dispatchRuntime(
   throw new Error(`Unknown runtime request: ${kind}`);
 }
 
+async function flushResult(result: Data): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(JSON.stringify(result) + '\n', error => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+async function finishSnapshotCleanup(
+  cleanups: Array<() => Promise<void>>,
+): Promise<{state: 'completed' | 'timeout' | 'error'; error?: string}> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.allSettled(
+        cleanups.map(cleanup => Promise.resolve().then(cleanup)),
+      ).then(results => {
+        const failed = results.find(result => result.status === 'rejected');
+        return failed?.status === 'rejected'
+          ? {state: 'error' as const, error: String(failed.reason)}
+          : {state: 'completed' as const};
+      }),
+      new Promise<{state: 'timeout'}>(resolve => {
+        timer = setTimeout(() => resolve({state: 'timeout'}), 500);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   // Before the first request, because undici picks its dispatcher lazily and
   // cannot be corrected afterwards. Every model call this process makes runs
@@ -205,33 +254,53 @@ async function main(): Promise<void> {
   };
   const heartbeat = setInterval(() => onProgress('runtime_alive'), 10000);
   heartbeat.unref();
+  const kind = process.argv[2] || 'electron';
+  const snapshotCleanups: Array<() => Promise<void>> = [];
   try {
     onProgress('runtime_ready');
-    const result = await dispatchRuntime(
-      process.argv[2] || 'electron',
-      payload,
-      {root, userDataDir, signal: controller.signal, onProgress},
-    );
+    const result = await dispatchRuntime(kind, payload, {
+      root,
+      userDataDir,
+      signal: controller.signal,
+      onProgress,
+      ...(kind === 'selection_snapshot'
+        ? {
+            deferSnapshotCleanup: (cleanup: () => Promise<void>) => {
+              snapshotCleanups.push(cleanup);
+            },
+          }
+        : {}),
+    });
     onProgress('total');
-    process.stdout.write(JSON.stringify(result) + '\n');
+    await flushResult(result);
   } finally {
     clearInterval(heartbeat);
+    if (kind === 'selection_snapshot') {
+      onProgress(
+        'snapshot_cleanup',
+        await finishSnapshotCleanup(snapshotCleanups),
+      );
+    }
     closeOcr();
     closeDesktop();
+  }
+  if (kind === 'selection_snapshot') {
+    process.exit(0);
   }
 }
 
 if (require.main === module) {
-  main().catch(error => {
+  main().catch(async error => {
     closeOcr();
     closeDesktop();
-    process.stdout.write(
-      JSON.stringify({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        usedBackend: 'typescript_runtime',
-      }) + '\n',
-    );
+    await flushResult({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      usedBackend: 'typescript_runtime',
+    });
+    if (process.argv[2] === 'selection_snapshot') {
+      process.exit(1);
+    }
     process.exitCode = 1;
   });
 }

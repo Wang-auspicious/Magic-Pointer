@@ -9,6 +9,7 @@ declare global {
     pointerStateFresh?: boolean;
     hotkeys: Array<{name: string; accelerator: string; registered: boolean}>;
     lastError?: string;
+    activity?: import('../perception_activity').PerceptionActivity;
   }
 
   interface DesktopPerceptionController {
@@ -157,7 +158,10 @@ interface DesktopPerceptionSummary {
     notice.setAttribute('role', 'status');
     const materials = node('section', 'mp-perception-materials');
     const evidenceHost = node('section', 'mp-perception-evidence');
-    body.append(intro, channels, actions, notice, evidenceHost, materials);
+    const liveHost = node('section', 'mp-perception-live');
+    liveHost.dataset.perceptionLive = '';
+    liveHost.setAttribute('aria-live', 'polite');
+    body.append(intro, channels, actions, notice, liveHost, evidenceHost, materials);
     root.append(summary, body);
     host.replaceChildren(root);
 
@@ -260,6 +264,7 @@ interface DesktopPerceptionSummary {
         );
         const note = [
           typeof attempt.usedBackend === 'string' ? attempt.usedBackend : '',
+          typeof attempt.latencyMs === 'number' ? `${Math.round(attempt.latencyMs)} ms` : '',
           attempt.coversMark === false
             ? text('Does not cover selection', '未覆盖指向区域')
             : '',
@@ -275,6 +280,35 @@ interface DesktopPerceptionSummary {
         list.append(node('dt', '', provider), detail);
       }
       evidenceHost.append(list);
+    }
+
+    function renderLive(): void {
+      const activity = status?.activity;
+      liveHost.hidden = !activity;
+      liveHost.replaceChildren();
+      if (!activity) {
+        return;
+      }
+      liveHost.append(node('h3', '', activity.state === 'reading'
+        ? text('Reading frozen screen', '正在读取已冻结画面')
+        : activity.state === 'ready' ? text('Last capture', '最近一次捕获') : text('Capture failed', '捕获失败')));
+      const labels: Record<string, string> = {
+        reading: text('Reading', '正在读取'), slow: text('Still reading', '仍在读取'),
+        fulfilled: text('Completed', '已完成'), rejected: text('Failed', '失败'),
+        timeout: text('Timed out', '超时'), cancelled: text('Cancelled', '已取消'),
+      };
+      const list = node('dl', 'mp-perception-providers');
+      for (const provider of activity.providers) {
+        const detail = node('dd', '', `${labels[provider.state] || provider.state} · ${Math.round(provider.latencyMs)} ms`);
+        if (provider.error) {
+          detail.append(node('small', '', provider.error));
+        }
+        list.append(node('dt', '', provider.provider), detail);
+      }
+      liveHost.append(list);
+      if (activity.error) {
+        liveHost.append(node('p', 'mp-perception-notice is-error', activity.error));
+      }
     }
 
     function renderMaterials(): void {
@@ -464,6 +498,7 @@ interface DesktopPerceptionSummary {
       notice.classList.toggle('is-error', Boolean(error || status?.lastError));
       renderMaterials();
       renderEvidence();
+      renderLive();
     }
 
     async function read(): Promise<void> {

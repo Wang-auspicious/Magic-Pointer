@@ -24,6 +24,19 @@ async function main() {
     ocr: (_path: string, options: { signal: AbortSignal }) => new Promise((_accept, reject) => options.signal.addEventListener('abort', () => { ocrCancelled = true; reject(new Error('cancelled')); }, { once: true })),
   };
   try {
+    let pixelsStarted = false;
+    const progress: Array<{provider: string; state: string}> = [];
+    await perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, {
+      ...providers,
+      nativeWindow: async () => {
+        await new Promise(resolve => setTimeout(resolve, 15));
+        assert.equal(pixelsStarted, true, 'historical OCR must start while live window identity is being checked');
+        return window;
+      },
+      ocr: async () => { pixelsStarted = true; return { blocks: [] }; },
+    }, event => progress.push(event));
+    assert.ok(progress.some(event => event.provider === 'window-identity' && event.state === 'fulfilled'));
+    assert.ok(progress.some(event => event.provider === 'pixel-ocr' && event.state === 'fulfilled'));
     const result = await Promise.race([
       perceiveFrozenFrame(frame, {}, abort.signal, { resolve: async () => [] }, providers),
       new Promise((_accept, reject) => setTimeout(() => reject(new Error('structured_perception_waited_for_ocr')), 1000)),

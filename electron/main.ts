@@ -1,4 +1,5 @@
 import {BrowserViewRegistry} from './browser_view_registry';
+import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
 import {
   projectAttachments,
   type ProjectDetailsPatch,
@@ -298,6 +299,7 @@ let pointerStateReceived = false;
 let pointerStateSequence = 0;
 let pointerStateError = '';
 let desktopPerceptionActivating = false;
+let desktopPerceptionActivity: PerceptionActivity | undefined;
 let pointerInputState = {
   buttons: 0,
   foregroundApp: '',
@@ -7835,6 +7837,7 @@ function desktopPerceptionStatus() {
       {name: 'text_mode', accelerator: fabricSettings?.shortcuts?.text_mode || 'Control+Alt+T'},
     ].map(key => ({...key, registered: globalShortcut.isRegistered(key.accelerator)})),
     lastError: pointerStateError,
+    activity: desktopPerceptionActivity,
   };
 }
 
@@ -8280,6 +8283,8 @@ function beginSelectionSession(
   }
 
   let child: ReturnType<typeof runRuntimeBridge> | null = null;
+  desktopPerceptionActivity = {token: entry.token, state: 'reading', providers: []};
+  publishDesktopPerceptionStatus();
   child = runRuntimeBridge(
     {
       mode: 'capture_selection_snapshot',
@@ -8302,11 +8307,24 @@ function beginSelectionSession(
       timelineToken: entry.token,
       onProgress: (record: any) => {
         handleAgentCursorProgress(record);
+        if (record?.phase === 'perception_provider' && desktopPerceptionActivity) {
+          try {
+            const progress = JSON.parse(Buffer.from(record.fields?.b64 || '', 'base64').toString('utf8'));
+            desktopPerceptionActivity = updatePerceptionActivity(desktopPerceptionActivity, entry.token, progress);
+            publishDesktopPerceptionStatus();
+          } catch (error) {
+            log(`perception progress decode failed: ${String(error)}`);
+          }
+        }
         if (record?.phase === CAPSULE_REVEAL_PHASE) {
           revealCapsule(CAPSULE_REVEAL_PHASE);
         }
       },
       onComplete: (parsed: any) => {
+        if (desktopPerceptionActivity && desktopPerceptionActivity.token === entry.token) {
+          desktopPerceptionActivity = {...desktopPerceptionActivity, state: parsed?.ok ? 'ready' : 'failed', error: parsed?.error};
+          publishDesktopPerceptionStatus();
+        }
         if (activeSessionChildren.get(entry.token) === child) {
           activeSessionChildren.delete(entry.token);
         }

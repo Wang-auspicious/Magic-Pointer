@@ -110,11 +110,13 @@
   color: var(--text-error, #c34f42);
 }
 .mp-perception-materials,
+.mp-perception-live,
 .mp-perception-evidence {
   border-top: 1px solid var(--mp-rule, #dfded8);
   padding-top: 12px;
 }
 .mp-perception-materials h3,
+.mp-perception-live h3,
 .mp-perception-evidence h3 {
   margin: 0 0 5px;
   font-size: 12px;

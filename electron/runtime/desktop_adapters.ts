@@ -1,6 +1,7 @@
 import {existsSync, readdirSync} from 'node:fs';
 import {isAbsolute, join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
+import {runPerceptionProviders, type PerceptionProvider, type PerceptionProgress} from './perception_broker';
 import {
   BROWSER_DOM_PROBE_SCRIPT,
   BROWSER_DOM_REGION_PROBE_SCRIPT,
@@ -76,22 +77,16 @@ export class SurfaceAdapterRegistry {
     window: DesktopRecord,
     request: DesktopRecord = {},
     signal?: AbortSignal,
+    onProgress?: (event: PerceptionProgress) => void,
   ): Promise<DesktopRecord[]> {
-    return Promise.all(
-      this.matching(window).map(async adapter => {
-        try {
-          return await adapter.resolve(window, request, signal);
-        } catch (error) {
-          signal?.throwIfAborted();
-          return {
-            adapter: adapter.id,
-            objects: [],
-            complete: false,
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      }),
-    );
+    const results = await runPerceptionProviders(this.matching(window).map(adapter => ({
+      id: adapter.id, softDeadlineMs: 300, hardDeadlineMs: 8000,
+      read: (signal: AbortSignal) => adapter.resolve(window, request, signal),
+    })), {signal, onProgress});
+    return results.map(result => result.status === 'fulfilled'
+      ? {...result.value, latencyMs: result.latencyMs}
+      : {adapter: result.id, objects: [], complete: false, error: result.error,
+        evidenceStatus: result.status === 'timeout' ? 'timeout' : 'error', latencyMs: result.latencyMs});
   }
 }
 
@@ -1229,9 +1224,13 @@ export async function resolveSelection(
   window: DesktopRecord,
   request: DesktopRecord = {},
   signal?: AbortSignal,
+  options: {
+    onProgress?: (event: PerceptionProgress) => void;
+    providers?: Array<PerceptionProvider<AdapterContext>>;
+  } = {},
 ): Promise<AdapterContext[]> {
-  const readers: Array<Promise<AdapterContext>> = [
-    (async () => {
+  const readers: Array<PerceptionProvider<AdapterContext>> = [
+    {id: 'uia', softDeadlineMs: 300, hardDeadlineMs: 4000, read: async signal => {
       const probe = () =>
         probeSelection(Number(window.hwnd), {
           point: request.point,
@@ -1248,34 +1247,38 @@ export async function resolveSelection(
         data = await probe();
       }
       return uiaContextFromProbe(window, data);
-    })(),
+    }},
   ];
   if (officeApp(window)) {
-    readers.push(readOffice(window, {region: request.region, signal}));
+    readers.push({id: 'office', softDeadlineMs: 300, hardDeadlineMs: 8000,
+      read: signal => readOffice(window, {region: request.region, signal})});
   }
   if (/chrome_widget|mozilla/i.test(window.class_name || '')) {
-    readers.push(readBrowserSelection(window, request, signal));
+    readers.push({id: 'browser', softDeadlineMs: 300, hardDeadlineMs: 4000,
+      read: signal => readBrowserSelection(window, request, signal)});
   }
   if (
     /^(CabinetWClass|ExploreWClass|Progman|WorkerW)$/i.test(
       window.class_name || '',
     )
   ) {
-    readers.push(readExplorer(window, request, signal));
+    readers.push({id: 'explorer', softDeadlineMs: 300, hardDeadlineMs: 4000,
+      read: signal => readExplorer(window, request, signal)});
   }
-  const results = await Promise.allSettled(readers);
-  signal?.throwIfAborted();
-  return results.map((result, index) =>
+  const results = await runPerceptionProviders(options.providers || readers, {signal, onProgress: options.onProgress});
+  return results.map(result =>
     result.status === 'fulfilled'
-      ? result.value
+      ? {...result.value!, latencyMs: result.latencyMs}
       : {
-          adapter: `provider-${index}`,
+          adapter: result.id,
           app: '',
           window,
           content: '',
           method: 'unavailable',
           artifacts: {},
-          error: String(result.reason),
+          error: result.error,
+          evidenceStatus: result.status === 'timeout' ? 'timeout' : 'error',
+          latencyMs: result.latencyMs,
         },
   );
 }
