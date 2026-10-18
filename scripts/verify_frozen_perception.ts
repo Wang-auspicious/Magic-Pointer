@@ -38,6 +38,8 @@ async function main(): Promise<void> {
   const snapshot = result.selectionSnapshot;
   assert.ok(String(snapshot.content).includes(witness), 'Historical frozen pixels must retain the known witness text');
   assert.equal(snapshot.frame_lease.frameLeaseId, lease.frameLeaseId);
+  assert.equal(snapshot.capture_attestation.source, lease.source);
+  assert.equal(snapshot.capture_attestation.frameAgeMs, lease.captureLatencyMs);
   assert.ok(progress.some(row => row.provider === 'pixel-ocr' && row.state === 'fulfilled'));
   assert.ok(progress.some(row => row.provider === 'worker-cleanup' && row.state === 'completed'));
   const report = {

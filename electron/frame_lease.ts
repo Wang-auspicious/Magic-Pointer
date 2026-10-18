@@ -32,6 +32,7 @@ interface FrameLease {
   capturedAtMonotonicMs: number;
   capturedAtUtc: string;
   source: CaptureSource;
+  captureFallbackReason?: string;
   targetWindow: WindowIdentity;
   surfaceBoundsPx: [number, number, number, number];
   displayId: string;
@@ -248,6 +249,10 @@ function validateFrameLease(value: unknown): FrameLease {
       'capturedAtUtc',
     ),
     source: source as CaptureSource,
+    ...(typeof candidate.captureFallbackReason === 'string' &&
+    candidate.captureFallbackReason
+      ? {captureFallbackReason: candidate.captureFallbackReason}
+      : {}),
     targetWindow: validateWindowIdentity(candidate.targetWindow),
     surfaceBoundsPx: validateSurfaceBounds(candidate.surfaceBoundsPx),
     displayId: requireNonEmptyString(candidate.displayId, 'displayId'),

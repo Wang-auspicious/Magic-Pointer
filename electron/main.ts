@@ -265,6 +265,8 @@ let selectionGestureArm: {
   expiresAt: number;
   armDelayMs: number;
   timeoutMs: number;
+  captureReady: boolean;
+  earlyPointerDown?: boolean;
   displayBounds: {x: number; y: number; width: number; height: number};
   source: {
     foregroundApp: string;
@@ -7295,6 +7297,7 @@ function armSelectionGesture(reason = 'wiggle') {
     expiresAt: now + timeoutMs,
     armDelayMs,
     timeoutMs,
+    captureReady: false,
     displayBounds: {...display.bounds},
     source: {
       foregroundApp: String(pointerInputState.foregroundApp || ''),
@@ -7319,8 +7322,20 @@ function armSelectionGesture(reason = 'wiggle') {
       },
       overlayExcluded: true,
     })
+    .then(() => {
+      const arm = selectionGestureArm;
+      if (!arm || arm.token !== token) {
+        return;
+      }
+      arm.captureReady = true;
+      reveal();
+    })
     .catch((error: any) => {
       log(`frame capture arm failed: ${error?.message || error}`);
+      if (selectionGestureArm?.token === token) {
+        cancelSelectionGesture('capture_failed');
+        reportFrameCommitFailure(error);
+      }
     });
   if (runtime.interactionMode === 'pass_through') {
     passThroughGestureCapture.arm({
@@ -7330,7 +7345,7 @@ function armSelectionGesture(reason = 'wiggle') {
       source: selectionGestureArm.source,
       multiStroke: true,
     });
-    sendPointerInputCommand(`capture-next:${timeoutMs}:${runtime.chainGapMs}`);
+    sendPointerInputCommand(`capture-next:12000:${runtime.chainGapMs}`);
   }
   createStageWindow();
   armTemporaryDismissShortcut();
@@ -7338,10 +7353,6 @@ function armSelectionGesture(reason = 'wiggle') {
   const reveal = () => {
     const arm = selectionGestureArm;
     if (!arm || arm.token !== token) {
-      return;
-    }
-    if (Date.now() >= arm.expiresAt) {
-      cancelSelectionGesture('expired');
       return;
     }
     if (!overlayWindow || overlayWindow.isDestroyed()) {
@@ -7354,6 +7365,19 @@ function armSelectionGesture(reason = 'wiggle') {
     const show = () => {
       if (!selectionGestureArm || selectionGestureArm.token !== token) {
         return;
+      }
+      arm.readyAt = Date.now() + armDelayMs;
+      arm.expiresAt = arm.readyAt + timeoutMs;
+      if (selectionGestureExpiryTimer) {
+        clearTimeout(selectionGestureExpiryTimer);
+      }
+      selectionGestureExpiryTimer = setTimeout(() => {
+        if (selectionGestureArm?.token === token) {
+          cancelSelectionGesture('expired');
+        }
+      }, armDelayMs + timeoutMs);
+      if (arm.runtime.interactionMode === 'pass_through') {
+        sendPointerInputCommand(`capture-next:${armDelayMs + timeoutMs}:${runtime.chainGapMs}`);
       }
       win.setBounds(arm.displayBounds);
       overlayBoundDisplayId = null;
@@ -7387,12 +7411,12 @@ function armSelectionGesture(reason = 'wiggle') {
   };
 
   log(`selection gesture armed reason=${reason} token=${token}`);
-  reveal();
   selectionGestureExpiryTimer = setTimeout(() => {
     if (selectionGestureArm?.token === token) {
-      cancelSelectionGesture('expired');
+      cancelSelectionGesture('capture_preparation_timeout');
+      reportFrameCommitFailure(new Error('capture_preparation_timeout'));
     }
-  }, timeoutMs);
+  }, 12000);
   return token;
 }
 
@@ -7433,6 +7457,11 @@ function completeSelectionGesture(payload: any) {
   }
   if (arm.committing) {
     cancelSelectionGesture('stale');
+    return false;
+  }
+  if (!arm.captureReady) {
+    cancelSelectionGesture('capture_not_ready');
+    reportFrameCommitFailure(new Error('capture_not_ready'));
     return false;
   }
   const boundedGesture = boundGestureInput(payload?.points, payload?.strokes, {
@@ -7569,6 +7598,15 @@ function processPassThroughGestureSample(
 ) {
   const arm = selectionGestureArm;
   if (!arm || arm.runtime.interactionMode !== 'pass_through') {
+    return false;
+  }
+  if (!arm.captureReady) {
+    if (Number(pointerInputState.buttons || 0) & 1) {
+      arm.earlyPointerDown = true;
+    } else if (arm.earlyPointerDown) {
+      cancelSelectionGesture('capture_not_ready');
+      reportFrameCommitFailure(new Error('capture_not_ready'));
+    }
     return false;
   }
   const events = passThroughGestureCapture.push({

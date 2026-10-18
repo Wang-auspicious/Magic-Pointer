@@ -1825,6 +1825,8 @@ export async function captureSnapshot(
         frameLeaseId: frame.frameLeaseId,
         source: frame.source,
         pixelsFrozen: true,
+        frameAgeMs: frame.captureLatencyMs,
+        ...(frame.captureFallbackReason ? {fallbackReason: frame.captureFallbackReason} : {}),
       },
       capture_policy: payload.capturePolicy || {
         uploadScreenshots: payload.uploadScreenshots !== false,

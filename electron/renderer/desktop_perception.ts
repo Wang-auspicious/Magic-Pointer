@@ -188,6 +188,21 @@ interface DesktopPerceptionSummary {
       evidenceHost.append(
         node('h3', '', text('Saved screen observation', '已保存的屏幕观察')),
       );
+      const capture = record(evidence.captureAttestation ?? record(evidence.source).captureAttestation);
+      const captureNames: Record<string, string> = {
+        'wgc-display': text('Windows Graphics Capture · display', 'Windows Graphics Capture · 显示器'),
+        'wgc-window': text('Windows Graphics Capture · window', 'Windows Graphics Capture · 窗口'),
+        'gdi-fallback': text('GDI fallback', 'GDI 回退捕获'),
+        'dxgi-display': text('DXGI display capture', 'DXGI 显示器捕获'),
+      };
+      if (typeof capture.source === 'string') {
+        evidenceHost.append(node('p', 'mp-perception-evidence-note', [
+          captureNames[capture.source] || capture.source,
+          typeof capture.frameAgeMs === 'number'
+            ? text(`Frame age ${Math.round(capture.frameAgeMs)} ms`, `帧龄 ${Math.round(capture.frameAgeMs)} ms`) : '',
+          typeof capture.fallbackReason === 'string' ? capture.fallbackReason : '',
+        ].filter(Boolean).join(' · ')));
+      }
       const capturedAt =
         typeof evidence.capturedAt === 'string'
           ? Date.parse(evidence.capturedAt)

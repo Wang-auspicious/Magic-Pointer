@@ -42,7 +42,7 @@ $app.Selection.SetRange([int]$p.start,[int]$p.end)
     }
     assert.ok(window, `Word window ${setup.hwnd} was not enumerated`);
     const capture = new FrameCaptureService(temporary);
-    capture.arm({ epochId: 'word-selection-native', displayId: 'word-selection-native', scaleFactor: 1,
+    await capture.arm({ epochId: 'word-selection-native', displayId: 'word-selection-native', scaleFactor: 1,
       surfaceBoundsPx: window.bbox, targetWindow: { hwnd: window.hwnd, processId: window.pid,
         processName: window.process_name, title: window.title } });
     await delay(700);

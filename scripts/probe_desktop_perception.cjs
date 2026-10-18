@@ -110,6 +110,10 @@ app.whenReady().then(async () => {
         check(opened === 'source', 'material opens exact current source');
         controller.updateEvidence({frameLeaseId:'frame-1',capturedAt:'2026-10-17T12:00:00Z',source:{perceptionTrace:{selectedAdapter:'uia',attempts:[{adapter:'uia',status:'ok',coversMark:true,usedBackend:'windows.uia'},{adapter:'pixel-ocr',status:'error',reason:'ocr_worker_unavailable'}]}}});
         check(document.querySelector('.mp-perception-evidence').textContent.includes('windows.uia') && document.querySelector('.mp-perception-evidence').textContent.includes('ocr_worker_unavailable'), 'saved capture displays actual provider backend and failure');
+        controller.updateEvidence({frameLeaseId:'wgc-frame',source:{captureAttestation:{source:'wgc-display',pixelsFrozen:true,frameAgeMs:23.4},perceptionTrace:{attempts:[]}}});
+        check(document.querySelector('.mp-perception-evidence').textContent.includes('Windows Graphics Capture') && document.querySelector('.mp-perception-evidence').textContent.includes('23 ms'), 'historical capture shows the actual WGC backend and frame age');
+        controller.updateEvidence({frameLeaseId:'fallback-frame',source:{captureAttestation:{source:'gdi-fallback',pixelsFrozen:true,fallbackReason:'wgc_access_denied'},perceptionTrace:{attempts:[]}}});
+        check(document.querySelector('.mp-perception-evidence').textContent.includes('GDI') && document.querySelector('.mp-perception-evidence').textContent.includes('wgc_access_denied'), 'fallback capture exposes its original WGC failure');
         controller.updateStatus({...status,paused:true});
         check(document.querySelector('.mp-perception-action').disabled && document.querySelector('.mp-perception-state').textContent === 'Paused', 'pause visibly disables activation');
         document.querySelector('[data-perception-pause]').click();

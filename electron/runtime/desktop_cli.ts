@@ -180,7 +180,7 @@ export async function desktopCommand(
     const epochId = `diagnostic-${Date.now()}`;
     try {
       await nativeRequest('ping', {}, signal);
-      service.arm({
+      await service.arm({
         ...args,
         epochId,
         displayId: args.displayId || 'diagnostic',
@@ -189,6 +189,7 @@ export async function desktopCommand(
       return await service.commit({epochId, gesture: args.gesture});
     } finally {
       service.cancel();
+      service.native?.close();
     }
   }
   throw new Error(`unknown_desktop_command:${command}`);
