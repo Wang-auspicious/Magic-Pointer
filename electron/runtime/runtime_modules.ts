@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
-import type {Data, HookManager} from './agent';
+import type {Data} from './agent';
+import type {HookManager} from './hooks';
 import {
   authorizeAccess,
   scopeFromEvents,

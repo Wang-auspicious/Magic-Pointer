@@ -4,7 +4,7 @@ import {
   loadHarnessConfiguration,
   PromptSections,
 } from './agent_plugins';
-import {HookManager} from './agent';
+import {HookManager} from './hooks';
 import {ToolRegistry} from './tools';
 import {EventSession} from './session';
 import {dashboardModulePlugin} from './dashboard_module';

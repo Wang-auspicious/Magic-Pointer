@@ -408,6 +408,10 @@ app.whenReady().then(async () => {
       ),
       'registered plugin action reads actual file after real task grant',
     );
+    check(
+      await js("(()=>{const times=document.querySelector('[data-mod-result]').textContent.match(/Execution ([0-9]+) ms.*Total ([0-9]+) ms/);return !!times&&Number(times[2])>=Number(times[1]);})()"),
+      'visible total wait includes the independently started worker and backend execution',
+    );
     await session.refresh();
     check(
       session.events.some(

@@ -77,6 +77,7 @@ app.whenReady().then(async () => {
         document.querySelector('[data-mod-action=refresh]').click(); await new Promise(r=>setTimeout(r,20));
         check(document.querySelector('[data-mod-result]').textContent.includes('Read the current source record'),'successful action displays actual result');
         check(document.querySelector('[data-mod-result]').textContent.includes('event-session'),'actual backend remains visible');
+        check(document.querySelector('[data-mod-result]').textContent.includes('Execution 12 ms') && /Total [0-9]+ ms/.test(document.querySelector('[data-mod-result]').textContent),'backend execution time is labelled separately from the complete action wait');
         fail=true;document.querySelector('[data-mod-action=refresh]').click();await new Promise(r=>setTimeout(r,20));
         check(document.querySelector('[data-mod-result]').textContent.includes('source_read_failed'),'failed action reports failure');
         check(!document.querySelector('[data-mod-action=refresh]').disabled,'failed action allows retry');

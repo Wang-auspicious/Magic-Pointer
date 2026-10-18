@@ -8,10 +8,10 @@ import {
   registerAgentTools,
   compactSession,
   buildSystemPrompt,
-  HookManager,
   type AgentEvent,
   type AgentOptions,
 } from './agent';
+import {HookManager} from './hooks';
 import {
   normalizePermissionPreset,
   PERMISSION_MODES,

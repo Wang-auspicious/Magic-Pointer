@@ -1,4 +1,4 @@
-import {asObject} from './agent';
+import {record as asObject} from './context';
 import {taskSources, taskReferences} from './context';
 import {taskOutcomes} from './agent_outcomes';
 import type {EventSession} from './session';

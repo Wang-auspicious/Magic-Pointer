@@ -1,4 +1,5 @@
-import {asObject, type Data} from './agent';
+import type {Data} from './agent';
+import {record as asObject} from './context';
 import {listDashboards} from './dashboard';
 import {
   createDashboardTools,

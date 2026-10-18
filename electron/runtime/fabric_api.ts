@@ -1,34 +1,6 @@
 import path from 'node:path';
 import {readFile} from 'node:fs/promises';
-import {Fabric} from './fabric';
-import {Workflows} from './workflow';
-import {
-  settingsStore,
-  mergeSettings,
-  handleModels,
-  resolveCapabilities,
-} from './model_admin';
-import {ArtifactRegistry} from './artifacts';
-import {ProvenanceIndex} from './context_memory';
-import {listWindows} from './desktop';
-import {reconfirmTargetLease} from './context_policy';
-import {
-  ExternalTasks,
-  discoverProviders,
-  discoverExternalSessions,
-  locateExecutable,
-} from './external';
-import {handleAgentContexts, dispatchAgentPrompt} from './context_handoff';
-import {
-  directoryPayload,
-  listSkills,
-  extensionsInventory,
-  setPluginEnabled,
-} from './agent_services';
-import {readJson} from './learning';
-import {handleSkillCandidates} from './context_skill_candidates';
 import type {RuntimeOptions} from './index';
-import {handleModuleWorkspace} from './module_workspace';
 
 type Data = Record<string, any>;
 export async function handleFabric(
@@ -38,6 +10,8 @@ export async function handleFabric(
   const {root, userDataDir, signal} = options;
   const operation = String(payload.operation || 'catalog');
   if (operation === 'modules.list' || operation === 'modules.invoke') {
+    const {handleModuleWorkspace} =
+      require('./module_workspace') as typeof import('./module_workspace');
     return handleModuleWorkspace(
       {
         operation,
@@ -49,13 +23,18 @@ export async function handleFabric(
       options,
     );
   }
-  const fabric = new Fabric(options);
-  const settings = fabric.settings;
+  const {settingsStore} =
+    require('./model_admin') as typeof import('./model_admin');
   const store = settingsStore(userDataDir);
+  const settings = store.load();
   if (operation === 'catalog') {
+    const {Fabric} = require('./fabric') as typeof import('./fabric');
+    const fabric = new Fabric(options);
     return {ok: true, recipes: await fabric.catalog()};
   }
   if (operation.startsWith('skills.candidates.')) {
+    const {handleSkillCandidates} =
+      require('./context_skill_candidates') as typeof import('./context_skill_candidates');
     return handleSkillCandidates(payload, userDataDir);
   }
   if (
@@ -63,22 +42,32 @@ export async function handleFabric(
     operation.startsWith('model.') ||
     operation === 'visual_relay.plan'
   ) {
+    const {handleModels} =
+      require('./model_admin') as typeof import('./model_admin');
     return handleModels(payload, root, userDataDir, signal);
   }
   if (operation === 'slash.directory') {
+    const {directoryPayload} =
+      require('./agent_services') as typeof import('./agent_services');
     return directoryPayload(payload.workspaceRoot, userDataDir);
   }
   if (operation === 'settings.get') {
     return {ok: true, settings};
   }
   if (operation === 'settings.save') {
+    const {mergeSettings} =
+      require('./model_admin') as typeof import('./model_admin');
     store.save(mergeSettings(settings, payload.settings || {}));
     return {ok: true, settings: store.load()};
   }
   if (operation === 'providers') {
+    const {discoverProviders} =
+      require('./external') as typeof import('./external');
     return {ok: true, providers: await discoverProviders()};
   }
   if (operation === 'agent.sessions') {
+    const {discoverExternalSessions} =
+      require('./external') as typeof import('./external');
     return {
       ok: true,
       state: 'completed',
@@ -91,12 +80,16 @@ export async function handleFabric(
     };
   }
   if (operation === 'agent.prompt.dispatch') {
+    const {dispatchAgentPrompt} =
+      require('./context_handoff') as typeof import('./context_handoff');
     return dispatchAgentPrompt(payload, userDataDir);
   }
   if (
     operation === 'agent.contexts.list' ||
     operation === 'agent.context.dispatch'
   ) {
+    const {handleAgentContexts} =
+      require('./context_handoff') as typeof import('./context_handoff');
     return handleAgentContexts(payload, userDataDir, {
       sessionId: payload.sessionId,
     });
@@ -150,6 +143,12 @@ export async function handleFabric(
     };
   }
   if (operation === 'runtime.snapshot') {
+    const {Fabric} = require('./fabric') as typeof import('./fabric');
+    const {locateExecutable} =
+      require('./external') as typeof import('./external');
+    const {resolveCapabilities} =
+      require('./model_admin') as typeof import('./model_admin');
+    const fabric = new Fabric(options);
     const recipes = await fabric.catalog();
     const agentIds = [
       'codex',
@@ -227,6 +226,8 @@ export async function handleFabric(
     };
   }
   if (operation === 'extensions.inventory') {
+    const {listSkills, extensionsInventory} =
+      require('./agent_services') as typeof import('./agent_services');
     const skills = await listSkills(payload.workspaceRoot, userDataDir);
     return {
       ...(await extensionsInventory(userDataDir)),
@@ -235,6 +236,8 @@ export async function handleFabric(
     };
   }
   if (operation === 'extensions.set-enabled') {
+    const {setPluginEnabled} =
+      require('./agent_services') as typeof import('./agent_services');
     try {
       return await setPluginEnabled(userDataDir, payload.id, payload.enabled);
     } catch (error) {
@@ -242,6 +245,8 @@ export async function handleFabric(
     }
   }
   if (operation === 'capabilities.search') {
+    const {Fabric} = require('./fabric') as typeof import('./fabric');
+    const fabric = new Fabric(options);
     return {
       ok: true,
       capabilities: await fabric.search(
@@ -253,6 +258,7 @@ export async function handleFabric(
     };
   }
   if (operation === 'current_object') {
+    const {readJson} = require('./learning') as typeof import('./learning');
     const episode = await readJson(
       path.join(userDataDir, 'current-object.json'),
       null,
@@ -282,6 +288,8 @@ export async function handleFabric(
     };
   }
   if (operation.startsWith('artifacts.')) {
+    const {ArtifactRegistry} =
+      require('./artifacts') as typeof import('./artifacts');
     const registry = new ArtifactRegistry(userDataDir);
     if (operation === 'artifacts.list') {
       return {ok: true, artifacts: await registry.list(payload.limit || 100)};
@@ -302,6 +310,8 @@ export async function handleFabric(
     }
   }
   if (operation === 'provenance.objects') {
+    const {ProvenanceIndex} =
+      require('./context_memory') as typeof import('./context_memory');
     return {
       ok: true,
       state: 'completed',
@@ -311,6 +321,8 @@ export async function handleFabric(
     };
   }
   if (operation === 'provenance.trace') {
+    const {ProvenanceIndex} =
+      require('./context_memory') as typeof import('./context_memory');
     return {
       ok: true,
       state: 'completed',
@@ -320,6 +332,8 @@ export async function handleFabric(
     };
   }
   if (operation.startsWith('task.')) {
+    const {ExternalTasks} =
+      require('./external') as typeof import('./external');
     const tasks = new ExternalTasks(userDataDir);
     const id = String(payload.taskId || '');
     if (operation === 'task.list' || operation === 'task.recover') {
@@ -347,6 +361,10 @@ export async function handleFabric(
           reconfirmationRequired: true,
         };
       } else {
+        const {reconfirmTargetLease} =
+          require('./context_policy') as typeof import('./context_policy');
+        const {listWindows} =
+          require('./desktop') as typeof import('./desktop');
         await tasks.mutate(id, async current => {
           if (current.status !== 'paused_target_mismatch') {
             throw new Error('target_not_paused');
@@ -367,6 +385,9 @@ export async function handleFabric(
     }
     return {ok: true, task};
   }
+  const {Fabric} = require('./fabric') as typeof import('./fabric');
+  const fabric = new Fabric(options);
+  const {Workflows} = require('./workflow') as typeof import('./workflow');
   const workflows = new Workflows(userDataDir);
   const surface = payload.surface || 'gui';
   if (operation.startsWith('workflow.')) {

@@ -6,12 +6,12 @@ import {
   asObject,
   runAgent,
   registerAgentTools,
-  HookManager,
   type AgentOptions,
   type AgentEvent,
   type Data,
   type PermissionMode,
 } from './agent';
+import {HookManager} from './hooks';
 import {
   bootPlugins,
   extensionPaths,

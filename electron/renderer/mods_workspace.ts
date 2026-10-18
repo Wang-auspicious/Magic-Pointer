@@ -45,7 +45,7 @@ declare global {
     let invalidated = false;
     let updateQueued = false;
     const pending = new Set<string>();
-    const results = new Map<string, ModuleActionResult>();
+    const results = new Map<string, ModuleActionResult & {elapsedMs: number}>();
     const contentId = `mp-module-content-${++sequence}`;
     const text = (english: string, chinese: string): string =>
       options.language() === 'zh-CN' ? chinese : english;
@@ -279,8 +279,9 @@ declare global {
         const metadata = [
           result.usedBackend,
           typeof result.timingMs === 'number'
-            ? `${Math.round(result.timingMs)} ms`
+            ? text(`Execution ${Math.round(result.timingMs)} ms`, `执行 ${Math.round(result.timingMs)} ms`)
             : '',
+          text(`Total ${Math.round(result.elapsedMs)} ms`, `总耗时 ${Math.round(result.elapsedMs)} ms`),
         ].filter(Boolean);
         if (metadata.length) {
           resultHost.append(element('small', '', metadata.join(' · ')));
@@ -299,6 +300,7 @@ declare global {
         return;
       }
       const requestGeneration = generation;
+      const started = performance.now();
       pending.add(identity);
       results.delete(identity);
       render();
@@ -307,7 +309,7 @@ declare global {
         if (disposed || requestGeneration !== generation) {
           return;
         }
-        results.set(identity, result);
+        results.set(identity, {...result, elapsedMs: performance.now() - started});
         if (result.ok) {
           snapshot = result;
         }
@@ -321,6 +323,7 @@ declare global {
           modules: [],
           errors: [],
           error: failure instanceof Error ? failure.message : String(failure),
+          elapsedMs: performance.now() - started,
         });
       } finally {
         if (requestGeneration === generation) {

@@ -1,7 +1,7 @@
 import {mkdir, readFile, readdir, rename, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-import ExcelJS from 'exceljs';
+import type ExcelJS from 'exceljs';
 
 export type DashboardSourceKind = 'csv' | 'xlsx' | 'static';
 export type DashboardAgg = 'sum' | 'avg' | 'count';
@@ -236,6 +236,7 @@ function excelValue(
 }
 
 async function xlsxData(source: DashboardSource): Promise<DashboardSourceData> {
+  const ExcelJS = require('exceljs') as typeof import('exceljs');
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(source.path!);
   const sheet = source.sheet

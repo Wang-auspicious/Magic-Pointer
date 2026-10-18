@@ -8,7 +8,7 @@ import {PluginContext} from './plugin_context';
 import {RuntimeModules} from './runtime_modules';
 import type {EventSession} from './session';
 import type {ToolRegistry} from './tools';
-import type {HookManager} from './agent';
+import type {HookManager} from './hooks';
 export {PluginContext, PromptSections} from './plugin_context';
 
 export interface RuntimePlugin {
