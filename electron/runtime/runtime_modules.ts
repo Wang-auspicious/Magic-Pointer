@@ -313,14 +313,19 @@ export class RuntimeModules {
       });
       const result = await this.tools.execute(call, {signal});
       usedBackend = result.used_backend ?? undefined;
-      await this.session.append('module/command_finished', {
-        ...request,
-        commandId: action.commandId,
-        result,
-      });
       const post = await this.hooks?.run('post', {
         tool_name: name,
         input: args,
+        result: result.value,
+      });
+      if (post?.allowed === false) {
+        result.value = `Tool executed, but its result was blocked: ${post.reason}`;
+        result.is_error = true;
+        result.error_message = String(post.reason || 'Module result blocked');
+      }
+      await this.session.append('module/command_finished', {
+        ...request,
+        commandId: action.commandId,
         result,
       });
       if (result.is_error || post?.allowed === false) {

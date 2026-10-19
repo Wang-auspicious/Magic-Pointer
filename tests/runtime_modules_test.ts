@@ -9,6 +9,7 @@ import {ToolRegistry} from '../electron/runtime/tools';
 import {handleFabric} from '../electron/runtime/fabric_api';
 import {updateContext} from '../electron/runtime/context';
 import {runRuntime} from '../electron/runtime/index';
+import {HookManager} from '../electron/runtime/hooks';
 
 test('installed module contributes a panel, a read command and request evidence through the same scope', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mp-runtime-module-'));
@@ -262,9 +263,12 @@ test('a module preserves existing tool names and formats their result for the in
   try {
     const session = await EventSession.open(root, 'module-named');
     const registry = new ToolRegistry();
+    const hooks = new HookManager();
+    let observed: unknown;
+    hooks.add('post', payload => { observed = payload.result; });
     const plugins = await bootPlugins({
       directory: '',
-      core: {session, tools: registry},
+      core: {session, tools: registry, hooks},
     });
     const definition = {
       id: 'existing',
@@ -316,6 +320,16 @@ test('a module preserves existing tool names and formats their result for the in
       actionId: 'inspect',
     });
     assert.equal(result.result?.text, 'Items: 7');
+    assert.deepEqual(observed, {count: 7}, 'module and Agent hooks receive the same tool value');
+    hooks.add('post', () => ({decision: 'block', reason: 'Result not available'}));
+    const blocked = await plugins.modules.invoke({
+      sessionId: session.id, moduleId: 'existing', panelId: 'existing', actionId: 'inspect',
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.agentRequest, undefined);
+    const finished = session.events.filter(event => event.type === 'module/command_finished').at(-1)!;
+    assert.equal((finished.data.result as {is_error: boolean}).is_error, true,
+      'blocked results must not become successful panel history');
     await plugins.close();
   } finally {
     await rm(root, {recursive: true, force: true});

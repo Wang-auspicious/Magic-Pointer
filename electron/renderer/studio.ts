@@ -12475,6 +12475,7 @@ if (modulesHost && globalThis.ModsWorkspace) {
     error: getStudioLanguage() === 'zh-CN' ? '请先打开一个已开始的任务。' : 'Open a started task to use its modules.',
   });
   modsWorkspaceController = ModsWorkspace.create(modulesHost, {
+    sessionId: () => activeConversationRecord?.agentSessionId || '',
     visible: modulesVisible,
     list: async () => activeConversationId && window.magicPointerDashboard?.modules
       ? window.magicPointerDashboard.modules.list({conversationId: activeConversationId})

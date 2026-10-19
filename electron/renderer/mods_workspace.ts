@@ -19,6 +19,7 @@ declare global {
       request: Omit<ModuleActionRequest, 'sessionId'>,
     ): Promise<ModuleActionResult>;
     language(): string;
+    sessionId?(): string;
     visible?(): boolean;
     composeAgentRequest?(
       sessionId: string,
@@ -44,6 +45,7 @@ declare global {
     let loading = false;
     let error = '';
     let generation = 0;
+    let loadedSessionId = '';
     let disposed = false;
     let updating = false;
     let invalidated = false;
@@ -404,6 +406,7 @@ declare global {
     }
 
     async function read(): Promise<void> {
+      loadedSessionId = options.sessionId?.() || '';
       const requestGeneration = ++generation;
       invalidated = false;
       updating = false;
@@ -529,7 +532,18 @@ declare global {
     });
     render();
     return {
-      refresh: read,
+      async refresh() {
+        const currentSessionId = options.sessionId?.();
+        if (currentSessionId && currentSessionId === loadedSessionId) {
+          if (pending.size || loading || updating) {
+            invalidate();
+            return;
+          }
+          await update();
+          return;
+        }
+        await read();
+      },
       invalidate,
       updateLanguage: render,
       dispose() {
