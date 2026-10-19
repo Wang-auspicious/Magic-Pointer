@@ -8,7 +8,9 @@ const {spawn} = require('node:child_process');
 const sharp = require('sharp');
 const root = path.resolve(__dirname, '..');
 const out = path.join(root, 'data/runtime/wgc-native-acceptance');
+const latestOnly = process.env.MP_WGC_LATEST_ONLY === '1';
 const {WgcCaptureSession} = require('../electron/runtime/wgc_capture.ts');
+const {FrameCaptureService} = require('../electron/runtime/desktop_capture.ts');
 const desktop = require('../electron/runtime/desktop.ts');
 const {
   FrameCaptureWorkerClient,
@@ -72,11 +74,70 @@ app.whenReady().then(async () => {
         ),
     );
     target.setAlwaysOnTop(true, 'screen-saver');
-    target.show();
-    target.focus();
+    if (latestOnly) {
+      target.showInactive();
+    } else {
+      target.show();
+      target.focus();
+    }
     await pause(350);
     console.log('wgc acceptance: target ready');
     const hwnd = nativeHandle(target);
+    if (latestOnly) {
+      await capture.arm({epochId: 'latest-cold', target: 'window', hwnd});
+      const cold = await capture.commit('latest-cold');
+      assert.ok(
+        countColor(
+          await pixels(Buffer.from(cold.png, 'base64')),
+          [21, 147, 72],
+        ) > 10000,
+      );
+      const warm = await capture.arm({
+        epochId: 'latest-warm',
+        target: 'window',
+        hwnd,
+      });
+      assert.equal(warm.deviceReused, true);
+      const before = await capture.status();
+      await target.webContents.executeJavaScript(`
+        document.body.style.background = 'rgb(178,42,153)';
+        new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      `);
+      await pause(150);
+      const latest = await capture.commit('latest-warm');
+      const actual = await pixels(Buffer.from(latest.png, 'base64'));
+      const greenPixels = countColor(actual, [21, 147, 72]);
+      const purplePixels = countColor(actual, [178, 42, 153]);
+      assert.ok(
+        purplePixels > 10000,
+        'warm capture must contain the pixels painted after arm',
+      );
+      assert.equal(
+        greenPixels,
+        0,
+        'warm capture must not retain its initial green frame',
+      );
+      assert.ok(
+        latest.frameCount > before.frameCount,
+        'warm capture must keep receiving frames',
+      );
+      await fs.writeFile(
+        path.join(out, 'latest-warm.png'),
+        Buffer.from(latest.png, 'base64'),
+      );
+      report.latest = {
+        warm,
+        before,
+        capture: {...latest, png: undefined},
+        greenPixels,
+        purplePixels,
+      };
+      checks.push(
+        'reused device receives and commits pixels changed after warm arm',
+      );
+      report.ok = true;
+      return;
+    }
     const window = await desktop.nativeRequest('window', {hwnd});
     report.window = {
       hwnd,
@@ -93,6 +154,14 @@ app.whenReady().then(async () => {
     const resized = await capture.commit('window-resize');
     console.log('wgc acceptance: resized frame committed');
     assert.equal(resized.source, 'wgc-window');
+    assert.ok(
+      Number.isFinite(resized.timings?.gpuReadbackMs),
+      'native commit must report measured GPU readback time',
+    );
+    assert.ok(
+      Number.isFinite(resized.timings?.pngEncodeMs),
+      'native commit must report measured PNG encoding time',
+    );
     assert.ok(
       resized.resizeCount > 0,
       'native pool must recreate after the real window changes size',
@@ -226,6 +295,43 @@ app.whenReady().then(async () => {
       'actual worker → FrameCaptureService → native WGC → validated FrameLease → coordinator release ordering',
     );
     report.production = {lease, durationMs};
+    const serviceArms = [];
+    const service = new FrameCaptureService(
+      path.join(out, 'reuse-profile'),
+      33,
+      undefined,
+      undefined,
+      {
+        arm: async params => {
+          const result = await capture.arm(params);
+          serviceArms.push(result);
+          return result;
+        },
+        commit: epoch => capture.commit(epoch),
+        cancel: epoch => capture.cancel(epoch),
+        close: () => capture.close(),
+      },
+    );
+    for (let index = 0; index < 2; index++) {
+      const epochId = `service-reuse-${index}`;
+      await service.arm({
+        epochId,
+        displayId: String(display.id),
+        surfaceBoundsPx: bounds,
+      });
+      const frozen = await service.commit({epochId});
+      assert.equal(frozen.source, 'wgc-display');
+      assert.equal(
+        (await capture.status()).deviceRetained,
+        true,
+        'the production service must not cancel a successfully committed native session',
+      );
+    }
+    assert.equal(serviceArms[1].deviceReused, true);
+    report.production.deviceReuse = serviceArms;
+    checks.push(
+      'real production service retains an idle device for the next gesture',
+    );
     await capture.arm({epochId: 'cancelled', surfaceBoundsPx: bounds});
     await capture.cancel('cancelled');
     await assert.rejects(capture.commit('cancelled'), /epoch_not_armed/);
@@ -239,11 +345,18 @@ app.whenReady().then(async () => {
     const samples = [];
     for (let index = 0; index < 8; index++) {
       const started = performance.now();
-      await capture.arm({
+      const armed = await capture.arm({
         epochId: `benchmark-${index}`,
         surfaceBoundsPx: bounds,
       });
       const armMs = performance.now() - started;
+      if (index > 0) {
+        assert.equal(
+          armed.deviceReused,
+          true,
+          'a subsequent gesture must reuse the idle GPU device',
+        );
+      }
       await pause(120);
       const requested = performance.now();
       const captured = await capture.commit(`benchmark-${index}`);
@@ -253,11 +366,15 @@ app.whenReady().then(async () => {
         nativeFreezeMs: captured.nativeFreezeMs,
         frameAgeMs: captured.captureLatencyMs,
         source: captured.source,
+        deviceReused: armed.deviceReused,
         bytes: Buffer.byteLength(captured.png, 'base64'),
+        armStages: armed.timings,
+        commitStages: captured.timings,
+        transport: (await capture.status()).transport,
       });
     }
-    const distribution = key => {
-      const values = samples.map(sample => sample[key]).sort((a, b) => a - b);
+    const distribution = (key, entries = samples) => {
+      const values = entries.map(sample => sample[key]).sort((a, b) => a - b);
       return {
         p50: values[Math.ceil(values.length * 0.5) - 1],
         p95: values[Math.ceil(values.length * 0.95) - 1],
@@ -269,12 +386,33 @@ app.whenReady().then(async () => {
       successes: samples.length,
       failures: 0,
       armMs: distribution('armMs'),
+      warmArmMs: distribution(
+        'armMs',
+        samples.filter(sample => sample.deviceReused),
+      ),
       commitMs: distribution('commitMs'),
       nativeFreezeMs: distribution('nativeFreezeMs'),
       frameAgeMs: distribution('frameAgeMs'),
       scope:
         '8 repeated arms on the same native process; native freeze excludes Node/IPC/encoding; commit includes IPC/PNG',
     };
+    const idle = await capture.status();
+    assert.equal(idle.captureResourcesReleased, true);
+    assert.equal(idle.deviceRetained, true);
+    assert.equal(idle.pumpRunning, false);
+    await pause(150);
+    assert.equal(
+      (await capture.status()).frameCount,
+      idle.frameCount,
+      'idle device reuse must not sample frames',
+    );
+    await pause(15100);
+    assert.equal(
+      (await capture.status()).resourcesReleased,
+      true,
+      'status must not disable the 15-second idle device release',
+    );
+    await capture.cancel('');
     assert.equal((await capture.status()).resourcesReleased, true);
     checks.push(
       'eight native captures with timings and final GPU resource release',
@@ -291,7 +429,7 @@ app.whenReady().then(async () => {
     desktop.closeDesktop();
     target.destroy();
     await fs.writeFile(
-      path.join(out, 'result.json'),
+      path.join(out, latestOnly ? 'latest-result.json' : 'result.json'),
       JSON.stringify(report, null, 2),
     );
     console.log(JSON.stringify({ok: report.ok, checks, evidence: out}));

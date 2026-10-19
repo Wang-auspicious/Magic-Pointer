@@ -55,7 +55,11 @@ export class FrameCaptureService {
     ) {
       throw new Error('invalid_arm');
     }
-    this.cancel();
+    if (this.epoch) {
+      this.cancel();
+    } else {
+      this.clearEpoch();
+    }
     this.epoch = structuredClone(params);
     this.captureFallbackReason = undefined;
     const generation = this.generation;
@@ -124,13 +128,16 @@ export class FrameCaptureService {
       return;
     }
     const cancelledEpoch = this.epoch?.epochId;
-    this.generation++;
-    this.nativeActive = false;
-    if (cancelledEpoch && this.native) {
-      void this.native.cancel(String(cancelledEpoch)).catch(error => {
+    if (this.native) {
+      void this.native.cancel(String(cancelledEpoch || '')).catch(error => {
         process.stderr.write(`capture: WGC cancel failed: ${String(error)}\n`);
       });
     }
+    this.clearEpoch();
+  }
+  private clearEpoch(): void {
+    this.generation++;
+    this.nativeActive = false;
     if (this.timer) {
       clearTimeout(this.timer);
     }
@@ -156,6 +163,7 @@ export class FrameCaptureService {
     let captureLatencyMs: number | undefined;
     if (this.nativeActive && this.native) {
       this.nativeActive = false;
+      let committed = false;
       try {
         const result = await this.native.commit(String(epoch.epochId));
         if (
@@ -174,8 +182,13 @@ export class FrameCaptureService {
           capturedAtUtc: result.capturedAtUtc,
           capturedAtMonotonicMs: Math.max(0, committedAt - captureLatencyMs),
         };
+        committed = true;
       } finally {
-        this.cancel(String(epoch.epochId));
+        if (committed && this.epoch === epoch) {
+          this.clearEpoch();
+        } else {
+          this.cancel(String(epoch.epochId));
+        }
       }
     }
     this.cancel(String(epoch.epochId));

@@ -117,7 +117,7 @@ export class WgcCaptureSession implements NativeCaptureSession {
     method: string,
     params: DesktopRecord = {},
   ): Promise<DesktopRecord> {
-    if (this.idleTimer) {
+    if (this.idleTimer && method !== 'status') {
       clearTimeout(this.idleTimer);
       this.idleTimer = undefined;
     }
@@ -143,6 +143,16 @@ export class WgcCaptureSession implements NativeCaptureSession {
   }
 
   status(): Promise<DesktopRecord> {
+    if (!this.child && !this.starting) {
+      return Promise.resolve({
+        armed: false,
+        pumpRunning: false,
+        resourcesReleased: true,
+        captureResourcesReleased: true,
+        deviceRetained: false,
+        frameCount: 0,
+      });
+    }
     return this.request('status');
   }
 

@@ -101,6 +101,17 @@ async function main() {
       'WGC arm must not also run the CPU capture timer',
     );
     assert.ok(events.indexOf('freeze:one') >= 0);
+    assert.equal(
+      events.includes('cancel:one'),
+      false,
+      'a successful native commit already stops capture and must retain the idle device',
+    );
+    service.cancel();
+    assert.equal(
+      events.includes('cancel:'),
+      true,
+      'an explicit idle cancel must release the retained native device',
+    );
     native.arm = async () => {
       throw new Error('wgc_not_supported');
     };
@@ -120,6 +131,31 @@ async function main() {
       events.slice(callsBeforeCommit).includes('gdi'),
       false,
       'commit failure cannot capture newer pixels',
+    );
+    let finishOld!: (value: Record<string, unknown>) => void;
+    const captured = {
+      png: Buffer.from('frozen').toString('base64'),
+      width: 10,
+      height: 10,
+      source: 'wgc-display',
+      capturedAtUtc: new Date().toISOString(),
+      captureLatencyMs: 1,
+    };
+    native.commit = async epoch =>
+      epoch === 'old'
+        ? new Promise(resolve => {
+            finishOld = resolve;
+          })
+        : captured;
+    await service.arm({...args, epochId: 'old'});
+    const oldCommit = service.commit({epochId: 'old'});
+    await service.arm({...args, epochId: 'new'});
+    finishOld(captured);
+    await oldCommit;
+    assert.equal(
+      (await service.commit({epochId: 'new'})).epochId,
+      'new',
+      'an older PNG commit finishing must not clear the next gesture',
     );
   } finally {
     service.cancel();

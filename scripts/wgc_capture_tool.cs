@@ -85,21 +85,33 @@ internal sealed class WgcCaptureTool : IDisposable
     Size poolSize, latestSize;
     long latestTimestamp;
     int frameCount, resizeCount;
+    readonly Dictionary<string, object> transport = new Dictionary<string, object>();
+    static void Mark(Dictionary<string, double> timings, string name, Stopwatch clock) { timings[name] = clock.Elapsed.TotalMilliseconds; clock.Restart(); }
 
     public object Arm(Dictionary<string, object> args) {
-        Dispose();
-        if (!Supported()) throw new Exception("wgc_not_supported");
+        var total = Stopwatch.StartNew(); var clock = Stopwatch.StartNew();
+        var timings = new Dictionary<string, double>();
+        StopCapture();
+        bool deviceReused = device != IntPtr.Zero;
+        if (!deviceReused && !Supported()) throw new Exception("wgc_not_supported");
+        Mark(timings, "cleanupAndSupportMs", clock);
         epoch = Text(args, "epochId");
         if (epoch == "") throw new Exception("invalid_epoch");
         try {
-            uint feature;
-            Check(D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out device, out feature, out context));
-            IntPtr dxgi = Query(device, "54ec77fa-1377-44e6-8c32-88fd5f44c84c");
-            IntPtr inspectable = IntPtr.Zero;
-            try {
-                Check(CreateDirect3D11DeviceFromDXGIDevice(dxgi, out inspectable));
-                winrtDevice = Query(inspectable, "a37624ab-8d5f-4650-9d3e-9eae3d9bc670");
-            } finally { Release(ref inspectable); Release(ref dxgi); }
+            if (!deviceReused) {
+                uint feature;
+                Check(D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out device, out feature, out context));
+            }
+            Mark(timings, "deviceCreateMs", clock);
+            if (!deviceReused) {
+                IntPtr dxgi = Query(device, "54ec77fa-1377-44e6-8c32-88fd5f44c84c");
+                IntPtr inspectable = IntPtr.Zero;
+                try {
+                    Check(CreateDirect3D11DeviceFromDXGIDevice(dxgi, out inspectable));
+                    winrtDevice = Query(inspectable, "a37624ab-8d5f-4650-9d3e-9eae3d9bc670");
+                } finally { Release(ref inspectable); Release(ref dxgi); }
+            }
+            Mark(timings, "deviceInteropMs", clock);
             IntPtr interop = Factory("Windows.Graphics.Capture.GraphicsCaptureItem", "3628e81b-3cac-4c60-b7f4-23ce0e0c3356");
             var iid = new Guid("79c3f95b-31f7-4ec2-a464-632ef5d30760");
             try {
@@ -122,15 +134,18 @@ internal sealed class WgcCaptureTool : IDisposable
                 }
             } finally { Release(ref interop); }
             Check(Method<GetSize>(item, 7)(item, out poolSize));
+            Mark(timings, "captureItemMs", clock);
             IntPtr factory = Factory("Windows.Graphics.Capture.Direct3D11CaptureFramePool", "589b103f-6bbc-5df5-a991-02e28b3b66d5");
             try { Check(Method<CreatePool>(factory, 6)(factory, winrtDevice, 87, 2, poolSize, out pool)); }
             finally { Release(ref factory); }
+            Mark(timings, "framePoolMs", clock);
             Check(Method<CreateSession>(pool, 10)(pool, item, out session));
             IntPtr cursor = IntPtr.Zero;
             try { cursor = Query(session, "2c39ae40-7d2e-5044-804e-8b6799d4cf9e"); Check(Method<PutBoolean>(cursor, 7)(cursor, 0)); }
             catch (COMException) { /* Cursor control was introduced after WGC. */ }
             finally { Release(ref cursor); }
             Check(Method<NoArgs>(session, 6)(session));
+            Mark(timings, "sessionStartMs", clock);
             stopping = false; failure = null; frameCount = 0; resizeCount = 0;
             pump = new Thread(Pump) {IsBackground = true, Name = "MagicPointer.WGC"};
             pump.Start();
@@ -138,7 +153,10 @@ internal sealed class WgcCaptureTool : IDisposable
             while (readyUntil.ElapsedMilliseconds < 2500) {
                 lock (gate) {
                     if (failure != null) throw new Exception("wgc_capture_failed:" + failure);
-                    if (latestFrame != IntPtr.Zero) return new {armed = true, usedBackend = source, width = poolSize.Width, height = poolSize.Height};
+                    if (latestFrame != IntPtr.Zero) {
+                        Mark(timings, "firstFrameMs", clock); timings["totalMs"] = total.Elapsed.TotalMilliseconds;
+                        return new {armed = true, usedBackend = source, width = poolSize.Width, height = poolSize.Height, deviceReused, timings};
+                    }
                 }
                 Thread.Sleep(5);
             }
@@ -184,27 +202,43 @@ internal sealed class WgcCaptureTool : IDisposable
 
     public object Status() { lock (gate) { return new {armed = epoch != null, usedBackend = source, frameCount, resizeCount, failure,
         pumpRunning = pump != null && pump.IsAlive,
+        deviceRetained = device != IntPtr.Zero,
+        captureResourcesReleased = item == IntPtr.Zero && pool == IntPtr.Zero && session == IntPtr.Zero && latestFrame == IntPtr.Zero,
         resourcesReleased = device == IntPtr.Zero && context == IntPtr.Zero && winrtDevice == IntPtr.Zero && item == IntPtr.Zero && pool == IntPtr.Zero && session == IntPtr.Zero && latestFrame == IntPtr.Zero,
-        width = poolSize.Width, height = poolSize.Height}; } }
+        width = poolSize.Width, height = poolSize.Height, transport}; } }
     public object Commit(Dictionary<string, object> args) {
+        var total = Stopwatch.StartNew(); var clock = Stopwatch.StartNew();
+        var timings = new Dictionary<string, double>();
         long requestedAt = Stopwatch.GetTimestamp();
         if (epoch == null) throw new Exception("epoch_not_armed");
         if (Text(args, "epochId") != epoch) throw new Exception("epoch_mismatch");
         long frozenAt; DateTime frozenAtUtc;
         lock (gate) { stopping = true; frozenAt = Stopwatch.GetTimestamp(); frozenAtUtc = DateTime.UtcNow; }
         if (pump != null) { pump.Join(); pump = null; }
+        Mark(timings, "stopPumpMs", clock);
+        bool committed = false;
         try {
             if (failure != null) throw new Exception("wgc_capture_failed:" + failure);
             if (latestFrame == IntPtr.Zero) throw new Exception("no_frame_buffered");
             double now100ns = (double)frozenAt * 10000000 / Stopwatch.Frequency;
             double ageMs = Math.Max(0, (now100ns - latestTimestamp) / 10000);
             var capturedAt = frozenAtUtc.AddMilliseconds(-ageMs).ToString("o");
-            var png = Encode(latestFrame, latestSize);
-            return new {png = Convert.ToBase64String(png), width = latestSize.Width, height = latestSize.Height,
+            var png = Encode(latestFrame, latestSize, timings);
+            clock.Restart();
+            var encoded = Convert.ToBase64String(png);
+            Mark(timings, "base64Ms", clock);
+            committed = true;
+            return new {png = encoded, width = latestSize.Width, height = latestSize.Height, timings,
                 source, capturedAtUtc = capturedAt, captureLatencyMs = ageMs, frameCount, resizeCount,
                 nativeFreezeMs = (double)(frozenAt - requestedAt) * 1000 / Stopwatch.Frequency,
                 freezeQpc = frozenAt.ToString(), capturedQpc100ns = latestTimestamp.ToString(), usedBackend = source};
-        } finally { Dispose(); }
+        } finally {
+            clock.Restart();
+            // Keep only the device between nearby gestures. The client closes this
+            // process after 15 idle seconds; cancel and failed captures release it now.
+            if (committed) StopCapture(); else Dispose();
+            Mark(timings, "cleanupMs", clock); timings["totalMs"] = total.Elapsed.TotalMilliseconds;
+        }
     }
 
     static IntPtr Texture(IntPtr frame, out TextureDescription description) {
@@ -220,7 +254,8 @@ internal sealed class WgcCaptureTool : IDisposable
         finally { Release(ref access); Release(ref surface); }
     }
 
-    byte[] Encode(IntPtr frame, Size size) {
+    byte[] Encode(IntPtr frame, Size size, Dictionary<string, double> timings) {
+        var clock = Stopwatch.StartNew();
         IntPtr texture = IntPtr.Zero, staging = IntPtr.Zero;
         try {
             TextureDescription desc; texture = Texture(frame, out desc);
@@ -229,6 +264,7 @@ internal sealed class WgcCaptureTool : IDisposable
             Check(Method<CreateTexture>(device, 5)(device, ref desc, IntPtr.Zero, out staging));
             Method<CopyResource>(context, 47)(context, staging, texture);
             MappedResource mapped; Check(Method<MapResource>(context, 14)(context, staging, 0, 1, 0, out mapped));
+            Mark(timings, "gpuReadbackMs", clock);
             try {
                 using (var bitmap = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb)) {
                     var data = bitmap.LockBits(new Rectangle(0, 0, size.Width, size.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
@@ -239,20 +275,27 @@ internal sealed class WgcCaptureTool : IDisposable
                             Marshal.Copy(row, 0, IntPtr.Add(data.Scan0, y * data.Stride), row.Length);
                         }
                     } finally { bitmap.UnlockBits(data); }
-                    using (var stream = new MemoryStream()) { bitmap.Save(stream, ImageFormat.Png); return stream.ToArray(); }
+                    Mark(timings, "bitmapCopyMs", clock);
+                    using (var stream = new MemoryStream()) {
+                        bitmap.Save(stream, ImageFormat.Png); var bytes = stream.ToArray();
+                        Mark(timings, "pngEncodeMs", clock); return bytes;
+                    }
                 }
             } finally { Method<UnmapResource>(context, 15)(context, staging, 0); }
         } finally { Release(ref staging); Release(ref texture); }
     }
 
-    public void Dispose() {
+    void StopCapture() {
         stopping = true;
         if (pump != null) { pump.Join(); pump = null; }
         lock (gate) {
             Close(ref latestFrame); Close(ref session); Close(ref pool); Release(ref item);
-            Release(ref winrtDevice); Release(ref context); Release(ref device);
             epoch = null; failure = null;
         }
+    }
+    public void Dispose() {
+        StopCapture();
+        Release(ref winrtDevice); Release(ref context); Release(ref device);
     }
     static string Text(Dictionary<string, object> value, string key) { object result; return value.TryGetValue(key, out result) ? Convert.ToString(result) : ""; }
     [MTAThread] static int Main() {
@@ -274,11 +317,17 @@ internal sealed class WgcCaptureTool : IDisposable
                             case "arm": result = capture.Arm(args); break;
                             case "status": result = capture.Status(); break;
                             case "commit": result = capture.Commit(args); break;
-                            case "cancel": if (Text(args, "epochId") == "" || Text(args, "epochId") == capture.epoch) capture.Dispose(); result = new {cancelled = true}; break;
+                            case "cancel": if (capture.epoch == null || Text(args, "epochId") == "" || Text(args, "epochId") == capture.epoch) capture.Dispose(); result = new {cancelled = true}; break;
                             case "shutdown": capture.Dispose(); result = new {shutdown = true}; quit = true; break;
                             default: throw new Exception("unknown_method");
                         }
-                        Console.WriteLine(json.Serialize(new {id, result}));
+                        var timer = Stopwatch.StartNew();
+                        var response = json.Serialize(new {id, result});
+                        double serializeMs = timer.Elapsed.TotalMilliseconds; timer.Restart();
+                        Console.WriteLine(response);
+                        if (Text(request, "method") == "arm" || Text(request, "method") == "commit") {
+                            capture.transport[Text(request, "method")] = new {serializeMs, writeMs = timer.Elapsed.TotalMilliseconds};
+                        }
                     } catch (Exception error) { Console.WriteLine(json.Serialize(new {id, error = new {code = error.Message, hresult = error.HResult}})); }
                     if (quit) break;
                 }
