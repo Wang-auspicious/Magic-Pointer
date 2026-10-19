@@ -1129,9 +1129,11 @@ function handleAgentCursorProgress(record: any): void {
 }
 
 let overlayCaptureExcluded = false;
+let overlayWasShown = false;
 
 function createOverlayWindow() {
   overlayCaptureExcluded = false;
+  overlayWasShown = false;
   const display = screen.getPrimaryDisplay();
   const bounds = display.bounds;
 
@@ -1178,9 +1180,13 @@ function createOverlayWindow() {
   overlayWindow.webContents.on('did-start-loading', () =>
     overlayReadiness.reset(),
   );
+  overlayWindow.once('show', () => {
+    overlayWasShown = true;
+  });
 
   overlayWindow.on('closed', () => {
     overlayCaptureExcluded = false;
+    overlayWasShown = false;
     overlayWindow = null;
     overlayOwnsPointerInput = false;
     overlayReadiness.reset();
@@ -1189,6 +1195,10 @@ function createOverlayWindow() {
 
 function ensureFreshGestureOverlay() {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
+    if (!overlayWasShown) {
+      return;
+    }
+    // Reusing a previously shown transparent window can lose Windows pointer events.
     overlayWindow.destroy();
   }
   overlayWindow = null;

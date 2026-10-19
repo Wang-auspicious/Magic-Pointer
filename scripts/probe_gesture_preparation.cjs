@@ -82,7 +82,7 @@ app.whenReady().then(async () => {
     context = {
       BrowserWindow, path, __dirname: out, crypto, Date, CAPSULE_CONTENT_PROTECTED: true,
       screen: {...screen, getCursorScreenPoint: () => ({x: display.bounds.x + 180, y: display.bounds.y + 180}), getDisplayNearestPoint: () => display},
-      overlayWindow: null, overlayCaptureExcluded: false, overlayOwnsPointerInput: false,
+      overlayWindow: null, overlayCaptureExcluded: false, overlayWasShown: false, overlayOwnsPointerInput: false,
       overlayReadiness: overlayReady, stageReadiness: stageReady, overlayBoundDisplayId: null,
       selectionGestureArm: null, selectionGestureExpiryTimer: null,
       pointerInputState: {foregroundApp: 'witness', foregroundHwnd: 1, foregroundProcessId: process.pid},
@@ -113,8 +113,12 @@ app.whenReady().then(async () => {
     vm.createContext(context);
     vm.runInContext(['createOverlayWindow', 'ensureFreshGestureOverlay', 'armSelectionGesture', 'reportFrameCommitFailure', 'placeStageOnDisplay', 'showStage', 'armTemporaryDismissShortcut', 'disarmTemporaryDismissShortcut', 'dismissTemporarySurfaces', 'hideStage'].map(extract).join('\n'), context);
     ipcMain.on('stage:hidden', () => context.hideStage());
+    context.createOverlayWindow();
+    const prewarmedOverlay = context.overlayWindow;
+    await new Promise(resolve => overlayReady.whenReady(resolve));
     context.armSelectionGesture('acceptance');
     const overlay = context.overlayWindow;
+    check(overlay === prewarmedOverlay, 'the first gesture retains its never-shown prewarmed renderer');
     overlay.webContents.on('preload-error', (_e, _p, error) => report.errors.push(String(error)));
     async function until(expression) {
       for (let n = 0; n < 150; n++) { if (await overlay.webContents.executeJavaScript(expression)) return; await wait(30); }
@@ -205,6 +209,7 @@ app.whenReady().then(async () => {
     check(!stage.isVisible(), 'existing Escape dismissal hides the actual error Stage');
     const previousToken = context.selectionGestureArm?.token;
     context.armSelectionGesture('wiggle');
+    check(overlay.isDestroyed() && context.overlayWindow !== overlay, 'a previously shown overlay is still replaced before the next gesture');
     for (let n = 0; n < 150; n++) {
       if (context.selectionGestureArm?.captureReady && context.overlayWindow.isVisible()) break;
       await wait(30);
@@ -212,6 +217,8 @@ app.whenReady().then(async () => {
     check(context.selectionGestureArm?.captureReady && context.selectionGestureArm.token !== previousToken && context.overlayWindow.isVisible(), 'a new wiggle arm recovers after failure and Escape dismissal');
     if (exclusive) {
       const nextOverlay = context.overlayWindow;
+      // Flush the queued show message before injecting directly into Chromium.
+      assert.equal(await nextOverlay.webContents.executeJavaScript('document.body.dataset.mode'), 'gesture');
       const beforeGraceEnds = Date.now() < context.selectionGestureArm.readyAt;
       check(beforeGraceEnds, 'second exclusive press begins within the visual grace interval');
       nextOverlay.webContents.sendInputEvent({type: 'mouseDown', x: 180, y: 260, button: 'left', clickCount: 1});
