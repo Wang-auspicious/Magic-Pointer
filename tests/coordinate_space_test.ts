@@ -130,37 +130,38 @@ assert.strictEqual(pointerOnly.state, 'pointer_only');
 assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, height: 16 });
 
 {
+  const primaryScreen = {dipToScreenPoint: (point: {x: number; y: number}) => point};
   assert.deepStrictEqual(
-    physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 }),
+    physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1, screenApi: primaryScreen }),
     [0, 0, 1920, 1080],
     'a 100% display keeps its own bounds',
   );
   assert.deepStrictEqual(
-    physicalDisplayBounds({ bounds: { x: 1920, y: 0, width: 1707, height: 960 }, scaleFactor: 1.5 }),
-    [2880, 0, 5441, 1440],
-    'a secondary 150% display maps origin and size separately',
+    physicalDisplayBounds({ bounds: { x: 1920, y: 0, width: 1707, height: 960 }, scaleFactor: 1.5, screenApi: mixedDpiScreen }),
+    [2760, 0, 5321, 1440],
+    'a secondary display uses the screen converter for its physical origin',
   );
   assert.deepStrictEqual(
-    physicalDisplayBounds({ bounds: { x: -1920, y: 0, width: 1707, height: 960 }, scaleFactor: 1.5 }),
-    [-2880, 0, -319, 1440],
+    physicalDisplayBounds({ bounds: { x: -1920, y: 0, width: 1707, height: 960 }, scaleFactor: 1.5, screenApi: mixedDpiScreen }),
+    [-3000, 0, -439, 1440],
     'negative-origin displays map below zero on the physical virtual screen',
   );
   assert.strictEqual(
-    physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 1.25 })[2]
-      - physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 1.25 })[0],
+    physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 1.25, screenApi: primaryScreen })[2]
+      - physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 1.25, screenApi: primaryScreen })[0],
     125,
     'physical width is DIP width scaled, never the DIP width itself',
   );
   assert.throws(
-    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 0 }),
+    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 0, screenApi: primaryScreen }),
     /scaleFactor/,
   );
   assert.throws(
-    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: NaN }),
+    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: NaN, screenApi: primaryScreen }),
     /scaleFactor/,
   );
   assert.throws(
-    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: Infinity, height: 100 }, scaleFactor: 1 }),
+    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: Infinity, height: 100 }, scaleFactor: 1, screenApi: primaryScreen }),
     /bounds/,
   );
 }

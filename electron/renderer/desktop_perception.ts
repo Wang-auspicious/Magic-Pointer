@@ -46,6 +46,7 @@ interface DesktopPerceptionSummary {
   state: 'unknown' | 'setup' | 'paused' | 'ready' | 'unavailable';
   label: string;
   wiggle: string;
+  pointer: string;
   hotkeys: Array<{label: string; ready: boolean}>;
 }
 
@@ -74,9 +75,19 @@ interface DesktopPerceptionSummary {
       ready: zh ? '可唤醒' : 'Ready to point',
       unavailable: zh ? '唤醒不可用' : 'Wake unavailable',
     };
+    const pointer = !status
+      ? labels.unknown
+      : status.paused
+        ? labels.paused
+        : status.pointerStateFresh === false
+          ? zh ? '鼠标输入不可用' : 'Pointer input unavailable'
+          : status.polling
+            ? zh ? '正在监听' : 'Listening'
+            : zh ? '未在监听' : 'Not listening';
     return {
       state,
       label: labels[state],
+      pointer,
       wiggle: !status
         ? labels.unknown
         : status.paused
@@ -85,17 +96,7 @@ interface DesktopPerceptionSummary {
             ? zh
               ? '已关闭'
               : 'Off'
-            : status.pointerStateFresh === false
-              ? zh
-                ? '鼠标输入不可用'
-                : 'Pointer input unavailable'
-              : status.polling
-                ? zh
-                  ? '正在监听'
-                  : 'Listening'
-                : zh
-                  ? '未在监听'
-                  : 'Not listening',
+            : pointer,
       hotkeys: (status?.hotkeys || []).map(key => ({
         label: key.accelerator,
         ready: key.registered,
@@ -445,7 +446,8 @@ interface DesktopPerceptionSummary {
       addChannel(
         text('Mouse wiggle', '晃动鼠标'),
         value.wiggle,
-        status?.detectWiggle === true && status?.polling === false,
+        status?.detectWiggle === true &&
+          (status.polling === false || status.pointerStateFresh === false),
       );
       addChannel(
         text('Shortcut', '快捷键'),
@@ -463,10 +465,8 @@ interface DesktopPerceptionSummary {
       if (status?.detectMouseButton) {
         addChannel(
           text('Mouse button', '鼠标侧键'),
-          status.polling
-            ? text('Listening', '正在监听')
-            : text('Not listening', '未在监听'),
-          !status.polling,
+          value.pointer,
+          !status.polling || status.pointerStateFresh === false,
         );
       }
       action.textContent = activating

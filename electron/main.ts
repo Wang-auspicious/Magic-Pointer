@@ -7350,6 +7350,7 @@ function armSelectionGesture(reason = 'wiggle') {
       surfaceBoundsPx: physicalDisplayBounds({
         bounds: display.bounds,
         scaleFactor: display.scaleFactor || 1,
+        screenApi: screen,
       }),
       targetWindow: {
         hwnd: selectionGestureArm.source.foregroundHwnd,

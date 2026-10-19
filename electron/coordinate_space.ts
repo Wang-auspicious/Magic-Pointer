@@ -289,9 +289,11 @@ function physicalGestureTrace(
 function physicalDisplayBounds({
   bounds,
   scaleFactor,
+  screenApi,
 }: {
   bounds: Rect;
   scaleFactor: number;
+  screenApi: ScreenApi;
 }): [number, number, number, number] {
   const scale = Number(scaleFactor);
   if (!Number.isFinite(scale) || scale <= 0) {
@@ -304,11 +306,15 @@ function physicalDisplayBounds({
   if (![x, y, width, height].every(Number.isFinite)) {
     throw new TypeError('bounds must contain finite numbers');
   }
-  const left = Math.round(x * scale);
-  const top = Math.round(y * scale);
+  // Display origins are mapped within Windows' mixed-DPI virtual desktop.
+  // Scaling the global origin by this display's scale shifts secondary screens.
+  const origin = physicalScreenPoint(screenApi, {x, y});
+  if (!origin) {
+    throw new TypeError('display physical origin is unavailable');
+  }
   const physicalWidth = Math.round(width * scale);
   const physicalHeight = Math.round(height * scale);
-  return [left, top, left + physicalWidth, top + physicalHeight];
+  return [origin.x, origin.y, origin.x + physicalWidth, origin.y + physicalHeight];
 }
 
 function finitePoint(value: unknown): Point | null {

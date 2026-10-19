@@ -123,8 +123,10 @@ app.whenReady().then(async () => {
         document.querySelector('[data-perception-pause]').click();
         await new Promise(resolve => setTimeout(resolve, 20));
         check(document.querySelector('.mp-perception-state').textContent === 'Ready to point' && document.querySelector('.mp-perception-notice').textContent === 'pause unavailable', 'failed pause preserves acknowledged state and reports error');
-        controller.updateStatus({...status,pointerStateFresh:false,hotkeys:[]});
+        controller.updateStatus({...status,pointerStateFresh:false,detectMouseButton:true,hotkeys:[]});
         check(document.querySelector('.mp-perception-state').textContent === 'Wake unavailable', 'timer alone does not claim native input health');
+        const mouseButtonState=Array.from(document.querySelectorAll('.mp-perception-channels dt')).find(row=>row.textContent==='Mouse button')?.nextElementSibling;
+        check(mouseButtonState?.textContent==='Pointer input unavailable'&&mouseButtonState.classList.contains('is-warning'),'side button cannot claim listening when the native pointer host is unavailable');
         failStatus = true;
         await controller.refresh();
         check(document.querySelector('.mp-perception-state').textContent === 'Status unknown' && document.querySelector('.mp-perception-notice').textContent === 'native bridge unavailable', 'status failure clears stale ready claim');
