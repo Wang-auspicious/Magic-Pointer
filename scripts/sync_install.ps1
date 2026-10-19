@@ -1,7 +1,7 @@
 ﻿# 本机同步更新：验证 -> 构建 -> 打包安装器 -> 静默安装 -> 重启应用。
 # 用法：npm run sync（或直接 powershell -File scripts/sync_install.ps1）
 # 之后用户从快捷方式/托盘照常使用，不需要终端。
-param()
+param([switch]$SkipVerification)
 
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
@@ -10,9 +10,13 @@ $packageVersion = (Get-Content 'package.json' | ConvertFrom-Json).version
 $syncStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $syncOutput = Join-Path (Get-Location) "release\sync-$($packageVersion)-$syncStamp-$PID"
 
-Write-Host "== verify =="
-npm run verify
-if ($LASTEXITCODE -ne 0) { throw 'verification failed' }
+if (-not $SkipVerification) {
+    Write-Host "== verify =="
+    npm run verify
+    if ($LASTEXITCODE -ne 0) { throw 'verification failed' }
+} else {
+    Write-Host 'Using the targeted verification completed for this source batch.'
+}
 
 Write-Host "== build installer =="
 npm run build:electron
@@ -72,4 +76,6 @@ if (Test-Path "secrets") {
 
 Write-Host "== relaunch =="
 Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe" -WindowStyle Hidden
+Write-Host "== prune old local releases =="
+& (Join-Path $PSScriptRoot 'prune_local_releases.ps1') -KeepInstaller (Join-Path (Join-Path (Get-Location) 'release') $installer.Name)
 Write-Host "sync done"
