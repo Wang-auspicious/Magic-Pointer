@@ -10706,7 +10706,7 @@ ipcMain.handle(
 async function handleModuleWorkspace(
   event: Electron.IpcMainInvokeEvent,
   operation: 'modules.list' | 'modules.invoke',
-  payload: {conversationId?: unknown; moduleId?: unknown; panelId?: unknown; actionId?: unknown} = {},
+  payload: {conversationId?: unknown; moduleId?: unknown; panelId?: unknown; actionId?: unknown; inputs?: unknown} = {},
 ) {
   const failed = (error: string) => ({ok: false, sessionId: '', modules: [], errors: [], error});
   if (!isDashboardSender(event)) {
@@ -10726,6 +10726,7 @@ async function handleModuleWorkspace(
     operation, sessionId,
     ...(operation === 'modules.invoke' ? {
       moduleId: payload.moduleId, panelId: payload.panelId, actionId: payload.actionId,
+      inputs: payload.inputs,
     } : {}),
   }, 'fabric', {target: null, timeoutMs: 30_000});
 }

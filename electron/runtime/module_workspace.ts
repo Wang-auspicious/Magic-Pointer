@@ -70,6 +70,7 @@ export async function handleModuleWorkspace(
             moduleId: request.moduleId ?? '',
             panelId: request.panelId ?? '',
             actionId: request.actionId ?? '',
+            inputs: request.inputs,
           },
           options.signal,
         );

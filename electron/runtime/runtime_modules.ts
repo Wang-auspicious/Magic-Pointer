@@ -253,6 +253,29 @@ export class RuntimeModules {
       if (!button || button.disabled || current.status.state === 'disabled') {
         throw new Error('Module action is unavailable');
       }
+      if (
+        request.inputs !== undefined &&
+        (request.inputs === null ||
+          typeof request.inputs !== 'object' ||
+          Array.isArray(request.inputs))
+      ) {
+        throw new Error('Module action inputs must be an object');
+      }
+      const inputs = request.inputs ?? {};
+      const fields = button.fields ?? [];
+      for (const name of Object.keys(inputs)) {
+        if (!fields.some(field => field.name === name)) {
+          throw new Error(`Unknown module action field: ${name}`);
+        }
+      }
+      const authoredArguments = structuredClone(action.arguments ?? {});
+      for (const field of fields) {
+        if (Object.hasOwn(inputs, field.name)) {
+          authoredArguments[field.name] = inputs[field.name];
+        } else if (field.value !== undefined) {
+          authoredArguments[field.name] = field.value;
+        }
+      }
       const name = module.commands.get(action.commandId)!;
       const spec = this.tools.get(name);
       const continuation: ModuleAgentRequest = {
@@ -261,18 +284,18 @@ export class RuntimeModules {
         actionLabel: button.label,
         toolName: name,
         // The Agent applies its hooks when executing the authored request.
-        arguments: structuredClone(action.arguments ?? {}),
+        arguments: structuredClone(authoredArguments),
       };
       const hook = await this.hooks?.run('pre', {
         tool_name: name,
-        input: structuredClone(action.arguments ?? {}),
+        input: structuredClone(authoredArguments),
       });
       if (hook?.allowed === false) {
         throw new Error(String(hook.reason));
       }
       const args = hook
         ? asObject(hook.input)
-        : structuredClone(action.arguments ?? {});
+        : authoredArguments;
       const call = {id: `module-${randomUUID()}`, name, arguments: args};
       const errors = this.tools.validateInput(spec, args);
       if (errors.length) {

@@ -501,6 +501,25 @@ app.whenReady().then(async () => {
       ),
       'source inspection displays the physical row and original cell value',
     );
+    await js(`(() => {
+      const form = document.querySelector('[data-mod-action-form="inspect-0"]');
+      for (const name of ['offset', 'limit']) {
+        const input = form.querySelector('input[name="'+name+'"]');
+        input.value = '1';
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+      }
+      form.requestSubmit();
+    })()`);
+    await waitFor("document.querySelector('.mp-mods-content').textContent.includes('2–2 of 2')");
+    check(
+      await js("document.querySelector('.mp-mods-content').textContent.includes('Row 3')&&!document.querySelector('.mp-mods-content').textContent.includes('Row 2')"),
+      'editable source range reaches the real worker and displays only the requested CSV row',
+    );
+    const pagedRequest = requests.findLast(request => request.runtime?.actionId === 'inspect-0');
+    check(
+      pagedRequest.runtime.inputs.offset === 1 && pagedRequest.runtime.inputs.limit === 1,
+      'native form inputs cross production preload and main as numeric tool parameters',
+    );
     for (const [theme, width] of [
       ['light', 1280],
       ['dark', 1280],

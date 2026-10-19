@@ -51,6 +51,7 @@ declare global {
     let invalidated = false;
     let updateQueued = false;
     const pending = new Set<string>();
+    const drafts = new Map<string, string>();
     const results = new Map<
       string,
       ModuleActionResult & {elapsedMs: number; composed?: boolean}
@@ -125,6 +126,12 @@ declare global {
       if (disposed) {
         return;
       }
+      const focused = document.activeElement instanceof HTMLInputElement &&
+          root.contains(document.activeElement)
+        ? document.activeElement : null;
+      const focusedKey = focused?.dataset.modFieldKey;
+      const selection = focused?.type === 'text'
+        ? [focused.selectionStart, focused.selectionEnd] : null;
       heading.textContent = text('Modules', '模块');
       refresh.textContent =
         loading || updating
@@ -255,11 +262,62 @@ declare global {
             updating ||
             action.disabled === true ||
             panel.status.state === 'disabled';
-          button.addEventListener(
-            'click',
-            () => void invoke(module.id, panel.id, action.id),
-          );
-          actions.append(button);
+          if (action.fields?.length) {
+            const form = element('form', 'mp-mods-action-form');
+            form.dataset.modActionForm = action.id;
+            const inputs = new Map<string, HTMLInputElement>();
+            for (const field of action.fields) {
+              const label = element('label', 'mp-mods-field');
+              label.append(element('span', '', field.label));
+              const input = element('input', '');
+              const fieldKey = JSON.stringify([module.id, panel.id, action.id, field.name]);
+              input.dataset.modFieldKey = fieldKey;
+              input.name = field.name;
+              input.type = field.type;
+              input.value = drafts.get(fieldKey) ?? String(field.value ?? '');
+              input.required = field.required === true;
+              input.disabled = button.disabled;
+              if (field.min !== undefined) {
+                input.min = String(field.min);
+              }
+              if (field.max !== undefined) {
+                input.max = String(field.max);
+              }
+              if (field.step !== undefined) {
+                input.step = String(field.step);
+              }
+              input.addEventListener('input', () => drafts.set(fieldKey, input.value));
+              inputs.set(field.name, input);
+              label.append(input);
+              form.append(label);
+            }
+            button.type = 'submit';
+            form.append(button);
+            form.addEventListener('submit', event => {
+              event.preventDefault();
+              if (button.disabled || !form.reportValidity()) {
+                return;
+              }
+              const values: Record<string, string | number> = {};
+              for (const [name, input] of inputs) {
+                if (input.type === 'number') {
+                  if (input.value !== '') {
+                    values[name] = input.valueAsNumber;
+                  }
+                } else {
+                  values[name] = input.value;
+                }
+              }
+              void invoke(module.id, panel.id, action.id, values);
+            });
+            actions.append(form);
+          } else {
+            button.addEventListener(
+              'click',
+              () => void invoke(module.id, panel.id, action.id),
+            );
+            actions.append(button);
+          }
         }
         if (actions.childElementCount) {
           sectionHost.append(actions);
@@ -356,12 +414,23 @@ declare global {
         }
         content.append(resultHost);
       }
+      if (focusedKey) {
+        const replacement = [...content.querySelectorAll<HTMLInputElement>('input[data-mod-field-key]')]
+          .find(input => input.dataset.modFieldKey === focusedKey);
+        if (replacement && !replacement.disabled) {
+          replacement.focus({preventScroll: true});
+          if (selection) {
+            replacement.setSelectionRange(selection[0], selection[1]);
+          }
+        }
+      }
     }
 
     async function invoke(
       moduleId: string,
       panelId: string,
       actionId: string,
+      inputs?: Record<string, string | number>,
     ): Promise<void> {
       const identity = key(moduleId, panelId);
       if (pending.has(identity) || disposed || loading || updating) {
@@ -373,7 +442,7 @@ declare global {
       results.delete(identity);
       render();
       try {
-        const result = await options.invoke({moduleId, panelId, actionId});
+        const result = await options.invoke({moduleId, panelId, actionId, ...(inputs ? {inputs} : {})});
         if (disposed || requestGeneration !== generation) {
           return;
         }
@@ -406,7 +475,11 @@ declare global {
     }
 
     async function read(): Promise<void> {
-      loadedSessionId = options.sessionId?.() || '';
+      const nextSessionId = options.sessionId?.() || '';
+      if (nextSessionId !== loadedSessionId) {
+        drafts.clear();
+      }
+      loadedSessionId = nextSessionId;
       const requestGeneration = ++generation;
       invalidated = false;
       updating = false;
@@ -450,6 +523,7 @@ declare global {
         loading ||
         updating ||
         pending.size ||
+        editingField() ||
         options.visible?.() === false
       ) {
         return;
@@ -463,6 +537,7 @@ declare global {
           !loading &&
           !updating &&
           !pending.size &&
+          !editingField() &&
           options.visible?.() !== false
         ) {
           void update();
@@ -505,6 +580,11 @@ declare global {
       scheduleUpdate();
     }
     refresh.addEventListener('click', invalidate);
+    function editingField(): boolean {
+      return document.activeElement instanceof HTMLInputElement &&
+        content.contains(document.activeElement);
+    }
+    content.addEventListener('focusout', () => queueMicrotask(scheduleUpdate));
     navigation.addEventListener('keydown', event => {
       const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
       if (!keys.includes(event.key)) {
@@ -535,7 +615,7 @@ declare global {
       async refresh() {
         const currentSessionId = options.sessionId?.();
         if (currentSessionId && currentSessionId === loadedSessionId) {
-          if (pending.size || loading || updating) {
+          if (pending.size || loading || updating || editingField()) {
             invalidate();
             return;
           }

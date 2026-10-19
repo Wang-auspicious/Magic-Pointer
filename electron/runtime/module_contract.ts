@@ -1,8 +1,19 @@
+export interface ModsActionField {
+  name: string;
+  label: string;
+  type: 'text' | 'number';
+  value?: string | number;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+}
 export interface ModsPanelAction {
   id: string;
   label: string;
   disabled?: boolean;
   primary?: boolean;
+  fields?: ModsActionField[];
 }
 export interface ModsPanelRow {
   id: string;
@@ -47,6 +58,7 @@ export interface ModuleActionRequest {
   moduleId: string;
   panelId: string;
   actionId: string;
+  inputs?: Record<string, string | number>;
 }
 export interface ModuleAgentRequest {
   moduleId: string;

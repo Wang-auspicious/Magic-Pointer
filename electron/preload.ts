@@ -719,7 +719,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   modules: {
     list: (payload: {conversationId: string}) => ipcRenderer.invoke('modules:list', payload),
-    invoke: (payload: {conversationId: string; moduleId: string; panelId: string; actionId: string}) => ipcRenderer.invoke('modules:invoke', payload),
+    invoke: (payload: Omit<import('./runtime/module_contract').ModuleActionRequest, 'sessionId'> & {conversationId: string}) => ipcRenderer.invoke('modules:invoke', payload),
   },
   artifacts: {
     undo: (payload: {

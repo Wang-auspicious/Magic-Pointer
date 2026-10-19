@@ -70,7 +70,7 @@ app.whenReady().then(async () => {
         let currentSnapshot=snapshot;let listCalls=0;
         snapshot.sessionId='task-one';
         snapshot.modules[0].panels[1].sections.push({id:'empty',title:'Outstanding work',rows:[]});
-        const controller=ModsWorkspace.create(document.getElementById('host'),{language:()=>language,sessionId:()=>currentSnapshot.sessionId||'task-one',list:async()=>{listCalls++;return currentSnapshot},composeAgentRequest:(sessionId,request)=>{check(sessionId==='task-one'&&request.toolName==='Module.task-context.read','continuation preserves backend session and tool');composed++;return true;},invoke:async request=>{calls++;check(request.moduleId==='task-context'&&request.panelId==='sources'&&request.actionId==='refresh','action is bound to module/panel/action identity');if(asynchronous)return new Promise(resolve=>resolveAction=resolve);return fail?{ok:false,sessionId:'task-one',error:'source_read_failed',agentRequest:{moduleId:'task-context',moduleTitle:'Task context',actionLabel:'Read source',toolName:'Module.task-context.read',arguments:{}}}:{...snapshot,result:{text:'Read the current source record'},usedBackend:'event-session',timingMs:12};}});
+        const controller=ModsWorkspace.create(document.getElementById('host'),{language:()=>language,sessionId:()=>currentSnapshot.sessionId||'task-one',list:async()=>{listCalls++;return currentSnapshot},composeAgentRequest:(sessionId,request)=>{check(sessionId==='task-one'&&request.toolName==='Module.task-context.read','continuation preserves backend session and tool');composed++;return true;},invoke:async request=>{calls++;window.formInputs=request.inputs;check(request.moduleId==='task-context'&&request.panelId==='sources'&&request.actionId==='refresh','action is bound to module/panel/action identity');if(asynchronous)return new Promise(resolve=>resolveAction=resolve);return fail?{ok:false,sessionId:'task-one',error:'source_read_failed',agentRequest:{moduleId:'task-context',moduleTitle:'Task context',actionLabel:'Read source',toolName:'Module.task-context.read',arguments:{}}}:{...snapshot,result:{text:'Read the current source record'},usedBackend:'event-session',timingMs:12};}});
         await controller.refresh();
         check(document.querySelector('.mp-mods-header').getBoundingClientRect().left-document.querySelector('.mp-mods-workspace').getBoundingClientRect().left>=12,'module content has its own inset');
         check(document.querySelectorAll('[data-mod-panel]').length===2,'registered panels appear');
@@ -112,9 +112,33 @@ app.whenReady().then(async () => {
         currentSnapshot={ok:false,error:'bridge_timeout'};await controller.refresh();
         check(document.querySelector('.mp-mods-notice').textContent.includes('请刷新面板')&&!document.querySelector('[data-mod-refresh]').disabled,'timed out panel read offers refresh without remaining busy');
         currentSnapshot=snapshot;await controller.refresh();
+        snapshot.modules[0].panels[0].sections[0].actions[0].fields=[{name:'filter',label:'Filter',type:'text',value:''},{name:'limit',label:'Rows',type:'number',value:20,required:true,min:1,max:50},{name:'offset',label:'Start row',type:'number',min:0}];
+        await controller.refresh();
+        const field=name=>document.querySelector('.mp-mods-action-form input[name='+name+']');
+        field('filter').value='North';field('filter').dispatchEvent(new Event('input',{bubbles:true}));field('filter').focus();field('filter').setSelectionRange(2,2);
+        const beforeEditRefresh=listCalls;controller.invalidate();await controller.refresh();await new Promise(r=>setTimeout(r,20));
+        check(listCalls===beforeEditRefresh&&document.activeElement===field('filter')&&field('filter').selectionStart===2,'background updates and reopen preserve an actively edited field and its caret');
+        document.querySelector('[data-mod-panel=receipt]').click();await new Promise(r=>setTimeout(r,20));document.querySelector('[data-mod-panel=sources]').click();
+        field('limit').value='0';field('limit').dispatchEvent(new Event('input',{bubbles:true}));const beforeInvalid=calls;document.querySelector('.mp-mods-action-form').requestSubmit();
+        check(calls===beforeInvalid&&field('filter').value==='North','native form validation blocks out-of-range input while tab switching preserves the draft');
+        field('limit').value='7';field('limit').dispatchEvent(new Event('input',{bubbles:true}));
+        asynchronous=false;fail=false;
+        window.formCalls=()=>calls;window.formInputs=null;
+        window.formExpectedCalls=calls+1;
+        window.changeFormTask=async()=>{currentSnapshot={...snapshot,sessionId:'task-two'};await controller.refresh();return field('filter').value===''&&field('limit').value==='20';};
+        field('filter').focus();
         window.modController=controller;
         return checks;
       })()`);
+      win.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Enter'});
+      win.webContents.sendInputEvent({type: 'char', keyCode: '\r'});
+      win.webContents.sendInputEvent({type: 'keyUp', keyCode: 'Enter'});
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert(await win.webContents.executeJavaScript("window.formCalls()===window.formExpectedCalls&&JSON.stringify(window.formInputs)===JSON.stringify({filter:'North',limit:7})"),
+        'Enter submits text and a numeric value, omitting an empty optional number');
+      checks.push('Enter submits text and a numeric value, omitting an empty optional number');
+      assert(await win.webContents.executeJavaScript('window.changeFormTask()'), 'switching tasks clears parameter drafts');
+      checks.push('switching tasks clears parameter drafts');
       for (const [theme, width] of [
         ['light', 760],
         ['dark', 760],

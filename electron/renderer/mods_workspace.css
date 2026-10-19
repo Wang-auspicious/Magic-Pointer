@@ -133,6 +133,36 @@
   background: var(--mp-text);
   border-color: transparent;
 }
+.mp-mods-action-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+}
+.mp-mods-field {
+  display: flex;
+  flex: 1 1 140px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--mp-text-secondary);
+  font-size: 12px;
+}
+.mp-mods-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 6px;
+  background: var(--mp-panel);
+  color: var(--mp-text);
+  font: inherit;
+}
+.mp-mods-field input:disabled {
+  opacity: 0.5;
+}
 .mp-mods-result {
   border-left: 2px solid var(--mp-rule-strong);
   margin-top: 8px;

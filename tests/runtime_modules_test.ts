@@ -265,6 +265,8 @@ test('a module preserves existing tool names and formats their result for the in
     const registry = new ToolRegistry();
     const hooks = new HookManager();
     let observed: unknown;
+    let observedInput: unknown;
+    hooks.add('pre', payload => { observedInput = payload.input; });
     hooks.add('post', payload => { observed = payload.result; });
     const plugins = await bootPlugins({
       directory: '',
@@ -280,8 +282,8 @@ test('a module preserves existing tool names and formats their result for the in
           tool: {
             name: 'Existing.inspect',
             description: 'Inspect existing data',
-            input_schema: {type: 'object', properties: {}, required: []},
-            execute: () => ({count: 7}),
+            input_schema: {type: 'object', properties: {count: {type: 'number', minimum: 1, maximum: 10}, sourceLabel: {type: 'string'}}, required: ['count', 'sourceLabel']},
+            execute: (args: Record<string, unknown>) => ({count: args.count}),
           },
           present: (value: unknown) => ({
             text: `Items: ${(value as {count: number}).count}`,
@@ -299,11 +301,11 @@ test('a module preserves existing tool names and formats their result for the in
               {
                 id: 'actions',
                 rows: [],
-                actions: [{id: 'inspect', label: 'Inspect'}],
+                actions: [{id: 'inspect', label: 'Inspect', fields: [{name: 'count', label: 'Count', type: 'number' as const, value: 7}]}],
               },
             ],
           }),
-          actions: {inspect: {commandId: 'inspect'}},
+          actions: {inspect: {commandId: 'inspect', arguments: {count: 3, sourceLabel: 'saved'}}},
         },
       ],
     };
@@ -318,9 +320,18 @@ test('a module preserves existing tool names and formats their result for the in
       moduleId: 'existing',
       panelId: 'existing',
       actionId: 'inspect',
+      inputs: {count: 9},
     });
-    assert.equal(result.result?.text, 'Items: 7');
-    assert.deepEqual(observed, {count: 7}, 'module and Agent hooks receive the same tool value');
+    assert.equal(result.result?.text, 'Items: 9');
+    assert.deepEqual(observedInput, {count: 9, sourceLabel: 'saved'});
+    assert.deepEqual(observed, {count: 9}, 'module and Agent hooks receive the same tool value');
+    const request = {sessionId: session.id, moduleId: 'existing', panelId: 'existing', actionId: 'inspect'};
+    assert.equal((await plugins.modules.invoke(request)).result?.text, 'Items: 7');
+    for (const inputs of [{sourceLabel: 'changed'}, {count: 'nine'}, null, []]) {
+      const rejected = await plugins.modules.invoke({...request, inputs: inputs as never});
+      assert.equal(rejected.ok, false, JSON.stringify(inputs));
+      assert.equal(rejected.agentRequest, undefined);
+    }
     hooks.add('post', () => ({decision: 'block', reason: 'Result not available'}));
     const blocked = await plugins.modules.invoke({
       sessionId: session.id, moduleId: 'existing', panelId: 'existing', actionId: 'inspect',
@@ -425,7 +436,7 @@ test('a failing request extension is visible while healthy panels remain usable 
           label: 'Change',
           tool: {
             description: 'Change state',
-            input_schema: {type: 'object', properties: {}, required: []},
+            input_schema: {type: 'object', properties: {message: {type: 'string'}}, required: ['message']},
             effect: 'reversible_write',
             execute: () => {
               wrote = true;
@@ -447,7 +458,7 @@ test('a failing request extension is visible while healthy panels remain usable 
                 rows: [],
                 actions: [
                   {id: 'inspect', label: 'Inspect'},
-                  {id: 'change', label: 'Change'},
+                  {id: 'change', label: 'Change', fields: [{name: 'message', label: 'Message', type: 'text', value: 'default'}]},
                 ],
               },
             ],
@@ -489,13 +500,14 @@ test('a failing request extension is visible while healthy panels remain usable 
     const write = await plugins.modules.invoke({
       ...request,
       actionId: 'change',
+      inputs: {message: 'Edited by user'},
     });
     assert.equal(write.ok, false);
     assert.match(write.error!, /Agent turn/);
     assert.equal(wrote, false);
     assert.equal(write.agentRequest?.toolName, 'Modules.bounded.change');
     assert.equal(write.agentRequest?.actionLabel, 'Change');
-    assert.deepEqual(write.agentRequest?.arguments, {});
+    assert.deepEqual(write.agentRequest?.arguments, {message: 'Edited by user'});
     assert.ok(
       session.events.some(
         event =>

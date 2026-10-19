@@ -12,7 +12,7 @@ import {
   type RuntimeModulePanel,
 } from './runtime_modules';
 import type {EventSession} from './session';
-import type {ModsPanel, ModsPanelRow} from './module_contract';
+import type {ModsPanel, ModsPanelAction, ModsPanelRow} from './module_contract';
 
 const rows = (value: unknown): Data[] =>
   Array.isArray(value) ? value.map(asObject) : [];
@@ -166,7 +166,12 @@ export function createDashboardModule(
           commandId: 'open',
           arguments: {dashboard_id: value.dashboardId},
         };
-        const sourceActions = sources.map((source, index) => {
+        const inspected = savedCommand(options.session, 'inspect-source');
+        const sourceActions = sources.map((source, index): ModsPanelAction => {
+          const previous = inspected && inspected.arguments.dashboard_id === value.dashboardId &&
+              inspected.arguments.source_id === source.sourceId
+            ? inspected.arguments
+            : {};
           actions[`inspect-${index}`] = {
             commandId: 'inspect-source',
             arguments: {
@@ -175,7 +180,20 @@ export function createDashboardModule(
               limit: 20,
             },
           };
-          return {id: `inspect-${index}`, label: `Inspect ${source.sourceId}`};
+          return {
+            id: `inspect-${index}`,
+            label: `Inspect ${source.sourceId}`,
+            fields: [
+              {
+                name: 'offset', label: 'Skip data rows', type: 'number',
+                value: Number(previous.offset ?? 0), required: true, min: 0, step: 1,
+              },
+              {
+                name: 'limit', label: 'Rows to read', type: 'number',
+                value: Number(previous.limit ?? 20), required: true, min: 1, max: 100, step: 1,
+              },
+            ],
+          };
         });
         sections.push({
           id: 'values',
@@ -186,7 +204,6 @@ export function createDashboardModule(
             ...sourceActions,
           ],
         });
-        const inspected = savedCommand(options.session, 'inspect-source');
         if (
           inspected &&
           inspected.arguments.dashboard_id === value.dashboardId
@@ -200,6 +217,13 @@ export function createDashboardModule(
                 id: 'source-read-at',
                 label: 'Source preview read at',
                 value: inspected.recordedAt,
+              },
+              {
+                id: 'source-page',
+                label: 'Data rows shown',
+                value: rows(source.rows).length
+                  ? `${Number(source.offset) + 1}–${Number(source.offset) + rows(source.rows).length} of ${source.totalRows}`
+                  : `No rows at offset ${source.offset} · ${source.totalRows} total`,
               },
               ...rows(source.rows).map(row => ({
                 id: `row-${row.rowNumber}`,

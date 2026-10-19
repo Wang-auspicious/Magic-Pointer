@@ -19,6 +19,7 @@ export async function handleFabric(
         moduleId: payload.moduleId,
         panelId: payload.panelId,
         actionId: payload.actionId,
+        inputs: payload.inputs,
       },
       options,
     );

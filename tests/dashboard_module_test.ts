@@ -47,9 +47,9 @@ test('the Dashboard module queries a real CSV, preserves the shown snapshot and 
         {operation: 'modules.list', sessionId: session.id},
         {root, userDataDir: root},
       );
-    const invoke = (actionId: string) =>
+    const invoke = (actionId: string, inputs?: Record<string, string | number>) =>
       handleFabric(
-        {operation: 'modules.invoke', ...request, actionId},
+        {operation: 'modules.invoke', ...request, actionId, inputs},
         {root, userDataDir: root},
       );
     const listed = await read();
@@ -112,6 +112,10 @@ test('the Dashboard module queries a real CSV, preserves the shown snapshot and 
     assert.equal(source.ok, true, source.error);
     assert.match(panelText(source), /112/);
     assert.match(panelText(source), /Row 2/);
+    const paged = await invoke('inspect-0', {offset: 1, limit: 1});
+    assert.equal(paged.ok, true, paged.error);
+    assert.match(panelText(paged), /Row 3/);
+    assert.doesNotMatch(panelText(paged), /Row 2/);
     const tools = createDashboardTools({
       userDataDir: root,
       sources: () => [],
