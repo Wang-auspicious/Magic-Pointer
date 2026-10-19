@@ -103,6 +103,12 @@ app.whenReady().then(async () => {
         snapshot.modules[0].status='error';snapshot.errors=[{moduleId:'task-context',message:'Secondary panel unavailable'}];await controller.refresh();
         check(!document.querySelector('[data-mod-action=refresh]').disabled&&document.querySelector('.mp-mods-notice').textContent.includes('Secondary panel unavailable'),'one failed contribution does not disable a healthy panel action');
         snapshot.modules[0].status='active';snapshot.errors=[];await controller.refresh();
+        asynchronous=true;document.querySelector('[data-mod-action=refresh]').click();await Promise.resolve();
+        resolveAction({ok:false,error:'runtime_snapshot_probe_timeout'});await new Promise(r=>setTimeout(r,20));
+        check(document.querySelector('[data-mod-result]').textContent.includes('模块请求超时')&&document.querySelector('[data-mod-result]').textContent.includes('runtime_snapshot_probe_timeout')&&!document.querySelector('[data-mod-action=refresh]').disabled&&!document.querySelector('[data-mod-refresh]').disabled,'timed out action explains recovery and releases both retry and refresh controls');
+        currentSnapshot={ok:false,error:'bridge_timeout'};await controller.refresh();
+        check(document.querySelector('.mp-mods-notice').textContent.includes('请刷新面板')&&!document.querySelector('[data-mod-refresh]').disabled,'timed out panel read offers refresh without remaining busy');
+        currentSnapshot=snapshot;await controller.refresh();
         window.modController=controller;
         return checks;
       })()`);

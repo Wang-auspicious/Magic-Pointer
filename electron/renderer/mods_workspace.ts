@@ -56,6 +56,13 @@ declare global {
     const contentId = `mp-module-content-${++sequence}`;
     const text = (english: string, chinese: string): string =>
       options.language() === 'zh-CN' ? chinese : english;
+    const errorText = (message: string): string =>
+      message === 'bridge_timeout' || message === 'runtime_snapshot_probe_timeout'
+        ? `${text(
+            'The module request timed out. Refresh the panel or retry the action.',
+            '模块请求超时，请刷新面板或重试操作。',
+          )} (${message})`
+        : message;
     const element = <K extends keyof HTMLElementTagNameMap>(
       tag: K,
       className: string,
@@ -130,7 +137,7 @@ declare global {
       const failures = (snapshot?.errors || []).map(item =>
         item.moduleId ? `${item.moduleId}: ${item.message}` : item.message,
       );
-      notice.textContent = [error, ...failures].filter(Boolean).join('\n');
+      notice.textContent = [errorText(error), ...failures].filter(Boolean).join('\n');
       notice.hidden = !notice.textContent;
       notice.classList.toggle('is-error', Boolean(error || failures.length));
       const entries = panels();
@@ -176,7 +183,7 @@ declare global {
             'mp-mods-empty',
             loading
               ? text('Reading module state…', '正在读取模块状态…')
-              : error ||
+              : errorText(error) ||
                   text(
                     'Open a task to inspect its registered modules and saved context.',
                     '打开一个任务，即可查看已注册模块与保存的上下文。',
@@ -278,7 +285,7 @@ declare global {
             '',
             result.ok
               ? result.result?.text || text('Action completed.', '操作已完成。')
-              : result.error ||
+              : errorText(result.error || '') ||
                   result.errors?.map(item => item.message).join('\n') ||
                   text('The action did not complete.', '操作未完成。'),
           ),
