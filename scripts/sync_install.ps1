@@ -50,7 +50,9 @@ while (Get-Process "Magic Pointer" -ErrorAction SilentlyContinue) {
 }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'migrate_workspace.ps1') -InstalledRoot $installedDir -UserDataDir "$env:LOCALAPPDATA\Magic Pointer"
 if ($LASTEXITCODE -ne 0) { throw 'Workspace migration failed' }
-& robocopy.exe $unpackedDir $installedDir /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+# Electron archives can retain identical timestamps and lengths across versions.
+# Copy those files too: an old V8 snapshot with a new executable cannot start.
+& robocopy.exe $unpackedDir $installedDir /E /IS /IM /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
 $copyExitCode = $LASTEXITCODE
 if ($copyExitCode -ge 8) { throw "robocopy sync failed with exit code $copyExitCode" }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'sync_owned_runtime.ps1') -SourceRoot $unpackedDir -InstalledRoot $installedDir
