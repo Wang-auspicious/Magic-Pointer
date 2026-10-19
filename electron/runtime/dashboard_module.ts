@@ -20,24 +20,57 @@ function savedCommand(
   session: EventSession,
   commandId: string,
 ): {value: Data; arguments: Data; recordedAt: string} | undefined {
+  const commands =
+    commandId === 'open' ? ['open', 'create', 'update'] : [commandId];
   for (const event of [...session.events].reverse()) {
+    let value: Data;
+    let args: Data;
     if (
-      event.type !== 'module/command_finished' ||
-      event.data.moduleId !== 'dashboards' ||
-      event.data.commandId !== commandId
+      event.type === 'module/command_finished' &&
+      event.data.moduleId === 'dashboards' &&
+      commands.includes(String(event.data.commandId))
     ) {
+      const result = asObject(event.data.result);
+      if (result.is_error === true) {
+        continue;
+      }
+      value = asObject(result.value);
+      args = asObject(result.arguments);
+    } else if (
+      event.type === 'operation/settled' &&
+      event.data.outcome === 'succeeded'
+    ) {
+      const message = asObject(event.data.message);
+      if (
+        message.is_error === true ||
+        !commands.some(
+          command => message.name === `Dashboard.${command.replaceAll('-', '_')}`,
+        )
+      ) {
+        continue;
+      }
+      try {
+        // Runtime serializes the value on one line, then appends hook context.
+        value = asObject(JSON.parse(String(message.content).split('\n', 1)[0]));
+      } catch {
+        continue;
+      }
+      const prepared = session.events.find(
+        row =>
+          row.type === 'operation/prepared' &&
+          row.data.operationId === event.data.operationId,
+      );
+      args = asObject(prepared?.data.arguments);
+    } else {
       continue;
     }
-    const result = asObject(event.data.result);
-    if (result.is_error !== true) {
-      return {
-        value: asObject(result.value),
-        arguments: asObject(result.arguments),
-        recordedAt: event.time
-          ? new Date(event.time).toISOString()
-          : 'Time unavailable',
-      };
-    }
+    return {
+      value,
+      arguments: args,
+      recordedAt: event.time
+        ? new Date(event.time).toISOString()
+        : 'Time unavailable',
+    };
   }
   return undefined;
 }

@@ -10,6 +10,7 @@ import {handleFabric} from '../electron/runtime/fabric_api';
 import {bootPlugins} from '../electron/runtime/agent_plugins';
 import {dashboardModulePlugin} from '../electron/runtime/dashboard_module';
 import {ToolRegistry} from '../electron/runtime/tools';
+import {createDashboardTools} from '../electron/runtime/dashboard_tools';
 
 test('the Dashboard module queries a real CSV, preserves the shown snapshot and revalidates source access', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mp-dashboard-module-'));
@@ -111,6 +112,26 @@ test('the Dashboard module queries a real CSV, preserves the shown snapshot and 
     assert.equal(source.ok, true, source.error);
     assert.match(panelText(source), /112/);
     assert.match(panelText(source), /Row 2/);
+    const tools = createDashboardTools({
+      userDataDir: root,
+      sources: () => [],
+      authorizeAccess: () => ({allowed: true}),
+    });
+    await writeFile(file, 'region,revenue\nNorth,212\nSouth,18\n');
+    const args = {dashboard_id: saved.dashboardId};
+    const value = await tools.find(tool => tool.name === 'Dashboard.open')!
+      .execute(args, {tool_call_id: 'agent-query'});
+    await session.append('operation/prepared', {
+      operationId: 'agent-query', callId: 'agent-query',
+      name: 'Dashboard.open', arguments: args, effect: 'read',
+    });
+    await session.append('operation/settled', {
+      operationId: 'agent-query', outcome: 'succeeded',
+      message: {role: 'tool', name: 'Dashboard.open', tool_call_id: 'agent-query',
+        content: `${JSON.stringify(value)}\nHook context`, is_error: false},
+    });
+    assert.match(panelText(await read()), /230/,
+      'the panel must show the latest Agent query, including results with hook context');
     await updateContext(session, {scopeRevocations: ['sales']});
     const revoked = await invoke('refresh-values');
     assert.equal(revoked.ok, false);
