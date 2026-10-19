@@ -10951,8 +10951,36 @@ ipcMain.handle(
         maxTokens: 512,
         timeoutMs: 25_000,
         attempts: 1,
+        fetch: net.fetch.bind(net),
       });
       return {ok: true, usedBackend: result.usedBackend, latencyMs: result.latencyMs};
+    } catch (error) {
+      return {ok: false, error: error instanceof Error ? error.message : String(error)};
+    }
+  },
+);
+
+ipcMain.handle(
+  'models:list-connection',
+  async (event: Electron.IpcMainInvokeEvent, input: ModelConnectionInput) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_model_sender'};
+    }
+    if (!fabricSettingsStore || !credentialStore) {
+      return {ok: false, error: 'Model settings are not available.'};
+    }
+    try {
+      const {config} = prepareModelConnection(
+        {...input, model: input.model || 'model-discovery'},
+        {settings: fabricSettingsStore, credentials: credentialStore},
+      );
+      const catalog = await listModels({...config, models: []}, net.fetch.bind(net));
+      if (catalog.error) {
+        return {ok: false, error: catalog.error};
+      }
+      const models = catalog.groups.flatMap((group: {models: Array<{id: string}>}) => group.models)
+        .filter((model: {id: string}) => model.id !== 'model-discovery');
+      return {ok: true, models};
     } catch (error) {
       return {ok: false, error: error instanceof Error ? error.message : String(error)};
     }

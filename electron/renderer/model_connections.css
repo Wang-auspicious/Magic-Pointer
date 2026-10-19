@@ -9,6 +9,24 @@
   justify-content: space-between;
   gap: 12px;
 }
+.model-connection-advanced {
+  border-top: 1px solid var(--mp-rule);
+  padding-top: 12px;
+}
+.model-connection-discover {
+  justify-self: start;
+  font-size: 12px;
+}
+.model-connection-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mp-text-secondary);
+}
+.model-connection-advanced > div {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+}
 .model-connections h3 {
   margin: 0;
   font-size: 14px;

@@ -6,7 +6,10 @@ declare global {
         settings: Record<string, any>,
         api: Pick<
           MagicPointerDashboardApi,
-          'connectModel' | 'testModelConnection'
+          | 'connectModel'
+          | 'testModelConnection'
+          | 'modelsCatalog'
+          | 'listModelConnectionModels'
         > | null,
         onSaved: (
           response: import('../model_connection').ModelConnectionResponse,
@@ -22,7 +25,10 @@ window.ModelConnections = (() => {
   type Response = import('../model_connection').ModelConnectionResponse;
   type Api = Pick<
     MagicPointerDashboardApi,
-    'connectModel' | 'testModelConnection'
+    | 'connectModel'
+    | 'testModelConnection'
+    | 'modelsCatalog'
+    | 'listModelConnectionModels'
   >;
 
   const presets: Record<
@@ -65,6 +71,12 @@ window.ModelConnections = (() => {
   let message = '';
   let failed = false;
   let redraw: (() => void) | undefined;
+  let advancedOpen = false;
+  let manualModel = false;
+  let catalog: MagicPointerModelGroup[] = [];
+  let discoveredModels: string[] = [];
+  let modelsLoading = false;
+  let discoveryVersion = 0;
 
   const t = (en: string, zh: string): string =>
     document.documentElement.lang.startsWith('zh') ? zh : en;
@@ -84,7 +96,7 @@ window.ModelConnections = (() => {
       baseUrl: preset.url,
       model: preset.model,
       apiMode: preset.mode,
-      useLocalOpenCode: provider === 'opencode-go',
+      useLocalOpenCode: false,
       makeDefault: true,
     };
   }
@@ -97,10 +109,49 @@ window.ModelConnections = (() => {
   ): void {
     const profiles: Profile[] = settings.models?.profiles || [];
     const defaultId = settings.models?.defaultProfileId;
+    const modelChoices = (input: Input): string[] => {
+      const profile = profiles.find(
+        item =>
+          item.id === input.profileId &&
+          item.provider === input.provider &&
+          item.baseUrl === input.baseUrl &&
+          item.apiMode === input.apiMode,
+      );
+      const entries = catalog
+        .filter(group =>
+          input.profileId
+            ? Boolean(profile && group.profileId === profile.id)
+            : group.provider === input.provider,
+        )
+        .flatMap(group => group.models.map(model => model.id));
+      return [
+        ...new Set([
+          ...discoveredModels,
+          ...entries,
+          ...(profile?.models || [])
+            .map(model => String(model.id || ''))
+            .filter(Boolean),
+          ...(input.model ? [input.model] : []),
+        ]),
+      ];
+    };
     const render = (): void => {
       if (!container.isConnected) {
         return;
       }
+      const active = container.contains(document.activeElement)
+        ? document.activeElement
+        : null;
+      const focusName =
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLSelectElement
+          ? active.name
+          : '';
+      const caret =
+        active instanceof HTMLInputElement &&
+        ['text', 'password'].includes(active.type)
+          ? [active.selectionStart, active.selectionEnd]
+          : null;
       container.className = 'model-connections';
       container.innerHTML = `<section aria-label="${t('Model connections', '模型连接')}">
         <div class="model-connections-heading"><h3>${t('Connections', '已连接服务')}</h3>
@@ -110,14 +161,14 @@ window.ModelConnections = (() => {
             .map(
               profile => `<div class="model-connection-row">
           <div><strong>${escape(profile.displayName)}</strong>${profile.id === defaultId ? `<span class="model-connection-default">${t('Default', '默认')}</span>` : ''}
-          <small>${escape(profile.model)} · ${escape(profile.baseUrl)}</small></div>
-          <button type="button" data-model-edit="${escape(profile.id)}" ${busy ? 'disabled' : ''}>${t('Edit', '编辑')}</button>
+          <small>${escape(profile.model)}</small></div>
+          <button type="button" data-model-edit="${escape(profile.id)}" ${busy ? 'disabled' : ''}>${t('Change model', '更换模型')}</button>
         </div>`,
             )
             .join('') ||
           `<p class="model-connection-hint">${t('Connect a provider to start using Magic Pointer.', '连接模型服务后即可使用 Magic Pointer。')}</p>`
         }</div>
-        ${draft ? formMarkup(draft) : ''}
+        ${draft ? formMarkup(draft, modelChoices(draft)) : ''}
         <p class="model-connection-status" role="status" data-error="${failed}" ${message ? '' : 'hidden'}>${escape(message)}</p>
       </section>`;
       const form = container.querySelector<HTMLFormElement>('form');
@@ -131,6 +182,11 @@ window.ModelConnections = (() => {
         .querySelector('[data-model-add]')
         ?.addEventListener('click', () => {
           draft = fresh();
+          advancedOpen = false;
+          manualModel = false;
+          discoveredModels = [];
+          modelsLoading = false;
+          discoveryVersion++;
           message = '';
           render();
         });
@@ -155,11 +211,28 @@ window.ModelConnections = (() => {
               useLocalOpenCode: false,
             };
             message = '';
+            advancedOpen = false;
+            manualModel = false;
+            discoveredModels = [];
+            modelsLoading = false;
+            discoveryVersion++;
             render();
           });
         });
-      form?.addEventListener('input', () => {
+      form?.addEventListener('input', event => {
         draft = readForm(form, draft!);
+        if (
+          (event.target as HTMLInputElement).name === 'credential' &&
+          draft.credential
+        ) {
+          draft.useLocalOpenCode = false;
+          const local = form.elements.namedItem(
+            'useLocalOpenCode',
+          ) as HTMLInputElement | null;
+          if (local) {
+            local.checked = false;
+          }
+        }
         message = '';
         const status = container.querySelector<HTMLElement>(
           '.model-connection-status',
@@ -176,9 +249,108 @@ window.ModelConnections = (() => {
             ...fresh(selected),
             profileId: draft?.profileId,
             credential: '',
-            useLocalOpenCode: selected === 'opencode-go',
+            useLocalOpenCode: false,
           };
+          advancedOpen = selected === 'custom';
+          manualModel = false;
+          discoveredModels = [];
+          modelsLoading = false;
+          discoveryVersion++;
           render();
+        });
+      form
+        ?.querySelector('[data-model-choice]')
+        ?.addEventListener('change', event => {
+          if ((event.target as HTMLSelectElement).value === '__custom__') {
+            manualModel = true;
+            draft = {...draft!, model: ''};
+            render();
+            container
+              .querySelector<HTMLInputElement>('[name="model"]')
+              ?.focus();
+          }
+        });
+      form?.querySelector('details')?.addEventListener('toggle', event => {
+        advancedOpen = (event.target as HTMLDetailsElement).open;
+      });
+      form?.addEventListener(
+        'invalid',
+        event => {
+          const details = (event.target as HTMLElement).closest('details');
+          if (details) {
+            details.open = true;
+          }
+        },
+        true,
+      );
+      form
+        ?.querySelector('[data-model-discover]')
+        ?.addEventListener('click', async () => {
+          if (
+            modelsLoading ||
+            busy ||
+            !draft ||
+            !form ||
+            !api?.listModelConnectionModels
+          ) {
+            return;
+          }
+          draft = readForm(form, draft);
+          const input = {...draft};
+          const request = ++discoveryVersion;
+          const current = () =>
+            request === discoveryVersion &&
+            draft &&
+            [
+              'provider',
+              'baseUrl',
+              'apiMode',
+              'credential',
+              'profileId',
+              'useLocalOpenCode',
+            ].every(
+              key => draft![key as keyof Input] === input[key as keyof Input],
+            );
+          modelsLoading = true;
+          message = '';
+          render();
+          try {
+            const response = await api.listModelConnectionModels(input);
+            if (!current() || !draft) {
+              return;
+            }
+            if (!response.ok) {
+              throw new Error(
+                response.error ||
+                  t(
+                    'Could not fetch models. You can enter a model manually.',
+                    '未能获取模型，可以手动输入模型名称。',
+                  ),
+              );
+            }
+            discoveredModels = (response.models || []).map(model => model.id);
+            if (!draft.model && discoveredModels.length) {
+              draft.model = discoveredModels[0];
+            }
+            manualModel = discoveredModels.length === 0;
+            failed = false;
+            message = discoveredModels.length
+              ? ''
+              : t(
+                  'No models returned. Enter the model name from your provider.',
+                  '服务商未返回模型，请输入其提供的模型名称。',
+                );
+          } catch (error) {
+            if (current()) {
+              failed = true;
+              message = error instanceof Error ? error.message : String(error);
+            }
+          } finally {
+            if (request === discoveryVersion) {
+              modelsLoading = false;
+              redraw?.();
+            }
+          }
         });
       form
         ?.querySelector('[name="useLocalOpenCode"]')
@@ -190,6 +362,8 @@ window.ModelConnections = (() => {
         ?.querySelector('[data-model-cancel]')
         ?.addEventListener('click', () => {
           draft = null;
+          discoveryVersion++;
+          modelsLoading = false;
           message = '';
           render();
         });
@@ -203,13 +377,21 @@ window.ModelConnections = (() => {
         failed = false;
         message = test
           ? t('Testing connection…', '正在测试连接…')
-          : t('Saving connection…', '正在保存连接…');
+          : t('Testing and saving…', '正在测试并保存…');
         render();
         let saved: Response | undefined;
         try {
-          const response = test
-            ? await api?.testModelConnection?.(input)
-            : await api?.connectModel?.(input);
+          const verified = await api?.testModelConnection?.(input);
+          if (!verified?.ok) {
+            throw new Error(
+              verified?.error ||
+                t(
+                  'The connection could not be verified.',
+                  '连接验证失败，请检查服务和密钥。',
+                ),
+            );
+          }
+          const response = test ? verified : await api?.connectModel?.(input);
           if (!response?.ok) {
             throw new Error(
               response?.error ||
@@ -235,6 +417,7 @@ window.ModelConnections = (() => {
         } finally {
           busy = false;
           if (saved) {
+            render();
             onSaved(saved);
           } else {
             redraw?.();
@@ -248,12 +431,40 @@ window.ModelConnections = (() => {
       form
         ?.querySelector('[data-model-test]')
         ?.addEventListener('click', () => void submit(true));
+      const focusTarget = focusName
+        ? form?.elements.namedItem(focusName)
+        : null;
+      if (
+        focusTarget instanceof HTMLInputElement ||
+        focusTarget instanceof HTMLSelectElement
+      ) {
+        focusTarget.focus();
+        if (
+          caret &&
+          focusTarget instanceof HTMLInputElement &&
+          ['text', 'password'].includes(focusTarget.type)
+        ) {
+          focusTarget.setSelectionRange(caret[0], caret[1]);
+        }
+      }
     };
     redraw = render;
     render();
+    void api
+      ?.modelsCatalog?.()
+      .then(response => {
+        if (!container.isConnected || !response.catalog) {
+          return;
+        }
+        catalog = response.catalog.groups || [];
+        if (!draft && !busy) {
+          render();
+        }
+      })
+      .catch(() => {});
   }
 
-  function formMarkup(input: Input): string {
+  function formMarkup(input: Input, models: string[]): string {
     const selected = presets[input.provider] ? input.provider : 'custom';
     const field = (
       name: keyof Input,
@@ -270,8 +481,12 @@ window.ModelConnections = (() => {
             `<option value="${id}" ${id === selected ? 'selected' : ''}>${preset.name}</option>`,
         )
         .join('')}</select></label>
+      ${input.apiMode !== 'local' ? `<label>${t('API key', 'API 密钥')}<input name="credential" type="password" autocomplete="new-password" placeholder="${input.profileId ? t('Leave blank to keep the saved key', '留空以保留已存密钥') : t('Paste your provider API key', '粘贴服务商 API 密钥')}"></label>` : `<p class="model-connection-hint">${t('Local models do not need an API key.', '本地模型无需 API 密钥。')}</p>`}
+      ${models.length && !manualModel ? `<label>${t('Model', '模型')}<select name="model" data-model-choice>${models.map(model => `<option value="${escape(model)}" ${model === input.model ? 'selected' : ''}>${escape(model)}</option>`).join('')}<option value="__custom__">${t('Other model…', '其他模型…')}</option></select></label>` : field('model', t('Model', '模型'), t('Choose or enter a model', '选择或输入模型名称'))}
+      <button type="button" class="model-connection-discover" data-model-discover ${modelsLoading ? 'disabled' : ''}>${modelsLoading ? t('Fetching models…', '正在获取模型…') : t('Fetch models', '获取模型')}</button>
+      <details class="model-connection-advanced" ${advancedOpen ? 'open' : ''}><summary>${t('Advanced', '高级设置')}</summary><div>
       ${field('displayName', t('Connection name', '连接名称'))}
-      ${field('baseUrl', t('API base URL', 'API 地址'), 'https://…/v1')}
+      ${field('baseUrl', t('Service address', '服务地址'), 'https://…/v1')}
       <label>${t('API protocol', 'API 协议')}<select name="apiMode">${[
         ['chat-completions', 'Chat Completions'],
         ['responses', 'Responses'],
@@ -283,12 +498,12 @@ window.ModelConnections = (() => {
             `<option value="${id}" ${id === input.apiMode ? 'selected' : ''}>${label}</option>`,
         )
         .join('')}</select></label>
-      ${field('model', t('Model ID', '模型 ID'), t('Exact model ID from your provider', '服务商提供的完整模型 ID'))}
       ${selected === 'opencode-go' ? `<label class="model-connection-check"><input type="checkbox" name="useLocalOpenCode" ${input.useLocalOpenCode ? 'checked' : ''}>${t('Use the OpenCode Go account on this computer', '使用本机已登录的 OpenCode Go 账户')}</label>` : ''}
-      <label>${t('API key', 'API 密钥')}<input name="credential" type="password" autocomplete="new-password" ${input.useLocalOpenCode || input.apiMode === 'local' ? 'disabled' : ''} placeholder="${input.profileId ? t('Leave blank to keep the saved key', '留空以保留已存密钥') : t('Your provider API key', '服务商 API 密钥')}"></label>
       <label class="model-connection-check"><input type="checkbox" name="makeDefault" ${input.makeDefault ? 'checked' : ''}>${t('Use as the default for new chats', '作为新对话的默认连接')}</label>
+      <button type="button" data-model-test>${t('Test only', '仅测试连接')}</button>
+      </div></details>
       <p class="model-connection-hint">${t('Keys stay in encrypted local storage. Test connection sends a small request to the selected provider.', '密钥加密保存在本机。测试连接会向所选服务商发送一次小请求。')}</p>
-      <div class="model-connection-actions"><button type="button" data-model-cancel>${t('Cancel', '取消')}</button><button type="button" data-model-test>${t('Test connection', '测试连接')}</button><button type="submit">${t('Save connection', '保存连接')}</button></div>
+      <div class="model-connection-actions"><button type="button" data-model-cancel>${t('Cancel', '取消')}</button><button type="submit">${t('Test and save', '测试并保存')}</button></div>
     </fieldset></form>`;
   }
 

@@ -255,6 +255,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   testModelConnection: (
     input: import('./model_connection').ModelConnectionInput,
   ) => ipcRenderer.invoke('models:test-connection', input),
+  listModelConnectionModels: (input: import('./model_connection').ModelConnectionInput) =>
+    ipcRenderer.invoke('models:list-connection', input),
   selectModel: (model: unknown, profileId?: string) =>
     ipcRenderer.invoke('models:select', {model, profileId}),
   modelQuota: (options: {force?: unknown; selection?: unknown} = {}) =>
