@@ -15,7 +15,7 @@ const arm = source.statements.find(
 const javascript = ts.transpileModule(arm.getText(source), {
   compilerOptions: {target: ts.ScriptTarget.ES2022},
 }).outputText;
-async function run(fail = false) {
+async function run(fail = false, excluded = true, mode = 'pass_through') {
   const events = [];
   let ready;
   let failed;
@@ -27,11 +27,11 @@ async function run(fail = false) {
     isDestroyed: () => false,
     setBounds() {},
     setFocusable() {},
-    setIgnoreMouseEvents() {},
+    setIgnoreMouseEvents(ignore) { events.push(ignore ? 'pass-through' : 'shield'); },
     showInactive() {
       events.push('show');
     },
-    webContents: {send() {}},
+    webContents: {send(_channel, payload) { events.push(payload?.captureState); }},
   };
   const context = {
     selectionGestureArm: null,
@@ -45,6 +45,7 @@ async function run(fail = false) {
     selectionGestureExpiryTimer: null,
     overlayBoundDisplayId: null,
     overlayOwnsPointerInput: false,
+    overlayCaptureExcluded: excluded,
     crypto: {randomUUID: () => 'one'},
     Date,
     screen: {
@@ -61,7 +62,7 @@ async function run(fail = false) {
       armDelayMs: 180,
       timeoutMs: 5000,
       chainGapMs: 1000,
-      interactionMode: 'pass_through',
+      interactionMode: mode,
     }),
     getCaptureCommitCoordinator: () => ({arm: () => capture}),
     physicalDisplayBounds: () => [0, 0, 100, 100],
@@ -77,16 +78,27 @@ async function run(fail = false) {
     clearTimeout() {},
   };
   vm.runInNewContext(`${javascript}\narmSelectionGesture();`, context);
+  if (!excluded) {
+    assert.equal(events.includes('show'), false);
+    assert.equal(events.includes('failure'), true,
+      'capture exclusion failure must reject preparation without exposing an overlay');
+    return;
+  }
   assert.equal(
-    events.includes('show'),
-    false,
-    'first gesture must not be shown ready before capture can freeze a frame',
+    events.includes('preparing'),
+    true,
+    'wake must display preparation feedback before the first frame is available',
   );
+  assert.equal(events.includes('ready'), false);
+  if (mode === 'exclusive_overlay') {
+    assert.equal(events.includes('shield'), true,
+      'default exclusive mode must shield the target during frame preparation');
+    assert.equal(context.overlayOwnsPointerInput, true);
+  }
   if (fail) failed(new Error('capture_unavailable'));
   else ready('one');
   await new Promise(resolve => setImmediate(resolve));
   if (fail) {
-    assert.equal(events.includes('show'), false);
     assert.equal(
       events.includes('failure'),
       true,
@@ -94,6 +106,7 @@ async function run(fail = false) {
     );
   } else {
     assert.equal(events.includes('show'), true);
+    assert.equal(events.includes('ready'), true);
     assert.equal(context.selectionGestureArm.captureReady, true);
   }
 }
@@ -140,10 +153,16 @@ function earlyRelease() {
     false,
     'early renderer completion must not wait for later pixels',
   );
+  context.selectionGestureArm = {token: 'late-ipc', captureReady: true};
+  assert.equal(context.completeSelectionGesture({
+    selectionGestureToken: 'late-ipc', captureState: 'preparing',
+  }), false, 'an early release remains invalid even if its IPC arrives after the first frame');
 }
 Promise.resolve()
   .then(() => run())
   .then(() => run(true))
+  .then(() => run(false, false))
+  .then(() => run(false, true, 'exclusive_overlay'))
   .then(earlyRelease)
   .then(() => console.log('gesture capture readiness passed'))
   .catch(error => {

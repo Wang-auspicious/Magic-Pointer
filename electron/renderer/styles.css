@@ -14,7 +14,8 @@ html, body {
 }
 
 body[data-mode='gesture'] {
-  background: rgba(0, 0, 0, 0.001);  
+  /* Keep one alpha byte so Windows hit testing does not pass through the shield. */
+  background: rgba(0, 0, 0, 0.004);
 }
 body[data-mode='gesture'],
 body[data-mode='gesture'] * {

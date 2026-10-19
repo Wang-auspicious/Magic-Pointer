@@ -29,11 +29,13 @@ let observerMode = false;
 let gestureMode = false;
 let gestureToken: string | null = null;
 let gestureAcceptAt = 0;
+let gestureCaptureReady = false;
 let gestureLineStyle = 'demo6_band';
 let gestureLineWidth = 22;
 let gestureInteractionMode = 'exclusive_overlay';
 let hintTimer: ReturnType<typeof setTimeout> | null = null;
 let gestureGraceTimer: ReturnType<typeof setTimeout> | null = null;
+let gestureReadyTimer: ReturnType<typeof setTimeout> | null = null;
 let currentWorkflow = 'generic';
 
 let guideTarget: {x: number; y: number} | null = null;
@@ -829,7 +831,7 @@ function render() {
     return;
   }
   if (gestureMode) {
-    if (Date.now() < gestureAcceptAt) {
+    if (!gestureCaptureReady || Date.now() < gestureAcceptAt) {
       return;
     }
     clear();
@@ -1035,6 +1037,10 @@ function resetOverlay() {
   if (gestureGraceTimer) {
     clearTimeout(gestureGraceTimer);
   }
+  if (gestureReadyTimer) {
+    clearTimeout(gestureReadyTimer);
+  }
+  gestureReadyTimer = null;
   fadeRaf = null;
   renderRaf = null;
   gestureGraceTimer = null;
@@ -1199,7 +1205,7 @@ window.addEventListener('pointerdown', e => {
   } catch (_error) {
     /* best effort */
   }
-  if (gestureMode) {
+  if (gestureMode && gestureCaptureReady) {
     window.magicPointer?.gestureStarted(gestureToken);
   }
   points = [];
@@ -1265,6 +1271,17 @@ window.addEventListener('pointerup', e => {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_error) {
     /* best effort */
+  }
+  if (gestureMode && !gestureCaptureReady) {
+    submitting = true;
+    window.magicPointer?.done({
+      workflow: currentWorkflow,
+      selectionGestureToken: gestureToken,
+      captureState: 'preparing',
+    });
+    e.stopPropagation();
+    e.preventDefault();
+    return;
   }
   addPoint(e, {force: true});
   render();
@@ -1339,10 +1356,18 @@ window.addEventListener('keydown', e => {
 });
 
 window.magicPointer?.onShow(payload => {
-  resetOverlay();
+  const continuingPreparation =
+    gestureMode &&
+    !gestureCaptureReady &&
+    payload?.captureState === 'ready' &&
+    payload?.selectionGestureToken === gestureToken;
+  if (!continuingPreparation) {
+    resetOverlay();
+  }
   allocateCanvas();
   observerMode = payload?.observerMode === true;
   gestureMode = payload?.gestureMode === true;
+  gestureCaptureReady = payload?.captureState !== 'preparing';
   gestureToken = payload?.selectionGestureToken
     ? String(payload.selectionGestureToken)
     : null;
@@ -1379,7 +1404,23 @@ window.magicPointer?.onShow(payload => {
   }
   if (gestureMode) {
     stopPulseLoop();
-    window.magicPointer?.gestureReady(gestureToken);
+    hint.textContent = '正在准备画面 · 请稍候，Esc 取消';
+    hint.classList.remove('dim');
+    if (gestureCaptureReady) {
+      const ready = () => {
+        gestureReadyTimer = null;
+        hint.textContent = '可以划线或圈选 · Esc 取消';
+        window.magicPointer?.gestureReady(gestureToken);
+        if (drawing) {
+          window.magicPointer?.gestureStarted(gestureToken);
+          scheduleRender();
+        }
+      };
+      gestureReadyTimer = setTimeout(
+        ready,
+        Math.max(0, gestureAcceptAt - Date.now()),
+      );
+    }
   } else {
     startPulseLoop();
   }
@@ -1421,6 +1462,7 @@ window.magicPointer?.onGuidePoint?.(payload => {
 window.magicPointer?.onGestureInput(payload => {
   if (
     !gestureMode ||
+    !gestureCaptureReady ||
     gestureInteractionMode !== 'pass_through' ||
     String(payload?.token || '') !== String(gestureToken || '')
   ) {
@@ -1464,6 +1506,7 @@ window.magicPointer?.onHide(() => {
   resetOverlay();
   releaseCanvas();
   gestureMode = false;
+  gestureCaptureReady = false;
   gestureToken = null;
   gestureAcceptAt = 0;
   gestureLineStyle = 'demo6_band';

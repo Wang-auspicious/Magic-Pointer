@@ -1128,7 +1128,10 @@ function handleAgentCursorProgress(record: any): void {
   });
 }
 
+let overlayCaptureExcluded = false;
+
 function createOverlayWindow() {
+  overlayCaptureExcluded = false;
   const display = screen.getPrimaryDisplay();
   const bounds = display.bounds;
 
@@ -1162,6 +1165,7 @@ function createOverlayWindow() {
   if (CAPSULE_CONTENT_PROTECTED) {
     try {
       overlayWindow.setContentProtection(true);
+      overlayCaptureExcluded = true;
     } catch (error) {
       log(
         `overlay content protection unavailable: ${(error as {message?: string})?.message || error}`,
@@ -1176,6 +1180,7 @@ function createOverlayWindow() {
   );
 
   overlayWindow.on('closed', () => {
+    overlayCaptureExcluded = false;
     overlayWindow = null;
     overlayOwnsPointerInput = false;
     overlayReadiness.reset();
@@ -7254,7 +7259,25 @@ function ensureResidentUiaHost(): void {
 function reportFrameCommitFailure(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   log(`frame commit failed: ${message}`);
-  deliverStageError(null, '这次没能冻结画面，请再选一次。');
+  cancelSelectionGesture('capture_failed');
+  const pointer = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(pointer);
+  const win = placeStageOnDisplay(display);
+  const failure = {
+    type: 'ERROR',
+    error: {message: '这次没能冻结画面，请再选一次。按 Esc 关闭。'},
+  };
+  stageReadiness.whenReady(() => {
+    if (selectionGestureArm || win.isDestroyed()) {
+      return;
+    }
+    showStage({
+      selectionSessionToken: null,
+      pointer: {x: pointer.x - display.bounds.x, y: pointer.y - display.bounds.y},
+      event: failure,
+    });
+  });
+  deliverStageError(null, failure.error.message);
 }
 
 function getCaptureCommitCoordinator() {
@@ -7281,6 +7304,10 @@ function getCaptureCommitCoordinator() {
 function armSelectionGesture(reason = 'wiggle') {
   cancelSelectionGesture('replaced');
   ensureFreshGestureOverlay();
+  if (!overlayCaptureExcluded) {
+    reportFrameCommitFailure(new Error('overlay_capture_exclusion_unavailable'));
+    return null;
+  }
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const now = Date.now();
@@ -7320,7 +7347,7 @@ function armSelectionGesture(reason = 'wiggle') {
         processName: selectionGestureArm.source.foregroundApp || '',
         title: '',
       },
-      overlayExcluded: true,
+      overlayExcluded: overlayCaptureExcluded,
     })
     .then(() => {
       const arm = selectionGestureArm;
@@ -7349,6 +7376,33 @@ function armSelectionGesture(reason = 'wiggle') {
   }
   createStageWindow();
   armTemporaryDismissShortcut();
+
+  overlayReadiness.whenReady(() => {
+    const arm = selectionGestureArm;
+    const win = overlayWindow;
+    if (
+      !arm ||
+      arm.token !== token ||
+      arm.captureReady ||
+      !win ||
+      win.isDestroyed()
+    ) {
+      return;
+    }
+    win.setBounds(arm.displayBounds);
+    const exclusive = arm.runtime.interactionMode === 'exclusive_overlay';
+    win.setIgnoreMouseEvents(!exclusive, {forward: true});
+    overlayOwnsPointerInput = exclusive;
+    win.showInactive();
+    win.webContents.send('overlay:show', {
+      reason,
+      workflow: 'selection_gesture',
+      gestureMode: true,
+      captureState: 'preparing',
+      gestureInteractionMode: arm.runtime.interactionMode,
+      selectionGestureToken: token,
+    });
+  });
 
   const reveal = () => {
     const arm = selectionGestureArm;
@@ -7384,13 +7438,15 @@ function armSelectionGesture(reason = 'wiggle') {
       if (typeof win.setFocusable === 'function') {
         win.setFocusable(false);
       }
-      win.setIgnoreMouseEvents(true, {forward: true});
-      overlayOwnsPointerInput = false;
+      const exclusive = arm.runtime.interactionMode === 'exclusive_overlay';
+      win.setIgnoreMouseEvents(!exclusive, {forward: true});
+      overlayOwnsPointerInput = exclusive;
       win.showInactive();
       win.webContents.send('overlay:show', {
         reason,
         workflow: 'selection_gesture',
         gestureMode: true,
+        captureState: 'ready',
         observerMode: false,
         selectionGestureToken: token,
         gestureAcceptAt: arm.readyAt,
@@ -7459,7 +7515,7 @@ function completeSelectionGesture(payload: any) {
     cancelSelectionGesture('stale');
     return false;
   }
-  if (!arm.captureReady) {
+  if (!arm.captureReady || payload?.captureState === 'preparing') {
     cancelSelectionGesture('capture_not_ready');
     reportFrameCommitFailure(new Error('capture_not_ready'));
     return false;
@@ -8898,6 +8954,9 @@ ipcMain.on(
     }
     if (rxToken !== arm.token) {
       log(`gesture-ready SKIP: token mismatch rx=${rxToken} arm=${arm.token}`);
+      return;
+    }
+    if (!arm.captureReady || Date.now() < arm.readyAt) {
       return;
     }
     if (arm.runtime.interactionMode !== 'exclusive_overlay') {
