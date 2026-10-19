@@ -45,6 +45,7 @@ declare global {
     details: HTMLDetailsElement;
     themeObserver: MutationObserver;
     initialState: Record<string, unknown>;
+    memoryOnly: boolean;
   }
   const containers = new WeakMap<HTMLElement, Map<HTMLElement, Mount>>();
   const activeMounts = new Set<Mount>();
@@ -179,6 +180,15 @@ declare global {
             return;
           }
           try {
+            // A binding can also feed other state values, so keep the whole
+            // password form in memory rather than guessing which keys to omit.
+            mount.memoryOnly ||= Boolean(
+              mount.wrapper.querySelector('input[type="password"]'),
+            );
+            if (mount.memoryOnly) {
+              localStorage.removeItem(storageKey(mount.scope, mount.blockId));
+              return;
+            }
             localStorage.setItem(
               storageKey(mount.scope, mount.blockId),
               JSON.stringify(state),
@@ -303,6 +313,7 @@ declare global {
       details,
       themeObserver,
       initialState: storedState(scope, blockId),
+      memoryOnly: false,
     };
     activeMounts.add(mount);
     removalObserver.observe(document.body, {childList: true, subtree: true});
