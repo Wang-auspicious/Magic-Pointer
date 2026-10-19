@@ -157,12 +157,12 @@ class CaptureCommitCoordinator {
     }
     this.activeToken = null;
     this.armedRequest = null;
-    if (failure !== null) {
-      this.onCommitFailure(failure);
-      return null;
-    }
     if (this.cancelledDuringCommit) {
       this.state = 'cancelled';
+      return null;
+    }
+    if (failure !== null) {
+      this.onCommitFailure(failure);
       return null;
     }
     this.beginSession(gesture, lease as ReturnType<typeof validateFrameLease>);

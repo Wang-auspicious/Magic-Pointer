@@ -123,19 +123,22 @@ coordinatorTests.push(async function commitFailureReleasesOverlayAndReportsWitho
 });
 
 coordinatorTests.push(async function cancellationDuringCommitSkipsTheSession() {
-  const events: string[] = [];
-  const coordinator = new CaptureCommitCoordinator({
-    provider: fakeProvider(events, { slowCommit: true }),
-    releaseOverlay: () => events.push('overlay-release'),
-    beginSession: () => events.push('session'),
-  });
-  await coordinator.arm(armRequest());
-  const completing = coordinator.complete(gesture());
-  await coordinator.cancel();
-  await completing;
-  assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release']);
-  assert.strictEqual(events.includes('session'), false);
-  assert.strictEqual(coordinator.state, 'cancelled');
+  for (const failCommit of [false, true]) {
+    const events: string[] = [];
+    const coordinator = new CaptureCommitCoordinator({
+      provider: fakeProvider(events, { slowCommit: true, failCommit }),
+      releaseOverlay: () => events.push('overlay-release'),
+      beginSession: () => events.push('session'),
+      onCommitFailure: () => events.push('reopened-error-stage'),
+    });
+    await coordinator.arm(armRequest());
+    const completing = coordinator.complete(gesture());
+    await coordinator.cancel();
+    await completing;
+    assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release']);
+    assert.strictEqual(events.includes('session'), false);
+    assert.strictEqual(coordinator.state, 'cancelled');
+  }
 });
 
 coordinatorTests.push(async function cancelWhileArmedCancelsTheWorkerEpoch() {
