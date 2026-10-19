@@ -48,8 +48,16 @@ export interface ModuleActionRequest {
   panelId: string;
   actionId: string;
 }
+export interface ModuleAgentRequest {
+  moduleId: string;
+  moduleTitle: string;
+  actionLabel: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}
 export interface ModuleActionResult extends ModuleWorkspaceSnapshot {
   result?: {text?: string; panelId?: string};
+  agentRequest?: ModuleAgentRequest;
   usedBackend?: string;
   timingMs?: number;
 }

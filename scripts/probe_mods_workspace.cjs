@@ -65,11 +65,11 @@ app.whenReady().then(async () => {
       await win.webContents.executeJavaScript(code);
       const checks = await win.webContents.executeJavaScript(`(async()=>{
         const checks=[]; const check=(value,message)=>{if(!value)throw Error(message);checks.push(message)};
-        let language='en';let calls=0;let fail=false;let resolveAction;let asynchronous=false;
+        let language='en';let calls=0;let fail=false;let resolveAction;let asynchronous=false;let composed=0;
         const snapshot={ok:true,modules:[{id:'task-context',title:'Task context',status:'active',commands:[],panels:[{id:'sources',moduleId:'task-context',title:'Task materials',description:'From the current task event log',status:{state:'ready',label:'Ready'},sections:[{id:'materials',title:'Sources',rows:[{id:'file',label:'Quarterly report <b>draft</b>',value:'User attached · Readable'}],actions:[{id:'refresh',label:'Read latest evidence',primary:true}]}]},{id:'receipt',moduleId:'task-context',title:'Latest receipt',status:{state:'ready',label:'Ready'},sections:[{id:'receipt',rows:[{id:'outcome',label:'Outcome',value:'Partial'}]}]}]}],errors:[]};
         let currentSnapshot=snapshot;let listCalls=0;
         snapshot.modules[0].panels[1].sections.push({id:'empty',title:'Outstanding work',rows:[]});
-        const controller=ModsWorkspace.create(document.getElementById('host'),{language:()=>language,list:async()=>{listCalls++;return currentSnapshot},invoke:async request=>{calls++;check(request.moduleId==='task-context'&&request.panelId==='sources'&&request.actionId==='refresh','action is bound to module/panel/action identity');if(asynchronous)return new Promise(resolve=>resolveAction=resolve);return fail?{ok:false,error:'source_read_failed'}:{...snapshot,result:{text:'Read the current source record'},usedBackend:'event-session',timingMs:12};}});
+        const controller=ModsWorkspace.create(document.getElementById('host'),{language:()=>language,list:async()=>{listCalls++;return currentSnapshot},composeAgentRequest:(sessionId,request)=>{check(sessionId==='task-one'&&request.toolName==='Module.task-context.read','continuation preserves backend session and tool');composed++;return true;},invoke:async request=>{calls++;check(request.moduleId==='task-context'&&request.panelId==='sources'&&request.actionId==='refresh','action is bound to module/panel/action identity');if(asynchronous)return new Promise(resolve=>resolveAction=resolve);return fail?{ok:false,sessionId:'task-one',error:'source_read_failed',agentRequest:{moduleId:'task-context',moduleTitle:'Task context',actionLabel:'Read source',toolName:'Module.task-context.read',arguments:{}}}:{...snapshot,result:{text:'Read the current source record'},usedBackend:'event-session',timingMs:12};}});
         await controller.refresh();
         check(document.querySelector('.mp-mods-header').getBoundingClientRect().left-document.querySelector('.mp-mods-workspace').getBoundingClientRect().left>=12,'module content has its own inset');
         check(document.querySelectorAll('[data-mod-panel]').length===2,'registered panels appear');
@@ -81,6 +81,8 @@ app.whenReady().then(async () => {
         fail=true;document.querySelector('[data-mod-action=refresh]').click();await new Promise(r=>setTimeout(r,20));
         check(document.querySelector('[data-mod-result]').textContent.includes('source_read_failed'),'failed action reports failure');
         check(!document.querySelector('[data-mod-action=refresh]').disabled,'failed action allows retry');
+        document.querySelector('[data-mod-continue]').click();document.querySelector('[data-mod-continue]').click();
+        check(composed===1&&document.querySelector('[data-mod-continue]').disabled&&document.querySelector('[data-mod-result]').classList.contains('is-error'),'continuation adds once to draft without relabelling the failed action as executed');
         fail=false;asynchronous=true;document.querySelector('[data-mod-action=refresh]').click();document.querySelector('[data-mod-action=refresh]').click();await Promise.resolve();
         check(calls===3,'pending action cannot be submitted twice');
         const beforePendingRefresh=listCalls;controller.invalidate();controller.invalidate();await new Promise(r=>setTimeout(r,20));

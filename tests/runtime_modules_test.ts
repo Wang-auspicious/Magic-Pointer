@@ -59,6 +59,7 @@ test('installed module contributes a panel, a read command and request evidence 
       actionId: 'read',
     });
     assert.equal(denied.ok, false);
+    assert.equal(denied.agentRequest?.toolName, 'Modules.source_note.read');
     await updateContext(session, {
       scopeGrants: [
         {
@@ -478,6 +479,9 @@ test('a failing request extension is visible while healthy panels remain usable 
     assert.equal(write.ok, false);
     assert.match(write.error!, /Agent turn/);
     assert.equal(wrote, false);
+    assert.equal(write.agentRequest?.toolName, 'Modules.bounded.change');
+    assert.equal(write.agentRequest?.actionLabel, 'Change');
+    assert.deepEqual(write.agentRequest?.arguments, {});
     assert.ok(
       session.events.some(
         event =>

@@ -249,13 +249,17 @@ app.whenReady().then(async () => {
       hotkeys: [],
     }),
   };
+  const unrelatedInvocations = [];
   for (const match of fs
     .readFileSync(path.join(root, 'electron/preload.ts'), 'utf8')
     .matchAll(/ipcRenderer\.invoke\(\s*['"]([^'"]+)['"]/g)) {
     const channel = match[1];
     if (owned.includes(channel)) continue;
     owned.push(channel);
-    ipcMain.handle(channel, () => fixtures[channel]?.() ?? []);
+    ipcMain.handle(channel, () => {
+      unrelatedInvocations.push(channel);
+      return fixtures[channel]?.() ?? [];
+    });
   }
   const js = code => win.webContents.executeJavaScript(code);
   const checks = [];
@@ -382,6 +386,27 @@ app.whenReady().then(async () => {
     check(
       await js("!document.querySelector('[data-mod-action=read]').disabled"),
       'real source authorization failure remains retryable',
+    );
+    const sendsBefore = unrelatedInvocations.filter(channel => /submit|send|start-turn/.test(channel)).length;
+    check(
+      await js(`(()=>{
+        const textarea=document.querySelector('.mpw-input');
+        textarea.value='Keep my original draft';
+        composerAttachments=[${JSON.stringify(note)}];
+        textarea.dispatchEvent(new Event('input',{bubbles:true}));
+        const attachmentsBefore=JSON.stringify(composerAttachments);
+        const button=document.querySelector('[data-mod-continue]');
+        if(!button)return false;
+        button.click();
+        const draft=textarea.value;
+        document.querySelector('[data-mod-continue]').click();
+        return draft.startsWith('Keep my original draft\\n\\n')&&draft.includes('source-note')&&draft.includes('Read latest note')&&draft.includes('{}')&&textarea.value===draft&&document.querySelector('[data-mod-continue]').disabled&&activeConversationRecord.agentSessionId===${JSON.stringify(session.id)}&&JSON.stringify(composerAttachments)===attachmentsBefore&&document.activeElement===textarea;
+      })()`),
+      'real denied worker action appends one editable request to the same task draft and preserves original text and attachments',
+    );
+    check(
+      unrelatedInvocations.filter(channel => /submit|send|start-turn/.test(channel)).length === sendsBefore,
+      'continuing in task does not send or execute the composed request',
     );
     await updateContext(session, {
       scopeGrants: [

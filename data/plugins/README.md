@@ -90,6 +90,7 @@ module.exports = {
 - `commands` 每项包含 id、label 和 `tool`。省略 ToolSpec.name 时，例如模块 `release-note` 的命令 `read` 进入真实注册表为 `Modules.release_note.read`；已有一方能力可提供完整 ToolSpec 保留原名。模型按现有 Tools 发现机制加载。输入 schema、effect、access_for、权限、pre/post hook、操作账本及验证都沿用普通 Agent 工具链。可选 `present(value)` 只将真实命令结果投影为界面 `{text,panelId}`，不改变工具返回、权限或日志，也不向模型伪造第二份结果。
 - `panels` 每项包含 id、`render()` 和 `actions` 映射。render 只返回 `module_contract.ts` 中的结构化标题、状态、分节、行与按钮；不会给渲染器注入 HTML/JavaScript。actions 把按钮 id 绑定到本模块的 commandId 和固定参数，界面只能提交已展示的三项身份，不能构造任意工具调用。目录类面板可在 render 时根据真实当前条目更新 actions；调用前先重新 render，再验证该按钮仍存在并可用。
 - 界面直接调用只接受 `read` 命令，并重新检查原权限、来源访问和当前按钮状态。写操作必须进入普通 Agent 回合及其权限流程。命令的真实返回、后端和耗时写入会话事件；失败不伪装成功。
+- 命令因权限或来源范围受阻时，可用“在任务中继续”把已解析的工具名与原参数追加到当前任务输入框，保留现有草稿和附件。该按钮只准备可编辑请求，不发送、不授权、不执行；用户发送后仍走原 Agent 权限和回执流程。普通工具失败或 hook 阻止不提供此入口。
 - `requestContext({sessionId,turn,signal})` 返回当前请求需要的文本证据。每个普通 Agent 模型请求前重新调用，按 `origin:data` 追加，不改变模型参数、权限、工具集合或用户原指令；完整文本存入 `module/request_context`，与实际请求投影和 token 估算一致。压缩后仍重新投影，不把旧模块证据变成持久用户指令。一个回调失败只记录该模块错误，其他模块仍可工作；恢复成功会清除保存的错误状态。
 
 内置 `task-context-module` 使用同一机制提供 Task context 面板及 `Modules.task_context.inspect`：直接读取当前 EventSession 的来源、活动引用、计划和未核对结果，不打开其他会话或原始文件。其 `refresh`、`summary` 按钮调用真正的读命令。主进程 `modules.list` 与 `modules.invoke` 从当前会话身份打开该工作区，后台子任务也注册同一模块服务。

@@ -67,6 +67,7 @@ test('the Dashboard module queries a real CSV, preserves the shown snapshot and 
     );
     const denied = await invoke(`open-${saved.dashboardId}`);
     assert.equal(denied.ok, false);
+    assert.equal(denied.agentRequest?.toolName, 'Dashboard.open');
     await updateContext(session, {
       scopeGrants: [
         {

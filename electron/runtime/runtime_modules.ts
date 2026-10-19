@@ -14,6 +14,7 @@ import type {
   ModsPanel,
   ModuleActionRequest,
   ModuleActionResult,
+  ModuleAgentRequest,
   ModuleRequestContext,
   ModuleWorkspaceSnapshot,
 } from './module_contract';
@@ -224,6 +225,7 @@ export class RuntimeModules {
   ): Promise<ModuleActionResult> {
     const started = performance.now();
     let usedBackend: string | undefined;
+    let agentRequest: ModuleAgentRequest | undefined;
     try {
       if (
         !this.session ||
@@ -253,6 +255,14 @@ export class RuntimeModules {
       }
       const name = module.commands.get(action.commandId)!;
       const spec = this.tools.get(name);
+      const continuation: ModuleAgentRequest = {
+        moduleId: module.definition.id,
+        moduleTitle: module.definition.title,
+        actionLabel: button.label,
+        toolName: name,
+        // The Agent applies its hooks when executing the authored request.
+        arguments: structuredClone(action.arguments ?? {}),
+      };
       const hook = await this.hooks?.run('pre', {
         tool_name: name,
         input: structuredClone(action.arguments ?? {}),
@@ -281,6 +291,7 @@ export class RuntimeModules {
           new Set(),
         ) !== 'allow'
       ) {
+        agentRequest = continuation;
         throw new Error(
           'This command requires an Agent turn and its normal permission flow',
         );
@@ -291,6 +302,7 @@ export class RuntimeModules {
           spec.access_for(args) as AccessRequest,
         );
         if (!access.allowed) {
+          agentRequest = continuation;
           throw new Error(access.reason);
         }
       }
@@ -312,6 +324,12 @@ export class RuntimeModules {
         result,
       });
       if (result.is_error || post?.allowed === false) {
+        if (
+          result.failure_type === 'permission_denied' &&
+          post?.allowed !== false
+        ) {
+          agentRequest = continuation;
+        }
         throw new Error(
           result.error_message ||
             String(post?.reason || 'Module command failed'),
@@ -342,6 +360,7 @@ export class RuntimeModules {
         ...(await this.snapshot()),
         ok: false,
         error: (error as Error).message,
+        ...(agentRequest ? {agentRequest} : {}),
         usedBackend,
         timingMs: performance.now() - started,
       };

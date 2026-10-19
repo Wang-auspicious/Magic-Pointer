@@ -12482,6 +12482,24 @@ if (modulesHost && globalThis.ModsWorkspace) {
     invoke: async request => activeConversationId && window.magicPointerDashboard?.modules
       ? window.magicPointerDashboard.modules.invoke({...request, conversationId: activeConversationId})
       : unavailableModules(),
+    composeAgentRequest: (sessionId, request) => {
+      const textarea = document.querySelector<HTMLTextAreaElement>('.mpw-input');
+      if (
+        !sessionId ||
+        activeConversationRecord?.agentSessionId !== sessionId ||
+        !textarea
+      ) {
+        return false;
+      }
+      const requestText = getStudioLanguage() === 'zh-CN'
+        ? `请在当前任务中继续模块操作：${request.moduleTitle} / ${request.actionLabel}。\n模块：${request.moduleId}\n工具：${request.toolName}\n参数：\n${JSON.stringify(request.arguments, null, 2)}`
+        : `Continue this module action in the current task: ${request.moduleTitle} / ${request.actionLabel}.\nModule: ${request.moduleId}\nTool: ${request.toolName}\nArguments:\n${JSON.stringify(request.arguments, null, 2)}`;
+      textarea.value += `${textarea.value ? '\n\n' : ''}${requestText}`;
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      return true;
+    },
     language: () => getStudioLanguage(),
   });
   const controller = modsWorkspaceController;

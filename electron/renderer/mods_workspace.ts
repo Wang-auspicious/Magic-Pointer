@@ -20,6 +20,10 @@ declare global {
     ): Promise<ModuleActionResult>;
     language(): string;
     visible?(): boolean;
+    composeAgentRequest?(
+      sessionId: string,
+      request: NonNullable<ModuleActionResult['agentRequest']>,
+    ): boolean;
   }
   var ModsWorkspace: {
     create(
@@ -45,7 +49,10 @@ declare global {
     let invalidated = false;
     let updateQueued = false;
     const pending = new Set<string>();
-    const results = new Map<string, ModuleActionResult & {elapsedMs: number}>();
+    const results = new Map<
+      string,
+      ModuleActionResult & {elapsedMs: number; composed?: boolean}
+    >();
     const contentId = `mp-module-content-${++sequence}`;
     const text = (english: string, chinese: string): string =>
       options.language() === 'zh-CN' ? chinese : english;
@@ -279,12 +286,64 @@ declare global {
         const metadata = [
           result.usedBackend,
           typeof result.timingMs === 'number'
-            ? text(`Execution ${Math.round(result.timingMs)} ms`, `执行 ${Math.round(result.timingMs)} ms`)
+            ? text(
+                `Execution ${Math.round(result.timingMs)} ms`,
+                `执行 ${Math.round(result.timingMs)} ms`,
+              )
             : '',
-          text(`Total ${Math.round(result.elapsedMs)} ms`, `总耗时 ${Math.round(result.elapsedMs)} ms`),
+          text(
+            `Total ${Math.round(result.elapsedMs)} ms`,
+            `总耗时 ${Math.round(result.elapsedMs)} ms`,
+          ),
         ].filter(Boolean);
         if (metadata.length) {
           resultHost.append(element('small', '', metadata.join(' · ')));
+        }
+        if (!result.ok && result.agentRequest && options.composeAgentRequest) {
+          const actions = element('div', 'mp-mods-actions');
+          const continueButton = element(
+            'button',
+            '',
+            result.composed
+              ? text('Added to draft', '已添加到草稿')
+              : text('Continue in task', '在任务中继续'),
+          );
+          continueButton.type = 'button';
+          continueButton.dataset.modContinue = '';
+          continueButton.disabled = result.composed === true;
+          continueButton.addEventListener('click', () => {
+            if (result.composed || results.get(identity) !== result) {
+              return;
+            }
+            if (
+              options.composeAgentRequest!(
+                result.sessionId,
+                result.agentRequest!,
+              )
+            ) {
+              result.composed = true;
+              render();
+            } else {
+              notice.textContent = text(
+                'Reopen the original task before adding this request.',
+                '请回到原任务后再添加此请求。',
+              );
+              notice.hidden = false;
+              notice.classList.add('is-error');
+            }
+          });
+          actions.append(continueButton);
+          resultHost.append(
+            element(
+              'p',
+              '',
+              text(
+                'Adds an editable request to this task’s draft. Review and send it to continue.',
+                '将可编辑的请求添加到当前任务草稿。请检查后发送以继续。',
+              ),
+            ),
+            actions,
+          );
         }
         content.append(resultHost);
       }
@@ -309,7 +368,10 @@ declare global {
         if (disposed || requestGeneration !== generation) {
           return;
         }
-        results.set(identity, {...result, elapsedMs: performance.now() - started});
+        results.set(identity, {
+          ...result,
+          elapsedMs: performance.now() - started,
+        });
         if (result.ok) {
           snapshot = result;
         }
