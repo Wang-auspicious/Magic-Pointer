@@ -7535,11 +7535,9 @@ function markSelectionGestureDrawing(
 function completeSelectionGesture(payload: any) {
   const arm = selectionGestureArm;
   if (!arm || String(payload?.selectionGestureToken || '') !== arm.token) {
-    cancelSelectionGesture('stale');
     return false;
   }
   if (arm.committing) {
-    cancelSelectionGesture('stale');
     return false;
   }
   if (!arm.captureReady || payload?.captureState === 'preparing') {

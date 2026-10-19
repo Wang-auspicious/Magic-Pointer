@@ -157,6 +157,40 @@ function earlyRelease() {
   assert.equal(context.completeSelectionGesture({
     selectionGestureToken: 'late-ipc', captureState: 'preparing',
   }), false, 'an early release remains invalid even if its IPC arrives after the first frame');
+  const replacement = {token: 'replacement', captureReady: true};
+  context.selectionGestureArm = replacement;
+  assert.equal(context.completeSelectionGesture({selectionGestureToken: 'old'}), false);
+  assert.equal(context.selectionGestureArm, replacement,
+    'completion queued before Esc must not cancel a newly awakened gesture');
+  replacement.committing = true;
+  assert.equal(context.completeSelectionGesture({selectionGestureToken: 'replacement'}), false);
+  assert.equal(context.selectionGestureArm, replacement,
+    'a duplicate completion must not cancel the frame already committing');
+}
+function queuedRendererCompletion() {
+  const overlay = ts.createSourceFile('overlay.ts', fs.readFileSync('electron/renderer/overlay.ts', 'utf8'), ts.ScriptTarget.Latest, true);
+  const submit = overlay.statements.find(row => ts.isFunctionDeclaration(row) && row.name?.text === 'submitGesture');
+  const queued = [];
+  const sent = [];
+  const context = {
+    submitting: false, strokes: [{}], gestureToken: 'old', currentWorkflow: 'selection_gesture',
+    computeSelectionPayload: () => ({selectionGestureToken: context.gestureToken}),
+    hideVisualsForCapture() {},
+    requestAnimationFrame: callback => queued.push(callback),
+    window: {magicPointer: {done: payload => sent.push(payload)}},
+  };
+  vm.runInNewContext(ts.transpileModule(submit.getText(overlay), {
+    compilerOptions: {target: ts.ScriptTarget.ES2022},
+  }).outputText, context);
+  context.submitGesture();
+  context.submitting = false;
+  context.gestureToken = 'replacement';
+  context.submitGesture();
+  queued[0]();
+  assert.equal(sent.length, 0, 'a frame callback queued before Esc must not send the old gesture after rearming');
+  queued[1]();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].selectionGestureToken, 'replacement');
 }
 Promise.resolve()
   .then(() => run())
@@ -164,6 +198,7 @@ Promise.resolve()
   .then(() => run(false, false))
   .then(() => run(false, true, 'exclusive_overlay'))
   .then(earlyRelease)
+  .then(queuedRendererCompletion)
   .then(() => console.log('gesture capture readiness passed'))
   .catch(error => {
     console.error(error);

@@ -990,6 +990,9 @@ function submitGesture() {
 
   hideVisualsForCapture();
   requestAnimationFrame(() => {
+    if (!submitting || payload.selectionGestureToken !== gestureToken) {
+      return;
+    }
     window.magicPointer?.done(payload);
   });
 }
