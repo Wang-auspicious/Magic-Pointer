@@ -1,0 +1,46 @@
+OpenUI browser renderer
+
+Package: @openuidev/browser-bundle 0.2.1
+Publisher: Thesys
+License: MIT; see LICENSE and the third-party notices retained in the bundle.
+Published archive:
+https://registry.npmjs.org/@openuidev/browser-bundle/-/browser-bundle-0.2.1.tgz
+Upstream repository: https://github.com/thesysdev/openui
+Published source revision: eb20708b9cc41afced5625e99e6ce8ec2f8a5435
+Revision source: npm package provenance, resolvedDependencies.gitCommit.
+Release workflow: https://github.com/thesysdev/openui/actions/runs/38680915033/attempts/1
+
+openui-bundle.min.js and openui-styles.css are the unmodified files from the
+published archive. The JS includes React, ReactDOM, the OpenUI Lang renderer,
+the default chat component library, and their runtime dependencies. The package
+declares @openuidev/react-lang ^1.0.1 and @openuidev/react-ui ^0.18.1. Its actual
+browser export reports React 19.2.4. No package install scripts were run.
+
+Public global: window.__OpenUI
+Exports: React, createRoot, Renderer, openuiChatLibrary.
+
+system-prompt.txt was generated from this exact browser bundle in an isolated
+Electron page by calling:
+  window.__OpenUI.openuiChatLibrary.prompt({bindings: true, toolCalls: false})
+This enables reactive variables and local Set/Reset actions. Query/Mutation
+instructions are omitted until the host supplies its own authorized tool bridge.
+The prompt is a tool-specific resource to load on demand, not a global prompt
+to insert into every model request. It describes this bundle's default library,
+not the distinct custom library in thesysdev/open-intelligent-ui.
+
+Renderer properties used by the host:
+  response, library, isStreaming, initialState, onStateUpdate, onAction, onError.
+Continue-conversation actions report type, humanFriendlyMessage, params.context,
+and formState; formName is included when the action belongs to a form.
+
+Runtime telemetry: upstream lang-core explicitly excludes browser and browser
+worker environments. Server telemetry is opt-in; OPENUI_TELEMETRY_DISABLED=1
+also disables it if a server integration is added later. This vendored browser
+renderer does not use OpenUI Gateway/Cloud. A hidden Electron page verified
+local reactive updates and action callbacks with zero HTTP(S) requests.
+
+Documentation:
+https://github.com/thesysdev/openui/tree/eb20708b9cc41afced5625e99e6ce8ec2f8a5435/packages/browser-bundle
+https://www.openui.com/docs/openui-lang/renderer
+https://www.openui.com/docs/openui-lang/interactivity
+https://www.openui.com/docs/openui-lang/telemetry

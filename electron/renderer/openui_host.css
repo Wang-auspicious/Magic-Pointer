@@ -1,0 +1,55 @@
+:host {
+  display: block;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: 16px;
+  border: 1px solid var(--mp-rule, var(--openui-border-default));
+  border-radius: 12px;
+  background: var(--mp-panel, var(--openui-background));
+  color: var(--mp-text, var(--openui-text-neutral-primary));
+  font-family: var(--mp-font-ui, system-ui);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.mp-openui-content {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.mp-openui-notice {
+  margin: 8px 0;
+  color: var(--mp-text-secondary, #747474);
+  font-size: 12px;
+}
+.mp-openui-notice:empty {
+  display: none;
+}
+.mp-openui-notice[data-error] {
+  color: var(--mp-danger, #bf5548);
+}
+.mp-openui-source {
+  margin-top: 10px;
+  color: var(--mp-text-secondary, #747474);
+  font-size: 12px;
+}
+.mp-openui-source summary {
+  cursor: pointer;
+}
+.mp-openui-source button {
+  margin: 8px 0;
+  padding: 5px 9px;
+  color: inherit;
+  border: 1px solid var(--mp-rule, #aaa);
+  border-radius: 5px;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.mp-openui-source pre {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,5 +1,15 @@
 # Third-party notices
 
+## OpenUI interactive responses
+
+Magic Pointer embeds the MIT-licensed `@openuidev/browser-bundle` 0.2.1 from
+[thesysdev/openui](https://github.com/thesysdev/openui), using the unmodified
+published browser JavaScript and CSS. The bundle includes React, ReactDOM and
+OpenUI's component library. The upstream license and release provenance are in
+`electron/vendor/openui/LICENSE` and `electron/vendor/openui/NOTICE`.
+Magic Pointer's model requests, task execution, user actions and local state
+remain managed by its own Runtime and desktop application.
+
 ## Personal activity and session visualization references
 
 The personal activity recorder independently implements local activity aggregation,

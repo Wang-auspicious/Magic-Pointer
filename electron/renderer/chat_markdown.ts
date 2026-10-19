@@ -319,10 +319,19 @@ const ChatMarkdown = (() => {
         while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
           body.push(lines[index++]);
         }
+        const complete = index < lines.length;
         if (index < lines.length) {
           index += 1;
         }
         const lang = fence[1] || '';
+        if (lang.toLowerCase() === 'openui') {
+          blocks.push(h('section', {
+            class: 'mp-openui-block',
+            'data-openui-source': body.join('\n'),
+            'data-openui-complete': String(complete),
+          }, h('pre', {}, h('code', {}, body.join('\n')))));
+          continue;
+        }
         const attrs: Record<string, string> = lang
           ? {class: `language-${lang}`}
           : {};

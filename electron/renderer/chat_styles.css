@@ -3218,3 +3218,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-compact-menu-row kbd { margin-left: 8px; color: var(--mp-text-muted); font: inherit; }
 #composer-permission-menu .mpw-perm-check { color: var(--mp-focus); }
 #composer-permission-menu .mpw-perm-check .cds-icon { --cds-icon-size: 14px; font-size: 14px; width: 14px; height: 14px; }
+
+.mp-chat-ui-receipt { margin-top: 8px; white-space: normal; }
+.mp-chat-ui-receipt summary { cursor: pointer; font-size: 12px; color: var(--mp-text-secondary); }
+.mp-chat-ui-receipt pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }

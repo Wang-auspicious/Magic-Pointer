@@ -49,6 +49,7 @@ import {resolveModelConfig, streamModel, requestVision} from './model';
 import {bindDesktopWindow, prepareTaskContext} from './context_prepare';
 import {latestTurnArtifactSummaries} from './artifacts';
 import {dashboardModulePlugin} from './dashboard_module';
+import {generativeUiPlugin} from './generative_ui';
 import {taskSources, taskReferences, referenceRevision} from './context';
 import {registerBrowserTools} from './desktop_browser';
 import {
@@ -485,6 +486,7 @@ export async function runRuntime(
         });
       },
     },
+    generativeUiPlugin(),
     ...modelPlugins(streamModel),
   ];
   const plugins = await bootPlugins({

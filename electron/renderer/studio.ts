@@ -11206,6 +11206,7 @@ function buildStudioTaskInput(
   inputId: string,
   taskId: string,
   attachments: string[] = [],
+  sourceIds: string[] = [...composerSelectedSourceIds],
 ): MagicPointerTaskInput {
   const capturedAtMs = Date.now();
   return TaskSources.bindConversationTaskInput(
@@ -11215,7 +11216,7 @@ function buildStudioTaskInput(
       target: 'next-step',
       instruction,
       referenceUpdates: [],
-      sourceIds: [...composerSelectedSourceIds],
+      sourceIds,
       timeline: [],
       capturedAtMs,
     },
@@ -13266,6 +13267,133 @@ async function steerActiveConversation(
     },
   });
 }
+
+async function submitOpenUiAction(detail: {
+  scope: string;
+  blockId: string;
+  event: {
+    type: string;
+    humanFriendlyMessage?: string;
+    formState?: Record<string, unknown>;
+    params?: Record<string, unknown>;
+  };
+}): Promise<void> {
+  const conversationId = detail.scope.slice(0, detail.scope.lastIndexOf('#'));
+  const conversation = activeConversationRecord;
+  if (!conversationId || conversationId !== activeConversationId ||
+      conversation?.id !== conversationId || !conversation.agentSessionId) {
+    throw new Error('Open the original task to use this interface.');
+  }
+  if (detail.event.type === 'open_url') {
+    const result = await Data.openProjectUrl(String(detail.event.params?.url || ''));
+    if (!result.ok) {
+      throw new Error(result.error || 'Could not open this link.');
+    }
+    return;
+  }
+  if (detail.event.type !== 'continue_conversation') {
+    throw new Error('This interface action is not available.');
+  }
+  if (pendingPermissionAsk || pendingAskInput) {
+    throw new Error('Answer the current task question before continuing this interface.');
+  }
+  const question = [
+    detail.event.humanFriendlyMessage || 'Continue with these interface values.',
+    `\n[Interactive response: ${detail.scope}, ${detail.blockId}]`,
+    JSON.stringify({
+      fields: detail.event.formState ?? {},
+      context: detail.event.params?.context ?? null,
+    }),
+  ].join('\n');
+  const requestId = crypto.randomUUID();
+  const taskInput = buildStudioTaskInput(
+    question, `input:openui:${requestId}`, conversation.agentSessionId, [], [],
+  );
+  if (studioComposerBusy || pendingConversation || externalConversationRun) {
+    const result = await Data.steerConversation(conversation.agentSessionId, taskInput);
+    if (!result.ok) {
+      throw new Error(result.error || 'Could not send the interface response.');
+    }
+    if (activeConversationId === conversationId) {
+      const receipt = ChatView.userNode(question) as HTMLElement;
+      receipt.dataset.queued = 'true';
+      document.querySelector('#stream .mp-chat-flow')?.append(receipt);
+      scrollChatToBottom();
+    }
+    return;
+  }
+  const flow = document.querySelector<HTMLElement>('#stream .mp-chat-flow');
+  if (!flow) {
+    throw new Error('The task conversation is not visible.');
+  }
+  captureComposerDraft();
+  const body = document.createElement('div');
+  body.className = 'mp-chat-assistant-body';
+  flow.append(ChatView.userNode(question) as HTMLElement, body);
+  const submitted: PendingConversation = {
+    requestId,
+    question,
+    startedAt: Date.now(),
+    body,
+    records: new Map(),
+    renderer: ChatView.createLiveTurn(body, undefined, {taskPanel: true}),
+    agentSessionId: conversation.agentSessionId,
+    streamText: '',
+    reasoningText: '',
+    transcript: ConversationControl.createTranscript(),
+    liveTokens: null,
+  };
+  pendingConversation = submitted;
+  studioComposerBusy = true;
+  setComposerRunningState(true);
+  startPendingClock(body);
+  renderConversationProgress({phase: 'runtime_boot', fields: {}});
+  const permissionPreset = composerPreset;
+  const effort = composerEffort;
+  const modelSelection = currentComposerModelSelection();
+  try {
+    const workspace = await prepareComposerWorktree();
+    if (activeConversationId !== conversationId || pendingConversation !== submitted) {
+      throw new Error('The active task changed before the interface response was sent.');
+    }
+    const result = await Data.sendConversation({
+      conversationId, question, requestId, taskInput, attachments: [],
+      permissionPreset, effort, modelSelection,
+      workspaceRoot: workspace.projectRoot,
+      executionWorkspaceRoot: workspace.executionWorkspaceRoot,
+      projectId: workspace.projectId,
+      additionalFolders: conversation.additionalFolders,
+    });
+    if (!result?.ok) {
+      throw new Error(result?.error || 'The interface response did not complete.');
+    }
+    if (activeConversationId === conversationId && pendingConversation === submitted) {
+      await openConversation(conversationId);
+    }
+  } catch (error) {
+    if (activeConversationId === conversationId && pendingConversation === submitted) {
+      body.replaceChildren(ChatView.turnErrorNode(
+        error instanceof Error ? error.message : String(error),
+      ) as HTMLElement);
+    }
+    throw error;
+  } finally {
+    if (pendingConversation === submitted) {
+      detachPendingConversation();
+    }
+    void renderSidebar();
+  }
+}
+
+document.addEventListener('mp:openui-action', event => {
+  const detail = (event as CustomEvent<Parameters<typeof submitOpenUiAction>[0] & {
+    respond?: (result: {ok: boolean; error?: string}) => void;
+  }>).detail;
+  void submitOpenUiAction(detail).then(
+    () => detail.respond?.({ok: true}),
+    error => detail.respond?.({ok: false, error: error instanceof Error ? error.message : String(error)}),
+  );
+});
 
 document
   .getElementById('composer-form')

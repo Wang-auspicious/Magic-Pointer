@@ -11,3 +11,4 @@ external/**
 package-lock.json
 requirements.lock.txt
 electron/renderer/assets
+electron/vendor

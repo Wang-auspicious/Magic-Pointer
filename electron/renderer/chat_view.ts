@@ -3253,7 +3253,8 @@ const ChatView = (() => {
    */
   function deliveryNode(text: string): ChatNode {
     const rendered = markdownRenderer.render(text);
-    if (text.length <= 1500 && text.split('\n').length <= 25) {
+    if (/^\s*```\s*openui\s*$/im.test(text) ||
+        (text.length <= 1500 && text.split('\n').length <= 25)) {
       return rendered;
     }
     const root = h('div', {
@@ -3431,7 +3432,25 @@ const ChatView = (() => {
     const root = h('div', {class: 'mp-chat-user'});
     const stack = h('div', {class: 'mp-chat-user-stack'});
     const bubble = h('div', {class: 'mp-chat-bubble'});
-    attach(bubble, question);
+    const interactive = /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(question);
+    let values: unknown;
+    if (interactive) {
+      try {
+        values = JSON.parse(interactive[2]);
+      } catch {
+        // Keep an ordinary user message intact if it only resembles a receipt.
+      }
+    }
+    if (interactive && values && typeof values === 'object') {
+      attach(bubble, interactive[1]);
+      const details = h('details', {class: 'mp-chat-ui-receipt'});
+      attach(details, h('summary', {}, DOC?.documentElement.lang.startsWith('zh')
+        ? '已提交的选项' : 'Submitted values'));
+      attach(details, h('pre', {}, JSON.stringify(values, null, 2)));
+      attach(bubble, details);
+    } else {
+      attach(bubble, question);
+    }
     attach(stack, bubble);
     attach(root, stack);
     attach(root, messageActions(question, branch, timeMs, {align: 'user'}));
@@ -4419,14 +4438,17 @@ const ChatView = (() => {
   }
 
   function cleanDeliveryText(value: string): string {
+    let insideCode = false;
     return value
       .split(/\r?\n/)
-      .filter(
-        line =>
-          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(
-            line,
-          ),
-      )
+      .filter(line => {
+        if (/^\s*```/.test(line)) {
+          insideCode = !insideCode;
+          return true;
+        }
+        return insideCode ||
+          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(line);
+      })
       .join('\n')
       .trim();
   }
@@ -4803,6 +4825,7 @@ const ChatView = (() => {
       const current = node.querySelector<HTMLElement>('.mp-chat-markdown');
       if (!current) {
         node.replaceChildren(next);
+        globalThis.OpenUIHost?.sync(node, scope, true);
         return;
       }
       const blocks = Array.from(next.childNodes);
@@ -4810,6 +4833,13 @@ const ChatView = (() => {
         const existing = current.childNodes[index];
         if (!existing) {
           current.appendChild(block);
+        } else if (
+          existing instanceof HTMLElement && block instanceof HTMLElement &&
+          existing.hasAttribute('data-openui-source') &&
+          block.hasAttribute('data-openui-source')
+        ) {
+          existing.dataset.openuiSource = block.dataset.openuiSource;
+          existing.dataset.openuiComplete = block.dataset.openuiComplete;
         } else {
           const existingMarkup =
             (existing as Element).outerHTML ?? existing.textContent;
@@ -4819,13 +4849,21 @@ const ChatView = (() => {
             existingMarkup !== nextMarkup
           ) {
             current.insertBefore(block, existing);
+            if (existing instanceof HTMLElement) {
+              globalThis.OpenUIHost?.dispose(existing);
+            }
             existing.remove();
           }
         }
       });
       while (current.childNodes.length > blocks.length) {
-        current.childNodes[current.childNodes.length - 1]?.remove();
+        const last = current.lastChild;
+        if (last instanceof HTMLElement) {
+          globalThis.OpenUIHost?.dispose(last);
+        }
+        last?.remove();
       }
+      globalThis.OpenUIHost?.sync(node, scope, true);
     };
     const liveMarkdownNode = (text: string) => {
       const node = document.createElement('div');
@@ -5199,9 +5237,11 @@ const ChatView = (() => {
           .split(' ')
           .filter(name => name !== 'mp-chat-live-turn')
           .join(' ');
+        globalThis.OpenUIHost?.dispose(host);
         host.replaceChildren(
           ...(assistantTurnNode(turn, scope, options) as HTMLElement[]),
         );
+        globalThis.OpenUIHost?.sync(host, scope, false);
       },
     };
   }

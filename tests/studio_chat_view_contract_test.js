@@ -9,6 +9,13 @@ const css = fs.readFileSync('electron/renderer/chat_styles.css', 'utf8');
 const tokens = fs.readFileSync('electron/renderer/theme_tokens.css', 'utf8');
 const html = (node) => (node ? node.outerHTML : '');
 
+const interactive = ChatView.assistantTurnNode({
+  answer: '```openui\nroot = Card([TextContent("visual tool unavailable is sample data")])\n```',
+}, 'interactive-task#0').map(html).join('');
+assert(interactive.includes('data-openui-source='), 'OpenUI answers create a renderer mount');
+assert(interactive.includes('visual tool unavailable is sample data'), 'answer cleanup must preserve UI code');
+assert(!interactive.includes('mp-chat-code-head'), 'OpenUI is an interactive response, not a code card');
+
 const user = html(ChatView.userNode('把这个表格转成 CSV', 1729857600000));
 assert(user.includes('class="mp-chat-user"'), 'user node must carry the user row');
 assert(user.includes('class="mp-chat-bubble"'), 'the question must render inside the bubble');

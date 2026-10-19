@@ -12,6 +12,7 @@ export default [
       'external_zip/**',
       'data/**',
       'electron/renderer/assets/**',
+      'electron/vendor/**',
       '.tmp/**',
       '.tmp*/**',
       '.pytest*/**',
