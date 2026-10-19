@@ -107,6 +107,8 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     onPayload('conversations:progress', callback),
   openArtifact: (payload: unknown) =>
     ipcRenderer.invoke('stage:open-artifact', payload),
+  openTask: (payload: {selectionSessionToken: string}) =>
+    ipcRenderer.invoke('stage:open-task', payload),
   ready: () => ipcRenderer.send('stage:renderer-ready'),
   show: () => ipcRenderer.send('stage:show'),
   reportState: (payload: unknown) => ipcRenderer.send('stage:state', payload),

@@ -1717,6 +1717,9 @@ declare global {
       selectionSessionToken: string;
       artifactId: string;
     }): Promise<Record<string, any>>;
+    openTask?(payload: {
+      selectionSessionToken: string;
+    }): Promise<{ok: boolean; error?: string; conversationId?: string}>;
     ready(): void;
     reportState(payload: unknown): void;
     hidden(): void;

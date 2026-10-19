@@ -11,12 +11,12 @@ export function generativeUiPlugin(): RuntimePlugin {
         id: 'generative-ui',
         order: 80,
         render: () =>
-          'When interactive charts, adjustable calculations, forms, or comparisons would help, discover and call UI.describe before producing an inline OpenUI interface. Use the task’s actual data. Ordinary answers remain Markdown.',
+          'When interactive charts, diagrams, adjustable calculations, forms, or comparisons would help, discover and call UI.describe before producing an inline OpenUI interface. Use the task’s actual data. Ordinary answers remain Markdown.',
       });
       ctx.registerTool({
         name: 'UI.describe',
         description:
-          'Get the exact OpenUI language and component library for interactive charts, tables, forms, sliders and local calculations inside this conversation. Call before generating an interface. User interactions can continue this same task.',
+          'Get the exact OpenUI language and component library for interactive charts, SVG diagrams, tables, forms, sliders and local calculations inside this conversation. Call before generating an interface. User interactions can continue this same task.',
         deferred: true,
         effect: 'read',
         used_backend: 'local.openui-library',
@@ -34,7 +34,14 @@ export function generativeUiPlugin(): RuntimePlugin {
             path.join(__dirname, '..', 'vendor', 'openui', 'system-prompt.txt'),
             'utf8',
           );
-          const signatures = library.split(/\r?\n/).filter(line => /^[A-Z]\w*\(/.test(line));
+          const graphics = await readFile(path.join(__dirname, 'openui_graphics_prompt.txt'), 'utf8');
+          const definitions = new Map<string, string>();
+          for (const line of `${library}\n${graphics}`.split(/\r?\n/)) {
+            if (/^[A-Z]\w*\(/.test(line)) {
+              definitions.set(line.slice(0, line.indexOf('(')), line);
+            }
+          }
+          const signatures = [...definitions.values()];
           const names = signatures.map(line => line.slice(0, line.indexOf('(')));
           const topic = String(args.topic || (args.components ? 'components' : 'overview'));
           let content: string;

@@ -39,6 +39,7 @@ declare global {
     pending: boolean;
     wrapper: HTMLElement;
     root?: ReturnType<OpenUIBundle['createRoot']>;
+    bundle?: OpenUIBundle;
     code: HTMLElement;
     notice: HTMLElement;
     details: HTMLDetailsElement;
@@ -117,7 +118,10 @@ declare global {
             document.head.append(style);
           }
           return {
-            bundle,
+            bundle: {
+              ...bundle,
+              openuiChatLibrary: OpenUIGraphics.extend(bundle),
+            },
             css:
               official
                 .replace(/:root:not\(([^)]+)\)/g, ':host(:not($1))')
@@ -332,6 +336,7 @@ declare global {
         const style = document.createElement('style');
         style.textContent = css;
         shadow.prepend(style);
+        mount.bundle = bundle;
         mount.root = bundle.createRoot(wrapper, {
           onUncaughtError: (error: unknown) => failure(mount, error),
         });
@@ -407,8 +412,8 @@ declare global {
         mount.source = source;
         mount.complete = complete;
         mount.streaming = isStreaming;
-        if (changed && globalThis.__OpenUI) {
-          render(mount, globalThis.__OpenUI);
+        if (changed && mount.bundle) {
+          render(mount, mount.bundle);
         }
       });
     },

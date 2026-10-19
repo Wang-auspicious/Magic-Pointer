@@ -4028,6 +4028,22 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'stage:open-task',
+  (event: Electron.IpcMainInvokeEvent, payload: {selectionSessionToken?: unknown} = {}) => {
+    if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    const conversation = conversationForSelection(String(payload.selectionSessionToken || ''));
+    if (!conversation) {
+      return {ok: false, error: 'unknown_selection_task'};
+    }
+    showDashboard({view: 'chat', conversationId: conversation.id}, {activate: true});
+    hideStage();
+    return {ok: true, conversationId: conversation.id};
+  },
+);
+
+ipcMain.handle(
   'stage:open-artifact',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {

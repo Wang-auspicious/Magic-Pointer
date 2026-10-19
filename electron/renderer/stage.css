@@ -1715,6 +1715,42 @@ body {
   transition: width 120ms cubic-bezier(.22, 1, .36, 1);
 }
 
+.stage-openui-entry {
+  border: 1px solid var(--mp-rule, rgba(127, 127, 127, .25));
+  border-radius: 10px;
+  padding: 12px;
+  margin: 10px 0;
+}
+.stage-openui-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.stage-openui-entry [data-stage-open-task] {
+  padding: 6px 10px;
+  border: 1px solid var(--mp-rule, rgba(127, 127, 127, .3));
+  border-radius: 6px;
+  background: var(--mp-hover, rgba(127, 127, 127, .08));
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.stage-openui-entry [data-stage-open-task]:disabled {
+  opacity: .6;
+  cursor: default;
+}
+.stage-openui-entry [data-stage-open-task]:focus-visible {
+  outline: 2px solid var(--mp-clay, #987a65);
+  outline-offset: 2px;
+}
+.stage-openui-error {
+  margin: 8px 0 0;
+  color: var(--mp-danger, #bf5548);
+  font-size: 12px;
+}
+.stage-openui-error:empty { display: none; }
+
 .selection-stretch-handle[data-edge='top'] { top: -14px; }
 .selection-stretch-handle[data-edge='bottom'] { bottom: -14px; }
 

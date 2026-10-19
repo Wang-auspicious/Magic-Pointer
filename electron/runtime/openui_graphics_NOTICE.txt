@@ -1,0 +1,56 @@
+Magic Pointer OpenUI drawing extension
+
+Renderer: electron/renderer/openui_graphics.ts
+Global API: OpenUIGraphics.extend(bundle)
+The factory derives and caches a library from the official browser bundle. It
+uses public component schemas and library.extend; the vendored code is unchanged.
+
+Components: Svg, SvgCircle, SvgRect, SvgLine, SvgPath, SvgText, SvgGroup.
+Svg is supported in Card, SectionItem, TabItem and AccordionItem content.
+SvgGroup can contain shapes and nested groups. Reactive expressions are evaluated
+by the official OpenUI renderer. No alternate DSL interpreter is included.
+
+Schema resource: openui_graphics_prompt.txt
+Generated from the actual extended library's toSpec().components. It contains
+only newly added components and parent signatures changed by the extension,
+formatted as signature + " — " + description. Regenerate after changing a
+schema; merge these entries by component name with the vendor's prompt so the
+updated parent content unions replace the original signatures.
+
+Drawing values are mapped to explicit React SVG attributes. Numbers must be
+finite; sizes are nonnegative. Paint accepts named/hex/rgb/hsl CSS colors,
+currentColor and none, never URLs or arbitrary CSS variables. Path commands and
+group transforms are restricted to SVG drawing syntax. Text is a React text
+child. No raw markup, external image references or event-handler strings are
+accepted by these components.
+
+Reference implementation and adapted drawing attribute handling:
+https://github.com/thesysdev/open-intelligent-ui/blob/03213439358bf3408ad61a46ec9e3230c5572e48/src/lib/components/svg.tsx
+https://github.com/thesysdev/open-intelligent-ui/blob/03213439358bf3408ad61a46ec9e3230c5572e48/src/lib/components/style.ts
+
+Official extension/schema API:
+https://github.com/thesysdev/openui/blob/eb20708b9cc41afced5625e99e6ce8ec2f8a5435/packages/lang-core/src/library.ts
+https://github.com/thesysdev/openui/blob/eb20708b9cc41afced5625e99e6ce8ec2f8a5435/packages/lang-core/src/extend.ts
+The browser renderer's separate notices are in electron/vendor/openui/NOTICE.
+
+The MIT License (MIT)
+
+Copyright (c) 2026 Thesys Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

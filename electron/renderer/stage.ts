@@ -1937,6 +1937,56 @@
     }
   });
 
+  function renderInteractiveEntries(container: HTMLElement, streaming: boolean) {
+    for (const block of container.querySelectorAll<HTMLElement>('[data-openui-source]')) {
+      const generating = streaming || block.dataset.openuiComplete !== 'true';
+      let title = block.querySelector<HTMLElement>('.stage-openui-title');
+      if (!title) {
+        const token = session.token;
+        title = document.createElement('p');
+        title.className = 'stage-openui-title';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-quiet';
+        button.dataset.stageOpenTask = '';
+        button.textContent = '打开交互界面';
+        const error = document.createElement('p');
+        error.className = 'stage-openui-error';
+        error.setAttribute('role', 'status');
+        button.addEventListener('click', async () => {
+          if (button.disabled) {
+            return;
+          }
+          if (!token || token !== session.token || !api?.openTask) {
+            error.textContent = '当前任务无法打开，请重新指向后重试。';
+            scheduleHitRegionRefresh();
+            return;
+          }
+          button.disabled = true;
+          button.textContent = '正在打开…';
+          error.textContent = '';
+          try {
+            const result = await api.openTask({selectionSessionToken: token});
+            if (!result.ok) {
+              error.textContent = result.error === 'unknown_selection_task'
+                ? '此任务暂不可用，请重试或在工作台查找。'
+                : result.error || '未能打开交互界面，请重试。';
+            }
+          } catch (failure) {
+            error.textContent = failure instanceof Error ? failure.message : '未能打开交互界面，请重试。';
+          } finally {
+            button.disabled = false;
+            button.textContent = '打开交互界面';
+            scheduleHitRegionRefresh();
+          }
+        });
+        block.classList.add('stage-openui-entry');
+        block.replaceChildren(title, button, error);
+      }
+      title.textContent = generating ? '正在生成交互界面，可在工作台继续查看。' : '交互界面已准备好，在工作台中填写或操作。';
+    }
+  }
+
   function renderStructured(
     container: HTMLElement,
     payload: any,
@@ -1955,6 +2005,7 @@
           ? payload
           : {answer: String(payload || '')};
       container.replaceChildren(...ChatView.assistantTurnNode(turn, scope));
+      renderInteractiveEntries(container, false);
       container.dataset.answer = String(turn.answer || '');
       const actions = Array.isArray(payload?.actions) ? payload.actions : [];
       if (actions.length) {
@@ -2092,6 +2143,7 @@
       ChatView.bindDelegation(container);
     }
     card.renderer.update(card.snapshot);
+    renderInteractiveEntries(container, true);
   }
 
   function patchRunningCard(patch: any) {
