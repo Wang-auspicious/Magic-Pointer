@@ -452,6 +452,13 @@ declare global {
         });
         if (result.ok) {
           snapshot = result;
+          const target = result.result?.panelId;
+          if (selected === identity && target && result.modules.some(module =>
+            module.id === moduleId && module.panels.some(panel => panel.id === target),
+          )) {
+            selected = key(moduleId, target);
+            results.set(selected, results.get(identity)!);
+          }
         }
       } catch (failure) {
         if (disposed || requestGeneration !== generation) {
