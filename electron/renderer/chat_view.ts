@@ -4889,7 +4889,9 @@ const ChatView = (() => {
               entry = {node: make() as HTMLElement, signature};
               traceNodes.set(key, entry);
             } else if (entry.signature !== signature) {
-              if (key.startsWith('thought:')) {
+              if (key.startsWith('message:')) {
+                updateLiveMarkdown(entry.node, String(value));
+              } else if (key.startsWith('thought:')) {
                 const currentThought =
                   entry.node.querySelector<HTMLElement>('.mp-chat-think');
                 const nextWork = (value as {work?: FlowItem[]}).work?.find(

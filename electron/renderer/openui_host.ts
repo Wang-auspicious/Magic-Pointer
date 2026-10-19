@@ -18,6 +18,7 @@ declare global {
   var OpenUIHost: {
     sync(container: HTMLElement, scope: string, isStreaming: boolean): void;
     dispose(container: HTMLElement): void;
+    clearConversation(conversationId: string): void;
   };
 }
 
@@ -353,6 +354,24 @@ declare global {
     }
   }
   globalThis.OpenUIHost = {
+    clearConversation(conversationId) {
+      if (!conversationId) {
+        return;
+      }
+      const scopePrefix = `${conversationId}#`;
+      for (const mount of activeMounts) {
+        if (mount.scope.startsWith(scopePrefix)) {
+          release(mount);
+        }
+      }
+      const keyPrefix = `mp:openui:${scopePrefix}`;
+      for (let index = localStorage.length - 1; index >= 0; index--) {
+        const key = localStorage.key(index);
+        if (key?.startsWith(keyPrefix)) {
+          localStorage.removeItem(key);
+        }
+      }
+    },
     sync(container, scope, isStreaming) {
       let mounts = containers.get(container);
       if (!mounts) {

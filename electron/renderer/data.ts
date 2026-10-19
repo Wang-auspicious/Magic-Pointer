@@ -2176,7 +2176,11 @@ const Data: MagicPointerDataApi = {
     if (!hasBridge() || !bridge()!.conversations.delete) {
       return {ok: false, error: '删除通道不可用。'};
     }
-    return bridge()!.conversations.delete!(id);
+    const result = await bridge()!.conversations.delete!(id);
+    if (result.ok === true) {
+      globalThis.OpenUIHost?.clearConversation(id);
+    }
+    return result;
   },
 
   async respondConversation(
