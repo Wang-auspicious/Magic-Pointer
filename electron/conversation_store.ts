@@ -81,6 +81,7 @@ export interface TurnPendingInput {
 }
 
 interface Conversation {
+  workMode?: 'work' | 'code';
   id: string;
   objectKey: string;
   title: string;
@@ -104,6 +105,7 @@ interface Conversation {
 }
 
 interface TurnInput {
+  workMode?: 'work' | 'code';
   request?: Record<string, unknown>;
   runtimeTurn?: unknown;
   capturedAt?: number;
@@ -687,6 +689,7 @@ function createConversationStore(
       updatedAt: at,
       closed: false,
       turns: [entry],
+      workMode: turn.workMode === 'work' ? 'work' : 'code',
       projectId: project?.id || (hasProjectSelection ? '' : undefined),
       modelSelection,
       workspaceRoot:
@@ -1014,6 +1017,7 @@ function createConversationStore(
     projectStore.list(conversations);
     return conversations.slice(0, limit).map(c => ({
       id: c.id,
+      workMode: c.workMode || 'code',
       title: c.title,
       subtitle: c.subtitle,
       object: c.object,
@@ -1080,6 +1084,7 @@ function createConversationStore(
       updatedAt: at,
       closed: false,
       turns: structuredClone(sourceTurns.slice(0, index + 1)),
+      workMode: source.workMode || 'code',
       workspaceRoot: source.workspaceRoot,
       additionalFolders: [...(source.additionalFolders || [])],
       modelSelection: source.modelSelection

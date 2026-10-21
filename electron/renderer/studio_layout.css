@@ -226,9 +226,8 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   margin: -8px 0 14px;
 }
 
-.mp-shell[data-product-mode="design"] .mp-design-nav {
-  display: flex;
-}
+.mp-shell[data-product-mode="design"] #stream {max-width: 820px; margin-inline: auto; width: 100%;}
+.mp-shell[data-product-mode="design"] #stream .mp-chat-assistant-body {line-height: 1.75;}
 
 .mpw-workspace-browser {
   display: flex;

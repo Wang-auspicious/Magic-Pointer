@@ -3,7 +3,7 @@ const { STUDIO_VIEWS, normalizeView, shellState } = require('../electron/studio_
 
 assert.deepStrictEqual(
   STUDIO_VIEWS.map((view: { id: string }) => view.id),
-  ['personal', 'chat', 'design', 'stash', 'artifacts', 'settings', 'projects', 'scheduled', 'customize', 'chats', 'designs'],
+  ['resources', 'personal', 'chat', 'design', 'stash', 'artifacts', 'dashboard', 'settings', 'projects', 'scheduled', 'customize', 'chats', 'designs'],
   'Studio keeps personal activity as a primary view and trajectory inside its conversation',
 );
 assert.strictEqual(new Set(STUDIO_VIEWS.map((view: { id: string }) => view.id)).size, STUDIO_VIEWS.length);
@@ -14,6 +14,8 @@ for (const view of STUDIO_VIEWS) {
 }
 assert.strictEqual(normalizeView('settings'), 'settings');
 assert.strictEqual(normalizeView('personal'), 'personal');
+assert.strictEqual(normalizeView('resources'), 'resources');
+assert.strictEqual(shellState('resources').allowsDetail, false);
 assert.strictEqual(shellState('personal').allowsDetail, false);
 assert.strictEqual(normalizeView('hero'), 'chat', 'the removed marketing hero must not remain a route');
 assert.strictEqual(normalizeView('unknown'), 'chat');

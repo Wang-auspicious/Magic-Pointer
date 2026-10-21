@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="studio_libraries.css?v=1" />
   <link rel="stylesheet" href="project_workspace.css?v=1" />
   <link rel="stylesheet" href="studio_stash.css?v=1" />
+  <link rel="stylesheet" href="resource_library.css?v=1" />
   <link rel="stylesheet" href="personal_activity_view.css" />
   <link rel="stylesheet" href="right_workspace.css" />
   <link rel="stylesheet" href="dashboard.css?v=1" />
@@ -72,6 +73,9 @@
         <button class="mpw-customize" id="nav-projects" data-goto="projects" data-library-nav="projects">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE0C9;" aria-hidden="true"></span></span><span class="mp-nav-label">Projects</span>
         </button>
+        <button class="mpw-customize" id="nav-resources" data-goto="resources">
+          <span class="mp-nav-leading"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg></span><span class="mp-nav-label">Resources</span>
+        </button>
         <div class="mp-nav-row"><button class="mpw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
         </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="Create artifact" title="Create artifact"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
@@ -87,13 +91,6 @@
         <button class="mpw-customize" id="sidebar-more" aria-haspopup="menu" aria-expanded="false">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE027;" aria-hidden="true"></span></span><span class="mp-nav-label">More</span>
         </button>
-        </nav>
-
-        <nav class="mp-design-nav" aria-label="Design" hidden>
-          <button type="button" data-goto="design"><svg class="codex-icon" aria-hidden="true"><use href="#ic-layout-grid" /></svg><span>Overview</span></button>
-          <button type="button" data-goto="stash" data-design-layout="canvas"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg><span>Canvas</span></button>
-          <button type="button" data-goto="stash" data-design-layout="list"><svg class="codex-icon" aria-hidden="true"><use href="#ic-img" /></svg><span>Assets</span></button>
-          <button type="button" data-goto="artifacts"><svg class="codex-icon" aria-hidden="true"><use href="#ic-docs" /></svg><span>Artifacts</span></button>
         </nav>
 
         <section class="mpw-workspace-browser is-searching" aria-label="Conversation browser">
@@ -405,6 +402,7 @@
       <section class="mpw-view mp-library-view" id="view-chats" hidden><div class="mp-library" id="library-chats"></div></section>
       <section class="mpw-view mp-library-view" id="view-designs" hidden><div class="mp-library" id="library-designs"></div></section>
 
+      <section class="mpw-view" id="view-resources" hidden><div id="resource-library"></div></section>
       <section class="mpw-view" id="view-stash" hidden>
         <div class="page-toolbar">
           <span class="pill" id="stash-count">0 items</span>
@@ -745,6 +743,7 @@
   <script defer src="personal_activity_view.js"></script>
   <script defer src="settings_model.js?v=23"></script>
   <script defer src="model_connections.js?v=1"></script>
+  <script defer src="resource_library.js?v=1"></script>
   <script defer src="settings.js?v=23"></script>
   <script defer src="right_workspace.js"></script>
   <script defer src="desktop_perception.js"></script>

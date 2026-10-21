@@ -1064,7 +1064,7 @@ export async function prepareTaskContext(
   registerContextTools(options.registry, session, readers);
   registerArtifactTools(options.registry, session);
   const knowledge = new KnowledgeCatalog(
-    join(options.userDataDir, 'stash', 'index.json'),
+    String(payload.knowledgeIndexPath || join(options.userDataDir, 'stash', 'index.json')),
   );
   const catalog = new ConversationEventCatalog(options.userDataDir);
   const string = {type: 'string'};

@@ -1,6 +1,7 @@
 (() => {
   type StudioViewId =
     | 'chat'
+    | 'resources'
     | 'design'
     | 'stash'
     | 'artifacts'
@@ -23,6 +24,9 @@
 
   // Shell copy is English by default; the locale layer owns any translation.
   const STUDIO_VIEWS: readonly StudioView[] = Object.freeze([
+    Object.freeze({
+      id: 'resources', title: 'Resources', description: 'A place for what you want to return to.', eyebrow: 'YOUR COLLECTION', allowsDetail: false,
+    }),
     Object.freeze({
       id: 'personal',
       title: 'Review',

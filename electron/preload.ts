@@ -458,7 +458,12 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           .slice(0, 3000),
       }),
   },
+  resources: {
+    request: (action: import('./resource_collection_api').ResourceAction, input: import('./resource_collection_api').ResourceRequest = {}) =>
+      ipcRenderer.invoke('resources:command', {action, input}),
+  },
   browserView: {
+    // Website content never receives this preload; only the Studio surface does.
     open: (
       url: unknown,
       bounds: UnknownRecord = {},
@@ -524,6 +529,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       }),
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
     send: (payload: {
+      workMode?: unknown;
       conversationId?: unknown;
       projectId?: unknown;
       modelSelection?: unknown;
@@ -541,6 +547,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       permissionGrantOnce?: unknown;
     }) =>
       ipcRenderer.invoke('conversations:send', {
+        workMode: payload.workMode === 'work' ? 'work' : 'code',
         conversationId: String(payload?.conversationId || '').slice(0, 120),
         ...(typeof payload?.projectId === 'string'
           ? {projectId: payload.projectId}

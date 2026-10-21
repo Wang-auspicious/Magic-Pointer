@@ -116,6 +116,7 @@ export interface AgentResult {
   receipt: Data;
 }
 export interface AgentOptions {
+  workMode?: 'work' | 'code';
   root: string;
   userDataDir: string;
   session: EventSession;
@@ -598,12 +599,15 @@ function recoveryRetryBlocked(
 export async function buildSystemPrompt(
   options: Pick<
     AgentOptions,
-    'workspace' | 'userDataDir' | 'evidence' | 'hasSelection' | 'permissionMode'
+    'workspace' | 'userDataDir' | 'evidence' | 'hasSelection' | 'permissionMode' | 'workMode'
   >,
 ): Promise<string> {
   const memory = await memoryPrompt(options);
   return [
     '你是 Magic Pointer 的桌面助手，负责独立完成用户的编程、办公与桌面任务。短任务与跨会话长任务都由你执行。',
+    options.workMode === 'work'
+      ? '工作模式：Work。围绕用户的实际交付组织研究、资料、文档和桌面工作。先说明结果和来源，把工具细节留在运行记录。无需代码仓库也可工作；只有任务需要时使用代码工具。'
+      : '工作模式：Code。围绕项目源码、实现、调试和验证组织工作；交付说明具体改动及验证结果。仍可调用所有已授权的办公和桌面能力。',
     options.hasSelection
       ? '用户圈选了对象。Look/Around/Tree 是历史冻结证据；Observe 是当前状态。历史坐标不能用于现在的点击。判断应用身份依据窗口事实。'
       : '根据本任务实际加入的材料工作，不要寻找不存在的屏幕对象。后续加入的指向以新的任务材料为准。',

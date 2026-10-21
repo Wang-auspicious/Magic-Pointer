@@ -40,6 +40,7 @@ export function resolveProjectMaterial(
 }
 
 export interface ProjectContext {
+  resourceInbox?: Array<{id: string; title: string; summary: string; path: string}>;
   id?: string;
   root: string;
   name: string;

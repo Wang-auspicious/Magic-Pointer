@@ -1,5 +1,7 @@
 'use strict';
 
+import {resourceCollection, type ResourceCollection} from './resource_collection_contract';
+
 type StashMedia = 'clip' | 'text' | 'image' | 'file';
 
 interface BitmapSample {
@@ -9,6 +11,8 @@ interface BitmapSample {
 }
 
 interface StashInput {
+  collection?: Partial<ResourceCollection>;
+  resourceId?: string;
   app?: string;
   bitmap?: BitmapSample | null;
   capturedAt?: number;
@@ -355,7 +359,7 @@ function buildEntry(
       : fingerprint(input.bitmap));
   const draft = {...input, capturedAt, fingerprint: fp};
 
-  if (shouldDedupe(previous, draft, options.dedupeWindowMs)) {
+  if (!input.collection && shouldDedupe(previous, draft, options.dedupeWindowMs)) {
     return {skipped: true, reason: 'duplicate'};
   }
 
@@ -369,7 +373,8 @@ function buildEntry(
   return {
     skipped: false,
     entry: {
-      id: `s${capturedAt}-${(fp || 'x').split('-').pop()!.slice(0, 4)}`,
+      id: input.resourceId || `s${capturedAt}-${(fp || 'x').split('-').pop()!.slice(0, 4)}`,
+      ...(input.collection ? {collection: resourceCollection(input.collection)} : {}),
       capturedAt,
       fingerprint: fp,
       burstId: burst.burstId,

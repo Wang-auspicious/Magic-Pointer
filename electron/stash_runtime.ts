@@ -1,5 +1,7 @@
 'use strict';
 
+import {resourceCollection, type ResourceCollection} from './resource_collection_contract';
+
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -45,6 +47,7 @@ interface FocusInfo {
 }
 
 interface RuntimeEntry {
+  collection?: ResourceCollection;
   app: string;
   burstId: string;
   capturedAt: number;
@@ -180,6 +183,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
     const result = store.buildEntry(
       {
         ...input,
+        ...(input.collection ? {resourceId: crypto.randomUUID()} : {}),
         app: input.app || focus.app || '',
         windowTitle: input.windowTitle || focus.windowTitle || '',
         elementName: input.elementName || focus.elementName || '',
@@ -198,6 +202,9 @@ function createStashRuntime(options: StashRuntimeOptions) {
       return null;
     }
 
+    if (input.collection) {
+      result.entry.relPath = path.join(path.dirname(result.entry.relPath), `${result.entry.id}${path.extname(result.entry.relPath)}`);
+    }
     const abs = path.join(baseDir, result.entry.relPath);
     fs.mkdirSync(path.dirname(abs), {recursive: true});
     writeBytes(abs);
@@ -472,6 +479,28 @@ function createStashRuntime(options: StashRuntimeOptions) {
     return {...entry};
   }
 
+  function updateResource(id: string, patch: Partial<ResourceCollection>, expectedRevision?: number): RuntimeEntry {
+    ensureLoaded();
+    const entry = entries.find(item => item.id === id);
+    if (!entry) {
+      throw new Error('resource_not_found');
+    }
+    const current = resourceCollection(entry.collection);
+    if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+      throw new Error('resource_revision_conflict');
+    }
+    const previous = entry.collection;
+    entry.collection = resourceCollection({...current, ...patch, revision: current.revision + 1});
+    try {
+      persist();
+    } catch (error) {
+      entry.collection = previous;
+      throw error;
+    }
+    onEntry({...entry});
+    return structuredClone(entry);
+  }
+
   function remove(id: unknown): {ok: boolean; entry?: RuntimeEntry} {
     ensureLoaded();
     const index = entries.findIndex(
@@ -582,6 +611,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
     get,
     search,
     updateCategory,
+    updateResource,
     remove,
     baseDir,
   };

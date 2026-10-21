@@ -293,6 +293,9 @@ let selectedModel = 'claude-opus-5 1M';
 const ok = async () => ({ ok: true });
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
+  resources: {
+    request: (action, input = {}) => require('electron').ipcRenderer.invoke('resource-probe', {action, input}),
+  },
   hide: () => {},
   setTheme: () => {},
   saveFabricSettings: async () => ({ ok: true, settings }),

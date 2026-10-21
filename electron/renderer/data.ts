@@ -165,6 +165,7 @@ declare global {
   }
 
   interface MagicPointerConversation {
+    workMode?: 'work' | 'code';
     id: string;
     projectId?: string;
     title?: string;
@@ -194,6 +195,7 @@ declare global {
   }
 
   interface MagicPointerConversationSend {
+    workMode?: 'work' | 'code';
     conversationId?: string | null;
     projectId?: string;
     modelSelection?: MagicPointerModelSelection;
@@ -759,6 +761,7 @@ declare global {
   }
 
   interface MagicPointerDashboardApi {
+    resources: import('../resource_collection_api').ResourceCollectionApi;
     modules?: {
       list(payload: {conversationId: string}): Promise<import('../runtime/module_contract').ModuleWorkspaceSnapshot>;
       invoke(payload: Omit<import('../runtime/module_contract').ModuleActionRequest, 'sessionId'> & {conversationId: string}): Promise<import('../runtime/module_contract').ModuleActionResult>;

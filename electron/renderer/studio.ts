@@ -4112,6 +4112,7 @@ async function openConversation(id: string) {
     repositoryContextDismissedFor = '';
   }
   activeConversationId = c.id;
+  setProductMode(c.workMode === 'work' ? 'design' : 'walker', false);
   seedSessionPane(c.id);
   restoreWorkspaceResourceSnapshot();
   void refreshBackgroundAgentTasks(c.id);
@@ -6098,6 +6099,11 @@ const personalActivityUi = globalThis.PersonalActivityView?.mount(
   document.getElementById('personal-activity'),
   window.magicPointerDashboard?.personalActivity,
 );
+const resourceLibraryUi = globalThis.ResourceLibrary?.mount(
+  document.getElementById('resource-library')!,
+  window.magicPointerDashboard?.resources,
+  {openTask: id => {void openConversation(id);}, openCanvas: () => show('stash')},
+);
 document
   .getElementById('personal-activity')
   ?.addEventListener('personal-activity-open-conversation', event => {
@@ -6177,6 +6183,7 @@ function show(view: string, projectKey?: string) {
   } else {
     personalActivityUi?.hide();
   }
+  if (view === 'resources') {resourceLibraryUi?.show();} else {resourceLibraryUi?.hide();}
   void libraryUi.render(
     view,
     view === 'projects' ? projectKey || '' : undefined,
@@ -6438,15 +6445,16 @@ type ProductMode = 'walker' | 'design';
 let productMode: ProductMode = 'walker';
 
 function setProductMode(mode: ProductMode, navigate = true) {
+  const changed = productMode !== mode;
   productMode = mode;
   shell.dataset.productMode = mode;
   const designNav = document.querySelector<HTMLElement>('.mp-design-nav');
   const workNav = document.querySelector<HTMLElement>('.mp-main-navigation');
   if (designNav) {
-    designNav.hidden = mode !== 'design';
+    designNav.hidden = true;
   }
   if (workNav) {
-    workNav.hidden = mode !== 'walker';
+    workNav.hidden = false;
   }
   document
     .querySelectorAll<HTMLElement>('[data-product-mode]')
@@ -6461,14 +6469,10 @@ function setProductMode(mode: ProductMode, navigate = true) {
     /* renderer storage unavailable */
   }
   if (navigate) {
-    show(mode === 'design' ? 'design' : 'chat');
-    if (mode === 'design') {
-      document
-        .querySelectorAll<HTMLElement>('.mp-design-nav button')
-        .forEach(button =>
-          button.classList.toggle('is-on', button.dataset.goto === 'design'),
-        );
+    if (changed && activeConversationId) {
+      startNewChat();
     }
+    show('chat');
   }
 }
 
@@ -6685,7 +6689,7 @@ function openInformationDialog(title: string, detail: string) {
 async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   closeWindowMenu();
   if (command === 'new-chat') {
-    setProductMode('walker');
+    show('chat');
     startNewChat();
     return;
   }
@@ -6703,7 +6707,7 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
         ...new Set([...composerAttachments, ...picked.paths.map(String)]),
       ];
       renderComposerAttachments();
-      setProductMode('walker');
+      show('chat');
     }
     return;
   }
@@ -6812,7 +6816,7 @@ async function executeAccountCommand(command: string) {
     return;
   }
   if (command === 'usage') {
-    setProductMode('walker');
+    show('chat');
     setStudioHomeVisible(true);
     return;
   }
@@ -13640,6 +13644,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       }
       const response = await Data.sendConversation({
         conversationId,
+        workMode: productMode === 'design' ? 'work' : 'code',
         question,
         permissionPreset,
         requestId,
@@ -13960,7 +13965,6 @@ function startNewChat(draftId?: string) {
 }
 
 document.getElementById('nav-new-chat')?.addEventListener('click', () => {
-  setProductMode('walker', false);
   startNewChat();
   show('chat');
 });
@@ -14103,9 +14107,7 @@ document.addEventListener('mouseout', e => {
 const initialView = studioShell.normalizeView(
   new URLSearchParams(location.search).get('view'),
 );
-void boot(
-  initialView === 'chat' && productMode === 'design' ? 'design' : initialView,
-);
+void boot(initialView === 'design' ? 'chat' : initialView);
 
 let conversationChangeRaf: number | null = null;
 Data.onChange(change => {

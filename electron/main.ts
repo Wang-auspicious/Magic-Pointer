@@ -1,5 +1,8 @@
 import {BrowserViewRegistry} from './browser_view_registry';
-import {runEgoBrowser} from './ego_browser';
+import {ResourceCollectionService} from './resource_collection_service';
+import {XResourceSource} from './resource_x_source';
+import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
+import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
 import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
 import {
   projectAttachments,
@@ -4279,6 +4282,12 @@ async function sendConversation(
   if (selectedProjectId && !projectContext) {
     return {ok: false, error: '找不到所选项目，请重新选择项目。'};
   }
+  if (projectContext) {
+    projectContext.resourceInbox = resources().list().filter(item =>
+      item.collection?.projectId === projectContext.id && item.collection?.exportedPath && item.collection.state !== 'ignored' &&
+      projectContext.sharedFiles?.includes(item.collection.exportedPath),
+    ).slice(0, 8).map(item => ({id: item.id, title: item.collection!.title, summary: item.collection!.summary.slice(0, 1200), path: item.collection!.exportedPath}));
+  }
   if (
     boundProject &&
     selectedProjectId !== undefined &&
@@ -4446,6 +4455,8 @@ async function sendConversation(
   const hadPendingWork = existing?.hasPendingWork === true;
   const payload = {
     question,
+    workMode: existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
+    knowledgeIndexPath: path.join(stashBaseDir(), 'index.json'),
     turns: bridgeHistoryTurns(existing?.turns),
     object: existing?.object || {},
     modelRuntime,
@@ -4483,6 +4494,7 @@ async function sendConversation(
         question,
         request: {
           taskInput,
+          workMode: existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
           attachments: taskAttachments,
           executionWorkspaceRoot: effectiveExecutionWorkspaceRoot,
           effort,
@@ -4492,6 +4504,7 @@ async function sendConversation(
         },
         answer: '',
         outcome: '进行中',
+        workMode: existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
         agentSessionId: effectiveAgentSessionId,
         hasPendingWork: true,
         modelId: String(modelRuntime?.model || '').trim() || undefined,
@@ -6259,6 +6272,81 @@ function createDashboardWindow(initialView = 'chat') {
 }
 
 let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
+
+let resourceService: ResourceCollectionService | null = null;
+let resourceXSource: XResourceSource | null = null;
+let resourceProcessingQueue: Promise<unknown> = Promise.resolve();
+function resources(): ResourceCollectionService {
+  if (!resourceService) {
+    resourceService = new ResourceCollectionService({
+      fetchPaper: url => net.fetch(url, {signal: AbortSignal.timeout(60000)}),
+      rules: () => resourceXSource?.snapshot().rules || '',
+      stash: () => initializeStashRuntime(),
+      projects: () => conversations().listProjects(),
+      attach: (projectId, paths) => {
+        const project = conversations().getProject(projectId);
+        if (!project) {throw new Error('Project not found.');}
+        const result = conversations().updateProject(projectId, {sharedFiles: [...new Set([...(project.sharedFiles || []), ...paths])]});
+        if (!result.ok) {throw new Error(result.error);}
+      },
+      analyze: input => sendConversation({...input, workspaceRoot: '', projectId: '', permissionPreset: 'read-only', workMode: 'work'}),
+    });
+    resourceService.recover();
+  }
+  return resourceService;
+}
+function xResourceSource(): XResourceSource {
+  if (!resourceXSource) {
+    if (!credentialStore) {throw new Error('Credentials are not ready.');}
+    resourceXSource = new XResourceSource({
+      folder: FABRIC_DATA_DIR, credentials: credentialStore,
+      fetch: (url, init) => net.fetch(url, init),
+      add: async input => {
+        const entry = await resources().add(input);
+        if (resourceXSource?.snapshot().organize && (!entry.collection || entry.collection.state === 'inbox')) {
+          resourceProcessingQueue = resourceProcessingQueue.then(async () => {
+            if (resourceXSource?.snapshot().organize) {await resources().process(entry.id);}
+          }).catch(error => log(`resource processing: ${error instanceof Error ? error.name : 'error'}`));
+        }
+        return entry;
+      },
+    });
+    resourceXSource.start();
+  }
+  return resourceXSource;
+}
+
+ipcMain.handle('resources:command', async (event: Electron.IpcMainInvokeEvent, raw: {action: ResourceAction; input?: ResourceRequest}): Promise<ResourceResponse> => {
+  if (!isDashboardSender(event)) {return {ok: false, error: 'unauthorized_renderer'};}
+  const input = raw?.input || {};
+  try {
+    const service = resources();
+    if (raw.action === 'list') {
+      return {ok: true, items: service.list().map(item => ({...item,
+        ...(item.media === 'image' || item.media === 'clip' ? {previewUrl: require('node:url').pathToFileURL(path.join(stashBaseDir(), item.relPath)).href} : {}),
+      })), projects: conversations().listProjects().map((project: ProjectRecord) => ({id: project.id, name: project.name, root: project.root})), source: xResourceSource().snapshot()};
+    }
+    if (raw.action === 'add') {return {ok: true, entry: await service.add(input)};}
+    if (raw.action === 'edit') {return {ok: true, entry: service.update(String(input.id || ''), input.patch || {}, Number(input.revision))};}
+    if (raw.action === 'process') {return {ok: true, entry: await service.process(String(input.id || ''))};}
+    if (raw.action === 'deliver') {return {ok: true, entry: await service.deliver(String(input.id || ''))};}
+    if (raw.action === 'x-connect') {return {ok: true, source: await xResourceSource().connect(String(input.token || ''))};}
+    if (raw.action === 'x-configure') {return {ok: true, source: xResourceSource().configure(input)};}
+    if (raw.action === 'x-sync') {return {ok: true, source: await xResourceSource().sync(true)};}
+    if (raw.action === 'browser-open') {
+      const url = normalizeBrowserUrl(String(input.url || ''));
+      const result = await openCollectionBrowser(url);
+      return {ok: true, url: result.url, title: result.title};
+    }
+    if (raw.action === 'capture') {
+      const result = await captureCollectionBrowserSelection();
+      return {ok: true, entry: await service.add({url: result.url, title: result.title, text: result.selectedText, note: input.note, projectId: input.projectId})};
+    }
+    throw new Error('Unknown resource action.');
+  } catch (error) {
+    return {ok: false, error: error instanceof Error ? error.message : String(error)};
+  }
+});
 
 function stashBaseDir() {
   const configured = fabricSettings?.stash?.dir;
@@ -8634,6 +8722,7 @@ if (gotLock) {
     setTimeout(() => {
       try {
         initializeStashRuntime();
+        xResourceSource();
       } catch (error) {
         log(
           `stash runtime startup failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`,
