@@ -1,5 +1,6 @@
 import {BrowserViewRegistry} from './browser_view_registry';
 import {ResourceCollectionService} from './resource_collection_service';
+import {resourceAnalysisTask} from './resource_analysis_task';
 import {XResourceSource} from './resource_x_source';
 import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
 import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
@@ -1915,6 +1916,9 @@ function notifyConversationChanged(
   conversationId: string,
   live?: {turnIndex: number; progress: SelectionLiveProgress},
 ): void {
+  if (!live) {
+    resourceService?.reconcileTask(conversationId);
+  }
   const payload = {
     id: conversationId,
     ...(live ? {turnIndex: live.turnIndex, liveProgress: live.progress} : {}),
@@ -4170,6 +4174,7 @@ async function respondConversation(
 async function sendConversation(
   raw: any = {},
   sender?: Electron.WebContents,
+  onStarted?: (conversationId: string) => void,
 ): Promise<any> {
   const inputResponse = raw?.inputResponse;
   const question = String(raw?.question || '').trim();
@@ -4527,6 +4532,24 @@ async function sendConversation(
       });
   const turnIndex = conversation.turns.length - 1;
   conversations().flush();
+  try {
+    onStarted?.(conversation.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    conversations().updateTurn({
+      conversationId: conversation.id,
+      turnIndex,
+      outcome: '失败',
+      failed: true,
+      error: message,
+      hasPendingWork: false,
+      resumePending: false,
+      completedAt: Date.now(),
+    });
+    conversations().flush();
+    notifyConversationChanged(conversation.id);
+    return {ok: false, error: message, conversationId: conversation.id};
+  }
   const previousTurn = continuation ? {...conversation.turns[turnIndex]} : null;
   const priorTrajectory = (previousTurn?.trajectory || []).map((item: any) => ({
     ...item,
@@ -6275,10 +6298,13 @@ let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
 
 let resourceService: ResourceCollectionService | null = null;
 let resourceXSource: XResourceSource | null = null;
-let resourceProcessingQueue: Promise<unknown> = Promise.resolve();
 function resources(): ResourceCollectionService {
   if (!resourceService) {
     resourceService = new ResourceCollectionService({
+      canOrganize: () =>
+        !isQuitting && resourceXSource?.snapshot().organize === true,
+      analysisTask: (taskId, requestId) =>
+        resourceAnalysisTask(conversations(), taskId, requestId),
       fetchPaper: url => net.fetch(url, {signal: AbortSignal.timeout(60000)}),
       rules: () => resourceXSource?.snapshot().rules || '',
       stash: () => initializeStashRuntime(),
@@ -6289,7 +6315,14 @@ function resources(): ResourceCollectionService {
         const result = conversations().updateProject(projectId, {sharedFiles: [...new Set([...(project.sharedFiles || []), ...paths])]});
         if (!result.ok) {throw new Error(result.error);}
       },
-      analyze: input => sendConversation({...input, workspaceRoot: '', projectId: '', permissionPreset: 'read-only', workMode: 'work'}),
+      analyze: input => {
+        const {onStarted, ...request} = input;
+        return sendConversation(
+          {...request, workspaceRoot: '', projectId: '', permissionPreset: 'read-only', workMode: 'work'},
+          undefined,
+          onStarted,
+        );
+      },
     });
     resourceService.recover();
   }
@@ -6303,10 +6336,9 @@ function xResourceSource(): XResourceSource {
       fetch: (url, init) => net.fetch(url, init),
       add: async input => {
         const entry = await resources().add(input);
-        if (resourceXSource?.snapshot().organize && (!entry.collection || entry.collection.state === 'inbox')) {
-          resourceProcessingQueue = resourceProcessingQueue.then(async () => {
-            if (resourceXSource?.snapshot().organize) {await resources().process(entry.id);}
-          }).catch(error => log(`resource processing: ${error instanceof Error ? error.name : 'error'}`));
+        if (resourceXSource?.snapshot().organize) {
+          resources().enqueue(entry.id);
+          void resources().drain().catch(error => log(`resource processing: ${String(error)}`));
         }
         return entry;
       },
@@ -6331,7 +6363,11 @@ ipcMain.handle('resources:command', async (event: Electron.IpcMainInvokeEvent, r
     if (raw.action === 'process') {return {ok: true, entry: await service.process(String(input.id || ''))};}
     if (raw.action === 'deliver') {return {ok: true, entry: await service.deliver(String(input.id || ''))};}
     if (raw.action === 'x-connect') {return {ok: true, source: await xResourceSource().connect(String(input.token || ''))};}
-    if (raw.action === 'x-configure') {return {ok: true, source: xResourceSource().configure(input)};}
+    if (raw.action === 'x-configure') {
+      const source = xResourceSource().configure(input);
+      void service.drain().catch(error => log(`resource processing: ${String(error)}`));
+      return {ok: true, source};
+    }
     if (raw.action === 'x-sync') {return {ok: true, source: await xResourceSource().sync(true)};}
     if (raw.action === 'browser-open') {
       const url = normalizeBrowserUrl(String(input.url || ''));
@@ -8723,6 +8759,7 @@ if (gotLock) {
       try {
         initializeStashRuntime();
         xResourceSource();
+        void resources().drain().catch(error => log(`resource recovery: ${String(error)}`));
       } catch (error) {
         log(
           `stash runtime startup failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`,
@@ -8973,6 +9010,8 @@ if (gotLock) {
 }
 
 app.on('will-quit', () => {
+  resourceService?.stop();
+  resourceXSource?.stop();
   projectTerminal.stop();
   void contextTrackerRuntime?.stop();
   void figmaRuntime.stop().catch((error: unknown) => {

@@ -1,7 +1,7 @@
 export type ResourceIntent =
   'save' | 'reference' | 'recreate' | 'read' | 'todo';
 export type ResourceState =
-  'inbox' | 'ready' | 'ignored' | 'processing' | 'error';
+  'inbox' | 'ready' | 'ignored' | 'queued' | 'processing' | 'waiting' | 'error';
 
 export interface ResourceCollection {
   url: string;
@@ -21,6 +21,10 @@ export interface ResourceCollection {
   paperPath: string;
   usedBackend: string;
   timingMs: number;
+  analysisRequestId: string;
+  analysisRevision: number;
+  analysisCoverage: string;
+  analysisAutomatic: boolean;
 }
 
 export function resourceCollection(
@@ -38,6 +42,8 @@ export function resourceCollection(
     'ready',
     'ignored',
     'processing',
+    'queued',
+    'waiting',
     'error',
   ];
   return {
@@ -58,6 +64,10 @@ export function resourceCollection(
     paperPath: String(value.paperPath || ''),
     usedBackend: String(value.usedBackend || ''),
     timingMs: Math.max(0, Number(value.timingMs) || 0),
+    analysisRequestId: String(value.analysisRequestId || ''),
+    analysisRevision: Math.max(0, Number(value.analysisRevision) || 0),
+    analysisCoverage: String(value.analysisCoverage || ''),
+    analysisAutomatic: value.analysisAutomatic === true,
   };
 }
 

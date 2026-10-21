@@ -76,7 +76,8 @@ app.whenReady().then(async () => {
           if(action==='add'){const added={...structuredClone(rows[0]),id:'added',text:input.text,collection:{...rows[0].collection,title:input.text}};rows.push(added);return structuredClone({ok:true,entry:added});}
           return structuredClone({ok:true,entry:row});
         }};
-        window.library=ResourceLibrary.mount(document.querySelector('main'),api,{openTask:()=>{},openCanvas:()=>{}});
+        window.openedTask='';
+        window.library=ResourceLibrary.mount(document.querySelector('main'),api,{openTask:id=>{window.openedTask=id;},openCanvas:()=>{}});
         library.show();await library.refresh();
       };void 0;
     `);
@@ -371,13 +372,57 @@ app.whenReady().then(async () => {
         );
       },
     );
+    await check(
+      'durable queued items remain visible in the inbox with their real state',
+      async () => {
+        await reset();
+        await js("rows[0].collection.state='queued';library.refresh()");
+        assert.equal(
+          await js("document.querySelectorAll('.rl-item').length"),
+          1,
+        );
+        assert.match(
+          await js("document.querySelector('.rl-item').textContent"),
+          /Queued/i,
+        );
+      },
+    );
+    await check(
+      'restored running analysis cannot launch a competing task',
+      async () => {
+        await reset();
+        await js(
+          "Object.assign(rows[0].collection,{state:'processing',taskId:'actual-task'});library.refresh()",
+        );
+        assert.equal(
+          await js(
+            "document.querySelector('[data-rl-action=process]').disabled",
+          ),
+          true,
+        );
+        assert.ok(
+          await js("!!document.querySelector('[data-rl-action=task]')"),
+        );
+      },
+    );
+    await check(
+      'waiting analysis continues its actual task from the primary action',
+      async () => {
+        await reset();
+        await js(
+          "Object.assign(rows[0].collection,{state:'waiting',taskId:'waiting-task'});library.refresh()",
+        );
+        assert.equal(
+          await js("document.querySelectorAll('.rl-item').length"),
+          1,
+        );
+        await click('.rl-actions [data-rl-action=task]');
+        assert.equal(await js('openedTask'), 'waiting-task');
+      },
+    );
     await reset();
     await js("document.querySelector('main').style.width='720px'");
     await new Promise(resolve => setTimeout(resolve, 100));
-    fs.writeFileSync(
-      path.join(output, 'narrow.png'),
-      (await win.webContents.capturePage()).toPNG(),
-    );
     const result = {
       ok: results.every(row => row.ok) && errors.length === 0,
       usedBackend:

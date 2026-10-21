@@ -173,7 +173,9 @@ declare global {
         return (
           (filter === 'all' ||
             (filter === 'inbox'
-              ? ['inbox', 'error', 'processing'].includes(detail.state)
+              ? ['inbox', 'error', 'queued', 'processing', 'waiting'].includes(
+                  detail.state,
+                )
               : detail.state === filter)) &&
           (!query ||
             `${detail.title} ${detail.summary} ${item.text || ''} ${detail.note}`
@@ -197,7 +199,7 @@ declare global {
               ).previewUrl;
               return `<button type="button" class="rl-item ${selected === item.id ? 'is-selected' : ''}" data-rl-id="${esc(item.id)}" aria-pressed="${selected === item.id}">
           ${preview ? `<div class="rl-thumbnail"><img src="${esc(preview)}" alt="${esc(detail.title)}" loading="lazy"></div>` : `<div class="rl-excerpt">${esc((detail.summary || item.text || detail.url || '').slice(0, 210))}</div>`}
-          <div class="rl-item-copy"><span class="rl-item-meta">${esc(item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong><div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent])}</span><span>${detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
+          <div class="rl-item-copy"><span class="rl-item-meta">${esc(item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong><div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent])}</span><span>${detail.state === 'queued' ? t('Queued', '等待整理') : detail.state === 'waiting' ? t('Needs your input', '等待你的处理') : detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
             })
             .join('')
         : snapshot.items?.length
@@ -220,6 +222,11 @@ declare global {
       }
       const detail = details(item);
       editorRevision = detail.revision;
+      const busy = pending.has(item.id) || detail.state === 'processing';
+      const primary =
+        detail.state === 'waiting' && detail.taskId
+          ? `<button type="button" data-rl-action="task">${t('Continue task', '继续整理任务')} ↗</button>`
+          : `<button type="button" data-rl-action="process" ${busy || detail.state === 'waiting' ? 'disabled' : ''}>${busy ? t('Working…', '正在处理…') : detail.state === 'queued' ? t('Organize now', '立即整理') : t('Let MP organize', '交给 MP 整理')}</button>`;
       panel.innerHTML = `<div class="rl-detail-top"><span>${t('Make it useful', '让它派上用场')}</span><button type="button" data-rl-action="close" aria-label="${t('Close details', '关闭详情')}">×</button></div>
         <button type="button" data-rl-action="reload" hidden>${t('Discard draft and reload', '舍弃草稿并重新加载')}</button>
         <form data-rl-edit><label>${t('Title', '标题')}<input name="title" value="${esc(detail.title)}" required></label><div class="rl-pair"><label>${t('Project', '项目')}<select name="projectId">${projectOptions(detail.projectId)}</select></label><label>${t('Use it for', '用途')}<select name="intent">${Object.entries(
@@ -234,7 +241,7 @@ declare global {
         <label>${t('Processed content', '整理后的内容')}<textarea name="summary" rows="6" placeholder="${t('Let the agent read your saved material, or write your own.', '让 Agent 整理已保存的材料，也可以自己写。')}">${esc(detail.summary)}</textarea></label>
         <label>${t('Next time', '下次可以做什么')}<textarea name="nextStep" rows="2">${esc(detail.nextStep)}</textarea></label><button type="submit" class="rl-save">${t('Save changes', '保存修改')}</button></form>
         <div class="rl-evidence">${detail.decisionReason ? `<span>${t('Collection decision', '收录判断')}</span><p>${esc(detail.decisionReason)}</p>` : ''}<span>${t('Reading coverage', '实际阅读范围')}</span><p>${esc(detail.coverage || t('Saved material; not yet reviewed.', '已保存材料，尚未阅读整理。'))}</p>${detail.error ? `<p class="rl-error">${esc(detail.error)}</p>` : ''}${detail.exportedPath ? `<p>${esc(detail.exportedPath)}</p>` : ''}</div>
-        <div class="rl-actions" aria-busy="${pending.has(item.id)}"><button type="button" data-rl-action="process" ${pending.has(item.id) ? 'disabled' : ''}>${pending.has(item.id) ? t('Working…', '正在处理…') : t('Let MP organize', '交给 MP 整理')}</button><button type="button" data-rl-action="deliver" ${pending.has(item.id) ? 'disabled' : ''}>${t('Send to project', '放入项目')} ↗</button></div>
+        <div class="rl-actions" aria-busy="${busy}">${primary}<button type="button" data-rl-action="deliver" ${busy ? 'disabled' : ''}>${t('Send to project', '放入项目')} ↗</button></div>
         <div class="rl-links">${detail.url ? `<button type="button" data-rl-action="source">${t('Original page', '原始页面')} ↗</button>` : ''}<button type="button" data-rl-action="original">${t('Saved original', '保存的原件')} ↗</button>${detail.taskId ? `<button type="button" data-rl-action="task">${t('Agent task', '整理任务')} ↗</button>` : ''}<button type="button" data-rl-action="ignore">${detail.state === 'ignored' ? t('Restore', '恢复') : t('Ignore', '忽略')}</button></div>`;
     }
     function renderBrowser() {

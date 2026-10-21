@@ -14,6 +14,18 @@ import {
 } from './resource_collection_contract';
 import {prepareResourceMedia} from './resource_media';
 import {fetchLinkedPaper} from './resource_paper';
+import type {ResourceAnalysisTask} from './resource_analysis_task';
+
+interface AnalysisResponse {
+  ok?: boolean;
+  answer?: string;
+  error?: string;
+  conversationId?: string;
+  usedBackend?: string;
+  timingMs?: number;
+  pendingInput?: unknown;
+  hasPendingWork?: boolean;
+}
 
 interface ResourceStash {
   baseDir: string;
@@ -35,6 +47,8 @@ interface ResourceProject {
 }
 
 interface CollectionOptions {
+  canOrganize?(): boolean;
+  analysisTask?(taskId: string, requestId: string): ResourceAnalysisTask | null;
   fetchPaper?(url: string): Promise<Response>;
   rules?(): string;
   stash(): ResourceStash;
@@ -44,18 +58,14 @@ interface CollectionOptions {
     question: string;
     attachments: string[];
     requestId: string;
-  }): Promise<{
-    ok?: boolean;
-    answer?: string;
-    error?: string;
-    conversationId?: string;
-    usedBackend?: string;
-    timingMs?: number;
-  }>;
+    onStarted?(conversationId: string): void;
+  }): Promise<AnalysisResponse>;
 }
 
 export class ResourceCollectionService {
   private readonly processing = new Set<string>();
+  private draining: Promise<void> | null = null;
+  private stopped = false;
   constructor(private readonly options: CollectionOptions) {}
 
   list(): CollectedResource[] {
@@ -159,7 +169,76 @@ export class ResourceCollectionService {
     );
   }
 
-  async process(id: string): Promise<CollectedResource> {
+  enqueue(id: string): CollectedResource {
+    const entry = this.options.stash().get(id);
+    if (!entry) {
+      throw new Error('resource_not_found');
+    }
+    const detail = resourceCollection(entry.collection);
+    if (detail.state !== 'inbox' || detail.analysisRequestId) {
+      return entry;
+    }
+    return this.options.stash().updateResource(
+      id,
+      {
+        state: 'queued',
+        analysisRequestId: `collect-${randomUUID()}`,
+        analysisRevision: detail.revision + 1,
+        analysisAutomatic: true,
+        analysisCoverage: '',
+        taskId: '',
+        error: '',
+      },
+      detail.revision,
+    );
+  }
+
+  drain(): Promise<void> {
+    if (!this.draining) {
+      this.draining = this.drainQueue().finally(() => {
+        this.draining = null;
+      });
+    }
+    return this.draining;
+  }
+
+  stop(): void {
+    this.stopped = true;
+  }
+
+  private async drainQueue(): Promise<void> {
+    while (!this.stopped) {
+      const item = this.list()
+        .reverse()
+        .find(
+          row =>
+            row.collection?.state === 'queued' &&
+            (!row.collection.analysisAutomatic || this.options.canOrganize?.()),
+        );
+      if (!item) {
+        return;
+      }
+      const detail = resourceCollection(item.collection);
+      if (detail.analysisRevision !== detail.revision) {
+        this.recordFailure(
+          item.id,
+          detail.analysisRevision,
+          new Error('The resource was edited while queued.'),
+        );
+        continue;
+      }
+      try {
+        await this.process(item.id, detail.analysisAutomatic);
+      } catch (error) {
+        if (this.options.stash().get(item.id)?.collection?.state === 'queued') {
+          throw error;
+        }
+        // A persisted failure leaves the next saved item independent.
+      }
+    }
+  }
+
+  async process(id: string, automatic = false): Promise<CollectedResource> {
     if (this.processing.has(id)) {
       throw new Error('This resource is already being processed.');
     }
@@ -169,16 +248,38 @@ export class ResourceCollectionService {
       throw new Error('resource_not_found');
     }
     const started = resourceCollection(entry.collection);
+    const existingTask =
+      started.analysisRequestId &&
+      ['processing', 'waiting'].includes(started.state)
+        ? this.options.analysisTask?.(started.taskId, started.analysisRequestId)
+        : null;
+    if (
+      existingTask?.state === 'running' ||
+      existingTask?.state === 'waiting'
+    ) {
+      throw new Error('Open the existing analysis task to continue.');
+    }
+    const requestId =
+      started.state === 'queued' && started.analysisRequestId
+        ? started.analysisRequestId
+        : `collect-${randomUUID()}`;
     const marked = stash.updateResource(
       id,
-      {state: 'processing', error: ''},
+      {
+        state: 'processing',
+        error: '',
+        taskId: '',
+        analysisRequestId: requestId,
+        analysisRevision: started.revision + 1,
+        analysisCoverage: '',
+        analysisAutomatic: automatic,
+      },
       started.revision,
     );
     let revision = marked.collection!.revision;
     const project = this.options
       .projects()
       .find(item => item.id === started.projectId);
-    const requestId = `collect-${randomUUID()}`;
     let response: Awaited<ReturnType<CollectionOptions['analyze']>> | undefined;
     this.processing.add(id);
     try {
@@ -198,14 +299,29 @@ export class ResourceCollectionService {
           this.options.fetchPaper,
         );
         if (paper) {
-          revision = stash.updateResource(id, {paperPath: paper.path}, revision)
-            .collection!.revision;
+          revision = stash.updateResource(
+            id,
+            {paperPath: paper.path, analysisRevision: revision + 1},
+            revision,
+          ).collection!.revision;
           media.attachments.push(paper.path);
           media.coverage += '\n' + paper.coverage;
         }
       }
+      revision = stash.updateResource(
+        id,
+        {analysisCoverage: media.coverage, analysisRevision: revision + 1},
+        revision,
+      ).collection!.revision;
       response = await this.options.analyze({
         requestId,
+        onStarted: conversationId => {
+          revision = stash.updateResource(
+            id,
+            {taskId: conversationId, analysisRevision: revision + 1},
+            revision,
+          ).collection!.revision;
+        },
         attachments: media.attachments,
         question: [
           media.coverage,
@@ -228,86 +344,106 @@ export class ResourceCollectionService {
           }),
         ].join('\n'),
       });
-      if (!response.ok) {
-        throw new Error(
-          response.error || 'Resource analysis did not complete.',
-        );
-      }
-      const answer = String(response.answer || '').trim();
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(
-          answer.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''),
-        );
-      } catch {
-        throw new Error(
-          'Analysis returned an unreadable result. Open the task to inspect it, then retry.',
-        );
-      }
-      if (
-        !parsed ||
-        typeof parsed.summary !== 'string' ||
-        !parsed.summary.trim() ||
-        typeof parsed.coverage !== 'string'
-      ) {
-        throw new Error(
-          'Analysis did not include a summary and reading coverage.',
-        );
-      }
-      return stash.updateResource(
-        id,
-        {
-          summary: parsed.summary,
-          nextStep: String(parsed.nextStep || ''),
-          coverage: [media.coverage, parsed.coverage]
-            .filter(Boolean)
-            .join('\n'),
-          decisionReason: String(parsed.decisionReason || ''),
-          ...(parsed.decision !== 'ignore' &&
-          !started.projectId &&
-          this.options.projects().some(row => row.id === parsed.projectId)
-            ? {
-                projectId: String(parsed.projectId),
-                decisionReason: `${String(parsed.decisionReason || '')}\nProject association suggested by MP.`,
-              }
-            : {}),
-          state:
-            parsed.decision === 'ignore'
-              ? 'ignored'
-              : parsed.decision === 'review'
-                ? 'inbox'
-                : 'ready',
-          error: '',
-          taskId: response.conversationId || '',
-          usedBackend: response.usedBackend || '',
-          timingMs: response.timingMs || 0,
-          exportedPath: '',
-        },
-        revision,
-      );
-    } catch (error) {
-      const current = stash.get(id);
-      if (current?.collection?.revision === revision) {
-        stash.updateResource(
+      if (response.pendingInput || (response.ok && response.hasPendingWork)) {
+        return stash.updateResource(
           id,
           {
-            state: 'error',
-            error: error instanceof Error ? error.message : String(error),
-            ...(response
-              ? {
-                  taskId: response.conversationId || '',
-                  usedBackend: response.usedBackend || '',
-                  timingMs: response.timingMs || 0,
-                }
-              : {}),
+            state: 'waiting',
+            taskId:
+              response.conversationId ||
+              stash.get(id)?.collection?.taskId ||
+              '',
+            analysisRevision: revision + 1,
           },
           revision,
         );
-      } else if (current?.collection?.state === 'processing') {
-        stash.updateResource(id, {
-          state: 'inbox',
-          error:
-            'The resource was edited during analysis. Your edits were preserved; run analysis again.',
+      }
+      return this.completeAnalysis(id, response, revision, media.coverage);
+    } catch (error) {
+      this.recordFailure(id, revision, error, response);
+      throw error;
+    } finally {
+      this.processing.delete(id);
+    }
+  }
+
+  private completeAnalysis(
+    id: string,
+    response: AnalysisResponse,
+    revision: number,
+    coverage: string,
+  ): CollectedResource {
+    const stash = this.options.stash();
+    const started = resourceCollection(stash.get(id)?.collection);
+    if (!response.ok) {
+      throw new Error(response.error || 'Resource analysis did not complete.');
+    }
+    const answer = String(response.answer || '').trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(
+        answer.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''),
+      );
+    } catch {
+      throw new Error(
+        'Analysis returned an unreadable result. Open the task to inspect it, then retry.',
+      );
+    }
+    if (
+      !parsed ||
+      typeof parsed.summary !== 'string' ||
+      !parsed.summary.trim() ||
+      typeof parsed.coverage !== 'string'
+    ) {
+      throw new Error(
+        'Analysis did not include a summary and reading coverage.',
+      );
+    }
+    return stash.updateResource(
+      id,
+      {
+        summary: parsed.summary,
+        nextStep: String(parsed.nextStep || ''),
+        coverage: [coverage, parsed.coverage].filter(Boolean).join('\n'),
+        decisionReason: String(parsed.decisionReason || ''),
+        ...(parsed.decision !== 'ignore' &&
+        !started.projectId &&
+        this.options.projects().some(row => row.id === parsed.projectId)
+          ? {
+              projectId: String(parsed.projectId),
+              decisionReason: `${String(parsed.decisionReason || '')}\nProject association suggested by MP.`,
+            }
+          : {}),
+        state:
+          parsed.decision === 'ignore'
+            ? 'ignored'
+            : parsed.decision === 'review'
+              ? 'inbox'
+              : 'ready',
+        error: '',
+        taskId: response.conversationId || started.taskId,
+        usedBackend: response.usedBackend || '',
+        timingMs: response.timingMs || 0,
+        exportedPath: '',
+      },
+      revision,
+    );
+  }
+
+  private recordFailure(
+    id: string,
+    revision: number,
+    error: unknown,
+    response?: AnalysisResponse,
+  ): void {
+    const stash = this.options.stash();
+    const current = stash.get(id);
+    if (current?.collection?.revision === revision) {
+      stash.updateResource(
+        id,
+        {
+          state: 'error',
+          error: error instanceof Error ? error.message : String(error),
           ...(response
             ? {
                 taskId: response.conversationId || '',
@@ -315,11 +451,25 @@ export class ResourceCollectionService {
                 timingMs: response.timingMs || 0,
               }
             : {}),
-        });
-      }
-      throw error;
-    } finally {
-      this.processing.delete(id);
+        },
+        revision,
+      );
+    } else if (
+      current?.collection &&
+      ['processing', 'waiting', 'queued'].includes(current.collection.state)
+    ) {
+      stash.updateResource(id, {
+        state: 'inbox',
+        error:
+          'The resource was edited during analysis. Your edits were preserved; run analysis again.',
+        ...(response
+          ? {
+              taskId: response.conversationId || '',
+              usedBackend: response.usedBackend || '',
+              timingMs: response.timingMs || 0,
+            }
+          : {}),
+      });
     }
   }
 
@@ -412,14 +562,100 @@ export class ResourceCollectionService {
   recover(): void {
     for (const item of this.list()) {
       if (
-        item.collection?.state === 'processing' &&
-        !this.processing.has(item.id)
+        !this.processing.has(item.id) &&
+        item.collection &&
+        ['processing', 'waiting'].includes(item.collection.state)
       ) {
-        this.options.stash().updateResource(item.id, {
-          state: 'error',
-          error:
-            'Processing was interrupted. The original is saved; retry to continue.',
-        });
+        this.reconcileItem(item);
+      }
+    }
+  }
+
+  reconcileTask(taskId: string): void {
+    for (const item of this.list()) {
+      if (
+        !this.processing.has(item.id) &&
+        item.collection?.taskId === taskId &&
+        ['processing', 'waiting'].includes(item.collection.state)
+      ) {
+        this.reconcileItem(item);
+      }
+    }
+  }
+
+  private reconcileItem(item: CollectedResource): void {
+    const detail = resourceCollection(item.collection);
+    if (!detail.analysisRequestId) {
+      this.recordFailure(
+        item.id,
+        detail.revision,
+        new Error(
+          'Processing was interrupted. The original is saved; retry to continue.',
+        ),
+      );
+      return;
+    }
+    if (detail.analysisRevision !== detail.revision) {
+      this.recordFailure(
+        item.id,
+        detail.analysisRevision,
+        new Error('The resource was edited during analysis.'),
+      );
+      return;
+    }
+    const task = this.options.analysisTask?.(
+      detail.taskId,
+      detail.analysisRequestId,
+    );
+    if (!task) {
+      if (detail.taskId) {
+        this.recordFailure(
+          item.id,
+          detail.revision,
+          new Error(
+            'The saved analysis task is unavailable. Review the original before retrying.',
+          ),
+        );
+      } else {
+        this.options
+          .stash()
+          .updateResource(
+            item.id,
+            {state: 'queued', analysisRevision: detail.revision + 1},
+            detail.revision,
+          );
+      }
+      return;
+    }
+    const response: AnalysisResponse = {...task, conversationId: task.id};
+    if (task.state === 'succeeded') {
+      try {
+        this.completeAnalysis(
+          item.id,
+          response,
+          detail.revision,
+          detail.analysisCoverage,
+        );
+      } catch (error) {
+        this.recordFailure(item.id, detail.revision, error, response);
+      }
+    } else if (task.state === 'failed') {
+      this.recordFailure(
+        item.id,
+        detail.revision,
+        new Error(task.error || 'Analysis did not complete.'),
+        response,
+      );
+    } else {
+      const state = task.state === 'waiting' ? 'waiting' : 'processing';
+      if (detail.state !== state || detail.taskId !== task.id) {
+        this.options
+          .stash()
+          .updateResource(
+            item.id,
+            {state, taskId: task.id, analysisRevision: detail.revision + 1},
+            detail.revision,
+          );
       }
     }
   }

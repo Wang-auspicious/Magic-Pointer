@@ -33,6 +33,7 @@ async function main() {
       ...require('../electron/project_context'),
       ...require('../electron/workspace_folders'),
       ROOT: path.resolve('.'), resolveModelConfig: (config: unknown) => config,
+      stashBaseDir: () => baseDir,
       combineModelUsage: require('../electron/runtime/model').combineModelUsage,
       contextTrackerRuntime: null,
       resolveConversationWorkspace: () => '', studioConversationSessionId: ({ existing }: any) => existing,
