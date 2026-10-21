@@ -51,10 +51,17 @@ app.whenReady().then(async () => {
       `document.documentElement.lang='en'; document.head.innerHTML=${JSON.stringify('<style>' + fs.readFileSync('electron/renderer/resource_library.css', 'utf8') + '</style>')};`,
     );
     await js(
+      fs.readFileSync('build/electron/renderer/right_workspace.js', 'utf8') +
+        '\n' +
+        fs.readFileSync('build/electron/renderer/resource_preview.js', 'utf8') +
+        ';void 0;',
+    );
+    await js(
       fs.readFileSync('build/electron/renderer/resource_library.js', 'utf8') +
         ';void 0;',
     );
     await js(`
+      window.studioT=key=>key;
       window.magicPointerDashboard={stash:{onEntry:()=>{}}};
       window.reset=async()=>{
         document.body.innerHTML='<main id="resource-library" style="height:850px;width:1200px"></main>';
@@ -66,6 +73,7 @@ app.whenReady().then(async () => {
           if(block===action){block='';await new Promise(resolve=>{window.release=resolve;});window.release=null;}
           if(fail===action){fail='';return {ok:false,error:'Fixture source request failed'};}
           if(action==='list')return structuredClone({ok:true,items:rows,projects:[],source});
+          if(action==='preview')return structuredClone({ok:true,preview:window.previewResult||{kind:'text',text:'Retained original <script>data only</script>',truncated:false}});
           if(action.startsWith('x-')){if(action==='x-configure')Object.assign(source,input);if(action==='x-sync')rows.push({...structuredClone(rows[0]),id:'synced'});return structuredClone({ok:true,source});}
           const row=rows.find(r=>r.id===input.id);
           if(action==='edit'){
@@ -76,7 +84,7 @@ app.whenReady().then(async () => {
           if(action==='add'){const added={...structuredClone(rows[0]),id:'added',text:input.text,collection:{...rows[0].collection,title:input.text}};rows.push(added);return structuredClone({ok:true,entry:added});}
           return structuredClone({ok:true,entry:row});
         }};
-        window.openedTask='';
+        window.openedTask='';window.previewResult=null;
         window.library=ResourceLibrary.mount(document.querySelector('main'),api,{openTask:id=>{window.openedTask=id;},openCanvas:()=>{}});
         library.show();await library.refresh();
       };void 0;
@@ -418,6 +426,284 @@ app.whenReady().then(async () => {
         );
         await click('.rl-actions [data-rl-action=task]');
         assert.equal(await js('openedTask'), 'waiting-task');
+      },
+    );
+    await check(
+      'read-only original preview preserves an unsaved note and renders text as data',
+      async () => {
+        await reset();
+        await input('[name=note]', 'Unsent thought');
+        await click('[data-rl-action=preview]');
+        await wait('!!document.querySelector(".rl-preview[open] pre")');
+        assert.match(
+          await js('document.querySelector(".rl-preview pre").textContent'),
+          /<script>data only<\/script>/,
+        );
+        assert.equal(await js('calls.some(c=>c.action==="edit")'), false);
+        await click('[data-preview-close]');
+        await wait('!document.querySelector(".rl-preview")');
+        assert.equal(
+          await js('document.querySelector("[name=note]").value'),
+          'Unsent thought',
+        );
+        assert.equal(
+          await js('document.activeElement.dataset.rlAction'),
+          'preview',
+        );
+      },
+    );
+    await check(
+      'a late original preview reply cannot reopen a closed or hidden view',
+      async () => {
+        await reset();
+        await js('block="preview"');
+        await click('[data-rl-action=preview]');
+        await wait('!!release');
+        await click('[data-preview-close]');
+        await js('release()');
+        await wait('!release');
+        assert.equal(
+          await js('!!document.querySelector(".rl-preview")'),
+          false,
+        );
+        await js('block="preview"');
+        await click('[data-rl-action=preview]');
+        await wait('!!release');
+        await js('library.hide();release()');
+        await wait('!release');
+        assert.equal(
+          await js('!!document.querySelector(".rl-preview")'),
+          false,
+        );
+      },
+    );
+    await check(
+      'preview failure is visible and retry stays in the same dialog',
+      async () => {
+        await reset();
+        await js('fail="preview"');
+        await click('[data-rl-action=preview]');
+        await wait(
+          '!!document.querySelector("[data-preview-error]")?.textContent',
+        );
+        await click('[data-preview-retry]');
+        await wait('!!document.querySelector(".rl-preview pre")');
+        assert.equal(
+          await js('document.querySelectorAll(".rl-preview").length'),
+          1,
+        );
+        await click('[data-preview-close]');
+      },
+    );
+    await check(
+      'downloaded paper preview and external open address the paper rather than the saved link',
+      async () => {
+        await reset();
+        await js(
+          'rows[0].collection.paperPath="retained/paper.pdf";library.refresh()',
+        );
+        await click('[data-rl-action=paper]');
+        await wait('!!document.querySelector(".rl-preview pre")');
+        assert.equal(
+          await js('calls.find(c=>c.action==="preview").input.material'),
+          'paper',
+        );
+        await click('[data-preview-external]');
+        await wait('calls.some(c=>c.action==="open-original")');
+        assert.equal(
+          await js('calls.find(c=>c.action==="open-original").input.material'),
+          'paper',
+        );
+        await click('[data-preview-close]');
+        assert.equal(
+          await js('document.activeElement.dataset.rlAction'),
+          'paper',
+        );
+      },
+    );
+    const imagePreview = async () => {
+      await js(
+        `previewResult={kind:'image',url:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1200"><rect width="2000" height="1200" fill="#c7c3b7"/><circle cx="1000" cy="600" r="350" fill="#746d59"/></svg>'),name:'Retained image',truncated:false}`,
+      );
+      await click('[data-rl-action=preview]');
+      await wait(
+        'document.querySelector(".rl-preview-image")?.naturalWidth===2000 && !document.querySelector(".rl-preview-toolbar").hidden',
+      );
+      await new Promise(resolve => setTimeout(resolve, 40));
+    };
+    await check(
+      'image zoom follows the cursor and ordinary wheel pans without changing scale',
+      async () => {
+        await reset();
+        await imagePreview();
+        const transform = () =>
+          js(
+            '(()=>{const m=new DOMMatrix(document.querySelector(".rl-preview-image").style.transform);return {scale:m.a,x:m.e,y:m.f}})()',
+          );
+        await js(
+          '(()=>{const b=document.querySelector(".rl-preview-body"),r=b.getBoundingClientRect();b.dispatchEvent(new WheelEvent("wheel",{deltaY:-30,ctrlKey:true,clientX:r.left+r.width*.65,clientY:r.top+r.height*.5,bubbles:true,cancelable:true}))})()',
+        );
+        const zoomed = await transform();
+        assert.ok(zoomed.scale > 1);
+        assert.ok(zoomed.x < 0, 'zoom remains anchored to the cursor');
+        await js(
+          'document.querySelector(".rl-preview-body").dispatchEvent(new WheelEvent("wheel",{deltaX:30,deltaY:10,bubbles:true,cancelable:true}))',
+        );
+        const panned = await transform();
+        assert.equal(panned.scale, zoomed.scale);
+        assert.ok(panned.x < zoomed.x);
+        await click('[data-preview-fit]');
+        assert.equal((await transform()).scale, 1);
+        await click('[data-preview-actual]');
+        assert.equal(
+          await js(
+            'document.querySelector(".rl-preview-toolbar output").textContent',
+          ),
+          '100%',
+        );
+        await click('[data-preview-close]');
+      },
+    );
+    await check(
+      'native pointer drag ignores micro-movement and does not turn a drag into a zoom click',
+      async () => {
+        await reset();
+        await imagePreview();
+        await click('[data-preview-actual]');
+        const point = await js(
+          '(()=>{const r=document.querySelector(".rl-preview-body").getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()',
+        );
+        const before = await js(
+          'document.querySelector(".rl-preview-image").style.transform',
+        );
+        win.webContents.sendInputEvent({
+          type: 'mouseDown',
+          button: 'left',
+          clickCount: 1,
+          ...point,
+        });
+        win.webContents.sendInputEvent({
+          type: 'mouseMove',
+          x: point.x + 2,
+          y: point.y,
+        });
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.equal(
+          await js(
+            'document.querySelector(".rl-preview-image").style.transform',
+          ),
+          before,
+        );
+        win.webContents.sendInputEvent({
+          type: 'mouseMove',
+          x: point.x + 90,
+          y: point.y + 30,
+        });
+        win.webContents.sendInputEvent({
+          type: 'mouseUp',
+          button: 'left',
+          clickCount: 1,
+          x: point.x + 90,
+          y: point.y + 30,
+        });
+        await new Promise(resolve => setTimeout(resolve, 30));
+        const moved = await js(
+          '(()=>{const m=new DOMMatrix(document.querySelector(".rl-preview-image").style.transform);return {scale:m.a,x:m.e}})()',
+        );
+        assert.ok(moved.scale > 1);
+        assert.ok(moved.x > 0);
+        await click('[data-preview-close]');
+      },
+    );
+    await check(
+      'broken thumbnails and image loads expose readable fallback and retry',
+      async () => {
+        await reset();
+        await js(
+          'rows[0].previewUrl="data:image/png;base64,AAAA";library.refresh()',
+        );
+        await wait('!!document.querySelector(".rl-thumbnail.is-unavailable")');
+        await js(
+          'previewResult={kind:"image",url:"data:image/png;base64,AAAA",name:"Missing",truncated:false}',
+        );
+        await click('[data-rl-action=preview]');
+        await wait('!document.querySelector("[data-preview-retry]").hidden');
+        assert.equal(
+          await js('document.querySelector(".rl-preview-toolbar").hidden'),
+          true,
+        );
+        await js(
+          'previewResult={kind:"text",text:"Recovered retained source",truncated:false}',
+        );
+        await click('[data-preview-retry]');
+        await wait(
+          'document.querySelector(".rl-preview pre")?.textContent.includes("Recovered")',
+        );
+        await click('[data-preview-close]');
+      },
+    );
+    await check(
+      'external-open failures stay visible and duplicate opens are gated',
+      async () => {
+        await reset();
+        await click('[data-rl-action=preview]');
+        await wait('!!document.querySelector(".rl-preview pre")');
+        await js('fail="open-original"');
+        await click('[data-preview-external]');
+        await wait(
+          'document.querySelector("[data-preview-error]").textContent.includes("Fixture")',
+        );
+        await js('block="open-original"');
+        await click('[data-preview-external]');
+        await wait('!!release');
+        await click('[data-preview-external]');
+        assert.equal(
+          await js('calls.filter(c=>c.action==="open-original").length'),
+          2,
+        );
+        await js('release()');
+        await wait('!release');
+        await click('[data-preview-close]');
+      },
+    );
+    await check(
+      'preview returns focus after a background refresh, and Escape closes only the preview',
+      async () => {
+        await reset();
+        await imagePreview();
+        await js('library.refresh()');
+        win.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Escape'});
+        win.webContents.sendInputEvent({type: 'keyUp', keyCode: 'Escape'});
+        await wait('!document.querySelector(".rl-preview")');
+        assert.equal(
+          await js('document.activeElement.dataset.rlAction'),
+          'preview',
+        );
+        assert.equal(
+          await js('document.querySelector(".rl-detail").hidden'),
+          false,
+        );
+      },
+    );
+    await check(
+      'audio and video use paused native controls and release their source on close',
+      async () => {
+        for (const kind of ['audio', 'video']) {
+          await reset();
+          await js(
+            `previewResult={kind:${JSON.stringify(kind)},url:'data:video/mp4;base64,AAAA',name:'Local media',truncated:false}`,
+          );
+          await click('[data-rl-action=preview]');
+          await wait(`!!document.querySelector('.rl-preview ${kind}')`);
+          assert.equal(
+            await js(
+              `(()=>{window.testMedia=document.querySelector('.rl-preview ${kind}');return testMedia.controls&&!testMedia.autoplay&&testMedia.paused})()`,
+            ),
+            true,
+          );
+          await click('[data-preview-close]');
+          assert.equal(await js('testMedia.getAttribute("src")'), null);
+        }
       },
     );
     await reset();

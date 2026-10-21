@@ -218,6 +218,12 @@ behaviors in its existing DOM renderer and uses its own Runtime and persisted
 task state. The reference's React examples, simulated tool completions, audio
 engine, and demo data are not included in the application.
 
+The saved-resource image viewer adapts the cursor-anchored pan/zoom geometry
+and drag threshold from `code-examples/MediaLightboxViewer.tsx` at the same
+revision, checked against locally retained original implementation evidence.
+Its vanilla DOM lifecycle, retained-file access, error handling, native media
+controls and document rendering integrate with Magic Pointer's own modules.
+
 MIT License
 
 Copyright (c) 2026 Caho1

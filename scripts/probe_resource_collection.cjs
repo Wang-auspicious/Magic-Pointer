@@ -3,80 +3,324 @@ const {app, BrowserWindow, ipcMain} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const {execFileSync} = require('node:child_process');
 const output = path.resolve('data/runtime/resource-acceptance');
 fs.mkdirSync(output, {recursive: true});
 app.setPath('userData', path.join(output, 'profile'));
 app.disableHardwareAcceleration();
 const deadline = setTimeout(() => app.exit(1), 60000);
 app.whenReady().then(async () => {
-  const {ResourceCollectionService} = require('../build/electron/resource_collection_service');
+  const {
+    ResourceCollectionService,
+  } = require('../build/electron/resource_collection_service');
   const {createStashRuntime} = require('../build/electron/stash_runtime');
+  const {resourceThumbnailUrl} = require('../build/electron/resource_preview');
   const baseDir = fs.mkdtempSync(path.join(output, 'stash-'));
   const root = fs.mkdtempSync(path.join(output, 'project-'));
-  const stash = createStashRuntime({baseDir, clipboard: {availableFormats: () => [], readText: () => '', readImage: () => ({isEmpty: () => true})}});
+  const stash = createStashRuntime({
+    baseDir,
+    clipboard: {
+      availableFormats: () => [],
+      readText: () => '',
+      readImage: () => ({isEmpty: () => true}),
+    },
+  });
   const attached = [];
   const projects = [{id: 'ui', name: '界面设计', root}];
-  const service = new ResourceCollectionService({stash: () => stash, projects: () => projects,
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => projects,
     attach: (_id, files) => attached.push(...files),
-    analyze: async () => ({ok: true, usedBackend: 'fixture.runtime', timingMs: 3, answer: JSON.stringify({summary: '侧栏在拖动时保持连续运动。适合作为当前项目导航切换的参考。', nextStep: '对照现有侧栏，试做可中断的弹簧动效。', coverage: '仅阅读用户保存的选文。', decision: 'keep'})}),
+    analyze: async () => ({
+      ok: true,
+      usedBackend: 'fixture.runtime',
+      timingMs: 3,
+      answer: JSON.stringify({
+        summary: '侧栏在拖动时保持连续运动。适合作为当前项目导航切换的参考。',
+        nextStep: '对照现有侧栏，试做可中断的弹簧动效。',
+        coverage: '仅阅读用户保存的选文。',
+        decision: 'keep',
+      }),
+    }),
   });
-  await service.add({text: 'A small detail: preserve velocity when an animation changes direction.', title: '可以随时打断的侧栏动效', url: 'https://example.com/motion', projectId: 'ui'});
-  await service.add({text: 'A paper reading note about evidence and retrieval.', title: '给下一篇论文留一条线索'});
+  await service.add({
+    text: 'A small detail: preserve velocity when an animation changes direction.',
+    title: '可以随时打断的侧栏动效',
+    url: 'https://example.com/motion',
+    projectId: 'ui',
+  });
+  await service.add({
+    text: 'A paper reading note about evidence and retrieval.',
+    title: '给下一篇论文留一条线索',
+  });
   ipcMain.handle('resource-probe', async (_event, {action, input}) => {
     try {
-      if (action === 'list') return {ok: true, items: service.list(), projects, source: {status: 'disconnected'}};
+      if (action === 'list')
+        return {
+          ok: true,
+          items: service
+            .list()
+            .map(item => ({
+              ...item,
+              previewUrl: resourceThumbnailUrl(baseDir, item),
+            })),
+          projects,
+          source: {status: 'disconnected'},
+        };
+      if (action === 'preview')
+        return {
+          ok: true,
+          preview: await service.preview(input.id, input.material),
+        };
       if (action === 'add') return {ok: true, entry: await service.add(input)};
-      if (action === 'edit') return {ok: true, entry: service.update(input.id, input.patch, input.revision)};
-      if (action === 'process') return {ok: true, entry: await service.process(input.id)};
-      if (action === 'deliver') return {ok: true, entry: await service.deliver(input.id)};
+      if (action === 'edit')
+        return {
+          ok: true,
+          entry: service.update(input.id, input.patch, input.revision),
+        };
+      if (action === 'process')
+        return {ok: true, entry: await service.process(input.id)};
+      if (action === 'deliver')
+        return {ok: true, entry: await service.deliver(input.id)};
       throw new Error('Not exercised: ' + action);
-    } catch (error) {return {ok: false, error: error.message};}
+    } catch (error) {
+      return {ok: false, error: error.message};
+    }
   });
-  const win = new BrowserWindow({width: 1360, height: 920, show: false, webPreferences: {offscreen: true, sandbox: false, contextIsolation: true, preload: path.resolve('scripts/probe_studio_layout_preload.js'), additionalArguments: ['--mp-probe-theme=light', '--mp-probe-state=landing']}});
+  const win = new BrowserWindow({
+    width: 1360,
+    height: 920,
+    show: false,
+    webPreferences: {
+      offscreen: true,
+      sandbox: false,
+      contextIsolation: true,
+      preload: path.resolve('scripts/probe_studio_layout_preload.js'),
+      additionalArguments: [
+        '--mp-probe-theme=light',
+        '--mp-probe-state=landing',
+      ],
+    },
+  });
   const errors = [];
-  win.webContents.on('console-message', (_event, level, message) => {if (level >= 3) errors.push(message);});
+  win.webContents.on('console-message', (_event, level, message) => {
+    if (level >= 3) errors.push(message);
+  });
   const js = script => win.webContents.executeJavaScript(script);
-  const wait = async expression => {for (let i = 0; i < 100; i++) {if (await js(expression)) return; await new Promise(resolve => setTimeout(resolve, 50));} throw new Error('UI timeout: ' + expression);};
+  const wait = async expression => {
+    for (let i = 0; i < 100; i++) {
+      if (await js(expression)) return;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('UI timeout: ' + expression);
+  };
   const screenshot = async name => {
     await new Promise(resolve => setTimeout(resolve, 400));
-    fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(
+      path.join(output, name),
+      (await win.webContents.capturePage()).toPNG(),
+    );
   };
   try {
     await win.loadFile(path.resolve('build/electron/renderer/studio.html'));
     await js('document.fonts.ready');
-    await js("document.documentElement.lang='zh-CN'; setProductMode('design');");
-    assert.equal(await js("document.querySelector('.mp-shell').dataset.view"), 'chat');
-    assert.equal(await js("document.querySelector('.mp-shell').dataset.productMode"), 'design');
+    await js(
+      "document.documentElement.lang='zh-CN'; setProductMode('design');",
+    );
+    assert.equal(
+      await js("document.querySelector('.mp-shell').dataset.view"),
+      'chat',
+    );
+    assert.equal(
+      await js("document.querySelector('.mp-shell').dataset.productMode"),
+      'design',
+    );
     await screenshot('work-light.png');
     await js("show('resources')");
     await wait("document.querySelectorAll('.rl-item').length === 2");
     await screenshot('library-light.png');
-    await js("[...document.querySelectorAll('.rl-item')].find(e => e.textContent.includes('侧栏')).click()");
+    await js(
+      "[...document.querySelectorAll('.rl-item')].find(e => e.textContent.includes('侧栏')).click()",
+    );
     await wait("!!document.querySelector('[data-rl-edit]')");
-    await js("document.querySelector('[name=note]').value = '只做参考，不直接复刻'; document.querySelector('[name=note]').dispatchEvent(new Event('input',{bubbles:true})); show('chat'); show('resources');");
-    assert.equal(await js("document.querySelector('[name=note]').value"), '只做参考，不直接复刻');
+    await js(
+      "document.querySelector('[name=note]').value = '只做参考，不直接复刻'; document.querySelector('[name=note]').dispatchEvent(new Event('input',{bubbles:true})); show('chat'); show('resources');",
+    );
+    assert.equal(
+      await js("document.querySelector('[name=note]').value"),
+      '只做参考，不直接复刻',
+    );
     await js("document.querySelector('[data-rl-edit]').requestSubmit()");
-    await wait("document.querySelector('[data-resource-status]').textContent.includes('修改已保存')");
+    await wait(
+      "document.querySelector('[data-resource-status]').textContent.includes('修改已保存')",
+    );
     await js("document.querySelector('[data-rl-action=process]').click()");
-    await wait("document.querySelector('[name=summary]').value.includes('连续运动')");
+    await wait(
+      "document.querySelector('[name=summary]').value.includes('连续运动')",
+    );
     await js("document.querySelector('[data-rl-action=deliver]').click()");
-    await wait("document.querySelector('[data-resource-status]').textContent.includes('下次任务')");
-    assert.ok(attached.some(file => file.endsWith('handoff.md') && fs.readFileSync(file, 'utf8').includes('连续运动')));
+    await wait(
+      "document.querySelector('[data-resource-status]').textContent.includes('下次任务')",
+    );
+    assert.ok(
+      attached.some(
+        file =>
+          file.endsWith('handoff.md') &&
+          fs.readFileSync(file, 'utf8').includes('连续运动'),
+      ),
+    );
     await screenshot('detail-light.png');
-    await js("document.documentElement.dataset.theme='dark'; document.documentElement.classList.add('dark');");
+    await js(
+      "document.documentElement.dataset.theme='dark'; document.documentElement.classList.add('dark');",
+    );
     await screenshot('detail-dark.png');
     win.setSize(860, 820);
     await screenshot('detail-narrow.png');
-    const narrowOverflow = await js("[...document.querySelectorAll('#resource-library,#resource-library *')].filter(e => e.clientWidth>0 && e.scrollWidth>e.clientWidth+2 && !e.matches('input,textarea')).map(e => ({className:e.className,clientWidth:e.clientWidth,scrollWidth:e.scrollWidth}))");
-    assert.deepEqual(narrowOverflow, [], 'Resource workspace must fit its container');
+    const narrowOverflow = await js(
+      "[...document.querySelectorAll('#resource-library,#resource-library *')].filter(e => e.clientWidth>0 && e.scrollWidth>e.clientWidth+2 && !e.matches('input,textarea')).map(e => ({className:e.className,clientWidth:e.clientWidth,scrollWidth:e.scrollWidth}))",
+    );
+    assert.deepEqual(
+      narrowOverflow,
+      [],
+      'Resource workspace must fit its container',
+    );
     await js("document.querySelector('[data-rl-tab=browser]').click()");
     await screenshot('browser.png');
     await js("document.querySelector('[data-rl-tab=sources]').click()");
     await screenshot('sources.png');
-    const result = {ok: true, usedBackend: 'electron UI + real local resource service; analysis fixture', resourceCount: service.list().length, projectFiles: attached.length, errors};
-    fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify(result, null, 2));
+    const imagePath = path.join(root, 'Collected reference.svg');
+    fs.writeFileSync(
+      imagePath,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1200"><rect width="2000" height="1200" fill="#d8d3c7"/><circle cx="1000" cy="600" r="350" fill="#837864"/></svg>',
+    );
+    const collectedImage = await stash.addFile(imagePath);
+    fs.writeFileSync(imagePath, 'Changed after collection');
+    await js(
+      "show('chat');show('resources');document.querySelector('[data-rl-tab=library]').click()",
+    );
+    await wait(
+      `!!document.querySelector('[data-rl-id="${collectedImage.id}"] img')`,
+    );
+    await js(
+      `document.querySelector('[data-rl-id="${collectedImage.id}"]').click()`,
+    );
+    await js("document.querySelector('[data-rl-action=preview]').click()");
+    await wait(
+      'document.querySelector(".rl-preview-image")?.naturalWidth===2000',
+    );
+    assert.equal(
+      await js('document.querySelector(".rl-preview").matches(":modal")'),
+      true,
+    );
+    await screenshot('original-dark-narrow.png');
+    await js("document.querySelector('[data-preview-actual]').click()");
+    win.setSize(1360, 920);
+    await wait('new DOMMatrix(document.querySelector(".rl-preview-image").style.transform).a===1');
+    await js(
+      "document.documentElement.dataset.theme='light';document.documentElement.classList.remove('dark')",
+    );
+    await screenshot('original-light.png');
+    await js("document.querySelector('[data-preview-close]').click()");
+    const mediaResults = [];
+    for (const kind of ['video', 'audio']) {
+      const mediaPath = path.join(
+        root,
+        kind === 'video' ? 'demo.webm' : 'silence.wav',
+      );
+      const args =
+        kind === 'video'
+          ? [
+              '-f',
+              'lavfi',
+              '-i',
+              'color=c=red:s=320x180:d=2',
+              '-c:v',
+              'libvpx-vp9',
+              '-b:v',
+              '80k',
+            ]
+          : ['-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '2'];
+      execFileSync('ffmpeg', ['-loglevel', 'error', ...args, mediaPath], {
+        windowsHide: true,
+      });
+      const entry = await stash.addFile(mediaPath);
+      await js("show('chat');show('resources')");
+      await wait(`!!document.querySelector('[data-rl-id="${entry.id}"]')`);
+      await js(`document.querySelector('[data-rl-id="${entry.id}"]').click()`);
+      await js("document.querySelector('[data-rl-action=preview]').click()");
+      await wait(
+        `document.querySelector('.rl-preview ${kind}')?.readyState>=1`,
+      );
+      assert.equal(
+        await js(`document.querySelector('.rl-preview ${kind}').paused`),
+        true,
+      );
+      await js(
+        `window.localMedia=document.querySelector('.rl-preview ${kind}');localMedia.muted=true;localMedia.play()`,
+      );
+      await wait('localMedia.currentTime>0.1');
+      await js('localMedia.pause()');
+      await js("document.querySelector('[data-preview-close]').click()");
+      assert.equal(await js('localMedia.getAttribute("src")'), null);
+      mediaResults.push({
+        kind,
+        metadata: true,
+        decodedPlayback: true,
+        autoplay: false,
+        sourceReleased: true,
+      });
+    }
+    const {PDFDocument, StandardFonts} = require('pdf-lib');
+    const pdf = await PDFDocument.create();
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    pdf
+      .addPage([600, 800])
+      .drawText('Retained paper preview', {x: 60, y: 700, size: 24, font});
+    const paperPath = path.join(baseDir, 'downloaded-paper.pdf');
+    fs.writeFileSync(paperPath, await pdf.save());
+    const paperNote = await service.add({
+      text: 'Saved paper link',
+      title: 'Downloaded paper',
+    });
+    stash.updateResource(paperNote.id, {paperPath});
+    await js("show('chat');show('resources')");
+    await wait(`!!document.querySelector('[data-rl-id="${paperNote.id}"]')`);
+    await js(
+      `document.querySelector('[data-rl-id="${paperNote.id}"]').click()`,
+    );
+    await js("document.querySelector('[data-rl-action=paper]').click()");
+    await wait('!!document.querySelector(".rl-preview iframe")');
+    assert.equal(
+      await js('document.querySelector(".rl-preview iframe").src'),
+      require('node:url').pathToFileURL(paperPath).href,
+    );
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    await screenshot('downloaded-paper.png');
+    await js("document.querySelector('[data-preview-close]').click()");
+    const result = {
+      ok: true,
+      usedBackend:
+        'electron UI + real local resource service; analysis fixture; actual retained image and silent audio/video playback',
+      resourceCount: service.list().length,
+      projectFiles: attached.length,
+      mediaResults,
+      errors,
+    };
+    fs.writeFileSync(
+      path.join(output, 'result.json'),
+      JSON.stringify(result, null, 2),
+    );
     console.log(JSON.stringify(result));
     app.exit(0);
-  } catch (error) {console.error(error); console.error(await js("document.querySelector('[data-resource-status]')?.textContent")); console.error(errors); await screenshot('failure.png'); app.exit(1);}
-  finally {clearTimeout(deadline);}
+  } catch (error) {
+    console.error(error);
+    console.error(
+      await js("document.querySelector('[data-resource-status]')?.textContent"),
+    );
+    console.error(errors);
+    await screenshot('failure.png');
+    app.exit(1);
+  } finally {
+    clearTimeout(deadline);
+  }
 });

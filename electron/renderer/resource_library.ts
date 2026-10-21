@@ -54,6 +54,7 @@ declare global {
     let savedBrowserUrl = 'https://x.com';
     let generation = 0;
     const pending = new Set<string>();
+    const preview = globalThis.ResourcePreviewView.create();
     const labels = () => ({
       save: t('Save', '仅保存'),
       reference: t('Reference', '参考'),
@@ -228,6 +229,8 @@ declare global {
           ? `<button type="button" data-rl-action="task">${t('Continue task', '继续整理任务')} ↗</button>`
           : `<button type="button" data-rl-action="process" ${busy || detail.state === 'waiting' ? 'disabled' : ''}>${busy ? t('Working…', '正在处理…') : detail.state === 'queued' ? t('Organize now', '立即整理') : t('Let MP organize', '交给 MP 整理')}</button>`;
       panel.innerHTML = `<div class="rl-detail-top"><span>${t('Make it useful', '让它派上用场')}</span><button type="button" data-rl-action="close" aria-label="${t('Close details', '关闭详情')}">×</button></div>
+        <button type="button" class="rl-read-original" data-rl-action="preview">${t('Read saved original', '阅读保存的原件')} <span aria-hidden="true">↗</span></button>
+        ${detail.paperPath ? `<button type="button" class="rl-read-original" data-rl-action="paper">${t('Read downloaded paper', '阅读已下载的论文')} <span aria-hidden="true">PDF ↗</span></button>` : ''}
         <button type="button" data-rl-action="reload" hidden>${t('Discard draft and reload', '舍弃草稿并重新加载')}</button>
         <form data-rl-edit><label>${t('Title', '标题')}<input name="title" value="${esc(detail.title)}" required></label><div class="rl-pair"><label>${t('Project', '项目')}<select name="projectId">${projectOptions(detail.projectId)}</select></label><label>${t('Use it for', '用途')}<select name="intent">${Object.entries(
           labels(),
@@ -736,11 +739,35 @@ declare global {
         if (!item) {
           return;
         }
+        if (action === 'preview' || action === 'paper') {
+          const material = action === 'paper' ? 'paper' : 'original';
+          preview.show({
+            title:
+              details(item).title ||
+              item.desc ||
+              t('Saved original', '保存的原件'),
+            restoreFocus: () => {
+              if (visible && tab === 'library' && current()?.id === item.id) {
+                host
+                  .querySelector<HTMLElement>(`[data-rl-action=${action}]`)
+                  ?.focus({preventScroll: true});
+              }
+            },
+            load: async () => {
+              const result = await call('preview', {id: item.id, material});
+              if (!result.preview) {
+                throw new Error(t('Preview unavailable.', '暂时无法预览。'));
+              }
+              return result.preview;
+            },
+            openExternal: async () => {
+              await call('open-original', {id: item.id, material});
+            },
+          });
+          return;
+        }
         if (action === 'original') {
-          if (!window.magicPointerDashboard.stash.open) {
-            throw new Error('Original material is unavailable.');
-          }
-          await window.magicPointerDashboard.stash.open(item.id);
+          await call('open-original', {id: item.id});
           return;
         }
         if (action === 'source') {
@@ -851,6 +878,21 @@ declare global {
         void refresh();
       }
     });
+    host.addEventListener(
+      'error',
+      event => {
+        const image = event.target;
+        if (
+          image instanceof HTMLImageElement &&
+          image.closest('.rl-thumbnail')
+        ) {
+          const thumbnail = image.parentElement!;
+          thumbnail.classList.add('is-unavailable');
+          thumbnail.textContent = t('Preview unavailable', '缩略图暂不可用');
+        }
+      },
+      true,
+    );
     return {
       show() {
         visible = true;
@@ -867,6 +909,7 @@ declare global {
       },
       hide() {
         visible = false;
+        preview.close();
       },
       refresh,
     };

@@ -1,6 +1,7 @@
 import {BrowserViewRegistry} from './browser_view_registry';
 import {ResourceCollectionService} from './resource_collection_service';
 import {resourceAnalysisTask} from './resource_analysis_task';
+import {resourceThumbnailUrl} from './resource_preview';
 import {XResourceSource} from './resource_x_source';
 import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
 import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
@@ -6355,10 +6356,25 @@ ipcMain.handle('resources:command', async (event: Electron.IpcMainInvokeEvent, r
     const service = resources();
     if (raw.action === 'list') {
       return {ok: true, items: service.list().map(item => ({...item,
-        ...(item.media === 'image' || item.media === 'clip' ? {previewUrl: require('node:url').pathToFileURL(path.join(stashBaseDir(), item.relPath)).href} : {}),
+        previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
       })), projects: conversations().listProjects().map((project: ProjectRecord) => ({id: project.id, name: project.name, root: project.root})), source: xResourceSource().snapshot()};
     }
     if (raw.action === 'add') {return {ok: true, entry: await service.add(input)};}
+    if (raw.action === 'preview') {
+      const preview = await service.preview(
+        String(input.id || ''),
+        input.material === 'paper' ? 'paper' : 'original',
+      );
+      return {ok: true, preview};
+    }
+    if (raw.action === 'open-original') {
+      const retained = service.originalPath(
+        String(input.id || ''),
+        input.material === 'paper' ? 'paper' : 'original',
+      );
+      const error = await shell.openPath(retained);
+      return error ? {ok: false, error} : {ok: true};
+    }
     if (raw.action === 'edit') {return {ok: true, entry: service.update(String(input.id || ''), input.patch || {}, Number(input.revision))};}
     if (raw.action === 'process') {return {ok: true, entry: await service.process(String(input.id || ''))};}
     if (raw.action === 'deliver') {return {ok: true, entry: await service.deliver(String(input.id || ''))};}

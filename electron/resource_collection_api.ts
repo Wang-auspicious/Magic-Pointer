@@ -3,6 +3,7 @@ import type {
   ResourceCollection,
 } from './resource_collection_contract';
 import type {XSourceState} from './resource_x_source';
+import type {ResourcePreview} from './resource_preview';
 
 export interface ResourceResponse {
   ok: boolean;
@@ -13,6 +14,7 @@ export interface ResourceResponse {
   source?: XSourceState;
   url?: string;
   title?: string;
+  preview?: ResourcePreview;
 }
 export type ResourceAction =
   | 'list'
@@ -20,12 +22,15 @@ export type ResourceAction =
   | 'edit'
   | 'process'
   | 'deliver'
+  | 'preview'
+  | 'open-original'
   | 'browser-open'
   | 'capture'
   | 'x-connect'
   | 'x-configure'
   | 'x-sync';
 export interface ResourceRequest {
+  material?: 'original' | 'paper';
   id?: string;
   text?: string;
   url?: string;

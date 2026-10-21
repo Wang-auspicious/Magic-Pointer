@@ -15,6 +15,8 @@ import {
 import {prepareResourceMedia} from './resource_media';
 import {fetchLinkedPaper} from './resource_paper';
 import type {ResourceAnalysisTask} from './resource_analysis_task';
+import {projectPath} from './project_inspector';
+import {readResourcePreview, type ResourcePreview} from './resource_preview';
 
 interface AnalysisResponse {
   ok?: boolean;
@@ -74,6 +76,30 @@ export class ResourceCollectionService {
       .list()
       .flatMap(group => group.items)
       .sort((a, b) => b.capturedAt - a.capturedAt);
+  }
+
+  originalPath(
+    id: string,
+    material: 'original' | 'paper' = 'original',
+  ): string {
+    const stash = this.options.stash();
+    const entry = stash.get(id);
+    if (!entry) {
+      throw new Error('resource_not_found');
+    }
+    const retained =
+      material === 'paper' ? entry.collection?.paperPath : entry.relPath;
+    if (!retained) {
+      throw new Error('resource_material_unavailable');
+    }
+    return projectPath(stash.baseDir, retained);
+  }
+
+  async preview(
+    id: string,
+    material: 'original' | 'paper' = 'original',
+  ): Promise<ResourcePreview> {
+    return readResourcePreview(this.originalPath(id, material));
   }
 
   async add(input: {
