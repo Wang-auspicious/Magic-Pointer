@@ -11465,10 +11465,32 @@ async function selectComposerPermission(
   }
   composerPreset = selected;
   renderPermissionChip();
-  if (!result.ok) {
+  if (!result.ok || result.warning) {
     const menu = document.getElementById('composer-permission-menu');
-    menu?.replaceChildren(modelMenuNote(result.error || studioT('common.switch_failed')));
+    const note = modelMenuNote(
+      result.warning === 'conversation_not_saved'
+        ? studioT('permission.changed_not_saved')
+        : result.warning === 'permission_save_unconfirmed'
+          ? studioT('permission.save_unconfirmed')
+          : result.error || studioT('common.switch_failed'),
+    );
+    note.setAttribute('role', result.warning ? 'status' : 'alert');
+    const content = [note];
+    if (result.warning) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'mp-compact-menu-row';
+      retry.dataset.permissionRetry = 'true';
+      retry.textContent = studioT('permission.retry_save');
+      retry.addEventListener('click', () => {
+        closePermissionMenu();
+        void selectComposerPermission(selected, owner);
+      });
+      content.push(retry);
+    }
+    menu?.replaceChildren(...content);
     positionAnchoredPopover('composer-permission-menu', 'composer-permission');
+    menu?.querySelector<HTMLButtonElement>('[data-permission-retry]')?.focus({preventScroll: true});
   }
 }
 
@@ -12463,6 +12485,10 @@ window.addEventListener('resize', () => {
   if (menu && !menu.hidden) {
     positionAnchoredPopover('composer-model-menu', 'composer-model');
     positionModelMorePanel();
+  }
+  const permissionMenu = document.getElementById('composer-permission-menu');
+  if (permissionMenu && !permissionMenu.hidden) {
+    positionAnchoredPopover('composer-permission-menu', 'composer-permission');
   }
 });
 

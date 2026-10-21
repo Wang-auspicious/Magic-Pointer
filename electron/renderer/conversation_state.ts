@@ -93,7 +93,13 @@ declare global {
     return outcome ? 'completed' : 'idle';
   }
 
-  const api: ConversationStateApi = {derive, label: state => labels[state]};
+  const api: ConversationStateApi = {
+    derive,
+    label: state =>
+      typeof studioT === 'function'
+        ? studioT(`activity.${state}`)
+        : labels[state],
+  };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;

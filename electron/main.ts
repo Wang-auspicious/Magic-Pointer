@@ -3566,10 +3566,12 @@ const restoredContextUsage = new Map<
 
 async function restoreConversationContext(conversation: any) {
   let turn = conversation.turns?.at(-1);
-  if (!turn || !conversation.agentSessionId) {
+  if (!turn) {
     return conversation;
   }
-  const sessionId = conversation.agentSessionId;
+  const sessionId =
+    conversation.agentSessionId ||
+    studioConversationSessionId({conversationId: conversation.id});
   const sessionPath = path.join(
     FABRIC_DATA_DIR,
     'agent-sessions',
@@ -3590,7 +3592,8 @@ async function restoreConversationContext(conversation: any) {
     if (
       status.ok &&
       preset &&
-      status.permissionMode !== conversation.taskContext?.permissionMode
+      (!conversation.agentSessionId ||
+        status.permissionMode !== conversation.taskContext?.permissionMode)
     ) {
       const updated = conversations().setPermissionMode(
         conversation.id,
@@ -3863,11 +3866,21 @@ async function setConversationPermission(
       {action: 'permission-mode', sessionId, preset},
       FABRIC_DATA_DIR,
     );
+    let warning: PermissionSelectionResult['warning'];
     if (!result.ok) {
-      return {
-        ok: false,
-        error: String(result.error || 'Permission change failed.'),
-      };
+      // A complete line may be readable after fsync fails. Read the actual mode
+      // before deciding which selection the UI should show.
+      const observed = await handleSessionRead(
+        {action: 'status', sessionId},
+        FABRIC_DATA_DIR,
+      );
+      if (!observed.ok || observed.permissionMode !== PERMISSION_MODES[preset]) {
+        return {
+          ok: false,
+          error: String(result.error || 'Permission change failed.'),
+        };
+      }
+      warning = 'permission_save_unconfirmed';
     }
     const saved = conversations().setPermissionMode(
       id,
@@ -3877,13 +3890,14 @@ async function setConversationPermission(
     if (!saved.ok) {
       return {ok: false, error: 'Conversation not found.'};
     }
-    conversations().flush();
+    warning ||= saved.persisted ? undefined : 'conversation_not_saved';
     notifyConversationChanged(id);
     return {
       ok: true,
       sessionId,
       preset,
       permissionMode: PERMISSION_MODES[preset],
+      ...(warning ? {warning} : {}),
     };
   } catch (error) {
     return {
@@ -4219,6 +4233,9 @@ async function sendConversation(
   let existing = conversationId ? conversations().get(conversationId) : null;
   let permissionPreset: PermissionPreset;
   try {
+    if (existing && raw.permissionPreset === undefined && !modelCommand) {
+      existing = await restoreConversationContext(existing);
+    }
     permissionPreset =
       normalizePermissionPreset(raw.permissionPreset) ??
       presetForPermissionMode(existing?.taskContext?.permissionMode) ??

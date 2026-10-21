@@ -135,6 +135,7 @@ async function main() {
     },
     figmaRuntime: {clientConfigurations: () => []},
     conversations: () => store,
+    restoreConversationContext: async (conversation: any) => conversation,
     notifyConversationChanged() {},
     activeConversations: runs,
     stageLiveTurns: new Map(),
@@ -429,6 +430,67 @@ async function main() {
     );
     assert.match(rebindFailure.error, /Could not save the conversation folder/);
     assert.equal(bridgeCalls, beforeRebind);
+    let permissionRestores = 0;
+    context.restoreConversationContext = async (conversation: any) => {
+      permissionRestores++;
+      return {
+        ...conversation,
+        taskContext: {...conversation.taskContext, permissionMode: 'safe'},
+      };
+    };
+    const freshMode = send({
+      conversationId: waiting.id,
+      question: 'Continue with the committed mode',
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    const forwardedPreset = payload.permissionPreset;
+    callbacks.onComplete({
+      ok: true,
+      answer: 'Read only',
+      hasPendingWork: false,
+    });
+    await freshMode;
+    assert.equal(
+      permissionRestores,
+      1,
+      'a default-mode request reads the authoritative Session projection',
+    );
+    assert.equal(forwardedPreset, 'read-only');
+    const explicitMode = send({
+      conversationId: waiting.id,
+      question: 'Use the explicitly chosen mode',
+      permissionPreset: 'workspace-write',
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    const explicitPreset = payload.permissionPreset;
+    callbacks.onComplete({
+      ok: true,
+      answer: 'Explicit mode accepted',
+      hasPendingWork: false,
+    });
+    await explicitMode;
+    assert.equal(
+      permissionRestores,
+      1,
+      'an explicit current request does not need a default-mode lookup',
+    );
+    assert.equal(explicitPreset, 'workspace-write');
+    const recorder = store.recordPermissionDecision;
+    store.recordPermissionDecision = () => ({ok: false, error: 'store_failed'});
+    const beforeDecision = bridgeCalls;
+    const rejectedDecision = await send({
+      conversationId: waiting.id,
+      question: 'Continue after approval',
+      permissionGrant: 'WriteFile',
+    });
+    store.recordPermissionDecision = recorder;
+    assert.equal(rejectedDecision.ok, false);
+    assert.equal(rejectedDecision.error, 'permission_decision_not_persisted');
+    assert.equal(
+      bridgeCalls,
+      beforeDecision,
+      'an unrecorded permission decision cannot dispatch execution',
+    );
     console.log(
       'Conversation persistence, cancellation and scoped model selection passed',
     );

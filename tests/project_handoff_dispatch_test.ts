@@ -89,6 +89,7 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
     stashBaseDir: () => stash.baseDir,
     figmaRuntime: {clientConfigurations: () => []},
     conversations: () => store,
+    restoreConversationContext: async (conversation: any) => conversation,
     resources: () => service,
     handoffsForTurn,
     notifyConversationChanged() {},

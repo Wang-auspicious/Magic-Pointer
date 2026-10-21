@@ -975,7 +975,7 @@ function createConversationStore(
     conversationId?: unknown;
     grant?: unknown;
     deny?: unknown;
-  }): {ok: boolean; conversation?: Conversation} {
+  }): {ok: boolean; conversation?: Conversation; error?: string} {
     const conversations = load();
     const target = conversations.find(
       conversation =>
@@ -986,27 +986,37 @@ function createConversationStore(
     if (!target || (!grant && !deny)) {
       return {ok: false};
     }
-    if (grant) {
-      target.permissionGrants = target.permissionGrants || [];
-      if (!target.permissionGrants.includes(grant)) {
-        target.permissionGrants.push(grant);
-      }
-    }
-    if (deny) {
-      target.permissionDenials = target.permissionDenials || [];
-      if (!target.permissionDenials.includes(deny)) {
-        target.permissionDenials.push(deny);
-      }
-    }
     const turns = target.turns || [];
-    const lastTurn = turns[turns.length - 1];
-    if (lastTurn?.pendingInput?.kind === 'permission') {
-      delete lastTurn.pendingInput;
-    }
-    target.updatedAt = now();
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    const lastTurn = turns.at(-1);
+    return commitMetadata(
+      target,
+      {
+        ...(grant
+          ? {
+              permissionGrants: [
+                ...new Set([...(target.permissionGrants || []), grant]),
+              ],
+            }
+          : {}),
+        ...(deny
+          ? {
+              permissionDenials: [
+                ...new Set([...(target.permissionDenials || []), deny]),
+              ],
+            }
+          : {}),
+        ...(lastTurn?.pendingInput?.kind === 'permission'
+          ? {
+              turns: [
+                ...turns.slice(0, -1),
+                {...lastTurn, pendingInput: undefined},
+              ],
+            }
+          : {}),
+        updatedAt: now(),
+      },
+      'permission-decision',
+    );
   }
 
   function recoverInterruptedTurns(): void {
@@ -1471,7 +1481,7 @@ function createConversationStore(
     id: string,
     sessionId: string,
     mode: PermissionMode,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; persisted?: boolean; conversation?: Conversation} {
     const target = get(id);
     if (!target) {
       return {ok: false};
@@ -1486,8 +1496,17 @@ function createConversationStore(
       permissionMode: mode,
     };
     markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    // The Session journal owns the mode. Keep this read projection current even
+    // if its index file cannot be saved; never undo an applied Session mode.
+    try {
+      writeNow();
+      dirty = false;
+      return {ok: true, persisted: true, conversation: target};
+    } catch (error) {
+      dirty = true;
+      reportPersistFailure(error, 'permission-mode-projection');
+      return {ok: true, persisted: false, conversation: target};
+    }
   }
 
   return {

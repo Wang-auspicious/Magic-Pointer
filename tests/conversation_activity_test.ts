@@ -2,6 +2,50 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const activity = require('../electron/renderer/conversation_state');
 
+test('activity labels follow the current Studio language', () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const ts = require('typescript');
+  const context = {
+    module: {exports: {}},
+    exports: {},
+    document: {documentElement: {lang: 'en', dataset: {}}},
+    localStorage: {getItem: () => null, setItem() {}},
+  };
+  const script = ['locale', 'conversation_state']
+    .map(
+      name =>
+        ts.transpileModule(
+          fs.readFileSync(`electron/renderer/${name}.ts`, 'utf8'),
+          {compilerOptions: {target: ts.ScriptTarget.ES2022}},
+        ).outputText,
+    )
+    .join('\n');
+  vm.runInNewContext(script, context);
+  assert.equal(
+    vm.runInNewContext('ConversationState.label("awaiting")', context),
+    'Needs input',
+  );
+  vm.runInNewContext('applyStudioLanguage("zh-CN")', context);
+  for (const [state, label] of Object.entries({
+    idle: '未开始',
+    running: '运行中',
+    awaiting: '需要输入',
+    interrupted: '已中断',
+    failed: '失败',
+    pending: '待继续',
+    completed: '已完成',
+  })) {
+    assert.equal(
+      vm.runInNewContext(
+        `ConversationState.label(${JSON.stringify(state)})`,
+        context,
+      ),
+      label,
+    );
+  }
+});
+
 test('activity reads real list summaries whose turns field is a count', () => {
   const fs = require('node:fs');
   const os = require('node:os');

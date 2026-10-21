@@ -40,6 +40,22 @@ interface StudioCountEntry {
 }
 
 const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
+  'activity.idle': {en: 'Not started', zh: '未开始'},
+  'activity.running': {en: 'Running', zh: '运行中'},
+  'activity.awaiting': {en: 'Needs input', zh: '需要输入'},
+  'activity.interrupted': {en: 'Interrupted', zh: '已中断'},
+  'activity.failed': {en: 'Failed', zh: '失败'},
+  'activity.pending': {en: 'Ready to continue', zh: '待继续'},
+  'activity.completed': {en: 'Completed', zh: '已完成'},
+  'permission.changed_not_saved': {
+    en: 'Selected mode is active, but the conversation could not be saved. Please try again.',
+    zh: '所选权限模式已生效，但对话设置未能保存。请重试。',
+  },
+  'permission.save_unconfirmed': {
+    en: 'Selected mode is active, but saving the permission record could not be confirmed. Please try again.',
+    zh: '所选权限模式已生效，但权限记录未确认保存。请重试。',
+  },
+  'permission.retry_save': {en: 'Retry saving', zh: '重试保存'},
   'chat.delete_active': {en: 'Stop this task and its background agents before deleting it.', zh: '请先停止此任务及其后台 Agent，再删除会话。'},
   'chat.delete_failed': {en: 'Could not save the deletion. Your conversation is kept; try again.', zh: '删除未能保存，会话已保留，请重试。'},
   'plugins.title': {en: 'Plugins', zh: '插件'},
