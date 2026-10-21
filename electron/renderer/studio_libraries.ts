@@ -10,7 +10,7 @@
       workspaceRoot?: string;
       taskContext?: any;
       agentSessionId?: string;
-      turns?: any[];
+      turns?: number | any[];
     };
   type SessionPreference = {
     pinned?: boolean;
@@ -164,8 +164,16 @@
         filters.sort === 'name'
           ? String(a.title || '').localeCompare(String(b.title || ''))
           : filters.sort === 'created'
-            ? Number(b.createdAt || b.turns?.[0]?.at || 0) -
-              Number(a.createdAt || a.turns?.[0]?.at || 0)
+            ? Number(
+                b.createdAt ||
+                  (Array.isArray(b.turns) ? b.turns[0]?.at : 0) ||
+                  0,
+              ) -
+              Number(
+                a.createdAt ||
+                  (Array.isArray(a.turns) ? a.turns[0]?.at : 0) ||
+                  0,
+              )
             : Number(b.updatedAt || 0) - Number(a.updatedAt || 0),
       );
   }

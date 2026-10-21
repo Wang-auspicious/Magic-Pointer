@@ -143,8 +143,8 @@ async function renderConversation(id: string | null) {
   if (!stream) {
     return;
   }
-  const list = await Data.conversations();
-  const target = id ? await Data.conversation(id) : list[0];
+  const selectedId = id || (await Data.conversations())[0]?.id;
+  const target = selectedId ? await Data.conversation(selectedId) : undefined;
   if (!target) {
     showEmpty(true);
     setTitle('未命名对话', 'mp');

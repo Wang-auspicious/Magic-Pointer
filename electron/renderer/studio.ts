@@ -1151,18 +1151,22 @@ interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   workspaceRoot: string;
-  items: MagicPointerConversation[];
+  items: MagicPointerConversationSummary[];
 }
 interface SidebarGroupModule {
   groupConversations(
-    rows: readonly MagicPointerConversation[],
-  ): Array<{key: string; label: string; items: MagicPointerConversation[]}>;
+    rows: readonly MagicPointerConversationSummary[],
+  ): Array<{
+    key: string;
+    label: string;
+    items: MagicPointerConversationSummary[];
+  }>;
   filterConversations(
-    rows: readonly MagicPointerConversation[],
+    rows: readonly MagicPointerConversationSummary[],
     query: string,
-  ): MagicPointerConversation[];
+  ): MagicPointerConversationSummary[];
   groupByWorkspace(
-    rows: readonly MagicPointerConversation[],
+    rows: readonly MagicPointerConversationSummary[],
   ): SidebarWorkspaceGroup[];
 }
 const sidebarGroups = (globalThis as {SidebarGroups?: SidebarGroupModule})
@@ -1201,7 +1205,7 @@ interface StudioSearchItem {
 }
 interface StudioSearchModule {
   buildStudioSearchIndex(sources: {
-    conversations?: readonly MagicPointerConversation[];
+    conversations?: readonly MagicPointerConversationSummary[];
     projects?: readonly MagicPointerProject[];
     commands?: readonly MagicPointerSlashEntry[];
     skills?: readonly MagicPointerSlashEntry[];
@@ -1392,7 +1396,7 @@ function conversationNode(
     lastOutcome?: string;
     lastFailed?: boolean;
     lastPendingInputKind?: string;
-    turns?: MagicPointerTurn[];
+    turns?: number | MagicPointerTurn[];
   },
   active?: string,
 ): HTMLElement {
@@ -1508,6 +1512,7 @@ async function deleteConversationFromUi(id: string): Promise<void> {
 function buildSessionMenu(c: {
   id?: string;
   title?: string;
+  projectId?: string;
   workspaceRoot?: string;
 }): HTMLElement {
   const id = String(c.id || '');
@@ -1546,7 +1551,7 @@ function buildSessionMenu(c: {
     return line;
   };
   const local = studioLibraries.sessionPreference(id);
-  const inProject = Boolean(String(c.workspaceRoot || '').trim());
+  const inProject = Boolean(String(c.projectId ?? c.workspaceRoot ?? '').trim());
   const close = (event: Event) => {
     event.stopPropagation();
     menu.hidden = true;
@@ -2059,7 +2064,7 @@ function openRenameDialog(id: string, currentTitle: string) {
     await renderSidebar();
     const head = document.getElementById('chat-title');
     if (head && activeConversationId === id) {
-      head.textContent = value;
+      head.textContent = response.title ?? value;
     }
   };
   save.addEventListener('click', () => void submit());
@@ -2240,7 +2245,7 @@ async function renderSidebar() {
   const nodes: HTMLElement[] = [];
   let filtered = studioLibraries.filterRows(
     sidebarGroups.filterConversations(list, sidebarQuery),
-  ) as MagicPointerConversation[];
+  ) as MagicPointerConversationSummary[];
   if (sidebarRecentOnly) {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     filtered = filtered.filter(
@@ -2286,7 +2291,7 @@ async function renderSidebar() {
   const displayGroups = studioLibraries.sections(filtered, groups) as Array<{
     key: string;
     label: string;
-    items: MagicPointerConversation[];
+    items: MagicPointerConversationSummary[];
     virtual?: boolean;
   }>;
   const browser = host.closest<HTMLElement>('.mpw-workspace-browser');
@@ -7149,6 +7154,46 @@ document.addEventListener('mp:open-file', (event: Event) => {
   void selectProjectFile(relative);
 });
 
+async function branchConversationFromUi(
+  conversationId: string,
+  turnIndex: number,
+): Promise<void> {
+  document.getElementById('conversation-branch-error')?.remove();
+  const report = (error?: unknown) => {
+    const notice = document.createElement('div');
+    notice.id = 'conversation-branch-error';
+    notice.className = 'notice mp-conversation-branch-error';
+    notice.setAttribute('role', 'alert');
+    const message = document.createElement('span');
+    message.textContent =
+      !error || error === 'store_failed'
+        ? studioT('chat.fork_failed')
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', studioT('common.close'));
+    notice.append(message, close);
+    document.body.append(notice);
+  };
+  let result: Awaited<ReturnType<typeof Data.branchConversation>>;
+  try {
+    result = await Data.branchConversation(conversationId, turnIndex);
+  } catch (error) {
+    report(error);
+    return;
+  }
+  if (!result?.ok || !result.conversation?.id) {
+    report(result?.error);
+    return;
+  }
+  await renderSidebar();
+  await openConversation(result.conversation.id);
+}
+
 document.addEventListener('mp:branch-conversation', (event: Event) => {
   const detail = (
     event as CustomEvent<{conversationId?: string; turnIndex?: number}>
@@ -7158,13 +7203,7 @@ document.addEventListener('mp:branch-conversation', (event: Event) => {
   if (!conversationId || !Number.isInteger(turnIndex)) {
     return;
   }
-  void Data.branchConversation(conversationId, turnIndex).then(async result => {
-    if (!result?.ok || !result.conversation?.id) {
-      return;
-    }
-    await renderSidebar();
-    await openConversation(result.conversation.id);
-  });
+  void branchConversationFromUi(conversationId, turnIndex);
 });
 
 function renderSidebarLayout(): void {
@@ -7341,16 +7380,10 @@ function openThreadMenu(button: HTMLElement) {
         if (!activeConversationId || activeConversationTurnCount < 1) {
           return;
         }
-        void Data.branchConversation(
+        void branchConversationFromUi(
           activeConversationId,
           activeConversationTurnCount - 1,
-        ).then(async result => {
-          if (!result?.ok || !result.conversation?.id) {
-            return;
-          }
-          await renderSidebar();
-          await openConversation(result.conversation.id);
-        });
+        );
       },
       {disabled: unavailable || activeConversationTurnCount < 1, shortcut: 'F'},
     ),

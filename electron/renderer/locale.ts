@@ -731,6 +731,10 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.copy': {en: 'Copy', zh: '复制'},
   'chat.resend': {en: 'Resend', zh: '重新发送'},
   'chat.fork_here': {en: 'Fork from here', zh: '从这里创建分支'},
+  'chat.fork_failed': {
+    en: 'Could not create the branch. Please try again.',
+    zh: '未能创建分支，请重试。',
+  },
   'chat.copy_failed': {en: 'Copy failure', zh: '复制失败'},
   'chat.time_just_now': {en: 'just now', zh: '刚刚'},
   'chat.time_minutes_ago': {en: '{n} minutes ago', zh: '{n} 分钟前'},

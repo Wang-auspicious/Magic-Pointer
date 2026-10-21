@@ -14,11 +14,13 @@ declare global {
     lastFailed?: boolean;
     lastPendingInputKind?: string;
     failed?: boolean;
-    turns?: ReadonlyArray<{
-      outcome?: string;
-      failed?: boolean;
-      pendingInput?: object | null;
-    }>;
+    turns?:
+      | number
+      | ReadonlyArray<{
+          outcome?: string;
+          failed?: boolean;
+          pendingInput?: object | null;
+        }>;
   }
 
   interface ConversationStateApi {
@@ -50,7 +52,7 @@ declare global {
     if (locallyRunning) {
       return 'running';
     }
-    const turn = input.turns?.at(-1);
+    const turn = Array.isArray(input.turns) ? input.turns.at(-1) : undefined;
     const outcome = (input.lastOutcome || turn?.outcome || '')
       .trim()
       .toLowerCase();

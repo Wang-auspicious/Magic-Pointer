@@ -3868,7 +3868,8 @@ dialog.mpw-perm-confirm::backdrop {
   font-size: 12.5px;
 }
 :root[data-theme="dark"] .mp-thread-menu { box-shadow: 0 10px 30px #00000066, 0 2px 8px #0000004d; }
-.mp-conversation-delete-error {
+.mp-conversation-delete-error,
+.mp-conversation-branch-error {
   position: fixed;
   z-index: 210;
   top: 104px;
@@ -3886,7 +3887,8 @@ dialog.mpw-perm-confirm::backdrop {
   font: 13px/1.5 var(--mp-font-ui);
   box-shadow: 0 8px 32px #0002;
 }
-.mp-conversation-delete-error button {
+.mp-conversation-delete-error button,
+.mp-conversation-branch-error button {
   border: 0;
   background: transparent;
   color: inherit;

@@ -164,7 +164,7 @@ declare global {
     [key: string]: unknown;
   }
 
-  interface MagicPointerConversation {
+  interface MagicPointerConversationInfo {
     workMode?: 'work' | 'code';
     id: string;
     projectId?: string;
@@ -182,8 +182,16 @@ declare global {
     additionalFolders?: string[];
     modelSelection?: MagicPointerModelSelection;
     object?: MagicPointerObject | null;
-    turns?: MagicPointerTurn[];
     [key: string]: unknown;
+  }
+
+  interface MagicPointerConversation extends MagicPointerConversationInfo {
+    turns?: MagicPointerTurn[];
+  }
+
+  interface MagicPointerConversationSummary
+    extends MagicPointerConversationInfo {
+    turns?: number;
   }
 
   interface MagicPointerConversationProgress {
@@ -987,7 +995,7 @@ declare global {
         payload: MagicPointerInputResponse,
       ): Promise<Record<string, any>>;
       recovery?(payload: Record<string, unknown>): Promise<Record<string, any>>;
-      list(): Promise<MagicPointerConversation[]>;
+      list(): Promise<MagicPointerConversationSummary[]>;
       stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
       branch?(payload: {id?: unknown; turnIndex?: unknown}): Promise<{
@@ -1403,7 +1411,7 @@ declare global {
     updateStatus(): Promise<MagicPointerUpdateState>;
     checkForUpdates(): Promise<{ok?: boolean; reason?: string}>;
     onUpdateStatus(callback: (state: MagicPointerUpdateState) => void): void;
-    conversations(): Promise<MagicPointerConversation[]>;
+    conversations(): Promise<MagicPointerConversationSummary[]>;
     conversationStats(): Promise<MagicPointerHomeStats | null>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     branchConversation(
@@ -2094,7 +2102,7 @@ const Data: MagicPointerDataApi = {
     bridge()?.updates?.onStatus?.(callback);
   },
 
-  async conversations(): Promise<MagicPointerConversation[]> {
+  async conversations(): Promise<MagicPointerConversationSummary[]> {
     if (!hasBridge()) {
       return [];
     }

@@ -16,6 +16,7 @@ const {projectStudioHomeStats} = require('./studio_home_stats');
 
 const MAX_CONVERSATIONS = 500;
 const TITLE_MAX = 28;
+const CUSTOM_TITLE_MAX = 60;
 
 interface ReferencedObject {
   app?: string;
@@ -1106,7 +1107,8 @@ function createConversationStore(
     const at = now();
     const titleSuffix = ' · 分支';
     const baseTitle = String(source.title || '未命名');
-    const title = `${baseTitle.slice(0, Math.max(1, TITLE_MAX - titleSuffix.length))}${titleSuffix}`;
+    const titleLimit = source.titleCustom ? CUSTOM_TITLE_MAX : TITLE_MAX;
+    const title = `${baseTitle.slice(0, Math.max(1, titleLimit - titleSuffix.length))}${titleSuffix}`;
     const created: Conversation = {
       id: `c${at}`,
       objectKey: source.objectKey,
@@ -1135,9 +1137,19 @@ function createConversationStore(
       permissionGrants: structuredClone(source.permissionGrants || []),
       permissionDenials: structuredClone(source.permissionDenials || []),
     };
+    const wasDirty = dirty;
     conversations.unshift(created);
     markDirty(created);
-    persist();
+    try {
+      writeNow();
+      dirty = false;
+    } catch (error) {
+      conversations.shift();
+      serializedConversations.delete(created.id);
+      dirty = wasDirty;
+      reportPersistFailure(error, 'branch');
+      throw error;
+    }
     return created;
   }
 
@@ -1356,7 +1368,7 @@ function createConversationStore(
   ): {ok: boolean; conversation?: Conversation; error?: string} {
     const clean = String(title || '')
       .trim()
-      .slice(0, TITLE_MAX);
+      .slice(0, CUSTOM_TITLE_MAX);
     if (!clean) {
       return {ok: false};
     }
