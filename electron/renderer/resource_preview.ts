@@ -2,6 +2,8 @@ import type {ResourcePreview} from '../resource_preview';
 
 interface PreviewOptions {
   title: string;
+  subtitle?: string;
+  container?: HTMLElement;
   restoreFocus(): void;
   load(): Promise<ResourcePreview>;
   openExternal(): Promise<void>;
@@ -37,6 +39,9 @@ declare global {
         <div class="rl-preview-toolbar" hidden><button type="button" data-preview-fit>${t('Fit', '适应窗口')}</button><button type="button" data-preview-actual>100%</button><button type="button" data-preview-out aria-label="${t('Zoom out', '缩小')}">−</button><output></output><button type="button" data-preview-in aria-label="${t('Zoom in', '放大')}">+</button><span data-preview-size></span></div>
         <div class="rl-preview-body" aria-busy="true"></div><footer><p data-preview-error role="status"></p><button type="button" data-preview-retry hidden>${t('Try again', '重试')}</button><button type="button" data-preview-external>${t('Open in app', '在应用中打开')} ↗</button></footer>`;
       dialog.querySelector('h2')!.textContent = options.title;
+      if (options.subtitle) {
+        dialog.querySelector('header small')!.textContent = options.subtitle;
+      }
       const body = dialog.querySelector<HTMLElement>('.rl-preview-body')!;
       const toolbar = dialog.querySelector<HTMLElement>('.rl-preview-toolbar')!;
       const error = dialog.querySelector<HTMLElement>('[data-preview-error]')!;
@@ -402,7 +407,7 @@ declare global {
       retry.addEventListener('click', () => {
         void load();
       });
-      document.body.append(dialog);
+      (options.container || document.body).append(dialog);
       dialog.showModal();
       dialog.querySelector<HTMLButtonElement>('[data-preview-close]')!.focus();
       void load();

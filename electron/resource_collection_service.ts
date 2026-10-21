@@ -11,6 +11,8 @@ import {
   resourceCollection,
   type CollectedResource,
   type ResourceCollection,
+  type ProjectInboxEntry,
+  type HandoffState,
 } from './resource_collection_contract';
 import {prepareResourceMedia} from './resource_media';
 import {fetchLinkedPaper} from './resource_paper';
@@ -46,6 +48,7 @@ interface ResourceProject {
   name: string;
   root: string;
   description?: string;
+  sharedFiles?: string[];
 }
 
 interface CollectionOptions {
@@ -78,14 +81,90 @@ export class ResourceCollectionService {
       .sort((a, b) => b.capturedAt - a.capturedAt);
   }
 
+  projectInbox(projectId: string): ProjectInboxEntry[] {
+    const project = this.options.projects().find(item => item.id === projectId);
+    if (!project) {
+      throw new Error('Project not found.');
+    }
+    return this.list()
+      .flatMap(item => {
+        const detail = resourceCollection(item.collection);
+        if (
+          detail.projectId !== projectId ||
+          detail.state === 'ignored' ||
+          !detail.exportedPath ||
+          !project.sharedFiles?.includes(detail.exportedPath)
+        ) {
+          return [];
+        }
+        return [
+          {
+            id: item.id,
+            version: detail.handoffVersion,
+            projectId,
+            title: detail.title,
+            summary: detail.summary,
+            coverage: detail.coverage,
+            path: detail.exportedPath,
+            intent: detail.intent,
+            sourceUrl: detail.url,
+            createdAt: detail.handoffUpdatedAt,
+            revision: detail.revision,
+            state: detail.handoffState,
+            snoozedUntil: detail.handoffSnoozedUntil,
+            available: existsSync(detail.exportedPath),
+          },
+        ];
+      })
+      .sort(
+        (left, right) =>
+          left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+      );
+  }
+
+  setHandoffState(
+    id: string,
+    state: HandoffState,
+    revision: number,
+    until = 0,
+  ): CollectedResource {
+    if (!['unread', 'handled', 'snoozed'].includes(state)) {
+      throw new Error('Invalid handoff state.');
+    }
+    if (
+      state === 'snoozed' &&
+      (!Number.isFinite(until) || until <= Date.now())
+    ) {
+      throw new Error('Choose a future reminder time.');
+    }
+    return this.options.stash().updateResource(
+      id,
+      {
+        handoffState: state,
+        handoffSnoozedUntil: state === 'snoozed' ? until : 0,
+      },
+      revision,
+    );
+  }
+
   originalPath(
     id: string,
-    material: 'original' | 'paper' = 'original',
+    material: 'original' | 'paper' | 'handoff' = 'original',
   ): string {
     const stash = this.options.stash();
     const entry = stash.get(id);
     if (!entry) {
       throw new Error('resource_not_found');
+    }
+    if (material === 'handoff') {
+      const detail = resourceCollection(entry.collection);
+      const project = this.options
+        .projects()
+        .find(item => item.id === detail.projectId);
+      if (!project?.sharedFiles?.includes(detail.exportedPath)) {
+        throw new Error('This handoff is no longer part of the project.');
+      }
+      return projectPath(project.root, detail.exportedPath);
     }
     const retained =
       material === 'paper' ? entry.collection?.paperPath : entry.relPath;
@@ -97,7 +176,7 @@ export class ResourceCollectionService {
 
   async preview(
     id: string,
-    material: 'original' | 'paper' = 'original',
+    material: 'original' | 'paper' | 'handoff' = 'original',
   ): Promise<ResourcePreview> {
     return readResourcePreview(this.originalPath(id, material));
   }
@@ -580,7 +659,17 @@ export class ResourceCollectionService {
     this.options.attach(project.id, attachments);
     return stash.updateResource(
       id,
-      {exportedPath: handoffPath},
+      {
+        exportedPath: handoffPath,
+        ...(handoffPath !== detail.exportedPath
+          ? {
+              handoffVersion: detail.handoffVersion + 1,
+              handoffUpdatedAt: Date.now(),
+              handoffState: 'unread',
+              handoffSnoozedUntil: 0,
+            }
+          : {}),
+      },
       detail.revision,
     );
   }

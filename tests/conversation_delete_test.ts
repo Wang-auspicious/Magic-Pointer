@@ -6,6 +6,9 @@ import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createConversationStore} from '../electron/conversation_store';
+import {ResourceCollectionService} from '../electron/resource_collection_service';
+import {resourceAnalysisTask} from '../electron/resource_analysis_task';
+const {createStashRuntime} = require('../electron/stash_runtime');
 
 test('deletion retains live Studio, pointer and background tasks until they stop', async () => {
   const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-delete-active-'));
@@ -18,9 +21,39 @@ test('deletion retains live Studio, pointer and background tasks until they stop
     const entry = store.appendTurn({
       newConversation: true,
       question: 'Read sources',
-      outcome: '进行中',
+      outcome: '等待输入',
+      request: {taskInput: {inputId: 'input:studio:waiting-analysis'}},
       agentSessionId: 'agent-delete',
     });
+    const stash = createStashRuntime({
+      baseDir: path.join(baseDir, 'stash'),
+      clipboard: {
+        availableFormats: () => [],
+        readText: () => '',
+        readImage: () => ({isEmpty: () => true}),
+      },
+    });
+    const service = new ResourceCollectionService({
+      stash: () => stash,
+      projects: () => [],
+      attach: () => {},
+      analysisTask: (id, requestId) =>
+        resourceAnalysisTask(store, id, requestId),
+      analyze: async () => {
+        throw new Error('Unexpected model');
+      },
+    });
+    const resource = await service.add({text: 'Original waiting source'});
+    stash.updateResource(
+      resource.id,
+      {
+        state: 'waiting',
+        taskId: entry.id,
+        analysisRequestId: 'waiting-analysis',
+        analysisRevision: 2,
+      },
+      1,
+    );
     const source = fs.readFileSync('electron/main.ts', 'utf8');
     const ast = ts.createSourceFile(
       'main.ts',
@@ -39,6 +72,7 @@ test('deletion retains live Studio, pointer and background tasks until they stop
     assert.ok(node);
     let remove!: (event: unknown, input: {id: string}) => Promise<any>;
     let children: Array<{status: string}> = [];
+    let notified = 0;
     const active = new Map([['request', {conversationId: entry.id}]]);
     const pointer = new Map();
     const context = {
@@ -49,12 +83,30 @@ test('deletion retains live Studio, pointer and background tasks until they stop
       isDashboardSender: () => true,
       conversations: () => store,
       dashboardWindow: null,
+      companionWindow: null,
+      resourceService: service,
+      notifyConversationChanged: () => {
+        notified++;
+      },
       readBackgroundAgents: async () => children,
       ipcMain: {
         handle: (_name: string, callback: typeof remove) => {
           remove = callback;
         },
       },
+    };
+    const notify = ast.statements.find(
+      node =>
+        ts.isFunctionDeclaration(node) &&
+        node.name?.text === 'notifyConversationChanged',
+    )!;
+    const realNotify = vm.runInNewContext(
+      `${ts.transpileModule(notify.getText(ast), {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText}\nnotifyConversationChanged`,
+      context,
+    );
+    context.notifyConversationChanged = () => {
+      notified++;
+      realNotify(entry.id);
     };
     vm.runInNewContext(
       ts.transpileModule(node.getText(ast), {
@@ -81,6 +133,16 @@ test('deletion retains live Studio, pointer and background tasks until they stop
       JSON.stringify({deleted, persistenceErrors}),
     );
     assert.equal(store.get(entry.id), null);
+    assert.equal(
+      stash.get(resource.id).collection.state,
+      'error',
+      'deleted analysis is immediately retryable without restarting the application',
+    );
+    assert.equal(
+      notified,
+      1,
+      'deletion must reconcile resource tasks and notify every bound surface',
+    );
   } finally {
     fs.rmSync(baseDir, {recursive: true, force: true});
   }

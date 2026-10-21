@@ -6,6 +6,50 @@
   line-height: 1.5;
 }
 
+.mp-project-list-tabs button[aria-pressed='true'] {
+  background: var(--mp-hover);
+  color: var(--mp-text);
+}
+.mp-project-handoffs article {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--mp-border);
+}
+.mp-project-handoffs [data-handoff-read] {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  text-align: start;
+}
+.mp-project-handoffs strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.mp-project-handoffs small {
+  color: var(--mp-text-muted);
+}
+.mp-project-handoffs article > p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin: 7px 0;
+  color: var(--mp-text-secondary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.mp-project-handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.mp-project-handoff-receipt {
+  color: var(--mp-text-muted);
+  font-size: 12px;
+}
+
 .mp-project-card-heading,
 .mp-project-list-tabs {
   display: flex;

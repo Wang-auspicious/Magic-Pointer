@@ -1,6 +1,7 @@
 'use strict';
 
 import {createProjectStore} from './project_store';
+import {handoffReceipts} from './resource_handoff';
 import {normalizeAdditionalFolders} from './workspace_folders';
 import type {PermissionMode} from './permission_mode';
 import {
@@ -27,6 +28,7 @@ type Artifact = Record<string, unknown>;
 
 interface TurnEntry {
   request?: Record<string, unknown>;
+  handoffsAcceptedAt?: number;
   runtimeTurn?: number;
   id: string;
   at: number;
@@ -804,6 +806,7 @@ function createConversationStore(
   }
 
   function updateTurn(input: {
+    handoffsAcceptedAt?: number;
     completedAt?: unknown;
     runtimeTurn?: unknown;
     conversationId?: unknown;
@@ -844,6 +847,12 @@ function createConversationStore(
     const turn = target.turns[index];
     if (!turn) {
       return {ok: false};
+    }
+    if (
+      typeof input.handoffsAcceptedAt === 'number' &&
+      input.handoffsAcceptedAt > 0
+    ) {
+      turn.handoffsAcceptedAt = input.handoffsAcceptedAt;
     }
     if (input.agentSessionId !== undefined) {
       target.agentSessionId = String(input.agentSessionId || '');
@@ -1443,6 +1452,7 @@ function createConversationStore(
     clear,
     registerProject: projectStore.register,
     createProject: projectStore.create,
+    handoffReceipts: (projectId: string) => handoffReceipts(load(), projectId),
     getProject,
     listProjects,
     updateProject: projectStore.update,

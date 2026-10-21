@@ -77,7 +77,7 @@ if (Test-Path "secrets") {
 }
 
 Write-Host "== relaunch =="
-Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe" -WindowStyle Hidden
+Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe" -ArgumentList '--show' -WindowStyle Normal
 Write-Host "== prune old local releases =="
 & (Join-Path $PSScriptRoot 'prune_local_releases.ps1') -KeepInstaller (Join-Path (Join-Path (Get-Location) 'release') $installer.Name)
 Write-Host "sync done"

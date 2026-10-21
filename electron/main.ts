@@ -2,6 +2,7 @@ import {BrowserViewRegistry} from './browser_view_registry';
 import {ResourceCollectionService} from './resource_collection_service';
 import {resourceAnalysisTask} from './resource_analysis_task';
 import {resourceThumbnailUrl} from './resource_preview';
+import {handoffsForTurn} from './resource_handoff';
 import {XResourceSource} from './resource_x_source';
 import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
 import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
@@ -4307,10 +4308,11 @@ async function sendConversation(
     return {ok: false, error: '找不到所选项目，请重新选择项目。'};
   }
   if (projectContext) {
-    projectContext.resourceInbox = resources().list().filter(item =>
-      item.collection?.projectId === projectContext.id && item.collection?.exportedPath && item.collection.state !== 'ignored' &&
-      projectContext.sharedFiles?.includes(item.collection.exportedPath),
-    ).slice(0, 8).map(item => ({id: item.id, title: item.collection!.title, summary: item.collection!.summary.slice(0, 1200), path: item.collection!.exportedPath}));
+    projectContext.resourceInbox = handoffsForTurn(
+      resources().projectInbox(projectContext.id),
+      existing?.turns,
+      continuation,
+    );
   }
   if (
     boundProject &&
@@ -4533,7 +4535,9 @@ async function sendConversation(
         question,
         request: {
           taskInput,
-          workMode: existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
+          projectHandoffs: projectContext?.resourceInbox || [],
+          workMode:
+            existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
           attachments: taskAttachments,
           executionWorkspaceRoot: effectiveExecutionWorkspaceRoot,
           effort,
@@ -4565,6 +4569,9 @@ async function sendConversation(
         permissionGrantOnce: onceNow || undefined,
       });
   const turnIndex = conversation.turns.length - 1;
+  let handoffsAccepted = Boolean(
+    conversation.turns[turnIndex]?.handoffsAcceptedAt,
+  );
   conversations().flush();
   try {
     onStarted?.(conversation.id);
@@ -4813,6 +4820,19 @@ async function sendConversation(
       allowWithoutSurface: true,
       timeoutMs: 120_000,
       onProgress: (record: any) => {
+        if (
+          record?.phase === 'model_request' &&
+          !handoffsAccepted &&
+          projectContext?.resourceInbox?.length
+        ) {
+          conversations().updateTurn({
+            conversationId: conversation.id,
+            turnIndex,
+            handoffsAcceptedAt: Date.now(),
+          });
+          conversations().flush();
+          handoffsAccepted = true;
+        }
         if (record?.phase === 'user_input_accepted') {
           let answer;
           try {
@@ -5711,9 +5731,7 @@ ipcMain.handle(
       if (!result.ok) {
         return {ok: false, error: result.error || 'unknown_conversation'};
       }
-      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        dashboardWindow.webContents.send('conversations:turn', {id});
-      }
+      notifyConversationChanged(id);
       return {ok: true};
     } catch (_) {
       return {ok: false, error: 'store_failed'};
@@ -6403,56 +6421,141 @@ function xResourceSource(): XResourceSource {
   return resourceXSource;
 }
 
-ipcMain.handle('resources:command', async (event: Electron.IpcMainInvokeEvent, raw: {action: ResourceAction; input?: ResourceRequest}): Promise<ResourceResponse> => {
-  if (!isDashboardSender(event)) {return {ok: false, error: 'unauthorized_renderer'};}
-  const input = raw?.input || {};
-  try {
-    const service = resources();
-    if (raw.action === 'list') {
-      return {ok: true, items: service.list().map(item => ({...item,
-        previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
-      })), projects: conversations().listProjects().map((project: ProjectRecord) => ({id: project.id, name: project.name, root: project.root})), source: xResourceSource().snapshot()};
+ipcMain.handle(
+  'resources:command',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {action: ResourceAction; input?: ResourceRequest},
+  ): Promise<ResourceResponse> => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
     }
-    if (raw.action === 'add') {return {ok: true, entry: await service.add(input)};}
-    if (raw.action === 'preview') {
-      const preview = await service.preview(
-        String(input.id || ''),
-        input.material === 'paper' ? 'paper' : 'original',
-      );
-      return {ok: true, preview};
+    const input = raw?.input || {};
+    try {
+      const service = resources();
+      if (raw.action === 'project-inbox') {
+        const projectId = String(input.projectId || '');
+        return {
+          ok: true,
+          handoffs: service.projectInbox(projectId),
+          handoffReceipts: conversations().handoffReceipts(projectId),
+        };
+      }
+      if (raw.action === 'handoff-state') {
+        return {
+          ok: true,
+          entry: service.setHandoffState(
+            String(input.id || ''),
+            input.handoffState!,
+            Number(input.revision),
+            Number(input.snoozedUntil || 0),
+          ),
+        };
+      }
+      if (raw.action === 'list') {
+        return {
+          ok: true,
+          items: service
+            .list()
+            .map(item => ({
+              ...item,
+              previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
+            })),
+          projects: conversations()
+            .listProjects()
+            .map((project: ProjectRecord) => ({
+              id: project.id,
+              name: project.name,
+              root: project.root,
+            })),
+          source: xResourceSource().snapshot(),
+        };
+      }
+      if (raw.action === 'add') {
+        return {ok: true, entry: await service.add(input)};
+      }
+      if (raw.action === 'preview') {
+        const preview = await service.preview(
+          String(input.id || ''),
+          input.material === 'handoff'
+            ? 'handoff'
+            : input.material === 'paper'
+              ? 'paper'
+              : 'original',
+        );
+        return {ok: true, preview};
+      }
+      if (raw.action === 'open-original') {
+        const retained = service.originalPath(
+          String(input.id || ''),
+          input.material === 'handoff'
+            ? 'handoff'
+            : input.material === 'paper'
+              ? 'paper'
+              : 'original',
+        );
+        const error = await shell.openPath(retained);
+        return error ? {ok: false, error} : {ok: true};
+      }
+      if (raw.action === 'edit') {
+        return {
+          ok: true,
+          entry: service.update(
+            String(input.id || ''),
+            input.patch || {},
+            Number(input.revision),
+          ),
+        };
+      }
+      if (raw.action === 'process') {
+        return {ok: true, entry: await service.process(String(input.id || ''))};
+      }
+      if (raw.action === 'deliver') {
+        return {ok: true, entry: await service.deliver(String(input.id || ''))};
+      }
+      if (raw.action === 'x-connect') {
+        return {
+          ok: true,
+          source: await xResourceSource().connect(String(input.token || '')),
+        };
+      }
+      if (raw.action === 'x-configure') {
+        const source = xResourceSource().configure(input);
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, source};
+      }
+      if (raw.action === 'x-sync') {
+        return {ok: true, source: await xResourceSource().sync(true)};
+      }
+      if (raw.action === 'browser-open') {
+        const url = normalizeBrowserUrl(String(input.url || ''));
+        const result = await openCollectionBrowser(url);
+        return {ok: true, url: result.url, title: result.title};
+      }
+      if (raw.action === 'capture') {
+        const result = await captureCollectionBrowserSelection();
+        return {
+          ok: true,
+          entry: await service.add({
+            url: result.url,
+            title: result.title,
+            text: result.selectedText,
+            note: input.note,
+            projectId: input.projectId,
+          }),
+        };
+      }
+      throw new Error('Unknown resource action.');
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
-    if (raw.action === 'open-original') {
-      const retained = service.originalPath(
-        String(input.id || ''),
-        input.material === 'paper' ? 'paper' : 'original',
-      );
-      const error = await shell.openPath(retained);
-      return error ? {ok: false, error} : {ok: true};
-    }
-    if (raw.action === 'edit') {return {ok: true, entry: service.update(String(input.id || ''), input.patch || {}, Number(input.revision))};}
-    if (raw.action === 'process') {return {ok: true, entry: await service.process(String(input.id || ''))};}
-    if (raw.action === 'deliver') {return {ok: true, entry: await service.deliver(String(input.id || ''))};}
-    if (raw.action === 'x-connect') {return {ok: true, source: await xResourceSource().connect(String(input.token || ''))};}
-    if (raw.action === 'x-configure') {
-      const source = xResourceSource().configure(input);
-      void service.drain().catch(error => log(`resource processing: ${String(error)}`));
-      return {ok: true, source};
-    }
-    if (raw.action === 'x-sync') {return {ok: true, source: await xResourceSource().sync(true)};}
-    if (raw.action === 'browser-open') {
-      const url = normalizeBrowserUrl(String(input.url || ''));
-      const result = await openCollectionBrowser(url);
-      return {ok: true, url: result.url, title: result.title};
-    }
-    if (raw.action === 'capture') {
-      const result = await captureCollectionBrowserSelection();
-      return {ok: true, entry: await service.add({url: result.url, title: result.title, text: result.selectedText, note: input.note, projectId: input.projectId})};
-    }
-    throw new Error('Unknown resource action.');
-  } catch (error) {
-    return {ok: false, error: error instanceof Error ? error.message : String(error)};
-  }
-});
+  },
+);
 
 function stashBaseDir() {
   const configured = fabricSettings?.stash?.dir;

@@ -197,6 +197,7 @@ declare global {
             </div>
           </div>
           <aside class="mp-project-context" aria-label="Project context">
+            <section data-project-inbox></section>
             <section>
               <div class="mp-project-section-heading"><h2>Instructions</h2>${action('Edit', 'instructions')}</div>
               <p class="mp-project-instructions ${project.instructions ? '' : 'is-empty'}">${escape(project.instructions || 'Set how Magic Pointer should respond in this project.')}</p>
@@ -224,6 +225,11 @@ declare global {
       searchInput.value = search;
       searchInput.dispatchEvent(new Event('input', {bubbles: true}));
       status(statusText);
+      ProjectInboxView.mount(
+        root.querySelector<HTMLElement>('[data-project-inbox]')!,
+        ProjectScope.key(project),
+        window.magicPointerDashboard.resources,
+      );
     }
 
     function syncSubmitState(): void {
@@ -332,9 +338,12 @@ declare global {
     async function previewMaterial(
       reference: MagicPointerProjectMaterialRef,
     ): Promise<void> {
-      const document = reference.kind === 'document'
-        ? project.documents?.find(item => item.id === reference.documentId)
-        : project.sharedFiles?.includes(reference.path) ? {name: fileName(reference.path)} : undefined;
+      const document =
+        reference.kind === 'document'
+          ? project.documents?.find(item => item.id === reference.documentId)
+          : project.sharedFiles?.includes(reference.path)
+            ? {name: fileName(reference.path)}
+            : undefined;
       if (!document) {
         return;
       }
@@ -364,7 +373,10 @@ declare global {
         });
       dialog.showModal();
       try {
-        const result = await options.data.readProjectMaterial(projectId, reference);
+        const result = await options.data.readProjectMaterial(
+          projectId,
+          reference,
+        );
         if (!dialog.isConnected) {
           return;
         }

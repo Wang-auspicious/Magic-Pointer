@@ -1,6 +1,9 @@
 import type {
   CollectedResource,
   ResourceCollection,
+  ProjectInboxEntry,
+  HandoffReceipt,
+  HandoffState,
 } from './resource_collection_contract';
 import type {XSourceState} from './resource_x_source';
 import type {ResourcePreview} from './resource_preview';
@@ -15,6 +18,8 @@ export interface ResourceResponse {
   url?: string;
   title?: string;
   preview?: ResourcePreview;
+  handoffs?: ProjectInboxEntry[];
+  handoffReceipts?: HandoffReceipt[];
 }
 export type ResourceAction =
   | 'list'
@@ -22,6 +27,8 @@ export type ResourceAction =
   | 'edit'
   | 'process'
   | 'deliver'
+  | 'project-inbox'
+  | 'handoff-state'
   | 'preview'
   | 'open-original'
   | 'browser-open'
@@ -30,7 +37,9 @@ export type ResourceAction =
   | 'x-configure'
   | 'x-sync';
 export interface ResourceRequest {
-  material?: 'original' | 'paper';
+  material?: 'original' | 'paper' | 'handoff';
+  handoffState?: HandoffState;
+  snoozedUntil?: number;
   id?: string;
   text?: string;
   url?: string;

@@ -2,6 +2,35 @@ export type ResourceIntent =
   'save' | 'reference' | 'recreate' | 'read' | 'todo';
 export type ResourceState =
   'inbox' | 'ready' | 'ignored' | 'queued' | 'processing' | 'waiting' | 'error';
+export type HandoffState = 'unread' | 'handled' | 'snoozed';
+
+export interface ResourceHandoff {
+  id: string;
+  version: number;
+  projectId: string;
+  title: string;
+  summary: string;
+  coverage: string;
+  path: string;
+  intent: ResourceIntent;
+  sourceUrl: string;
+  createdAt: number;
+}
+
+export interface ProjectInboxEntry extends ResourceHandoff {
+  revision: number;
+  state: HandoffState;
+  snoozedUntil: number;
+  available: boolean;
+}
+
+export interface HandoffReceipt {
+  resourceId: string;
+  version: number;
+  conversationId: string;
+  turnId: string;
+  acceptedAt: number;
+}
 
 export interface ResourceCollection {
   url: string;
@@ -25,6 +54,10 @@ export interface ResourceCollection {
   analysisRevision: number;
   analysisCoverage: string;
   analysisAutomatic: boolean;
+  handoffVersion: number;
+  handoffUpdatedAt: number;
+  handoffState: HandoffState;
+  handoffSnoozedUntil: number;
 }
 
 export function resourceCollection(
@@ -68,6 +101,16 @@ export function resourceCollection(
     analysisRevision: Math.max(0, Number(value.analysisRevision) || 0),
     analysisCoverage: String(value.analysisCoverage || ''),
     analysisAutomatic: value.analysisAutomatic === true,
+    handoffVersion: Math.max(
+      0,
+      Number(value.handoffVersion) || (value.exportedPath ? 1 : 0),
+    ),
+    handoffUpdatedAt: Math.max(0, Number(value.handoffUpdatedAt) || 0),
+    handoffState:
+      value.handoffState === 'handled' || value.handoffState === 'snoozed'
+        ? value.handoffState
+        : 'unread',
+    handoffSnoozedUntil: Math.max(0, Number(value.handoffSnoozedUntil) || 0),
   };
 }
 

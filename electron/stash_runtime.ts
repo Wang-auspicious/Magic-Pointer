@@ -490,7 +490,17 @@ function createStashRuntime(options: StashRuntimeOptions) {
       throw new Error('resource_revision_conflict');
     }
     const previous = entry.collection;
-    entry.collection = resourceCollection({...current, ...patch, revision: current.revision + 1});
+    const keys = Object.keys(patch);
+    const readingStateOnly =
+      keys.length > 0 &&
+      keys.every(
+        key => key === 'handoffState' || key === 'handoffSnoozedUntil',
+      );
+    entry.collection = resourceCollection({
+      ...current,
+      ...patch,
+      revision: current.revision + (readingStateOnly ? 0 : 1),
+    });
     try {
       persist();
     } catch (error) {
