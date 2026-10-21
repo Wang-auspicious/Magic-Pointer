@@ -1320,10 +1320,40 @@ function createConversationStore(
     persist();
   }
 
+  function commitMetadata(
+    target: Conversation,
+    patch: Partial<Conversation>,
+    context: string,
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
+    const previous = {...target};
+    const wasDirty = dirty;
+    Object.assign(target, patch);
+    markDirty(target);
+    try {
+      // Explicit user settings need a durable result, even while token updates
+      // are being coalesced by the deferred transcript writer.
+      writeNow();
+      dirty = false;
+      return {ok: true, conversation: target};
+    } catch (error) {
+      for (const key of Object.keys(patch) as Array<keyof Conversation>) {
+        if (Object.hasOwn(previous, key)) {
+          Object.assign(target, {[key]: previous[key]});
+        } else {
+          delete target[key];
+        }
+      }
+      markDirty(target);
+      dirty = wasDirty;
+      reportPersistFailure(error, context);
+      return {ok: false, error: 'store_failed'};
+    }
+  }
+
   function rename(
     id: unknown,
     title: unknown,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const clean = String(title || '')
       .trim()
       .slice(0, TITLE_MAX);
@@ -1335,11 +1365,7 @@ function createConversationStore(
     if (!target) {
       return {ok: false};
     }
-    target.title = clean;
-    target.titleCustom = true;
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(target, {title: clean, titleCustom: true}, 'rename');
   }
 
   function remove(id: unknown): {ok: boolean; error?: string} {
@@ -1365,7 +1391,7 @@ function createConversationStore(
   function setProject(
     id: unknown,
     projectKey: unknown,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
@@ -1375,49 +1401,58 @@ function createConversationStore(
     if (key && !project) {
       return {ok: false};
     }
-    target.projectId = project?.id || '';
-    if (project?.root) {
-      target.workspaceRoot = project.root;
-      target.additionalFolders = normalizeAdditionalFolders(
-        project.root,
-        target.additionalFolders,
-      );
-    }
-    target.updatedAt = now();
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(
+      target,
+      {
+        projectId: project?.id || '',
+        ...(project?.root
+          ? {
+              workspaceRoot: project.root,
+              additionalFolders: normalizeAdditionalFolders(
+                project.root,
+                target.additionalFolders,
+              ),
+            }
+          : {}),
+        updatedAt: now(),
+      },
+      'set-project',
+    );
   }
 
   function setWorkspace(
     id: string,
     root: string,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
     }
-    target.workspaceRoot = root || undefined;
-    target.additionalFolders = root
-      ? normalizeAdditionalFolders(root, target.additionalFolders)
-      : [];
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(
+      target,
+      {
+        workspaceRoot: root || undefined,
+        additionalFolders: root
+          ? normalizeAdditionalFolders(root, target.additionalFolders)
+          : [],
+      },
+      'set-workspace',
+    );
   }
 
   function setModel(
     id: string,
     selection: ConversationModelSelection,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
     }
-    target.modelSelection = normalizeModelSelection(selection);
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(
+      target,
+      {modelSelection: normalizeModelSelection(selection)},
+      'set-model',
+    );
   }
 
   function setPermissionMode(

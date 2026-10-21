@@ -3,7 +3,9 @@ const {app, BrowserWindow} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const output = path.resolve('data/runtime/compaction-status');
+const output = path.resolve(
+  process.env.MP_STATUS_PROBE_OUTPUT || 'data/runtime/compaction-status',
+);
 fs.mkdirSync(output, {recursive: true});
 app.setPath('userData', path.join(output, 'profile'));
 app.disableHardwareAcceleration();
@@ -64,6 +66,7 @@ app.whenReady().then(async () => {
   };
   try {
     await win.loadFile(path.resolve('build/electron/renderer/studio.html'));
+    await js('setStudioLanguage("en")');
     await js(
       `window.__conversation={id:'compact-status-probe',title:'Long task · context handoff',workMode:'code',hasPendingWork:false,turns:[{at:Date.now(),question:'Continue verifying the project. Keep the checked facts and remaining steps.',answer:'',outcome:'进行中',trajectory:[]}]};Data.conversation=async()=>window.__conversation;void 0;`,
     );
@@ -92,6 +95,46 @@ app.whenReady().then(async () => {
       'the compaction row replaces the generic busy label',
     );
     witnesses.push('live bridge notice and active status');
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{name: 'prefers-reduced-motion', value: 'no-preference'}],
+    });
+    const runningGraphic = await js(
+      `(()=>{const node=document.querySelector('.mp-chat-compaction [data-state="ongoing"]');const style=getComputedStyle(node);return {namespace:node.namespaceURI,path:node.querySelector('path')?.getBBox().width||0,animation:style.animationName,duration:style.animationDuration,width:node.getBoundingClientRect().width};})()`,
+    );
+    assert.equal(runningGraphic.namespace, 'http://www.w3.org/2000/svg');
+    assert.ok(runningGraphic.path > 0, 'the native SVG paints real geometry');
+    assert.notEqual(runningGraphic.animation, 'none');
+    assert.equal(runningGraphic.duration, '1s');
+    const originalTransform = await js(
+      'getComputedStyle(document.querySelector(".mp-chat-compaction [data-state=ongoing]")).transform',
+    );
+    await new Promise(resolve => setTimeout(resolve, 180));
+    assert.notEqual(
+      await js(
+        'getComputedStyle(document.querySelector(".mp-chat-compaction [data-state=ongoing]")).transform',
+      ),
+      originalTransform,
+    );
+    witnesses.push('ongoing status paints a native SVG with measured rotation');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{name: 'prefers-reduced-motion', value: 'reduce'}],
+    });
+    assert.equal(
+      await js(
+        'getComputedStyle(document.querySelector(".mp-chat-compaction [data-state=ongoing]")).animationName',
+      ),
+      'none',
+    );
+    assert.ok(
+      await js(
+        'document.querySelector(".mp-chat-compaction [data-state=ongoing]").getBoundingClientRect().width>0',
+      ),
+    );
+    witnesses.push('reduced motion keeps a visible static status');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{name: 'prefers-reduced-motion', value: 'no-preference'}],
+    });
     await new Promise(resolve => setTimeout(resolve, 150));
     fs.writeFileSync(
       path.join(output, 'compaction-live-light.png'),
@@ -141,6 +184,12 @@ app.whenReady().then(async () => {
       ),
       0,
     );
+    assert.deepEqual(
+      await js(
+        `(()=>{const node=window.__notice.querySelector('[data-state="done"]');const box=node.getBoundingClientRect();return {width:box.width,height:box.height,visible:getComputedStyle(node).backgroundColor!=='rgba(0, 0, 0, 0)'};})()`,
+      ),
+      {width: 10, height: 10, visible: true},
+    );
     witnesses.push(
       'successful compaction shows estimated reduction and stops motion',
     );
@@ -167,6 +216,15 @@ app.whenReady().then(async () => {
       ),
       /Connection closed/,
     );
+    assert.equal(
+      await js(
+        `(()=>{const node=document.querySelector('.mp-chat-compaction [data-state="error"]');return node.getBoundingClientRect().width===10&&getComputedStyle(node).backgroundColor!=='rgba(0, 0, 0, 0)';})()`,
+      ),
+      true,
+    );
+    witnesses.push(
+      'completed and failed notices have visible semantic indicators',
+    );
     witnesses.push('failure remains distinct and error text is inert');
     assert.equal(
       await js('document.querySelectorAll(".mp-chat-turn-status").length'),
@@ -175,6 +233,12 @@ app.whenReady().then(async () => {
     );
     await event({...base, compactionId: 'cancelled-one'});
     await event({kind: 'loop_stopped', terminal: {reason: 'user_interrupt'}});
+    assert.equal(
+      await js(
+        `(()=>{const node=document.querySelector('.mp-chat-compaction [data-state="warning"]');const style=getComputedStyle(node);return node.getBoundingClientRect().width===10&&style.borderStyle==='solid'&&style.backgroundColor==='rgba(0, 0, 0, 0)';})()`,
+      ),
+      true,
+    );
     assert.equal(
       await js(
         '[...document.querySelectorAll(".mp-chat-compaction")].at(-1).dataset.state',
@@ -232,6 +296,7 @@ app.whenReady().then(async () => {
     await js(
       'document.documentElement.lang="en";window.__conversation.turns[0].trajectory=window.__conversation.turns[0].trajectory.slice(0,1);window.__host.replaceChildren();window.__view=ChatView.createConversationView(window.__host);window.__view.update(window.__conversation);void 0;',
     );
+    await new Promise(resolve => setTimeout(resolve, 150));
     fs.writeFileSync(
       path.join(output, 'compaction-light.png'),
       (await win.webContents.capturePage()).toPNG(),
@@ -245,6 +310,63 @@ app.whenReady().then(async () => {
       path.join(output, 'compaction-dark-narrow.png'),
       (await win.webContents.capturePage()).toPNG(),
     );
+    await js(
+      `window.__conversation.turns[0]={...window.__conversation.turns[0],failed:true,error:'The provider connection closed.',trajectory:[{kind:'notice',text:'Original task context was retained.'}]};window.__view.update(window.__conversation);void 0;`,
+    );
+    assert.equal(
+      await js(
+        `(()=>{const warnings=[...document.querySelectorAll('.mp-chat-notice .mp-chat-dot, .mp-chat-turn-error .mp-chat-dot')];return warnings.length===2&&warnings.every(node=>node.getBoundingClientRect().width===10);})()`,
+      ),
+      true,
+    );
+    witnesses.push(
+      'ordinary warning and turn-error rows retain visible indicators',
+    );
+    await js(
+      `Data.projects=async()=>[{id:'project-status-probe',root:'D:/project-status-probe',name:'Saved project'}];Data.conversation=async()=>({...window.__conversation,workspaceRoot:'D:/saved-project'});Data.setConversationProject=async()=>({ok:false,error:'store_failed'});window.__projectAnchor=document.createElement('button');window.__projectAnchor.textContent='Change project';document.body.append(window.__projectAnchor);openProjectAssignment(window.__conversation.id,window.__projectAnchor);void 0;`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 70));
+    await js(
+      `document.querySelector('.mp-project-assignment [data-project-root]').click();void 0;`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 70));
+    assert.match(
+      await js(
+        `document.querySelector('.mp-project-assignment .mp-library-error').textContent`,
+      ),
+      /Could not save/,
+    );
+    assert.equal(
+      await js(
+        `document.querySelector('.mp-project-assignment [data-project-root]').disabled`,
+      ),
+      false,
+    );
+    await js(
+      `closeProjectAssignment();window.__sessionMenu=buildSessionMenu({...window.__conversation,workspaceRoot:'D:/saved-project'});document.body.append(window.__sessionMenu);window.__sessionMenu.hidden=false;window.__sessionMenu.querySelector('[data-session-action="remove-project"]').click();void 0;`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 70));
+    assert.equal(await js(`window.__sessionMenu.hidden`), false);
+    assert.match(
+      await js(
+        `window.__sessionMenu.querySelector('[role=alert]').textContent`,
+      ),
+      /Could not save/,
+    );
+    witnesses.push(
+      'project change and removal failures remain visible and retryable',
+    );
+    await js(
+      `setStudioLanguage('zh-CN');window.__sessionMenu.querySelector('[data-session-action="remove-project"]').click();void 0;`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 70));
+    assert.match(
+      await js(
+        `window.__sessionMenu.querySelector('[role=alert]').textContent`,
+      ),
+      /未能保存对话设置/,
+    );
+    witnesses.push('save failure feedback follows the current Studio language');
     const report = {
       ok: !errors.length,
       usedBackend:

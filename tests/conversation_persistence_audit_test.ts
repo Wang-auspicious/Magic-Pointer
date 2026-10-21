@@ -102,6 +102,8 @@ async function main() {
     ...require('../electron/permission_mode'),
     ...require('../electron/conversation_model'),
     ...require('../electron/project_context'),
+    ...require('../electron/resource_handoff'),
+    resources: () => ({projectInbox: () => []}),
     ...require('../electron/workspace_folders'),
     canonicalProjectRoot: async () => '',
     knownProjectRoot: (root: string) => root,
@@ -386,6 +388,47 @@ async function main() {
       'real-question',
     );
     assert.equal(store.get(waiting.id).turns[0].outcome, '等待输入');
+    const modelSetter = store.setModel;
+    store.setModel = () => ({ok: false, error: 'store_failed'});
+    const modelFailure = await send({
+      question: '/model not-saved',
+      conversationId: waiting.id,
+    });
+    store.setModel = modelSetter;
+    assert.equal(modelFailure.ok, false);
+    assert.match(modelFailure.error, /Could not save the model selection/);
+    assert.equal(store.get(waiting.id).modelSelection.model, 'next-audit');
+
+    const bound = store.appendTurn({
+      newConversation: true,
+      question: 'Bound task',
+      workspaceRoot: path.join(baseDir, 'alias'),
+    });
+    context.canonicalProjectRoot = async (root?: string) =>
+      root ? path.join(baseDir, 'canonical') : '';
+    const workspaceSetter = store.setWorkspace;
+    store.setWorkspace = () => ({ok: false, error: 'store_failed'});
+    const beforeRebind = bridgeCalls;
+    const rebindRequest = send({
+      question: 'Continue',
+      conversationId: bound.id,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    if (bridgeCalls > beforeRebind) {
+      callbacks.onComplete({
+        ok: true,
+        answer: 'An unwanted request was started.',
+      });
+    }
+    const rebindFailure = await rebindRequest;
+    store.setWorkspace = workspaceSetter;
+    assert.equal(
+      rebindFailure.ok,
+      false,
+      'a failed folder save must not silently start the task',
+    );
+    assert.match(rebindFailure.error, /Could not save the conversation folder/);
+    assert.equal(bridgeCalls, beforeRebind);
     console.log(
       'Conversation persistence, cancellation and scoped model selection passed',
     );

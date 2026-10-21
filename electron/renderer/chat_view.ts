@@ -161,44 +161,40 @@ const ChatView = (() => {
     return exactIcons.node(name, size) as ChatNode;
   }
 
-  const MATRIX_CELLS: ReadonlyArray<readonly [number, number]> = [
-    [0, 0],
-    [4, 0],
-    [8, 0],
-    [8, 4],
-    [8, 8],
-    [4, 8],
-    [0, 8],
-    [0, 4],
-  ];
-
   function stateDot(
     state: 'done' | 'warning' | 'ongoing' | 'error',
     size = 10,
   ): ChatNode {
     if (state === 'ongoing') {
-      const svg = h('svg', {
-        class: 'mp-chat-matrix',
+      const namespace = 'http://www.w3.org/2000/svg';
+      const svg = DOC
+        ? DOC.createElementNS(namespace, 'svg')
+        : shimNode('svg', namespace);
+      const attrs = {
+        class: 'mp-chat-status-spinner',
         width: String(size),
         height: String(size),
-        viewBox: '0 0 10 10',
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '1',
+        'stroke-linecap': 'round',
         'aria-hidden': 'true',
-      });
+      };
+      for (const [key, value] of Object.entries(attrs)) {
+        svg.setAttribute(key, value);
+      }
       svg.setAttribute('data-state', 'ongoing');
-      MATRIX_CELLS.forEach(([x, y], index) => {
-        const rect = h('rect', {
-          class: 'mp-chat-cell',
-          x: String(x),
-          y: String(y),
-          width: '2',
-          height: '2',
-        });
-        rect.setAttribute(
-          'style',
-          `animation-delay:${(index - MATRIX_CELLS.length) * 125}ms`,
-        );
-        attach(svg, rect);
-      });
+      const path = DOC
+        ? DOC.createElementNS(namespace, 'path')
+        : shimNode('path', namespace);
+      // Claude Desktop's shipped Spinner master16, extracted via local REA.
+      path.setAttribute(
+        'd',
+        'M13.5 8C13.5 11.038 11.038 13.5 8 13.5C4.962 13.5 2.5 11.038 2.5 8C2.5 4.962 4.962 2.5 8 2.5',
+      );
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      attach(svg, path);
       return svg;
     }
     const dot = h('span', {class: 'mp-chat-dot', 'aria-hidden': 'true'});

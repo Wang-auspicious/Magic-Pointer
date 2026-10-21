@@ -3828,7 +3828,12 @@ function setConversationModel(
     };
     const result = conversations().setModel(id, selection);
     if (!result.ok) {
-      return {ok: false, error: 'Conversation not found.'};
+      return {
+        ok: false,
+        error: result.error === 'store_failed'
+          ? 'Could not save the model selection. Try again.'
+          : 'Conversation not found.',
+      };
     }
     notifyConversationChanged(id);
     return {ok: true, selection};
@@ -4335,7 +4340,13 @@ async function sendConversation(
       existing.id,
       threadWorkspaceRoot,
     );
-    if (rebound.ok && rebound.conversation) {
+    if (!rebound.ok) {
+      return {
+        ok: false,
+        error: 'Could not save the conversation folder. Try again.',
+      };
+    }
+    if (rebound.conversation) {
       existing = rebound.conversation;
       notifyConversationChanged(existing.id);
     }
@@ -5651,7 +5662,7 @@ ipcMain.handle(
     try {
       const result = conversations().rename(id, title);
       if (!result.ok) {
-        return {ok: false, error: 'invalid_id_or_title'};
+        return {ok: false, error: result.error || 'invalid_id_or_title'};
       }
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('conversations:turn', {id});

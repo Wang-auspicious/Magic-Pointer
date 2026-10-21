@@ -1375,6 +1375,34 @@
   font-size: 12px;
   color: var(--mp-text-muted);
 }
+.mp-chat-status-spinner,
+.mp-chat-dot {
+  display: inline-block;
+  flex: none;
+}
+.mp-chat-status-spinner {
+  animation: mp-chat-status-spin 1s linear infinite;
+}
+.mp-chat-dot {
+  border-radius: 50%;
+  background: currentColor;
+}
+.mp-chat-dot[data-state='done'] {
+  color: var(--mp-success);
+}
+.mp-chat-dot[data-state='error'] {
+  color: var(--mp-danger);
+}
+.mp-chat-dot[data-state='warning'] {
+  background: transparent;
+  border: 1px solid currentColor;
+}
+@keyframes mp-chat-status-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-chat-status-spinner { animation: none; }
+}
 .mp-chat-compaction[data-state='error'] {
   color: var(--mp-danger);
 }

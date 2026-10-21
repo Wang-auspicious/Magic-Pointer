@@ -311,6 +311,10 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'Rename failed. Please try again.',
     zh: '重命名失败，请重试。',
   },
+  'convo.save_failed': {
+    en: 'Could not save the conversation. Please try again.',
+    zh: '未能保存对话设置，请重试。',
+  },
   'convo.untitled': {en: 'Untitled conversation', zh: '未命名对话'},
   'convo.jump_to': {en: 'Jump to: {label}', zh: '跳到：{label}'},
   'prompt.group_name': {en: 'Group name', zh: '分组名称'},

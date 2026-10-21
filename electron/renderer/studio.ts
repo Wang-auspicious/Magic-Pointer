@@ -1571,7 +1571,21 @@ function buildSessionMenu(c: {
       return;
     }
     if (name === 'remove-project') {
-      void Data.setConversationProject(id, '').then(() => renderSidebar());
+      void Data.setConversationProject(id, '').then(result => {
+        if (result.ok) {
+          return renderSidebar();
+        }
+        const notice = document.createElement('p');
+        notice.className = 'mp-library-error';
+        notice.setAttribute('role', 'alert');
+        notice.textContent =
+          result.error === 'store_failed'
+            ? studioT('convo.save_failed')
+            : result.error || studioT('convo.save_failed');
+        menu.querySelector('[role=alert]')?.remove();
+        menu.append(notice);
+        menu.hidden = false;
+      });
       return;
     }
     if (name === 'up') {
@@ -1865,7 +1879,11 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     try {
       const result = await Data.setConversationProject(id, root);
       if (!result.ok) {
-        throw new Error(result.error || studioT('project.no_changes'));
+        throw new Error(
+          result.error === 'store_failed'
+            ? studioT('convo.save_failed')
+            : result.error || studioT('convo.save_failed'),
+        );
       }
       if (activeConversationId === id) {
         setActiveProject(
