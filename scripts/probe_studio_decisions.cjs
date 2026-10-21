@@ -213,6 +213,14 @@ app.whenReady().then(async () => {
       await refreshBackgroundAgentTasks(stored.id);
       check(crashedRow.querySelector('.mp-subagent-state').textContent === 'Partially complete'
         && crashedRow.closest('[data-task-section="Needs attention"]'), 'partial child was displayed as Completed or hidden under Finished');
+      applyStudioLanguage('zh-CN');
+      check(crashedRow.querySelector('.mp-subagent-state').textContent === '部分完成', 'visible background status does not follow the language change');
+      check(document.getElementById('inspector-title').textContent === '后台任务', 'background inspector title ignores the selected language');
+      setInspector(true, 'files');
+      check(document.getElementById('inspector-title').textContent === '文件', 'file inspector title ignores the selected language');
+      setInspector(true, 'tasks');
+      applyStudioLanguage('en');
+      check(document.querySelector('.mp-subagent-task[data-task-id="child-background"]') === crashedRow, 'language change rebuilt the task row');
       let resolveSources;
       const sourcesPromise = new Promise(resolve => { resolveSources = resolve; });
       Data.conversations = async () => sourcesPromise;
@@ -222,7 +230,7 @@ app.whenReady().then(async () => {
       resolveSources([{ id: 'selected-conversation', title: 'Selected task' }, { id: 'other-conversation', title: 'Other task' }]);
       await wait();
       check(!!host.querySelector('[data-dailywrap-from]') && !!host.querySelector('[data-dailywrap-to]'), 'DailyWrap has no editable time range');
-      check(host.querySelector('.mp-decision-dailywrap-sources .mp-decision-hint')?.textContent === '1 selected',
+      check(host.querySelector('.mp-decision-dailywrap-sources span.mp-decision-hint')?.textContent === '1 selected',
         'duplicate proposed task IDs remain duplicated in the user selection');
       check(host.querySelector('[data-decision="once"]').disabled, 'DailyWrap accepted a model-selected source without user choice');
       host.querySelector('[data-dailywrap-source-selected]').click();

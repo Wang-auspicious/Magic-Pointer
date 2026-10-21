@@ -678,6 +678,39 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'The watch settings were not saved: {error}',
     zh: '关注设置未保存：{error}',
   },
+  'subagent.running': {en: 'Running', zh: '运行中'},
+  'subagent.awaiting_user': {en: 'Needs approval', zh: '等待批准'},
+  'subagent.needs_verification': {en: 'Needs verification', zh: '等待验证'},
+  'subagent.partial': {en: 'Partially complete', zh: '部分完成'},
+  'subagent.stalled': {en: 'Stalled', zh: '已停滞'},
+  'subagent.provider_unavailable': {
+    en: 'Provider unavailable',
+    zh: '模型服务不可用',
+  },
+  'subagent.budget_exhausted': {en: 'Budget exhausted', zh: '预算已用尽'},
+  'subagent.invariant_failed': {en: 'Runtime error', zh: '运行时错误'},
+  'subagent.user_interrupt': {en: 'Interrupted', zh: '已中断'},
+  'subagent.stop_hook': {en: 'Stopped by hook', zh: '已被钩子停止'},
+  'subagent.failed': {en: 'Failed', zh: '失败'},
+  'subagent.stopped': {en: 'Stopped', zh: '已停止'},
+  'subagent.completed': {en: 'Completed', zh: '已完成'},
+  'subagent.unknown': {en: 'Unknown status', zh: '状态未知'},
+  'subagent.needs_resume': {en: 'Needs resume', zh: '等待恢复'},
+  'subagent.stopping': {en: 'Stopping', zh: '正在停止'},
+  'subagent.writing': {en: 'Writing', zh: '正在编写'},
+  'subagent.thinking': {en: 'Thinking', zh: '思考中'},
+  'subagent.thinking_live': {en: 'Thinking…', zh: '正在思考…'},
+  'subagent.thought': {en: 'Thought', zh: '思考记录'},
+  'inspector.materials': {en: 'Materials', zh: '资料'},
+  'inspector.files': {en: 'Files', zh: '文件'},
+  'inspector.browser': {en: 'Browser', zh: '浏览器'},
+  'inspector.terminal': {en: 'Terminal', zh: '终端'},
+  'inspector.changes': {en: 'Changes', zh: '变更'},
+  'inspector.background_tasks': {en: 'Background tasks', zh: '后台任务'},
+  'inspector.tasks': {en: 'Tasks', zh: '任务'},
+  'inspector.artifact': {en: 'Artifact', zh: '产物'},
+  'inspector.modules': {en: 'Mods', zh: '模块'},
+  'inspector.task': {en: 'Task', zh: '任务'},
   'task.updating': {
     en: 'The task status is updating; please try again later.',
     zh: '任务状态正在更新，请稍后重试。',
@@ -758,6 +791,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'No saved tasks are available.',
     zh: '没有可用的已保存任务。',
   },
+  'decision.no_matching_tasks': {en: 'No saved tasks match this search.', zh: '没有匹配此次搜索的已保存任务。'},
   'decision.approval_scope': {
     en: 'Scope of this approval',
     zh: '本次授权的范围',
@@ -1019,6 +1053,7 @@ function studioTCount(
 }
 
 function applyStudioLanguage(language: StudioLanguage): void {
+  const changed = studioLanguage !== language;
   studioLanguage = language;
   document.documentElement.lang = language;
   document.documentElement.dataset.language = language;
@@ -1027,14 +1062,29 @@ function applyStudioLanguage(language: StudioLanguage): void {
   } catch {
     /* storage unavailable */
   }
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('mp:language-change'));
+  }
 }
 
 if (typeof document !== 'undefined') {
   try {
-    applyStudioLanguage(localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en');
+    applyStudioLanguage(
+      localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en',
+    );
   } catch {
     applyStudioLanguage('en');
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', event => {
+    if (event.key === 'mp:language:v1') {
+      applyStudioLanguage(
+        localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en',
+      );
+    }
+  });
 }
 
 if (typeof module !== 'undefined' && module.exports) {

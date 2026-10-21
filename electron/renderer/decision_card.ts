@@ -197,6 +197,7 @@ declare global {
       input.value = value;
       input.disabled = busy;
       input.setAttribute(marker, '');
+      input.dataset.decisionControl = marker;
       input.addEventListener('input', () => update(input.value));
       field.append(input);
       return field;
@@ -272,6 +273,7 @@ declare global {
             studioT('decision.retry_tasks'),
           );
           retry.type = 'button';
+          retry.dataset.decisionControl = 'history-retry';
           retry.disabled = busy;
           retry.addEventListener('click', request.retryHistorySources);
           scope.append(status, retry);
@@ -293,6 +295,7 @@ declare global {
       radio.type = 'radio';
       radio.name = `dailywrap-source-${request.key}`;
       radio.value = value;
+      radio.dataset.decisionControl = `history-${value}`;
       radio.checked = selection.sourceMode === value;
       radio.disabled = busy;
       radio.setAttribute(marker, '');
@@ -321,11 +324,20 @@ declare global {
     );
     const search = element('input', 'mp-decision-dailywrap-search');
     search.type = 'search';
+    search.dataset.decisionControl = 'history-search';
     search.placeholder = studioT('decision.find_task');
     search.value = selection.search;
     search.disabled = busy;
     search.setAttribute('aria-label', studioT('decision.find_task'));
     const list = element('div', 'mp-decision-dailywrap-list');
+    const empty = element(
+      'p',
+      'mp-decision-hint',
+      studioT(
+        sources.length ? 'decision.no_matching_tasks' : 'decision.no_tasks',
+      ),
+    );
+    empty.setAttribute('role', 'status');
     const selectedCount = element('span', 'mp-decision-hint', '');
     const count = () => {
       const available = new Set(sources.map(source => source.id));
@@ -335,11 +347,18 @@ declare global {
     };
     const filter = () => {
       const query = selection.search.trim().toLocaleLowerCase();
-      for (const row of Array.from(list.children) as HTMLElement[]) {
+      let matches = 0;
+      for (const row of list.querySelectorAll<HTMLElement>(
+        '.mp-decision-dailywrap-source',
+      )) {
         row.hidden = Boolean(
           query && !row.textContent?.toLocaleLowerCase().includes(query),
         );
+        if (!row.hidden) {
+          matches++;
+        }
       }
+      empty.hidden = matches > 0;
     };
     search.addEventListener('input', () => {
       selection.search = search.value;
@@ -349,6 +368,7 @@ declare global {
       const row = element('label', 'mp-decision-dailywrap-source');
       const check = element('input', '');
       check.type = 'checkbox';
+      check.dataset.decisionControl = `history-source:${source.id}`;
       check.checked = selection.selectedIds.includes(source.id);
       check.disabled = busy;
       check.setAttribute('data-dailywrap-source-id', source.id);
@@ -372,11 +392,7 @@ declare global {
       row.append(check, name, id);
       list.append(row);
     }
-    if (!sources.length) {
-      list.append(
-        element('p', 'mp-decision-hint', studioT('decision.no_tasks')),
-      );
-    }
+    list.append(empty);
     filter();
     count();
     sourceGroup.append(search, list, selectedCount);
@@ -527,11 +543,14 @@ declare global {
     const hadFocus = host.contains(document.activeElement);
     const focused = document.activeElement as HTMLElement | null;
     const selection =
-      hadFocus && focused instanceof HTMLTextAreaElement
+      hadFocus &&
+      (focused instanceof HTMLTextAreaElement ||
+        focused instanceof HTMLInputElement) &&
+      focused.selectionStart !== null
         ? {
             start: focused.selectionStart,
             end: focused.selectionEnd,
-            direction: focused.selectionDirection,
+            direction: focused.selectionDirection ?? 'none',
           }
         : undefined;
     const focusControl = hadFocus
@@ -881,6 +900,11 @@ declare global {
       custom.addEventListener('input', () => {
         draft.custom[draft.page] = custom.value;
         selectOther();
+        if (hasAnswer()) {
+          view.error = '';
+          view.errorKey = undefined;
+          host.querySelector('.mp-decision-error[role="alert"]')?.remove();
+        }
         continueButton.disabled = view.busy || !hasAnswer();
         custom.style.height = 'auto';
         custom.style.height = `${Math.min(88, custom.scrollHeight)}px`;
@@ -1066,10 +1090,14 @@ declare global {
         ?.focus({preventScroll: true});
     } else if (focusControl !== undefined) {
       const control = host.querySelector<HTMLElement>(
-        `[data-decision-control="${focusControl}"]`,
+        `[data-decision-control="${CSS.escape(focusControl)}"]`,
       );
       control?.focus({preventScroll: true});
-      if (selection && control instanceof HTMLTextAreaElement) {
+      if (
+        selection &&
+        (control instanceof HTMLTextAreaElement ||
+          control instanceof HTMLInputElement)
+      ) {
         control.setSelectionRange(
           selection.start,
           selection.end,
@@ -1217,4 +1245,16 @@ declare global {
       delete host.dataset.decisionKey;
     },
   };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('mp:language-change', () => {
+      for (const host of document.querySelectorAll<HTMLElement>(
+        '[data-decision-key]',
+      )) {
+        const view = views.get(host);
+        if (view && view.language !== getStudioLanguage()) {
+          paint(host, view);
+        }
+      }
+    });
+  }
 })();

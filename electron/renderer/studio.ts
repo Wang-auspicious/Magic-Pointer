@@ -8611,45 +8611,45 @@ document
 
 function subagentStatusLabel(status: string): string {
   if (status === 'running') {
-    return 'Running';
+    return studioT('subagent.running');
   }
   if (status === 'awaiting_user') {
-    return 'Needs approval';
+    return studioT('subagent.awaiting_user');
   }
   if (status === 'needs_verification') {
-    return 'Needs verification';
+    return studioT('subagent.needs_verification');
   }
   if (status === 'partial') {
-    return 'Partially complete';
+    return studioT('subagent.partial');
   }
   if (status === 'stalled') {
-    return 'Stalled';
+    return studioT('subagent.stalled');
   }
   if (status === 'provider_unavailable') {
-    return 'Provider unavailable';
+    return studioT('subagent.provider_unavailable');
   }
   if (status === 'budget_exhausted') {
-    return 'Budget exhausted';
+    return studioT('subagent.budget_exhausted');
   }
   if (status === 'invariant_failed') {
-    return 'Runtime error';
+    return studioT('subagent.invariant_failed');
   }
   if (status === 'user_interrupt') {
-    return 'Interrupted';
+    return studioT('subagent.user_interrupt');
   }
   if (status === 'stop_hook') {
-    return 'Stopped by hook';
+    return studioT('subagent.stop_hook');
   }
   if (status === 'failed') {
-    return 'Failed';
+    return studioT('subagent.failed');
   }
   if (status === 'stopped') {
-    return 'Stopped';
+    return studioT('subagent.stopped');
   }
   if (status === 'completed') {
-    return 'Completed';
+    return studioT('subagent.completed');
   }
-  return 'Unknown status';
+  return studioT('subagent.unknown');
 }
 
 function subagentResumeText(task: StudioSubagentTask): string {
@@ -8819,7 +8819,7 @@ async function stopSubagentTask(row: HTMLElement) {
   }
   row.dataset.stopState = 'pending';
   row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent =
-    'Stopping';
+    studioT('subagent.stopping');
   button.disabled = true;
   button.title = 'Stopping task…';
   button.setAttribute('aria-label', 'Stopping task');
@@ -8990,10 +8990,10 @@ function renderProjectTasks() {
       setText(
         row.querySelector('.mp-subagent-state')!,
         task.resumeRequired
-          ? 'Needs resume'
+          ? studioT('subagent.needs_resume')
           : task.status === 'running'
             ? row.dataset.stopState
-              ? 'Stopping'
+              ? studioT('subagent.stopping')
               : ''
             : subagentStatusLabel(task.status),
       );
@@ -9006,8 +9006,8 @@ function renderProjectTasks() {
         task.currentTool ||
           (task.status === 'running'
             ? task.phase === 'writing'
-              ? 'Writing'
-              : 'Thinking'
+              ? studioT('subagent.writing')
+              : studioT('subagent.thinking')
             : ''),
       );
       const usage = task.modelUsage;
@@ -9063,8 +9063,8 @@ function renderProjectTasks() {
       setText(
         thinking.querySelector('summary')!,
         task.status === 'running' && task.phase === 'thinking'
-          ? 'Thinking…'
-          : 'Thought',
+          ? studioT('subagent.thinking_live')
+          : studioT('subagent.thought'),
       );
       setText(thinking.querySelector('pre')!, task.reasoning || '');
       const answer = row.querySelector<HTMLElement>('.mp-subagent-answer')!;
@@ -9275,6 +9275,29 @@ function inspectorAvailableWidth(): number {
   return Math.max(0, shell.clientWidth - sidebarWidth);
 }
 
+function renderInspectorTitle() {
+  const inspector = document.getElementById('project-inspector');
+  const title = document.getElementById('inspector-title');
+  if (!inspector || !title) {
+    return;
+  }
+  const labels: Record<string, string> = {
+    activity: 'activity.log',
+    materials: 'inspector.materials',
+    files: 'inspector.files',
+    browser: 'inspector.browser',
+    terminal: 'inspector.terminal',
+    changes: 'inspector.changes',
+    tasks:
+      inspector.dataset.taskLayout === 'background'
+        ? 'inspector.background_tasks'
+        : 'inspector.tasks',
+    artifact: 'inspector.artifact',
+    modules: 'inspector.modules',
+  };
+  title.textContent = studioT(labels[inspectorState.tab] || 'inspector.task');
+}
+
 function syncInspectorGeometry() {
   const inspector = document.getElementById('project-inspector');
   const maximize = document.getElementById('inspector-maximize');
@@ -9323,12 +9346,7 @@ function syncInspectorGeometry() {
         : backgroundTasks
           ? '416px'
           : `${inspectorState.width}px`;
-  if (taskRail) {
-    const title = document.getElementById('inspector-title');
-    if (title) {
-      title.textContent = backgroundTasks ? 'Background tasks' : 'Tasks';
-    }
-  }
+  renderInspectorTitle();
   if (maximize) {
     maximize.hidden = taskRail && !backgroundTasks;
   }
@@ -9409,26 +9427,6 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       button.classList.toggle('is-on', active);
       button.setAttribute('aria-selected', String(active));
     });
-  const inspectorTitle = document.getElementById('inspector-title');
-  if (inspectorTitle) {
-    inspectorTitle.textContent =
-      (
-        {
-          activity: studioT('activity.log'),
-          materials: 'Materials',
-          files: 'Files',
-          browser: 'Browser',
-          terminal: 'Terminal',
-          changes: 'Changes',
-          tasks:
-            inspector.dataset.taskLayout === 'background'
-              ? 'Background tasks'
-              : 'Tasks',
-          artifact: 'Artifact',
-          modules: 'Mods',
-        } as Record<string, string>
-      )[activeInspectorTab] || 'Task';
-  }
   if (!open) {
     closeProjectBrowserView();
     return;
@@ -12584,8 +12582,16 @@ function setStudioLanguage(language: 'en' | 'zh-CN'): void {
   if (view === 'chat' && activeConversationId) {
     void openConversation(activeConversationId);
   }
-  window.dispatchEvent(new CustomEvent('mp:language-change'));
 }
+
+window.addEventListener('mp:language-change', () => {
+  if (inspectorState.open && activeInspectorTab === 'tasks') {
+    renderProjectTasks();
+  }
+  if (inspectorState.open) {
+    renderInspectorTitle();
+  }
+});
 
 try {
   applyStudioLanguage(
