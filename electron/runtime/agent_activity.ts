@@ -1,4 +1,5 @@
 import {asObject, type AgentEvent, type Data} from './agent';
+import {updateCompaction, settleCompactions} from '../compaction_status';
 
 const text = (value: unknown) =>
   typeof value === 'string'
@@ -63,7 +64,19 @@ export class RuntimeActivitySink {
       return;
     }
     if (kind === 'context_compacting') {
-      this.mark('context_compacting', event);
+      this.flush();
+      const at = this.mark('context_compacting', event);
+      if (event.status === 'request') {
+        if (this.activeMessage) {
+          this.activeMessage.state = 'done';
+          this.activeMessage.completedAt ??= at;
+        }
+        if (this.activeModel?.state === 'running') {
+          this.activeModel.state = 'done';
+          this.activeModel.latencyMs = at - Number(this.activeModel.startedMs);
+        }
+      }
+      updateCompaction(this.trajectory, event, at, this.timeOriginMs);
       return;
     }
     if (kind === 'turn_started') {
@@ -247,6 +260,20 @@ export class RuntimeActivitySink {
     if (kind === 'turn_finished' || kind === 'loop_stopped') {
       this.flush();
       if (kind === 'loop_stopped') {
+        const terminal = asObject(event.terminal);
+        const status =
+          terminal.reason === 'user_interrupt' ? 'cancelled' : 'failed';
+        for (const row of settleCompactions(
+          this.trajectory,
+          status,
+          Date.now(),
+        )) {
+          this.mark('context_compacting', {
+            compactionId: row.compactionId,
+            status,
+            error: row.error,
+          });
+        }
         for (const review of this.trajectory) {
           if (
             review.kind !== 'permission-review' ||

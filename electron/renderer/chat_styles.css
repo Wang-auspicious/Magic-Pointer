@@ -1368,6 +1368,24 @@
   font-size: 12px;
 }
 
+.mp-chat-compaction {
+  padding: 8px 0;
+  background: transparent;
+  align-items: center;
+  font-size: 12px;
+  color: var(--mp-text-muted);
+}
+.mp-chat-compaction[data-state='error'] {
+  color: var(--mp-danger);
+}
+.mp-chat-compaction-error {
+  display: block;
+  margin-top: 3px;
+  color: var(--mp-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .mp-chat-turn-error {
   border: 1px solid color-mix(in srgb, var(--mp-danger) 20%, transparent);
 }

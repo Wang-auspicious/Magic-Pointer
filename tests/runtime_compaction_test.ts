@@ -136,6 +136,23 @@ test('manual compaction receipts survive reopening and produce progress without 
     'a summary is not acceptance of the primary task input',
   );
   assert.ok(!events.some(event => event.kind === 'model_chunk'));
+  const compactionEvents = events.filter(
+    event => event.kind === 'context_compacting',
+  );
+  assert.ok(
+    compactionEvents.every(
+      event => typeof event.compactionId === 'string' && event.compactionId,
+    ),
+  );
+  assert.equal(
+    new Set(compactionEvents.map(event => event.compactionId)).size,
+    1,
+  );
+  assert.equal(compactionEvents.at(-1)?.status, 'done');
+  assert.ok(
+    Number(compactionEvents.at(-1)?.beforeTokens) >
+      Number(compactionEvents.at(-1)?.afterTokens),
+  );
   assert.equal(
     (
       sink.trajectory.find(item => item.kind === 'message')

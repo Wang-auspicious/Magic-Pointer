@@ -15,6 +15,10 @@ const ChatView = (() => {
         : null;
   const StudioLocaleApi =
     typeof require === 'function' ? require('./locale') : null;
+  const compaction: typeof import('../compaction_status') =
+    typeof CompactionStatus !== 'undefined'
+      ? CompactionStatus
+      : require('../compaction_status');
   function lt(
     id: string,
     params?: Record<string, string | number>,
@@ -3856,7 +3860,12 @@ const ChatView = (() => {
         running?: boolean;
         turn?: string;
       }
-    | {type: 'notice'; text: string; turn?: string}
+    | {
+        type: 'notice';
+        text: string;
+        turn?: string;
+        compaction?: Record<string, unknown>;
+      }
     | {type: 'chip'; chip: TurnChip; turn?: string};
 
   function trajectoryReasoning(
@@ -3923,6 +3932,47 @@ const ChatView = (() => {
     attach(root, stateDot('warning'));
     const copy = h('span', {class: 'mp-chat-notice-copy'});
     attach(copy, text);
+    attach(root, copy);
+    return root;
+  }
+
+  function compactionNode(
+    record: Record<string, unknown>,
+    live = false,
+  ): ChatNode {
+    const language =
+      typeof document !== 'undefined'
+        ? document.documentElement.lang || 'en'
+        : StudioLocaleApi?.getStudioLanguage() || 'en';
+    const label = compaction.compactionLabel(record, language);
+    const running = record.state === 'running';
+    const root = h('div', {
+      class: 'mp-chat-notice mp-chat-compaction',
+      role: 'status',
+      'aria-live': live ? 'polite' : 'off',
+      'aria-atomic': 'true',
+      'data-state': String(record.state),
+      'data-compaction-id': String(record.compactionId),
+    });
+    attach(
+      root,
+      stateDot(
+        running
+          ? 'ongoing'
+          : record.state === 'error'
+            ? 'error'
+            : record.state === 'done'
+              ? 'done'
+              : 'warning',
+      ),
+    );
+    const copy = h('span', {class: 'mp-chat-notice-copy'});
+    attach(copy, label);
+    if (record.error) {
+      const error = h('small', {class: 'mp-chat-compaction-error'});
+      attach(error, String(record.error));
+      attach(copy, error);
+    }
     attach(root, copy);
     return root;
   }
@@ -4506,7 +4556,11 @@ const ChatView = (() => {
       if (record.kind === 'notice') {
         const text = String(record.text || '').trim();
         if (text) {
-          items.push({type: 'notice', text});
+          items.push({
+            type: 'notice',
+            text,
+            ...(record.noticeType === 'compaction' ? {compaction: record} : {}),
+          });
         }
         continue;
       }
@@ -4640,7 +4694,12 @@ const ChatView = (() => {
         attach(bodyHost, narrationNode(item.text));
       } else if (item.type === 'notice') {
         flushChips();
-        attach(bodyHost, noticeNode(item.text));
+        attach(
+          bodyHost,
+          item.compaction
+            ? compactionNode(item.compaction)
+            : noticeNode(item.text),
+        );
       } else {
         chipRun.push(item.chip);
         workRun.push(item);
@@ -4926,6 +4985,7 @@ const ChatView = (() => {
                   'data-single',
                   'data-thought-only',
                   'data-error-title',
+                  'aria-live',
                 ]) {
                   const value = replacement.getAttribute(attribute);
                   if (value === null) {
@@ -5049,9 +5109,25 @@ const ChatView = (() => {
               }
             } else if (record.kind === 'notice') {
               flush();
-              render(`notice:${index}`, record, () =>
-                noticeNode(String(record.text || '')),
-              );
+              if (record.noticeType === 'compaction') {
+                const signature = {
+                  state: record.state,
+                  pass: record.pass,
+                  chunk: record.chunk,
+                  chunks: record.chunks,
+                  error: record.error,
+                  beforeTokens: record.beforeTokens,
+                  afterTokens: record.afterTokens,
+                  language: document.documentElement.lang,
+                };
+                render(`compaction:${record.compactionId}`, signature, () =>
+                  compactionNode(record, true),
+                );
+              } else {
+                render(`notice:${index}`, record, () =>
+                  noticeNode(String(record.text || '')),
+                );
+              }
             }
           });
           flush();
@@ -5073,17 +5149,36 @@ const ChatView = (() => {
               row =>
                 row.kind === 'permission-review' && row.state === 'running',
             );
-          const statusText = activeReview
-            ? liveStatusLabel('permission_review_started', {
-                name: activeReview.name,
-              })
-            : activeChildren
-              ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
-              : activeTools
-                ? 'Running tools'
-                : snapshot.answer
-                  ? 'Writing'
-                  : 'Thinking';
+          const activeCompaction = [...snapshot.trajectory]
+            .reverse()
+            .find(
+              row => row.noticeType === 'compaction' && row.state === 'running',
+            );
+          const latestRecord = snapshot.trajectory.at(-1);
+          const compactionSettled =
+            latestRecord?.noticeType === 'compaction' &&
+            latestRecord.state !== 'running' &&
+            !activeReview &&
+            !activeTools &&
+            !snapshot.trajectory.some(
+              row => row.kind === 'message' && row.state === 'running',
+            );
+          const statusText = activeCompaction
+            ? compaction.compactionLabel(
+                activeCompaction,
+                document.documentElement.lang || 'en',
+              )
+            : activeReview
+              ? liveStatusLabel('permission_review_started', {
+                  name: activeReview.name,
+                })
+              : activeChildren
+                ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
+                : activeTools
+                  ? 'Running tools'
+                  : snapshot.answer
+                    ? 'Writing'
+                    : 'Thinking';
           const statusLabel = traceStatus.querySelector(
             '.mp-chat-turn-status-label',
           );
@@ -5095,7 +5190,13 @@ const ChatView = (() => {
             String(statusText === 'Thinking'),
           );
           traceStatus.setAttribute('aria-label', statusText);
-          desired.push(traceStatus);
+          traceStatus.setAttribute(
+            'aria-live',
+            activeCompaction ? 'off' : 'polite',
+          );
+          if (!activeCompaction && !compactionSettled) {
+            desired.push(traceStatus);
+          }
           for (const child of Array.from(host.children)) {
             if (!desired.includes(child as HTMLElement)) {
               child.remove();

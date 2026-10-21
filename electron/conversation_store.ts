@@ -2,6 +2,7 @@
 
 import {createProjectStore} from './project_store';
 import {handoffReceipts} from './resource_handoff';
+import {settleCompactions} from './compaction_status';
 import {normalizeAdditionalFolders} from './workspace_folders';
 import type {PermissionMode} from './permission_mode';
 import {
@@ -631,6 +632,13 @@ function createConversationStore(
       evidence: sanitizeEvidence(turn.evidence),
       pendingInput: sanitizePendingInput(turn.pendingInput),
     };
+    if (isTurnSettled(entry.outcome)) {
+      settleCompactions(
+        entry.trajectory,
+        entry.failed || entry.outcome === '失败' ? 'failed' : 'cancelled',
+        at,
+      );
+    }
 
     if (target) {
       if (!Array.isArray(target.turns)) {
@@ -940,6 +948,11 @@ function createConversationStore(
     turn.at = turn.startedAt;
     if (input.outcome !== undefined) {
       if (isTurnSettled(turn.outcome)) {
+        settleCompactions(
+          turn.trajectory,
+          turn.failed || turn.outcome === '失败' ? 'failed' : 'cancelled',
+          updatedAt,
+        );
         if (input.completedAt === null) {
           delete turn.completedAt;
         } else {
@@ -1005,6 +1018,7 @@ function createConversationStore(
           continue;
         }
         turn.outcome = '可恢复';
+        settleCompactions(turn.trajectory, 'cancelled', now());
         turn.failed = true;
         turn.error =
           '上次客户端会话已中断，可以继续此任务。此前操作结果需恢复后核实。';

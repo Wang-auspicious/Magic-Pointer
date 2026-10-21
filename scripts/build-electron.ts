@@ -80,7 +80,17 @@ buildSync({
   sourcemap: true,
 });
 
-// CommonJS preamble throws `exports is not defined` on line 1 and every global
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'compaction_status.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'compaction_status.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'CompactionStatus',
+  target: 'es2022',
+  sourcemap: true,
+});
+
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();
