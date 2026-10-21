@@ -47,6 +47,10 @@ declare global {
     let saving: Promise<void> | null = null;
     let captureDraft = '';
     let capturing = false;
+    let rulesDraft: string | null = null;
+    let sourcePending = false;
+    let sourceFeedback = '';
+    let sourceError = false;
     let savedBrowserUrl = 'https://x.com';
     let generation = 0;
     const pending = new Set<string>();
@@ -104,13 +108,8 @@ declare global {
           renderList();
           renderDetail();
         }
-        if (
-          visible &&
-          tab === 'sources' &&
-          !host.querySelector<HTMLInputElement>('[name="token"]')?.value &&
-          document.activeElement?.tagName !== 'TEXTAREA'
-        ) {
-          renderSources();
+        if (visible && tab === 'sources') {
+          syncSourceView();
         }
       } catch (error) {
         status(String(error), true);
@@ -257,11 +256,12 @@ declare global {
       const source = snapshot.source;
       host.querySelector('.rl-content')!.innerHTML =
         `<div class="rl-sources"><h2>${t('Connected on your terms.', '按你的方式，连接来源。')}</h2><p>${t('Browser sign-in and automatic collection are separate. MP does not script social timelines or reuse private account APIs.', '浏览器登录与定时采集分别管理。MP 不脚本刷社交时间线，也不借用私有账号接口。')}</p>
-        <section class="rl-source-row"><div><h3>X</h3><p>${t('Official, read-only API · every 30 minutes when enabled', '官方只读 API · 启用后每 30 分钟检查')}</p></div><span>${esc(source?.username ? '@' + source.username : t('Not connected', '未连接'))}</span></section>
+        <section class="rl-source-row"><div><h3>X</h3><p>${t('Official, read-only API · every 30 minutes when enabled', '官方只读 API · 启用后每 30 分钟检查')}</p></div><span data-rl-source-account></span></section>
+        <p data-rl-source-feedback role="status" aria-live="polite"></p>
         <form data-rl-x><label>${t('User OAuth access token', '用户 OAuth access token')}<input name="token" type="password" autocomplete="off" required placeholder="${t('Stored encrypted on this device', '仅加密保存在本机')}"></label><p>${t('Requires your X developer application and user-authorized read scopes. API usage may be billed by X. Your browser login is not this token.', '需要你自己的 X 开发者应用和用户授权的读取权限，X API 可能计费。浏览器的登录状态不能代替这个 token。')}</p><button type="submit">${t('Connect official API', '连接官方 API')}</button></form>
         <div class="rl-source-options"><label><input type="checkbox" data-rl-x-option="bookmarks" ${source?.bookmarks ? 'checked' : ''}> ${t('Bookmarks', '收藏')}</label><label><input type="checkbox" data-rl-x-option="likes" ${source?.likes ? 'checked' : ''}> ${t('Likes', '点赞')}</label><label><input type="checkbox" data-rl-x-option="enabled" ${source?.enabled ? 'checked' : ''}> ${t('Automatic checks', '定时检查')}</label><button type="button" data-rl-action="sync" ${source?.accountId ? '' : 'disabled'}>${t('Check now', '现在检查')}</button></div>
         <form data-rl-rules><label>${t('What is worth keeping?', '哪些内容值得留下？')}<textarea name="rules" rows="3" placeholder="${t('Keep UI references and research ideas; ignore giveaways.', '保留 UI 参考与论文思路，忽略抽奖。')}">${esc(source?.rules || '')}</textarea></label><button type="submit">${t('Save collection rule', '保存收集规则')}</button></form><div class="rl-source-options"><label><input type="checkbox" data-rl-x-option="organize" ${source?.organize ? 'checked' : ''}> ${t('Organize newly imported posts with MP (uses model credits)', '自动整理新导入内容（消耗模型额度）')}</label></div><p>${t('Recent window only, up to 500 entries per list per check. Imported materials are retained even when the source is unavailable.', '每次检查近期窗口，每类最多 500 条。来源不可用时，已经保存的材料仍然保留。')}</p>
-        <p class="rl-source-result">${esc(source?.error || source?.status || '')}${source?.lastSuccess ? ' · ' + new Date(source.lastSuccess).toLocaleString() : ''}</p>
+        <p class="rl-source-result"></p>
         ${[
           [
             '小红书 / 抖音 / B站',
@@ -284,6 +284,109 @@ declare global {
           )
           .join('')}
         <button type="button" data-rl-action="settings">${t('Clipboard collection settings', '剪贴板收集设置')} ↗</button></div>`;
+      syncSourceView();
+    }
+    function syncSourceView() {
+      if (tab !== 'sources') {
+        return;
+      }
+      const source = snapshot.source;
+      const account = host.querySelector<HTMLElement>(
+        '[data-rl-source-account]',
+      );
+      if (account) {
+        account.textContent = source?.username
+          ? '@' + source.username
+          : t('Not connected', '未连接');
+      }
+      host
+        .querySelectorAll<HTMLInputElement>('[data-rl-x-option]')
+        .forEach(input => {
+          const key = input.dataset.rlXOption as
+            'enabled' | 'likes' | 'bookmarks' | 'organize';
+          input.checked = Boolean(source?.[key]);
+          input.disabled = sourcePending;
+        });
+      host
+        .querySelectorAll<HTMLButtonElement>(
+          '[data-rl-x] button,[data-rl-rules] button,[data-rl-action=sync]',
+        )
+        .forEach(button => {
+          button.disabled =
+            sourcePending ||
+            (button.dataset.rlAction === 'sync' && !source?.accountId);
+        });
+      const check = host.querySelector<HTMLElement>('[data-rl-action=sync]');
+      if (check) {
+        check.textContent = sourcePending
+          ? t('Working…', '正在处理…')
+          : t('Check now', '现在检查');
+      }
+      const rules = host.querySelector<HTMLTextAreaElement>('[name=rules]');
+      const value = rulesDraft ?? source?.rules ?? '';
+      if (rules && rules.value !== value) {
+        rules.value = value;
+      }
+      const feedback = host.querySelector<HTMLElement>(
+        '[data-rl-source-feedback]',
+      );
+      if (feedback) {
+        feedback.textContent = sourceFeedback;
+        feedback.classList.toggle('rl-error', sourceError);
+      }
+      const result = host.querySelector<HTMLElement>('.rl-source-result');
+      if (result) {
+        const states = {
+          disconnected: t('Not connected', '未连接'),
+          ready: t('Ready', '已就绪'),
+          syncing: t('Checking…', '正在检查…'),
+          partial: t('Partially checked', '部分检查完成'),
+          auth_required: t('Reconnect your account', '需要重新连接账号'),
+          rate_limited: t(
+            'Paused by the platform rate limit',
+            '平台限流，已暂停检查',
+          ),
+          error: t('Check failed', '检查失败'),
+        };
+        result.textContent = [
+          source ? states[source.status] : states.disconnected,
+          source?.error,
+          source?.lastSuccess
+            ? t('Last checked: ', '上次检查：') +
+              new Date(source.lastSuccess).toLocaleString()
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+      }
+    }
+    function sourceNotice(message: string, error = false) {
+      sourceFeedback = message;
+      sourceError = error;
+      syncSourceView();
+    }
+    async function sourceRequest(
+      action: ResourceAction,
+      input: ResourceRequest = {},
+    ) {
+      if (sourcePending) {
+        return null;
+      }
+      sourcePending = true;
+      generation++;
+      sourceNotice(t('Updating the X source…', '正在处理 X 来源…'));
+      try {
+        const result = await call(action, input);
+        generation++;
+        snapshot.source = result.source;
+        return result;
+      } catch (error) {
+        sourceNotice(String(error), true);
+        return null;
+      } finally {
+        sourcePending = false;
+        syncSourceView();
+      }
     }
     async function saveDetail() {
       if (saving) {
@@ -391,6 +494,9 @@ declare global {
       if (target.matches('[data-rl-capture] textarea')) {
         captureDraft = (target as HTMLTextAreaElement).value;
       }
+      if (target.matches('[name=rules]')) {
+        rulesDraft = (target as HTMLTextAreaElement).value;
+      }
       if (target.classList.contains('rl-search')) {
         query = (target as HTMLInputElement).value;
         renderList();
@@ -400,11 +506,12 @@ declare global {
       const input = event.target as HTMLInputElement;
       if (input.dataset.rlXOption) {
         run(async () => {
-          const result = await call('x-configure', {
+          const result = await sourceRequest('x-configure', {
             [input.dataset.rlXOption!]: input.checked,
           });
-          snapshot.source = result.source;
-          status(t('Source settings saved.', '来源设置已保存。'));
+          if (result) {
+            sourceNotice(t('Source settings saved.', '来源设置已保存。'));
+          }
         });
       }
     });
@@ -421,21 +528,36 @@ declare global {
           return;
         }
         if (form.matches('[data-rl-rules]')) {
-          const result = await call('x-configure', {
-            rules: String(new FormData(form).get('rules') || ''),
+          const value = String(new FormData(form).get('rules') || '');
+          const result = await sourceRequest('x-configure', {
+            rules: value,
           });
-          snapshot.source = result.source;
-          status(t('Collection rule saved.', '收集规则已保存。'));
+          if (result) {
+            if (rulesDraft === value) {
+              rulesDraft = null;
+            }
+            sourceNotice(
+              rulesDraft === null
+                ? t('Collection rule saved.', '收集规则已保存。')
+                : t(
+                    'Saved. Your newer rule edits are still unsaved.',
+                    '已保存，之后输入的规则修改仍待保存。',
+                  ),
+            );
+          }
           return;
         }
         if (form.matches('[data-rl-x]')) {
           const token = form.querySelector<HTMLInputElement>('input')!;
           const value = token.value;
-          token.value = '';
-          const result = await call('x-connect', {token: value});
-          snapshot.source = result.source;
-          renderSources();
-          status(
+          const result = await sourceRequest('x-connect', {token: value});
+          if (!result) {
+            return;
+          }
+          if (token.value === value) {
+            token.value = '';
+          }
+          sourceNotice(
             t(
               'Connected. Choose what to collect before enabling automatic checks.',
               '已连接。选择采集内容后，再启用定时检查。',
@@ -589,10 +711,18 @@ declare global {
           return;
         }
         if (action === 'sync') {
-          status(t('Checking the official API…', '正在检查官方 API…'));
-          const result = await call('x-sync');
-          snapshot.source = result.source;
-          renderSources();
+          const result = await sourceRequest('x-sync');
+          if (result) {
+            if (visible && tab === 'library') {
+              await refresh();
+            }
+            sourceNotice(
+              t(
+                'Source check finished. See its status below.',
+                '来源检查已返回，实际状态见下方。',
+              ),
+            );
+          }
           return;
         }
         const item = current();

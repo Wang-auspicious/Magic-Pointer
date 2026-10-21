@@ -114,28 +114,36 @@ export class XResourceSource {
     if (this.busy) {
       throw new Error('Wait for the current sync to finish.');
     }
-    const result = await this.request('users/me', token.trim());
-    if (!/^\d+$/.test(String(result.data?.id || ''))) {
-      throw new Error('A user-authorized X OAuth access token is required.');
+    this.busy = true;
+    try {
+      const result = await this.request('users/me', token.trim());
+      if (!/^\d+$/.test(String(result.data?.id || ''))) {
+        throw new Error('A user-authorized X OAuth access token is required.');
+      }
+      this.options.credentials.set(
+        `resources.x.oauth:${result.data.id}`,
+        token.trim(),
+      );
+      this.state = {
+        ...this.state,
+        ...(this.state.accountId !== result.data.id
+          ? {lastAttempt: 0, lastSuccess: 0}
+          : {}),
+        recentIds:
+          this.state.accountId === result.data.id ? this.state.recentIds : [],
+        accountId: result.data.id,
+        username: String(result.data.username || ''),
+        status: 'ready',
+        error: '',
+        enabled: false,
+        lastCount: 0,
+        nextRunAt: 0,
+      };
+      this.save();
+      return this.snapshot();
+    } finally {
+      this.busy = false;
     }
-    this.options.credentials.set(
-      `resources.x.oauth:${result.data.id}`,
-      token.trim(),
-    );
-    this.state = {
-      ...this.state,
-      recentIds:
-        this.state.accountId === result.data.id ? this.state.recentIds : [],
-      accountId: result.data.id,
-      username: String(result.data.username || ''),
-      status: 'ready',
-      error: '',
-      enabled: false,
-      lastCount: 0,
-      nextRunAt: 0,
-    };
-    this.save();
-    return this.snapshot();
   }
   configure(
     patch: Partial<
@@ -148,6 +156,15 @@ export class XResourceSource {
     if (patch.enabled && !this.state.accountId) {
       throw new Error(
         'Connect an official X API account first. Browser login is separate.',
+      );
+    }
+    if (
+      (patch.enabled ?? this.state.enabled) &&
+      !(patch.likes ?? this.state.likes) &&
+      !(patch.bookmarks ?? this.state.bookmarks)
+    ) {
+      throw new Error(
+        'Choose likes or bookmarks before enabling automatic checks.',
       );
     }
     for (const key of ['enabled', 'likes', 'bookmarks', 'organize'] as const) {
@@ -176,6 +193,9 @@ export class XResourceSource {
     }
     if (!this.state.accountId) {
       throw new Error('Connect an official X API account first.');
+    }
+    if (!this.state.likes && !this.state.bookmarks) {
+      throw new Error('Choose likes or bookmarks before checking this source.');
     }
     this.busy = true;
     this.state = {

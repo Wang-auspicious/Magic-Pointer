@@ -59,11 +59,14 @@ app.whenReady().then(async () => {
       window.reset=async()=>{
         document.body.innerHTML='<main id="resource-library" style="height:850px;width:1200px"></main>';
         window.rows=[{id:'one',media:'text',capturedAt:Date.now(),relPath:'one.txt',text:'Reference material',collection:{revision:1,title:'First resource',state:'inbox',note:'',summary:'Original summary',intent:'save'}},{id:'two',media:'text',capturedAt:Date.now(),relPath:'two.txt',text:'Second resource',collection:{revision:1,title:'Second resource',state:'ready',note:'',summary:'Second summary',intent:'save'}}];
-        window.calls=[];window.block='';window.release=null;
+        window.calls=[];window.block='';window.release=null;window.fail='';
+        window.source={accountId:'42',username:'tester',status:'ready',enabled:false,likes:false,bookmarks:true,organize:false,rules:'Saved rule',recentIds:[]};
         window.api={request:async(action,input={})=>{
           calls.push({action,input:structuredClone(input)});
           if(block===action){block='';await new Promise(resolve=>{window.release=resolve;});window.release=null;}
-          if(action==='list')return structuredClone({ok:true,items:rows,projects:[]});
+          if(fail===action){fail='';return {ok:false,error:'Fixture source request failed'};}
+          if(action==='list')return structuredClone({ok:true,items:rows,projects:[],source});
+          if(action.startsWith('x-')){if(action==='x-configure')Object.assign(source,input);if(action==='x-sync')rows.push({...structuredClone(rows[0]),id:'synced'});return structuredClone({ok:true,source});}
           const row=rows.find(r=>r.id===input.id);
           if(action==='edit'){
             if(input.revision!==row.collection.revision)return {ok:false,error:'resource_revision_conflict'};
@@ -257,6 +260,114 @@ app.whenReady().then(async () => {
         assert.match(
           await js("document.querySelector('.rl-error').textContent"),
           /Unreadable analysis/,
+        );
+      },
+    );
+    const sources = async () => {
+      await reset();
+      await click('[data-rl-tab=sources]');
+      await wait("!!document.querySelector('[data-rl-x]')");
+    };
+    await check(
+      'late account connection preserves the current browser view',
+      async () => {
+        await sources();
+        await input('[name=token]', 'test-token');
+        await js("block='x-connect'");
+        await submit('[data-rl-x]');
+        await wait('!!release');
+        await click('[data-rl-tab=browser]');
+        await wait("!!document.querySelector('.rl-browser')");
+        await js('release()');
+        await wait('!release');
+        assert.ok(await js("!!document.querySelector('.rl-browser')"));
+      },
+    );
+    await check('late source sync preserves the library view', async () => {
+      await sources();
+      await js("block='x-sync'");
+      await click('[data-rl-action=sync]');
+      await wait('!!release');
+      await click('[data-rl-tab=library]');
+      await wait("!!document.querySelector('.rl-grid')");
+      await js('release()');
+      await wait('!release');
+      assert.ok(await js("!!document.querySelector('.rl-grid')"));
+      await wait("document.querySelectorAll('.rl-item').length===2");
+    });
+    await check(
+      'unsaved collection rules survive refresh and a view change',
+      async () => {
+        await sources();
+        await input('[name=rules]', 'My unsaved rule');
+        await js(
+          "document.querySelector('[data-rl-action=sync]').focus();library.refresh()",
+        );
+        assert.equal(
+          await js("document.querySelector('[name=rules]').value"),
+          'My unsaved rule',
+        );
+        await click('[data-rl-tab=browser]');
+        await click('[data-rl-tab=sources]');
+        assert.equal(
+          await js("document.querySelector('[name=rules]').value"),
+          'My unsaved rule',
+        );
+      },
+    );
+    await check(
+      'failed source preference restores the actual saved checkbox value',
+      async () => {
+        await sources();
+        await js(
+          "fail='x-configure';document.querySelector('[data-rl-x-option=likes]').click()",
+        );
+        await wait(
+          "document.querySelector('[data-rl-source-feedback]').textContent.includes('Fixture source request failed')",
+        );
+        assert.equal(
+          await js(
+            "document.querySelector('[data-rl-x-option=likes]').checked",
+          ),
+          false,
+        );
+      },
+    );
+    await check(
+      'source operations cannot be submitted twice while pending',
+      async () => {
+        await sources();
+        await js("block='x-sync'");
+        await click('[data-rl-action=sync]');
+        await wait('!!release');
+        await click('[data-rl-action=sync]');
+        assert.equal(
+          await js("calls.filter(c=>c.action==='x-sync').length"),
+          1,
+        );
+        await js('release()');
+        await wait('!release');
+      },
+    );
+    await check(
+      'failed account connection keeps its token for an in-place retry only',
+      async () => {
+        await sources();
+        await input('[name=token]', 'test-token');
+        await js("fail='x-connect'");
+        await submit('[data-rl-x]');
+        await wait(
+          "document.querySelector('[data-rl-source-feedback]').textContent.includes('Fixture source request failed')",
+        );
+        assert.equal(
+          await js("document.querySelector('[name=token]').value"),
+          'test-token',
+        );
+        await click('[data-rl-tab=browser]');
+        await click('[data-rl-tab=sources]');
+        assert.equal(
+          await js("document.querySelector('[name=token]').value"),
+          '',
         );
       },
     );
