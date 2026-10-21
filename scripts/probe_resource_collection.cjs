@@ -67,6 +67,8 @@ app.whenReady().then(async () => {
     await screenshot('detail-dark.png');
     win.setSize(860, 820);
     await screenshot('detail-narrow.png');
+    const narrowOverflow = await js("[...document.querySelectorAll('#resource-library,#resource-library *')].filter(e => e.clientWidth>0 && e.scrollWidth>e.clientWidth+2 && !e.matches('input,textarea')).map(e => ({className:e.className,clientWidth:e.clientWidth,scrollWidth:e.scrollWidth}))");
+    assert.deepEqual(narrowOverflow, [], 'Resource workspace must fit its container');
     await js("document.querySelector('[data-rl-tab=browser]').click()");
     await screenshot('browser.png');
     await js("document.querySelector('[data-rl-tab=sources]').click()");

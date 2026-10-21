@@ -42,6 +42,11 @@ declare global {
     let tab = 'library';
     let visible = false;
     let dirty = false;
+    let editorRevision = 0;
+    let editVersion = 0;
+    let saving: Promise<void> | null = null;
+    let captureDraft = '';
+    let capturing = false;
     let savedBrowserUrl = 'https://x.com';
     let generation = 0;
     const pending = new Set<string>();
@@ -77,7 +82,12 @@ declare global {
       const result = await api.request(action, input);
       if (!result.ok) {
         throw new Error(
-          result.error || t('The operation failed.', '操作失败。'),
+          result.error === 'resource_revision_conflict'
+            ? t(
+                'This resource changed elsewhere. Your draft is kept. Reload the saved version to review the changes.',
+                '资料已在别处更新，当前草稿已保留。可重新加载已保存的版本查看变化。',
+              )
+            : result.error || t('The operation failed.', '操作失败。'),
         );
       }
       return result;
@@ -136,7 +146,7 @@ declare global {
     }
     function renderLibrary() {
       host.querySelector('.rl-content')!.innerHTML =
-        `<form class="rl-capture" data-rl-capture><span class="rl-add-mark" aria-hidden="true">＋</span><textarea name="text" rows="1" placeholder="${t('Drop a thought. Paste a link. Keep something good.', '记下一点想法，粘贴一个链接，留住值得回看的东西。')}" aria-label="${t('Text or link to collect', '要收集的文字或链接')}" required></textarea><button type="submit">${t('Keep', '收下')} ↗</button></form>
+        `<form class="rl-capture" data-rl-capture><span class="rl-add-mark" aria-hidden="true">＋</span><textarea name="text" rows="1" placeholder="${t('Drop a thought. Paste a link. Keep something good.', '记下一点想法，粘贴一个链接，留住值得回看的东西。')}" aria-label="${t('Text or link to collect', '要收集的文字或链接')}" required>${esc(captureDraft)}</textarea><button type="submit" ${capturing ? 'disabled' : ''}>${t('Keep', '收下')} ↗</button></form>
         <div class="rl-tools"><div class="rl-filters">${[
           ['inbox', t('Inbox', '待整理')],
           ['ready', t('Collected', '已整理')],
@@ -191,7 +201,9 @@ declare global {
           <div class="rl-item-copy"><span class="rl-item-meta">${esc(item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong><div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent])}</span><span>${detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
             })
             .join('')
-        : `<div class="rl-empty"><span class="rl-empty-mark" aria-hidden="true">↙</span><h2>${t('Room for the next good idea.', '留一点空间，给下一个好想法。')}</h2><p>${t('A screenshot, a paper, a small detail you want to borrow. Keep it here; decide what it becomes next.', '截图、论文、想借鉴的小细节。先收在这里，再决定它会成为什么。')}</p><button type="button" data-rl-tab="browser">${t('Open your browser', '打开内置浏览器')} ↗</button></div>`;
+        : snapshot.items?.length
+          ? `<div class="rl-empty"><h2>${t('No resources match.', '没有符合条件的资料。')}</h2><p>${t('Try another search or view your other resources.', '试试其他关键词，或查看其他分类。')}</p><button type="button" data-rl-action="clear-search">${t(query ? 'Clear search' : 'View all resources', query ? '清除搜索' : '查看全部资料')}</button></div>`
+          : `<div class="rl-empty"><span class="rl-empty-mark" aria-hidden="true">↙</span><h2>${t('Room for the next good idea.', '留一点空间，给下一个好想法。')}</h2><p>${t('A screenshot, a paper, a small detail you want to borrow. Keep it here; decide what it becomes next.', '截图、论文、想借鉴的小细节。先收在这里，再决定它会成为什么。')}</p><button type="button" data-rl-tab="browser">${t('Open your browser', '打开内置浏览器')} ↗</button></div>`;
     }
     function renderDetail() {
       const panel = host.querySelector<HTMLElement>('.rl-detail');
@@ -208,7 +220,9 @@ declare global {
         return;
       }
       const detail = details(item);
+      editorRevision = detail.revision;
       panel.innerHTML = `<div class="rl-detail-top"><span>${t('Make it useful', '让它派上用场')}</span><button type="button" data-rl-action="close" aria-label="${t('Close details', '关闭详情')}">×</button></div>
+        <button type="button" data-rl-action="reload" hidden>${t('Discard draft and reload', '舍弃草稿并重新加载')}</button>
         <form data-rl-edit><label>${t('Title', '标题')}<input name="title" value="${esc(detail.title)}" required></label><div class="rl-pair"><label>${t('Project', '项目')}<select name="projectId">${projectOptions(detail.projectId)}</select></label><label>${t('Use it for', '用途')}<select name="intent">${Object.entries(
           labels(),
         )
@@ -221,7 +235,7 @@ declare global {
         <label>${t('Processed content', '整理后的内容')}<textarea name="summary" rows="6" placeholder="${t('Let the agent read your saved material, or write your own.', '让 Agent 整理已保存的材料，也可以自己写。')}">${esc(detail.summary)}</textarea></label>
         <label>${t('Next time', '下次可以做什么')}<textarea name="nextStep" rows="2">${esc(detail.nextStep)}</textarea></label><button type="submit" class="rl-save">${t('Save changes', '保存修改')}</button></form>
         <div class="rl-evidence">${detail.decisionReason ? `<span>${t('Collection decision', '收录判断')}</span><p>${esc(detail.decisionReason)}</p>` : ''}<span>${t('Reading coverage', '实际阅读范围')}</span><p>${esc(detail.coverage || t('Saved material; not yet reviewed.', '已保存材料，尚未阅读整理。'))}</p>${detail.error ? `<p class="rl-error">${esc(detail.error)}</p>` : ''}${detail.exportedPath ? `<p>${esc(detail.exportedPath)}</p>` : ''}</div>
-        <div class="rl-actions"><button type="button" data-rl-action="process" ${pending.has(item.id) ? 'disabled' : ''}>${pending.has(item.id) ? t('Processing…', '正在整理…') : t('Let MP organize', '交给 MP 整理')}</button><button type="button" data-rl-action="deliver">${t('Send to project', '放入项目')} ↗</button></div>
+        <div class="rl-actions" aria-busy="${pending.has(item.id)}"><button type="button" data-rl-action="process" ${pending.has(item.id) ? 'disabled' : ''}>${pending.has(item.id) ? t('Working…', '正在处理…') : t('Let MP organize', '交给 MP 整理')}</button><button type="button" data-rl-action="deliver" ${pending.has(item.id) ? 'disabled' : ''}>${t('Send to project', '放入项目')} ↗</button></div>
         <div class="rl-links">${detail.url ? `<button type="button" data-rl-action="source">${t('Original page', '原始页面')} ↗</button>` : ''}<button type="button" data-rl-action="original">${t('Saved original', '保存的原件')} ↗</button>${detail.taskId ? `<button type="button" data-rl-action="task">${t('Agent task', '整理任务')} ↗</button>` : ''}<button type="button" data-rl-action="ignore">${detail.state === 'ignored' ? t('Restore', '恢复') : t('Ignore', '忽略')}</button></div>`;
     }
     function renderBrowser() {
@@ -272,10 +286,22 @@ declare global {
         <button type="button" data-rl-action="settings">${t('Clipboard collection settings', '剪贴板收集设置')} ↗</button></div>`;
     }
     async function saveDetail() {
+      if (saving) {
+        await saving;
+        return;
+      }
       const item = current();
       const form = host.querySelector<HTMLFormElement>('[data-rl-edit]');
       if (!item || !form) {
         return;
+      }
+      if (!form.reportValidity()) {
+        throw new Error(
+          t(
+            'Complete the resource details before saving.',
+            '请补全资料详情再保存。',
+          ),
+        );
       }
       const data = new FormData(form);
       const patch = Object.fromEntries(
@@ -283,20 +309,59 @@ declare global {
           key => [key, String(data.get(key) || '')],
         ),
       ) as Partial<ResourceCollection>;
-      const result = await call('edit', {
-        id: item.id,
-        revision: details(item).revision,
-        patch,
-      });
-      dirty = false;
-      if (result.entry) {
-        snapshot.items = snapshot.items?.map(row =>
-          row.id === item.id ? {...row, ...result.entry} : row,
-        );
+      const version = editVersion;
+      saving = (async () => {
+        try {
+          const result = await call('edit', {
+            id: item.id,
+            revision: editorRevision,
+            patch,
+          });
+          if (result.entry) {
+            snapshot.items = snapshot.items?.map(row =>
+              row.id === item.id ? {...row, ...result.entry} : row,
+            );
+          }
+          if (form.isConnected && selected === item.id) {
+            editorRevision =
+              result.entry?.collection?.revision ?? editorRevision;
+            dirty = version !== editVersion;
+            renderList();
+            if (!dirty) {
+              renderDetail();
+            }
+            status(
+              dirty
+                ? t(
+                    'Saved. Your newer edits are still unsaved.',
+                    '已保存，之后输入的修改仍待保存。',
+                  )
+                : t('Changes saved.', '修改已保存。'),
+            );
+          }
+        } catch (error) {
+          if (form.isConnected) {
+            const reload = host.querySelector<HTMLButtonElement>(
+              '[data-rl-action=reload]',
+            );
+            if (reload) {
+              reload.hidden = false;
+            }
+          }
+          throw error;
+        }
+      })();
+      try {
+        await saving;
+      } finally {
+        saving = null;
       }
-      renderList();
-      renderDetail();
-      status(t('Changes saved.', '修改已保存。'));
+    }
+    async function savePending() {
+      if (dirty) {
+        await saveDetail();
+      }
+      return !dirty;
     }
     async function browse(url: string) {
       const result = await call('browser-open', {url});
@@ -321,6 +386,10 @@ declare global {
       const target = event.target as HTMLElement;
       if (target.closest('[data-rl-edit]')) {
         dirty = true;
+        editVersion++;
+      }
+      if (target.matches('[data-rl-capture] textarea')) {
+        captureDraft = (target as HTMLTextAreaElement).value;
       }
       if (target.classList.contains('rl-search')) {
         query = (target as HTMLInputElement).value;
@@ -374,17 +443,46 @@ declare global {
           );
           return;
         }
+        if (capturing || !(await savePending())) {
+          return;
+        }
         const field = form.querySelector<HTMLTextAreaElement>('textarea')!;
-        const text = field.value.trim();
-        const result = await call(
-          'add',
-          /^https?:\/\/\S+$/.test(text) ? {url: text} : {text},
-        );
-        field.value = '';
-        selected = result.entry?.id || '';
-        filter = 'inbox';
-        await refresh();
-        status(t('Kept. Ready when you are.', '收下了，随时可以继续。'));
+        const draft = field.value;
+        const text = draft.trim();
+        const previousSelection = selected;
+        capturing = true;
+        const submit = form.querySelector<HTMLButtonElement>('[type=submit]')!;
+        submit.disabled = true;
+        try {
+          const result = await call(
+            'add',
+            /^https?:\/\/\S+$/.test(text) ? {url: text} : {text},
+          );
+          if (captureDraft === draft) {
+            captureDraft = '';
+            const currentField = host.querySelector<HTMLTextAreaElement>(
+              '[data-rl-capture] textarea',
+            );
+            if (currentField) {
+              currentField.value = '';
+            }
+          }
+          if (selected === previousSelection && tab === 'library' && !dirty) {
+            selected = result.entry?.id || '';
+            filter = 'inbox';
+            renderLibrary();
+          }
+          await refresh();
+          status(t('Kept. Ready when you are.', '收下了，随时可以继续。'));
+        } finally {
+          capturing = false;
+          const button = host.querySelector<HTMLButtonElement>(
+            '[data-rl-capture] [type=submit]',
+          );
+          if (button) {
+            button.disabled = false;
+          }
+        }
       });
     });
     host.addEventListener('click', event => {
@@ -396,8 +494,8 @@ declare global {
       }
       run(async () => {
         if (button.dataset.rlTab) {
-          if (dirty) {
-            await saveDetail();
+          if (!(await savePending())) {
+            return;
           }
           tab = button.dataset.rlTab;
           render();
@@ -421,8 +519,8 @@ declare global {
           return;
         }
         if (button.dataset.rlId) {
-          if (dirty) {
-            await saveDetail();
+          if (!(await savePending())) {
+            return;
           }
           selected = button.dataset.rlId;
           renderList();
@@ -430,9 +528,35 @@ declare global {
           return;
         }
         const action = button.dataset.rlAction;
+        if (action === 'clear-search') {
+          if (!query) {
+            filter = 'all';
+          }
+          query = '';
+          const search = host.querySelector<HTMLInputElement>('.rl-search');
+          if (search) {
+            search.value = '';
+            search.focus();
+          }
+          host
+            .querySelectorAll<HTMLElement>('[data-rl-filter]')
+            .forEach(item =>
+              item.setAttribute(
+                'aria-pressed',
+                String(item.dataset.rlFilter === filter),
+              ),
+            );
+          renderList();
+          return;
+        }
+        if (action === 'reload') {
+          dirty = false;
+          await refresh();
+          return;
+        }
         if (action === 'close') {
-          if (dirty) {
-            await saveDetail();
+          if (!(await savePending())) {
+            return;
           }
           selected = '';
           renderList();
@@ -483,8 +607,8 @@ declare global {
           return;
         }
         if (action === 'source') {
-          if (dirty) {
-            await saveDetail();
+          if (!(await savePending())) {
+            return;
           }
           savedBrowserUrl = details(item).url;
           tab = 'browser';
@@ -497,33 +621,53 @@ declare global {
           return;
         }
         if (action === 'ignore') {
-          await call('edit', {
-            id: item.id,
-            revision: details(item).revision,
-            patch: {
-              state: details(item).state === 'ignored' ? 'inbox' : 'ignored',
-            },
-          });
-          dirty = false;
-          selected = '';
-          await refresh();
+          if (pending.has(item.id)) {
+            return;
+          }
+          pending.add(item.id);
+          try {
+            if (!(await savePending()) || selected !== item.id) {
+              return;
+            }
+            const detail = details(current()!);
+            const result = await call('edit', {
+              id: item.id,
+              revision: detail.revision,
+              patch: {
+                state: detail.state === 'ignored' ? 'inbox' : 'ignored',
+              },
+            });
+            if (selected === item.id) {
+              editorRevision =
+                result.entry?.collection?.revision ?? editorRevision;
+              if (!dirty) {
+                selected = '';
+              }
+            }
+            await refresh();
+          } finally {
+            pending.delete(item.id);
+          }
           return;
         }
         if (action === 'process' || action === 'deliver') {
-          if (dirty) {
-            await saveDetail();
+          if (pending.has(item.id)) {
+            return;
           }
           pending.add(item.id);
-          renderDetail();
-          status(
-            action === 'process'
-              ? t(
-                  'MP is reading the saved material…',
-                  'MP 正在阅读已保存的材料…',
-                )
-              : t('Saving into the project…', '正在放入项目…'),
-          );
           try {
+            if (!(await savePending())) {
+              return;
+            }
+            renderDetail();
+            status(
+              action === 'process'
+                ? t(
+                    'MP is reading the saved material…',
+                    'MP 正在阅读已保存的材料…',
+                  )
+                : t('Saving into the project…', '正在放入项目…'),
+            );
             await call(action, {id: item.id});
             await refresh();
             status(
@@ -537,6 +681,9 @@ declare global {
                     '已保存并加入项目资料，下次任务可读取。',
                   ),
             );
+          } catch (error) {
+            await refresh();
+            throw error;
           } finally {
             pending.delete(item.id);
             if (!dirty) {
@@ -552,9 +699,13 @@ declare global {
         selected &&
         !(event.target as HTMLElement).matches('input,textarea,select')
       ) {
-        selected = '';
-        renderList();
-        renderDetail();
+        run(async () => {
+          if (await savePending()) {
+            selected = '';
+            renderList();
+            renderDetail();
+          }
+        });
         event.stopPropagation();
       }
     });
@@ -566,7 +717,9 @@ declare global {
     return {
       show() {
         visible = true;
-        const navigationLabel = document.querySelector('#nav-resources .mp-nav-label');
+        const navigationLabel = document.querySelector(
+          '#nav-resources .mp-nav-label',
+        );
         if (navigationLabel) {
           navigationLabel.textContent = t('Resources', '收集');
         }

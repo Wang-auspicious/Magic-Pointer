@@ -127,10 +127,7 @@ test('a processed resource is exported into its selected project and a new servi
     {projectId: 'paper', note: 'Keep this'},
     again.collection!.revision,
   );
-  assert.equal(
-    edited.collection!.exportedPath,
-    exported.collection!.exportedPath,
-  );
+  assert.equal(edited.collection!.exportedPath, '');
   const selection = await service.add({
     url: 'https://example.com/paper',
     text: 'A newly selected paragraph',
@@ -141,4 +138,89 @@ test('a processed resource is exported into its selected project and a new servi
     text: 'A newly selected paragraph',
   });
   assert.equal(repeated.id, selection.id);
+});
+
+test('an unsuccessful or unreadable analysis retains its task and execution details for inspection', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-resource-analysis-error-'));
+  const runtime = createStashRuntime({baseDir, clipboard});
+  for (const response of [
+    {
+      ok: true,
+      answer: 'This is not JSON',
+      conversationId: 'bad-json-task',
+      usedBackend: 'fixture.runtime',
+      timingMs: 30,
+    },
+    {
+      ok: false,
+      error: 'Provider disconnected',
+      conversationId: 'failed-task',
+      usedBackend: 'fixture.runtime',
+      timingMs: 40,
+    },
+  ]) {
+    const service = new ResourceCollectionService({
+      stash: () => runtime,
+      projects: () => [],
+      attach: () => {},
+      analyze: async () => response,
+    });
+    const item = await service.add({text: response.conversationId});
+    await assert.rejects(service.process(item.id));
+    const result = runtime.get(item.id).collection;
+    assert.equal(result.state, 'error');
+    assert.equal(result.taskId, response.conversationId);
+    assert.equal(result.usedBackend, 'fixture.runtime');
+    assert.equal(result.timingMs, response.timingMs);
+  }
+});
+
+test('no-op edits keep the delivery marker; changed content and new analysis require redelivery', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-resource-redelivery-'));
+  const root = mkdtempSync(join(tmpdir(), 'mp-resource-redelivery-project-'));
+  const runtime = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => runtime,
+    projects: () => [{id: 'p', name: 'Project', root}],
+    attach: () => {},
+    analyze: async () => ({
+      ok: true,
+      answer: JSON.stringify({
+        summary: 'Updated analysis',
+        coverage: 'Saved text',
+        decision: 'keep',
+      }),
+    }),
+  });
+  const item = await service.add({text: 'A reference', projectId: 'p'});
+  let edited = service.update(
+    item.id,
+    {summary: 'First summary'},
+    item.collection!.revision,
+  );
+  const delivered = await service.deliver(item.id);
+  edited = service.update(
+    item.id,
+    {summary: 'First summary'},
+    delivered.collection!.revision,
+  );
+  assert.equal(
+    edited.collection!.exportedPath,
+    delivered.collection!.exportedPath,
+  );
+  edited = service.update(
+    item.id,
+    {intent: 'reference'},
+    edited.collection!.revision,
+  );
+  assert.equal(edited.collection!.exportedPath, '');
+  await service.deliver(item.id);
+  const processed = await service.process(item.id);
+  assert.equal(processed.collection!.exportedPath, '');
+  assert.equal(
+    readFileSync(delivered.collection!.exportedPath, 'utf8').includes(
+      'First summary',
+    ),
+    true,
+  );
 });

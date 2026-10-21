@@ -131,6 +131,12 @@ export class ResourceCollectionService {
     ) {
       throw new Error('Project not found.');
     }
+    const previous = resourceCollection(
+      this.options.stash().get(id)?.collection,
+    );
+    const contentChanged = (
+      ['title', 'projectId', 'intent', 'note', 'summary', 'nextStep'] as const
+    ).some(key => patch[key] !== undefined && patch[key] !== previous[key]);
     return this.options.stash().updateResource(
       id,
       {
@@ -138,10 +144,6 @@ export class ResourceCollectionService {
         ...(patch.projectId !== undefined
           ? {
               projectId: patch.projectId,
-              ...(patch.projectId !==
-              this.options.stash().get(id)?.collection?.projectId
-                ? {exportedPath: ''}
-                : {}),
             }
           : {}),
         ...(patch.intent !== undefined ? {intent: patch.intent} : {}),
@@ -151,6 +153,7 @@ export class ResourceCollectionService {
         ...(patch.state === 'ignored' || patch.state === 'inbox'
           ? {state: patch.state}
           : {}),
+        ...(contentChanged ? {exportedPath: ''} : {}),
       },
       revision,
     );
@@ -176,6 +179,7 @@ export class ResourceCollectionService {
       .projects()
       .find(item => item.id === started.projectId);
     const requestId = `collect-${randomUUID()}`;
+    let response: Awaited<ReturnType<CollectionOptions['analyze']>> | undefined;
     this.processing.add(id);
     try {
       const media = await prepareResourceMedia(
@@ -200,7 +204,7 @@ export class ResourceCollectionService {
           media.coverage += '\n' + paper.coverage;
         }
       }
-      const response = await this.options.analyze({
+      response = await this.options.analyze({
         requestId,
         attachments: media.attachments,
         question: [
@@ -277,6 +281,7 @@ export class ResourceCollectionService {
           taskId: response.conversationId || '',
           usedBackend: response.usedBackend || '',
           timingMs: response.timingMs || 0,
+          exportedPath: '',
         },
         revision,
       );
@@ -288,6 +293,13 @@ export class ResourceCollectionService {
           {
             state: 'error',
             error: error instanceof Error ? error.message : String(error),
+            ...(response
+              ? {
+                  taskId: response.conversationId || '',
+                  usedBackend: response.usedBackend || '',
+                  timingMs: response.timingMs || 0,
+                }
+              : {}),
           },
           revision,
         );
@@ -296,6 +308,13 @@ export class ResourceCollectionService {
           state: 'inbox',
           error:
             'The resource was edited during analysis. Your edits were preserved; run analysis again.',
+          ...(response
+            ? {
+                taskId: response.conversationId || '',
+                usedBackend: response.usedBackend || '',
+                timingMs: response.timingMs || 0,
+              }
+            : {}),
         });
       }
       throw error;

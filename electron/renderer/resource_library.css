@@ -10,6 +10,7 @@
 #resource-library {
   height: 100%;
   min-height: 0;
+  container-type: inline-size;
 }
 .rl-shell {
   height: 100%;
@@ -378,7 +379,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
-  margin: 16px -6px 0;
+  margin: 16px 0 0;
   font-size: 11px;
   color: var(--mp-muted);
 }
@@ -547,7 +548,7 @@
     transform: translateX(0);
   }
 }
-@media (max-width: 1000px) {
+@container (max-width: 1000px) {
   .rl-shell {
     padding: 24px 20px 0;
   }
@@ -566,7 +567,7 @@
     gap: 4px;
   }
 }
-@media (max-width: 720px) {
+@container (max-width: 720px) {
   .rl-heading {
     align-items: flex-start;
     flex-direction: column;
