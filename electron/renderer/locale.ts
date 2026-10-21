@@ -714,6 +714,137 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'Confirm you have verified the displayed read-back content and allow re-executing this operation?',
     zh: '确认已核对显示的读回内容，并允许重新执行这项操作？',
   },
+  'decision.daily_scope': {
+    en: 'Choose DailyWrap time and saved tasks',
+    zh: '选择每日回顾的时间和已保存任务',
+  },
+  'decision.daily_heading': {
+    en: 'Choose the time and saved tasks to include',
+    zh: '选择要读取的时间和已保存任务',
+  },
+  'decision.range_error': {
+    en: 'Choose a valid time range with To after From.',
+    zh: '请选择有效的时间范围，结束时间须晚于开始时间。',
+  },
+  'decision.choose_sources': {
+    en: 'Choose the source set before allowing this read.',
+    zh: '允许读取前，请先选择来源范围。',
+  },
+  'decision.select_task': {
+    en: 'Select at least one saved task.',
+    zh: '请至少选择一项已保存任务。',
+  },
+  'decision.from': {en: 'From', zh: '开始时间'},
+  'decision.to': {en: 'To', zh: '结束时间'},
+  'decision.read_limit': {
+    en: 'Read up to {n} records.',
+    zh: '最多读取 {n} 条记录。',
+  },
+  'decision.loading_tasks': {
+    en: 'Loading saved tasks…',
+    zh: '正在读取已保存任务…',
+  },
+  'decision.retry_tasks': {en: 'Retry loading tasks', zh: '重试读取任务'},
+  'decision.saved_sources': {en: 'Saved task sources', zh: '已保存任务来源'},
+  'decision.all_tasks': {
+    en: 'All saved tasks ({n})',
+    zh: '全部已保存任务（{n}）',
+  },
+  'decision.choose_tasks': {en: 'Choose saved tasks', zh: '选择已保存任务'},
+  'decision.sources': {en: 'Sources', zh: '来源'},
+  'decision.find_task': {en: 'Find a saved task', zh: '查找已保存任务'},
+  'decision.selected_count': {en: '{n} selected', zh: '已选择 {n} 项'},
+  'decision.no_tasks': {
+    en: 'No saved tasks are available.',
+    zh: '没有可用的已保存任务。',
+  },
+  'decision.approval_scope': {
+    en: 'Scope of this approval',
+    zh: '本次授权的范围',
+  },
+  'decision.scope_heading': {en: 'This approval covers', zh: '本次授权范围'},
+  'decision.saved_task': {en: 'saved task {id}', zh: '已保存任务 {id}'},
+  'decision.all_evidence': {
+    en: 'all saved tasks and recent screen evidence',
+    zh: '全部已保存任务及近期屏幕证据',
+  },
+  'decision.task_records': {en: 'saved task records', zh: '已保存的任务记录'},
+  'decision.all_conversations': {en: 'all conversations', zh: '全部会话'},
+  'decision.restore_clipboard': {
+    en: 'restore one saved clipboard entry',
+    zh: '恢复一条已保存的剪贴板记录',
+  },
+  'decision.search_clipboard': {
+    en: 'search saved clipboard history',
+    zh: '搜索已保存的剪贴板历史',
+  },
+  'decision.search_screen': {
+    en: 'search recent screen memory',
+    zh: '搜索近期屏幕记忆',
+  },
+  'decision.selected_object': {en: 'selected object', zh: '所选对象'},
+  'decision.scope_source': {en: 'Source', zh: '来源'},
+  'decision.scope_event': {en: 'Event', zh: '事件'},
+  'decision.scope_offset': {en: 'Text offset', zh: '文本偏移'},
+  'decision.scope_characters': {en: 'Characters', zh: '字符数'},
+  'decision.scope_search': {en: 'Search', zh: '搜索内容'},
+  'decision.scope_tasks': {en: 'Task matches', zh: '任务匹配数'},
+  'decision.scope_screens': {en: 'Screen matches', zh: '屏幕匹配数'},
+  'decision.scope_screen_from': {en: 'Screen from', zh: '屏幕记录起始时间'},
+  'decision.scope_screen_to': {en: 'Screen to', zh: '屏幕记录结束时间'},
+  'decision.scope_from': {en: 'From', zh: '开始时间'},
+  'decision.scope_to': {en: 'To', zh: '结束时间'},
+  'decision.scope_conversations': {en: 'Conversations', zh: '会话'},
+  'decision.scope_max_records': {en: 'Maximum records', zh: '记录数上限'},
+  'decision.scope_recipe': {en: 'Recipe', zh: '配方'},
+  'decision.scope_action': {en: 'Action', zh: '操作'},
+  'decision.scope_clipboard': {en: 'Clipboard entry', zh: '剪贴板记录'},
+  'decision.scope_max_matches': {en: 'Maximum matches', zh: '匹配数上限'},
+  'decision.scope_objects': {en: 'Selected objects', zh: '所选对象'},
+  'decision.scope_object_source': {en: 'Object source', zh: '对象来源'},
+  'decision.scope_attachment': {en: 'Attachment', zh: '附件'},
+  'decision.permission': {en: 'Permission request', zh: '权限请求'},
+  'decision.question': {
+    en: 'Question from Magic Pointer',
+    zh: 'Magic Pointer 的提问',
+  },
+  'decision.saving': {en: 'Saving your choice…', zh: '正在保存你的选择…'},
+  'decision.permission_heading': {
+    en: 'Your permission is needed',
+    zh: '需要你的授权',
+  },
+  'decision.tool': {en: 'Tool', zh: '工具'},
+  'decision.this_action': {en: 'this action', zh: '此操作'},
+  'decision.allow_question': {en: 'Allow {tool}?', zh: '允许执行{tool}吗？'},
+  'decision.deny': {en: 'Deny', zh: '拒绝'},
+  'decision.allow_once': {en: 'Allow once', zh: '仅这一次允许'},
+  'decision.allow_session': {en: 'Allow for this session', zh: '本次会话允许'},
+  'decision.plan_approval': {en: 'Plan approval', zh: '计划审批'},
+  'decision.plan': {en: 'Plan', zh: '计划'},
+  'decision.ready_review': {en: 'Ready for review', zh: '等待审阅'},
+  'decision.keep_planning': {en: 'Keep planning', zh: '继续规划'},
+  'decision.approve_manual': {en: 'Approve · manual', zh: '批准 · 手动确认'},
+  'decision.approve_edits': {
+    en: 'Approve · accept edits',
+    zh: '批准 · 接受编辑',
+  },
+  'decision.choose': {en: 'Your choice is needed', zh: '需要你的选择'},
+  'decision.previous': {en: 'Previous question', zh: '上一题'},
+  'decision.next_question': {en: 'Next question', zh: '下一题'},
+  'decision.multi_hint': {en: 'Select all that apply', zh: '可选择多个选项'},
+  'decision.custom': {en: 'Type something else…', zh: '输入其他回答…'},
+  'decision.your_answer': {
+    en: 'Your answer: {question}',
+    zh: '你的回答：{question}',
+  },
+  'decision.other': {en: 'Other', zh: '其他'},
+  'decision.missing': {
+    en: 'Choose an answer or explicitly skip this question.',
+    zh: '请选择一个回答，或明确跳过此题。',
+  },
+  'decision.skip': {en: 'Skip', zh: '跳过'},
+  'decision.submit': {en: 'Submit', zh: '提交'},
+  'decision.next': {en: 'Next', zh: '下一题'},
   'ask.default_question': {en: 'Your decision is needed', zh: '需要你的决定'},
   'ask.save_failed': {
     en: 'Could not save this answer; please try again.',
@@ -895,6 +1026,14 @@ function applyStudioLanguage(language: StudioLanguage): void {
     localStorage.setItem('mp:language:v1', language);
   } catch {
     /* storage unavailable */
+  }
+}
+
+if (typeof document !== 'undefined') {
+  try {
+    applyStudioLanguage(localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en');
+  } catch {
+    applyStudioLanguage('en');
   }
 }
 
