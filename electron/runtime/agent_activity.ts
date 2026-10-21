@@ -62,6 +62,10 @@ export class RuntimeActivitySink {
       this.blob('subagent', payload);
       return;
     }
+    if (kind === 'context_compacting') {
+      this.mark('context_compacting', event);
+      return;
+    }
     if (kind === 'turn_started') {
       this.flush();
       const at = this.mark('model_request', {turn: event.turn});
@@ -118,7 +122,7 @@ export class RuntimeActivitySink {
     }
     if (kind === 'model_usage') {
       const at = this.blob('model_usage', event.usage);
-      if (this.activeMessage) {
+      if (this.activeMessage && event.purpose !== 'compaction') {
         Object.assign(this.activeMessage, {
           modelUsage: event.requestUsage ?? event.usage,
           completedAt: at,

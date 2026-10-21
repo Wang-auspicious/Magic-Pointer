@@ -953,19 +953,39 @@ export async function handleSessionRead(
       )
     : undefined;
   const usageByTurn = new Map<number, Record<string, unknown>>();
+  let commandUsage: Record<string, number> = {};
   if (acceptedInput) {
     for (const event of events.slice(acceptedInput.seq)) {
+      if (event.type === 'compaction/response' && event.data.turn === null) {
+        const spent = {...object(event.data.requestUsage)};
+        for (const key of [
+          'contextTokens',
+          'contextEstimated',
+          'lastOutputTokens',
+          'lastCacheReadTokens',
+          'lastCacheWriteTokens',
+        ]) {
+          delete spent[key];
+        }
+        commandUsage = combineModelUsage(commandUsage, spent);
+        continue;
+      }
       if (
-        ['model/response', 'permission/reviewed', 'turn/result'].includes(
-          event.type,
-        ) &&
+        [
+          'model/response',
+          'compaction/response',
+          'permission/reviewed',
+          'turn/result',
+        ].includes(event.type) &&
         event.data.modelUsage
       ) {
         usageByTurn.set(Number(event.data.turn), object(event.data.modelUsage));
       }
     }
   }
-  let taskModelUsage: Record<string, number> | undefined;
+  let taskModelUsage: Record<string, number> | undefined = Object.keys(commandUsage).length
+    ? commandUsage
+    : undefined;
   for (const values of usageByTurn.values()) {
     taskModelUsage = combineModelUsage(taskModelUsage || {}, values);
   }
@@ -1573,12 +1593,13 @@ export class EventSession {
     next: AgentMessage[],
     reason: string,
     expected?: AgentMessage[],
+    expectedTurn: number | null = null,
   ): Promise<boolean> {
     return withFileLock(`${this.file}.ts-lock`, async () => {
       await this.refresh();
       if (
         expected &&
-        (this.openTurn !== null ||
+        (this.openTurn !== expectedTurn ||
           canonicalJson(this.deriveMessages()) !== canonicalJson(expected))
       ) {
         return false;

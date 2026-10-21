@@ -605,18 +605,31 @@ export async function runRuntime(
         };
       }
       if (name === 'compact') {
+        const started = Date.now();
+        const firstEvent = session.events.length;
+        const modelUsage: Record<string, number> = {};
         const compacted = await compactSession(
           common,
           common.system,
           signal || new AbortController().signal,
           true,
+          modelUsage,
         );
+        if (compacted) {
+          onEvent({kind: 'context_compacted'});
+        }
+        const response = session.events
+          .slice(firstEvent)
+          .reverse()
+          .find(event => event.type === 'compaction/response');
         return {
           ok: compacted,
           answer: compacted ? '已压缩任务上下文。' : '当前上下文未压缩。',
           command: {type: name},
           agentSessionId: session.id,
-          usedBackend: 'runtime.compaction',
+          usedBackend: response?.data.usedBackend || 'runtime.compaction',
+          timingMs: Date.now() - started,
+          modelUsage,
         };
       }
       if (name === 'permission') {

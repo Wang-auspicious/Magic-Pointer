@@ -28,16 +28,16 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   USAGE_CATEGORIES.map((category) => category.label),
-  ['缓存命中', '缓存写入', '新输入', '输出'],
+  ['Cache read', 'Cache write', 'Input', 'Output'],
 );
 
 assert.deepStrictEqual(
   usageCategoryRows({ inputTokens: 1000, cacheReadTokens: 600, cacheWriteTokens: 100, outputTokens: 50 }),
   [
-    { kind: 'cache-read', label: '缓存命中', value: 600 },
-    { kind: 'cache-write', label: '缓存写入', value: 100 },
-    { kind: 'input', label: '新输入', value: 300 },
-    { kind: 'output', label: '输出', value: 50 },
+    { kind: 'cache-read', label: 'Cache read', value: 600 },
+    { kind: 'cache-write', label: 'Cache write', value: 100 },
+    { kind: 'input', label: 'Input', value: 300 },
+    { kind: 'output', label: 'Output', value: 50 },
   ],
   'new input is the part of the prompt that was neither read from nor written to the cache',
 );
@@ -45,8 +45,8 @@ assert.deepStrictEqual(
 assert.deepStrictEqual(
   usageCategoryRows({ inputTokens: 1842, outputTokens: 286, totalTokens: 2128 }),
   [
-    { kind: 'input', label: '新输入', value: 1842 },
-    { kind: 'output', label: '输出', value: 286 },
+    { kind: 'input', label: 'Input', value: 1842 },
+    { kind: 'output', label: 'Output', value: 286 },
   ],
   'without cache numbers the card falls back to the two categories that did arrive',
 );
@@ -61,16 +61,16 @@ assert.deepStrictEqual(
 );
 
 assert.deepStrictEqual(usageCategoryRows({ inputTokens: 100, cacheReadTokens: 0, outputTokens: 0 }), [
-  { kind: 'input', label: '新输入', value: 100 },
+  { kind: 'input', label: 'Input', value: 100 },
 ]);
 assert.deepStrictEqual(usageCategoryRows({ cacheReadTokens: 0 }), []);
 
 assert.deepStrictEqual(
   usageCategoryRows({ inputTokens: 100, cacheReadTokens: 400, cacheWriteTokens: 50, outputTokens: 5 }),
   [
-    { kind: 'cache-read', label: '缓存命中', value: 400 },
-    { kind: 'cache-write', label: '缓存写入', value: 50 },
-    { kind: 'output', label: '输出', value: 5 },
+    { kind: 'cache-read', label: 'Cache read', value: 400 },
+    { kind: 'cache-write', label: 'Cache write', value: 50 },
+    { kind: 'output', label: 'Output', value: 5 },
   ],
   'a fresh-input count cannot go negative',
 );
@@ -141,7 +141,7 @@ assert(!source.includes("['input', '读取上下文', inputTokens]"),
   'the two hardcoded rows are gone; the legend follows the categories that arrived');
 assert(!source.includes("el('span', 'mp-usage-seg is-input')"),
   'the bar no longer draws a fixed input segment before looking at the numbers');
-assert(source.includes('const contextTokens = Number(latestUsage?.contextTokens) || 0;'));
+assert(source.includes('const contextTokens = Math.max(0, Number(latestUsage?.contextTokens) || 0);'));
 assert(source.includes('const contextProgress = Math.max(0, Math.min(100, Math.round(contextRatio)));'));
 
 console.log('studio usage meter test ok');
