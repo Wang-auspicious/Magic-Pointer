@@ -1,4 +1,5 @@
 import {BrowserViewRegistry} from './browser_view_registry';
+import {runEgoBrowser} from './ego_browser';
 import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
 import {
   projectAttachments,
@@ -3349,6 +3350,13 @@ ipcMain.handle(
           : root
             ? normalizeProjectBrowserUrl(requested, root)
             : normalizeBrowserUrl(requested);
+      if (/^https?:/i.test(url)) {
+        const result = await runEgoBrowser('Magic Pointer browser', {
+          operation: 'browse',
+          url,
+        });
+        return {ok: true, backend: 'ego-lite', url: result.url, title: result.title};
+      }
       const key =
         String(raw?.resourceKey || '').trim() ||
         browserResourceKey(root, String(raw?.path || ''), url);

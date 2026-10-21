@@ -549,6 +549,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'browser.stop_loading': {en: 'Stop loading', zh: '停止加载'},
   'browser.reload': {en: 'Reload', zh: '重新加载'},
   'browser.open_failed': {en: 'Failed to open the page.', zh: '网页打开失败。'},
+  'browser.ego_opening': {en: 'Opening in ego lite…', zh: '正在 ego lite 中打开…'},
+  'browser.ego_opened': {en: 'Opened in ego lite. Continue in its native browser window.', zh: '已在 ego lite 中打开，请在浏览器原生窗口中继续。'},
   'tasks.collapse': {en: 'Restore the task panel', zh: '还原任务面板'},
   'tasks.expand': {en: 'Expand the task panel', zh: '展开任务面板'},
   'activity.log': {en: 'Conversation log', zh: '对话记录'},

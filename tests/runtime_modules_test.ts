@@ -250,7 +250,7 @@ test('the builtin task-context registration belongs to its plugin scope', async 
     );
     assert.deepEqual(
       (await plugins.modules.snapshot()).modules.map(module => module.id),
-      ['other'],
+      ['ego-browser', 'other'],
     );
     await plugins.close();
   } finally {

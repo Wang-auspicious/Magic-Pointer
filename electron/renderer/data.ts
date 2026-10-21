@@ -918,6 +918,9 @@ declare global {
         ok?: boolean;
         key?: string;
         state?: MagicPointerBrowserViewState;
+        backend?: string;
+        url?: string;
+        title?: string;
         error?: string;
       }>;
       resize(bounds: {
@@ -1356,6 +1359,9 @@ declare global {
       ok?: boolean;
       key?: string;
       state?: MagicPointerBrowserViewState;
+      backend?: string;
+      url?: string;
+      title?: string;
       error?: string;
     }>;
     resizeBrowserView(bounds: {

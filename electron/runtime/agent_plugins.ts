@@ -137,6 +137,17 @@ export async function bootPlugins(options: {
       },
     });
     rows.push({id: 'task-context-module', plugin: 'task-context-module'});
+    const {egoBrowserModule} = require('./ego_browser_module') as typeof import('./ego_browser_module');
+    specs.set('ego-browser-module', {
+      name: 'ego-browser-module',
+      inject: ['modules', 'session'],
+      apply: ctx => {
+        ctx.get<RuntimeModules>('modules').register(
+          egoBrowserModule(ctx.get<EventSession>('session').id),
+        );
+      },
+    });
+    rows.push({id: 'ego-browser-module', plugin: 'ego-browser-module'});
   }
   const disabledDirectories: Data[] = [];
   for (const entry of await readdir(options.directory, {

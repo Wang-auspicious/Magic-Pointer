@@ -72,6 +72,12 @@ MP 的自有 Runtime 可通过 `Activity.read` 按需读取这些记录，回答
 
 ## 外部接入
 
+内置网页浏览使用本机安装的 **ego lite**，网页在它的原生窗口中打开；右侧面板继续显示本地 HTML、PDF 和图片预览。首次使用先完成 ego lite 的设置向导，浏览器数据是否导入由你选择。
+
+MP 自有 Agent 通过 `EgoBrowser.open/observe/act/screenshot` 操作网页，每个保存任务使用独立 Task Space；支持中文输入、语义元素定位和页面结果读回。需要登录或人工处理时交接给你，只有你明确要求继续才恢复控制。浏览器控制不会把任务转交给 Codex、Claude Code 等其他 Harness。
+
+普通导航会核对实际网址；页面点击本身不算业务成功。表单写入或发送应指定可读回的结果，例如成功消息或字段值。下载、上传和完整右栏嵌入尚未接入这组工具；原有 `Browser.navigate` 继续用于明确指定的已有外部浏览器窗口。
+
 网络 `Search` 在设置 `EXA_API_KEY` 环境变量后使用 Exa Search：每次最多五条结果，返回出处、有限摘录与服务端报告的实际费用。没有密钥时沿用 DuckDuckGo。检索由 MP 自己的主代理和子代理分工执行，不调用 Exa Agent Ultra 的远端执行循环。
 
 `integrations/` 提供外部客户端的配置示例和可选提示词投递接口。

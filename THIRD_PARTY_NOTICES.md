@@ -240,6 +240,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## ego lite browser integration
+
+Magic Pointer invokes the separately installed ego lite application's local
+`ego-browser` executable through the public TaskSpace/Page API. The upstream
+control SDK and skill source is <https://github.com/citrolabs/ego-lite>
+(reviewed revision `d392204`, SDK guide v2.1.0, MIT). No upstream SDK source or
+browser binary is bundled in Magic Pointer. The ego lite browser application
+is a separate download governed by its own terms; the SDK repository's MIT
+license does not grant redistribution rights to the browser itself.
+
 ## Existing desktop visual assets
 
 The activity frame strips in `electron/renderer/assets/activity/`, library

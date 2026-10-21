@@ -8395,6 +8395,25 @@ async function openProjectBrowser(
   relativePath = '',
   options: {fromResourceTab?: boolean; resourceKey?: string} = {},
 ) {
+  if (!relativePath && !rawUrl.startsWith('file:') && !/^[a-zA-Z]:[\\/]/.test(rawUrl)) {
+    await Data.browserViewCommand('hide');
+    browserViewVisible = false;
+    const empty = document.getElementById('project-browser-empty');
+    const message = empty?.querySelector('p');
+    if (empty) {
+      empty.hidden = false;
+    }
+    if (message) {
+      message.textContent = studioT('browser.ego_opening');
+    }
+    const response = await Data.openBrowserView(rawUrl, {x: 0, y: 0, width: 1, height: 1}, activeProjectRoot);
+    if (message) {
+      message.textContent = response?.ok
+        ? studioT('browser.ego_opened')
+        : String(response?.error || studioT('browser.open_failed'));
+    }
+    return;
+  }
   const localResourceKey =
     options.resourceKey ||
     (relativePath
