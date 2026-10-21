@@ -53,6 +53,7 @@ declare global {
     let sourceError = false;
     let savedBrowserUrl = 'https://x.com';
     let generation = 0;
+    let focusedId = '';
     const pending = new Set<string>();
     const preview = globalThis.ResourcePreviewView.create();
     const labels = () => ({
@@ -169,6 +170,12 @@ declare global {
       if (!grid) {
         return;
       }
+      const focused =
+        document.activeElement?.closest<HTMLElement>('[data-rl-id]');
+      const restore = focused && grid.contains(focused);
+      if (restore) {
+        focusedId = focused.dataset.rlId || '';
+      }
       const items = (snapshot.items || []).filter(item => {
         const detail = details(item);
         return (
@@ -184,6 +191,11 @@ declare global {
               .includes(query.toLowerCase()))
         );
       });
+      if (!items.some(item => item.id === focusedId)) {
+        focusedId = items.some(item => item.id === selected)
+          ? selected
+          : items[0]?.id || '';
+      }
       grid.innerHTML = items.length
         ? items
             .map(item => {
@@ -198,7 +210,7 @@ declare global {
               const preview = (
                 item as CollectedResource & {previewUrl?: string}
               ).previewUrl;
-              return `<button type="button" class="rl-item ${selected === item.id ? 'is-selected' : ''}" data-rl-id="${esc(item.id)}" aria-pressed="${selected === item.id}">
+              return `<button type="button" class="rl-item ${selected === item.id ? 'is-selected' : ''}" data-rl-id="${esc(item.id)}" tabindex="${focusedId === item.id ? 0 : -1}" aria-pressed="${selected === item.id}">
           ${preview ? `<div class="rl-thumbnail"><img src="${esc(preview)}" alt="${esc(detail.title)}" loading="lazy"></div>` : `<div class="rl-excerpt">${esc((detail.summary || item.text || detail.url || '').slice(0, 210))}</div>`}
           <div class="rl-item-copy"><span class="rl-item-meta">${esc(item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong><div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent])}</span><span>${detail.state === 'queued' ? t('Queued', '等待整理') : detail.state === 'waiting' ? t('Needs your input', '等待你的处理') : detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
             })
@@ -206,6 +218,45 @@ declare global {
         : snapshot.items?.length
           ? `<div class="rl-empty"><h2>${t('No resources match.', '没有符合条件的资料。')}</h2><p>${t('Try another search or view your other resources.', '试试其他关键词，或查看其他分类。')}</p><button type="button" data-rl-action="clear-search">${t(query ? 'Clear search' : 'View all resources', query ? '清除搜索' : '查看全部资料')}</button></div>`
           : `<div class="rl-empty"><span class="rl-empty-mark" aria-hidden="true">↙</span><h2>${t('Room for the next good idea.', '留一点空间，给下一个好想法。')}</h2><p>${t('A screenshot, a paper, a small detail you want to borrow. Keep it here; decide what it becomes next.', '截图、论文、想借鉴的小细节。先收在这里，再决定它会成为什么。')}</p><button type="button" data-rl-tab="browser">${t('Open your browser', '打开内置浏览器')} ↗</button></div>`;
+      if (restore) {
+        focusCard(focusedId);
+      }
+    }
+
+    function focusCard(id: string): void {
+      if (!visible || tab !== 'library' || !host.isConnected) {
+        return;
+      }
+      const cards = [
+        ...host.querySelectorAll<HTMLButtonElement>('[data-rl-id]'),
+      ];
+      const card = cards.find(item => item.dataset.rlId === id);
+      if (!card) {
+        host.querySelector<HTMLElement>('.rl-search')?.focus();
+        return;
+      }
+      focusedId = id;
+      cards.forEach(item => {
+        item.tabIndex = item === card ? 0 : -1;
+      });
+      card.focus({preventScroll: true});
+      card.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    }
+
+    async function closeDetail(): Promise<void> {
+      const id = selected;
+      if (
+        !(await savePending()) ||
+        selected !== id ||
+        !visible ||
+        tab !== 'library'
+      ) {
+        return;
+      }
+      selected = '';
+      renderList();
+      renderDetail();
+      focusCard(id);
     }
     function renderDetail() {
       const panel = host.querySelector<HTMLElement>('.rl-detail');
@@ -213,6 +264,27 @@ declare global {
       if (!panel || dirty) {
         return;
       }
+      const active = document.activeElement as HTMLElement | null;
+      const field =
+        active &&
+        panel.contains(active) &&
+        (active instanceof HTMLInputElement ||
+          active instanceof HTMLTextAreaElement ||
+          active instanceof HTMLSelectElement)
+          ? active
+          : null;
+      const selection =
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLTextAreaElement
+          ? {
+              start: field.selectionStart,
+              end: field.selectionEnd,
+              direction: field.selectionDirection,
+            }
+          : null;
+      const action =
+        active && panel.contains(active) ? active.dataset.rlAction : undefined;
+      const saveFocused = active?.matches('.rl-save') && panel.contains(active);
       panel.hidden = !item;
       host
         .querySelector('.rl-workspace')
@@ -246,6 +318,27 @@ declare global {
         <div class="rl-evidence">${detail.decisionReason ? `<span>${t('Collection decision', '收录判断')}</span><p>${esc(detail.decisionReason)}</p>` : ''}<span>${t('Reading coverage', '实际阅读范围')}</span><p>${esc(detail.coverage || t('Saved material; not yet reviewed.', '已保存材料，尚未阅读整理。'))}</p>${detail.error ? `<p class="rl-error">${esc(detail.error)}</p>` : ''}${detail.exportedPath ? `<p>${esc(detail.exportedPath)}</p>` : ''}</div>
         <div class="rl-actions" aria-busy="${busy}">${primary}<button type="button" data-rl-action="deliver" ${busy ? 'disabled' : ''}>${t('Send to project', '放入项目')} ↗</button></div>
         <div class="rl-links">${detail.url ? `<button type="button" data-rl-action="source">${t('Original page', '原始页面')} ↗</button>` : ''}<button type="button" data-rl-action="original">${t('Saved original', '保存的原件')} ↗</button>${detail.taskId ? `<button type="button" data-rl-action="task">${t('Agent task', '整理任务')} ↗</button>` : ''}<button type="button" data-rl-action="ignore">${detail.state === 'ignored' ? t('Restore', '恢复') : t('Ignore', '忽略')}</button></div>`;
+      const restored = field
+        ? panel.querySelector<HTMLElement>(`[name="${field.name}"]`)
+        : action
+          ? panel.querySelector<HTMLElement>(`[data-rl-action="${action}"]`)
+          : saveFocused
+            ? panel.querySelector<HTMLElement>('.rl-save')
+            : null;
+      restored?.focus({preventScroll: true});
+      if (
+        selection?.start !== null &&
+        selection?.end !== null &&
+        selection &&
+        (restored instanceof HTMLInputElement ||
+          restored instanceof HTMLTextAreaElement)
+      ) {
+        restored.setSelectionRange(
+          selection.start,
+          selection.end,
+          selection.direction || undefined,
+        );
+      }
     }
     function renderBrowser() {
       host.querySelector('.rl-content')!.innerHTML =
@@ -655,8 +748,14 @@ declare global {
             return;
           }
           selected = button.dataset.rlId;
+          focusedId = selected;
           renderList();
           renderDetail();
+          if (event.detail === 0 && visible && tab === 'library') {
+            host
+              .querySelector<HTMLElement>('.rl-detail [data-rl-action=close]')
+              ?.focus({preventScroll: true});
+          }
           return;
         }
         const action = button.dataset.rlAction;
@@ -687,12 +786,7 @@ declare global {
           return;
         }
         if (action === 'close') {
-          if (!(await savePending())) {
-            return;
-          }
-          selected = '';
-          renderList();
-          renderDetail();
+          await closeDetail();
           return;
         }
         if (action === 'files') {
@@ -859,17 +953,52 @@ declare global {
     });
     host.addEventListener('keydown', event => {
       if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement;
+      const card = target.closest<HTMLButtonElement>('[data-rl-id]');
+      if (
+        card &&
+        [
+          'ArrowDown',
+          'ArrowUp',
+          'ArrowLeft',
+          'ArrowRight',
+          'Home',
+          'End',
+        ].includes(event.key)
+      ) {
+        const cards = [
+          ...host.querySelectorAll<HTMLButtonElement>('[data-rl-id]'),
+        ];
+        const index = cards.indexOf(card);
+        const next =
+          event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? cards.length - 1
+              : (index +
+                  (['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1) +
+                  cards.length) %
+                cards.length;
+        event.preventDefault();
+        event.stopPropagation();
+        focusCard(cards[next].dataset.rlId!);
+        return;
+      }
+      if (
         event.key === 'Escape' &&
         selected &&
-        !(event.target as HTMLElement).matches('input,textarea,select')
+        (target.closest('.rl-detail') || card)
       ) {
-        run(async () => {
-          if (await savePending()) {
-            selected = '';
-            renderList();
-            renderDetail();
-          }
-        });
+        event.preventDefault();
+        run(closeDetail);
         event.stopPropagation();
       }
     });

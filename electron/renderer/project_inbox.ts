@@ -50,6 +50,14 @@ declare global {
         return;
       }
       const rows = entries.filter(entry => state(entry) === filter);
+      const active = document.activeElement as HTMLElement | null;
+      const focusedFilter = host.contains(active)
+        ? active?.dataset.handoffFilter
+        : undefined;
+      const focusedState = host.contains(active)
+        ? active?.dataset.handoffState
+        : undefined;
+      const focusedId = focusedState ? active?.dataset.handoffId : undefined;
       host.innerHTML = `<div class="mp-project-section-heading"><h2>${t('Collected references', '项目交接')}</h2><button type="button" class="mp-project-button" data-handoff-refresh ${loading ? 'disabled' : ''}>${t('Refresh', '刷新')}</button></div>
         <p class="mp-project-context-note">${t('New references travel with your next task. Mark them handled when your work is done.', '新资料随下一次任务带入。工作完成后，可自行标记已处理。')}</p>
         <div class="mp-project-list-tabs" role="group" aria-label="${t('Reference status', '交接状态')}">${(['unread', 'snoozed', 'handled'] as const).map(value => `<button type="button" data-handoff-filter="${value}" aria-pressed="${filter === value}">${{unread: t('New', '待处理'), snoozed: t('Later', '稍后'), handled: t('Handled', '已处理')}[value]} <span>${entries.filter(entry => state(entry) === value).length}</span></button>`).join('')}</div>
@@ -71,6 +79,26 @@ declare global {
           .join(
             '',
           )}${!rows.length ? `<p class="mp-project-empty">${loading ? t('Loading references…', '正在读取交接…') : t('No references here.', '此处暂无交接资料。')}</p>` : ''}</div>`;
+      if (focusedFilter || focusedState) {
+        const next = focusedState
+          ? [
+              ...host.querySelectorAll<HTMLButtonElement>(
+                '[data-handoff-state]',
+              ),
+            ].find(
+              button =>
+                button.dataset.handoffId === focusedId &&
+                button.dataset.handoffState === focusedState &&
+                !button.disabled,
+            )
+          : undefined;
+        (
+          next ||
+          host.querySelector<HTMLElement>(
+            `[data-handoff-filter="${focusedFilter || filter}"]`,
+          )
+        )?.focus({preventScroll: true});
+      }
     }
 
     async function refresh(): Promise<void> {

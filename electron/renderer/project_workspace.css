@@ -6,6 +6,12 @@
   line-height: 1.5;
 }
 
+.mp-project-workspace :is(button, summary):focus-visible,
+.mp-project-editor :is(button, input, textarea):focus-visible {
+  outline: 2px solid var(--mp-accent, #a65c38);
+  outline-offset: 3px;
+}
+
 .mp-project-list-tabs button[aria-pressed='true'] {
   background: var(--mp-hover);
   color: var(--mp-text);

@@ -36,6 +36,24 @@ declare global {
 }
 
 (() => {
+  function showDialog(dialog: HTMLDialogElement): void {
+    dialog.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+      }
+    });
+    dialog.showModal();
+  }
+
+  document.addEventListener('pointerdown', event => {
+    document
+      .querySelectorAll<HTMLDetailsElement>('.mp-project-menu[open]')
+      .forEach(menu => {
+        if (!menu.contains(event.target as Node)) {
+          menu.open = false;
+        }
+      });
+  });
   function escape(value: unknown): string {
     return String(value ?? '').replace(/[&<>"']/g, character => {
       return {
@@ -112,7 +130,7 @@ declare global {
           submit.disabled = false;
         });
     });
-    dialog.showModal();
+    showDialog(dialog);
   }
 
   function mount(
@@ -147,6 +165,10 @@ declare global {
     }
 
     function paint(): void {
+      const active = document.activeElement as HTMLElement | null;
+      const focusedMenu = [
+        ...root.querySelectorAll('.mp-project-menu summary'),
+      ].indexOf(active!);
       chatDraft =
         root.querySelector<HTMLTextAreaElement>('.mp-project-compose textarea')
           ?.value ?? chatDraft;
@@ -225,11 +247,29 @@ declare global {
       searchInput.value = search;
       searchInput.dispatchEvent(new Event('input', {bubbles: true}));
       status(statusText);
+      root
+        .querySelectorAll<HTMLDetailsElement>('.mp-project-menu')
+        .forEach(menu => {
+          const trigger = menu.querySelector('summary')!;
+          trigger.setAttribute('aria-haspopup', 'menu');
+          trigger.setAttribute('aria-expanded', String(menu.open));
+          menu.querySelector(':scope > div')!.setAttribute('role', 'menu');
+          menu.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
+            button.setAttribute('role', 'menuitem');
+            button.tabIndex = -1;
+          });
+        });
       ProjectInboxView.mount(
         root.querySelector<HTMLElement>('[data-project-inbox]')!,
         ProjectScope.key(project),
         window.magicPointerDashboard.resources,
       );
+      if (focusedMenu >= 0) {
+        const trigger = root
+          .querySelectorAll<HTMLElement>('.mp-project-menu summary')
+          .item(focusedMenu);
+        trigger?.focus({preventScroll: true});
+      }
     }
 
     function syncSubmitState(): void {
@@ -330,7 +370,7 @@ declare global {
         });
       });
       root.append(dialog);
-      dialog.showModal();
+      showDialog(dialog);
       title.focus();
       remember();
     }
@@ -371,7 +411,7 @@ declare global {
               error.textContent = String(reason);
             });
         });
-      dialog.showModal();
+      showDialog(dialog);
       try {
         const result = await options.data.readProjectMaterial(
           projectId,
@@ -441,10 +481,13 @@ declare global {
           if (saved && root.isConnected) {
             close();
             paint();
+            root
+              .querySelector<HTMLElement>(`[data-project-action="${kind}"]`)
+              ?.focus({preventScroll: true});
           }
         });
       });
-      dialog.showModal();
+      showDialog(dialog);
     }
 
     function confirmArchive(): void {
@@ -476,7 +519,7 @@ declare global {
           }
         });
       });
-      dialog.showModal();
+      showDialog(dialog);
     }
 
     root.addEventListener('input', event => {
@@ -531,6 +574,52 @@ declare global {
 
     root.addEventListener('keydown', event => {
       const input = event.target as HTMLElement;
+      const menu = input.closest<HTMLDetailsElement>('.mp-project-menu');
+      if (menu && !event.isComposing && !event.defaultPrevented) {
+        const trigger = menu.querySelector('summary')!;
+        const rows = [
+          ...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+        ];
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          event.stopPropagation();
+          root
+            .querySelectorAll<HTMLDetailsElement>('.mp-project-menu[open]')
+            .forEach(other => {
+              if (other !== menu) {
+                other.open = false;
+              }
+            });
+          menu.open = true;
+          const index = rows.indexOf(
+            input.closest('button') as HTMLButtonElement,
+          );
+          const next =
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? rows.length - 1
+                : index === -1
+                  ? event.key === 'ArrowDown'
+                    ? 0
+                    : rows.length - 1
+                  : (index +
+                      (event.key === 'ArrowDown' ? 1 : -1) +
+                      rows.length) %
+                    rows.length;
+          rows[next]?.focus();
+          return;
+        }
+        if (menu.open && (event.key === 'Escape' || event.key === 'Tab')) {
+          menu.open = false;
+          trigger.focus({preventScroll: true});
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
+      }
       if (
         input.matches('.mp-project-compose textarea') &&
         event.key === 'Enter' &&
@@ -544,6 +633,30 @@ declare global {
     });
 
     root.addEventListener('click', event => {
+      const target = event.target as Element;
+      const trigger = target.closest<HTMLElement>('.mp-project-menu > summary');
+      const menu = target.closest<HTMLDetailsElement>('.mp-project-menu');
+      if (trigger && menu) {
+        root
+          .querySelectorAll<HTMLDetailsElement>('.mp-project-menu[open]')
+          .forEach(other => {
+            if (other !== menu) {
+              other.open = false;
+            }
+          });
+        if (event.detail === 0) {
+          queueMicrotask(() => {
+            if (menu.open) {
+              menu.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+            }
+          });
+        }
+      } else if (menu) {
+        menu.open = false;
+        menu
+          .querySelector<HTMLElement>('summary')
+          ?.focus({preventScroll: true});
+      }
       const button = (event.target as Element).closest<HTMLButtonElement>(
         '[data-project-action]',
       );
@@ -647,6 +760,21 @@ declare global {
           .catch(error => status(String(error)));
       }
     });
+    root.addEventListener(
+      'toggle',
+      event => {
+        const menu = event.target;
+        if (
+          menu instanceof HTMLDetailsElement &&
+          menu.matches('.mp-project-menu')
+        ) {
+          menu
+            .querySelector('summary')
+            ?.setAttribute('aria-expanded', String(menu.open));
+        }
+      },
+      true,
+    );
     paint();
   }
 
