@@ -1462,6 +1462,49 @@ function conversationNode(
   return row;
 }
 
+const deletingConversations = new Set<string>();
+
+async function deleteConversationFromUi(id: string): Promise<void> {
+  if (deletingConversations.has(id)) {
+    return;
+  }
+  deletingConversations.add(id);
+  document.getElementById('conversation-delete-error')?.remove();
+  try {
+    const result = await Data.deleteConversation(id);
+    if (!result.ok) {
+      throw new Error(
+        result.error === 'conversation_active'
+          ? studioT('chat.delete_active')
+          : result.error === 'store_failed'
+            ? studioT('chat.delete_failed')
+            : result.error || studioT('chat.delete_failed'),
+      );
+    }
+    if (activeConversationId === id) {
+      startNewChat();
+    }
+    await renderSidebar();
+  } catch (error) {
+    const notice = document.createElement('div');
+    notice.id = 'conversation-delete-error';
+    notice.className = 'notice mp-conversation-delete-error';
+    notice.setAttribute('role', 'alert');
+    const message = document.createElement('span');
+    message.textContent = error instanceof Error ? error.message : String(error);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', studioT('common.close'));
+    notice.append(message, close);
+    document.getElementById('conversation-delete-error')?.remove();
+    document.body.append(notice);
+  } finally {
+    deletingConversations.delete(id);
+  }
+}
+
 function buildSessionMenu(c: {
   id?: string;
   title?: string;
@@ -1542,10 +1585,7 @@ function buildSessionMenu(c: {
       return;
     }
     if (name === 'delete') {
-      if (id === activeConversationId) {
-        startNewChat();
-      }
-      void Data.deleteConversation(id).then(() => renderSidebar());
+      void deleteConversationFromUi(id);
     }
   };
   const pin = item('pin', local.pinned ? 'Unpin' : 'Pin', {
@@ -7312,9 +7352,7 @@ function openThreadMenu(button: HTMLElement) {
         if (!activeConversationId) {
           return;
         }
-        const id = activeConversationId;
-        startNewChat();
-        void Data.deleteConversation(id).then(() => renderSidebar());
+        void deleteConversationFromUi(activeConversationId);
       },
       {danger: true, disabled: unavailable, shortcut: 'D'},
     ),
@@ -8589,7 +8627,7 @@ function currentSubagentTasks() {
 const backgroundAgentSnapshots = new Map<string, StudioSubagentTask[]>();
 const acceptedChildInputs = new Set<string>();
 let backgroundAgentRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-let backgroundAgentRefreshInFlight = '';
+const backgroundAgentRefreshInFlight = new Set<string>();
 
 function childActive(status: string): boolean {
   return status === 'running' || status === 'awaiting_user';
@@ -8605,10 +8643,10 @@ function childNeedsAttention(task: StudioSubagentTask): boolean {
 async function refreshBackgroundAgentTasks(
   conversationId: string,
 ): Promise<void> {
-  if (!conversationId || backgroundAgentRefreshInFlight === conversationId) {
+  if (!conversationId || backgroundAgentRefreshInFlight.has(conversationId)) {
     return;
   }
-  backgroundAgentRefreshInFlight = conversationId;
+  backgroundAgentRefreshInFlight.add(conversationId);
   try {
     const result = await Data.subagents({conversationId});
     if (!result.ok) {
@@ -8637,9 +8675,7 @@ async function refreshBackgroundAgentTasks(
       }
     }
   } finally {
-    if (backgroundAgentRefreshInFlight === conversationId) {
-      backgroundAgentRefreshInFlight = '';
-    }
+    backgroundAgentRefreshInFlight.delete(conversationId);
     scheduleBackgroundAgentRefresh();
   }
 }
@@ -8648,7 +8684,7 @@ function scheduleBackgroundAgentRefresh(): void {
   if (
     backgroundAgentRefreshTimer ||
     !activeConversationId ||
-    backgroundAgentRefreshInFlight
+    backgroundAgentRefreshInFlight.has(activeConversationId)
   ) {
     return;
   }

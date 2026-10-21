@@ -31,6 +31,8 @@ async function main() {
     response: { ok: false, conversationId: 'saved-failure', error: 'Provider unavailable' },
     activeConversationId: null, pendingPermissionChoice: {}, pendingPermissionAsk: {}, pendingAskInput: {},
     composerAttachments: ['notes.txt'], composerSelectedSourceIds: new Set(),
+    workspace: {contextKey: 'fixture', projectRoot: ''},
+    adoptComposerWorktreeConversation() {},
     renderPermissionAsk() {}, renderComposerAttachments() {}, renderComposerMaterials() {},
     openConversation: async id => calls.push(id), renderSidebar: async () => calls.push('sidebar'),
   };

@@ -454,6 +454,17 @@ function createConversationStore(
                   finish(renameError);
                   return;
                 }
+                // A synchronous mutation may commit while this rename is in
+                // the filesystem queue. Restore the newer in-memory snapshot.
+                if (syncWriteCount !== startedAtSyncWrite) {
+                  try {
+                    writeNow();
+                    dirty = false;
+                  } catch (error) {
+                    finish(error);
+                    return;
+                  }
+                }
                 finish(null);
               },
             );
@@ -1308,14 +1319,23 @@ function createConversationStore(
     return {ok: true, conversation: target};
   }
 
-  function remove(id: unknown): {ok: boolean} {
+  function remove(id: unknown): {ok: boolean; error?: string} {
     const conversations = load();
     const next = conversations.filter(conversation => conversation.id !== id);
     if (next.length === conversations.length) {
       return {ok: false};
     }
+    const wasDirty = dirty;
     items = next;
-    persist();
+    try {
+      writeNow();
+      dirty = false;
+    } catch (error) {
+      items = conversations;
+      dirty = wasDirty;
+      reportPersistFailure(error, 'remove');
+      return {ok: false, error: 'store_failed'};
+    }
     return {ok: true};
   }
 

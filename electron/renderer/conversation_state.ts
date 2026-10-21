@@ -60,9 +60,14 @@ declare global {
     // Startup recovery marks interrupted turns failed as well. Their recoverable
     // outcome is more specific than that failure bit.
     if (
-      ['可恢复', '已中断', 'interrupted', 'stopped', 'cancelled'].includes(
-        outcome,
-      )
+      [
+        '可恢复',
+        '已中断',
+        '已停止',
+        'interrupted',
+        'stopped',
+        'cancelled',
+      ].includes(outcome)
     ) {
       return 'interrupted';
     }

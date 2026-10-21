@@ -3868,3 +3868,28 @@ dialog.mpw-perm-confirm::backdrop {
   font-size: 12.5px;
 }
 :root[data-theme="dark"] .mp-thread-menu { box-shadow: 0 10px 30px #00000066, 0 2px 8px #0000004d; }
+.mp-conversation-delete-error {
+  position: fixed;
+  z-index: 210;
+  top: 104px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border: 1px solid var(--mp-rule-strong);
+  border-radius: 8px;
+  background: var(--mp-panel);
+  color: var(--mp-text);
+  font: 13px/1.5 var(--mp-font-ui);
+  box-shadow: 0 8px 32px #0002;
+}
+.mp-conversation-delete-error button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+  cursor: pointer;
+}

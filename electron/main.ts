@@ -4187,6 +4187,7 @@ async function sendConversation(
   if (question.length > 12000) {
     return {ok: false, error: '问题最多 12000 字，请缩短后重试。'};
   }
+  const modelCommand = /^\/model +(\S[\s\S]*)$/i.exec(question);
   const conversationId = String(raw?.conversationId || '')
     .trim()
     .slice(0, 120);
@@ -4228,17 +4229,34 @@ async function sendConversation(
   if (resume && !existing?.hasPendingWork) {
     return {ok: false, error: 'This conversation has no unfinished task.'};
   }
-  if (
-    resume &&
-    [...activeConversations.values()].some(
-      run => run.conversationId === conversationId,
-    )
-  ) {
-    return {
-      ok: false,
-      active: true,
-      error: 'This conversation is already running.',
-    };
+  if (modelCommand && existing && !continuation) {
+    try {
+      const requested =
+        normalizeModelSelection(raw.modelSelection) ?? existing.modelSelection;
+      const selected = setConversationModel(existing.id, {
+        model: modelCommand[1],
+        profileId: requested?.profileId,
+      });
+      if (!selected.ok) {
+        return {...selected, conversationId: existing.id};
+      }
+      conversations().flush();
+      const pendingInput = existing.turns.at(-1)?.pendingInput;
+      return {
+        ok: true,
+        conversationId: existing.id,
+        command: {type: 'model', modelSelection: selected.selection},
+        answer: `此会话的模型已切换为 ${selected.selection!.model}，下一次发送即生效。`,
+        hasPendingWork: existing.hasPendingWork === true,
+        ...(pendingInput ? {pendingInput, awaitingUserInput: true} : {}),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        conversationId: existing.id,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
   const grantNow = sanitizePermissionRule(raw?.permissionGrant);
   const denyNow = sanitizePermissionRule(raw?.permissionDeny);
@@ -4491,6 +4509,21 @@ async function sendConversation(
     ...(threadDenials.length ? {permissionDenials: threadDenials} : {}),
     ...(onceNow ? {permissionGrantOnce: [onceNow]} : {}),
   };
+  // Workspace resolution above awaits disk. Check ownership after those awaits,
+  // before another renderer can append a competing turn to this Runtime session.
+  if (
+    conversationId &&
+    [...activeConversations.values(), ...stageLiveTurns.values()].some(
+      run => run.conversationId === conversationId,
+    )
+  ) {
+    return {
+      ok: false,
+      active: true,
+      conversationId,
+      error: 'This conversation is already running. Steer or stop its current task before sending another turn.',
+    };
+  }
   const conversation = continuation
     ? existing!
     : conversations().appendTurn({
@@ -4759,7 +4792,6 @@ async function sendConversation(
       }
       resolve(settled);
     };
-    const modelCommand = /^\/model +(\S[\s\S]*)$/i.exec(question);
     if (modelCommand) {
       const selected = setConversationModel(conversation.id, {
         model: modelCommand[1],
@@ -5647,15 +5679,37 @@ ipcMain.handle(
 
 ipcMain.handle(
   'conversations:delete',
-  (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_renderer'};
     }
     const id = String(raw?.id || '').slice(0, 120);
     try {
+      const running = () =>
+        [...activeConversations.values(), ...stageLiveTurns.values()].some(
+          run => run.conversationId === id,
+        );
+      if (running()) {
+        return {ok: false, error: 'conversation_active'};
+      }
+      const conversation = conversations().get(id);
+      const children: Array<{status: string}> = conversation?.agentSessionId
+        ? await readBackgroundAgents(
+            path.join(FABRIC_DATA_DIR, 'agent-sessions'),
+            conversation.agentSessionId,
+          )
+        : [];
+      if (
+        running() ||
+        children.some(task =>
+          ['starting', 'running', 'awaiting_user'].includes(task.status),
+        )
+      ) {
+        return {ok: false, error: 'conversation_active'};
+      }
       const result = conversations().remove(id);
       if (!result.ok) {
-        return {ok: false, error: 'unknown_conversation'};
+        return {ok: false, error: result.error || 'unknown_conversation'};
       }
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('conversations:turn', {id});

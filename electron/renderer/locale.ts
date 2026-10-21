@@ -40,6 +40,8 @@ interface StudioCountEntry {
 }
 
 const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
+  'chat.delete_active': {en: 'Stop this task and its background agents before deleting it.', zh: '请先停止此任务及其后台 Agent，再删除会话。'},
+  'chat.delete_failed': {en: 'Could not save the deletion. Your conversation is kept; try again.', zh: '删除未能保存，会话已保留，请重试。'},
   'plugins.title': {en: 'Plugins', zh: '插件'},
   'plugins.heading': {en: 'Local plugins', zh: '本地插件'},
   'plugins.search': {en: 'Search plugins', zh: '搜索插件'},
