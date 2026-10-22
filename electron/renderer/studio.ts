@@ -1267,13 +1267,7 @@ function closeAnchoredPopover(popupId: string, triggerId: string) {
     effortParticleController = null;
   }
   if (popupId === 'account-menu') {
-    const submenu = document.getElementById('account-submenu');
-    if (submenu) {
-      submenu.hidden = true;
-    }
-    document
-      .querySelectorAll('[data-account-command][aria-haspopup]')
-      .forEach(row => row.setAttribute('aria-expanded', 'false'));
+    closeAccountSubmenu();
   }
   if (popupId === 'composer-usage-popover') {
     setUsageDetailsOpen(false);
@@ -6584,7 +6578,30 @@ function setProductMode(mode: ProductMode, navigate = true) {
     });
 })();
 
-function closeWindowMenu() {
+let windowMenuTrigger: HTMLElement | null = null;
+
+function studioMenuItems(menu: HTMLElement): HTMLButtonElement[] {
+  return [
+    ...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+  ].filter(
+    button =>
+      button.closest('[role="menu"]') === menu &&
+      button.getClientRects().length > 0,
+  );
+}
+
+function enterStudioMenu(menu: HTMLElement): void {
+  const items = studioMenuItems(menu);
+  for (const item of items) {
+    if (!item.hasAttribute('role')) {
+      item.setAttribute('role', 'menuitem');
+    }
+    item.tabIndex = -1;
+  }
+  items[0]?.focus();
+}
+
+function closeWindowMenu(restoreFocus = false) {
   const popover = document.getElementById('window-menu-popover');
   if (popover) {
     popover.hidden = true;
@@ -6593,6 +6610,10 @@ function closeWindowMenu() {
     .querySelectorAll<HTMLElement>('[data-window-menu]')
     .forEach(button => button.setAttribute('aria-expanded', 'false'));
   document.getElementById('app-menu')?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    windowMenuTrigger?.focus({preventScroll: true});
+  }
+  windowMenuTrigger = null;
 }
 
 function openWindowMenu(button: HTMLElement, menuName: string) {
@@ -6616,6 +6637,8 @@ function openWindowMenu(button: HTMLElement, menuName: string) {
   popover.style.left = `${Math.max(4, rect.left)}px`;
   popover.hidden = false;
   button.setAttribute('aria-expanded', 'true');
+  windowMenuTrigger = button;
+  enterStudioMenu(popover);
 }
 
 document
@@ -6750,7 +6773,9 @@ function openInformationDialog(title: string, detail: string) {
 }
 
 async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
-  closeWindowMenu();
+  closeWindowMenu(
+    document.getElementById('window-menu-popover')?.contains(document.activeElement),
+  );
   if (command === 'new-chat') {
     show('chat');
     startNewChat();
@@ -6827,12 +6852,46 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   await Data.windowCommand(command);
 }
 
-function closeAccountMenu() {
-  const submenu = document.getElementById('account-submenu');
-  if (submenu) {
-    submenu.hidden = true;
-  }
+function closeAccountMenu(restoreFocus = false) {
   closeAnchoredPopover('account-menu', 'account-footer');
+  if (restoreFocus) {
+    document.getElementById('account-footer')?.focus({preventScroll: true});
+  }
+}
+
+function closeAccountSubmenu(restoreFocus = false): void {
+  const menu = document.getElementById('account-submenu');
+  const parentCommand = menu?.dataset.parentCommand;
+  if (menu) {
+    menu.hidden = true;
+    delete menu.dataset.parentCommand;
+  }
+  document
+    .querySelectorAll('[data-account-command][aria-haspopup]')
+    .forEach(row => row.setAttribute('aria-expanded', 'false'));
+  if (restoreFocus && parentCommand) {
+    document
+      .querySelector<HTMLElement>(`[data-account-command="${parentCommand}"]`)
+      ?.focus({preventScroll: true});
+  }
+}
+
+function dismissStudioMenu(menu: HTMLElement): void {
+  if (menu.id === 'window-menu-popover') {
+    closeWindowMenu(true);
+  } else if (menu.id === 'thread-menu') {
+    closeThreadMenu(true);
+  } else if (menu.id === 'sidebar-menu') {
+    closeSidebarMenu(true);
+  } else if (menu.id === 'account-submenu') {
+    closeAccountSubmenu(true);
+  } else {
+    closeStudioPopovers();
+    const trigger = STUDIO_POPOVERS.find(([id]) => id === menu.id)?.[1];
+    document
+      .getElementById(trigger || 'composer-add')
+      ?.focus({preventScroll: true});
+  }
 }
 
 function openAccountMenu() {
@@ -6854,9 +6913,7 @@ function openAccountMenu() {
   menu.style.top = `${Math.max(36, Math.round(footerRect.top - 8 - menu.offsetHeight))}px`;
   menu.style.removeProperty('visibility');
   footer.setAttribute('aria-expanded', 'true');
-  requestAnimationFrame(() =>
-    menu.querySelector<HTMLButtonElement>('button')?.focus(),
-  );
+  requestAnimationFrame(() => enterStudioMenu(menu));
 }
 
 async function executeAccountCommand(command: string) {
@@ -6864,7 +6921,7 @@ async function executeAccountCommand(command: string) {
     openAccountSubmenu(command);
     return;
   }
-  closeAccountMenu();
+  closeAccountMenu(true);
   if (command === 'settings') {
     show('settings');
     return;
@@ -6932,14 +6989,14 @@ document
     if (row?.dataset.accountCommand === 'learn-more') {
       openAccountSubmenu('learn-more');
     } else if (row) {
-      const submenu = document.getElementById('account-submenu');
-      if (submenu) {
-        submenu.hidden = true;
-      }
+      closeAccountSubmenu();
     }
   });
 
 document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing) {
+    return;
+  }
   if (
     (event.ctrlKey || event.metaKey) &&
     !event.altKey &&
@@ -6954,34 +7011,59 @@ document.addEventListener('keydown', event => {
     return;
   }
   const target = event.target as HTMLElement;
-  const menu = target?.closest<HTMLElement>('.mp-compact-menu, #account-menu');
-  if (!menu || menu.hidden) {
+  const menu = target?.closest<HTMLElement>(
+    '.mp-compact-menu, #account-menu, #window-menu-popover, .mp-thread-menu',
+  );
+  if (!menu || menu.hidden || event.ctrlKey || event.metaKey || event.altKey) {
     return;
   }
-  const rows = [
-    ...menu.querySelectorAll<HTMLButtonElement>(
-      ':scope > button:not(:disabled)',
-    ),
-  ];
+  const rows = studioMenuItems(menu);
   const index = rows.indexOf(target.closest('button') as HTMLButtonElement);
+  if (event.key === 'ArrowRight' && menu.id === 'account-menu') {
+    const command = rows[index]?.dataset.accountCommand;
+    if (command === 'language' || command === 'learn-more') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openAccountSubmenu(command);
+    }
+    return;
+  }
+  if (event.key === 'ArrowLeft' && menu.id === 'account-submenu') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeAccountSubmenu(true);
+    return;
+  }
+  if (event.key === 'Tab') {
+    if (menu.id === 'account-submenu') {
+      closeAccountMenu();
+      document.getElementById('account-footer')?.focus({preventScroll: true});
+    } else {
+      dismissStudioMenu(menu);
+    }
+    return;
+  }
   if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
     event.preventDefault();
+    event.stopImmediatePropagation();
     const next =
       event.key === 'Home'
         ? 0
         : event.key === 'End'
           ? rows.length - 1
-          : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) %
-            rows.length;
+          : index < 0
+            ? event.key === 'ArrowDown'
+              ? 0
+              : rows.length - 1
+            : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) %
+              rows.length;
     rows[next]?.focus();
   } else if (event.key === 'Escape') {
     event.preventDefault();
     event.stopImmediatePropagation();
-    closeStudioPopovers();
-    (menu.id.startsWith('account')
-      ? document.getElementById('account-footer')
-      : document.getElementById('composer-add')
-    )?.focus();
+    if (!event.repeat) {
+      dismissStudioMenu(menu);
+    }
   }
 });
 
@@ -7027,6 +7109,7 @@ document.addEventListener('keydown', event => {
     const menuWasOpen =
       [
         'window-menu-popover',
+        'sidebar-menu',
         'magic-brain-popover',
         'composer-add-menu',
         'composer-permission-menu',
@@ -7039,6 +7122,7 @@ document.addEventListener('keydown', event => {
       Boolean(document.querySelector('.side-session-menu:not([hidden])'));
     closeWindowMenu();
     closeThreadMenu();
+    closeSidebarMenu();
     closeSlashMenu();
     closePermissionMenu();
     closeModelMenu();
@@ -7318,11 +7402,14 @@ function closeAux() {
   }, 240);
 }
 
-function closeThreadMenu() {
+function closeThreadMenu(restoreFocus = false) {
   document.getElementById('thread-menu')?.remove();
   document
     .getElementById('thread-more')
     ?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    document.getElementById('thread-more')?.focus({preventScroll: true});
+  }
 }
 
 function openThreadMenu(button: HTMLElement) {
@@ -7350,7 +7437,7 @@ function openThreadMenu(button: HTMLElement) {
     item.classList.toggle('is-danger', options.danger === true);
     item.addEventListener('click', event => {
       event.stopPropagation();
-      closeThreadMenu();
+      closeThreadMenu(true);
       run();
     });
     return item;
@@ -7424,6 +7511,7 @@ function openThreadMenu(button: HTMLElement) {
   menu.style.top = `${rect.bottom + 6}px`;
   menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
   button.setAttribute('aria-expanded', 'true');
+  enterStudioMenu(menu);
 }
 
 document.getElementById('thread-more')?.addEventListener('click', event => {
@@ -7436,11 +7524,14 @@ document.getElementById('thread-more')?.addEventListener('click', event => {
   }
 });
 
-function closeSidebarMenu() {
+function closeSidebarMenu(restoreFocus = false) {
   document.getElementById('sidebar-menu')?.remove();
   document
     .getElementById('sidebar-more')
     ?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    document.getElementById('sidebar-more')?.focus({preventScroll: true});
+  }
 }
 
 function openSidebarMenu(button: HTMLElement) {
@@ -7462,7 +7553,7 @@ function openSidebarMenu(button: HTMLElement) {
     item.append(text);
     item.addEventListener('click', event => {
       event.stopPropagation();
-      closeSidebarMenu();
+      closeSidebarMenu(true);
       show(view);
     });
     menu.append(item);
@@ -7472,6 +7563,7 @@ function openSidebarMenu(button: HTMLElement) {
   menu.style.top = `${rect.bottom + 6}px`;
   menu.style.left = `${Math.max(8, rect.left)}px`;
   button.setAttribute('aria-expanded', 'true');
+  enterStudioMenu(menu);
 }
 
 document.getElementById('sidebar-more')?.addEventListener('click', event => {
@@ -12730,6 +12822,7 @@ function openAccountSubmenu(kind: string) {
           compactMenuItem('Keyboard shortcuts', '', run('shortcuts'), 'Ctrl+/'),
         ];
   menu.replaceChildren(...rows);
+  menu.dataset.parentCommand = kind;
   menu.hidden = false;
   const rect = trigger.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(rect.right + 4, innerWidth - menu.offsetWidth - 8))}px`;
@@ -12737,12 +12830,12 @@ function openAccountSubmenu(kind: string) {
   document
     .querySelectorAll('[data-account-command][aria-haspopup]')
     .forEach(row => row.setAttribute('aria-expanded', String(row === trigger)));
-  rows[0].focus();
+  enterStudioMenu(menu);
 }
 
 function setStudioLanguage(language: 'en' | 'zh-CN'): void {
   applyStudioLanguage(language);
-  closeAccountMenu();
+  closeAccountMenu(true);
   const view = shell.dataset.view || 'chat';
   show(view);
   if (view === 'chat' && activeConversationId) {
