@@ -489,6 +489,7 @@ declare global {
   const ChatIcons: {
     node(name: string, size?: number): Element;
   };
+  const ChatDiffRows: typeof import('./chat_diff_rows');
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;

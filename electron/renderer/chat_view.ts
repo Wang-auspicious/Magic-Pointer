@@ -13,6 +13,9 @@ const ChatView = (() => {
       : typeof require === 'function'
         ? require('./chat_icons')
         : null;
+  const diffRows: typeof import('./chat_diff_rows') =
+    typeof ChatDiffRows !== 'undefined'
+      ? ChatDiffRows : require('./chat_diff_rows');
   const StudioLocaleApi =
     typeof require === 'function' ? require('./locale') : null;
   const compaction: typeof import('../compaction_status') =
@@ -1711,7 +1714,7 @@ const ChatView = (() => {
   }
   interface DiffView {
     blocks: DiffBlock[];
-    previews: Array<{blocks: DiffBlock[]; copyText?: string}>;
+    previews: Array<{blocks: DiffBlock[]; copyText?: string; numbered?: boolean}>;
   }
 
   function appendDiffBlock(
@@ -1833,7 +1836,7 @@ const ChatView = (() => {
       }
       return {
         blocks,
-        previews: [{blocks, copyText: shown.afterText || shown.beforeText}],
+        previews: [{blocks, copyText: shown.afterText || shown.beforeText, numbered: true}],
       };
     }
     if (shown?.kind === 'file_diff_unavailable') {
@@ -1901,8 +1904,8 @@ const ChatView = (() => {
       if (!content) {
         return null;
       }
-      appendDiffBlock(content, 'add', view.blocks);
-      view.previews.push({blocks: view.blocks, copyText: content});
+      appendDiffBlock(content.replace(/\r\n/g, '\n'), 'add', view.blocks);
+      view.previews.push({blocks: view.blocks, copyText: content, numbered: true});
       return view;
     }
     return null;
@@ -2342,7 +2345,63 @@ const ChatView = (() => {
     }
   }
 
-  function diffNode(diff: Pick<DiffView, 'blocks'>): ChatNode {
+  function numberedDiffNode(blocks: DiffBlock[]): ChatNode {
+    const index = diffRows.indexDiffRows(blocks.flatMap(block =>
+      block.kind === 'notice' ? [] : [{kind: block.kind, text: block.text}],
+    ));
+    const pure = blocks.length && blocks.every(block => block.kind === blocks[0].kind)
+      && (blocks[0].kind === 'add' || blocks[0].kind === 'del') ? blocks[0].kind : '';
+    const card = h('div', {
+      class: 'mp-chat-diff',
+      'data-diff-numbered': 'true',
+      'data-diff-pure-side': pure,
+      'data-diff-total-rows': String(index.count),
+      style: `--mp-chat-diff-number-width: max(3ch, ${index.digits + (pure ? 2 : 0)}ch)`,
+      tabindex: '0',
+      role: 'group',
+      'aria-label': lt('artifact.kind.code'),
+    });
+    const render = (first: number, last: number, before: number, after: number): void => {
+      const children: ChatNode[] = [];
+      if (index.count > diffRows.INITIAL_DIFF_ROWS) {
+        children.push(h('div', {
+          class: 'mp-chat-diff-virtual-spacer', 'aria-hidden': 'true',
+          style: `height: ${before}px`,
+        }));
+      }
+      for (let i = first; i < last; i++) {
+        const row = index.get(i);
+        children.push(h('div', {
+          class: 'mp-chat-diff-code-row',
+          'data-kind': row.kind,
+          'data-diff-row': String(i),
+          'data-line-number': String(row.number),
+        },
+        h('span', {class: 'mp-chat-diff-number', 'aria-hidden': 'true'}, String(row.number)),
+        h('pre', {class: 'mp-chat-diff-code-text'}, row.text)));
+      }
+      if (index.count > diffRows.INITIAL_DIFF_ROWS) {
+        children.push(h('div', {
+          class: 'mp-chat-diff-virtual-spacer', 'aria-hidden': 'true',
+          style: `height: ${after}px`,
+        }));
+      }
+      if (DOC) {
+        (card as HTMLElement).replaceChildren(...children as HTMLElement[]);
+      } else {
+        (card as ShimNode).children = [];
+        children.forEach(child => attach(card, child));
+      }
+    };
+    const initial = Math.min(index.count, diffRows.INITIAL_DIFF_ROWS);
+    render(0, initial, 0, (index.count - initial) * 17);
+    if (DOC) {
+      diffRows.mountDiffRows(card as HTMLElement, index, render);
+    }
+    return card;
+  }
+
+  function diffNode(diff: Pick<DiffView, 'blocks'> & {numbered?: boolean}): ChatNode {
     if (diff.blocks.some(block => block.kind === 'notice')) {
       const root = h('div', {class: 'mp-chat-diffs'});
       let pending: DiffBlock[] = [];
@@ -2387,6 +2446,9 @@ const ChatView = (() => {
       }
       flush();
       return root;
+    }
+    if (diff.numbered) {
+      return numberedDiffNode(diff.blocks);
     }
     const card = h('div', {
       class: 'mp-chat-diff',

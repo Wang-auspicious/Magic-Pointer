@@ -408,6 +408,113 @@
   overflow-y: auto;
 }
 
+.mp-chat-diff[data-diff-numbered="true"] {
+  padding-block: var(--cds-pad-xs);
+  overflow-anchor: none;
+}
+
+.mp-chat-diff-code-row {
+  display: grid;
+  grid-template-columns: calc(var(--mp-chat-diff-number-width) + 3ch) minmax(0, 1fr);
+  min-height: 1lh;
+}
+
+.mp-chat-diff-number {
+  padding: 0 1ch 0 2ch;
+  color: var(--cds-text-muted);
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+
+.mp-chat-diff-code-text {
+  position: relative;
+  min-width: 0;
+  min-height: 1lh;
+  margin: 0;
+  padding: 0 1ch 0 2ch;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mp-chat-diff-code-row[data-kind="add"] {
+  --mp-chat-diff-line-color: var(--cds-text-git-added);
+  --mp-chat-diff-line-bg: var(--mp-chat-diff-added-bg);
+}
+
+.mp-chat-diff-code-row[data-kind="del"] {
+  --mp-chat-diff-line-color: var(--cds-text-git-removed);
+  --mp-chat-diff-line-bg: var(--mp-chat-diff-removed-bg);
+}
+
+.mp-chat-diff-code-row:is([data-kind="add"], [data-kind="del"]) .mp-chat-diff-code-text {
+  background: var(--mp-chat-diff-line-bg);
+}
+
+.mp-chat-diff-code-row:is([data-kind="add"], [data-kind="del"]) .mp-chat-diff-number {
+  color: var(--mp-chat-diff-line-color);
+  background: light-dark(
+    color-mix(in lab, var(--mp-chat-diff-bg) 91%, var(--mp-chat-diff-line-color)),
+    color-mix(in lab, var(--mp-chat-diff-bg) 85%, var(--mp-chat-diff-line-color))
+  );
+}
+
+.mp-chat-diff-code-row:is([data-kind="add"], [data-kind="del"]) .mp-chat-diff-code-text::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-block;
+  width: 1ch;
+  height: 1lh;
+  color: var(--mp-chat-diff-line-color);
+  user-select: none;
+}
+
+.mp-chat-diff-code-row[data-kind="add"] .mp-chat-diff-code-text::before {
+  content: "+";
+}
+
+.mp-chat-diff-code-row[data-kind="del"] .mp-chat-diff-code-text::before {
+  content: "-";
+}
+
+/* Pure-side previews use Jl's File branch: the indicator precedes the number. */
+.mp-chat-diff[data-diff-pure-side="add"] {
+  --mp-chat-diff-pure-bg: var(--cds-bg-git-added);
+  --mp-chat-diff-pure-indicator: "+ ";
+}
+
+.mp-chat-diff[data-diff-pure-side="del"] {
+  --mp-chat-diff-pure-bg: var(--cds-bg-git-removed);
+  --mp-chat-diff-pure-indicator: "− ";
+}
+
+.mp-chat-diff[data-diff-pure-side] .mp-chat-diff-code-text {
+  padding-left: 1ch;
+  background: var(--mp-chat-diff-pure-bg);
+}
+
+.mp-chat-diff[data-diff-pure-side] .mp-chat-diff-code-text::before {
+  content: none;
+}
+
+.mp-chat-diff[data-diff-pure-side] .mp-chat-diff-number {
+  color: var(--cds-text-muted);
+  background: var(--mp-chat-diff-bg);
+}
+
+.mp-chat-diff[data-diff-pure-side] .mp-chat-diff-number::before {
+  display: inline-block;
+  min-width: 1ch;
+  color: var(--mp-chat-diff-line-color);
+  content: var(--mp-chat-diff-pure-indicator);
+}
+
+.mp-chat-diff-virtual-spacer {
+  pointer-events: none;
+}
+
 .mp-chat-diff-notice {
   margin: 0;
   padding: var(--cds-pad-xs) var(--cds-pad-md);

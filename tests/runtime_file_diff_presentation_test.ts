@@ -81,9 +81,18 @@ test('an overwrite preview retains actual before and after after reopening histo
       .assistantTurnNode(turn)
       .map((node: any) => node.outerHTML)
       .join('');
-    assert.match(html, /data-kind="context"> {2}retained first/);
-    assert.ok(html.includes('- old middle'));
-    assert.ok(html.includes('+ new middle'));
+    assert.match(
+      html,
+      /data-kind="context"[^>]*data-line-number="1">[^]*?<pre[^>]*>retained first<\/pre>/,
+    );
+    assert.match(
+      html,
+      /data-kind="del"[^>]*data-line-number="2">[^]*?<pre[^>]*>old middle<\/pre>/,
+    );
+    assert.match(
+      html,
+      /data-kind="add"[^>]*data-line-number="2">[^]*?<pre[^>]*>new middle<\/pre>/,
+    );
     assert.doesNotMatch(html, /later user modification|\+ retained first/);
     const packet = f.packets.find(
       (entry: any) => entry.phase === 'tool_result',
@@ -134,7 +143,10 @@ test('Edit retains whole-file context and Write CSV copies actual encoded conten
         .length,
       1,
     );
-    assert.match(batchHtml, /data-kind="context"> {2}context first/);
+    assert.match(
+      batchHtml,
+      /data-kind="context"[^>]*data-line-number="1">[^]*?<pre[^>]*>context first<\/pre>/,
+    );
     const csv = await f.execute('Write', {
       path: 'table.csv',
       content: 'col,value\n一,2\n',

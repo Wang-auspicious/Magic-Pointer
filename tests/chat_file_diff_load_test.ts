@@ -244,9 +244,18 @@ test('real rendered action traverses preload and main before reading snapshots',
     assert.equal(f.button.disabled, true);
     await f.settle();
     assert.equal(f.count(), 1);
-    assert.match(f.root.outerHTML, /data-kind="context"> {2}retained/);
-    assert.ok(f.root.outerHTML.includes('- old text'));
-    assert.ok(f.root.outerHTML.includes('+ new text'));
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="context"[^>]*data-line-number="1">[^]*?<pre[^>]*>retained<\/pre>/,
+    );
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="del"[^>]*data-line-number="2">[^]*?<pre[^>]*>old text<\/pre>/,
+    );
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="add"[^>]*data-line-number="2">[^]*?<pre[^>]*>new text<\/pre>/,
+    );
     assert.equal(f.root.getAttribute('data-file-diff-reference'), null);
   }));
 
@@ -262,7 +271,10 @@ test('a failed snapshot load exposes retry and the same action later loads real 
     f.fire();
     await f.settle();
     assert.equal(f.count(), 2);
-    assert.ok(f.root.outerHTML.includes('+ retried content'));
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="add"[^>]*data-line-number="2">[^]*?<pre[^>]*>retried content<\/pre>/,
+    );
   }));
 
 test('a multi-file Patch survives the progress decoder and loads only the chosen file through preload/main', () =>
@@ -275,7 +287,10 @@ test('a multi-file Patch survives the progress decoder and loads only the chosen
     f.fire();
     await f.settle();
     assert.equal(f.count(), 1);
-    assert.ok(f.root.outerHTML.includes('+ new text'));
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="add"[^>]*data-line-number="2">[^]*?<pre[^>]*>new text<\/pre>/,
+    );
     assert.doesNotMatch(f.rendered.outerHTML, /second file contents/);
     assert.equal(
       (f.rendered.outerHTML.match(/data-file-diff-reference=/g) || []).length,
@@ -294,7 +309,10 @@ test('a deleted Patch file keeps its retained file opener before and after loadi
       );
       f.fire();
       await f.settle();
-      assert.ok(f.root.outerHTML.includes('- old text'));
+      assert.match(
+        f.root.outerHTML,
+        /data-kind="del"[^>]*data-line-number="2">[^]*?<pre[^>]*>old text<\/pre>/,
+      );
       f.fireFile();
       assert.equal(f.events.at(-1).detail.previewPath, f.previewPath);
     },
@@ -384,6 +402,12 @@ test('the same real loader works for the Stage window sender', () =>
     f.context.stageWindow = {webContents: f.sender, isDestroyed: () => false};
     f.fire();
     await f.settle();
-    assert.ok(f.root.outerHTML.includes('- old text'));
-    assert.ok(f.root.outerHTML.includes('+ new text'));
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="del"[^>]*data-line-number="2">[^]*?<pre[^>]*>old text<\/pre>/,
+    );
+    assert.match(
+      f.root.outerHTML,
+      /data-kind="add"[^>]*data-line-number="2">[^]*?<pre[^>]*>new text<\/pre>/,
+    );
   }));

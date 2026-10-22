@@ -91,6 +91,17 @@ buildSync({
   sourcemap: true,
 });
 
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'chat_diff_rows.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'chat_diff_rows.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'ChatDiffRows',
+  target: 'es2022',
+  sourcemap: true,
+});
+
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();
