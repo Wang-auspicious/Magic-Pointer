@@ -164,7 +164,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   border-radius: var(--mp-r6);
   color: var(--mp-text-secondary);
   font-size: 13px;
-  line-height: 19.5px;
+  line-height: var(--cds-leading-body);
   font-weight: var(--mp-weight-regular);
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
@@ -351,7 +351,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   border-radius: 8px;
   color: var(--mp-text-secondary);
   font-size: 13px;
-  line-height: 19.5px;
+  line-height: var(--cds-leading-body);
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
@@ -497,26 +497,8 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 .side-item {
   position: relative;
   gap: 4px;
-  padding-left: 2px;
+  padding-left: 8px;
   margin-bottom: .5px;
-}
-
-.side-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  margin-inline: 9px;
-  border-radius: 50%;
-  background: var(--mp-rule-strong);
-}
-
-.side-dot:is(.is-pending, .is-waiting) {
-  background: var(--mp-clay);
-  color: var(--mp-clay);
-}
-
-.side-dot.is-running {
-  background: var(--mp-activity-blue);
 }
 
 .side-actions {

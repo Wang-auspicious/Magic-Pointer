@@ -1,6 +1,7 @@
 /* Menu geometry follows the original CDS popup and compact item rules. */
 :is(
   .side-session-menu,
+  .mp-workspace-menu,
   .side-session-submenu,
   .mp-project-assignment,
   .mp-library-popover.is-group-sort,
@@ -27,6 +28,7 @@
 }
 :is(
   .side-session-menu,
+  .mp-workspace-menu,
   .side-session-submenu,
   .mp-project-assignment,
   .mp-library-popover.is-group-sort,
@@ -51,6 +53,7 @@
 }
 :is(
   .side-session-menu-item,
+  .mp-workspace-menu-row,
   .side-session-submenu button,
   .mp-project-assignment button,
   .is-group-sort button
@@ -94,6 +97,7 @@
 }
 :is(
   .side-session-menu-item,
+  .mp-workspace-menu-row,
   .side-session-submenu button,
   .mp-project-assignment button,
   .is-group-sort button
@@ -104,6 +108,23 @@
 }
 .side-session-menu-item.is-danger {
   color: var(--cds-text-danger);
+}
+
+.mp-workspace-menu-section {
+  padding: 4px 8px;
+  color: var(--cds-text-muted);
+  font-size: var(--cds-font-size-footnote);
+  font-weight: var(--cds-font-weight-medium);
+  line-height: var(--cds-leading-footnote);
+}
+.mp-workspace-menu-divider {
+  flex: 0 0 1px;
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--cds-border);
+}
+.mp-workspace-menu-check {
+  color: var(--cds-text-primary);
 }
 .side-session-menu-item.is-danger:is(:hover, :focus-visible) {
   color: var(--cds-role-danger-on);

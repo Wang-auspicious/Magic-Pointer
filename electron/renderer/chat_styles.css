@@ -2146,13 +2146,6 @@
 .mp-workspace-menu {
   position: fixed;
   z-index: 150;
-  min-width: 220px;
-  max-width: min(340px, calc(100vw - 32px));
-  padding: 4px;
-  border: 1px solid var(--mp-rule);
-  border-radius: var(--mp-r6);
-  background: var(--mp-panel);
-  box-shadow: var(--mp-shadow-menu);
 }
 
 .mp-branch-menu {
@@ -2238,13 +2231,11 @@
 .mp-workspace-menu-row {
   display: flex;
   width: 100%;
-  min-height: 30px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
   border-radius: var(--mp-r5);
   color: var(--mp-text);
-  font-size: 14px;
   text-align: left;
 }
 

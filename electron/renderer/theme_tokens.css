@@ -55,9 +55,9 @@
   --mp-composer: #FFFFFF;
   --mp-user-bubble: #F0F4F8;
   --mp-selected: #EDECE8; /* no CDS counterpart: Claude selects with --cds-fill-ghost-selected (alpha-2) */
-  --mp-text: #151515;
-  --mp-text-secondary: #525252;
-  --mp-text-muted: #8A8A8A;
+  --mp-text: var(--cds-text-primary);
+  --mp-text-secondary: var(--cds-text-secondary);
+  --mp-text-muted: var(--cds-text-muted);
   --mp-rule: rgba(11, 11, 11, .10); /* --cds-alpha-2 */
   --mp-rule-strong: rgba(11, 11, 11, .20); /* --cds-border-strong = --cds-alpha-3 */
   --mp-hover: rgba(11, 11, 11, .05); /* --cds-fill-ghost-hover light = --cds-alpha-1 */
@@ -105,11 +105,11 @@
   --mp-usage-input: #2566D0;
   --mp-usage-output: #D97757;
 
-  --mp-font-ui: "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --mp-font-ui: var(--cds-font-sans);
   --mp-font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
   --mp-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   --mp-text-body: 13px;
-  --mp-leading-body: 18px;
+  --mp-leading-body: var(--cds-leading-body);
   --mp-text-footnote: 12px;
   --mp-leading-footnote: 16px;
   --mp-text-caption: 11px;
@@ -122,10 +122,8 @@
   --mp-weight-bold: 600;
   /* Type scale: --mp-text-body/footnote/caption already equal --cds-font-size-body
      (.8125rem = 13px), --cds-font-size-footnote (.75rem = 12px) and
-     --cds-font-size-caption (.6875rem = 11px). The line heights are NOT aligned:
-     the shipped sheet carries two variants (a 13px/19px and a 14px/20px body) and
-     which rule wins per theme was not resolved from the minified CSS, so these
-     keep Magic Pointer's tighter 18/16/14/28 values rather than guessing. Claude's
+     --cds-font-size-caption (.6875rem = 11px). Body leading now follows the
+     active CDS density instead of the former hardcoded 18px. Claude's
      weights are also a different mechanism: --cds-font-wght-regular/medium/
      semibold/bold resolve to the font default in light and to "wght" 360/460/540/560
      in dark, used through font-variation-settings. Magic Pointer sets numeric
@@ -225,9 +223,9 @@ body[data-ds-dark-theme] {
   --mp-user-bubble: rgba(255, 255, 255, .06);
   --mp-selected: #343433; /* no CDS counterpart: Claude uses --cds-fill-ghost-selected dark = 15% white */
   --mp-task-card: #2F2F2F; /* no CDS counterpart */
-  --mp-text: #F5F5F5;
-  --mp-text-secondary: #A3A3A3;
-  --mp-text-muted: #8A8A8A;
+  --mp-text: var(--cds-text-primary);
+  --mp-text-secondary: var(--cds-text-secondary);
+  --mp-text-muted: var(--cds-text-muted);
   --mp-clay-strong: #E08264;
   --mp-rule: rgba(255, 255, 255, .10); /* --cds-alpha-2 (neutral-900 flips to gray-0 in dark) */
   --mp-rule-strong: rgba(255, 255, 255, .20); /* --cds-border-strong = --cds-alpha-3 */

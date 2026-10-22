@@ -1421,8 +1421,6 @@ function conversationNode(
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
   row.dataset.open = String(c.id || '');
   row.type = 'button';
-  const dot = document.createElement('span');
-  dot.className = 'side-dot';
   const activity = ConversationState.derive(
     c,
     studioComposerBusy && c.id === activeConversationId,
@@ -1438,7 +1436,6 @@ function conversationNode(
   const statusLabel = status ? ConversationState.label(activity) : '';
   row.title = String(c.title || studioT('convo.untitled'));
   if (status) {
-    dot.classList.add(`is-${status}`);
     row.title = `${String(c.title || studioT('convo.untitled'))}\n${statusLabel}`;
     row.dataset.taskState = status;
     row.setAttribute(
@@ -1452,7 +1449,6 @@ function conversationNode(
       row.dataset.pendingWork = 'true';
     }
   }
-  dot.setAttribute('aria-hidden', 'true');
   const title = document.createElement('span');
   title.className = 'side-title';
   title.textContent = String(c.title || studioT('convo.untitled'));
@@ -1480,7 +1476,7 @@ function conversationNode(
   ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
   actions.appendChild(buildSessionMenu(c));
-  row.append(dot, title, actions);
+  row.append(title, actions);
   return row;
 }
 
@@ -2682,6 +2678,9 @@ async function openWorkspaceMenu() {
     ),
   );
   if (projects.length) {
+    const divider = document.createElement('div');
+    divider.className = 'mp-workspace-menu-divider';
+    rows.push(divider);
     const label = document.createElement('div');
     label.className = 'mp-workspace-menu-section';
     label.textContent = 'Recent';
