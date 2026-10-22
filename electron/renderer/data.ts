@@ -890,6 +890,11 @@ declare global {
         }>;
         error?: string;
       }>;
+      prepareDeletedFile(
+        projectRoot: string,
+        relativePath: string,
+        base: 'head' | 'index',
+      ): Promise<{ok: boolean; previewPath?: string; error?: string}>;
       readFile(
         projectRoot: string,
         relativePath: string,
@@ -1328,6 +1333,11 @@ declare global {
       entries?: Array<{name: string; path: string; kind: 'directory' | 'file'}>;
       error?: string;
     }>;
+    prepareDeletedProjectFile(
+      projectRoot: string,
+      relativePath: string,
+      base: 'head' | 'index',
+    ): Promise<{ok: boolean; previewPath?: string; error?: string}>;
     readProjectFile(
       projectRoot: string,
       relativePath: string,
@@ -1592,7 +1602,12 @@ declare global {
     ahead?: number;
     behind?: number;
     changedFiles?: number;
-    fileChanges?: Array<{path: string; status: string; staged: boolean}>;
+    fileChanges?: Array<{
+      path: string;
+      status: string;
+      staged: boolean;
+      deletionBase?: 'head' | 'index';
+    }>;
     addedLines?: number;
     deletedLines?: number;
     remoteUrl?: string;
@@ -1928,6 +1943,17 @@ const Data: MagicPointerDataApi = {
       return {ok: false, error: '文件树通道不可用。'};
     }
     return projects.tree(projectRoot, relativePath);
+  },
+
+  async prepareDeletedProjectFile(
+    projectRoot: string,
+    relativePath: string,
+    base: 'head' | 'index',
+  ) {
+    const projects = bridge()?.projects;
+    return projects?.prepareDeletedFile
+      ? projects.prepareDeletedFile(projectRoot, relativePath, base)
+      : {ok: false, error: '文件读取通道不可用。'};
   },
 
   async readProjectFile(projectRoot: string, relativePath: string) {

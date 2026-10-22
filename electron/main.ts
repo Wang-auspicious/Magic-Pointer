@@ -241,6 +241,7 @@ const {
   readProjectPreview,
 } = require('./project_inspector');
 const {ProjectTerminal} = require('./project_terminal');
+const {GitFilePreviews} = require('./git_file_previews');
 const {
   parseGitEnvironment,
   sourceLinksFromConversation,
@@ -406,6 +407,7 @@ const DEFAULT_USER_DATA_DIR = app.isPackaged
 const FABRIC_DATA_DIR = path.resolve(
   EXPLICIT_USER_DATA_DIR || DEFAULT_USER_DATA_DIR,
 );
+const gitFilePreviews = new GitFilePreviews(path.join(FABRIC_DATA_DIR, 'previews'));
 const FIGMA_BRIDGE_PORT = Number.parseInt(
   process.env.MAGIC_POINTER_FIGMA_PORT || '37843',
   10,
@@ -2923,6 +2925,37 @@ ipcMain.handle(
       return {
         ok: true,
         entries: listProjectDirectory(root, String(raw?.path || '')),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:prepare-deleted-file',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    const root = knownProjectRoot(raw?.projectRoot);
+    if (!root) {
+      return {ok: false, error: '请先打开项目。'};
+    }
+    if (raw.base !== 'head' && raw.base !== 'index') {
+      return {ok: false, error: 'Invalid deleted-file source.'};
+    }
+    try {
+      return {
+        ok: true,
+        previewPath: await gitFilePreviews.prepare(
+          root,
+          String(raw.path || ''),
+          raw.base,
+        ),
       };
     } catch (error) {
       return {
@@ -9305,6 +9338,11 @@ app.on('will-quit', () => {
   try {
     dashboardWindow?.close();
   } catch (_) {}
+  try {
+    gitFilePreviews.dispose();
+  } catch (error) {
+    log(`Git preview cleanup: ${String(error)}`);
+  }
   try {
     tray?.destroy();
   } catch (_) {}

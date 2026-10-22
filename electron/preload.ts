@@ -390,6 +390,16 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           .trim()
           .slice(0, 1000),
       }),
+    prepareDeletedFile: (
+      projectRoot: string,
+      relativePath: string,
+      base: 'head' | 'index',
+    ) =>
+      ipcRenderer.invoke('projects:prepare-deleted-file', {
+        projectRoot,
+        path: relativePath,
+        base,
+      }),
     readFile: (projectRoot: unknown, relativePath: unknown) =>
       ipcRenderer.invoke('projects:read-file', {
         projectRoot: String(projectRoot || '')

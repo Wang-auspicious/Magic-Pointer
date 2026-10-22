@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import test from 'node:test';
+import {execFileSync} from 'node:child_process';
 import ts from 'typescript';
 
 const {readProjectPreview} = require('../electron/project_inspector');
@@ -28,6 +29,7 @@ const names = [
   'activateWorkspaceResource',
   'renderProjectFileTree',
   'normalizedProjectRoot',
+  'renderProjectChanges',
 ];
 const code = names
   .map(name => {
@@ -54,6 +56,22 @@ const openCode = ts.transpileModule(
   `globalThis.openDelivered = ${openCallback.getText(ast)}`,
   {compilerOptions: {target: ts.ScriptTarget.ES2022}},
 ).outputText;
+const changeEvent = ast.statements.find(
+  n =>
+    ts.isExpressionStatement(n) &&
+    n
+      .getText(ast)
+      .startsWith(
+        "document.getElementById('project-changes')?.addEventListener('click'",
+      ),
+) as ts.ExpressionStatement;
+assert.ok(changeEvent);
+const changeCallback = (changeEvent.expression as ts.CallExpression)
+  .arguments[1];
+const changeCode = ts.transpileModule(
+  `globalThis.clickProjectChange = ${changeCallback.getText(ast)}`,
+  {compilerOptions: {target: ts.ScriptTarget.ES2022}},
+).outputText;
 
 const mainSource = fs.readFileSync('electron/main.ts', 'utf8');
 const mainAst = ts.createSourceFile(
@@ -68,9 +86,11 @@ const fileHandlerCode = mainAst.statements
       ts.isExpressionStatement(n) &&
       ts.isCallExpression(n.expression) &&
       n.expression.expression.getText(mainAst) === 'ipcMain.handle' &&
-      ["'projects:read-file'", "'projects:open-path'"].includes(
-        n.expression.arguments[0].getText(mainAst),
-      ),
+      [
+        "'projects:read-file'",
+        "'projects:open-path'",
+        "'projects:prepare-deleted-file'",
+      ].includes(n.expression.arguments[0].getText(mainAst)),
   )
   .map(n => n.getText(mainAst))
   .join('\n');
@@ -82,6 +102,10 @@ function fixture(root: string) {
   const handlers = new Map<string, (...args: any[]) => Promise<any>>();
   const openedPaths: string[] = [];
   const knownRoots = new Set([root]);
+  const gitFilePreviews =
+    new (require('../electron/git_file_previews').GitFilePreviews)(
+      path.join(root || os.tmpdir(), 'preview-cache'),
+    );
   const mainContext = {
     ipcMain: {
       handle: (name: string, callback: (...args: any[]) => Promise<any>) =>
@@ -93,6 +117,7 @@ function fixture(root: string) {
     path,
     projectPath: require('../electron/project_inspector').projectPath,
     readProjectPreview,
+    gitFilePreviews,
     shell: {
       openPath: async (target: string) => {
         openedPaths.push(target);
@@ -101,7 +126,7 @@ function fixture(root: string) {
     },
   };
   vm.runInNewContext(compiledFileHandlers, mainContext);
-  assert.equal(handlers.size, 2);
+  assert.equal(handlers.size, 3);
   const element = (tag = 'div'): any => {
     const attrs = new Map<string, string>();
     const listeners = new Map<string, () => void>();
@@ -122,12 +147,20 @@ function fixture(root: string) {
         this.children = [];
       },
       children: [],
-      style: {},
+      get childElementCount() {
+        return this.children.length;
+      },
+      style: {
+        setProperty(name: string, value: string) {
+          this[name] = value;
+        },
+      },
       classList: {add() {}, remove() {}, toggle() {}},
       setAttribute(key: string, value: string) {
         attrs.set(key, String(value));
       },
       getAttribute: (key: string) => attrs.get(key),
+      removeAttribute: (key: string) => attrs.delete(key),
       addEventListener: (name: string, listener: () => void) =>
         listeners.set(name, listener),
       click: () => listeners.get('click')?.(),
@@ -142,6 +175,10 @@ function fixture(root: string) {
           child.parentNode = this;
         }
         this.children.push(...children);
+      },
+      appendChild(child: any) {
+        this.append(child);
+        return child;
       },
       remove() {
         if (this.parentNode) {
@@ -203,6 +240,8 @@ function fixture(root: string) {
     Set,
     HTMLElement: class {},
     activeProjectRoot: root,
+    activeConversationId: '',
+    projectEnvironment: null,
     pickerCalls: 0,
     openProjectFromPicker: () => {
       ctx.pickerCalls++;
@@ -235,6 +274,7 @@ function fixture(root: string) {
       },
     },
     studioT: (id: string) => (id === 'files.deleted' ? 'Deleted' : id),
+    studioTCount: (_id: string, count: number) => String(count),
     projectFileCodeView: false,
     projectFileTreeFilter: '',
     projectTreeCache: new Map(),
@@ -246,13 +286,22 @@ function fixture(root: string) {
     inspectorState: {open: false, tab: 'files'},
     inspectorReturnFocus: null,
     document: {
-      getElementById: (id: string) => nodes.get(id),
+      getElementById: (id: string) =>
+        nodes.get(id) ||
+        [...nodes.values()]
+          .flatMap(descendants)
+          .find((node: any) => node.id === id),
       createElement: element,
       querySelectorAll: () => [],
       activeElement: null,
       body: element(),
     },
     Data: {
+      prepareDeletedProjectFile: (folder: string, file: string, base: string) =>
+        handlers.get('projects:prepare-deleted-file')!(
+          {},
+          {projectRoot: folder, path: file, base},
+        ),
       readProjectFile: async (folder: string, file: string) => {
         return handlers.get('projects:read-file')!(
           {},
@@ -289,8 +338,192 @@ function fixture(root: string) {
   vm.createContext(ctx);
   vm.runInContext(compiled, ctx);
   vm.runInContext(openCode, ctx);
+  vm.runInContext(changeCode, ctx);
   return {ctx, nodes, openedPaths, knownRoots};
 }
+
+function git(root: string, ...args: string[]) {
+  return execFileSync(
+    'git',
+    [
+      '-c',
+      'core.autocrlf=false',
+      '-c',
+      'user.name=MP Preview',
+      '-c',
+      'user.email=preview@localhost',
+      ...args,
+    ],
+    {cwd: root, encoding: 'utf8', windowsHide: true},
+  );
+}
+
+test('a deleted Git row opens its actual index contents without trying to read the missing working file', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-git-deleted-row-'));
+  try {
+    git(root, 'init', '--quiet');
+    const relative = 'sub folder/报告.txt';
+    fs.mkdirSync(path.join(root, 'sub folder'));
+    fs.writeFileSync(path.join(root, relative), 'committed text\n');
+    git(root, 'add', '--', relative);
+    git(root, 'commit', '-qm', 'baseline');
+    fs.writeFileSync(path.join(root, relative), '\nindex content\n\n');
+    git(root, 'add', '--', relative);
+    fs.unlinkSync(path.join(root, relative));
+    const {ctx, nodes} = fixture(root);
+    nodes.set('project-changes', ctx.document.createElement('div'));
+    ctx.Data.projectEnvironment = async () => ({
+      ok: true,
+      ...require('../electron/project_environment').parseGitEnvironment({
+        root,
+        branchOutput: git(root, 'status', '--porcelain=v1', '--branch', '-z'),
+      }),
+    });
+    await ctx.renderProjectChanges();
+    const row = descendants(nodes.get('project-changes')).find(
+      (node: any) => node.dataset?.changePath === relative,
+    );
+    assert.ok(row);
+    const select = ctx.selectProjectFile;
+    let pending: Promise<void> | undefined;
+    ctx.selectProjectFile = (...args: any[]) => (pending = select(...args));
+    await ctx.clickProjectChange({target: {closest: () => row}});
+    await pending;
+    assert.equal(ctx.selectedProjectFileText, '\nindex content\n\n');
+    assert.equal(ctx.selectedProjectFileSnapshot, true);
+    assert.equal(nodes.get('project-file-open').disabled, true);
+    assert.equal(fs.existsSync(path.join(root, relative)), false);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('a Git deletion preview exposes a real Git launch failure and can retry the same row', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-git-preview-retry-'));
+  const originalPath = process.env.PATH;
+  try {
+    git(root, 'init', '--quiet');
+    fs.writeFileSync(path.join(root, 'gone.txt'), 'original\n');
+    git(root, 'add', '--', 'gone.txt');
+    git(root, 'commit', '-qm', 'baseline');
+    git(root, 'rm', '--quiet', '--', 'gone.txt');
+    const {ctx, nodes} = fixture(root);
+    nodes.set('project-changes', ctx.document.createElement('div'));
+    ctx.Data.projectEnvironment = async () => ({
+      ok: true,
+      ...require('../electron/project_environment').parseGitEnvironment({
+        root,
+        branchOutput: git(root, 'status', '--porcelain=v1', '--branch', '-z'),
+      }),
+    });
+    await ctx.renderProjectChanges();
+    const row = descendants(nodes.get('project-changes')).find(
+      (node: any) => node.dataset?.changePath === 'gone.txt',
+    );
+    process.env.PATH = '';
+    await ctx.clickProjectChange({target: {closest: () => row}});
+    const error = ctx.document.getElementById('git-file-preview-error');
+    assert.ok(error);
+    assert.equal(error.getAttribute('role'), 'alert');
+    assert.match(error.textContent, /ENOENT/);
+    assert.equal(row.disabled, false);
+    assert.equal(ctx.selectedProjectFile, '');
+    assert.equal(ctx.workspaceResourceTabs.length, 0);
+    process.env.PATH = originalPath;
+    await ctx.clickProjectChange({target: {closest: () => row}});
+    assert.equal(ctx.selectedProjectFileText, 'original\n');
+    assert.equal(
+      ctx.document.getElementById('git-file-preview-error'),
+      undefined,
+    );
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('a pending deleted-file preview cannot replace a newer selection and ignores duplicate clicks', async () => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'mp-git-preview-pending-'),
+  );
+  try {
+    git(root, 'init', '--quiet');
+    fs.writeFileSync(path.join(root, 'gone.txt'), 'deleted\n');
+    git(root, 'add', '--', 'gone.txt');
+    fs.unlinkSync(path.join(root, 'gone.txt'));
+    fs.writeFileSync(path.join(root, 'current.txt'), 'newer selection\n');
+    const {ctx, nodes} = fixture(root);
+    nodes.set('project-changes', ctx.document.createElement('div'));
+    ctx.Data.projectEnvironment = async () => ({
+      ok: true,
+      ...require('../electron/project_environment').parseGitEnvironment({
+        root,
+        branchOutput: git(root, 'status', '--porcelain=v1', '--branch', '-z'),
+      }),
+    });
+    await ctx.renderProjectChanges();
+    const row = descendants(nodes.get('project-changes')).find(
+      (node: any) => node.dataset?.changePath === 'gone.txt',
+    );
+    const prepare = ctx.Data.prepareDeletedProjectFile;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    let calls = 0;
+    ctx.Data.prepareDeletedProjectFile = async (...args: any[]) => {
+      calls++;
+      await gate;
+      return prepare(...args);
+    };
+    const pending = ctx.clickProjectChange({target: {closest: () => row}});
+    assert.equal(row.disabled, true);
+    assert.equal(row.getAttribute('aria-busy'), 'true');
+    await ctx.clickProjectChange({target: {closest: () => row}});
+    assert.equal(calls, 1);
+    await ctx.selectProjectFile('current.txt');
+    release();
+    await pending;
+    assert.equal(ctx.selectedProjectFileText, 'newer selection\n');
+    assert.equal(row.disabled, false);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('an earlier Git list response cannot replace the newly selected project changes', async () => {
+  const {ctx, nodes} = fixture('C:/first-project');
+  nodes.set('project-changes', ctx.document.createElement('div'));
+  const responses = new Map<string, (value: any) => void>();
+  ctx.Data.projectEnvironment = (root: string) =>
+    new Promise(resolve => responses.set(root, resolve));
+  const earlier = ctx.renderProjectChanges();
+  ctx.activeProjectRoot = 'C:/second-project';
+  const current = ctx.renderProjectChanges();
+  responses.get('C:/second-project')!({
+    ok: true,
+    branch: 'current',
+    fileChanges: [{path: 'new.txt', status: 'M', staged: false}],
+  });
+  await current;
+  responses.get('C:/first-project')!({
+    ok: true,
+    branch: 'old',
+    fileChanges: [
+      {path: 'old.txt', status: 'D', staged: true, deletionBase: 'head'},
+    ],
+  });
+  await earlier;
+  assert.equal(ctx.projectEnvironment.branch, 'current');
+  const paths = descendants(nodes.get('project-changes'))
+    .filter((node: any) => node.dataset?.changePath)
+    .map((node: any) => node.dataset.changePath);
+  assert.deepEqual(paths, ['new.txt']);
+});
 
 async function clickDelivered(ctx: any, turn: any, file: string) {
   const html = ctx.ChatView.assistantTurnNode(turn)

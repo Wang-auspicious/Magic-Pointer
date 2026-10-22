@@ -8814,10 +8814,14 @@ async function renderProjectChanges() {
     return;
   }
   host.innerHTML = '<p class="mp-inspector-empty">' + studioT('git.reading') + '</p>';
+  const root = activeProjectRoot;
   const response = await Data.projectEnvironment(
-    activeProjectRoot,
+    root,
     activeConversationId,
   );
+  if (root !== activeProjectRoot) {
+    return;
+  }
   projectEnvironment = response;
   if (!response.ok) {
     host.innerHTML = `<p class="mp-inspector-empty">${esc(response.error || studioT('git.env_failed'))}</p>`;
@@ -8840,6 +8844,10 @@ async function renderProjectChanges() {
     button.type = 'button';
     button.className = 'mp-change-row';
     button.dataset.changePath = change.path;
+    button.dataset.changeRoot = root;
+    if (change.deletionBase) {
+      button.dataset.deletionBase = change.deletionBase;
+    }
     button.style.setProperty('--item-index', String(index));
     button.innerHTML = `<span class="mp-change-status">${esc(change.status || 'M')}</span><span>${esc(change.path)}</span>${change.staged ? `<small>${studioT('git.staged')}</small>` : ''}`;
     list.appendChild(button);
@@ -8850,15 +8858,57 @@ async function renderProjectChanges() {
   host.replaceChildren(header, list);
 }
 
-document.getElementById('project-changes')?.addEventListener('click', event => {
-  const row = (event.target as Element | null)?.closest<HTMLElement>(
+document.getElementById('project-changes')?.addEventListener('click', async event => {
+  const row = (event.target as Element | null)?.closest<HTMLButtonElement>(
     '[data-change-path]',
   );
   if (!row?.dataset.changePath) {
     return;
   }
+  if (row.disabled) {
+    return;
+  }
+  const base = row.dataset.deletionBase;
+  if (base === 'head' || base === 'index') {
+    const root = row.dataset.changeRoot || activeProjectRoot;
+    const request = ++projectFileRequest;
+    row.disabled = true;
+    row.setAttribute('aria-busy', 'true');
+    document.getElementById('git-file-preview-error')?.remove();
+    try {
+      const response = await Data.prepareDeletedProjectFile(
+        root,
+        row.dataset.changePath,
+        base,
+      );
+      if (root !== activeProjectRoot || request !== projectFileRequest) {
+        return;
+      }
+      if (!response.ok || !response.previewPath) {
+        throw new Error(response.error || studioT('files.read_failed'));
+      }
+      await selectProjectFile(response.previewPath, {
+        snapshot: true,
+        title: `${row.dataset.changePath} · ${studioT('files.deleted')}`,
+      });
+    } catch (error) {
+      if (root === activeProjectRoot && request === projectFileRequest) {
+        const notice = document.createElement('p');
+        notice.id = 'git-file-preview-error';
+        notice.className = 'mp-inspector-empty';
+        notice.setAttribute('role', 'alert');
+        notice.textContent =
+          error instanceof Error ? error.message : String(error);
+        document.getElementById('project-changes')?.append(notice);
+      }
+    } finally {
+      row.disabled = false;
+      row.removeAttribute('aria-busy');
+    }
+    return;
+  }
   setInspector(true, 'files');
-  void selectProjectFile(row.dataset.changePath);
+  await selectProjectFile(row.dataset.changePath);
 });
 
 let browserViewVisible = false;

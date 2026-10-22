@@ -18,7 +18,12 @@ interface ProjectEnvironment {
   ahead: number;
   behind: number;
   changedFiles: number;
-  fileChanges: Array<{path: string; status: string; staged: boolean}>;
+  fileChanges: Array<{
+    path: string;
+    status: string;
+    staged: boolean;
+    deletionBase?: 'head' | 'index';
+  }>;
   addedLines: number;
   deletedLines: number;
   remoteUrl: string;
@@ -122,6 +127,11 @@ function parseGitEnvironment(
         path: nulTerminated ? changedPath : changedPath.replace(/^"|"$/g, ''),
         status,
         staged: x !== ' ' && x !== '?',
+        ...(y === 'D'
+          ? {deletionBase: 'index' as const}
+          : x === 'D'
+            ? {deletionBase: 'head' as const}
+            : {}),
       });
     }
     if (nulTerminated && /[RC]/.test(`${x}${y}`)) {
