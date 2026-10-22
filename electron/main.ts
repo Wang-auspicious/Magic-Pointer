@@ -4368,6 +4368,20 @@ async function sendConversation(
       error: error instanceof Error ? error.message : String(error),
     };
   }
+  // A refused request must not change the checkout owned by a running task.
+  if (
+    conversationId &&
+    [...activeConversations.values(), ...stageLiveTurns.values()].some(
+      run => run.conversationId === conversationId,
+    )
+  ) {
+    return {
+      ok: false,
+      active: true,
+      conversationId,
+      error: 'This conversation is already running. Steer or stop its current task before sending another turn.',
+    };
+  }
   const effectiveAgentSessionId = studioConversationSessionId({
     existing: existing?.agentSessionId,
     conversationId,

@@ -223,6 +223,12 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
     assert.equal(payload.workspaceRoot, executionRoot);
     assert.equal(payload.permissionPreset, 'workspace-write', 'existing task settings are not replaced by project defaults');
     assert.equal(payload.modelRuntime.model, 'explicit-model');
+    context.activeConversations.set('live-task', {conversationId: conversation.id});
+    const busy = await send({question: 'Rejected workspace change', conversationId: conversation.id, branch: 'feature/environment', worktree: false});
+    assert.equal(busy.ok, false);
+    assert.equal(busy.active, true);
+    assert.equal(git(['branch', '--show-current']), 'main', 'a rejected busy request cannot switch the project branch');
+    context.activeConversations.delete('live-task');
     assert.equal(store.handoffReceipts(project.id).length, 10);
     store.flush();
     assert.equal(
