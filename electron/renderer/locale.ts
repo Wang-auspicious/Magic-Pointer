@@ -1013,6 +1013,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   },
   'chat.copy_failed': {en: 'Copy failure', zh: '复制失败'},
   'chat.copied': {en: 'Copied', zh: '已复制'},
+  'chat.files_show_more': {en: 'Show {count} more', zh: '显示另外 {count} 项'},
+  'chat.files_show_less': {en: 'Show less', zh: '收起'},
   'chat.time_just_now': {en: 'just now', zh: '刚刚'},
   'chat.time_minutes_ago': {en: '{n} minutes ago', zh: '{n} 分钟前'},
   'chat.time_hours_ago': {en: '{n} hours ago', zh: '{n} 小时前'},

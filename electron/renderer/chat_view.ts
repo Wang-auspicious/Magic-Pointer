@@ -4108,6 +4108,7 @@ const ChatView = (() => {
     files: DeliveredFile[],
     artifacts: Array<Record<string, unknown>>,
     conversationId: string,
+    turnScope = conversationId,
   ): ChatNode | null {
     const artifact = artifacts.find(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
@@ -4267,20 +4268,31 @@ const ChatView = (() => {
       attach(row, chev);
       return row;
     };
-    if (visibleFiles.length) {
-      attach(card, fileRow(visibleFiles[0]));
-    }
-    if (visibleFiles.length > 1) {
-      const more = h('details', {class: 'mp-chat-files-more'});
-      const summary = h('summary', {class: 'mp-chat-files-more-summary'});
-      attach(
-        summary,
-        `Show ${visibleFiles.length - 1} more file${visibleFiles.length === 2 ? '' : 's'}`,
-      );
-      const rest = h('div', {class: 'mp-chat-files-more-list'});
-      visibleFiles.slice(1).forEach(file => attach(rest, fileRow(file)));
-      attach(more, summary);
+    visibleFiles.slice(0, 3).forEach(file => attach(card, fileRow(file)));
+    if (visibleFiles.length > 3) {
+      const key = `files:${turnScope}:${deliveredFileKey(visibleFiles[0].path)}`;
+      const expanded = ROW_EXPANSION.get(key) === true;
+      const more = h('div', {class: 'mp-chat-files-more'});
+      const rest = h('div', {
+        class: 'mp-chat-files-more-list',
+        ...(!expanded ? {hidden: 'true'} : {}),
+      });
+      visibleFiles.slice(3).forEach(file => attach(rest, fileRow(file)));
       attach(more, rest);
+      const collapsedLabel = lt('chat.files_show_more', {count: visibleFiles.length - 3});
+      const toggle = h('button', {
+        type: 'button',
+        class: 'mp-chat-files-more-summary',
+        'data-mp-chat-act': 'toggle-files',
+        'data-files-expansion-key': key,
+        'data-files-collapsed-label': collapsedLabel,
+        'aria-expanded': String(expanded),
+      });
+      attach(toggle, h('span', {class: 'mp-chat-files-more-spacer', 'aria-hidden': 'true'}));
+      attach(toggle, h('span', {class: 'mp-chat-files-more-label'},
+        expanded ? lt('chat.files_show_less') : collapsedLabel));
+      attach(toggle, h('span', {class: 'mp-chat-files-more-chevron', 'aria-hidden': 'true'}, icon('chev', 14)));
+      attach(more, toggle);
       attach(card, more);
     }
 
@@ -5392,6 +5404,7 @@ const ChatView = (() => {
       ),
       artifacts,
       String(turn.conversationId || ''),
+      turnScope,
     );
     if (results) {
       attach(root, results);
@@ -6237,6 +6250,25 @@ const ChatView = (() => {
         return;
       }
       const kind = act.getAttribute('data-mp-chat-act');
+      if (kind === 'toggle-files') {
+        const more = act.closest('.mp-chat-files-more');
+        const rest = more?.querySelector('.mp-chat-files-more-list');
+        const label = more?.querySelector('.mp-chat-files-more-label');
+        if (!rest || !label) {
+          return;
+        }
+        const expanded = act.getAttribute('aria-expanded') !== 'true';
+        if (expanded) {
+          rest.removeAttribute('hidden');
+        } else {
+          rest.setAttribute('hidden', 'true');
+        }
+        act.setAttribute('aria-expanded', String(expanded));
+        label.textContent = expanded ? lt('chat.files_show_less')
+          : act.getAttribute('data-files-collapsed-label') || '';
+        rememberExpansion(ROW_EXPANSION, act.getAttribute('data-files-expansion-key') || '', expanded);
+        return;
+      }
       if (kind === 'view-image' && act instanceof HTMLImageElement) {
         event.preventDefault();
         openChatImage(act);
