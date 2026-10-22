@@ -3249,34 +3249,8 @@ const ChatView = (() => {
     return root;
   }
 
-  /**
-   * A settled answer body. Long answers collapse behind the same
-   * Show more mechanism as long thinking blocks, with a higher bar:
-   * an answer under it renders whole, never half-hidden.
-   */
   function deliveryNode(text: string): ChatNode {
-    const rendered = markdownRenderer.render(text);
-    if (/^\s*```\s*openui\s*$/im.test(text) ||
-        (text.length <= 1500 && text.split('\n').length <= 25)) {
-      return rendered;
-    }
-    const root = h('div', {
-      class: 'mp-chat-delivery',
-      'data-long': 'true',
-      'data-expanded': 'false',
-    });
-    const viewport = h('div', {class: 'mp-chat-delivery-viewport'});
-    attach(viewport, rendered);
-    attach(
-      viewport,
-      h('span', {class: 'mp-chat-delivery-fade', 'aria-hidden': 'true'}),
-    );
-    attach(root, viewport);
-    const more = h('button', {type: 'button', class: 'mp-chat-delivery-more'});
-    more.setAttribute('data-mp-chat-act', 'delivery-more');
-    attach(more, 'Show more');
-    attach(root, more);
-    return root;
+    return markdownRenderer.render(text);
   }
 
   function updateThinkingState(
@@ -5634,14 +5608,6 @@ const ChatView = (() => {
         }
         const expanded = disclosure.dataset.expanded === 'true';
         disclosure.dataset.expanded = expanded ? 'false' : 'true';
-        act.textContent = expanded ? 'Show more' : 'Show less';
-      } else if (kind === 'delivery-more') {
-        const wrap = act.closest<HTMLElement>('.mp-chat-delivery');
-        if (!wrap) {
-          return;
-        }
-        const expanded = wrap.dataset.expanded === 'true';
-        wrap.dataset.expanded = expanded ? 'false' : 'true';
         act.textContent = expanded ? 'Show more' : 'Show less';
       } else if (kind === 'copy') {
         const text = act.getAttribute('data-mp-chat-copy') || '';

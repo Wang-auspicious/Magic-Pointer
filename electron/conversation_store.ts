@@ -364,6 +364,18 @@ function createConversationStore(
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
       items = Array.isArray(parsed) ? (parsed as Conversation[]) : [];
+      for (const conversation of items) {
+        if (conversation.titleCustom || conversation.title !== '未命名') {
+          continue;
+        }
+        const question = (conversation.turns || []).find(turn =>
+          String(turn.question || '').trim() &&
+          isSubstantiveQuestion(turn.question) && !permissionAnswerOf(turn),
+        )?.question;
+        if (question) {
+          conversation.title = titleFrom(question);
+        }
+      }
     } catch {
       items = [];
     }
@@ -676,7 +688,12 @@ function createConversationStore(
       if (taskContext) {
         target.taskContext = taskContext;
       }
-      if (!target.titleCustom && !permissionAnswerOf(turn)) {
+      if (
+        !target.titleCustom &&
+        (target.title === '未命名' || !isSubstantiveQuestion(target.title)) &&
+        !permissionAnswerOf(turn) &&
+        String(turn.question || '').trim()
+      ) {
         target.title = titleFrom(turn.question);
       }
       const grant = String(turn.permissionGrant || '').trim();

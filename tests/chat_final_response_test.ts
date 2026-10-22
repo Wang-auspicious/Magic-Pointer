@@ -3,6 +3,17 @@ import test from 'node:test';
 const chat = require('../electron/renderer/chat_view');
 const markdown = require('../electron/renderer/chat_markdown');
 
+test('long final answers stay fully visible without an invented Show more control', () => {
+  const answer = '完整正文段落。'.repeat(400) + '\n\n末尾交付内容。';
+  const rendered = chat
+    .assistantTurnNode({answer})
+    .map((node: {outerHTML: string}) => node.outerHTML)
+    .join('');
+  assert(rendered.includes('末尾交付内容。'));
+  assert(!rendered.includes('mp-chat-delivery-viewport'));
+  assert(!rendered.includes('data-mp-chat-act="delivery-more"'));
+});
+
 test('Markdown images expose the shared viewer action to mouse and keyboard', () => {
   const rendered = markdown.render(
     '![Photo](https://example.test/photo.jpg)',
