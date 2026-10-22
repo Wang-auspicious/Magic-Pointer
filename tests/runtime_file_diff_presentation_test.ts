@@ -129,7 +129,11 @@ test('Edit retains whole-file context and Write CSV copies actual encoded conten
         ).presentation,
       }),
     ).outerHTML;
-    assert.equal((batchHtml.match(/mp-chat-diff-copy/g) || []).length, 1);
+    assert.equal(
+      (batchHtml.match(/class="mp-chat-action mp-chat-diff-copy"/g) || [])
+        .length,
+      1,
+    );
     assert.match(batchHtml, /data-kind="context"> {2}context first/);
     const csv = await f.execute('Write', {
       path: 'table.csv',

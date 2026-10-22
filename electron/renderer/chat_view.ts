@@ -45,6 +45,7 @@ const ChatView = (() => {
   type ChatChild = string | number | ShimNode | Node | null | undefined | false;
 
   const DOC = typeof document !== 'undefined' ? document : null;
+  const COPY_RESET_TIMERS = new WeakMap<HTMLElement, number>();
   const ESCAPES: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
@@ -2255,7 +2256,11 @@ const ChatView = (() => {
           'data-mp-chat-act': 'copy',
           'data-mp-chat-copy': preview.copyText,
         });
-        attach(copy, icon('copy', 16));
+        attach(copy, h('span', {
+          class: 'mp-chat-diff-copy-glyph',
+          'aria-hidden': 'true',
+          'data-glyph': '\ue056',
+        }));
         attach(header, copy);
       }
       attach(section, header);
@@ -6145,6 +6150,11 @@ const ChatView = (() => {
     }
     (host as unknown as {__mpChatBound?: boolean}).__mpChatBound = true;
     host.addEventListener('toggle', rememberGroupToggle, true);
+    host.addEventListener('mousedown', (event: MouseEvent) => {
+      if ((event.target as Element | null)?.closest('.mp-chat-diff-copy')) {
+        event.preventDefault();
+      }
+    });
     host.addEventListener('click', (event: Event) => {
       const target = event.target as HTMLElement | null;
       if (!target) {
@@ -6184,23 +6194,43 @@ const ChatView = (() => {
       } else if (kind === 'copy') {
         const text = act.getAttribute('data-mp-chat-copy') || '';
         const button = act;
+        const diffCopy = button.getAttribute('class')?.split(' ').includes('mp-chat-diff-copy');
+        const previous = COPY_RESET_TIMERS.get(button);
+        if (previous !== undefined) {
+          window.clearTimeout(previous);
+          COPY_RESET_TIMERS.delete(button);
+        }
         void copyToClipboard(text).then((ok: boolean) => {
-          const original = button.querySelector('svg');
-          if (original) {
-            original.remove();
+          if (button.isConnected === false) {
+            return;
           }
-          button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
+          const glyph = button.querySelector('.mp-chat-diff-copy-glyph');
+          if (glyph) {
+            glyph.setAttribute('data-glyph', ok ? '\ue03b' : '\ue056');
+          } else {
+            button.querySelector('svg')?.remove();
+            button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
+          }
           if (!ok) {
             button.setAttribute('aria-label', lt('chat.copy_failed'));
+          } else if (diffCopy) {
+            button.setAttribute('aria-label', lt('chat.copied'));
           }
-          window.setTimeout(() => {
-            const check = button.querySelector('svg');
-            if (check) {
-              check.remove();
+          const timer = window.setTimeout(() => {
+            COPY_RESET_TIMERS.delete(button);
+            if (button.isConnected === false) {
+              return;
             }
-            button.appendChild(icon('copy', 16) as Element);
+            const glyph = button.querySelector('.mp-chat-diff-copy-glyph');
+            if (glyph) {
+              glyph.setAttribute('data-glyph', '\ue056');
+            } else {
+              button.querySelector('svg')?.remove();
+              button.appendChild(icon('copy', 16) as Element);
+            }
             button.setAttribute('aria-label', lt('chat.copy'));
-          }, 2000);
+          }, diffCopy ? 1200 : 2000);
+          COPY_RESET_TIMERS.set(button, timer);
         });
       } else if (kind === 'retry') {
         const question = act.getAttribute('data-mp-chat-retry') || '';
@@ -6257,6 +6287,13 @@ const ChatView = (() => {
     });
     host.addEventListener('keydown', (event: KeyboardEvent) => {
       if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+      if (
+        event.repeat &&
+        (event.target as Element | null)?.closest('.mp-chat-diff-copy')
+      ) {
+        event.preventDefault();
         return;
       }
       const row = (event.target as HTMLElement | null)?.closest?.(

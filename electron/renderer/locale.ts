@@ -1012,6 +1012,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '未能创建分支，请重试。',
   },
   'chat.copy_failed': {en: 'Copy failure', zh: '复制失败'},
+  'chat.copied': {en: 'Copied', zh: '已复制'},
   'chat.time_just_now': {en: 'just now', zh: '刚刚'},
   'chat.time_minutes_ago': {en: '{n} minutes ago', zh: '{n} 分钟前'},
   'chat.time_hours_ago': {en: '{n} hours ago', zh: '{n} 小时前'},

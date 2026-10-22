@@ -50,12 +50,22 @@ function buttons(args: Record<string, unknown>, name = 'Edit'): any[] {
 async function clickCopy(button: any, fail = false) {
   const copied: string[] = [];
   const timers: Array<() => void> = [];
+  const delays: number[] = [];
+  const cancelled = new Set<number>();
   const listeners = new Map<string, (event: unknown) => void>();
   let feedback = '';
   let currentIcon: any;
+  const glyph = button.children.find(
+    (child: any) =>
+      child?.getAttribute?.('class') === 'mp-chat-diff-copy-glyph',
+  );
   Object.assign(button, {
-    closest: () => button,
-    querySelector: () => currentIcon,
+    closest: (selector: string) =>
+      ['[data-mp-chat-act]', '.mp-chat-diff-copy'].includes(selector)
+        ? button
+        : null,
+    querySelector: (selector: string) =>
+      selector === '.mp-chat-diff-copy-glyph' ? glyph : currentIcon,
     appendChild: (icon: any) => {
       currentIcon = icon;
       feedback = icon.name;
@@ -68,6 +78,7 @@ async function clickCopy(button: any, fail = false) {
   const context = vm.createContext({
     DOC: {},
     rememberGroupToggle: () => {},
+    COPY_RESET_TIMERS: new WeakMap(),
     navigator: {
       clipboard: {
         writeText: async (text: string) => {
@@ -89,14 +100,57 @@ async function clickCopy(button: any, fail = false) {
         currentIcon = undefined;
       },
     }),
-    lt: (key: string) => (key === 'chat.copy_failed' ? 'Copy failure' : 'Copy'),
-    window: {setTimeout: (callback: () => void) => timers.push(callback)},
+    lt: (key: string) =>
+      key === 'chat.copy_failed'
+        ? 'Copy failure'
+        : key === 'chat.copied'
+          ? 'Copied'
+          : 'Copy',
+    window: {
+      setTimeout: (callback: () => void, delay: number) => {
+        const id = timers.length + 1;
+        delays.push(delay);
+        timers.push(() => {
+          if (!cancelled.has(id)) {
+            callback();
+          }
+        });
+        return id;
+      },
+      clearTimeout: (id: number) => cancelled.add(id),
+    },
   });
   vm.runInContext(code, context);
   context.bindDelegation(host);
   listeners.get('click')!({target: button});
   await new Promise(resolve => setImmediate(resolve));
-  return {copied, timers, feedback};
+  return {
+    copied,
+    timers,
+    delays,
+    get feedback() {
+      return glyph
+        ? glyph.getAttribute('data-glyph') === '\ue03b'
+          ? 'check'
+          : 'copy'
+        : feedback;
+    },
+    async fire() {
+      listeners.get('click')!({target: button});
+      await new Promise(resolve => setImmediate(resolve));
+    },
+    event(type: string, fields: Record<string, unknown> = {}) {
+      let prevented = false;
+      listeners.get(type)?.({
+        target: button,
+        preventDefault: () => {
+          prevented = true;
+        },
+        ...fields,
+      });
+      return prevented;
+    },
+  };
 }
 
 test('diff copy uses exact replacement text and the real delegated action', async () => {
@@ -155,4 +209,46 @@ test('Write and costly previews copy full source rather than visible lines', asy
   });
   assert.equal(edits.length, 1);
   assert.deepEqual((await clickCopy(edits[0])).copied, [after]);
+});
+
+test('inline diff copy uses the reference Copied label, 1200ms reset and glyph font', async () => {
+  const button = buttons({
+    path: 'file.txt',
+    old_string: 'old',
+    new_string: 'new',
+  })[0];
+  assert.ok(button.outerHTML.includes('mp-chat-diff-copy-glyph'));
+  const result = await clickCopy(button);
+  assert.equal(button.getAttribute('aria-label'), 'Copied');
+  assert.deepEqual(result.delays, [1200]);
+  result.timers[0]();
+  assert.equal(button.getAttribute('aria-label'), 'Copy');
+  assert.equal(result.feedback, 'copy');
+});
+
+test('a second diff copy restarts its reset instead of being reverted by the first timer', async () => {
+  const button = buttons({
+    path: 'file.txt',
+    old_string: 'old',
+    new_string: 'new',
+  })[0];
+  const result = await clickCopy(button);
+  await result.fire();
+  assert.deepEqual(result.copied, ['new', 'new']);
+  result.timers[0]();
+  assert.equal(result.feedback, 'check');
+  result.timers[1]();
+  assert.equal(result.feedback, 'copy');
+});
+
+test('diff copy preserves text focus on mouse down and suppresses held activation keys', async () => {
+  const button = buttons({
+    path: 'file.txt',
+    old_string: 'old',
+    new_string: 'new',
+  })[0];
+  const result = await clickCopy(button);
+  assert.equal(result.event('mousedown'), true);
+  assert.equal(result.event('keydown', {key: 'Enter', repeat: true}), true);
+  assert.equal(result.event('keydown', {key: ' ', repeat: true}), true);
 });

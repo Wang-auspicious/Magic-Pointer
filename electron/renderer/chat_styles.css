@@ -551,6 +551,81 @@ span.mp-chat-diff-path {
   height: 15px;
 }
 
+@font-face {
+  font-family: 'Anthropicons Code';
+  src: url('./assets/fonts/Anthropicons-DFbvW9Cm.woff2') format('woff2-variations');
+  font-weight: 400 700;
+  font-display: block;
+}
+
+.mp-chat-diff-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cds-h-control);
+  height: var(--cds-h-control);
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cds-radius);
+  outline: none;
+  background: transparent;
+  color: var(--cds-text-primary);
+  cursor: var(--cds-cursor-interactive);
+  opacity: 0;
+  transition: opacity var(--cds-dur-fast) var(--cds-ease-snap),
+    box-shadow var(--cds-dur-fast);
+}
+
+.mp-chat-diff-copy:hover {
+  color: var(--cds-text-primary);
+  background: var(--cds-fill-ghost-hover);
+}
+
+.mp-chat-diff-copy:focus-visible {
+  box-shadow: var(--cds-focus-shadow);
+}
+
+.mp-chat-body-wrap:hover .mp-chat-diff-copy {
+  opacity: 1;
+  transition-duration: var(--cds-dur-snap), var(--cds-dur-fast);
+  transition-delay: 100ms, 0s;
+}
+
+.mp-chat-diff-copy:focus-within {
+  opacity: 1;
+  transition-duration: var(--cds-dur-snap), var(--cds-dur-fast);
+  transition-delay: 0s;
+}
+
+.mp-chat-diff-copy-glyph {
+  display: inline-flex;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  font-family: 'Anthropicons Code';
+  font-size: var(--cds-icon);
+  font-style: normal;
+  font-weight: 533.3;
+  font-feature-settings: 'liga' 0;
+  line-height: 1;
+}
+
+.mp-chat-diff-copy-glyph::before {
+  content: attr(data-glyph);
+}
+
+[data-density='comfortable'] .mp-chat-diff-copy-glyph {
+  font-weight: 433.3;
+}
+
+@media (prefers-reduced-motion: reduce), (pointer: coarse), (hover: none) {
+  .mp-chat-diff-copy {
+    transition: none;
+  }
+}
+
 .mp-chat-tool-group,
 .mp-chat-disclosure,
 .mp-chat-tool {
