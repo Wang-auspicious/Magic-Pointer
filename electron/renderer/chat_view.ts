@@ -19,10 +19,7 @@ const ChatView = (() => {
     typeof CompactionStatus !== 'undefined'
       ? CompactionStatus
       : require('../compaction_status');
-  function lt(
-    id: string,
-    params?: Record<string, string | number>,
-  ): string {
+  function lt(id: string, params?: Record<string, string | number>): string {
     if (typeof studioT === 'function') {
       return studioT(id, params);
     }
@@ -3409,7 +3406,10 @@ const ChatView = (() => {
     const root = h('div', {class: 'mp-chat-user'});
     const stack = h('div', {class: 'mp-chat-user-stack'});
     const bubble = h('div', {class: 'mp-chat-bubble'});
-    const interactive = /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(question);
+    const interactive =
+      /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(
+        question,
+      );
     let values: unknown;
     if (interactive) {
       try {
@@ -3421,8 +3421,16 @@ const ChatView = (() => {
     if (interactive && values && typeof values === 'object') {
       attach(bubble, interactive[1]);
       const details = h('details', {class: 'mp-chat-ui-receipt'});
-      attach(details, h('summary', {}, DOC?.documentElement.lang.startsWith('zh')
-        ? '已提交的选项' : 'Submitted values'));
+      attach(
+        details,
+        h(
+          'summary',
+          {},
+          DOC?.documentElement.lang.startsWith('zh')
+            ? '已提交的选项'
+            : 'Submitted values',
+        ),
+      );
       attach(details, h('pre', {}, JSON.stringify(values, null, 2)));
       attach(bubble, details);
     } else {
@@ -3477,6 +3485,10 @@ const ChatView = (() => {
     'MultiEdit',
   ]);
 
+  function deliveredFileKey(path: string): string {
+    return path.replace(/\\/g, '/');
+  }
+
   // A result is a file the agent actually wrote, not a claim about one.
   function deliveredFiles(
     trajectory: Array<Record<string, unknown>> | undefined,
@@ -3505,7 +3517,7 @@ const ChatView = (() => {
       if (!path) {
         continue;
       }
-      byPath.set(path, {
+      byPath.set(deliveredFileKey(path), {
         path,
         name: path.split(/[\\/]/).pop() || path,
         added: stat ? stat.added : 0,
@@ -3552,7 +3564,7 @@ const ChatView = (() => {
     }
     attach(card, head);
 
-    if (!files.length && artifact) {
+    if (artifact) {
       const row = h('button', {
         type: 'button',
         class: 'mp-chat-file-row',
@@ -3600,18 +3612,12 @@ const ChatView = (() => {
       attach(card, row);
     }
 
-    const artifactNames = new Set(
-      artifact
-        ? [
-            String(artifact.name || artifact.path || '')
-              .split(/[\\/]/)
-              .pop()
-              ?.toLocaleLowerCase() || '',
-          ]
-        : [],
-    );
+    const artifactPath = artifact?.path;
     const visibleFiles = files.filter(
-      item => !artifactNames.has(item.name.toLocaleLowerCase()),
+      item =>
+        typeof artifactPath !== 'string' ||
+        !artifactPath ||
+        deliveredFileKey(item.path) !== deliveredFileKey(artifactPath),
     );
     const fileRow = (file: DeliveredFile): ChatNode => {
       const row = h('button', {
@@ -3765,7 +3771,10 @@ const ChatView = (() => {
     if (tone === 'warning') {
       title.setAttribute('data-tone', 'warning');
     }
-    attach(title, tone === 'error' ? lt('chat.round_failed') : lt('common.notice'));
+    attach(
+      title,
+      tone === 'error' ? lt('chat.round_failed') : lt('common.notice'),
+    );
     const body = h('span', {class: 'mp-chat-turn-error-message'});
     attach(body, message);
     attach(copy, title);
@@ -4888,7 +4897,8 @@ const ChatView = (() => {
         if (!existing) {
           current.appendChild(block);
         } else if (
-          existing instanceof HTMLElement && block instanceof HTMLElement &&
+          existing instanceof HTMLElement &&
+          block instanceof HTMLElement &&
           existing.hasAttribute('data-openui-source') &&
           block.hasAttribute('data-openui-source')
         ) {
@@ -5428,7 +5438,9 @@ const ChatView = (() => {
       session_ready: lt('phase.session_ready'),
       agent_start: lt('phase.agent_start'),
       agent_turn: turn ? lt('phase.agent_turn', {turn}) : lt('phase.reasoning'),
-      model_request: turn ? lt('phase.agent_turn', {turn}) : lt('phase.reasoning'),
+      model_request: turn
+        ? lt('phase.agent_turn', {turn})
+        : lt('phase.reasoning'),
       model_first_chunk: lt('phase.model_first_chunk'),
       model_response: lt('phase.model_response'),
       budget_renewed: lt('phase.budget_renewed'),

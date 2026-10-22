@@ -8442,7 +8442,6 @@ async function selectProjectFile(
   relativePath: string,
   options: {fromResourceTab?: boolean; resourceKey?: string} = {},
 ) {
-  const request = ++projectFileRequest;
   const root = activeProjectRoot;
   const browserFile = /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(
     relativePath,
@@ -8460,6 +8459,7 @@ async function selectProjectFile(
       path: relativePath,
     });
   }
+  const request = ++projectFileRequest;
   if (browserFile) {
     selectedProjectFile = relativePath;
     setInspector(true, 'browser');
