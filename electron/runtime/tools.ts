@@ -19,11 +19,22 @@ export type FailureType =
   | 'computer_use_busy'
   | 'steer_pending';
 export type JsonSchema = Record<string, unknown>;
-export type ToolPresentation =
+export type FileDiffPresentation =
   | {kind: 'file_diff'; beforePath: string | null; afterPath: string}
   | {
       kind: 'file_diff_unavailable';
       reason: 'too_large' | 'binary' | 'capture_failed';
+    };
+export type ToolPresentation =
+  | FileDiffPresentation
+  | {
+      kind: 'file_diffs';
+      files: Array<{
+        path: string;
+        absolutePath: string;
+        previewPath?: string;
+        presentation: FileDiffPresentation;
+      }>;
     };
 export interface ToolCall {
   id: string;

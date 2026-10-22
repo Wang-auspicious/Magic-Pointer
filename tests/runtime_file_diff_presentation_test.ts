@@ -37,7 +37,7 @@ async function withFiles(run: (fixture: any) => Promise<void>) {
     return result as any;
   };
   try {
-    await run({root, session, execute, sink, packets});
+    await run({root, session, registry, execute, sink, packets});
   } finally {
     await session.endTurn('completed');
     await rm(root, {recursive: true, force: true});
@@ -151,6 +151,145 @@ test('Edit retains whole-file context and Write CSV copies actual encoded conten
     assert.ok(html.includes('data-mp-chat-copy="' + persisted + '"'));
   }));
 
+test('multi-file Patch retains each verified file version and lazy preview after reopening history', () =>
+  withFiles(async f => {
+    const before = 'unchanged first\nold middle\nunchanged last\n';
+    await writeFile(path.join(f.root, 'edit.txt'), before);
+    await writeFile(path.join(f.root, 'gone.txt'), 'deleted content\n');
+    const result = await f.execute('Patch', {
+      patch: [
+        '*** Begin Patch\n*** Update File: edit.txt\n@@\n-old middle\n+new middle\n*** Add File: new.txt\n+created content\n*** End Patch',
+        '*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch',
+      ],
+    });
+    assert.equal(result.presentation?.kind, 'file_diffs');
+    assert.deepEqual(
+      result.presentation.files.map((entry: any) => entry.path),
+      ['edit.txt', 'new.txt', 'gone.txt'],
+    );
+    const versions = [];
+    for (const entry of result.presentation.files) {
+      const view = await readFileDiffPresentation(entry.presentation);
+      assert.equal(view.ok, true);
+      versions.push((view as any).presentation);
+      assert.equal(
+        entry.absolutePath,
+        path.join(f.root, entry.path).replaceAll('\\', '/'),
+      );
+    }
+    assert.equal(versions[0].beforeText, before);
+    assert.equal(
+      versions[0].afterText,
+      before.replace('old middle', 'new middle'),
+    );
+    assert.equal(versions[1].beforeText, '');
+    assert.equal(versions[1].afterText, 'created content\n');
+    assert.equal(versions[2].beforeText, 'deleted content\n');
+    assert.equal(versions[2].afterText, '');
+    assert.equal(
+      await readFile(result.presentation.files[2].previewPath, 'utf8'),
+      'deleted content\n',
+    );
+    const store = createConversationStore({baseDir: f.root});
+    const saved = store.appendTurn({
+      newConversation: true,
+      question: 'Patch files',
+      answer: 'Saved',
+      trajectory: f.sink.trajectory,
+    });
+    store.flush();
+    await writeFile(path.join(f.root, 'edit.txt'), 'later user text');
+    const turn = createConversationStore({baseDir: f.root}).get(saved.id)!
+      .turns[0];
+    const stored = turn.trajectory!.find((row: any) => row.presentation)!;
+    assert.deepEqual(stored.presentation, result.presentation);
+    const html = chat
+      .assistantTurnNode(turn)
+      .map((node: any) => node.outerHTML)
+      .join('');
+    assert.equal((html.match(/data-file-diff-reference=/g) || []).length, 3);
+    assert.ok(
+      html.includes(
+        'data-preview-path="' + result.presentation.files[2].previewPath + '"',
+      ),
+    );
+    assert.doesNotMatch(
+      html,
+      /later user text|checkpoint_restore|file_bytes_readback/,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(result.value),
+      /beforeText|afterText|\.after\.txt/,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(f.session.deriveMessages()),
+      /unchanged first|unchanged last/,
+    );
+  }));
+
+test('multiple patches of one file preview the tool call net versions once', () =>
+  withFiles(async f => {
+    await writeFile(path.join(f.root, 'file.txt'), 'context\nbefore\n');
+    const result = await f.execute('Patch', {
+      patch: [
+        '*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+intermediate\n*** End Patch',
+        '*** Begin Patch\n*** Update File: file.txt\n@@\n-intermediate\n+final\n*** End Patch',
+      ],
+    });
+    assert.equal(result.presentation.files.length, 1);
+    const view = await readFileDiffPresentation(
+      result.presentation.files[0].presentation,
+    );
+    assert.equal((view as any).presentation.beforeText, 'context\nbefore\n');
+    assert.equal((view as any).presentation.afterText, 'context\nfinal\n');
+  }));
+
+test('a moved Patch file retains source deletion and destination bytes, including CSV encoding', () =>
+  withFiles(async f => {
+    await writeFile(path.join(f.root, 'source.csv'), 'col,value\nold,1\n');
+    const result = await f.execute('Patch', {
+      patch:
+        '*** Begin Patch\n*** Update File: source.csv\n*** Move to: destination.csv\n@@\n-old,1\n+new,2\n*** End Patch',
+    });
+    assert.equal(result.presentation?.files.length, 2);
+    const [removed, created] = await Promise.all(
+      result.presentation.files.map((entry: any) =>
+        readFileDiffPresentation(entry.presentation),
+      ),
+    );
+    assert.equal((removed as any).presentation.afterText, '');
+    assert.equal(
+      (removed as any).presentation.beforeText,
+      'col,value\nold,1\n',
+    );
+    assert.equal((created as any).presentation.beforeText, '');
+    assert.equal(
+      (created as any).presentation.afterText,
+      await readFile(path.join(f.root, 'destination.csv'), 'utf8'),
+    );
+  }));
+
+test('partially failed Patch retains actual file receipts and never advertises an unverified group preview', () =>
+  withFiles(async f => {
+    const result = await f.registry.execute({
+      id: 'partial',
+      name: 'Patch',
+      arguments: {
+        patch: [
+          '*** Begin Patch\n*** Add File: first.txt\n+confirmed\n*** End Patch',
+          '*** Begin Patch\n*** Update File: missing.txt\n@@\n-missing\n+new\n*** End Patch',
+        ],
+      },
+    });
+    assert.equal(result.is_error, true);
+    assert.equal(result.presentation, undefined);
+    assert.equal(
+      await readFile(path.join(f.root, 'first.txt'), 'utf8'),
+      'confirmed\n',
+    );
+    assert.equal(result.value.patches[0].fileChanges[0].path, 'first.txt');
+  }));
+
 test('presentation stays per call and does not survive failed verification', async () => {
   const registry = new ToolRegistry();
   registry.register({
@@ -217,6 +356,32 @@ test('large and binary file results explicitly omit a fabricated diff', () =>
       assert.doesNotMatch(html, /data-kind="add"|mp-chat-diff-copy/);
       assert.match(html, /mp-chat-diff-notice/);
     }
+  }));
+
+test('a Patch group keeps unavailable files separate from its readable file', () =>
+  withFiles(async f => {
+    const result = await f.execute('Patch', {
+      patch: `*** Begin Patch\n*** Add File: large.txt\n+${'x'.repeat(200001)}\n*** Add File: binary.txt\n+prefix\u0000suffix\n*** Add File: small.txt\n+readable\n*** End Patch`,
+    });
+    assert.deepEqual(
+      result.presentation.files
+        .slice(0, 2)
+        .map((entry: any) => entry.presentation),
+      [
+        {kind: 'file_diff_unavailable', reason: 'too_large'},
+        {kind: 'file_diff_unavailable', reason: 'binary'},
+      ],
+    );
+    assert.equal(result.presentation.files[2].presentation.kind, 'file_diff');
+    const html = chat.toolRowNode(
+      chat.toolRowModel('Patch', JSON.stringify(result.arguments), {
+        text: JSON.stringify(result.value),
+        presentation: result.presentation,
+      }),
+    ).outerHTML;
+    assert.equal((html.match(/mp-chat-diff-notice/g) || []).length, 2);
+    assert.equal((html.match(/data-file-diff-reference=/g) || []).length, 1);
+    assert.doesNotMatch(html, /prefix|file_bytes_readback/);
   }));
 
 test('display-only file content does not enter the next model request', async () => {
@@ -306,5 +471,17 @@ test('a preview capture failure leaves the real verified Write successful', asyn
       reason: 'capture_failed',
     });
     assert.equal(result.value.verification.matched, true);
+    const patch = await f.execute('Patch', {
+      patch:
+        '*** Begin Patch\n*** Add File: patched.txt\n+also saved\n*** End Patch',
+    });
+    assert.equal(
+      await readFile(path.join(f.root, 'patched.txt'), 'utf8'),
+      'also saved\n',
+    );
+    assert.deepEqual(patch.presentation.files[0].presentation, {
+      kind: 'file_diff_unavailable',
+      reason: 'capture_failed',
+    });
   });
 });

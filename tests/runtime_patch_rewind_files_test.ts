@@ -254,8 +254,11 @@ test(
         assert.equal(partial.fileChanges[0].unchanged, true);
         f.sink.onEvent({kind: 'tool_call_finished', result});
         const html = f.html();
-        assert.match(html, /data-file-path="blocked.txt"/);
-        assert.doesNotMatch(html, /data-file-path="restored.txt"/);
+        const footerStart = html.indexOf('<div class="mp-chat-files">');
+        assert.ok(footerStart >= 0);
+        const footer = html.slice(footerStart);
+        assert.match(footer, /data-file-path="blocked.txt"/);
+        assert.doesNotMatch(footer, /data-file-path="restored.txt"/);
         const manifest = path.join(
           f.root,
           '.mp',

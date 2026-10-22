@@ -84,7 +84,11 @@ function find(node: any, predicate: (entry: any) => boolean): any {
   }
 }
 
-async function fixture(run: (f: any) => Promise<void>) {
+async function fixture(
+  run: (f: any) => Promise<void>,
+  group = false,
+  deleted = false,
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'mp-lazy-diff-'));
   try {
     const reference = {
@@ -93,17 +97,46 @@ async function fixture(run: (f: any) => Promise<void>) {
       afterPath: path.join(directory, 'after.txt'),
     };
     await writeFile(reference.beforePath, 'retained\nold text\n');
-    await writeFile(reference.afterPath, 'retained\nnew text\n');
+    await writeFile(reference.afterPath, deleted ? '' : 'retained\nnew text\n');
+    const previewPath = path.join(directory, 'deleted-preview.txt');
+    if (deleted) {
+      await writeFile(previewPath, 'retained\nold text\n');
+    }
+    const secondReference = {
+      kind: 'file_diff',
+      beforePath: null,
+      afterPath: path.join(directory, 'second-after.txt'),
+    };
+    if (group) {
+      await writeFile(secondReference.afterPath, 'second file contents\n');
+    }
     const wire = Buffer.from(
       JSON.stringify({
         id: 'write',
-        name: 'Write',
+        name: group ? 'Patch' : 'Write',
         args: JSON.stringify({path: 'file.txt', content: 'new text'}),
         result: JSON.stringify({
           absolutePath: path.join(directory, 'file.txt'),
         }),
         state: 'done',
-        presentation: reference,
+        presentation: group
+          ? {
+              kind: 'file_diffs',
+              files: [
+                {
+                  path: 'file.txt',
+                  absolutePath: path.join(directory, 'file.txt'),
+                  previewPath: deleted ? previewPath : undefined,
+                  presentation: reference,
+                },
+                {
+                  path: 'second.txt',
+                  absolutePath: path.join(directory, 'second.txt'),
+                  presentation: secondReference,
+                },
+              ],
+            }
+          : reference,
       }),
     ).toString('base64');
     const progress = parseProgressLine(`@@mp phase=tool_result b64=${wire}`);
@@ -129,8 +162,18 @@ async function fixture(run: (f: any) => Promise<void>) {
     let pending: Promise<unknown> | undefined;
     let count = 0;
     const sender = {};
+    const events: any[] = [];
     const context = vm.createContext({
-      DOC: {},
+      DOC: {dispatchEvent: (event: unknown) => events.push(event)},
+      CustomEvent: class {
+        constructor(
+          readonly type: string,
+          readonly options: {detail: unknown},
+        ) {}
+        get detail() {
+          return this.options.detail;
+        }
+      },
       rememberGroupToggle: () => {},
       isDashboardSender: () => true,
       stageWindow: null,
@@ -168,11 +211,23 @@ async function fixture(run: (f: any) => Promise<void>) {
     };
     await run({
       reference,
+      rendered,
       root,
       button,
       context,
       sender,
       fire,
+      previewPath,
+      events,
+      fireFile: () => {
+        const header = find(
+          root,
+          node => node.getAttribute('class') === 'mp-chat-diff-path',
+        );
+        assert.ok(header);
+        header.closest = () => header;
+        listeners.get('click')!({target: header});
+      },
       settle,
       count: () => count,
     });
@@ -209,6 +264,43 @@ test('a failed snapshot load exposes retry and the same action later loads real 
     assert.equal(f.count(), 2);
     assert.ok(f.root.outerHTML.includes('+ retried content'));
   }));
+
+test('a multi-file Patch survives the progress decoder and loads only the chosen file through preload/main', () =>
+  fixture(async f => {
+    assert.equal(
+      (f.rendered.outerHTML.match(/data-file-diff-reference=/g) || []).length,
+      2,
+    );
+    assert.equal(f.count(), 0);
+    f.fire();
+    await f.settle();
+    assert.equal(f.count(), 1);
+    assert.ok(f.root.outerHTML.includes('+ new text'));
+    assert.doesNotMatch(f.rendered.outerHTML, /second file contents/);
+    assert.equal(
+      (f.rendered.outerHTML.match(/data-file-diff-reference=/g) || []).length,
+      1,
+    );
+  }, true));
+
+test('a deleted Patch file keeps its retained file opener before and after loading the diff', () =>
+  fixture(
+    async f => {
+      f.fireFile();
+      assert.equal(f.events.at(-1).detail.previewPath, f.previewPath);
+      assert.equal(
+        fs.readFileSync(f.events.at(-1).detail.previewPath, 'utf8'),
+        'retained\nold text\n',
+      );
+      f.fire();
+      await f.settle();
+      assert.ok(f.root.outerHTML.includes('- old text'));
+      f.fireFile();
+      assert.equal(f.events.at(-1).detail.previewPath, f.previewPath);
+    },
+    true,
+    true,
+  ));
 
 test('duplicate loads coalesce and a detached preview is never replaced', () =>
   fixture(async f => {

@@ -17,7 +17,8 @@ import {
   ToolRegistry,
   type ToolSpec,
   type Effect,
-  type ToolContext,
+  type FileDiffPresentation,
+  type ToolPresentation,
 } from './tools';
 import {EventSession} from './session';
 import {asObject, type Data} from './agent';
@@ -264,7 +265,37 @@ export class WorkspaceFiles {
         : {}),
     };
   }
-  async delete(file: string): Promise<Data> {
+  private async captureDiff(
+    checkpoint: FileSnapshot,
+    body: Buffer,
+    finalText: string,
+  ): Promise<FileDiffPresentation> {
+    if (binaryContent(checkpoint.original) || binaryContent(body)) {
+      return {kind: 'file_diff_unavailable', reason: 'binary'};
+    }
+    if ((checkpoint.original?.length || 0) > 4 * MAX_DIFF_PREVIEW_CHARS) {
+      return {kind: 'file_diff_unavailable', reason: 'too_large'};
+    }
+    const beforeText = checkpoint.original?.toString('utf8') || '';
+    if (
+      beforeText.length > MAX_DIFF_PREVIEW_CHARS ||
+      finalText.length > MAX_DIFF_PREVIEW_CHARS
+    ) {
+      return {kind: 'file_diff_unavailable', reason: 'too_large'};
+    }
+    const afterPath = path.join(this.checkpointDir, checkpoint.id + '.after.txt');
+    try {
+      await writeFile(afterPath, body);
+      return {kind: 'file_diff', beforePath: checkpoint.backupPath, afterPath};
+    } catch {
+      // Optional preview storage cannot invalidate a verified file operation.
+      return {kind: 'file_diff_unavailable', reason: 'capture_failed'};
+    }
+  }
+  async delete(
+    file: string,
+    present?: (presentation: FileDiffPresentation) => void,
+  ): Promise<Data> {
     const before = await this.checkpoint(file);
     await this.prepareDeletionPreview(file);
     await unlink(file);
@@ -272,6 +303,9 @@ export class WorkspaceFiles {
       throw new Error(`File deletion readback mismatch: ${file}`);
     }
     this.readVersions.delete(file);
+    if (present) {
+      present(await this.captureDiff(before, Buffer.alloc(0), ''));
+    }
     return this.changeResult(file, before, null);
   }
   async write(
@@ -279,7 +313,7 @@ export class WorkspaceFiles {
     content: string,
     check = true,
     preserveExactText = false,
-    present?: ToolContext['present'],
+    present?: (presentation: FileDiffPresentation) => void,
   ): Promise<Data> {
     if (check) {
       await this.requireFresh(file);
@@ -297,37 +331,7 @@ export class WorkspaceFiles {
     const finalText = body.toString('utf8');
     this.readVersions.set(file, finalText);
     if (present) {
-      if (binaryContent(checkpoint.original) || binaryContent(body)) {
-        present({kind: 'file_diff_unavailable', reason: 'binary'});
-      } else if (
-        (checkpoint.original?.length || 0) > 4 * MAX_DIFF_PREVIEW_CHARS
-      ) {
-        present({kind: 'file_diff_unavailable', reason: 'too_large'});
-      } else {
-        const beforeText = checkpoint.original?.toString('utf8') || '';
-        if (
-          beforeText.length <= MAX_DIFF_PREVIEW_CHARS &&
-          finalText.length <= MAX_DIFF_PREVIEW_CHARS
-        ) {
-          const afterPath = path.join(
-            this.checkpointDir,
-            checkpoint.id + '.after.txt',
-          );
-          try {
-            await writeFile(afterPath, body);
-            present({
-              kind: 'file_diff',
-              beforePath: checkpoint.backupPath,
-              afterPath,
-            });
-          } catch {
-            // Optional preview storage cannot invalidate the verified file write.
-            present({kind: 'file_diff_unavailable', reason: 'capture_failed'});
-          }
-        } else {
-          present({kind: 'file_diff_unavailable', reason: 'too_large'});
-        }
-      }
+      present(await this.captureDiff(checkpoint, body, finalText));
     }
     return {
       ...(await this.changeResult(file, checkpoint, body)),
@@ -624,6 +628,7 @@ function locate(raw: string, needle: string): Array<[number, number]> {
 export async function applyWorkspacePatch(
   space: WorkspaceFiles,
   patch: string,
+  present?: (file: string, presentation: FileDiffPresentation, change: Data) => void,
 ): Promise<Data> {
   const lines = patch
     .trim()
@@ -742,10 +747,19 @@ export async function applyWorkspacePatch(
   const fileChanges: Data[] = [];
   try {
     for (const [file, content] of planned) {
+      let view: FileDiffPresentation | undefined;
+      const capture = present ? (value: FileDiffPresentation) => {
+        view = value;
+      } : undefined;
+      let change: Data;
       if (content === null) {
-        fileChanges.push(await space.delete(file));
+        change = await space.delete(file, capture);
       } else {
-        fileChanges.push(await space.write(file, content, false));
+        change = await space.write(file, content, false, false, capture);
+      }
+      fileChanges.push(change);
+      if (view) {
+        present?.(file, view, change);
       }
     }
   } catch (error) {
@@ -1070,13 +1084,53 @@ export function registerCodingTools(
     schema({patch: {oneOf: [string, {type: 'array', items: string}]}}, [
       'patch',
     ]),
-    async args => {
+    async (args, context) => {
       const results: Data[] = [];
+      const presentation: Extract<ToolPresentation, {kind: 'file_diffs'}> = {
+        kind: 'file_diffs',
+        files: [],
+      };
+      const firstVersions = new Map<
+        string, {initial: FileDiffPresentation; index: number}
+      >();
+      const present = context.present
+        ? (file: string, view: FileDiffPresentation, change: Data) => {
+            const previewPath = typeof change.previewPath === 'string'
+              ? change.previewPath : undefined;
+            const first = firstVersions.get(file);
+            if (first) {
+              const entry = presentation.files[first.index];
+              if (previewPath) {
+                entry.previewPath = previewPath;
+              } else {
+                delete entry.previewPath;
+              }
+              if (first.initial.kind === 'file_diff_unavailable') {
+                entry.presentation = first.initial;
+              } else if (view.kind === 'file_diff') {
+                entry.presentation = {...view, beforePath: first.initial.beforePath};
+              } else {
+                entry.presentation = view;
+              }
+              return;
+            }
+            firstVersions.set(file, {
+              initial: view,
+              index: presentation.files.length,
+            });
+            presentation.files.push({
+              path: space.display(file),
+              absolutePath: file.replaceAll('\\', '/'),
+              ...(previewPath ? {previewPath} : {}),
+              presentation: view,
+            });
+          }
+        : undefined;
       try {
         for (const patch of Array.isArray(args.patch)
           ? args.patch
           : [args.patch]) {
-          results.push(await applyWorkspacePatch(space, str(patch)));
+          results.push(await applyWorkspacePatch(space, str(patch), present));
         }
       } catch (error) {
         if (!results.length) {
@@ -1090,6 +1144,9 @@ export function registerCodingTools(
           ],
           error: message,
         });
+      }
+      if (presentation.files.length) {
+        context.present?.(presentation);
       }
       return results.length === 1 ? results[0] : {patches: results};
     },

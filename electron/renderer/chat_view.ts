@@ -2006,6 +2006,7 @@ const ChatView = (() => {
     summary: string;
     filePath?: string;
     fileTarget?: string;
+    filePreviewPath?: string;
     presentation?: unknown;
     body: string | null;
     output: string | null;
@@ -2224,7 +2225,7 @@ const ChatView = (() => {
 
   function diffPreviewNode(
     diff: DiffView,
-    model: Pick<ToolRowModel, 'filePath' | 'fileTarget'>,
+    model: Pick<ToolRowModel, 'filePath' | 'fileTarget' | 'filePreviewPath'>,
   ): ChatNode {
     const root = h('div', {class: 'mp-chat-diff-previews'});
     for (const preview of diff.previews) {
@@ -2239,6 +2240,8 @@ const ChatView = (() => {
               'data-mp-chat-act': 'open-file',
               'data-file-path': model.filePath,
               'data-file-absolute-path': model.fileTarget,
+              ...(model.filePreviewPath
+                ? {'data-preview-path': model.filePreviewPath} : {}),
             })
           : h('span', {class: 'mp-chat-diff-path', title: model.filePath});
         attach(file, model.filePath);
@@ -2263,7 +2266,7 @@ const ChatView = (() => {
   }
 
   function deferredFileDiffNode(
-    model: ToolRowModel,
+    model: Pick<ToolRowModel, 'filePath' | 'fileTarget' | 'filePreviewPath'>,
     reference: Record<string, unknown>,
   ): ChatNode {
     const root = diffPreviewNode({blocks: [], previews: [{blocks: []}]}, model);
@@ -2273,6 +2276,9 @@ const ChatView = (() => {
     }
     if (model.fileTarget) {
       root.setAttribute('data-file-absolute-path', model.fileTarget);
+    }
+    if (model.filePreviewPath) {
+      root.setAttribute('data-preview-path', model.filePreviewPath);
     }
     const load = h('button', {
       type: 'button',
@@ -2308,6 +2314,7 @@ const ChatView = (() => {
       const content = diffPreviewNode(diff, {
         filePath: root.getAttribute('data-file-path') || undefined,
         fileTarget: root.getAttribute('data-file-absolute-path') || undefined,
+        filePreviewPath: root.getAttribute('data-preview-path') || undefined,
       }) as HTMLElement;
       root.replaceChildren(...Array.from(content.childNodes));
       root.removeAttribute('data-file-diff-reference');
@@ -3458,6 +3465,8 @@ const ChatView = (() => {
       ? outputRecord(model.presentation) : recordOf(model.presentation);
     const deferred = model.state === 'ok' && reference?.kind === 'file_diff' &&
       typeof reference.afterPath === 'string';
+    const fileDiffs = model.state === 'ok' && reference?.kind === 'file_diffs' &&
+      Array.isArray(reference.files) ? reference.files : null;
     // Verified snapshots take precedence over request snippets. Old overwrites
     // without a before-image cannot truthfully be shown as all additions.
     const legacyOverwrite = model.state === 'ok' && !model.presentation &&
@@ -3487,7 +3496,31 @@ const ChatView = (() => {
       );
     }
     const checklist = todoChecklist(model) || questionHistory(model);
-    if (deferred) {
+    if (fileDiffs) {
+      for (const raw of fileDiffs) {
+        const entry = recordOf(raw);
+        if (!entry || typeof entry.path !== 'string') {
+          continue;
+        }
+        const fileModel = {
+          filePath: entry.path,
+          fileTarget: typeof entry.absolutePath === 'string'
+            ? entry.absolutePath : undefined,
+          filePreviewPath: typeof entry.previewPath === 'string'
+            ? entry.previewPath : undefined,
+        };
+        const view = recordOf(entry.presentation);
+        if (view?.kind === 'file_diff' && typeof view.afterPath === 'string') {
+          body.push(deferredFileDiffNode(fileModel, view));
+        } else {
+          const fileDiff = deriveDiff(model.name, '', view);
+          if (fileDiff) {
+            body.push(diffPreviewNode(fileDiff, fileModel));
+          }
+        }
+      }
+      outputInCard = body.length > 0;
+    } else if (deferred) {
       body.push(deferredFileDiffNode(model, reference!));
       outputInCard = true;
     } else if (checklist !== null) {
