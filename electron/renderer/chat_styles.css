@@ -975,6 +975,10 @@ span.mp-chat-diff-path {
   border-top: 1px solid var(--mp-rule);
 }
 
+.mp-chat-coalesced-result {
+  display: contents;
+}
+
 .mp-chat-tool > .mp-chat-disclosure > .mp-chat-row {
   min-height: 36px;
   border-radius: 0;

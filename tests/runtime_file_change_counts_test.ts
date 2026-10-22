@@ -71,7 +71,13 @@ test('later operations retain the turn baseline and an undo has zero net changes
   try {
     const original = 'first\nsecond\nthird\n';
     await writeFile(path.join(f.root, 'notes.txt'), original);
-    await f.run('Read', {path: 'notes.txt'});
+    const read = await f.registry.execute({
+      id: 'baseline-read',
+      name: 'Read',
+      arguments: {path: 'notes.txt'},
+    });
+    assert.equal(read.is_error, false, read.error_message);
+    f.sink.onEvent({kind: 'tool_call_finished', result: read});
     await f.run('Edit', {
       path: 'notes.txt',
       old_string: 'first\n',

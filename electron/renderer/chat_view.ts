@@ -198,7 +198,10 @@ const ChatView = (() => {
   }
 
   const ROW_EXPANSION = new Map<string, boolean>();
-  const GROUP_EXPANSION = new Map<string, {open: boolean; members: string[]}>();
+  const GROUP_EXPANSION = new Map<
+    string,
+    {open: boolean; members: string[]; single?: boolean}
+  >();
   let liveTurnSequence = 0;
 
   function rememberExpansion(
@@ -219,6 +222,7 @@ const ChatView = (() => {
     GROUP_EXPANSION.set(id, {
       open,
       members: GROUP_EXPANSION.get(id)?.members || [],
+      single: GROUP_EXPANSION.get(id)?.single,
     });
   }
 
@@ -476,6 +480,7 @@ const ChatView = (() => {
     Read: 'read',
     Write: 'write',
     Edit: 'edit',
+    MultiEdit: 'edit',
     Patch: 'edit',
     Grep: 'search',
     Glob: 'search',
@@ -3485,7 +3490,11 @@ const ChatView = (() => {
     return root;
   }
 
-  function toolRowNode(model: ToolRowModel, scope = ''): ChatNode {
+  function toolRowNode(
+    model: ToolRowModel,
+    scope = '',
+    members?: ToolRowModel[],
+  ): ChatNode {
     const root = h('div', {class: 'mp-chat-tool'});
     root.setAttribute('data-tool', '');
     root.setAttribute('data-state', model.state);
@@ -3546,23 +3555,103 @@ const ChatView = (() => {
       collapsed.push(stat);
     }
 
+    const contents = (members ?? [model]).map(toolRowBody);
+    const body = members
+      ? contents.map((content, index) =>
+          h(
+            'div',
+            {
+              class: 'mp-chat-coalesced-result',
+              'data-call-id': members[index].callId,
+            },
+            ...content.nodes,
+          ),
+        )
+      : contents[0].nodes;
+    const webCount = contents[0].webCount;
+    if (webCount !== null) {
+      const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
+      attach(sep, ' ');
+      collapsed.push(sep);
+      collapsed.push(
+        h('span', {class: 'mp-chat-web-count'}, webCountLabel(webCount)),
+      );
+    }
+    const isSubagent = SUBAGENT_TOOLS.has(model.name) && Boolean(model.callId);
+    const {root: disclosure, row: disclosureAction} = disclosureRow({
+      leadingOverride: isSubagent
+        ? h(
+            'span',
+            {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
+            AGENTS_SIMPLE_GLYPH,
+          )
+        : undefined,
+      title: model.title,
+      collapsed,
+      body: body.length ? body : null,
+      expandable: !isSubagent && body.length > 0,
+      open:
+        defaultOpenForTool(model) ||
+        contents.some(content => content.hasResults),
+      rowId: model.callId
+        ? `tool:${scope ? `${scope}:` : ''}${model.callId}`
+        : undefined,
+    });
+    if (isSubagent) {
+      disclosure.setAttribute('data-subagent-row', '');
+      disclosureAction.setAttribute('data-mp-chat-act', 'open-subagent');
+      disclosureAction.setAttribute(
+        'data-subagent-parent-call-id',
+        model.callId,
+      );
+      disclosureAction.setAttribute('role', 'button');
+      disclosureAction.setAttribute('tabindex', '0');
+    }
+    attach(root, disclosure);
+    return root;
+  }
+
+  function toolRowBody(model: ToolRowModel): {
+    nodes: ChatNode[];
+    hasResults: boolean;
+    webCount: number | null;
+  } {
     const body: ChatNode[] = [];
     const payload = outputRecord(model.output);
-    const reference = typeof model.presentation === 'string'
-      ? outputRecord(model.presentation) : recordOf(model.presentation);
-    const deferred = model.state === 'ok' && reference?.kind === 'file_diff' &&
+    const reference =
+      typeof model.presentation === 'string'
+        ? outputRecord(model.presentation)
+        : recordOf(model.presentation);
+    const deferred =
+      model.state === 'ok' &&
+      reference?.kind === 'file_diff' &&
       typeof reference.afterPath === 'string';
-    const fileDiffs = model.state === 'ok' && reference?.kind === 'file_diffs' &&
-      Array.isArray(reference.files) ? reference.files : null;
+    const fileDiffs =
+      model.state === 'ok' &&
+      reference?.kind === 'file_diffs' &&
+      Array.isArray(reference.files)
+        ? reference.files
+        : null;
     // Verified snapshots take precedence over request snippets. Old overwrites
     // without a before-image cannot truthfully be shown as all additions.
-    const legacyOverwrite = model.state === 'ok' && !model.presentation &&
-      ['Write', 'write_file', 'write'].includes(model.name) && payload?.created === false;
-    const presented = model.state === 'ok'
-      ? deriveDiff(model.name, '', legacyOverwrite
-        ? {kind: 'file_diff_unavailable', reason: 'previous'} : model.presentation) : null;
-    const diff = presented ?? (
-      model.state === 'error' || model.fileChange === 'too_large'
+    const legacyOverwrite =
+      model.state === 'ok' &&
+      !model.presentation &&
+      ['Write', 'write_file', 'write'].includes(model.name) &&
+      payload?.created === false;
+    const presented =
+      model.state === 'ok'
+        ? deriveDiff(
+            model.name,
+            '',
+            legacyOverwrite
+              ? {kind: 'file_diff_unavailable', reason: 'previous'}
+              : model.presentation,
+          )
+        : null;
+    const diff =
+      presented ??
+      (model.state === 'error' || model.fileChange === 'too_large'
         ? null
         : deriveDiff(model.name, model.argsRaw ?? ''));
     const command = toolCommandOf(model);
@@ -3574,14 +3663,6 @@ const ChatView = (() => {
     // so an empty result set still reports "0 results".
     const results = resultBodyNode(model.name, payload);
     const webCount = webResults(model.name, payload)?.count ?? null;
-    if (webCount !== null) {
-      const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
-      attach(sep, ' ');
-      collapsed.push(sep);
-      collapsed.push(
-        h('span', {class: 'mp-chat-web-count'}, webCountLabel(webCount)),
-      );
-    }
     const checklist = todoChecklist(model) || questionHistory(model);
     if (fileDiffs) {
       for (const raw of fileDiffs) {
@@ -3591,11 +3672,15 @@ const ChatView = (() => {
         }
         const fileModel = {
           filePath: entry.path,
-          fileTarget: (entry.exists !== false || entry.previewPath) &&
+          fileTarget:
+            (entry.exists !== false || entry.previewPath) &&
             typeof entry.absolutePath === 'string'
-            ? entry.absolutePath : undefined,
-          filePreviewPath: typeof entry.previewPath === 'string'
-            ? entry.previewPath : undefined,
+              ? entry.absolutePath
+              : undefined,
+          filePreviewPath:
+            typeof entry.previewPath === 'string'
+              ? entry.previewPath
+              : undefined,
         };
         const view = recordOf(entry.presentation);
         if (view?.kind === 'file_diff' && typeof view.afterPath === 'string') {
@@ -3669,40 +3754,7 @@ const ChatView = (() => {
       body.push(output);
     }
 
-    const isSubagent = SUBAGENT_TOOLS.has(model.name) && Boolean(model.callId);
-    const {root: disclosure, row: disclosureAction} = disclosureRow({
-      leadingOverride: isSubagent
-        ? h(
-            'span',
-            {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
-            AGENTS_SIMPLE_GLYPH,
-          )
-        : undefined,
-      title: model.title,
-      collapsed,
-      body: body.length ? body : null,
-      expandable: !isSubagent && body.length > 0,
-      // Rendered results are the point of the row, so they start visible the
-      // way the reference shows its own search results.
-      open: defaultOpenForTool(model) || results !== null,
-      rowId: model.callId
-        ? `tool:${scope ? `${scope}:` : ''}${model.callId}`
-        : undefined,
-    });
-
-    if (isSubagent) {
-      disclosure.setAttribute('data-subagent-row', '');
-      disclosureAction.setAttribute('data-mp-chat-act', 'open-subagent');
-      disclosureAction.setAttribute(
-        'data-subagent-parent-call-id',
-        model.callId,
-      );
-      disclosureAction.setAttribute('role', 'button');
-      disclosureAction.setAttribute('tabindex', '0');
-    }
-
-    attach(root, disclosure);
-    return root;
+    return {nodes: body, hasResults: results !== null, webCount};
   }
 
   function thinkNode(
@@ -4632,7 +4684,7 @@ const ChatView = (() => {
     return root;
   }
 
-  function chipNode(chip: TurnChip, scope = ''): ChatNode {
+  function chipModel(chip: TurnChip): ToolRowModel {
     const model = toolRowModel(
       chip.name,
       chip.argsRaw,
@@ -4644,7 +4696,11 @@ const ChatView = (() => {
       model.title = chip.displayLabel.trim();
       model.summary = '';
     }
-    const node = toolRowNode(model, scope);
+    return model;
+  }
+
+  function chipNode(chip: TurnChip, scope = ''): ChatNode {
+    const node = toolRowNode(chipModel(chip), scope);
     if (SUBAGENT_TOOLS.has(chip.name)) {
       attach(
         node,
@@ -4719,8 +4775,100 @@ const ChatView = (() => {
     );
   }
 
+  function fileRowKey(chip: TurnChip): string | null {
+    const family = FILE_WRITE_TOOLS.has(chip.name)
+      ? ['Write', 'write_file', 'write'].includes(chip.name)
+        ? 'Write'
+        : 'Edit'
+      : ['Read', 'read', 'read_file'].includes(chip.name)
+        ? 'Read'
+        : null;
+    const path = deriveFilePath(classifyTool(chip.name), chip.argsRaw);
+    return family && path ? `${family} ${path}` : null;
+  }
+
   function singleToolGroup(chips: TurnChip[], work?: FlowItem[]): boolean {
-    return chips.length === 1 && !work?.some(item => item.type === 'reasoning');
+    if (!chips.length || work?.some(item => item.type !== 'chip')) {
+      return false;
+    }
+    const key = fileRowKey(chips[0]);
+    return (
+      chips.length === 1 ||
+      (key !== null && chips.every(chip => fileRowKey(chip) === key))
+    );
+  }
+
+  function coalescedToolModel(
+    chips: TurnChip[],
+    models: ToolRowModel[],
+  ): ToolRowModel {
+    if (models.length === 1) {
+      return models[0];
+    }
+    const first = chips[0];
+    const state = models.some(model => model.state === 'running')
+      ? 'running'
+      : models[models.length - 1].state;
+    const allFailed =
+      state === 'error' && models.every(model => model.state === 'error');
+    const header = toolRowModel(
+      first.name,
+      first.argsRaw,
+      state === 'running'
+        ? undefined
+        : {
+            ...first.result,
+            isError: allFailed,
+            interrupted: state === 'stopped',
+          },
+      first.callId,
+      first.executionRoot,
+    );
+    header.state = state;
+    if (allFailed && !isBlockedResult(first.result)) {
+      header.title = fileRowKey(first)?.startsWith('Write ')
+        ? 'Failed to write'
+        : fileRowKey(first)?.startsWith('Read ')
+          ? 'Failed to read'
+          : 'Failed to edit';
+    }
+    const completed = models.filter(model => model.state === 'ok');
+    const write = ['Write', 'write_file', 'write'].includes(first.name);
+    const stats = write ? completed.slice(-1) : completed;
+    header.diffStat =
+      stats.length && stats.every(model => model.diffStat !== null)
+        ? stats.reduce(
+            (total, model) => ({
+              added: total.added + model.diffStat!.added,
+              removed: total.removed + model.diffStat!.removed,
+            }),
+            {added: 0, removed: 0},
+          )
+        : null;
+    if (fileRowKey(first)?.startsWith('Read ')) {
+      header.diffStat = null;
+      const ranges = chips.map(chip => {
+        const input = parseArgs(chip.argsRaw) ?? {};
+        const offset =
+          typeof input.offset === 'number' ? input.offset : undefined;
+        const limit = typeof input.limit === 'number' ? input.limit : undefined;
+        if (offset === undefined && limit === undefined) {
+          return null;
+        }
+        const start = offset ?? 1;
+        return limit === undefined
+          ? `${start}–`
+          : `${start}–${start + limit - 1}`;
+      });
+      if (ranges.every(range => range !== null)) {
+        header.summary += ` (${ranges.join(', ')})`;
+      }
+    }
+    if (first.displayLabel?.trim()) {
+      header.title = first.displayLabel.trim();
+      header.summary = '';
+    }
+    return header;
   }
 
   function toolGroupNode(
@@ -4740,15 +4888,12 @@ const ChatView = (() => {
     if (thoughtOnly) {
       root.setAttribute('data-thought-only', 'true');
     }
-    const model = single
-      ? toolRowModel(
-          chips[0].name,
-          chips[0].argsRaw,
-          chips[0].result,
-          chips[0].callId,
-        )
-      : null;
-    if (model?.errorTitle) {
+    const models = single ? chips.map(chipModel) : null;
+    const model = models ? coalescedToolModel(chips, models) : null;
+    if (model) {
+      root.setAttribute('data-state', model.state);
+    }
+    if (model?.errorTitle || model?.state === 'error') {
       root.setAttribute('data-error-title', 'true');
     }
     if (!thoughtOnly) {
@@ -4808,6 +4953,20 @@ const ChatView = (() => {
       }
       attach(label, stat);
     }
+    if (model && model.state !== 'ok') {
+      attach(
+        summary,
+        h(
+          'span',
+          {class: 'mp-chat-vh'},
+          model.state === 'running'
+            ? 'Running'
+            : model.state === 'error'
+              ? 'Failed'
+              : 'Stopped',
+        ),
+      );
+    }
     attach(summary, label);
     const body = h('div', {class: 'mp-chat-tool-group-body'});
     const entries: FlowItem[] =
@@ -4834,6 +4993,11 @@ const ChatView = (() => {
     const open =
       thoughtOnly ||
       previous?.open === true ||
+      (single &&
+        previous?.single !== true &&
+        ROW_EXPANSION.get(
+          `tool:${scope ? `${scope}:` : ''}${chips[0]?.callId}`,
+        ) === true) ||
       members.some(
         id =>
           !previousMembers.has(id) &&
@@ -4848,8 +5012,10 @@ const ChatView = (() => {
         );
         if (
           source?.open &&
-          childToolIds?.length === 1 &&
-          (!previousMembers.has(id) || previousMembers.size === 1)
+          childToolIds?.length &&
+          (source.single ||
+            (childToolIds.length === 1 &&
+              (!previousMembers.has(id) || previousMembers.size === 1)))
         ) {
           rememberExpansion(
             ROW_EXPANSION,
@@ -4859,30 +5025,49 @@ const ChatView = (() => {
         }
       }
     }
-    GROUP_EXPANSION.set(groupId, {open, members});
+    GROUP_EXPANSION.set(groupId, {open, members, single});
     if (open) {
       root.setAttribute('open', '');
     }
     summary.setAttribute('aria-expanded', open ? 'true' : 'false');
     summary.setAttribute('data-group-id', groupId);
 
-    entries.forEach(entry => {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
       if (entry.type === 'reasoning') {
         attach(
           body,
           thinkNode(entry.text, entry.running === true, reasoningId(entry)),
         );
-        return;
+        continue;
       }
       if (entry.type === 'narration') {
         attach(body, narrationNode(entry.text));
-        return;
+        continue;
       }
       if (entry.type !== 'chip') {
-        return;
+        continue;
       }
       const chip = entry.chip;
-      const node = chipNode(chip, scope);
+      const grouped = [chip];
+      const key = fileRowKey(chip);
+      while (key !== null && entries[index + 1]?.type === 'chip') {
+        const next = entries[index + 1] as Extract<FlowItem, {type: 'chip'}>;
+        if (fileRowKey(next.chip) !== key) {
+          break;
+        }
+        grouped.push(next.chip);
+        index++;
+      }
+      const groupedModels =
+        grouped.length > 1 ? (models ?? grouped.map(chipModel)) : null;
+      const node = groupedModels
+        ? toolRowNode(
+            coalescedToolModel(grouped, groupedModels),
+            scope,
+            groupedModels,
+          )
+        : chipNode(chip, scope);
       if (single) {
         const disclosure = DOC
           ? (node as Element).querySelector('.mp-chat-disclosure')
@@ -4895,7 +5080,7 @@ const ChatView = (() => {
         disclosure?.removeAttribute('data-row-id');
       }
       attach(body, node);
-    });
+    }
     attach(root, summary);
     attach(root, body);
     return root;
