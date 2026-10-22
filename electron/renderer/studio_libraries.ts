@@ -722,14 +722,9 @@
       }
       const edit = target.closest('[data-edit-sidebar]');
       if (edit) {
-        root.innerHTML =
-          '<div class="mp-library-menu-heading">Sidebar</div>' +
-          ['projects', 'artifacts', 'scheduled', 'designs', 'customize']
-            .map(
-              id =>
-                `<label class="mp-library-nav-option"><input type="checkbox" data-nav-visibility="${id}" ${preferences.hiddenNavigation.includes(id) ? '' : 'checked'} /><span>${id === 'designs' ? 'Design' : id[0].toUpperCase() + id.slice(1)}</span></label>`,
-            )
-            .join('');
+        if (anchor) {
+          openSidebarEditor(anchor);
+        }
       }
       const restore = target.closest<HTMLElement>('[data-restore-nav]');
       if (restore) {
@@ -761,28 +756,17 @@
           );
         });
     }
-    document
-      .getElementById('sidebar-more')
-      ?.addEventListener('click', event => {
-        if (!root.hidden && anchor === event.currentTarget) {
-          closeMenu();
-          return;
-        }
-        root.innerHTML =
-          preferences.hiddenNavigation
-            .map(
-              id =>
-                `<button type="button" data-restore-nav="${id}">${glyph(id === 'designs' ? 'design' : id)}<span>${id === 'designs' ? 'Design' : id[0].toUpperCase() + id.slice(1)}</span></button>`,
-            )
-            .join('') +
-          `<button type="button" data-edit-sidebar>${glyph('mode-write')}<span>Edit sidebar…</span></button>`;
-        positionMenu(event.currentTarget as HTMLElement);
-      });
-    document
-      .getElementById('sidebar-group-sort')
-      ?.addEventListener('click', event =>
-        filterMenu(event.currentTarget as HTMLElement),
-      );
+    function openSidebarEditor(button: HTMLElement) {
+      root.innerHTML =
+        '<div class="mp-library-menu-heading">Sidebar</div>' +
+        ['projects', 'artifacts', 'scheduled', 'designs', 'customize']
+          .map(
+            id =>
+              `<label class="mp-library-nav-option"><input type="checkbox" data-nav-visibility="${id}" ${preferences.hiddenNavigation.includes(id) ? '' : 'checked'} /><span>${id === 'designs' ? 'Design' : id[0].toUpperCase() + id.slice(1)}</span></label>`,
+          )
+          .join('');
+      positionMenu(button);
+    }
     document.addEventListener('pointerdown', event => {
       if (
         !root.contains(event.target as Node) &&
@@ -1728,6 +1712,8 @@
       render,
       changed,
       filterMenu,
+      closeMenu,
+      openSidebarEditor,
       setProjectSubmissionError(key: string, message: string) {
         projectSubmissionErrors.set(key, message);
       },

@@ -106,6 +106,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   min-height: 0;
   padding: 12px 8px 8px;
   background: var(--mp-sidebar);
+  font-family: var(--cds-font-sans);
 }
 
 .mpw-logo-row {
@@ -364,6 +365,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mpw-project-toggle {
+  position: relative;
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
@@ -435,11 +437,19 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mpw-project-chevron {
+  position: absolute;
+  left: -10px;
   display: grid;
   flex: none;
   place-items: center;
   width: 10px;
   color: var(--mp-text-muted);
+  opacity: 0;
+}
+
+.mpw-project-row:is(:hover, :focus-within) .mpw-project-chevron,
+.mpw-project[data-open="false"] .mpw-project-chevron {
+  opacity: 1;
 }
 
 .mpw-project[data-open="true"] .mpw-project-chevron svg {
@@ -458,12 +468,6 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 .mpw-project-name {
   font-size: 12px;
   font-weight: 400;
-}
-
-.mpw-project-count {
-  flex: none;
-  color: var(--mp-text-muted);
-  font-size: 11px;
 }
 
 .mpw-project + .mpw-project {
@@ -498,47 +502,14 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   background: var(--mp-rule-strong);
 }
 
-.side-dot.is-pending {
+.side-dot:is(.is-pending, .is-waiting) {
+  background: var(--mp-clay);
   color: var(--mp-clay);
 }
 
 .side-dot.is-running {
   background: var(--mp-activity-blue);
 }
-
-.side-dot:is(.is-pending, .is-waiting, .is-interrupted, .is-error) {
-  width: 16px;
-  height: 16px;
-  flex-basis: 16px;
-  margin-inline: 4px;
-  border-radius: 0;
-  background: transparent;
-}
-
-.side-dot.is-waiting { color: var(--mp-clay); }
-.side-dot.is-interrupted { color: var(--mp-text-muted); }
-.side-dot.is-error {
-  color: var(--mp-danger);
-}
-
-.side-dot:is(.is-pending, .is-waiting, .is-interrupted, .is-error) svg {
-  width: 16px;
-  height: 16px;
-}
-
-.side-state-label {
-  flex: 0 0 auto;
-  color: var(--mp-text-muted);
-  font-size: 10px;
-  line-height: 16px;
-}
-
-.side-state-label:empty,
-.side-item:hover .side-state-label,
-.side-item[data-menu-open] .side-state-label { display: none; }
-
-.side-item[data-task-state="error"] .side-state-label { color: var(--mp-danger); }
-.side-item[data-task-state="waiting"] .side-state-label { color: var(--mp-clay); }
 
 .side-actions {
   display: flex;

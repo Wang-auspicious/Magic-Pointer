@@ -1413,19 +1413,10 @@ function conversationNode(
           ? ''
           : activity;
   const statusLabel = status ? ConversationState.label(activity) : '';
+  row.title = String(c.title || studioT('convo.untitled'));
   if (status) {
     dot.classList.add(`is-${status}`);
-    dot.innerHTML =
-      status === 'running'
-        ? ''
-        : icon(
-            status === 'error'
-              ? 'ic-warning'
-              : status === 'interrupted'
-                ? 'ic-alarm-clock'
-                : 'ic-list-checks',
-          );
-    dot.title = statusLabel;
+    row.title = `${String(c.title || studioT('convo.untitled'))}\n${statusLabel}`;
     row.dataset.taskState = status;
     row.setAttribute(
       'aria-label',
@@ -1442,9 +1433,6 @@ function conversationNode(
   const title = document.createElement('span');
   title.className = 'side-title';
   title.textContent = String(c.title || studioT('convo.untitled'));
-  const stateLabel = document.createElement('span');
-  stateLabel.className = 'side-state-label';
-  stateLabel.textContent = statusLabel;
   const actions = document.createElement('span');
   actions.className = 'side-actions';
   const ellipsis = document.createElement('span');
@@ -1456,7 +1444,7 @@ function conversationNode(
   ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
   actions.appendChild(buildSessionMenu(c));
-  row.append(dot, title, stateLabel, actions);
+  row.append(dot, title, actions);
   return row;
 }
 
@@ -2329,14 +2317,13 @@ async function renderSidebar() {
     projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
     toggle.append(chevron, projectName);
-    const count = document.createElement('span');
-    count.className = 'mpw-project-count';
-    count.textContent = String(group.items.length);
-    count.setAttribute(
+    toggle.setAttribute(
       'aria-label',
-      `${group.items.length} sessions`,
+      studioT('sidebar.group_summary', {
+        name: group.label,
+        count: String(group.items.length),
+      }),
     );
-    toggle.append(count);
     const actions = document.createElement('span');
     actions.className = 'mpw-project-actions';
     if (group.key && !group.virtual) {
@@ -7536,13 +7523,36 @@ function closeSidebarMenu(restoreFocus = false) {
 
 function openSidebarMenu(button: HTMLElement) {
   closeSidebarMenu();
+  libraryUi.closeMenu();
   const menu = document.createElement('div');
   menu.id = 'sidebar-menu';
   menu.className = 'mp-thread-menu';
   menu.setAttribute('role', 'menu');
+  for (const view of studioLibraries.preferences.hiddenNavigation as string[]) {
+    if (view === 'designs') {
+      continue;
+    }
+    const source = document.querySelector<HTMLElement>(
+      `[data-library-nav="${CSS.escape(view)}"] .mp-nav-label`,
+    );
+    if (!source) {
+      continue;
+    }
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = source.textContent;
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      closeSidebarMenu(true);
+      show(view);
+    });
+    menu.append(item);
+  }
   for (const [label, view, id] of [
-    ['Review', 'personal', 'nav-personal'],
-    ['Design', 'designs', 'nav-designs'],
+    [studioT('sidebar.all_chats'), 'chats', 'nav-chats'],
+    [studioT('sidebar.review'), 'personal', 'nav-personal'],
+    [studioT('sidebar.design'), 'designs', 'nav-designs'],
+    [studioT('sidebar.saved_dashboards'), 'dashboard', 'nav-dashboard'],
   ] as Array<[string, string, string]>) {
     const item = document.createElement('button');
     item.type = 'button';
@@ -7555,6 +7565,20 @@ function openSidebarMenu(button: HTMLElement) {
       event.stopPropagation();
       closeSidebarMenu(true);
       show(view);
+    });
+    menu.append(item);
+  }
+  for (const [label, action] of [
+    [studioT('sidebar.group_sort'), () => libraryUi.filterMenu(button)],
+    [studioT('sidebar.edit'), () => libraryUi.openSidebarEditor(button)],
+  ] as Array<[string, () => void]>) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = label;
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      closeSidebarMenu();
+      action();
     });
     menu.append(item);
   }
