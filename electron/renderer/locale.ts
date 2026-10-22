@@ -563,6 +563,10 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '项目中没有可显示的文件。',
   },
   'files.read_failed': {en: 'Failed to read the file.', zh: '文件读取失败。'},
+  'files.origin_unknown': {
+    en: 'This historical result has no saved execution folder. Open the original file from its folder to view it.',
+    zh: '这条历史结果未保存执行目录，请从原文件所在目录打开查看。',
+  },
   'files.tree_failed': {en: 'Failed to read the file tree.', zh: '文件树读取失败。'},
   'files.truncated': {en: ' · truncated', zh: ' · 已截断'},
   'git.clean': {en: 'Worktree clean', zh: '工作树干净'},

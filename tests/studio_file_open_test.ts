@@ -10,6 +10,8 @@ const {readProjectPreview} = require('../electron/project_inspector');
 const {EventSession} = require('../electron/runtime/session');
 const {ToolRegistry} = require('../electron/runtime/tools');
 const {registerCodingTools} = require('../electron/runtime/agent_files');
+const {RuntimeActivitySink} = require('../electron/runtime/agent_activity');
+const {createConversationStore} = require('../electron/conversation_store');
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const ast = ts.createSourceFile(
   'studio.ts',
@@ -24,6 +26,8 @@ const names = [
   'refreshProjectInspector',
   'renderSelectedProjectFile',
   'activateWorkspaceResource',
+  'renderProjectFileTree',
+  'normalizedProjectRoot',
 ];
 const code = names
   .map(name => {
@@ -77,6 +81,7 @@ const compiledFileHandlers = ts.transpileModule(fileHandlerCode, {
 function fixture(root: string) {
   const handlers = new Map<string, (...args: any[]) => Promise<any>>();
   const openedPaths: string[] = [];
+  const knownRoots = new Set([root]);
   const mainContext = {
     ipcMain: {
       handle: (name: string, callback: (...args: any[]) => Promise<any>) =>
@@ -84,7 +89,7 @@ function fixture(root: string) {
     },
     isDashboardSender: () => true,
     knownProjectRoot: (requested: string) =>
-      requested && requested === root ? root : null,
+      requested && knownRoots.has(requested) ? requested : null,
     path,
     projectPath: require('../electron/project_inspector').projectPath,
     readProjectPreview,
@@ -133,7 +138,17 @@ function fixture(root: string) {
         this.children = children;
       },
       append(...children: any[]) {
+        for (const child of children) {
+          child.parentNode = this;
+        }
         this.children.push(...children);
+      },
+      remove() {
+        if (this.parentNode) {
+          this.parentNode.children = this.parentNode.children.filter(
+            (child: any) => child !== this,
+          );
+        }
       },
       prepend(...children: any[]) {
         this.children.unshift(...children);
@@ -265,6 +280,8 @@ function fixture(root: string) {
     syncInspectorGeometry() {},
     closeProjectBrowserView() {},
     renderProjectFileTree() {},
+    icon: () => '',
+    esc: (value: string) => value,
     loadProjectDirectory: async () => {
       ctx.projectTreeCache.set('', []);
     },
@@ -272,8 +289,271 @@ function fixture(root: string) {
   vm.createContext(ctx);
   vm.runInContext(compiled, ctx);
   vm.runInContext(openCode, ctx);
-  return {ctx, nodes, openedPaths};
+  return {ctx, nodes, openedPaths, knownRoots};
 }
+
+async function clickDelivered(ctx: any, turn: any, file: string) {
+  const html = ctx.ChatView.assistantTurnNode(turn)
+    .map((n: any) => n.outerHTML)
+    .join('');
+  const button = [
+    ...html.matchAll(/<button[^>]*data-mp-chat-act="open-file"[^>]*>/g),
+  ]
+    .map(match => match[0])
+    .find(tag => tag.includes(`data-file-path="${file}"`));
+  assert.ok(button, file);
+  const attrs = Object.fromEntries(
+    [...button.matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [
+      match[1],
+      match[2],
+    ]),
+  );
+  const events = new Map<string, (event: any) => void>();
+  let pending: Promise<void> | undefined;
+  ctx.DOC = {
+    dispatchEvent: (event: any) => {
+      pending = ctx.openDelivered(event);
+      return true;
+    },
+  };
+  ctx.CustomEvent = class {
+    detail: any;
+    constructor(_type: string, options: any) {
+      this.detail = options.detail;
+    }
+  };
+  ctx.rememberGroupToggle = () => {};
+  ctx.fileHost = {
+    addEventListener: (name: string, listener: (event: any) => void) =>
+      events.set(name, listener),
+  };
+  vm.runInContext(`(${ctx.ChatView.bindDelegation.toString()})(fileHost)`, ctx);
+  events.get('click')!({
+    target: {closest: () => ({getAttribute: (name: string) => attrs[name]})},
+  });
+  await pending;
+}
+
+test('a relative file receipt reopens its actual execution target with no project or another project selected', async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-origin-file-'));
+  try {
+    const origin = path.join(base, 'origin');
+    const other = path.join(base, 'other');
+    fs.mkdirSync(origin);
+    fs.mkdirSync(other);
+    fs.writeFileSync(path.join(other, 'result.txt'), 'wrong project file\n');
+    const session = await EventSession.open(origin, 'agent-origin-file');
+    const registry = new ToolRegistry();
+    registerCodingTools(registry, origin, session);
+    const result = await registry.execute({
+      id: 'origin-write',
+      name: 'Write',
+      arguments: {path: 'result.txt', content: 'actual execution file\n'},
+    });
+    assert.equal(result.is_error, false, result.error_message);
+    assert.equal((result.value as any).path, 'result.txt');
+    const sink = new RuntimeActivitySink(() => {});
+    sink.onEvent({kind: 'tool_call_finished', result});
+    const store = createConversationStore({baseDir: origin});
+    const saved = store.appendTurn({
+      newConversation: true,
+      question: 'Write a result',
+      answer: 'Saved',
+      trajectory: sink.trajectory,
+    });
+    store.flush();
+    const turn = createConversationStore({baseDir: origin}).get(saved.id)
+      .turns[0];
+    const local = fixture(origin);
+    await clickDelivered(local.ctx, turn, 'result.txt');
+    local.nodes.set(
+      'project-file-tree',
+      local.ctx.document.createElement('div'),
+    );
+    local.ctx.projectTreeCache.set('', [
+      {path: 'result.txt', name: 'result.txt', kind: 'file'},
+    ]);
+    local.ctx.renderProjectFileTree();
+    assert.equal(
+      local.nodes
+        .get('project-file-tree')
+        .children[0].classList.contains('is-on'),
+      true,
+    );
+    const states = [];
+    for (const selectedRoot of ['', other, origin]) {
+      const {ctx, nodes, knownRoots} = fixture(selectedRoot);
+      await clickDelivered(ctx, turn, 'result.txt');
+      assert.equal(ctx.activeProjectRoot, selectedRoot);
+      if (selectedRoot === origin) {
+        knownRoots.add(other);
+        ctx.activeProjectRoot = other;
+        const select = ctx.selectProjectFile;
+        let pending: Promise<void> | undefined;
+        ctx.selectProjectFile = (...args: any[]) => (pending = select(...args));
+        ctx.activateWorkspaceResource(ctx.workspaceResourceTabs[0].id);
+        await pending;
+      }
+      states.push({
+        picker: ctx.pickerCalls,
+        content: nodes.get('project-file-content').textContent,
+      });
+    }
+    assert.deepEqual(
+      states,
+      Array.from({length: 3}, () => ({
+        picker: 0,
+        content: 'actual execution file\n',
+      })),
+    );
+  } finally {
+    fs.rmSync(base, {recursive: true, force: true});
+  }
+});
+
+test('a deleted relative target retains its original snapshot after another project is selected', async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-origin-snapshot-'));
+  try {
+    const origin = path.join(base, 'origin');
+    const other = path.join(base, 'other');
+    fs.mkdirSync(origin);
+    fs.mkdirSync(other);
+    fs.writeFileSync(
+      path.join(origin, 'gone.txt'),
+      'original deleted content\n',
+    );
+    fs.writeFileSync(
+      path.join(other, 'gone.txt'),
+      'unrelated present content\n',
+    );
+    const session = await EventSession.open(origin, 'agent-origin-snapshot');
+    const registry = new ToolRegistry();
+    registerCodingTools(registry, origin, session);
+    const result = await registry.execute({
+      id: 'origin-delete',
+      name: 'Patch',
+      arguments: {
+        patch: '*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch',
+      },
+    });
+    assert.equal(result.is_error, false, result.error_message);
+    for (const selectedRoot of ['', other]) {
+      const {ctx, nodes} = fixture(selectedRoot);
+      await clickDelivered(
+        ctx,
+        {
+          answer: 'Deleted',
+          trajectory: [
+            {kind: 'tool', name: 'Patch', result: JSON.stringify(result.value)},
+          ],
+        },
+        'gone.txt',
+      );
+      assert.equal(ctx.pickerCalls, 0);
+      assert.equal(ctx.selectedProjectFileText, 'original deleted content\n');
+      assert.equal(ctx.selectedProjectFileSnapshot, true);
+      assert.equal(nodes.get('project-file-open').disabled, true);
+    }
+  } finally {
+    fs.rmSync(base, {recursive: true, force: true});
+  }
+});
+
+test('older relative file and snapshot receipts use the saved turn execution directory', async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-legacy-origin-'));
+  try {
+    const origin = path.join(base, 'worktree');
+    const other = path.join(base, 'project');
+    fs.mkdirSync(origin);
+    fs.mkdirSync(other);
+    fs.writeFileSync(path.join(origin, 'result.txt'), 'saved worktree file\n');
+    fs.writeFileSync(
+      path.join(other, 'result.txt'),
+      'wrong base-project file\n',
+    );
+    const snapshot = path
+      .join('.mp', 'checkpoints', 'old.bin.txt')
+      .replace(/\\/g, '/');
+    fs.mkdirSync(path.join(origin, '.mp', 'checkpoints'), {recursive: true});
+    fs.writeFileSync(path.join(origin, snapshot), 'saved deleted content\n');
+    const trajectory = [
+      {
+        kind: 'tool',
+        name: 'Write',
+        result: JSON.stringify({path: 'result.txt', created: true}),
+      },
+      {
+        kind: 'tool',
+        name: 'Patch',
+        result: JSON.stringify({
+          fileChanges: [
+            {path: 'gone.txt', exists: false, previewPath: snapshot},
+          ],
+        }),
+      },
+    ];
+    const store = createConversationStore({baseDir: base});
+    const saved = store.appendTurn({
+      newConversation: true,
+      question: 'Older change',
+      answer: 'Saved',
+      workspaceRoot: other,
+      request: {executionWorkspaceRoot: origin},
+      trajectory,
+    });
+    store.flush();
+    const turn = createConversationStore({baseDir: base}).get(saved.id)
+      .turns[0];
+    const {ctx, nodes} = fixture(other);
+    await clickDelivered(ctx, turn, 'result.txt');
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'saved worktree file\n',
+    );
+    await clickDelivered(ctx, turn, 'gone.txt');
+    assert.equal(ctx.selectedProjectFileText, 'saved deleted content\n');
+    assert.equal(ctx.selectedProjectFileSnapshot, true);
+    assert.equal(ctx.activeProjectRoot, other);
+  } finally {
+    fs.rmSync(base, {recursive: true, force: true});
+  }
+});
+
+test('an older relative receipt without an execution directory explains the missing origin instead of reading another project', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-unknown-origin-'));
+  try {
+    fs.writeFileSync(
+      path.join(root, 'result.txt'),
+      'wrong current-project file\n',
+    );
+    const {ctx, nodes} = fixture(root);
+    await clickDelivered(
+      ctx,
+      {
+        answer: 'Saved',
+        trajectory: [
+          {
+            kind: 'tool',
+            name: 'Write',
+            result: JSON.stringify({path: 'result.txt'}),
+          },
+        ],
+      },
+      'result.txt',
+    );
+    assert.equal(nodes.get('project-file-content').textContent, '');
+    const notice = ctx.document.body.children.find(
+      (node: any) => node.getAttribute('role') === 'alert',
+    );
+    assert.ok(notice);
+    assert.match(notice.textContent, /result.txt.*files.origin_unknown/);
+    assert.equal(ctx.pickerCalls, 0);
+    notice.children[0].click();
+    assert.equal(ctx.document.body.children.length, 0);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
 
 test('a delivered file in an additional folder opens the actual absolute target without confusing a shared directory prefix', async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-external-delivered-'));
@@ -473,7 +753,10 @@ test('a deleted-file action opens its actual retained snapshot and restores that
     });
     await delivered;
     await selected;
-    assert.equal(ctx.selectedProjectFile, change.previewPath);
+    assert.equal(
+      path.resolve(root, ctx.selectedProjectFile),
+      path.resolve(root, change.previewPath),
+    );
     assert.equal(ctx.selectedProjectFileSnapshot, true);
     assert.match(
       nodes.get('project-file-name').textContent,

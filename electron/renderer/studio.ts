@@ -7425,13 +7425,36 @@ document.addEventListener('mp:open-artifact', (event: Event) => {
 
 document.addEventListener('mp:open-file', async (event: Event) => {
   const detail = (
-    event as CustomEvent<{path?: string; previewPath?: string}>
+    event as CustomEvent<{
+      path?: string;
+      absolutePath?: string;
+      previewPath?: string;
+      originUnknown?: boolean;
+    }>
   ).detail;
   const raw = String(detail?.path || '').trim();
   const previewPath = String(detail?.previewPath || '').trim();
-  const readPath = previewPath || raw;
+  const absolutePath = String(detail?.absolutePath || '').trim();
+  const readPath = previewPath || absolutePath || raw;
   const root = String(activeProjectRoot || '').replace(/[\\/]+$/, '');
   if (!raw) {
+    return;
+  }
+  if (detail?.originUnknown) {
+    document.getElementById('delivered-file-error')?.remove();
+    const notice = document.createElement('div');
+    notice.id = 'delivered-file-error';
+    notice.className = 'notice';
+    notice.setAttribute('role', 'alert');
+    notice.textContent = `${raw}: ${studioT('files.origin_unknown')}`;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'close';
+    close.setAttribute('aria-label', studioT('common.close'));
+    close.textContent = '×';
+    close.addEventListener('click', () => notice.remove());
+    notice.append(close);
+    document.body.append(notice);
     return;
   }
   const absolute =
@@ -7441,6 +7464,8 @@ document.addEventListener('mp:open-file', async (event: Event) => {
   const normalizedRead = readPath.replace(/\\/g, '/');
   const normalizedRoot = root.replace(/\\/g, '/');
   const relative =
+    !previewPath &&
+    !absolutePath &&
     absolute &&
     root &&
     normalizedRead.toLowerCase().startsWith(normalizedRoot.toLowerCase() + '/')
@@ -7457,7 +7482,9 @@ document.addEventListener('mp:open-file', async (event: Event) => {
     relative,
     previewPath
       ? {snapshot: true, title: `${raw} · ${studioT('files.deleted')}`}
-      : {},
+      : absolutePath
+        ? {title: raw}
+        : {},
   );
 });
 
@@ -8337,6 +8364,12 @@ function renderProjectFileTree() {
     return;
   }
   const query = projectFileTreeFilter.trim().toLocaleLowerCase();
+  const root = normalizedProjectRoot(activeProjectRoot);
+  const selected = normalizedProjectRoot(selectedProjectFile);
+  const selectedPath =
+    root && selected.startsWith(root + '/')
+      ? selected.slice(root.length + 1)
+      : selected;
   const buildLevel = (directory: string, depth: number): Node[] => {
     const nodes: Node[] = [];
     for (const entry of projectTreeCache.get(directory) || []) {
@@ -8351,7 +8384,7 @@ function renderProjectFileTree() {
       row.type = 'button';
       row.className =
         'mp-file-tree-row' +
-        (entry.path === selectedProjectFile ? ' is-on' : '');
+        (normalizedProjectRoot(entry.path) === selectedPath ? ' is-on' : '');
       row.dataset.projectPath = entry.path;
       row.dataset.projectKind = entry.kind;
       row.dataset.depth = String(depth);

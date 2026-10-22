@@ -3517,6 +3517,7 @@ const ChatView = (() => {
 
   interface DeliveredFile {
     path: string;
+    absolutePath?: string;
     name: string;
     added: number;
     removed: number;
@@ -3548,9 +3549,17 @@ const ChatView = (() => {
     return path.replace(/\\/g, '/');
   }
 
+  function executionFilePath(file: string, root: string): string {
+    if (!root || /^(?:[a-z]:[\\/]|[\\/])/i.test(file)) {
+      return file;
+    }
+    return root.replace(/[\\/]+$/, '') + '/' + file.replace(/\\/g, '/');
+  }
+
   // A result is a file the agent actually wrote, not a claim about one.
   function deliveredFiles(
     trajectory: Array<Record<string, unknown>> | undefined,
+    executionRoot: string,
   ): DeliveredFile[] {
     const byPath = new Map<string, DeliveredFile>();
     for (const record of trajectory || []) {
@@ -3613,13 +3622,18 @@ const ChatView = (() => {
                   ))));
         byPath.set(key, {
           path,
+          ...(typeof change.absolutePath === 'string'
+            ? {absolutePath: change.absolutePath}
+            : executionRoot
+              ? {absolutePath: executionFilePath(path, executionRoot)}
+              : {}),
           name: path.split(/[\\/]/).pop() || path,
           added: stat ? stat.added : 0,
           removed: stat ? stat.removed : 0,
           created,
           deleted: change.exists === false,
           ...(typeof change.previewPath === 'string'
-            ? {previewPath: change.previewPath}
+            ? {previewPath: executionFilePath(change.previewPath, executionRoot)}
             : {}),
         });
       }
@@ -3741,12 +3755,19 @@ const ChatView = (() => {
         deliveredFileKey(item.path) !== deliveredFileKey(artifactPath),
     );
     const fileRow = (file: DeliveredFile): ChatNode => {
+      const target = file.previewPath || file.absolutePath || file.path;
       const row = h('button', {
         type: 'button',
         class: 'mp-chat-file-row',
         'data-mp-chat-act': 'open-file',
         'data-file-path': file.path,
+        ...(file.absolutePath
+          ? {'data-file-absolute-path': file.absolutePath}
+          : {}),
         'data-file-state': file.deleted ? 'deleted' : 'present',
+        ...(!/^(?:[a-z]:[\\/]|[\\/])/i.test(target)
+          ? {'data-file-origin-unknown': 'true'}
+          : {}),
         ...(file.previewPath ? {'data-preview-path': file.previewPath} : {}),
       });
       const mark = h('span', {
@@ -3912,6 +3933,7 @@ const ChatView = (() => {
   }
 
   interface AssistantTurnInput {
+    request?: Record<string, unknown>;
     answer?: string;
     thinking?: string;
     trace?: Array<
@@ -4890,7 +4912,10 @@ const ChatView = (() => {
     }
     const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
     const results = fileResultsNode(
-      deliveredFiles(turn.trajectory),
+      deliveredFiles(
+        turn.trajectory,
+        String(turn.request?.executionWorkspaceRoot || ''),
+      ),
       artifacts,
       String(turn.conversationId || ''),
     );
@@ -5791,9 +5816,17 @@ const ChatView = (() => {
           return;
         }
         const previewPath = act.getAttribute('data-preview-path') || '';
+        const absolutePath = act.getAttribute('data-file-absolute-path') || '';
+        const originUnknown =
+          act.getAttribute('data-file-origin-unknown') === 'true';
         DOC.dispatchEvent(
           new CustomEvent('mp:open-file', {
-            detail: {path, ...(previewPath ? {previewPath} : {})},
+            detail: {
+              path,
+              ...(absolutePath ? {absolutePath} : {}),
+              ...(previewPath ? {previewPath} : {}),
+              ...(originUnknown ? {originUnknown} : {}),
+            },
           }),
         );
       } else if (kind === 'branch') {

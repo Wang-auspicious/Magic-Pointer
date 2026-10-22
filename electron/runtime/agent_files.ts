@@ -231,6 +231,7 @@ export class WorkspaceFiles {
           : null;
     return {
       path: this.display(file),
+      absolutePath: file.replaceAll('\\', '/'),
       exists: after !== null,
       created: before.original === null && after !== null,
       turnCreated: baseline === null && after !== null,
@@ -248,8 +249,9 @@ export class WorkspaceFiles {
             : lineChangeStat(baseline?.toString('utf8') || '', finalText),
       ...(after === null && baselinePath
         ? {
-            previewPath: this.display(
-              this.deletionPreviewPath(file, baselinePath),
+            previewPath: this.deletionPreviewPath(file, baselinePath).replaceAll(
+              '\\',
+              '/',
             ),
           }
         : {}),
