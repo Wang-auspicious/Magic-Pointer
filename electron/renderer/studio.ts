@@ -2335,8 +2335,8 @@ async function renderSidebar() {
       const tools = document.createElement('button');
       tools.type = 'button';
       tools.dataset.projectTools = group.key;
-      tools.setAttribute('aria-label', studioT('sidebar.project_settings'));
-      tools.title = studioT('sidebar.project_settings');
+      tools.setAttribute('aria-label', studioT('environment.edit'));
+      tools.title = studioT('environment.edit');
       tools.innerHTML = icon('ic-sliders');
       actions.append(add, tools);
     }
@@ -2491,6 +2491,7 @@ async function openProjectFromPicker(preserveProjectId?: string) {
   }
   setWorkspaceNote('');
   invalidateProjectCache();
+  await warmProjects();
   setActiveProject(picked.project.root, preserveProjectId ?? picked.project.id);
   startNewChat();
   await renderSidebar();
@@ -6318,6 +6319,7 @@ function captureComposerDraft(): void {
     returnToProject: windowNavigation.draft(owner.location)?.returnToProject,
     modelSelection: currentComposerModelSelection(),
     permissionPreset: composerPreset,
+    effort: composerEffort,
   });
 }
 
@@ -6329,6 +6331,16 @@ function restoreComposerDraft(
   >,
 ): void {
   const draft = windowNavigation.draft(location);
+  const project = ProjectScope.find(
+    cachedProjects || [],
+    activeProjectId || activeProjectRoot,
+  );
+  const environment =
+    location.kind === 'draft' && !draft && !saved
+      ? project?.environments?.find(
+          item => item.id === project.defaultEnvironmentId,
+        )
+      : undefined;
   const textarea = document.querySelector<HTMLTextAreaElement>(
     '#composer-form textarea',
   );
@@ -6338,9 +6350,13 @@ function restoreComposerDraft(
   }
   composerAttachments = [...(draft?.attachments || [])];
   composerAdditionalFolders = [
-    ...(draft?.additionalFolders ?? saved?.additionalFolders ?? []),
+    ...(draft?.additionalFolders ??
+      saved?.additionalFolders ??
+      environment?.additionalFolders ??
+      []),
   ];
-  const selection = draft?.modelSelection ?? saved?.modelSelection;
+  const selection =
+    draft?.modelSelection ?? saved?.modelSelection ?? environment?.modelSelection;
   composerModelSelection = selection ? {...selection} : undefined;
   const savedPreset = permPresets.presetForMode(
     saved?.taskContext?.permissionMode,
@@ -6350,7 +6366,14 @@ function restoreComposerDraft(
       ? draft?.permissionPreset
       : savedPreset) ??
     draft?.permissionPreset ??
+    environment?.permissionPreset ??
     defaultComposerPreset;
+  composerEffort =
+    draft?.effort ??
+    saved?.taskContext?.effort ??
+    environment?.effort ??
+    defaultComposerEffort;
+  renderEffortChip();
   renderPermissionChip();
   renderComposerModel();
   renderComposerFolders();
@@ -10577,7 +10600,23 @@ document.addEventListener('click', e => {
   }
   const projectTools = target.closest<HTMLElement>('[data-project-tools]');
   if (projectTools) {
-    libraryUi.openProject(projectTools.dataset.projectTools || '');
+    const project = ProjectScope.find(
+      cachedProjects || [],
+      projectTools.dataset.projectTools || '',
+    );
+    if (project) {
+      void globalThis.ProjectEnvironments.open(
+        project,
+        Data,
+        async updated => {
+          cachedProjects = (cachedProjects || []).map(item =>
+            ProjectScope.key(item) === ProjectScope.key(updated) ? updated : item,
+          );
+          await renderSidebar();
+        },
+        projectTools,
+      );
+    }
     return;
   }
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
@@ -11051,8 +11090,10 @@ let composerEffort = (() => {
     return 'xhigh';
   }
 })();
+let defaultComposerEffort = composerEffort;
 
 function persistEffort() {
+  defaultComposerEffort = composerEffort;
   try {
     localStorage.setItem(EFFORT_STORAGE_KEY, composerEffort);
   } catch {
@@ -13954,6 +13995,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         windowNavigation.draft(navigationLocation)?.returnToProject,
       modelSelection: currentComposerModelSelection(),
       permissionPreset: composerPreset,
+      effort: composerEffort,
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];

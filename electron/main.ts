@@ -4241,7 +4241,6 @@ async function sendConversation(
   const conversationId = String(raw?.conversationId || '')
     .trim()
     .slice(0, 120);
-  const effort = normalizeConversationEffort(raw?.effort);
   const requestId =
     String(raw?.requestId || crypto.randomUUID())
       .trim()
@@ -4261,13 +4260,24 @@ async function sendConversation(
       ].slice(0, 32)
     : [];
   let existing = conversationId ? conversations().get(conversationId) : null;
+  const environmentProject: ProjectRecord | undefined = !existing
+    ? conversations().getProject(
+        typeof raw.projectId === 'string' ? raw.projectId.trim() : workspaceRoot,
+      )
+    : undefined;
+  const environment = environmentProject?.environments?.find(
+    item => item.id === environmentProject.defaultEnvironmentId,
+  );
+  const effort = normalizeConversationEffort(raw.effort ?? environment?.effort);
   let permissionPreset: PermissionPreset;
   try {
     if (existing && raw.permissionPreset === undefined && !modelCommand) {
       existing = await restoreConversationContext(existing);
     }
     permissionPreset =
-      normalizePermissionPreset(raw.permissionPreset) ??
+      normalizePermissionPreset(
+        raw.permissionPreset ?? environment?.permissionPreset,
+      ) ??
       presetForPermissionMode(existing?.taskContext?.permissionMode) ??
       'workspace-write';
   } catch (error) {
@@ -4422,7 +4432,10 @@ async function sendConversation(
   try {
     additionalFolders = await validateAdditionalFolders(
       projectRoot,
-      raw.additionalFolders ?? existing?.additionalFolders ?? [],
+      raw.additionalFolders ??
+        existing?.additionalFolders ??
+        environment?.additionalFolders ??
+        [],
     );
   } catch (error) {
     return {
@@ -4523,7 +4536,9 @@ async function sendConversation(
   let modelSelection: ConversationModelSelection;
   try {
     const requested =
-      normalizeModelSelection(raw.modelSelection) ?? existing?.modelSelection;
+      normalizeModelSelection(raw.modelSelection) ??
+      existing?.modelSelection ??
+      environment?.modelSelection;
     const runtime = activeModelRuntimeConfig(requested);
     modelRuntime = resolveModelConfig(runtime, ROOT, FABRIC_DATA_DIR);
     modelSelection = {

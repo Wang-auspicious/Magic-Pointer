@@ -19,6 +19,7 @@ declare global {
     returnToProject?: string;
     modelSelection?: MagicPointerModelSelection;
     permissionPreset?: MagicPointerPermissionPreset;
+    effort?: string;
     projectId?: string;
   }
 

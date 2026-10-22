@@ -1,4 +1,15 @@
 import path from 'node:path';
+import type {ConversationModelSelection} from './conversation_model';
+import type {PermissionPreset} from './permission_mode';
+
+export interface ProjectRunEnvironment {
+  id: string;
+  name: string;
+  modelSelection?: ConversationModelSelection;
+  permissionPreset?: PermissionPreset;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  additionalFolders?: string[];
+}
 
 export interface ProjectDocument {
   id: string;
@@ -40,6 +51,8 @@ export function resolveProjectMaterial(
 }
 
 export interface ProjectContext {
+  environments?: ProjectRunEnvironment[];
+  defaultEnvironmentId?: string;
   resourceInbox?: Array<{id: string; title: string; summary: string; path: string}>;
   id?: string;
   root: string;
@@ -51,6 +64,8 @@ export interface ProjectContext {
 }
 
 export interface ProjectDetailsPatch {
+  environments?: ProjectRunEnvironment[];
+  defaultEnvironmentId?: string;
   name?: string;
   description?: string;
   instructions?: string;

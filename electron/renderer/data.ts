@@ -281,6 +281,8 @@ declare global {
   };
 
   interface MagicPointerProject {
+    environments?: Array<import('../project_context').ProjectRunEnvironment>;
+    defaultEnvironmentId?: string;
     id?: string;
     root: string;
     name: string;
@@ -300,6 +302,8 @@ declare global {
 
   type MagicPointerProjectPatch = Pick<
     Partial<MagicPointerProject>,
+    | 'environments'
+    | 'defaultEnvironmentId'
     | 'name'
     | 'description'
     | 'instructions'
