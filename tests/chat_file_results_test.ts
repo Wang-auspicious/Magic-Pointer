@@ -67,3 +67,49 @@ test('failed or unfinished writes cannot create delivered file rows', () => {
   assert.match(html, /data-file-path="saved.ts"/);
   assert.doesNotMatch(html, /data-file-path="(?:failed|pending)\.ts"/);
 });
+
+test('edited files use the reference edit label instead of claiming creation', () => {
+  const html = card([
+    {
+      kind: 'tool',
+      name: 'Edit',
+      text: JSON.stringify({
+        path: 'index.ts',
+        old_string: 'old',
+        new_string: 'new',
+      }),
+      result: 'done',
+    },
+  ]);
+  assert.match(html, /mp-chat-files-title">Edited a file</);
+});
+
+test('a write receipt distinguishes overwriting an existing file from creating a new one', () => {
+  const existing = {
+    ...write('existing.ts'),
+    result: JSON.stringify({path: 'existing.ts', created: false}),
+  };
+  assert.match(card([existing]), /mp-chat-files-title">Edited a file</);
+  assert.match(
+    card([write('new.ts'), existing]),
+    /mp-chat-files-title">Edited a file, created a file</,
+  );
+});
+
+test('a file created and then edited in one turn is counted once as a created file', () => {
+  const html = card([
+    write('index.ts'),
+    {
+      kind: 'tool',
+      name: 'Edit',
+      text: JSON.stringify({
+        path: 'index.ts',
+        old_string: '1',
+        new_string: '2',
+      }),
+      result: 'done',
+    },
+  ]);
+  assert.match(html, /mp-chat-files-title">Created a file</);
+  assert.equal((html.match(/data-mp-chat-act="open-file"/g) || []).length, 1);
+});

@@ -144,7 +144,7 @@ export class WorkspaceFiles {
       );
     }
   }
-  async checkpoint(file: string): Promise<void> {
+  async checkpoint(file: string): Promise<boolean> {
     await mkdir(this.checkpointDir, {recursive: true});
     const old = (await exists(file)) ? await readFile(file) : null;
     const id = `${Date.now()}-${randomUUID()}`;
@@ -162,6 +162,7 @@ export class WorkspaceFiles {
     } finally {
       await handle.close();
     }
+    return old !== null;
   }
   async write(
     file: string,
@@ -176,7 +177,7 @@ export class WorkspaceFiles {
       !preserveExactText && path.extname(file).toLowerCase() === '.csv'
         ? encodeCsv(content)
         : Buffer.from(content);
-    await this.checkpoint(file);
+    const existed = await this.checkpoint(file);
     await mkdir(path.dirname(file), {recursive: true});
     await writeFile(file, body);
     if (!body.equals(await readFile(file))) {
@@ -185,6 +186,7 @@ export class WorkspaceFiles {
     this.readVersions.set(file, body.toString('utf8'));
     return {
       path: this.display(file),
+      created: !existed,
       message: `Wrote ${body.length} bytes`,
       verification: {
         matched: true,

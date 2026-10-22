@@ -3473,6 +3473,7 @@ const ChatView = (() => {
     name: string;
     added: number;
     removed: number;
+    created: boolean;
   }
 
   const FILE_WRITE_TOOLS = new Set([
@@ -3517,11 +3518,20 @@ const ChatView = (() => {
       if (!path) {
         continue;
       }
-      byPath.set(deliveredFileKey(path), {
+      const key = deliveredFileKey(path);
+      const previous = byPath.get(key);
+      const result = outputRecord(String(record.result));
+      const created =
+        previous?.created ??
+        (result?.created === true ||
+          (result?.created !== false &&
+            ['Write', 'write_file', 'write'].includes(String(record.name))));
+      byPath.set(key, {
         path,
         name: path.split(/[\\/]/).pop() || path,
         added: stat ? stat.added : 0,
         removed: stat ? stat.removed : 0,
+        created,
       });
     }
     return [...byPath.values()];
@@ -3546,9 +3556,16 @@ const ChatView = (() => {
       : '';
     attach(
       title,
-      label
-        ? `Published artifact ${label}`
-        : `Created ${files.length === 1 ? files[0].name : `${files.length} files`}`,
+      artifact
+        ? `Published artifact${label ? ` ${label}` : ''}`
+        : toolGroupLabel(
+            files.map(file => ({
+              name: file.created ? 'Write' : 'Edit',
+              argsRaw: '{}',
+              callId: file.path,
+              result: {text: '', isError: false},
+            })),
+          ),
     );
     attach(head, title);
     if (artifact) {
