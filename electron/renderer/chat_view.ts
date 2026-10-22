@@ -1705,7 +1705,7 @@ const ChatView = (() => {
   }
 
   interface DiffBlock {
-    kind: 'del' | 'add';
+    kind: 'del' | 'add' | 'context' | 'notice';
     text: string;
   }
   interface DiffView {
@@ -1720,6 +1720,93 @@ const ChatView = (() => {
     if (text) {
       out.push({kind, text});
     }
+  }
+
+  function replacementDiff(before: string, after: string): DiffBlock[] | null {
+    const oldLines = before.match(/[^\n]*\n|[^\n]+$/g) || [];
+    const newLines = after.match(/[^\n]*\n|[^\n]+$/g) || [];
+    let start = 0;
+    let oldEnd = oldLines.length;
+    let newEnd = newLines.length;
+    while (
+      start < oldEnd &&
+      start < newEnd &&
+      oldLines[start] === newLines[start]
+    ) {
+      start++;
+    }
+    while (
+      oldEnd > start &&
+      newEnd > start &&
+      oldLines[oldEnd - 1] === newLines[newEnd - 1]
+    ) {
+      oldEnd--;
+      newEnd--;
+    }
+    const groups: Array<{kind: DiffBlock['kind']; parts: string[]}> = [];
+    const push = (kind: DiffBlock['kind'], text: string): void => {
+      if (!text) {
+        return;
+      }
+      const last = groups.at(-1);
+      if (last?.kind === kind) {
+        last.parts.push(text);
+      } else {
+        groups.push({kind, parts: [text]});
+      }
+    };
+    push('context', oldLines.slice(0, start).join(''));
+    const oldCount = oldEnd - start;
+    const newCount = newEnd - start;
+    const oldSet = new Set(oldLines.slice(start, oldEnd));
+    if (!newLines.slice(start, newEnd).some(line => oldSet.has(line))) {
+      push('del', oldLines.slice(start, oldEnd).join(''));
+      push('add', newLines.slice(start, newEnd).join(''));
+    } else {
+      // Optional inline comparisons must not stall the UI. At this budget the
+      // table is under 2 MiB; larger comparisons retain separate full texts.
+      if (oldCount * newCount > 200_000) {
+        return null;
+      }
+      const width = newCount + 1;
+      const lengths = new Uint32Array((oldCount + 1) * width);
+      for (let i = oldCount - 1; i >= 0; i--) {
+        for (let j = newCount - 1; j >= 0; j--) {
+          lengths[i * width + j] =
+            oldLines[start + i] === newLines[start + j]
+              ? lengths[(i + 1) * width + j + 1] + 1
+              : Math.max(
+                  lengths[(i + 1) * width + j],
+                  lengths[i * width + j + 1],
+                );
+        }
+      }
+      let i = 0;
+      let j = 0;
+      while (i < oldCount || j < newCount) {
+        if (
+          i < oldCount &&
+          j < newCount &&
+          oldLines[start + i] === newLines[start + j]
+        ) {
+          push('context', oldLines[start + i++]);
+          j++;
+        } else if (
+          j === newCount ||
+          (i < oldCount &&
+            lengths[(i + 1) * width + j] >= lengths[i * width + j + 1])
+        ) {
+          push('del', oldLines[start + i++]);
+        } else {
+          push('add', newLines[start + j++]);
+        }
+      }
+    }
+    push('context', oldLines.slice(oldEnd).join(''));
+    return groups.map(group => ({
+      kind: group.kind,
+      text: group.parts.join(''),
+    }));
   }
 
   function deriveDiff(name: string, argsRaw: string): DiffView | null {
@@ -1743,16 +1830,27 @@ const ChatView = (() => {
         if (!edit) {
           continue;
         }
-        appendDiffBlock(
-          firstString(edit, ['old_string', 'oldText', 'old_str']),
-          'del',
-          view.blocks,
-        );
-        appendDiffBlock(
-          firstString(edit, ['new_string', 'newText', 'new_str']),
-          'add',
-          view.blocks,
-        );
+        const before = firstString(edit, [
+          'old_string',
+          'oldText',
+          'old_str',
+        ]).replace(/\r\n/g, '\n');
+        const after = firstString(edit, [
+          'new_string',
+          'newText',
+          'new_str',
+        ]).replace(/\r\n/g, '\n');
+        const blocks = replacementDiff(before, after);
+        if (blocks) {
+          view.blocks.push(...blocks);
+        } else {
+          view.blocks.push({
+            kind: 'notice',
+            text: lt('chat.diff_separate_text'),
+          });
+          appendDiffBlock(before, 'del', view.blocks);
+          appendDiffBlock(after, 'add', view.blocks);
+        }
       }
       return view.blocks.length ? view : null;
     }
@@ -1831,7 +1929,22 @@ const ChatView = (() => {
       if (!oldText && !newText) {
         return null;
       }
-      return {added: countLines(newText), removed: countLines(oldText)};
+      const blocks = replacementDiff(
+        oldText.replace(/\r\n/g, '\n'),
+        newText.replace(/\r\n/g, '\n'),
+      );
+      if (!blocks) {
+        return null;
+      }
+      const stat = {added: 0, removed: 0};
+      for (const block of blocks) {
+        if (block.kind === 'add') {
+          stat.added += countLines(block.text);
+        } else if (block.kind === 'del') {
+          stat.removed += countLines(block.text);
+        }
+      }
+      return stat;
     }
     if (name === 'Write' || name === 'write_file' || name === 'write') {
       const content = firstString(args, ['content', 'text', 'new_string']);
@@ -2056,6 +2169,51 @@ const ChatView = (() => {
   }
 
   function diffNode(diff: DiffView): ChatNode {
+    if (diff.blocks.some(block => block.kind === 'notice')) {
+      const root = h('div', {class: 'mp-chat-diffs'});
+      let pending: DiffBlock[] = [];
+      const flush = (): void => {
+        if (pending.length) {
+          attach(root, diffNode({blocks: pending}));
+          pending = [];
+        }
+      };
+      for (let i = 0; i < diff.blocks.length; i++) {
+        const block = diff.blocks[i];
+        if (block.kind !== 'notice') {
+          pending.push(block);
+          continue;
+        }
+        flush();
+        const separate = h('div', {
+          class: 'mp-chat-diff mp-chat-diff-separated',
+        });
+        attach(separate, h('p', {class: 'mp-chat-diff-notice'}, block.text));
+        for (const side of diff.blocks.slice(i + 1, i + 3)) {
+          const row = h('pre', {
+            class: 'mp-chat-diff-line mp-chat-diff-side',
+            'data-kind': side.kind,
+            tabindex: '0',
+            role: 'group',
+            'aria-label': lt(
+              side.kind === 'del'
+                ? 'chat.diff_removed_text'
+                : 'chat.diff_added_text',
+            ),
+          });
+          const prefix = side.kind === 'del' ? '− ' : '+ ';
+          attach(
+            row,
+            side.text.replace(/\n$/, '').replace(/(^|\n)/g, '$1' + prefix),
+          );
+          attach(separate, row);
+        }
+        i += 2;
+        attach(root, separate);
+      }
+      flush();
+      return root;
+    }
     const card = h('div', {
       class: 'mp-chat-diff',
       tabindex: '0',
@@ -2065,7 +2223,8 @@ const ChatView = (() => {
     for (const block of diff.blocks) {
       const row = h('pre', {class: 'mp-chat-diff-line'});
       row.setAttribute('data-kind', block.kind);
-      const prefix = block.kind === 'del' ? '- ' : '+ ';
+      const prefix =
+        block.kind === 'del' ? '- ' : block.kind === 'add' ? '+ ' : '  ';
       const text = block.text.replace(/\r\n/g, '\n').replace(/\n$/, '');
       attach(row, text.replace(/(^|\n)/g, '$1' + prefix));
       attach(card, row);

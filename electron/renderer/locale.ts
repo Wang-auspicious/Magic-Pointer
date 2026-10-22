@@ -973,6 +973,12 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.incomplete': {en: 'This turn did not complete.', zh: '这次没有答完。'},
   'chat.round_failed': {en: 'This round did not finish.', zh: '这一轮没有完成。'},
   'chat.copy': {en: 'Copy', zh: '复制'},
+  'chat.diff_separate_text': {
+    en: 'Too many changes to show as a diff. Showing the removed and added text separately.',
+    zh: '改动过多，无法显示逐行差异。下方分别显示删除和新增的文本。',
+  },
+  'chat.diff_removed_text': {en: 'Removed text', zh: '删除的文本'},
+  'chat.diff_added_text': {en: 'Added text', zh: '新增的文本'},
   'chat.image_preview': {en: 'Image preview', zh: '图片预览'},
   'chat.image_original_size': {en: 'Click for original size; right-click to copy', zh: '点击查看原始大小；右键复制图片'},
   'chat.resend': {en: 'Resend', zh: '重新发送'},

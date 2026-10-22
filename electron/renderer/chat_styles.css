@@ -397,6 +397,25 @@
   overflow-y: auto;
 }
 
+.mp-chat-diff-notice {
+  margin: 0;
+  padding: var(--cds-pad-xs) var(--cds-pad-md);
+  color: var(--cds-text-secondary);
+  font-family: var(--cds-font-sans);
+  font-size: var(--cds-font-size-caption);
+  line-height: var(--cds-leading-caption);
+}
+
+.mp-chat-tool .mp-chat-diff.mp-chat-diff-separated {
+  max-height: none;
+  overflow-y: visible;
+}
+
+.mp-chat-diff-side {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 .mp-chat-actions {
   display: flex;
   align-items: center;

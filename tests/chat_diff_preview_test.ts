@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import {lineChangeStat} from '../electron/line_change_stat';
 
 const chat = require('../electron/renderer/chat_view');
 
@@ -95,4 +96,101 @@ test('a failed edit keeps its error instead of rendering the requested changes a
   assert.ok(html.includes('Read file.txt before editing it'));
   assert.doesNotMatch(html, /class="mp-chat-diff"/);
   assert.doesNotMatch(html, /class="mp-chat-diff-stat"/);
+});
+
+test('retained edit lines render once as neutral context', () => {
+  const args = {
+    path: 'file.txt',
+    old_string: 'first\nold\nmiddle\nlast\n',
+    new_string: 'first\nnew\nmiddle\nlast\n',
+  };
+  const view = chat.__test.deriveDiff('Edit', JSON.stringify(args));
+  assert.deepEqual(view.blocks, [
+    {kind: 'context', text: 'first\n'},
+    {kind: 'del', text: 'old\n'},
+    {kind: 'add', text: 'new\n'},
+    {kind: 'context', text: 'middle\nlast\n'},
+  ]);
+  const html = row('Edit', args);
+  assert.match(html, /data-kind="context"> {2}first/);
+  assert.doesNotMatch(html, /[-+] first|[-+] middle|[-+] last/);
+  assert.deepEqual(
+    chat.toolRowModel('Edit', JSON.stringify(args)).diffStat,
+    {added: 1, removed: 1},
+  );
+});
+
+test('CRLF and interior context preserve both complete sides', () => {
+  const view = chat.__test.deriveDiff(
+    'Edit',
+    JSON.stringify({
+      path: 'file.txt',
+      old_string: 'old first\r\nshared\r\nold last\r\n',
+      new_string: 'new first\nshared\nnew last\n',
+    }),
+  );
+  assert.deepEqual(view.blocks, [
+    {kind: 'del', text: 'old first\n'},
+    {kind: 'add', text: 'new first\n'},
+    {kind: 'context', text: 'shared\n'},
+    {kind: 'del', text: 'old last\n'},
+    {kind: 'add', text: 'new last\n'},
+  ]);
+});
+
+test('costly comparisons retain both full texts with a notice', () => {
+  const lines = Array.from({length: 700}, (_, i) => `unique ${i}\n`);
+  const args = {
+    path: 'file.txt',
+    old_string: lines.join(''),
+    new_string: [...lines].reverse().join(''),
+  };
+  const view = chat.__test.deriveDiff('Edit', JSON.stringify(args));
+  assert.equal(view.blocks[0].kind, 'notice');
+  assert.equal(view.blocks[1].text, args.old_string);
+  assert.equal(view.blocks[2].text, args.new_string);
+  const html = row('Edit', args);
+  assert.match(html, /mp-chat-diff-notice/);
+  assert.ok(html.includes('− unique 699'));
+  assert.ok(html.includes('+ unique 0'));
+  assert.equal((html.match(/mp-chat-diff-side/g) || []).length, 2);
+  assert.match(html, /role="group" aria-label="Removed text"/);
+  assert.match(html, /role="group" aria-label="Added text"/);
+  assert.equal(chat.toolRowModel('Edit', JSON.stringify(args)).diffStat, null);
+});
+
+test('duplicate and empty lines reconstruct shortest changes', () => {
+  const values = ['', '\n', 'A', 'A\nB', 'A\nA\n', 'B\nA\n', 'A\nB\nA\n'];
+  for (const before of values) {
+    for (const after of values) {
+      const blocks: Array<{kind: string; text: string}> =
+        chat.__test.deriveDiff(
+          'Edit',
+          JSON.stringify({
+            path: 'file.txt',
+            old_string: before,
+            new_string: after,
+          }),
+        )?.blocks || [];
+      const reconstruct = (side: string) =>
+        blocks
+          .filter(block => block.kind === side || block.kind === 'context')
+          .map(block => block.text)
+          .join('');
+      assert.equal(reconstruct('del'), before);
+      assert.equal(reconstruct('add'), after);
+      const changedLines = (side: string) =>
+        blocks
+          .filter(block => block.kind === side)
+          .reduce(
+            (count, block) =>
+              count + (block.text.match(/[^\n]*\n|[^\n]+$/g)?.length || 0),
+            0,
+          );
+      assert.deepEqual(
+        {added: changedLines('add'), removed: changedLines('del')},
+        lineChangeStat(before, after),
+      );
+    }
+  }
 });

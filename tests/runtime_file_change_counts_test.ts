@@ -165,3 +165,47 @@ test('a bounded statistic does not fail a successful large write', async () => {
     await rm(f.root, {recursive: true, force: true});
   }
 });
+
+test('persisted Edit previews retain context and actual counts', async () => {
+  const f = await fixture();
+  try {
+    const before = 'first retained\nold changed\nlast retained\n';
+    const after = 'first retained\nnew changed\nlast retained\n';
+    await writeFile(path.join(f.root, 'context.txt'), before);
+    await f.run('Read', {path: 'context.txt'});
+    const result = await f.run('Edit', {
+      path: 'context.txt',
+      old_string: before,
+      new_string: after,
+    });
+    assert.equal(
+      await readFile(path.join(f.root, 'context.txt'), 'utf8'),
+      after,
+    );
+    assert.deepEqual(result.diffStat, {added: 1, removed: 1});
+    const store = createConversationStore({baseDir: f.root});
+    const conversation = store.appendTurn({
+      newConversation: true,
+      question: 'Change the middle line',
+      answer: 'Saved.',
+      trajectory: f.sink.trajectory,
+    });
+    store.flush();
+    const saved = createConversationStore({baseDir: f.root}).get(
+      conversation.id,
+    )!;
+    const chat = require('../electron/renderer/chat_view');
+    const html = chat
+      .assistantTurnNode(saved.turns[0])
+      .map((node: {outerHTML: string}) => node.outerHTML)
+      .join('');
+    assert.match(html, /data-kind="context"> {2}first retained/);
+    assert.doesNotMatch(html, /[-+] first retained|[-+] last retained/);
+    assert.ok(html.includes('- old changed'));
+    assert.ok(html.includes('+ new changed'));
+    assert.match(html, /mp-chat-diff-add">\+1/);
+  } finally {
+    await f.session.endTurn('completed');
+    await rm(f.root, {recursive: true, force: true});
+  }
+});
