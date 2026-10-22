@@ -92,9 +92,7 @@ assert(canonicalWrite.includes('class="mp-chat-diff"') && canonicalWrite.include
 const writeDiff = ChatView.toolRowNode(ChatView.toolRowModel('write_file', JSON.stringify({ path: 'n.txt', content: 'a\nb' }))).outerHTML;
 assert(/mp-chat-diff-line[^>]*data-kind="add"/.test(writeDiff) && writeDiff.includes('+ a'), 'write_file renders as an all-add diff');
 
-const bigOld = Array.from({ length: 120 }, (_, i) => `old ${i}`).join('\n');
-const capped = ChatView.__test.deriveDiff('edit_file', JSON.stringify({ path: 'p', old_string: bigOld, new_string: 'new' }));
-assert(capped && capped.hidden >= 80, `over-cap lines must collapse with a count (hidden=${capped && capped.hidden})`);
+// Complete long and batch previews are covered by chat_diff_preview_test.ts.
 assert(!/mp-chat-diff/.test(ChatView.toolRowNode(ChatView.toolRowModel('grep', JSON.stringify({ pattern: 'x' }))).outerHTML),
   'read-only tools must not grow a diff card');
 

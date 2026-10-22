@@ -355,8 +355,7 @@
 }
 
 .mp-chat-codeblock,
-.mp-chat-io-card,
-.mp-chat-diff {
+.mp-chat-io-card {
   overflow: hidden;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r6);
@@ -384,6 +383,18 @@
   font-family: var(--mp-font-mono);
   font-size: 12px;
   line-height: 17px;
+}
+
+/* Code tool preview: inspect-code-files-b573e26302.js Al/Z, xl and pi. */
+.mp-chat-diff {
+  font-family: var(--cds-font-mono, var(--mp-font-mono));
+  font-size: var(--cds-font-size-code, 12px);
+  line-height: var(--cds-leading-code, 17px);
+}
+
+.mp-chat-tool .mp-chat-diff {
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .mp-chat-actions {
@@ -1250,8 +1261,12 @@
 }
 
 .mp-chat-diff-line {
-  padding: 2px 8px;
+  min-height: 1lh;
+  margin: 0;
+  padding: 0 8px;
+  font: inherit;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .mp-chat-diff-line[data-kind="add"] {
@@ -1262,11 +1277,6 @@
 .mp-chat-diff-line[data-kind="del"] {
   color: var(--mp-danger);
   background: color-mix(in srgb, var(--mp-danger) 8%, transparent);
-}
-
-.mp-chat-diff-more {
-  padding: 4px 8px;
-  color: var(--mp-text-muted);
 }
 
 /* A thought is a row, not a panel: same box, height, type and chevron as a tool row. */

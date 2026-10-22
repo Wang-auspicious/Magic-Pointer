@@ -28,16 +28,6 @@ const ChatView = (() => {
     }
     return id;
   }
-  function ltCount(id: string, count: number): string {
-    if (typeof studioTCount === 'function') {
-      return studioTCount(id, count);
-    }
-    if (StudioLocaleApi && typeof StudioLocaleApi.studioTCount === 'function') {
-      return StudioLocaleApi.studioTCount(id, count);
-    }
-    return `${count}`;
-  }
-
   interface ShimNode {
     tagName: string;
     ns: string | null;
@@ -1714,32 +1704,22 @@ const ChatView = (() => {
     return JSON.stringify(parsed, null, 2);
   }
 
-  interface DiffLine {
+  interface DiffBlock {
     kind: 'del' | 'add';
     text: string;
   }
   interface DiffView {
-    lines: DiffLine[];
-    hidden: number;
+    blocks: DiffBlock[];
   }
 
-  const DIFF_MAX_LINES = 40;
-
-  function diffLinesFrom(
+  function appendDiffBlock(
     text: string,
-    kind: DiffLine['kind'],
-    out: DiffLine[],
-  ): number {
-    const parts = String(text || '').split('\n');
-    let hidden = 0;
-    for (let i = 0; i < parts.length; i += 1) {
-      if (out.length >= DIFF_MAX_LINES) {
-        hidden += parts.length - i;
-        break;
-      }
-      out.push({kind, text: parts[i]});
+    kind: DiffBlock['kind'],
+    out: DiffBlock[],
+  ): void {
+    if (text) {
+      out.push({kind, text});
     }
-    return hidden;
   }
 
   function deriveDiff(name: string, argsRaw: string): DiffView | null {
@@ -1756,23 +1736,32 @@ const ChatView = (() => {
       return null;
     }
     const args = parsed as Record<string, unknown>;
-    const view: DiffView = {lines: [], hidden: 0};
+    const view: DiffView = {blocks: []};
     if (name === 'Edit' || name === 'edit_file' || name === 'edit') {
-      const oldText = firstString(args, ['old_string', 'oldText', 'old_str']);
-      const newText = firstString(args, ['new_string', 'newText', 'new_str']);
-      if (!oldText && !newText) {
-        return null;
+      for (const raw of Array.isArray(args.edits) ? args.edits : [args]) {
+        const edit = recordOf(raw);
+        if (!edit) {
+          continue;
+        }
+        appendDiffBlock(
+          firstString(edit, ['old_string', 'oldText', 'old_str']),
+          'del',
+          view.blocks,
+        );
+        appendDiffBlock(
+          firstString(edit, ['new_string', 'newText', 'new_str']),
+          'add',
+          view.blocks,
+        );
       }
-      view.hidden += diffLinesFrom(oldText, 'del', view.lines);
-      view.hidden += diffLinesFrom(newText, 'add', view.lines);
-      return view;
+      return view.blocks.length ? view : null;
     }
     if (name === 'Write' || name === 'write_file' || name === 'write') {
       const content = firstString(args, ['content', 'text', 'new_string']);
       if (!content) {
         return null;
       }
-      view.hidden += diffLinesFrom(content, 'add', view.lines);
+      appendDiffBlock(content, 'add', view.blocks);
       return view;
     }
     return null;
@@ -2035,23 +2024,29 @@ const ChatView = (() => {
       state,
       callId,
       diffStat:
-        actualStat === undefined ? deriveDiffStat(name, argsRaw) : actualStat,
+        actualStat === undefined
+          ? state === 'error'
+            ? null
+            : deriveDiffStat(name, argsRaw)
+          : actualStat,
       fileChange: fileChangeMode(name, input),
     };
   }
 
   function diffNode(diff: DiffView): ChatNode {
-    const card = h('div', {class: 'mp-chat-diff'});
-    for (const line of diff.lines) {
-      const row = h('div', {class: 'mp-chat-diff-line'});
-      row.setAttribute('data-kind', line.kind);
-      attach(row, `${line.kind === 'del' ? '-' : '+'} ${line.text}`);
+    const card = h('div', {
+      class: 'mp-chat-diff',
+      tabindex: '0',
+      role: 'group',
+      'aria-label': lt('artifact.kind.code'),
+    });
+    for (const block of diff.blocks) {
+      const row = h('pre', {class: 'mp-chat-diff-line'});
+      row.setAttribute('data-kind', block.kind);
+      const prefix = block.kind === 'del' ? '- ' : '+ ';
+      const text = block.text.replace(/\r\n/g, '\n').replace(/\n$/, '');
+      attach(row, text.replace(/(^|\n)/g, '$1' + prefix));
       attach(card, row);
-    }
-    if (diff.hidden > 0) {
-      const more = h('div', {class: 'mp-chat-diff-more'});
-      attach(more, ltCount('chat.more_lines', diff.hidden));
-      attach(card, more);
     }
     return card;
   }
@@ -3119,7 +3114,7 @@ const ChatView = (() => {
     // exceed 200000 characters: the row keeps its diffstat and drops the body
     // rather than rendering a diff too big to read.
     const diff =
-      model.fileChange === 'too_large'
+      model.state === 'error' || model.fileChange === 'too_large'
         ? null
         : deriveDiff(model.name, model.argsRaw ?? '');
     const command = toolCommandOf(model);
