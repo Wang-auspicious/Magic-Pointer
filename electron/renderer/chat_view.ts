@@ -2371,8 +2371,16 @@ const ChatView = (() => {
       }
       for (let i = first; i < last; i++) {
         const row = index.get(i);
+        if (row.kind === 'separator') {
+          children.push(h('div', {
+            class: 'mp-chat-diff-hunk-separator mp-chat-diff-window-row',
+            'data-diff-row': String(i),
+            'aria-hidden': 'true',
+          }));
+          continue;
+        }
         children.push(h('div', {
-          class: 'mp-chat-diff-code-row',
+          class: 'mp-chat-diff-code-row mp-chat-diff-window-row',
           'data-kind': row.kind,
           'data-diff-row': String(i),
           'data-line-number': String(row.number),
@@ -2394,7 +2402,9 @@ const ChatView = (() => {
       }
     };
     const initial = Math.min(index.count, diffRows.INITIAL_DIFF_ROWS);
-    render(0, initial, 0, (index.count - initial) * 17);
+    const after = index.separators.reduce((height, i) =>
+      i >= initial ? height - 13 : height, (index.count - initial) * 17);
+    render(0, initial, 0, after);
     if (DOC) {
       diffRows.mountDiffRows(card as HTMLElement, index, render);
     }

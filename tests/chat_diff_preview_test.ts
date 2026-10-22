@@ -65,7 +65,7 @@ test('a blank-line-heavy write stays complete with a bounded number of rendered 
     content: 'start\n' + '\n'.repeat(12000) + 'end',
   });
   assert.ok(html.includes('data-mp-chat-copy="start\n' + '\n'.repeat(12000) + 'end"'));
-  assert.ok((html.match(/class="mp-chat-diff-code-row"/g) || []).length <= 50);
+  assert.ok((html.match(/class="mp-chat-diff-code-row(?: |")/g) || []).length <= 50);
   assert.match(html, /data-diff-total-rows="12002"/);
   assert.match(html, /class="mp-chat-diff"[^>]*tabindex="0"[^>]*role="group"/);
 });

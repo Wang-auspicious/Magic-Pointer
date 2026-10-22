@@ -104,7 +104,91 @@ test('pure file sides select the original File branch rather than unified indica
   assert.equal(mixed.getAttribute('data-diff-pure-side'), null);
 });
 
-function viewportFixture(count = 12002, connect = true) {
+test('retained diff uses four context lines, actual offsets and simple inter-hunk gaps', () => {
+  const lines = Array.from({length: 60}, (_, i) => `line ${i + 1}\n`);
+  const after = [...lines];
+  after[9] = 'changed 10\n';
+  after[39] = 'changed 40\n';
+  const root = preview(lines.join(''), after.join(''));
+  const rows = findAll(root, 'mp-chat-diff-code-row');
+  assert.deepEqual(
+    rows.map(row => Number(row.getAttribute('data-line-number'))),
+    [
+      6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 36, 37, 38, 39, 40, 40, 41, 42, 43,
+      44,
+    ],
+  );
+  assert.equal(findAll(root, 'mp-chat-diff-hunk-separator').length, 1);
+  assert.ok(
+    root.outerHTML.includes('data-mp-chat-copy="' + after.join('') + '"'),
+  );
+  const bodies = findAll(root, 'mp-chat-diff-code-text').map(row =>
+    row.children.join(''),
+  );
+  assert.ok(
+    !bodies.includes('line 1') &&
+      !bodies.includes('line 20') &&
+      !bodies.includes('line 60'),
+  );
+  const separator = findAll(root, 'mp-chat-diff-hunk-separator')[0];
+  assert.equal(separator.getAttribute('aria-hidden'), 'true');
+  assert.equal(separator.getAttribute('data-mp-chat-act'), null);
+});
+
+test('one omitted context line is restored at edges and between close hunks', () => {
+  for (const gap of [8, 9, 10]) {
+    const context = Array.from({length: gap}, (_, i) => `context ${i}\n`).join(
+      '',
+    );
+    const root = preview(
+      `old first\n${context}old last\n`,
+      `new first\n${context}new last\n`,
+    );
+    assert.equal(
+      findAll(root, 'mp-chat-diff-hunk-separator').length,
+      gap === 10 ? 1 : 0,
+    );
+    assert.equal(
+      findAll(root, 'mp-chat-diff-code-row').length,
+      4 + (gap === 10 ? 8 : gap),
+    );
+  }
+  for (const edge of [5, 6]) {
+    const context = Array.from({length: edge}, (_, i) => `edge ${i}\n`).join(
+      '',
+    );
+    const root = preview(
+      `${context}old\n${context}`,
+      `${context}new\n${context}`,
+    );
+    const rows = findAll(root, 'mp-chat-diff-code-row');
+    assert.equal(rows.length, edge === 5 ? 12 : 10);
+    assert.equal(
+      Number(rows[0].getAttribute('data-line-number')),
+      edge === 5 ? 1 : 3,
+    );
+    assert.equal(findAll(root, 'mp-chat-diff-hunk-separator').length, 0);
+  }
+});
+
+test('unchanged versions have no fake hunk and a long unchanged prefix is indexed, not rendered', () => {
+  const unchanged = preview('same\nretained\n', 'same\nretained\n');
+  assert.equal(findAll(unchanged, 'mp-chat-diff-code-row').length, 0);
+  const context = Array.from({length: 12000}, (_, i) => `context ${i}\n`).join(
+    '',
+  );
+  const root = preview(context + 'old\n', context + 'new\n');
+  const rows = findAll(root, 'mp-chat-diff-code-row');
+  assert.equal(rows.length, 6);
+  assert.equal(rows[0].getAttribute('data-line-number'), '11997');
+  assert.equal(findAll(root, 'mp-chat-diff-virtual-spacer').length, 0);
+});
+
+function viewportFixture(
+  count = 12002,
+  connect = true,
+  versions?: {beforeText: string; afterText: string},
+) {
   const frames = new Map<number, FrameRequestCallback>();
   const observers: any[] = [];
   const mutations: any[] = [];
@@ -218,6 +302,9 @@ function viewportFixture(count = 12002, connect = true) {
       this.listeners.delete(name);
     }
     getBoundingClientRect() {
+      if (this.getAttribute('class')?.includes('mp-chat-diff-hunk-separator')) {
+        return {height: 4};
+      }
       return {height: measured.get(Number(this.dataset.diffRow)) ?? lineHeight};
     }
   }
@@ -242,13 +329,12 @@ function viewportFixture(count = 12002, connect = true) {
   ).outputText;
   vm.runInContext(code, context);
   const api = (context.module as any).exports;
-  const contents = Array.from(
-    {length: count},
-    (_, i) => `actual ${i + 1}`,
-  ).join('\n');
+  const contents =
+    versions?.afterText ??
+    Array.from({length: count}, (_, i) => `actual ${i + 1}`).join('\n');
   const diff = api.__test.deriveDiff('', '', {
     kind: 'file_diff',
-    beforeText: '',
+    beforeText: versions?.beforeText ?? '',
     afterText: contents,
   });
   const root = api.__test.diffPreviewNode(diff, {filePath: 'actual.txt'});
@@ -328,6 +414,47 @@ test('wrapped measured heights and density changes retain the visible logical an
   f.measured.clear();
   f.resize(400, 19);
   assert.equal(f.card.scrollTop, 100 * 19 + 4);
+  assert.ok(f.rows().length < 100);
+  f.remove();
+});
+
+test('simple hunk gaps keep their four-pixel height while a real row window scrolls and resizes', () => {
+  const before = Array.from({length: 400}, (_, i) => `line ${i + 1}\n`);
+  const after = [...before];
+  for (let i = 0; i < 30; i++) {
+    after[9 + i * 12] = `change ${i}\n`;
+  }
+  const f = viewportFixture(400, true, {
+    beforeText: before.join(''),
+    afterText: after.join(''),
+  });
+  f.settle();
+  const count = Number(f.card.getAttribute('data-diff-total-rows'));
+  const height = () =>
+    findAll(f.card, 'mp-chat-diff-window-row').reduce(
+      (total, row) => total + row.getBoundingClientRect().height,
+      0,
+    ) +
+    findAll(f.card, 'mp-chat-diff-virtual-spacer').reduce(
+      (total, row) =>
+        total +
+        Number.parseFloat(
+          row.style.height || row.getAttribute('style').slice(8),
+        ),
+      0,
+    );
+  assert.ok(
+    f.observers.some(observer =>
+      [...observer.targets].some((row: any) =>
+        row.getAttribute('class')?.includes('mp-chat-diff-hunk-separator'),
+      ),
+    ),
+  );
+  assert.equal(height(), count * 17 - 29 * 13);
+  f.scroll(count * 17 - 400);
+  assert.equal(f.rows().at(-1).getAttribute('data-line-number'), '362');
+  f.resize(400, 19);
+  assert.equal(height(), count * 19 - 29 * 15);
   assert.ok(f.rows().length < 100);
   f.remove();
 });

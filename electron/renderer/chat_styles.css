@@ -515,6 +515,11 @@
   pointer-events: none;
 }
 
+.mp-chat-diff-hunk-separator {
+  height: 4px;
+  background: transparent;
+}
+
 .mp-chat-diff-notice {
   margin: 0;
   padding: var(--cds-pad-xs) var(--cds-pad-md);

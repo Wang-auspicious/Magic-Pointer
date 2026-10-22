@@ -259,6 +259,32 @@ test('real rendered action traverses preload and main before reading snapshots',
     assert.equal(f.root.getAttribute('data-file-diff-reference'), null);
   }));
 
+test('the real snapshot loader folds retained context without renumbering or shortening copy text', () =>
+  fixture(async f => {
+    const before = Array.from({length: 60}, (_, i) => `line ${i + 1}\n`);
+    const after = [...before];
+    after[9] = 'changed 10\n';
+    after[39] = 'changed 40\n';
+    await writeFile(f.reference.beforePath, before.join(''));
+    await writeFile(f.reference.afterPath, after.join(''));
+    f.fire();
+    await f.settle();
+    const html = f.root.outerHTML;
+    assert.deepEqual(
+      Array.from(
+        html.matchAll(/data-line-number="(\d+)"/g),
+        (match: RegExpMatchArray) => Number(match[1]),
+      ),
+      [
+        6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 36, 37, 38, 39, 40, 40, 41, 42, 43,
+        44,
+      ],
+    );
+    assert.equal((html.match(/mp-chat-diff-hunk-separator/g) || []).length, 1);
+    assert.ok(html.includes('data-mp-chat-copy="' + after.join('') + '"'));
+    assert.equal(f.count(), 1);
+  }));
+
 test('a failed snapshot load exposes retry and the same action later loads real content', () =>
   fixture(async f => {
     await unlink(f.reference.afterPath);

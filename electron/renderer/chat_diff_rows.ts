@@ -4,8 +4,12 @@ export interface DiffRowBlock {
   text: string;
 }
 
+// Matching structured-patch defaults and the inline renderer's simple mode.
+const CONTEXT_LINES = 4;
+const COLLAPSED_CONTEXT_THRESHOLD = 1;
+const SIMPLE_SEPARATOR_HEIGHT = 4;
+
 export function indexDiffRows(blocks: readonly DiffRowBlock[]) {
-  let count = 0;
   let oldLine = 1;
   let newLine = 1;
   const sections = blocks
@@ -26,10 +30,8 @@ export function indexDiffRows(blocks: readonly DiffRowBlock[]) {
       const section = {
         block,
         offsets,
-        start: count,
         number: block.kind === 'del' ? oldLine : newLine,
       };
-      count += length;
       if (block.kind !== 'add') {
         oldLine += length;
       }
@@ -39,22 +41,69 @@ export function indexDiffRows(blocks: readonly DiffRowBlock[]) {
       return section;
     })
     .filter(section => section.offsets.length);
+  type Section = (typeof sections)[number];
+  const runs: Array<{
+    start: number;
+    length: number;
+    from: number;
+    section: Section | null;
+  }> = [];
+  const separators: number[] = [];
+  let count = 0;
+  const append = (
+    section: Section | null,
+    from: number,
+    length: number,
+  ): void => {
+    if (length) {
+      runs.push({start: count, length, from, section});
+      count += length;
+    }
+  };
+  if (sections.some(section => section.block.kind !== 'context')) {
+    for (const [i, section] of sections.entries()) {
+      const length = section.offsets.length;
+      if (section.block.kind !== 'context') {
+        append(section, 0, length);
+        continue;
+      }
+      const head = i === 0 ? 0 : Math.min(CONTEXT_LINES, length);
+      const tail =
+        i === sections.length - 1 ? 0 : Math.min(CONTEXT_LINES, length - head);
+      if (length - head - tail <= COLLAPSED_CONTEXT_THRESHOLD) {
+        append(section, 0, length);
+        continue;
+      }
+      append(section, 0, head);
+      // Simple inline mode has neither an initial/final separator nor expand UI.
+      if (head && tail) {
+        separators.push(count);
+        append(null, 0, 1);
+      }
+      append(section, length - tail, tail);
+    }
+  }
   return {
     count,
+    separators,
     digits: String(Math.max(oldLine - 1, newLine - 1, 1)).length,
     get(index: number) {
       let lo = 0;
-      let hi = sections.length;
+      let hi = runs.length;
       while (lo + 1 < hi) {
         const middle = (lo + hi) >>> 1;
-        if (sections[middle].start <= index) {
+        if (runs[middle].start <= index) {
           lo = middle;
         } else {
           hi = middle;
         }
       }
-      const section = sections[lo];
-      const offset = index - section.start;
+      const run = runs[lo];
+      const section = run.section;
+      if (!section) {
+        return {kind: 'separator' as const, number: null, text: ''};
+      }
+      const offset = run.from + index - run.start;
       const start = section.offsets[offset];
       const end = section.offsets[offset + 1] ?? section.block.text.length;
       return {
@@ -188,6 +237,7 @@ export function mountDiffRows(
   }
   const win = card.ownerDocument.defaultView as BrowserWindow;
   const heights = new DiffRowHeights(index.count, 17);
+  index.separators.forEach(i => heights.set(i, SIMPLE_SEPARATOR_HEIGHT));
   let first = 0;
   let last = INITIAL_DIFF_ROWS;
   let width = 0;
@@ -198,7 +248,7 @@ export function mountDiffRows(
   const observeRows = (): void => {
     rendered.forEach(row => resize.unobserve(row));
     rendered = Array.from(
-      card.querySelectorAll<HTMLElement>('.mp-chat-diff-code-row'),
+      card.querySelectorAll<HTMLElement>('.mp-chat-diff-window-row'),
     );
     rendered.forEach(row => resize.observe(row));
   };
@@ -251,6 +301,7 @@ export function mountDiffRows(
     if (reset) {
       width = card.clientWidth;
       heights.reset(lineHeight);
+      index.separators.forEach(i => heights.set(i, SIMPLE_SEPARATOR_HEIGHT));
       rendered.forEach(row =>
         heights.set(
           Number(row.dataset.diffRow),
