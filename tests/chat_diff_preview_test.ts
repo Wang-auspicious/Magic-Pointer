@@ -1,7 +1,41 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 const chat = require('../electron/renderer/chat_view');
+
+test('later shared IO rules do not override the reference diff typography', () => {
+  const styles = fs
+    .readFileSync(
+      path.join(__dirname, '../electron/renderer/chat_styles.css'),
+      'utf8',
+    )
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const declarations = new Map<string, string>();
+  // These are the flat, equal-specificity class rules for this element. Keep
+  // source order so an earlier correct declaration cannot mask a later reset.
+  for (const match of styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!match[1].split(',').some(selector => selector.trim() === '.mp-chat-diff')) {
+      continue;
+    }
+    for (const declaration of match[2].split(';')) {
+      const colon = declaration.indexOf(':');
+      if (colon !== -1) {
+        declarations.set(
+          declaration.slice(0, colon).trim(),
+          declaration.slice(colon + 1).trim(),
+        );
+      }
+    }
+  }
+  assert.equal(
+    declarations.get('font-family'),
+    'var(--cds-font-mono, var(--mp-font-mono))',
+  );
+  assert.equal(declarations.get('font-size'), 'var(--cds-font-size-code, 12px)');
+  assert.equal(declarations.get('line-height'), 'var(--cds-leading-code, 17px)');
+});
 
 function row(
   name: string,
