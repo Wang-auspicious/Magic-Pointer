@@ -6785,11 +6785,15 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
     return;
   }
   if (command === 'toggle-inspector') {
-    setInspector(shell.dataset.inspector !== 'open', activeInspectorTab);
+    if (inspectorState.open) {
+      closeInspectorPanel();
+    } else {
+      setInspector(true, activeInspectorTab);
+    }
     return;
   }
   if (command === 'toggle-bottom-panel') {
-    setBottomPanel(shell.dataset.bottomPanel !== 'open');
+    toggleTerminalPanel();
     return;
   }
   if (command === 'toggle-theme') {
@@ -8432,6 +8436,49 @@ function projectBrowserBounds() {
   };
 }
 
+function renderBrowserToolbarLanguage(): void {
+  for (const [id, label] of [
+    ['project-browser-back', 'browser.back'],
+    ['project-browser-forward', 'browser.forward'],
+    [
+      'project-browser-reload',
+      latestBrowserViewState.loading
+        ? 'browser.stop_loading'
+        : 'browser.reload',
+    ],
+    ['project-browser-external', 'browser.external'],
+  ] as const) {
+    const button = document.getElementById(id);
+    button?.setAttribute('aria-label', studioT(label));
+    button?.setAttribute('title', studioT(label));
+  }
+  const input = document.getElementById('project-browser-url');
+  input?.setAttribute('aria-label', studioT('browser.address'));
+  input?.setAttribute('placeholder', studioT('browser.address_hint'));
+  const go = document.querySelector('#project-browser-form button');
+  go?.setAttribute('aria-label', studioT('browser.go'));
+  go?.setAttribute('title', studioT('browser.go'));
+  document
+    .getElementById('project-browser-host')
+    ?.setAttribute('aria-label', studioT('browser.host'));
+  const message = document.querySelector<HTMLElement>(
+    '#project-browser-empty p',
+  );
+  if (message?.dataset.browserMessage) {
+    message.textContent = studioT(message.dataset.browserMessage);
+  }
+}
+
+function setBrowserMessage(id: string, detail?: string): void {
+  const message = document.querySelector<HTMLElement>(
+    '#project-browser-empty p',
+  );
+  if (message) {
+    message.dataset.browserMessage = detail ? '' : id;
+    message.textContent = detail || studioT(id);
+  }
+}
+
 function renderBrowserViewState(state: MagicPointerBrowserViewState) {
   latestBrowserViewState = {...latestBrowserViewState, ...state};
   if (Array.isArray(state.tabs)) {
@@ -8474,17 +8521,13 @@ function renderBrowserViewState(state: MagicPointerBrowserViewState) {
   const forward = document.getElementById(
     'project-browser-forward',
   ) as HTMLButtonElement | null;
-  const reload = document.getElementById('project-browser-reload');
   if (back) {
     back.disabled = !state.canGoBack;
   }
   if (forward) {
     forward.disabled = !state.canGoForward;
   }
-  if (reload) {
-    reload.setAttribute('aria-label', state.loading ? studioT('browser.stop_loading') : studioT('browser.reload'));
-    reload.setAttribute('title', state.loading ? studioT('browser.stop_loading') : studioT('browser.reload'));
-  }
+  renderBrowserToolbarLanguage();
   if (state.title) {
     document
       .getElementById('inspector-browser')
@@ -8501,19 +8544,15 @@ async function openProjectBrowser(
     await Data.browserViewCommand('hide');
     browserViewVisible = false;
     const empty = document.getElementById('project-browser-empty');
-    const message = empty?.querySelector('p');
     if (empty) {
       empty.hidden = false;
     }
-    if (message) {
-      message.textContent = studioT('browser.ego_opening');
-    }
+    setBrowserMessage('browser.ego_opening');
     const response = await Data.openBrowserView(rawUrl, {x: 0, y: 0, width: 1, height: 1}, activeProjectRoot);
-    if (message) {
-      message.textContent = response?.ok
-        ? studioT('browser.ego_opened')
-        : String(response?.error || studioT('browser.open_failed'));
-    }
+    setBrowserMessage(
+      response?.ok ? 'browser.ego_opened' : 'browser.open_failed',
+      response?.ok ? undefined : response?.error,
+    );
     return;
   }
   const localResourceKey =
@@ -8569,10 +8608,7 @@ async function openProjectBrowser(
   }
   if (!response?.ok && empty) {
     empty.hidden = false;
-    const message = empty.querySelector('p');
-    if (message) {
-      message.textContent = String(response?.error || studioT('browser.open_failed'));
-    }
+    setBrowserMessage('browser.open_failed', response?.error);
   }
 }
 
@@ -9507,7 +9543,11 @@ function toggleMaterialsPanel(): void {
 }
 
 function toggleTerminalPanel(): void {
-  setBottomPanel(shell.dataset.bottomPanel !== 'open');
+  if (shell.dataset.bottomPanel === 'open') {
+    closeBottomPanel();
+  } else {
+    setBottomPanel(true);
+  }
 }
 
 document
@@ -9517,12 +9557,15 @@ const executionActivity = document.getElementById('conversation-activity');
 if (executionActivity) {
   ChatView.bindDelegation(executionActivity);
 }
-document.getElementById('inspector-close')?.addEventListener('click', () => {
+function closeInspectorPanel(): void {
   workspaceAutoOpenedResourceKey = '';
   setInspector(false);
   restorePanelFocus(inspectorReturnFocus);
   inspectorReturnFocus = null;
-});
+}
+document
+  .getElementById('inspector-close')
+  ?.addEventListener('click', closeInspectorPanel);
 document.getElementById('project-inspector')?.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) {
     return;
@@ -9942,9 +9985,43 @@ function renderTerminalPrompt() {
     const output = document.getElementById(id);
     const label = output?.querySelector('.mp-terminal-label');
     if (label) {
-      label.textContent = `PowerShell · Current project${suffix}`;
+      label.textContent = `PowerShell · ${studioT('terminal.current_project')}${suffix}`;
     }
   }
+}
+
+function renderTerminalLanguage(): void {
+  document
+    .getElementById('bottom-panel')
+    ?.setAttribute('aria-label', studioT('terminal.bottom_panel'));
+  document
+    .getElementById('bottom-panel-close')
+    ?.setAttribute('aria-label', studioT('terminal.close_bottom'));
+  const tools = document.querySelector('#bottom-panel nav');
+  tools?.setAttribute('aria-label', studioT('terminal.bottom_tools'));
+  const title = tools?.querySelector('button');
+  if (title) {
+    title.textContent = studioT('terminal.title');
+  }
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    '.mp-terminal-form',
+  )) {
+    form
+      .querySelector('input')
+      ?.setAttribute('aria-label', studioT('terminal.command'));
+    const button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.textContent = studioT(
+        form.dataset.submitting === 'true'
+          ? 'terminal.sending'
+          : 'terminal.run',
+      );
+    }
+  }
+  for (const button of document.querySelectorAll('[data-terminal-stop]')) {
+    button.textContent = studioT('terminal.stop');
+  }
+  renderTerminalPrompt();
 }
 
 async function runTerminalCommand(command: string): Promise<boolean> {
@@ -10034,7 +10111,6 @@ for (const pair of [
     const button = form.querySelector<HTMLButtonElement>(
       'button[type="submit"]',
     )!;
-    const label = button.textContent;
     form.dataset.submitting = 'true';
     form.setAttribute('aria-busy', 'true');
     button.disabled = true;
@@ -10061,7 +10137,7 @@ for (const pair of [
       delete form.dataset.submitting;
       form.removeAttribute('aria-busy');
       button.disabled = false;
-      button.textContent = label;
+      button.textContent = studioT('terminal.run');
     }
   });
 }
@@ -10103,16 +10179,15 @@ function setBottomPanel(open: boolean) {
 
 document
   .getElementById('bottom-panel-toggle')
-  ?.addEventListener('click', () =>
-    setBottomPanel(shell.dataset.bottomPanel !== 'open'),
-  );
+  ?.addEventListener('click', toggleTerminalPanel);
+function closeBottomPanel(): void {
+  setBottomPanel(false);
+  restorePanelFocus(bottomPanelReturnFocus);
+  bottomPanelReturnFocus = null;
+}
 document
   .getElementById('bottom-panel-close')
-  ?.addEventListener('click', () => {
-    setBottomPanel(false);
-    restorePanelFocus(bottomPanelReturnFocus);
-    bottomPanelReturnFocus = null;
-  });
+  ?.addEventListener('click', closeBottomPanel);
 document.getElementById('bottom-panel')?.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) {
     return;
@@ -12676,6 +12751,8 @@ function setStudioLanguage(language: 'en' | 'zh-CN'): void {
 }
 
 window.addEventListener('mp:language-change', () => {
+  renderTerminalLanguage();
+  renderBrowserToolbarLanguage();
   if (inspectorState.open && activeInspectorTab === 'tasks') {
     renderProjectTasks();
   }
@@ -12683,6 +12760,9 @@ window.addEventListener('mp:language-change', () => {
     renderInspectorTitle();
   }
 });
+
+renderTerminalLanguage();
+renderBrowserToolbarLanguage();
 
 try {
   applyStudioLanguage(
