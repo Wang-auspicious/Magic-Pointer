@@ -204,6 +204,7 @@ test('persisted Edit previews retain context and actual counts', async () => {
     assert.ok(html.includes('- old changed'));
     assert.ok(html.includes('+ new changed'));
     assert.match(html, /mp-chat-diff-add">\+1/);
+    assert.doesNotMatch(html, /mp-chat-tool-output|absolutePath|checkpointId/);
   } finally {
     await f.session.endTurn('completed');
     await rm(f.root, {recursive: true, force: true});

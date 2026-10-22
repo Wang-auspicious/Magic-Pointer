@@ -406,6 +406,12 @@
   line-height: var(--cds-leading-caption);
 }
 
+.mp-chat-diff-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--cds-pad-sm) var(--cds-pad-md);
+}
+
 .mp-chat-tool .mp-chat-diff.mp-chat-diff-separated {
   max-height: none;
   overflow-y: visible;

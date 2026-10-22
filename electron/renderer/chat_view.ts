@@ -1710,6 +1710,7 @@ const ChatView = (() => {
   }
   interface DiffView {
     blocks: DiffBlock[];
+    previews: Array<{blocks: DiffBlock[]; copyText: string}>;
   }
 
   function appendDiffBlock(
@@ -1823,33 +1824,39 @@ const ChatView = (() => {
       return null;
     }
     const args = parsed as Record<string, unknown>;
-    const view: DiffView = {blocks: []};
+    const view: DiffView = {blocks: [], previews: []};
     if (name === 'Edit' || name === 'edit_file' || name === 'edit') {
       for (const raw of Array.isArray(args.edits) ? args.edits : [args]) {
         const edit = recordOf(raw);
         if (!edit) {
           continue;
         }
-        const before = firstString(edit, [
+        const beforeText = firstString(edit, [
           'old_string',
           'oldText',
           'old_str',
-        ]).replace(/\r\n/g, '\n');
-        const after = firstString(edit, [
+        ]);
+        const afterText = firstString(edit, [
           'new_string',
           'newText',
           'new_str',
-        ]).replace(/\r\n/g, '\n');
-        const blocks = replacementDiff(before, after);
-        if (blocks) {
+        ]);
+        const before = beforeText.replace(/\r\n/g, '\n');
+        const after = afterText.replace(/\r\n/g, '\n');
+        let blocks = replacementDiff(before, after);
+        if (!blocks) {
+          blocks = [
+            {
+              kind: 'notice',
+              text: lt('chat.diff_separate_text'),
+            },
+          ];
+          appendDiffBlock(before, 'del', blocks);
+          appendDiffBlock(after, 'add', blocks);
+        }
+        if (blocks.length) {
           view.blocks.push(...blocks);
-        } else {
-          view.blocks.push({
-            kind: 'notice',
-            text: lt('chat.diff_separate_text'),
-          });
-          appendDiffBlock(before, 'del', view.blocks);
-          appendDiffBlock(after, 'add', view.blocks);
+          view.previews.push({blocks, copyText: afterText || beforeText});
         }
       }
       return view.blocks.length ? view : null;
@@ -1860,6 +1867,7 @@ const ChatView = (() => {
         return null;
       }
       appendDiffBlock(content, 'add', view.blocks);
+      view.previews.push({blocks: view.blocks, copyText: content});
       return view;
     }
     return null;
@@ -2168,7 +2176,28 @@ const ChatView = (() => {
     };
   }
 
-  function diffNode(diff: DiffView): ChatNode {
+  function diffPreviewNode(diff: DiffView): ChatNode {
+    const root = h('div', {class: 'mp-chat-diff-previews'});
+    for (const preview of diff.previews) {
+      const section = h('div', {class: 'mp-chat-diff-preview'});
+      const header = h('div', {class: 'mp-chat-diff-header'});
+      const copy = h('button', {
+        type: 'button',
+        class: 'mp-chat-action mp-chat-diff-copy',
+        'aria-label': lt('chat.copy'),
+        'data-mp-chat-act': 'copy',
+        'data-mp-chat-copy': preview.copyText,
+      });
+      attach(copy, icon('copy', 16));
+      attach(header, copy);
+      attach(section, header);
+      attach(section, diffNode(preview));
+      attach(root, section);
+    }
+    return root;
+  }
+
+  function diffNode(diff: Pick<DiffView, 'blocks'>): ChatNode {
     if (diff.blocks.some(block => block.kind === 'notice')) {
       const root = h('div', {class: 'mp-chat-diffs'});
       let pending: DiffBlock[] = [];
@@ -3327,7 +3356,10 @@ const ChatView = (() => {
       diff !== null &&
       (model.body !== null || model.output !== null)
     ) {
-      body.push(diffNode(diff));
+      body.push(diffPreviewNode(diff));
+      // The reference diff branch ends at the code view. Keep receipts in the
+      // model/history; only unsuccessful or interrupted calls need raw detail.
+      outputInCard = model.state === 'ok';
     } else if (command !== null) {
       body.push(
         commandCardNode(command, commandPrompt(model), command.full, {

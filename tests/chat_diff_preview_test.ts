@@ -41,7 +41,7 @@ test('later shared IO rules do not override the reference diff typography', () =
 function row(
   name: string,
   args: Record<string, unknown>,
-  result?: {text: string; isError?: boolean},
+  result?: {text: string; isError?: boolean; interrupted?: boolean},
 ) {
   return chat.toolRowNode(chat.toolRowModel(name, JSON.stringify(args), result))
     .outerHTML as string;
@@ -192,5 +192,37 @@ test('duplicate and empty lines reconstruct shortest changes', () => {
         lineChangeStat(before, after),
       );
     }
+  }
+});
+
+test('a successful file preview does not append raw receipt fields', () => {
+  for (const [name, args] of [
+    ['Write', {path: 'file.txt', content: 'written content\n'}],
+    ['Edit', {path: 'file.txt', old_string: 'old', new_string: 'new'}],
+  ] as const) {
+    const result = {
+      text: JSON.stringify({
+        path: 'file.txt',
+        absolutePath: 'D:/project/file.txt',
+        checkpointId: 'internal-checkpoint',
+        diffStat: {added: 1, removed: name === 'Edit' ? 1 : 0},
+      }),
+    };
+    const model = chat.toolRowModel(name, JSON.stringify(args), result);
+    assert.ok(model.output.includes('internal-checkpoint'));
+    const html = chat.toolRowNode(model).outerHTML;
+    assert.match(html, /class="mp-chat-diff"/);
+    assert.doesNotMatch(html, /mp-chat-tool-output|internal-checkpoint|absolutePath/);
+    assert.match(html, /mp-chat-diff-add">\+1/);
+  }
+});
+
+test('stopped and failed edits retain their actual result details', () => {
+  const args = {path: 'file.txt', old_string: 'old', new_string: 'new'};
+  for (const result of [
+    {text: 'Interrupted before applying the edit', interrupted: true},
+    {text: 'Permission denied writing file.txt', isError: true},
+  ]) {
+    assert.ok(row('Edit', args, result).includes(result.text));
   }
 });
