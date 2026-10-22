@@ -132,6 +132,13 @@
   function sessionPreference(id: string): SessionPreference {
     return preferences.sessions[id] || {};
   }
+  function sessionUnread(row: {id: string; updatedAt?: number}): boolean {
+    const seenAt = sessionPreference(row.id).seenAt;
+    return (
+      seenAt !== undefined &&
+      (seenAt === 0 || seenAt < Number(row.updatedAt || 0))
+    );
+  }
   function sessionGroups(): string[] {
     const names = new Set<string>(preferences.sections);
     for (const value of Object.values(preferences.sessions)) {
@@ -247,7 +254,7 @@
               ? 'Tasks'
               : 'Chats'
             : preferences.filters.group === 'unread'
-              ? Number(row.updatedAt || 0) > Number(local.seenAt || 0)
+              ? sessionUnread(row)
                 ? 'Unread'
                 : 'Read'
               : preferences.filters.group === 'state'
@@ -2111,6 +2118,7 @@
     addSidebarSection,
     groupMenuMarkup,
     sessionPreference,
+    sessionUnread,
     sessionGroups,
     setSessionGroup,
     setFilter,

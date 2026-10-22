@@ -973,6 +973,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.image_original_size': {en: 'Click for original size; right-click to copy', zh: '点击查看原始大小；右键复制图片'},
   'chat.resend': {en: 'Resend', zh: '重新发送'},
   'chat.fork_here': {en: 'Fork from here', zh: '从这里创建分支'},
+  'convo.unread': {en: 'Unread', zh: '未读'},
+  'chat.fork_creating': {en: 'Creating a branch…', zh: '正在创建分支…'},
   'chat.fork_failed': {
     en: 'Could not create the branch. Please try again.',
     zh: '未能创建分支，请重试。',

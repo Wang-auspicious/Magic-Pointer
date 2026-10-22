@@ -507,6 +507,14 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   flex: 0 0 auto;
 }
 
+.side-unread {
+  width: 6px;
+  height: 6px;
+  margin: 0 6px;
+  border-radius: 50%;
+  background: var(--cds-text-tint-blue);
+}
+
 .side-ellipsis {
   display: grid;
   width: 20px;
@@ -3812,6 +3820,7 @@ dialog.mpw-perm-confirm::backdrop {
 }
 :root[data-theme="dark"] .mp-thread-menu { box-shadow: 0 10px 30px #00000066, 0 2px 8px #0000004d; }
 .mp-conversation-delete-error,
+.mp-conversation-branch-progress,
 .mp-conversation-branch-error {
   position: fixed;
   z-index: 210;

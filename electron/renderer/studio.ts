@@ -1470,6 +1470,18 @@ function conversationNode(
   }
   const actions = document.createElement('span');
   actions.className = 'side-actions';
+  const unread = studioLibraries.sessionUnread({
+    id: String(c.id || ''),
+    updatedAt: c.updatedAt,
+  });
+  row.dataset.unread = String(unread);
+  if (unread) {
+    const mark = document.createElement('span');
+    mark.className = 'side-unread';
+    mark.setAttribute('role', 'status');
+    mark.setAttribute('aria-label', studioT('convo.unread'));
+    actions.append(mark);
+  }
   const ellipsis = document.createElement('span');
   ellipsis.className = 'side-ellipsis';
   ellipsis.setAttribute('role', 'button');
@@ -1592,21 +1604,15 @@ function buildSessionMenu(c: {
     }
     if (name === 'read') {
       studioLibraries.setSessionPreference(id, {
-        seenAt:
-          Number(local.seenAt || 0) >= Number(c.updatedAt || 0)
-            ? 0
-            : Date.now(),
+        seenAt: studioLibraries.sessionUnread({id, updatedAt: c.updatedAt})
+          ? Math.max(Date.now(), Number(c.updatedAt || 0))
+          : 0,
       });
       void renderSidebar();
       return;
     }
     if (name === 'fork') {
-      void Data.conversation(id).then(conversation =>
-        branchConversationFromUi(
-          id,
-          Math.max(0, (conversation?.turns?.length || 0) - 1),
-        ),
-      );
+      void branchConversationFromUi(id);
       return;
     }
     if (name === 'archive') {
@@ -1636,9 +1642,9 @@ function buildSessionMenu(c: {
   menu.append(pin);
   const read = item(
     'read',
-    Number(local.seenAt || 0) >= Number(c.updatedAt || 0)
-      ? 'Mark as unread'
-      : 'Mark as read',
+    studioLibraries.sessionUnread({id, updatedAt: c.updatedAt})
+      ? 'Mark as read'
+      : 'Mark as unread',
     {key: 'U'},
   );
   read.addEventListener('click', run('read'));
@@ -1647,6 +1653,7 @@ function buildSessionMenu(c: {
   rename.addEventListener('click', run('rename'));
   menu.append(rename);
   const fork = item('fork', 'Fork', {key: 'F'});
+  fork.disabled = branchingConversations.has(id);
   fork.addEventListener('click', run('fork'));
   menu.append(fork, divider());
   const project = item('project', 'Move to project', {submenu: true});
@@ -4236,7 +4243,17 @@ async function openConversation(id: string) {
     return false;
   }
   captureComposerDraft();
-  studioLibraries.setSessionPreference(c.id, {seenAt: Date.now()});
+  studioLibraries.setSessionPreference(c.id, {
+    seenAt: Math.max(Date.now(), Number(c.updatedAt || 0)),
+  });
+  document
+    .querySelectorAll<HTMLElement>('#side-convos .side-item')
+    .forEach(row => {
+      if (row.dataset.open === c.id) {
+        row.dataset.unread = 'false';
+        row.querySelector('.side-unread')?.remove();
+      }
+    });
   const switchedTask = activeConversationId !== c.id;
   if (switchedTask) {
     detachPendingConversation();
@@ -7428,11 +7445,23 @@ document.addEventListener('mp:open-file', (event: Event) => {
   void selectProjectFile(relative);
 });
 
+const branchingConversations = new Set<string>();
+
 async function branchConversationFromUi(
   conversationId: string,
-  turnIndex: number,
+  turnIndex?: number,
 ): Promise<void> {
+  if (branchingConversations.has(conversationId)) {
+    return;
+  }
+  branchingConversations.add(conversationId);
   document.getElementById('conversation-branch-error')?.remove();
+  const progress = document.createElement('div');
+  progress.id = 'conversation-branch-progress';
+  progress.className = 'notice mp-conversation-branch-progress';
+  progress.setAttribute('role', 'status');
+  progress.textContent = studioT('chat.fork_creating');
+  document.body.append(progress);
   const report = (error?: unknown) => {
     const notice = document.createElement('div');
     notice.id = 'conversation-branch-error';
@@ -7455,10 +7484,20 @@ async function branchConversationFromUi(
   };
   let result: Awaited<ReturnType<typeof Data.branchConversation>>;
   try {
+    if (turnIndex === undefined) {
+      const source = await Data.conversation(conversationId);
+      if (!source?.turns?.length) {
+        throw new Error(studioT('chat.fork_failed'));
+      }
+      turnIndex = source.turns.length - 1;
+    }
     result = await Data.branchConversation(conversationId, turnIndex);
   } catch (error) {
     report(error);
     return;
+  } finally {
+    branchingConversations.delete(conversationId);
+    progress.remove();
   }
   if (!result?.ok || !result.conversation?.id) {
     report(result?.error);
@@ -10787,7 +10826,9 @@ document.addEventListener('click', e => {
     closeAnchoredPopover('composer-usage-popover', 'composer-context');
   }
 
-  const open = target.closest<HTMLElement>('[data-open]');
+  const open = target.closest('[data-session-menu], .side-session-menu')
+    ? null
+    : target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) {
     void openConversation(open.dataset.open);
     return;
