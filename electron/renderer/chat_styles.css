@@ -414,6 +414,33 @@
   padding: var(--cds-pad-sm) var(--cds-pad-md);
 }
 
+.mp-chat-diff-load {
+  display: flex;
+  padding: var(--cds-pad-sm) var(--cds-pad-md);
+  border: 0;
+  background: transparent;
+  color: var(--cds-text-secondary);
+  font-family: var(--cds-font-sans);
+  font-size: var(--cds-font-size-footnote);
+  line-height: var(--cds-leading-footnote);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mp-chat-diff-load:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mp-chat-diff-load:focus-visible {
+  outline: none;
+  box-shadow: var(--cds-focus-shadow);
+}
+
+.mp-chat-diff-load:disabled {
+  cursor: wait;
+}
+
 .mp-chat-diff-path {
   flex: 1;
   min-width: 0;

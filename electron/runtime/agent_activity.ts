@@ -227,6 +227,7 @@ export class RuntimeActivitySink {
         latency_ms: result.latency_ms,
         args: text(result.arguments),
         result: text(result.value),
+        presentation: result.presentation,
       });
       const record =
         this.tools.get(text(result.tool_call_id)) ??
@@ -244,6 +245,7 @@ export class RuntimeActivitySink {
         text: text(result.arguments),
         result: text(result.value),
         isError: result.is_error,
+        presentation: result.presentation,
       });
       const activity = this.activities.find(
         item => item.kind === 'tool' && item.id === result.tool_call_id,

@@ -19,6 +19,12 @@ export type FailureType =
   | 'computer_use_busy'
   | 'steer_pending';
 export type JsonSchema = Record<string, unknown>;
+export type ToolPresentation =
+  | {kind: 'file_diff'; beforePath: string | null; afterPath: string}
+  | {
+      kind: 'file_diff_unavailable';
+      reason: 'too_large' | 'binary' | 'capture_failed';
+    };
 export interface ToolCall {
   id: string;
   name: string;
@@ -36,11 +42,13 @@ export interface ToolResult {
   outcome_known: boolean;
   tool_name?: string;
   arguments?: Record<string, unknown>;
+  presentation?: ToolPresentation;
 }
 export interface ToolContext {
   signal: AbortSignal;
   tool_call_id: string;
   scope?: unknown;
+  present?: (presentation: ToolPresentation) => void;
 }
 export interface ToolSpec {
   name: string;
@@ -575,10 +583,14 @@ export class ToolRegistry {
         ? AbortSignal.any([options.signal, deadline.signal])
         : deadline.signal;
       signal.throwIfAborted();
+      let presentation: ToolPresentation | undefined;
       const context: ToolContext = {
         signal,
         tool_call_id: call.id,
         scope: options.scope,
+        present: value => {
+          presentation = value;
+        },
       };
       for (const precondition of spec.preconditions ?? []) {
         await precondition(args, context);
@@ -592,6 +604,7 @@ export class ToolRegistry {
         tool_name: call.name,
         arguments: args,
         value,
+        ...(presentation ? {presentation} : {}),
         is_error: false,
         failure_type: null,
         used_backend: spec.used_backend ?? 'local',

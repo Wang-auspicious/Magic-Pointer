@@ -1637,6 +1637,10 @@ declare global {
   }
 
   interface MagicPointerOverlayApi {
+    readFileDiff(reference: {beforePath: string | null; afterPath: string}): Promise<
+      {ok: true; presentation: {kind: 'file_diff'; beforeText: string; afterText: string}} |
+      {ok: false; error: string}
+    >;
     ready(): void;
     gestureReady(token: unknown): void;
     hide(): void;

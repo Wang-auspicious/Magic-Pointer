@@ -12,7 +12,13 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import createIgnore, {type Ignore} from 'ignore';
-import {ActionFailure, ToolRegistry, type ToolSpec, type Effect} from './tools';
+import {
+  ActionFailure,
+  ToolRegistry,
+  type ToolSpec,
+  type Effect,
+  type ToolContext,
+} from './tools';
 import {EventSession} from './session';
 import {asObject, type Data} from './agent';
 import {normalizeAdditionalFolders} from '../workspace_folders';
@@ -31,6 +37,7 @@ const normalize = (value: string) =>
   value.replace(/\r\n/g, '\n').replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 const binaryContent = (value: Buffer | null) =>
   Boolean(value?.subarray(0, 8192).includes(0));
+const MAX_DIFF_PREVIEW_CHARS = 200_000;
 const ignore = new Set([
   'node_modules',
   '.git',
@@ -272,6 +279,7 @@ export class WorkspaceFiles {
     content: string,
     check = true,
     preserveExactText = false,
+    present?: ToolContext['present'],
   ): Promise<Data> {
     if (check) {
       await this.requireFresh(file);
@@ -288,6 +296,39 @@ export class WorkspaceFiles {
     }
     const finalText = body.toString('utf8');
     this.readVersions.set(file, finalText);
+    if (present) {
+      if (binaryContent(checkpoint.original) || binaryContent(body)) {
+        present({kind: 'file_diff_unavailable', reason: 'binary'});
+      } else if (
+        (checkpoint.original?.length || 0) > 4 * MAX_DIFF_PREVIEW_CHARS
+      ) {
+        present({kind: 'file_diff_unavailable', reason: 'too_large'});
+      } else {
+        const beforeText = checkpoint.original?.toString('utf8') || '';
+        if (
+          beforeText.length <= MAX_DIFF_PREVIEW_CHARS &&
+          finalText.length <= MAX_DIFF_PREVIEW_CHARS
+        ) {
+          const afterPath = path.join(
+            this.checkpointDir,
+            checkpoint.id + '.after.txt',
+          );
+          try {
+            await writeFile(afterPath, body);
+            present({
+              kind: 'file_diff',
+              beforePath: checkpoint.backupPath,
+              afterPath,
+            });
+          } catch {
+            // Optional preview storage cannot invalidate the verified file write.
+            present({kind: 'file_diff_unavailable', reason: 'capture_failed'});
+          }
+        } else {
+          present({kind: 'file_diff_unavailable', reason: 'too_large'});
+        }
+      }
+    }
     return {
       ...(await this.changeResult(file, checkpoint, body)),
       message: `Wrote ${body.length} bytes`,
@@ -932,7 +973,14 @@ export function registerCodingTools(
     'Write',
     'Write a workspace text file. Read existing files first. Returns actual byte readback.',
     schema({path: string, content: string}, ['path', 'content']),
-    args => space.write(space.resolve(args.path), str(args.content)),
+    (args, context) =>
+      space.write(
+        space.resolve(args.path),
+        str(args.content),
+        true,
+        false,
+        context.present,
+      ),
     'reversible_write',
   );
   const editSchema = schema(
@@ -952,7 +1000,7 @@ export function registerCodingTools(
       },
       ['path'],
     ),
-    async args => {
+    async (args, context) => {
       const file = space.resolve(args.path);
       await space.requireFresh(file);
       const original = await readFile(file, 'utf8');
@@ -987,7 +1035,13 @@ export function registerCodingTools(
         output =
           output.slice(0, item.start) + item.text + output.slice(item.end);
       }
-      const persisted = await space.write(file, output, true, true);
+      const persisted = await space.write(
+        file,
+        output,
+        true,
+        true,
+        context.present,
+      );
       const before = fileFacts(original);
       const after = fileFacts(output);
       return {

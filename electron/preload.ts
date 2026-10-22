@@ -57,6 +57,8 @@ function onSignal(channel: string, callback: SignalCallback): void {
 }
 
 contextBridge.exposeInMainWorld('magicPointer', {
+  readFileDiff: (reference: {beforePath: string | null; afterPath: string}) =>
+    ipcRenderer.invoke('files:diff-preview', reference),
   ready: () => ipcRenderer.send('overlay:renderer-ready'),
   gestureReady: (token: unknown) =>
     ipcRenderer.send('overlay:gesture-ready', {token}),

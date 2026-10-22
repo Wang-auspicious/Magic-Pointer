@@ -10,6 +10,14 @@ const {
 assert.strictEqual(PROGRESS_PREFIX, '@@mp ');
 
 {
+  const presentation = {kind: 'file_diff', beforePath: 'D:/work/.mp/old.bin', afterPath: 'D:/work/.mp/new.after.txt'};
+  const blob = Buffer.from(JSON.stringify({id: 'edit', name: 'Edit', state: 'done', presentation})).toString('base64');
+  const result = parseProgressLine(`@@mp phase=tool_result b64=${blob}`);
+  assert.deepStrictEqual(JSON.parse(result.fields.presentation), presentation,
+    'the actual progress decoder must preserve lightweight diff references');
+}
+
+{
   const result = '工具输出\n'.repeat(6000);
   const payload = { id: 'look-1', name: 'Look', args: '{"target":"右侧区域"}', result, state: 'done', latency_ms: 412 };
   const blob = Buffer.from(JSON.stringify(payload)).toString('base64');

@@ -978,7 +978,26 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '改动过多，无法显示逐行差异。下方分别显示删除和新增的文本。',
   },
   'chat.diff_removed_text': {en: 'Removed text', zh: '删除的文本'},
+  'chat.diff_unavailable_large': {
+    en: 'File changes are too large to preview. Open the file to view its contents.',
+    zh: '文件改动过大，无法在此预览。请打开文件查看内容。',
+  },
+  'chat.diff_unavailable_binary': {
+    en: 'This file cannot be shown as a text diff.',
+    zh: '此文件无法显示为文本差异。',
+  },
   'chat.diff_added_text': {en: 'Added text', zh: '新增的文本'},
+  'chat.diff_unavailable_capture': {
+    en: 'File saved. Its change preview could not be retained.',
+    zh: '文件已保存，但未能保留此次改动预览。',
+  },
+  'chat.diff_show': {en: 'Show changes', zh: '查看改动'},
+  'chat.diff_unavailable_previous': {
+    en: 'The previous version was not retained, so a historical diff is unavailable.',
+    zh: '未保留此前版本，无法显示当时的差异。',
+  },
+  'chat.diff_loading': {en: 'Loading changes…', zh: '正在加载改动…'},
+  'chat.diff_retry': {en: 'Could not load changes. Retry', zh: '改动加载失败，点击重试'},
   'chat.image_preview': {en: 'Image preview', zh: '图片预览'},
   'chat.image_original_size': {en: 'Click for original size; right-click to copy', zh: '点击查看原始大小；右键复制图片'},
   'chat.resend': {en: 'Resend', zh: '重新发送'},

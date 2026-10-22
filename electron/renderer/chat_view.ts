@@ -1710,7 +1710,7 @@ const ChatView = (() => {
   }
   interface DiffView {
     blocks: DiffBlock[];
-    previews: Array<{blocks: DiffBlock[]; copyText: string}>;
+    previews: Array<{blocks: DiffBlock[]; copyText?: string}>;
   }
 
   function appendDiffBlock(
@@ -1810,7 +1810,41 @@ const ChatView = (() => {
     }));
   }
 
-  function deriveDiff(name: string, argsRaw: string): DiffView | null {
+  function deriveDiff(
+    name: string,
+    argsRaw: string,
+    presentation?: unknown,
+  ): DiffView | null {
+    const shown = typeof presentation === 'string'
+      ? outputRecord(presentation) : recordOf(presentation);
+    if (
+      shown?.kind === 'file_diff' &&
+      typeof shown.beforeText === 'string' &&
+      typeof shown.afterText === 'string'
+    ) {
+      const before = shown.beforeText.replace(/\r\n/g, '\n');
+      const after = shown.afterText.replace(/\r\n/g, '\n');
+      let blocks = replacementDiff(before, after);
+      if (!blocks) {
+        blocks = [{kind: 'notice', text: lt('chat.diff_separate_text')}];
+        appendDiffBlock(before, 'del', blocks);
+        appendDiffBlock(after, 'add', blocks);
+      }
+      return {
+        blocks,
+        previews: [{blocks, copyText: shown.afterText || shown.beforeText}],
+      };
+    }
+    if (shown?.kind === 'file_diff_unavailable') {
+      const blocks: DiffBlock[] = [{
+        kind: 'notice',
+        text: lt(shown.reason === 'binary'
+          ? 'chat.diff_unavailable_binary' : shown.reason === 'capture_failed'
+            ? 'chat.diff_unavailable_capture' : shown.reason === 'previous'
+              ? 'chat.diff_unavailable_previous' : 'chat.diff_unavailable_large'),
+      }];
+      return {blocks, previews: [{blocks}]};
+    }
     if (!argsRaw) {
       return null;
     }
@@ -1972,6 +2006,7 @@ const ChatView = (() => {
     summary: string;
     filePath?: string;
     fileTarget?: string;
+    presentation?: unknown;
     body: string | null;
     output: string | null;
     errorSummary: string | null;
@@ -1985,7 +2020,7 @@ const ChatView = (() => {
   function toolRowModel(
     name: string,
     argsRaw: string,
-    result?: {text?: string; isError?: boolean; interrupted?: boolean},
+    result?: {text?: string; isError?: boolean; interrupted?: boolean; presentation?: unknown},
     callId = '',
     executionRoot = '',
   ): ToolRowModel {
@@ -2169,6 +2204,7 @@ const ChatView = (() => {
       summary,
       filePath,
       fileTarget: /^(?:[a-z]:[\\/]|[\\/])/i.test(target) ? target : undefined,
+      presentation: result?.presentation,
       body: deriveBody(variant, argsRaw),
       output,
       errorSummary,
@@ -2177,7 +2213,8 @@ const ChatView = (() => {
       callId,
       diffStat:
         actualStat === undefined
-          ? state === 'error'
+          ? state === 'error' ||
+            (['Write', 'write_file', 'write'].includes(name) && receipt?.created === false)
             ? null
             : deriveDiffStat(name, argsRaw)
           : actualStat,
@@ -2185,7 +2222,10 @@ const ChatView = (() => {
     };
   }
 
-  function diffPreviewNode(diff: DiffView, model: ToolRowModel): ChatNode {
+  function diffPreviewNode(
+    diff: DiffView,
+    model: Pick<ToolRowModel, 'filePath' | 'fileTarget'>,
+  ): ChatNode {
     const root = h('div', {class: 'mp-chat-diff-previews'});
     for (const preview of diff.previews) {
       const section = h('div', {class: 'mp-chat-diff-preview'});
@@ -2204,20 +2244,90 @@ const ChatView = (() => {
         attach(file, model.filePath);
         attach(header, file);
       }
-      const copy = h('button', {
-        type: 'button',
-        class: 'mp-chat-action mp-chat-diff-copy',
-        'aria-label': lt('chat.copy'),
-        'data-mp-chat-act': 'copy',
-        'data-mp-chat-copy': preview.copyText,
-      });
-      attach(copy, icon('copy', 16));
-      attach(header, copy);
+      if (preview.copyText !== undefined) {
+        const copy = h('button', {
+          type: 'button',
+          class: 'mp-chat-action mp-chat-diff-copy',
+          'aria-label': lt('chat.copy'),
+          'data-mp-chat-act': 'copy',
+          'data-mp-chat-copy': preview.copyText,
+        });
+        attach(copy, icon('copy', 16));
+        attach(header, copy);
+      }
       attach(section, header);
       attach(section, diffNode(preview));
       attach(root, section);
     }
     return root;
+  }
+
+  function deferredFileDiffNode(
+    model: ToolRowModel,
+    reference: Record<string, unknown>,
+  ): ChatNode {
+    const root = diffPreviewNode({blocks: [], previews: [{blocks: []}]}, model);
+    root.setAttribute('data-file-diff-reference', JSON.stringify(reference));
+    if (model.filePath) {
+      root.setAttribute('data-file-path', model.filePath);
+    }
+    if (model.fileTarget) {
+      root.setAttribute('data-file-absolute-path', model.fileTarget);
+    }
+    const load = h('button', {
+      type: 'button',
+      class: 'mp-chat-diff-load',
+      'data-mp-chat-act': 'load-file-diff',
+    });
+    attach(load, lt('chat.diff_show'));
+    attach(root, load);
+    return root;
+  }
+
+  async function loadFileDiff(button: HTMLElement): Promise<void> {
+    const root = button.closest<HTMLElement>('[data-file-diff-reference]');
+    if (!root || button.dataset.loading === 'true') {
+      return;
+    }
+    const restoreFocus = DOC?.activeElement === button;
+    button.dataset.loading = 'true';
+    (button as HTMLButtonElement).disabled = true;
+    button.textContent = lt('chat.diff_loading');
+    try {
+      const reference = JSON.parse(
+        root.getAttribute('data-file-diff-reference') || '{}',
+      );
+      const reply = await window.magicPointer.readFileDiff(reference);
+      if (root.isConnected === false) {
+        return;
+      }
+      if (!reply.ok) {
+        throw new Error(reply.error);
+      }
+      const diff = deriveDiff('', '', reply.presentation)!;
+      const content = diffPreviewNode(diff, {
+        filePath: root.getAttribute('data-file-path') || undefined,
+        fileTarget: root.getAttribute('data-file-absolute-path') || undefined,
+      }) as HTMLElement;
+      root.replaceChildren(...Array.from(content.childNodes));
+      root.removeAttribute('data-file-diff-reference');
+      if (restoreFocus && DOC?.activeElement === button) {
+        root
+          .querySelector<HTMLElement>('[tabindex="0"]')
+          ?.focus({preventScroll: true});
+      }
+    } catch (error) {
+      if (root.isConnected === false) {
+        return;
+      }
+      button.dataset.loading = 'false';
+      (button as HTMLButtonElement).disabled = false;
+      button.textContent = lt('chat.diff_retry');
+      button.title = error instanceof Error ? error.message : String(error);
+      if (restoreFocus && DOC?.activeElement === button) {
+        button.focus({preventScroll: true});
+      }
+    }
   }
 
   function diffNode(diff: Pick<DiffView, 'blocks'>): ChatNode {
@@ -3343,13 +3453,22 @@ const ChatView = (() => {
     }
 
     const body: ChatNode[] = [];
-    // `too_large` is the reference's refusal to preview a change whose strings
-    // exceed 200000 characters: the row keeps its diffstat and drops the body
-    // rather than rendering a diff too big to read.
-    const diff =
+    const payload = outputRecord(model.output);
+    const reference = typeof model.presentation === 'string'
+      ? outputRecord(model.presentation) : recordOf(model.presentation);
+    const deferred = model.state === 'ok' && reference?.kind === 'file_diff' &&
+      typeof reference.afterPath === 'string';
+    // Verified snapshots take precedence over request snippets. Old overwrites
+    // without a before-image cannot truthfully be shown as all additions.
+    const legacyOverwrite = model.state === 'ok' && !model.presentation &&
+      ['Write', 'write_file', 'write'].includes(model.name) && payload?.created === false;
+    const presented = model.state === 'ok'
+      ? deriveDiff(model.name, '', legacyOverwrite
+        ? {kind: 'file_diff_unavailable', reason: 'previous'} : model.presentation) : null;
+    const diff = presented ?? (
       model.state === 'error' || model.fileChange === 'too_large'
         ? null
-        : deriveDiff(model.name, model.argsRaw ?? '');
+        : deriveDiff(model.name, model.argsRaw ?? ''));
     const command = toolCommandOf(model);
     const singleLine = command !== null && command.rest === '';
     let outputInCard = false;
@@ -3357,7 +3476,6 @@ const ChatView = (() => {
     // a diff or a JSON dump: it renders the payload's own results, and the raw
     // output row is dropped when it does. The count lives on the row itself,
     // so an empty result set still reports "0 results".
-    const payload = outputRecord(model.output);
     const results = resultBodyNode(model.name, payload);
     const webCount = webResults(model.name, payload)?.count ?? null;
     if (webCount !== null) {
@@ -3369,7 +3487,10 @@ const ChatView = (() => {
       );
     }
     const checklist = todoChecklist(model) || questionHistory(model);
-    if (checklist !== null) {
+    if (deferred) {
+      body.push(deferredFileDiffNode(model, reference!));
+      outputInCard = true;
+    } else if (checklist !== null) {
       body.push(checklist);
       outputInCard = model.state !== 'error';
     } else if (results !== null) {
@@ -4202,7 +4323,7 @@ const ChatView = (() => {
     displayLabel?: string;
     startedAtMs?: number;
     executionRoot?: string;
-    result?: {text: string; isError: boolean; interrupted?: boolean};
+    result?: {text: string; isError: boolean; interrupted?: boolean; presentation?: unknown};
     subagent?: Record<string, unknown>;
   }
 
@@ -4275,6 +4396,7 @@ const ChatView = (() => {
             text: String(record.result ?? ''),
             isError: record.isError === true || record.state === 'error',
             interrupted,
+            presentation: record.presentation,
           }
         : undefined,
     };
@@ -4983,6 +5105,7 @@ const ChatView = (() => {
                   text: String(event.result || ''),
                   isError: Boolean(event.isError),
                   interrupted: event.interrupted === true,
+                  presentation: event.presentation,
                 }
               : undefined,
         },
@@ -5221,6 +5344,7 @@ const ChatView = (() => {
                 text:
                   fields.result !== undefined ? String(fields.result) : detail,
                 isError: fields.state === 'error',
+                presentation: fields.presentation,
               }
             : undefined,
           String(fields.id || ''),
@@ -5860,6 +5984,10 @@ const ChatView = (() => {
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
     row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    if (!open) {
+      disclosure.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
+        .forEach(button => { void loadFileDiff(button); });
+    }
     const rowId = disclosure.getAttribute('data-row-id');
     if (rowId) {
       rememberExpansion(ROW_EXPANSION, rowId, !open);
@@ -5876,6 +6004,14 @@ const ChatView = (() => {
       return;
     }
     const summary = target.querySelector(':scope > .mp-chat-tool-group-header');
+    if (target.hasAttribute('open')) {
+      target.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
+        .forEach(button => {
+          if (button.closest('.mp-chat-disclosure')?.getAttribute('data-open') === 'true') {
+            void loadFileDiff(button);
+          }
+        });
+    }
     const groupId = summary?.getAttribute('data-group-id');
     if (!groupId) {
       return;
@@ -5988,6 +6124,8 @@ const ChatView = (() => {
       if (kind === 'view-image' && act instanceof HTMLImageElement) {
         event.preventDefault();
         openChatImage(act);
+      } else if (kind === 'load-file-diff') {
+        void loadFileDiff(act);
       } else if (kind === 'toggle') {
         toggleDisclosure(act);
       } else if (kind === 'open-subagent') {
@@ -6136,6 +6274,7 @@ const ChatView = (() => {
       classifyTool,
       deriveSummary,
       deriveDiff,
+      diffPreviewNode,
       formatClock,
       relativeTime,
       toolGroupLabel,

@@ -241,3 +241,15 @@ test('a preview path uses its receipt target and unknown origins stay plain text
   assert.match(unknown, /<span class="mp-chat-diff-path"/);
   assert.doesNotMatch(unknown, /data-mp-chat-act="open-file"/);
 });
+
+test('an older overwrite without a retained before image does not claim all lines were added', () => {
+  const html = row('Write', {path: 'file.txt', content: 'retained\nnew\n'}, {
+    text: JSON.stringify({created: false, diffStat: {added: 1, removed: 1}}),
+  });
+  assert.doesNotMatch(html, /data-kind="add"/);
+  assert.match(html, /mp-chat-diff-notice/);
+  assert.match(html, /mp-chat-diff-add">\+1/);
+  assert.equal(chat.toolRowModel('Write', JSON.stringify({path: 'file.txt', content: 'one\ntwo\n'}), {
+    text: JSON.stringify({created: false}),
+  }).diffStat, null);
+});

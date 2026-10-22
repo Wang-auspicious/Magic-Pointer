@@ -8,6 +8,7 @@ import {RuntimeActivitySink} from '../electron/runtime/agent_activity';
 import {EventSession} from '../electron/runtime/session';
 import {ToolRegistry} from '../electron/runtime/tools';
 import {createConversationStore} from '../electron/conversation_store';
+import {readFileDiffPresentation} from '../electron/file_diff_presentation';
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mp-change-counts-'));
@@ -194,6 +195,13 @@ test('persisted Edit previews retain context and actual counts', async () => {
     const saved = createConversationStore({baseDir: f.root}).get(
       conversation.id,
     )!;
+    for (const entry of saved.turns[0].trajectory || []) {
+      if (entry.presentation) {
+        const loaded = await readFileDiffPresentation(entry.presentation as any);
+        assert.equal(loaded.ok, true);
+        if (loaded.ok) entry.presentation = loaded.presentation;
+      }
+    }
     const chat = require('../electron/renderer/chat_view');
     const html = chat
       .assistantTurnNode(saved.turns[0])

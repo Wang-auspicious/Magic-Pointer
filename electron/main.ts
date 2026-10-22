@@ -8,6 +8,7 @@ import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource
 import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
 import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
 import {attachChatImageMenu} from './chat_image_menu';
+import {readFileDiffPresentation} from './file_diff_presentation';
 import {
   projectAttachments,
   type ProjectDetailsPatch,
@@ -2994,6 +2995,23 @@ ipcMain.handle(
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  },
+);
+
+ipcMain.handle(
+  'files:diff-preview',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    reference: {beforePath: string | null; afterPath: string},
+  ) => {
+    const stage =
+      stageWindow &&
+      !stageWindow.isDestroyed() &&
+      event.sender === stageWindow.webContents;
+    if (!isDashboardSender(event) && !stage) {
+      return {ok: false, error: 'unauthorized_file_sender'};
+    }
+    return readFileDiffPresentation(reference);
   },
 );
 
