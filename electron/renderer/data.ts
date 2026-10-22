@@ -903,10 +903,12 @@ declare global {
         conversationId?: string | null,
       ): Promise<MagicPointerProjectEnvironment>;
       worktree?(payload: {
-        action: 'create' | 'remove';
+        action: 'create' | 'remove' | 'checkout';
         projectRoot: string;
         conversationId?: string;
         path?: string;
+        baseBranch?: string;
+        previousBranch?: string;
       }): Promise<{
         ok?: boolean;
         path?: string;
@@ -1988,11 +1990,12 @@ const Data: MagicPointerDataApi = {
   },
 
   async projectWorktree(payload: {
-    action: 'create' | 'remove';
+    action: 'create' | 'remove' | 'checkout';
     projectRoot: string;
     conversationId?: string;
     path?: string;
     baseBranch?: string;
+    previousBranch?: string;
   }) {
     const projects = bridge()?.projects;
     if (!hasBridge() || !projects?.worktree) {
