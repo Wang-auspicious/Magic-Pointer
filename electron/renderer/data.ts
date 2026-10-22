@@ -490,6 +490,7 @@ declare global {
     node(name: string, size?: number): Element;
   };
   const ChatDiffRows: typeof import('./chat_diff_rows');
+  const ChatFileIcons: typeof import('./chat_file_icons');
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;

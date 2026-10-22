@@ -16,6 +16,9 @@ const ChatView = (() => {
   const diffRows: typeof import('./chat_diff_rows') =
     typeof ChatDiffRows !== 'undefined'
       ? ChatDiffRows : require('./chat_diff_rows');
+  const fileIcons: typeof import('./chat_file_icons') =
+    typeof ChatFileIcons !== 'undefined'
+      ? ChatFileIcons : require('./chat_file_icons');
   const StudioLocaleApi =
     typeof require === 'function' ? require('./locale') : null;
   const compaction: typeof import('../compaction_status') =
@@ -3984,6 +3987,7 @@ const ChatView = (() => {
     name: string;
     added: number;
     removed: number;
+    statKnown: boolean;
     created: boolean;
     deleted: boolean;
     previewPath?: string;
@@ -4093,6 +4097,7 @@ const ChatView = (() => {
           name: path.split(/[\\/]/).pop() || path,
           added: stat ? stat.added : 0,
           removed: stat ? stat.removed : 0,
+          statKnown: Boolean(stat),
           created,
           deleted: change.exists === false,
           ...(typeof change.previewPath === 'string'
@@ -4102,6 +4107,116 @@ const ChatView = (() => {
       }
     }
     return [...byPath.values()];
+  }
+
+  function fileResultGlyph(glyph: string, className = ''): ChatNode {
+    return h('span', {
+      class: `mp-chat-file-glyph ${className}`.trim(),
+      'aria-hidden': 'true', 'data-glyph': glyph,
+    });
+  }
+
+  function fileTypeIcon(name: string): ChatNode {
+    const namespace = 'http://www.w3.org/2000/svg';
+    const selected = fileIcons.fileIconFor(name);
+    const svg = DOC ? DOC.createElementNS(namespace, 'svg') : shimNode('svg', namespace);
+    svg.setAttribute('class', 'mp-chat-file-type-icon');
+    svg.setAttribute('data-file-type-icon', selected.id);
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    const append = (parent: ChatNode, nodes: typeof selected.nodes): void => {
+      for (const [tag, attributes, children] of nodes) {
+        const node = DOC ? DOC.createElementNS(namespace, tag) : shimNode(tag, namespace);
+        for (const [key, value] of Object.entries(attributes)) {
+          node.setAttribute(key, value);
+        }
+        if (children) {
+          append(node, children);
+        }
+        attach(parent, node);
+      }
+    };
+    append(svg, selected.nodes);
+    return svg;
+  }
+
+  function fileFolderHints(files: DeliveredFile[]): Map<string, string> {
+    const groups = new Map<string, DeliveredFile[]>();
+    for (const file of files) {
+      const group = groups.get(file.name) || [];
+      group.push(file);
+      groups.set(file.name, group);
+    }
+    const hints = new Map<string, string>();
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      const folders = group.map(file => {
+        const path = file.path.replace(/\\/g, '/');
+        const folder = path.slice(0, path.lastIndexOf('/')) || (path.startsWith('/') ? '/' : '');
+        const parts = folder.split('/').filter(Boolean);
+        if (folder.startsWith('//')) {
+          parts.unshift('/');
+        } else if (folder.startsWith('/')) {
+          parts.unshift('');
+        }
+        return {file, folder, parts};
+      });
+      for (const item of folders) {
+        const others = folders.filter(other => other !== item);
+        if (others.every(other => other.folder === item.folder)) {
+          continue;
+        }
+        let hint = item.folder;
+        for (let size = 1; size < item.parts.length; size++) {
+          const tail = item.parts.slice(-size).join('/');
+          if (others.every(other => other.parts.slice(-size).join('/') !== tail)) {
+            const root = item.parts[0];
+            if (!(size === item.parts.length - 1 && (root === '' || root === '/' || /^[a-z]:$/i.test(root)))) {
+              hint = tail;
+            }
+            break;
+          }
+        }
+        hints.set(item.file.path, hint);
+      }
+    }
+    return hints;
+  }
+
+  function fileResultStat(added: number, removed: number): ChatNode {
+    return h('span', {class: 'mp-chat-diff-stat'},
+      h('span', {class: 'mp-chat-diff-add'}, `+${added}`),
+      h('span', {class: 'mp-chat-diff-del'}, `−${removed}`));
+  }
+
+  function fileResultRow(options: {
+    opener: ChatNode; label: string; mark: ChatNode; hint?: string;
+    detail?: string; stat?: ChatNode | null; action?: ChatNode; chevron?: boolean;
+  }): ChatNode {
+    const item = h('li', {class: 'mp-chat-file-item'});
+    const name = h('span', {class: 'mp-chat-file-name'}, options.label);
+    if (options.hint !== undefined) {
+      options.opener.setAttribute('aria-label', `${options.label}, ${options.hint}`);
+      attach(name, h('span', {class: 'mp-chat-file-folder-hint'}, options.hint));
+    }
+    const labels = h('span', {class: 'mp-chat-file-labels'},
+      h('span', {class: 'mp-chat-file-mark'}, options.mark), name);
+    if (options.detail) {
+      attach(labels, h('span', {class: 'mp-chat-file-detail'}, options.detail));
+    }
+    attach(options.opener, labels);
+    attach(item, options.opener);
+    const trailing = h('span', {class: 'mp-chat-file-trailing'});
+    attach(trailing, options.action);
+    attach(trailing, options.stat);
+    if (options.chevron) {
+      attach(trailing, fileResultGlyph('\ue02a', 'mp-chat-file-chev'));
+    }
+    attach(item, trailing);
+    return item;
   }
 
   function fileResultsNode(
@@ -4117,8 +4232,8 @@ const ChatView = (() => {
       return null;
     }
     const card = h('div', {class: 'mp-chat-files'});
-    const head = h('div', {class: 'mp-chat-files-head'});
-    const title = h('span', {class: 'mp-chat-files-title'});
+    const list = h('ul', {class: 'mp-chat-files-list', role: 'list'});
+    attach(card, list);
     const artifactPath =
       typeof artifact?.path === 'string' ? artifact.path : '';
     const artifactFile = artifactPath
@@ -4130,36 +4245,19 @@ const ChatView = (() => {
     const label = artifact
       ? String(artifact.title || artifact.name || '').trim()
       : '';
-    attach(
-      title,
-      artifact
-        ? `Published artifact${label ? ` ${label}` : ''}`
-        : toolGroupLabel(
-            files.map(file => ({
-              name: file.deleted
-                ? 'delete_file'
-                : file.created
-                  ? 'Write'
-                  : 'Edit',
-              argsRaw: '{}',
-              callId: file.path,
-              result: {text: '', isError: false},
-            })),
-          ),
-    );
-    attach(head, title);
-    if (artifact) {
-      const open = h('button', {
-        type: 'button',
-        class: 'mp-chat-files-open',
-        'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': String(artifact.artifactId || ''),
-        'data-artifact-conversation': conversationId,
-      });
-      attach(open, 'Open');
-      attach(head, open);
+    if (!artifact && files.length > 1) {
+      const title = h('span', {class: 'mp-chat-files-title'},
+        lt('chat.files_edited', {count: files.length}));
+      const head = h('li', {class: 'mp-chat-files-head'},
+        h('span', {class: 'mp-chat-files-heading'},
+          fileResultGlyph('\ue02d'), title));
+      if (files.every(file => file.statKnown)) {
+        const added = files.reduce((total, file) => total + file.added, 0);
+        const removed = files.reduce((total, file) => total + file.removed, 0);
+        attach(head, h('span', {class: 'mp-chat-file-trailing'}, fileResultStat(added, removed)));
+      }
+      attach(list, head);
     }
-    attach(card, head);
 
     if (artifact) {
       const row = h('button', {
@@ -4169,48 +4267,28 @@ const ChatView = (() => {
         'data-artifact-id': String(artifact.artifactId || ''),
         'data-artifact-conversation': conversationId,
       });
-      const mark = h('span', {
-        class: 'mp-chat-file-mark',
-        'aria-hidden': 'true',
-      });
-      attach(mark, icon('browse', 14));
-      attach(row, mark);
-      const name = h('span', {class: 'mp-chat-file-name'});
       const artifactName = String(
         artifact.name || artifact.path || artifact.artifactId || 'artifact',
       );
-      attach(name, artifactName.split(/[\\/]/).pop() || artifactName);
-      attach(row, name);
       const added = artifactFile
         ? artifactFile.added
         : Number(artifact.added || 0);
       const removed = artifactFile
         ? artifactFile.removed
         : Number(artifact.removed || 0);
-      if (added > 0 || removed > 0) {
-        const stat = h('span', {
-          class: 'mp-chat-diff-stat',
-          'aria-hidden': 'true',
-        });
-        if (added > 0) {
-          const add = h('span', {class: 'mp-chat-diff-add'});
-          attach(add, `+${added}`);
-          attach(stat, add);
-        }
-        if (removed > 0) {
-          const del = h('span', {class: 'mp-chat-diff-del'});
-          attach(del, `−${removed}`);
-          attach(stat, del);
-        }
-        attach(row, stat);
-      }
-      const chev = h('span', {
-        class: 'mp-chat-file-chev',
-        'aria-hidden': 'true',
-      });
-      attach(chev, icon('chev', 14));
-      attach(row, chev);
-      attach(card, row);
+      const open = h('button', {
+        type: 'button', class: 'mp-chat-files-open',
+        'aria-label': lt('chat.files_open_artifact', {label: label || artifactName}),
+        'data-mp-chat-act': 'open-artifact',
+        'data-artifact-id': String(artifact.artifactId || ''),
+        'data-artifact-conversation': conversationId,
+      }, lt('chat.files_open'));
+      const known = artifactFile ? artifactFile.statKnown
+        : typeof artifact.added === 'number' || typeof artifact.removed === 'number';
+      attach(list, fileResultRow({opener: row,
+        label: label || artifactName.split(/[\\/]/).pop() || artifactName,
+        mark: fileResultGlyph('\ue017'), detail: lt('chat.files_artifact'),
+        stat: known ? fileResultStat(added, removed) : null, action: open}));
     }
 
     const visibleFiles = files.filter(
@@ -4218,6 +4296,7 @@ const ChatView = (() => {
         !artifactPath ||
         deliveredFileKey(item.path) !== deliveredFileKey(artifactPath),
     );
+    const hints = fileFolderHints(visibleFiles);
     const fileRow = (file: DeliveredFile): ChatNode => {
       const target = file.previewPath || file.absolutePath || file.path;
       const row = h('button', {
@@ -4229,52 +4308,25 @@ const ChatView = (() => {
           ? {'data-file-absolute-path': file.absolutePath}
           : {}),
         'data-file-state': file.deleted ? 'deleted' : 'present',
+        'data-file-change': file.deleted ? 'deleted' : file.created ? 'created' : 'edited',
         ...(!/^(?:[a-z]:[\\/]|[\\/])/i.test(target)
           ? {'data-file-origin-unknown': 'true'}
           : {}),
         ...(file.previewPath ? {'data-preview-path': file.previewPath} : {}),
       });
-      const mark = h('span', {
-        class: 'mp-chat-file-mark',
-        'aria-hidden': 'true',
-      });
-      attach(mark, icon('browse', 14));
-      attach(row, mark);
-      const name = h('span', {class: 'mp-chat-file-name'});
-      attach(name, file.name);
-      attach(row, name);
-      if (file.added > 0 || file.removed > 0) {
-        const stat = h('span', {
-          class: 'mp-chat-diff-stat',
-          'aria-hidden': 'true',
-        });
-        if (file.added > 0) {
-          const add = h('span', {class: 'mp-chat-diff-add'});
-          attach(add, `+${file.added}`);
-          attach(stat, add);
-        }
-        if (file.removed > 0) {
-          const del = h('span', {class: 'mp-chat-diff-del'});
-          attach(del, `−${file.removed}`);
-          attach(stat, del);
-        }
-        attach(row, stat);
-      }
-      const chev = h('span', {
-        class: 'mp-chat-file-chev',
-        'aria-hidden': 'true',
-      });
-      attach(chev, icon('chev', 14));
-      attach(row, chev);
-      return row;
+      return fileResultRow({opener: row, label: file.name,
+        mark: fileTypeIcon(file.name), hint: hints.get(file.path),
+        stat: file.statKnown ? fileResultStat(file.added, file.removed) : null,
+        chevron: true});
     };
-    visibleFiles.slice(0, 3).forEach(file => attach(card, fileRow(file)));
+    visibleFiles.slice(0, 3).forEach(file => attach(list, fileRow(file)));
     if (visibleFiles.length > 3) {
       const key = `files:${turnScope}:${deliveredFileKey(visibleFiles[0].path)}`;
       const expanded = ROW_EXPANSION.get(key) === true;
-      const more = h('div', {class: 'mp-chat-files-more'});
-      const rest = h('div', {
+      const more = h('li', {class: 'mp-chat-files-more'});
+      const rest = h('ul', {
         class: 'mp-chat-files-more-list',
+        role: 'presentation',
         ...(!expanded ? {hidden: 'true'} : {}),
       });
       visibleFiles.slice(3).forEach(file => attach(rest, fileRow(file)));
@@ -4291,9 +4343,9 @@ const ChatView = (() => {
       attach(toggle, h('span', {class: 'mp-chat-files-more-spacer', 'aria-hidden': 'true'}));
       attach(toggle, h('span', {class: 'mp-chat-files-more-label'},
         expanded ? lt('chat.files_show_less') : collapsedLabel));
-      attach(toggle, h('span', {class: 'mp-chat-files-more-chevron', 'aria-hidden': 'true'}, icon('chev', 14)));
+      attach(toggle, fileResultGlyph('\ue02a', 'mp-chat-files-more-chevron'));
       attach(more, toggle);
-      attach(card, more);
+      attach(list, more);
     }
 
     return card;
@@ -4312,25 +4364,7 @@ const ChatView = (() => {
     if (!artifact) {
       return null;
     }
-    const name =
-      String(artifact.title || artifact.name || 'Draft artifact').trim() ||
-      'Draft artifact';
-    const card = h('div', {class: 'mp-chat-files'});
-    const head = h('div', {class: 'mp-chat-files-head'});
-    attach(head, h('span', {class: 'mp-chat-files-title'}, `Draft ${name}`));
-    attach(card, head);
-    const row = h('button', {
-      type: 'button',
-      class: 'mp-chat-file-row',
-      'data-mp-chat-act': 'open-artifact',
-      'data-artifact-id': String(artifact.artifactId),
-      'data-artifact-conversation': conversationId,
-    });
-    attach(row, h('span', {class: 'mp-chat-file-mark'}, icon('browse', 14)));
-    attach(row, h('span', {class: 'mp-chat-file-name'}, name));
-    attach(row, h('span', {class: 'mp-chat-file-chev'}, icon('chev', 14)));
-    attach(card, row);
-    return card;
+    return fileResultsNode([], [artifact], conversationId);
   }
 
   function sparkMark(running = true): ChatNode {

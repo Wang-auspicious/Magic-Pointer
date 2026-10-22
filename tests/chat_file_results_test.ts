@@ -68,7 +68,7 @@ test('failed or unfinished writes cannot create delivered file rows', () => {
   assert.doesNotMatch(html, /data-file-path="(?:failed|pending)\.ts"/);
 });
 
-test('edited files use the reference edit label instead of claiming creation', () => {
+test('a single file keeps its actual edit operation without an extra footer header', () => {
   const html = card([
     {
       kind: 'tool',
@@ -81,7 +81,8 @@ test('edited files use the reference edit label instead of claiming creation', (
       result: 'done',
     },
   ]);
-  assert.match(html, /mp-chat-files-title">Edited a file</);
+  assert.match(html, /data-file-change="edited"/);
+  assert.doesNotMatch(html, /mp-chat-files-head/);
 });
 
 test('a write receipt distinguishes overwriting an existing file from creating a new one', () => {
@@ -89,10 +90,10 @@ test('a write receipt distinguishes overwriting an existing file from creating a
     ...write('existing.ts'),
     result: JSON.stringify({path: 'existing.ts', created: false}),
   };
-  assert.match(card([existing]), /mp-chat-files-title">Edited a file</);
+  assert.match(card([existing]), /data-file-change="edited"/);
   assert.match(
     card([write('new.ts'), existing]),
-    /mp-chat-files-title">Edited a file, created a file</,
+    /mp-chat-files-title">Edited 2 files</,
   );
 });
 
@@ -110,7 +111,8 @@ test('a file created and then edited in one turn is counted once as a created fi
       result: 'done',
     },
   ]);
-  assert.match(html, /mp-chat-files-title">Created a file</);
+  assert.match(html, /data-file-change="created"/);
+  assert.doesNotMatch(html, /mp-chat-files-head/);
   assert.equal((html.match(/data-mp-chat-act="open-file"/g) || []).length, 1);
 });
 

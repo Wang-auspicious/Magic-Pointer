@@ -73,7 +73,10 @@ test('actual overwrite status survives activity projection and history reopening
       .assistantTurnNode(reopened.turns[0])
       .map((node: {outerHTML: string}) => node.outerHTML)
       .join('');
-    assert.match(html, /mp-chat-files-title">Edited a file</);
+    assert.match(
+      html,
+      /data-file-path="existing.ts"[^>]*data-file-change="edited"/,
+    );
     assert.match(html, /data-file-path="existing.ts"/);
     assert.equal(
       await readFile(path.join(workspace, 'existing.ts'), 'utf8'),

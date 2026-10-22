@@ -256,6 +256,16 @@ browser binary is bundled in Magic Pointer. The ego lite browser application
 is a separate download governed by its own terms; the SDK repository's MIT
 license does not grant redistribution rights to the browser itself.
 
+## Pierre file-type icons
+
+`electron/renderer/assets/file-type-icons.json` retains the built-in complete
+icon set from `@pierre/trees` 1.0.0-beta.3, Copyright 2025 Pierre Computer
+Company, licensed under Apache-2.0. It was recovered from the user's local
+Claude cache, where it had been converted into this data format. The original
+source attribution and complete Apache-2.0 license are preserved inside the
+unchanged JSON asset. Magic Pointer supplies its own filename selection and
+SVG DOM renderer; it does not execute the reference application's loader.
+
 ## Existing desktop visual assets
 
 The activity frame strips in `electron/renderer/assets/activity/`, library

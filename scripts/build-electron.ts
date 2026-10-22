@@ -102,6 +102,17 @@ buildSync({
   sourcemap: true,
 });
 
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'chat_file_icons.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'chat_file_icons.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'ChatFileIcons',
+  target: 'es2022',
+  sourcemap: true,
+});
+
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();
