@@ -303,6 +303,7 @@ function fixture() {
     document,
     MutationObserver: Observer,
     closeGroupSubmenu: null,
+    closeProjectAssignment: null,
     groupSubmenuAnchor: null,
     window: {
       innerWidth: 1200,

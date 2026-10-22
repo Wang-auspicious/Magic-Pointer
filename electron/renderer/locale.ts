@@ -292,6 +292,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'common.unknown_reason': {en: 'Unknown reason', zh: '未知原因'},
   'common.switch_failed': {en: 'Switch failed.', zh: '切换失败。'},
   'common.loading': {en: 'Loading…', zh: '正在读取…'},
+  'common.retry': {en: 'Retry', zh: '重试'},
+  'convo.not_found': {en: 'This chat is no longer available.', zh: '这条对话已不存在。'},
   'common.remove_named': {en: 'Remove {name}', zh: '移除 {name}'},
   'search.kind.conversation': {en: 'Chat', zh: '会'},
   'search.kind.project': {en: 'Proj', zh: '项'},

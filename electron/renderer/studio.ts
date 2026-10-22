@@ -1657,8 +1657,11 @@ function buildSessionMenu(c: {
   fork.addEventListener('click', run('fork'));
   menu.append(fork, divider());
   const project = item('project', 'Move to project', {submenu: true});
+  project.setAttribute('aria-haspopup', 'menu');
+  project.setAttribute('aria-expanded', 'false');
   project.addEventListener('click', event => {
     event.stopPropagation();
+    closeGroupSubmenu?.();
     void openProjectAssignment(id, project);
   });
   if (!local.pinned) {
@@ -1694,11 +1697,13 @@ function buildSessionMenu(c: {
         enter,
       );
     parent.addEventListener('mouseenter', () => {
+      closeProjectAssignment?.();
       closeGroupSubmenu?.();
       show();
     });
     parent.addEventListener('click', event => {
       event.stopPropagation();
+      closeProjectAssignment?.();
       show(true);
     });
     menu.append(parent);
@@ -1886,7 +1891,7 @@ function bindSessionMenuKeys(
     }
     if (event.key === 'ArrowRight') {
       const row = (event.target as Element).closest<HTMLElement>(
-        '[data-session-action="group"]',
+        '[data-session-action="group"], [data-session-action="project"]',
       );
       if (row) {
         event.preventDefault();
@@ -1975,39 +1980,50 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   const parentMenu = anchor.closest<HTMLElement>(
     '.side-session-menu, .mp-library-popover',
   );
-  const bounds = (parentMenu || anchor).getBoundingClientRect();
-  const anchorBounds = anchor.getBoundingClientRect();
-  const [projects, conversation] = await Promise.all([
-    Data.projects(),
-    Data.conversation(id),
-  ]);
-  if (!conversation || request !== projectAssignmentRequest) {
+  if (!anchor.isConnected || parentMenu?.hidden) {
     return;
   }
   const popover = document.createElement('div');
   popover.className = 'mp-library-popover mp-project-assignment';
+  popover.tabIndex = -1;
   popover.setAttribute('role', 'menu');
   popover.setAttribute('aria-label', 'Change project');
   const glyph = (globalThis as any).CdsIcons.html;
-  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options">${studioLibraries.projectOptionsMarkup(projects, conversation.projectId ?? conversation.workspaceRoot ?? '')}</div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p>`;
+  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options"></div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p><button type="button" data-project-retry hidden>${esc(studioT('common.retry'))}</button>`;
   document.body.append(popover);
-  const width = popover.offsetWidth;
-  const left = bounds.right + width + 4 <= window.innerWidth - 8
-    ? bounds.right + 4
-    : bounds.left - width - 4;
-  popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
-  popover.style.top = `${Math.max(8, Math.min(anchorBounds.top - 4, window.innerHeight - popover.offsetHeight - 8))}px`;
+  const position = () => {
+    const bounds = (parentMenu || anchor).getBoundingClientRect();
+    const anchorBounds = anchor.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    const left = bounds.right + width + 4 <= window.innerWidth - 8
+      ? bounds.right + 4
+      : bounds.left - width - 4;
+    popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+    popover.style.top = `${Math.max(8, Math.min(anchorBounds.top - 4, window.innerHeight - popover.offsetHeight - 8))}px`;
+  };
   anchor.setAttribute('aria-expanded', 'true');
   const listeners = new AbortController();
+  let closed = false;
   const close = () => {
+    closed = true;
     popover.remove();
     anchor.setAttribute('aria-expanded', 'false');
     listeners.abort();
+    observer.disconnect();
     if (closeProjectAssignment === close) {
       closeProjectAssignment = null;
     }
   };
+  const observer = new MutationObserver(() => {
+    if (parentMenu?.hidden) {
+      close();
+    }
+  });
+  if (parentMenu) {
+    observer.observe(parentMenu, {attributes: true, attributeFilter: ['hidden']});
+  }
   closeProjectAssignment = close;
+  popover.focus({preventScroll: true});
   document.addEventListener(
     'pointerdown',
     event => {
@@ -2023,11 +2039,21 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.addEventListener(
     'keydown',
     event => {
-      if (event.key === 'Escape') {
+      if (event.isComposing || event.keyCode === 229) {
+        return;
+      }
+      if (event.key === 'Escape' || event.key === 'Tab') {
         event.preventDefault();
-        event.stopPropagation();
+        event.stopImmediatePropagation();
+        if (event.repeat) {
+          return;
+        }
         close();
-        anchor.focus();
+        if (event.key === 'Tab' && parentMenu) {
+          parentMenu.hidden = true;
+        } else if (anchor.isConnected) {
+          anchor.focus({preventScroll: true});
+        }
       }
     },
     {signal: listeners.signal},
@@ -2036,12 +2062,77 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     popover.querySelector('.mp-library-error')!.textContent =
       reason instanceof Error ? reason.message : String(reason);
   };
+  const search = popover.querySelector<HTMLInputElement>('[data-project-search]')!;
+  const options = popover.querySelector<HTMLElement>('.mp-project-options')!;
+  const picker = popover.querySelector<HTMLButtonElement>('[data-project-picker]')!;
+  const retry = popover.querySelector<HTMLButtonElement>('[data-project-retry]')!;
+  let projects: MagicPointerProject[] = [];
+  let conversation: Awaited<ReturnType<typeof Data.conversation>>;
+  let loading = false;
+  const load = async () => {
+    if (closed || loading) {
+      return;
+    }
+    loading = true;
+    if (popover.contains(document.activeElement)) {
+      popover.focus({preventScroll: true});
+    }
+    search.disabled = true;
+    picker.disabled = true;
+    retry.hidden = true;
+    popover.setAttribute('aria-busy', 'true');
+    popover.querySelector('.mp-library-error')!.textContent = '';
+    options.innerHTML = `<p class="mp-library-note" role="status">${esc(studioT('common.loading'))}</p>`;
+    position();
+    try {
+      const loaded = await Promise.all([Data.projects(), Data.conversation(id)]);
+      if (closed || request !== projectAssignmentRequest) {
+        return;
+      }
+      if (!anchor.isConnected || parentMenu?.hidden) {
+        close();
+        return;
+      }
+      const loadedConversation = loaded[1];
+      if (!loadedConversation) {
+        throw new Error(studioT('convo.not_found'));
+      }
+      projects = loaded[0];
+      conversation = loadedConversation;
+      options.innerHTML = studioLibraries.projectOptionsMarkup(
+        projects,
+        loadedConversation.projectId ?? loadedConversation.workspaceRoot ?? '',
+        search.value,
+      );
+      search.disabled = false;
+      picker.disabled = false;
+      position();
+      if (document.activeElement === popover || document.activeElement === anchor) {
+        search.focus();
+      }
+    } catch (reason) {
+      if (!closed) {
+        options.innerHTML = '';
+        report(reason);
+        retry.hidden = false;
+        position();
+        if (document.activeElement === popover) {
+          retry.focus({preventScroll: true});
+        }
+      }
+    } finally {
+      loading = false;
+      popover.setAttribute('aria-busy', 'false');
+    }
+  };
   let busy = false;
   async function move(root: string) {
-    if (busy) {
+    if (closed || busy || loading || !conversation) {
       return;
     }
     busy = true;
+    search.disabled = true;
+    popover.querySelector('.mp-library-error')!.textContent = '';
     popover.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
       button.disabled = true;
     });
@@ -2068,8 +2159,12 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       }
       await renderSidebar();
     } catch (reason) {
+      if (closed) {
+        return;
+      }
       report(reason);
       busy = false;
+      search.disabled = false;
       popover.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
         button.disabled = false;
       });
@@ -2077,7 +2172,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   }
   popover.addEventListener('input', event => {
     const input = event.target as HTMLInputElement;
-    if (input.matches('[data-project-search]')) {
+    if (!busy && conversation && input.matches('[data-project-search]')) {
       popover.querySelector('.mp-project-options')!.innerHTML =
         studioLibraries.projectOptionsMarkup(
           projects,
@@ -2089,10 +2184,14 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.addEventListener('click', event => {
     event.stopPropagation();
     const button = (event.target as Element).closest<HTMLElement>('button');
+    if (button?.hasAttribute('data-project-retry')) {
+      void load();
+      return;
+    }
     if (button?.hasAttribute('data-project-root')) {
       void move(String(button.dataset.projectRoot || ''));
     }
-    if (button?.hasAttribute('data-project-picker')) {
+    if (!busy && !loading && conversation && button?.hasAttribute('data-project-picker')) {
       ProjectWorkspace.create(
         popover,
         Data,
@@ -2103,7 +2202,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       );
     }
   });
-  popover.querySelector<HTMLInputElement>('input')?.focus();
+  await load();
 }
 
 function showStudioDialog(
