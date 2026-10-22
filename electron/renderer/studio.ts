@@ -1989,7 +1989,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.setAttribute('role', 'menu');
   popover.setAttribute('aria-label', 'Change project');
   const glyph = (globalThis as any).CdsIcons.html;
-  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options"></div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p><button type="button" data-project-retry hidden>${esc(studioT('common.retry'))}</button>`;
+  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options"></div><button type="button" role="menuitem" tabindex="-1" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p><button type="button" role="menuitem" tabindex="-1" data-project-retry hidden>${esc(studioT('common.retry'))}</button>`;
   document.body.append(popover);
   const position = () => {
     const bounds = (parentMenu || anchor).getBoundingClientRect();
@@ -2040,6 +2040,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     'keydown',
     event => {
       if (event.isComposing || event.keyCode === 229) {
+        event.stopPropagation();
         return;
       }
       if (event.key === 'Escape' || event.key === 'Tab') {
@@ -2054,6 +2055,79 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
         } else if (anchor.isConnected) {
           anchor.focus({preventScroll: true});
         }
+        return;
+      }
+      const altGraph = event.getModifierState('AltGraph');
+      if (event.metaKey || ((event.ctrlKey || event.altKey) && !altGraph)) {
+        return;
+      }
+      if (loading || busy || search.disabled) {
+        return;
+      }
+      const fromSearch = event.target === search;
+      if (!fromSearch && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+        if (anchor.isConnected) {
+          anchor.focus({preventScroll: true});
+        }
+        return;
+      }
+      const vertical = event.key === 'ArrowDown' || event.key === 'ArrowUp';
+      if (
+        vertical ||
+        (!fromSearch && (event.key === 'Home' || event.key === 'End'))
+      ) {
+        const rows = studioMenuItems(popover);
+        const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+        let next: number;
+        if (
+          event.key === 'Home' ||
+          (fromSearch && event.key === 'ArrowDown')
+        ) {
+          next = 0;
+        } else if (
+          event.key === 'End' ||
+          (fromSearch && event.key === 'ArrowUp')
+        ) {
+          next = rows.length - 1;
+        } else {
+          next = (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) %
+            rows.length;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        rows[next]?.focus();
+        return;
+      }
+      // Search owns caret movement and editing; result rows forward text to it.
+      const textKey =
+        (event.key.length === 1 && event.key !== ' ') ||
+        event.key === 'Backspace' ||
+        (event.key === 'Delete' && !event.shiftKey);
+      if (!fromSearch && textKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        let start = search.selectionStart ?? search.value.length;
+        let end = search.selectionEnd ?? search.value.length;
+        if (start === end && event.key === 'Backspace') {
+          const width = (search.value.codePointAt(start - 2) ?? 0) > 0xffff ? 2 : 1;
+          start = Math.max(0, start - width);
+        } else if (start === end && event.key === 'Delete') {
+          const width = (search.value.codePointAt(end) ?? 0) > 0xffff ? 2 : 1;
+          end = Math.min(search.value.length, end + width);
+        }
+        search.focus({preventScroll: true});
+        search.setRangeText(
+          event.key === 'Backspace' || event.key === 'Delete' ? '' : event.key,
+          start,
+          end,
+          'end',
+        );
+        search.dispatchEvent(new Event('input', {bubbles: true}));
+      } else if (fromSearch) {
+        event.stopPropagation();
       }
     },
     {signal: listeners.signal},
@@ -2069,6 +2143,19 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   let projects: MagicPointerProject[] = [];
   let conversation: Awaited<ReturnType<typeof Data.conversation>>;
   let loading = false;
+  const renderOptions = () => {
+    if (!conversation) {
+      return;
+    }
+    options.innerHTML = studioLibraries.projectOptionsMarkup(
+      projects,
+      conversation.projectId ?? conversation.workspaceRoot ?? '',
+      search.value,
+    );
+    for (const item of studioMenuItems(popover)) {
+      item.tabIndex = -1;
+    }
+  };
   const load = async () => {
     if (closed || loading) {
       return;
@@ -2099,13 +2186,9 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       }
       projects = loaded[0];
       conversation = loadedConversation;
-      options.innerHTML = studioLibraries.projectOptionsMarkup(
-        projects,
-        loadedConversation.projectId ?? loadedConversation.workspaceRoot ?? '',
-        search.value,
-      );
       search.disabled = false;
       picker.disabled = false;
+      renderOptions();
       position();
       if (document.activeElement === popover || document.activeElement === anchor) {
         search.focus();
@@ -2173,12 +2256,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.addEventListener('input', event => {
     const input = event.target as HTMLInputElement;
     if (!busy && conversation && input.matches('[data-project-search]')) {
-      popover.querySelector('.mp-project-options')!.innerHTML =
-        studioLibraries.projectOptionsMarkup(
-          projects,
-          conversation.projectId ?? conversation.workspaceRoot ?? '',
-          input.value,
-        );
+      renderOptions();
     }
   });
   popover.addEventListener('click', event => {

@@ -25,6 +25,10 @@ const build = studio.statements.find(
   node =>
     ts.isFunctionDeclaration(node) && node.name?.text === 'buildSessionMenu',
 )!;
+const items = studio.statements.find(
+  node =>
+    ts.isFunctionDeclaration(node) && node.name?.text === 'studioMenuItems',
+)!;
 const main = parse('electron/main.ts');
 const registration = main.statements.find(
   node =>
@@ -80,6 +84,8 @@ async function fixture(run: (f: any) => Promise<void>) {
     disabled = false;
     textContent = '';
     value = '';
+    selectionStart = 0;
+    selectionEnd = 0;
     constructor(readonly tagName = 'div') {}
     get className() {
       return this.attrs.class || '';
@@ -163,6 +169,9 @@ async function fixture(run: (f: any) => Promise<void>) {
       return node === this || this.children.some(child => child.contains(node));
     }
     matches(selector: string): boolean {
+      if (selector === 'button:not(:disabled)') {
+        return this.tagName === 'button' && !this.disabled;
+      }
       if (selector.startsWith('.')) {
         return this.className.split(' ').includes(selector.slice(1));
       }
@@ -189,6 +198,24 @@ async function fixture(run: (f: any) => Promise<void>) {
     }
     querySelector(selector: string) {
       return this.querySelectorAll(selector)[0] || null;
+    }
+    getClientRects() {
+      for (let node: Element | null = this; node; node = node.parentElement) {
+        if (node.hidden) {
+          return [];
+        }
+      }
+      return this.isConnected ? [{}] : [];
+    }
+    setRangeText(value: string, start: number, end: number) {
+      this.value = this.value.slice(0, start) + value + this.value.slice(end);
+      this.selectionStart = this.selectionEnd = start + value.length;
+    }
+    dispatchEvent(event: {type: string}) {
+      for (let node: Element | null = this; node; node = node.parentElement) {
+        node.dispatch(event.type, {target: this});
+      }
+      return true;
     }
     set innerHTML(html: string) {
       this.children = [];
@@ -234,7 +261,10 @@ async function fixture(run: (f: any) => Promise<void>) {
     dispatch(type: string, fields: Record<string, unknown> = {}) {
       const event = {
         target: this,
-        preventDefault() {},
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
         stopPropagation() {},
         stopImmediatePropagation() {},
         ...fields,
@@ -272,6 +302,7 @@ async function fixture(run: (f: any) => Promise<void>) {
     document,
     MutationObserver: Observer,
     AbortController,
+    Event,
     closeProjectAssignment: null,
     projectAssignmentRequest: 0,
     closeGroupSubmenu: null,
@@ -309,7 +340,7 @@ async function fixture(run: (f: any) => Promise<void>) {
   context.studioLibraries = context.module.exports;
   vm.runInContext(
     ts.transpileModule(
-      `${build.getText(studio)}\n${open.getText(studio)}\nglobalThis.mainHandler = ${handler.getText(main)};`,
+      `${build.getText(studio)}\n${items.getText(studio)}\n${open.getText(studio)}\nglobalThis.mainHandler = ${handler.getText(main)};`,
       {compilerOptions: {target: ts.ScriptTarget.ES2022}},
     ).outputText,
     context,
@@ -326,6 +357,25 @@ async function fixture(run: (f: any) => Promise<void>) {
     assert.equal(button.disabled, false);
     popover.dispatch('click', {target: button});
   };
+  const key = (value: string, fields: Record<string, unknown> = {}) => {
+    const popover = panel()!;
+    const target = document.activeElement;
+    const event = popover.dispatch('keydown', {
+      target,
+      key: value,
+      getModifierState: () => false,
+      ...fields,
+    });
+    if (
+      !event.defaultPrevented &&
+      target.tagName === 'button' &&
+      !target.disabled &&
+      ['Enter', ' '].includes(value)
+    ) {
+      popover.dispatch('click', {target});
+    }
+    return event;
+  };
   try {
     await run({
       context,
@@ -338,6 +388,7 @@ async function fixture(run: (f: any) => Promise<void>) {
       anchor,
       panel,
       click,
+      key,
       writes,
       get changed() {
         return changed;
@@ -542,4 +593,78 @@ test('a refused active-task move stays open and retries the actual main/store op
     assert.equal(f.reopen().get(f.source.id).projectId, f.project.id);
     assert.equal(f.writes.length, 2);
     assert.ok(!f.panel());
+  }));
+
+test('search ArrowDown reaches project rows and Enter saves through the production main/store path', () =>
+  fixture(async f => {
+    await f.open();
+    const search = f.panel()!.querySelector('[data-project-search]')!;
+    assert.ok(f.document.activeElement === search);
+    f.key('ArrowDown');
+    assert.equal(f.document.activeElement.dataset.projectRoot, '');
+    f.key('ArrowDown');
+    assert.equal(f.document.activeElement.dataset.projectRoot, f.project.id);
+    f.key('Enter');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.reopen().get(f.source.id).projectId, f.project.id);
+    assert.ok(!f.panel());
+  }));
+
+test('search ArrowUp enters the last visible action; filtered lists and Home/End use current rows', () =>
+  fixture(async f => {
+    await f.open();
+    const search = f.panel()!.querySelector('[data-project-search]')!;
+    const picker = f.panel()!.querySelector('[data-project-picker]')!;
+    f.key('ArrowUp');
+    assert.ok(f.document.activeElement === picker);
+    f.key('Home');
+    assert.equal(f.document.activeElement.dataset.projectRoot, '');
+    f.key('End');
+    assert.ok(f.document.activeElement === picker);
+    search.focus();
+    search.value = f.project.name;
+    f.panel()!.dispatch('input', {target: search});
+    f.key('ArrowDown');
+    assert.equal(f.document.activeElement.dataset.projectRoot, f.project.id);
+    search.focus();
+    search.value = 'no matching project';
+    f.panel()!.dispatch('input', {target: search});
+    f.key('ArrowDown');
+    assert.ok(f.document.activeElement === picker);
+  }));
+
+test('typing from a result returns to the real search input and filters the current project list', () =>
+  fixture(async f => {
+    await f.open();
+    const search = f.panel()!.querySelector('[data-project-search]')!;
+    f.key('ArrowDown');
+    f.key('t');
+    assert.ok(f.document.activeElement === search);
+    assert.equal(search.value, 't');
+    assert.ok(!f.panel()!.querySelector('[data-project-root=""]'));
+    f.key('ArrowDown');
+    f.key('Backspace');
+    assert.equal(search.value, '');
+    assert.ok(f.panel()!.querySelector('[data-project-root=""]'));
+    assert.equal(f.writes.length, 0);
+  }));
+
+test('caret keys and composition remain in search, while ArrowLeft on a result closes only the child', () =>
+  fixture(async f => {
+    await f.open();
+    const search = f.panel()!.querySelector('[data-project-search]')!;
+    for (const value of ['Home', 'End', 'ArrowLeft', 'ArrowRight']) {
+      assert.equal(f.key(value).defaultPrevented, false);
+      assert.ok(f.document.activeElement === search);
+    }
+    f.key('ArrowDown', {isComposing: true});
+    f.key('ArrowDown', {keyCode: 229});
+    f.key('ArrowDown', {ctrlKey: true});
+    assert.ok(f.document.activeElement === search);
+    f.key('ArrowDown');
+    f.key('ArrowLeft');
+    assert.ok(!f.panel());
+    assert.equal(f.parent.hidden, false);
+    assert.ok(f.document.activeElement === f.anchor);
+    assert.equal(f.writes.length, 0);
   }));
