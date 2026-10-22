@@ -385,11 +385,22 @@
   line-height: 17px;
 }
 
-/* Code tool preview: inspect-code-files-b573e26302.js Al/Z, xl and pi. */
+/* Code preview: Al/pi; matching ca7ba268c CDS roles and c49d7f557 line mixes. */
 .mp-chat-diff {
+  --mp-chat-diff-bg: light-dark(var(--code-theme-light-bg, transparent), var(--code-theme-dark-bg, transparent));
+  --mp-chat-diff-added-bg: light-dark(
+    color-mix(in lab, var(--mp-chat-diff-bg) 88%, var(--cds-text-git-added)),
+    color-mix(in lab, var(--mp-chat-diff-bg) 80%, var(--cds-text-git-added))
+  );
+  --mp-chat-diff-removed-bg: light-dark(
+    color-mix(in lab, var(--mp-chat-diff-bg) 88%, var(--cds-text-git-removed)),
+    color-mix(in lab, var(--mp-chat-diff-bg) 80%, var(--cds-text-git-removed))
+  );
+  background: var(--mp-chat-diff-bg);
   font-family: var(--cds-font-mono, var(--mp-font-mono));
   font-size: var(--cds-font-size-code, 12px);
   line-height: var(--cds-leading-code, 17px);
+  tab-size: 2;
 }
 
 .mp-chat-tool .mp-chat-diff {
@@ -1429,13 +1440,22 @@ span.mp-chat-diff-path {
 }
 
 .mp-chat-diff-line[data-kind="add"] {
-  color: var(--mp-success);
-  background: color-mix(in srgb, var(--mp-success) 8%, transparent);
+  color: inherit;
+  background: var(--mp-chat-diff-added-bg);
 }
 
 .mp-chat-diff-line[data-kind="del"] {
-  color: var(--mp-danger);
-  background: color-mix(in srgb, var(--mp-danger) 8%, transparent);
+  color: inherit;
+  background: var(--mp-chat-diff-removed-bg);
+}
+
+/* Jl's separate-file fallback supplies the solid CDS Git background directly. */
+.mp-chat-diff-side[data-kind="add"] {
+  background: var(--cds-bg-git-added);
+}
+
+.mp-chat-diff-side[data-kind="del"] {
+  background: var(--cds-bg-git-removed);
 }
 
 /* A thought is a row, not a panel: same box, height, type and chevron as a tool row. */
