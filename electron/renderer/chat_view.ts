@@ -1973,8 +1973,24 @@ const ChatView = (() => {
     // the opposite of what happened.
     const title =
       sentenceTitle ?? (phase === 'running' ? runningTitle : completedTitle);
-    let output = result === undefined || !result.text ? null : result.text;
-    if (output) {
+    const shellResult =
+      variant === 'bash' ? outputRecord(result?.text || '') : null;
+    const terminal =
+      shellResult !== null &&
+      (typeof shellResult.stdout === 'string' ||
+        typeof shellResult.stderr === 'string');
+    const stdout = terminal ? firstString(shellResult, ['stdout']) : '';
+    const stderr = terminal ? firstString(shellResult, ['stderr']) : '';
+    const terminalText =
+      stdout +
+      (stdout && stderr && !stdout.endsWith('\n') ? '\n' : '') +
+      stderr;
+    let output = terminal
+      ? terminalText || firstString(shellResult, ['error', 'error_message']) || null
+      : result === undefined || !result.text
+        ? null
+        : result.text;
+    if (output && !terminal) {
       try {
         const decoded = JSON.parse(output);
         if (decoded && typeof decoded.value === 'string') {
@@ -1985,7 +2001,7 @@ const ChatView = (() => {
         output = JSON.stringify(decoded, null, 2);
       } catch {}
     }
-    if (output) {
+    if (output && !terminal) {
       output = output
         .split(/\r?\n/)
         .filter(
@@ -1999,7 +2015,13 @@ const ChatView = (() => {
         ? firstString(outputRecord(result.text) || {}, [
             'error',
             'error_message',
-          ])
+          ]) ||
+          (terminal ? stderr.trim() : '') ||
+          (terminal &&
+          typeof shellResult.exit === 'number' &&
+          shellResult.exit !== 0
+            ? `Command exited with code ${shellResult.exit}`
+            : '')
         : '';
     const rawError =
       state === 'error' && output !== null

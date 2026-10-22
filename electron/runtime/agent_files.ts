@@ -791,6 +791,8 @@ export async function runShell(
   });
   let stdout = '';
   let stderr = '';
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
   child.stdout?.on('data', chunk => {
     stdout = (stdout + chunk.toString()).slice(-64000);
   });
@@ -820,7 +822,12 @@ export async function runShell(
       exit !== 0 &&
       !(exit === 1 && /^\s*(rg|grep|git\s+diff)\b/.test(command))
     ) {
-      throw new Error(JSON.stringify(result));
+      const message =
+        stderr.trim().split(/\r?\n/, 1)[0] || `Command exited with code ${exit}`;
+      throw new ActionFailure('tool_error', message, undefined, {
+        ...result,
+        error: message,
+      });
     }
     return result;
   } finally {
