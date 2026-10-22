@@ -20,17 +20,24 @@ async function fixture(name: string) {
 test('Write records actual creation and overwrite state after persistence', async () => {
   const {workspace, registry} = await fixture('write-change-kind');
   try {
-    const run = async (content: string) => {
+    const run = async (content: string, expectedTitle: string) => {
       const result = await registry.execute({
         id: 'write',
         name: 'Write',
         arguments: {path: 'notes.txt', content},
       });
       assert.equal(result.is_error, false, result.error_message);
+      const chat = require('../electron/renderer/chat_view');
+      assert.equal(
+        chat.toolRowModel('Write', JSON.stringify(result.arguments), {
+          text: JSON.stringify(result.value),
+        }).title,
+        expectedTitle,
+      );
       return result.value as {created: boolean};
     };
-    assert.equal((await run('first\n')).created, true);
-    assert.equal((await run('second\n')).created, false);
+    assert.equal((await run('first\n', 'Created')).created, true);
+    assert.equal((await run('second\n', 'Updated')).created, false);
     assert.equal(
       await readFile(path.join(workspace, 'notes.txt'), 'utf8'),
       'second\n',
@@ -78,6 +85,13 @@ test('actual overwrite status survives activity projection and history reopening
       /data-file-path="existing.ts"[^>]*data-file-change="edited"/,
     );
     assert.match(html, /data-file-path="existing.ts"/);
+    assert.deepEqual(
+      Array.from(
+        html.matchAll(/class="mp-chat-title">([^<]*)<\/span>/g),
+        match => match[1],
+      ),
+      ['Updated', 'Updated'],
+    );
     assert.equal(
       await readFile(path.join(workspace, 'existing.ts'), 'utf8'),
       'new content\n',

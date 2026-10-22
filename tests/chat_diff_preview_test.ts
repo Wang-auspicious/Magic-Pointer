@@ -254,3 +254,36 @@ test('an older overwrite without a retained before image does not claim all line
     text: JSON.stringify({created: false}),
   }).diffStat, null);
 });
+
+test('Write titles use actual receipts without inventing overwrite or completion', () => {
+  for (const name of ['Write', 'write_file', 'write']) {
+    const args = JSON.stringify({path: 'file.txt', content: 'saved\n'});
+    const title = (result?: {
+      text: string;
+      isError?: boolean;
+      interrupted?: boolean;
+    }) => chat.toolRowModel(name, args, result).title;
+    for (const payload of [{created: false}, {value: {created: false}}]) {
+      assert.equal(title({text: JSON.stringify(payload)}), 'Updated', name);
+    }
+    assert.equal(title({text: JSON.stringify({created: true})}), 'Created', name);
+    assert.equal(title({text: 'Saved'}), 'Created', name);
+    assert.equal(title(), 'Creating', name);
+    assert.equal(
+      title({text: 'Disk full', isError: true}), 'Failed to write', name,
+    );
+    assert.equal(
+      title({text: 'Permission denied', isError: true}), 'Blocked', name,
+    );
+    assert.equal(
+      title({text: JSON.stringify({created: false}), interrupted: true}),
+      'Stopped creating file', name,
+    );
+  }
+  assert.equal(
+    chat.toolRowModel('Write', '{}', {
+      text: JSON.stringify({created: false}),
+    }).title,
+    'Updated',
+  );
+});

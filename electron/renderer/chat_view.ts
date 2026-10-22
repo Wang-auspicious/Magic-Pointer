@@ -2042,6 +2042,8 @@ const ChatView = (() => {
             ? 'error'
             : 'ok';
     const input = parseArgs(argsRaw) ?? {};
+    const receipt = outputRecord(result?.text || '');
+    const isWrite = ['Write', 'write_file', 'write'].includes(name);
     const phase: ToolPhase =
       state === 'running'
         ? 'running'
@@ -2095,7 +2097,9 @@ const ChatView = (() => {
       (REMOTE_DEVICE_LABELS[name] === undefined
         ? undefined
         : toolLabel(name, input, phase)) ??
-      (phase === 'cancelled' ? toolLabel(name, input, 'cancelled') : undefined);
+      (phase === 'cancelled'
+        ? toolLabel(isWrite ? 'Write' : name, input, 'cancelled')
+        : undefined);
     if (sentenceTitle !== undefined) {
       summary = '';
     }
@@ -2117,9 +2121,13 @@ const ChatView = (() => {
           ? 'Failed to fetch'
           : SUBAGENT_TOOLS.has(name)
             ? 'Subagent'
-            : (connector ??
-              sentence(toolLabel(name, input, 'done')) ??
-              mpCompleted)));
+            : isWrite && state === 'error'
+              ? 'Failed to write'
+              : isWrite && state === 'ok' && receipt?.created === false
+                ? 'Updated'
+                : (connector ??
+                  sentence(toolLabel(name, input, 'done')) ??
+                  mpCompleted)));
     // An unknown tool is shown by its raw name when settled, and keeps that
     // name mid-flight too — a wrong tense beats a wrong tool.
     // `||`, not `??`: an empty variant title means "no running form", and a
@@ -2199,7 +2207,6 @@ const ChatView = (() => {
         : rawError;
     const actualStat = reportedDiffStat(result?.text || '', 'diffStat');
     const filePath = deriveFilePath(variant, argsRaw);
-    const receipt = outputRecord(result?.text || '');
     const target = filePath
       ? firstString(receipt || {}, ['absolutePath']) ||
         executionFilePath(filePath, executionRoot)
@@ -2222,7 +2229,7 @@ const ChatView = (() => {
       diffStat:
         actualStat === undefined
           ? state === 'error' ||
-            (['Write', 'write_file', 'write'].includes(name) && receipt?.created === false)
+            (isWrite && receipt?.created === false)
             ? null
             : deriveDiffStat(name, argsRaw)
           : actualStat,
