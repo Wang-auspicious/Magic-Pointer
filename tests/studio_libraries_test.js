@@ -44,7 +44,7 @@ assert.equal(lib.sections(lib.filterRows(rows), [])[0].label, 'Pinned');
 assert.ok(lib.sections(lib.filterRows(rows), []).some(group => group.label === 'Research'));
 assert.ok(cells.size > 0, 'organization preferences persist across views and relaunches');
 lib.setSessionPreference('a', { pinned: true, order: 2 });
-lib.movePinned('a', -1);
+lib.movePinned('a', -1, lib.sections(lib.filterRows(rows), [])[0].items.map(row => row.id));
 assert.equal(lib.sections(lib.filterRows(rows), [])[0].items[0].id, 'a', 'Move up changes persisted pinned order');
 const candidates = lib.scheduledSources([{id:'c',title:'Task',taskContext:{sources:[
   {sourceId:'file',title:'Notes',identity:{absolutePath:'D:/notes.md'}},

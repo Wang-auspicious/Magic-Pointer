@@ -4,8 +4,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
 
-function library() {
-  const cells = new Map<string, string>();
+function library(cells = new Map<string, string>()) {
   const sandbox = {
     module: {exports: {}},
     localStorage: {
@@ -81,6 +80,47 @@ test('Code group controls persist actual sidebar ordering and visibility indepen
     assert.ok(menu.includes(label), label);
   }
   assert.ok(!menu.includes('Execution environments'));
+});
+
+test('pinned movement skips archived and deleted preferences and persists the visible result', () => {
+  const cells = new Map<string, string>();
+  const lib = library(cells);
+  const rows = [{id: 'a'}, {id: 'archived'}, {id: 'b'}];
+  for (const [order, id] of ['a', 'archived', 'deleted', 'b'].entries()) {
+    lib.setSessionPreference(id, {pinned: true, order, group: 'Research'});
+  }
+  lib.setSessionPreference('archived', {archived: true});
+  const pinned = (value: any) =>
+    Array.from(value.sidebarSections(value.sidebarRows(rows), [])[0].items).map(
+      (row: any) => row.id,
+    );
+  assert.deepEqual(pinned(lib), ['a', 'b']);
+  lib.movePinned('a', 1, pinned(lib));
+  const reopened = library(cells);
+  assert.deepEqual(pinned(reopened), ['b', 'a']);
+  assert.equal(reopened.sessionPreference('a').group, 'Research');
+  assert.equal(reopened.sessionPreference('archived').archived, true);
+});
+
+test('pinned movement uses the displayed tie order and only crosses the displayed neighbour', () => {
+  const lib = library();
+  const rows = [
+    {id: 'a', title: 'Alpha'},
+    {id: 'b', title: 'Beta'},
+  ];
+  lib.setSessionPreference('a', {pinned: true});
+  lib.setSessionPreference('b', {pinned: true});
+  lib.setSidebarOption('sort', 'name');
+  lib.setSidebarOption('ascending', false);
+  const pinned = () =>
+    Array.from(lib.sidebarSections(lib.sidebarRows(rows), [])[0].items).map(
+      (row: any) => row.id,
+    );
+  assert.deepEqual(pinned(), ['b', 'a']);
+  lib.movePinned('b', 1, pinned());
+  assert.deepEqual(pinned(), ['a', 'b']);
+  lib.movePinned('a', -1, ['a']);
+  assert.deepEqual(pinned(), ['a', 'b']);
 });
 
 test('new chat home does not replace its existing presentation with invented Sessions and Projects lists', () => {

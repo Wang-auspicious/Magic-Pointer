@@ -156,11 +156,12 @@
     preferences.sessions[id] = {...sessionPreference(id), ...patch};
     save();
   }
-  function movePinned(id: string, direction: number) {
-    const pinned = Object.entries(preferences.sessions)
-      .filter(([, value]) => value.pinned)
-      .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
-      .map(([key]) => key);
+  function movePinned(
+    id: string,
+    direction: number,
+    visibleIds: readonly string[],
+  ) {
+    const pinned = [...visibleIds];
     const index = pinned.indexOf(id);
     const next = index + direction;
     if (index < 0 || next < 0 || next >= pinned.length) {
@@ -168,8 +169,15 @@
     }
     pinned.splice(index, 1);
     pinned.splice(next, 0, id);
-    pinned.forEach((key, order) => {
-      preferences.sessions[key].order = order;
+    const visible = new Set(visibleIds);
+    const allPinned = Object.entries(preferences.sessions)
+      .filter(([, value]) => value.pinned)
+      .sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+    let cursor = 0;
+    allPinned.forEach(([key], order) => {
+      // Keep hidden pins in place while applying the displayed order to its slots.
+      const target = visible.has(key) ? pinned[cursor++] : key;
+      preferences.sessions[target].order = order;
     });
     save();
   }

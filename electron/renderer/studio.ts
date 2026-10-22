@@ -1419,6 +1419,7 @@ function conversationNode(
     turns?: number | MagicPointerTurn[];
   },
   active?: string,
+  pinnedIds: readonly string[] = [],
 ): HTMLElement {
   const row = document.createElement('button');
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
@@ -1490,7 +1491,7 @@ function conversationNode(
   ellipsis.dataset.sessionMenu = String(c.id || '');
   ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
-  actions.appendChild(buildSessionMenu(c));
+  actions.appendChild(buildSessionMenu(c, pinnedIds));
   row.append(title, actions);
   return row;
 }
@@ -1538,13 +1539,16 @@ async function deleteConversationFromUi(id: string): Promise<void> {
   }
 }
 
-function buildSessionMenu(c: {
-  id?: string;
-  title?: string;
-  projectId?: string;
-  workspaceRoot?: string;
-  updatedAt?: number;
-}): HTMLElement {
+function buildSessionMenu(
+  c: {
+    id?: string;
+    title?: string;
+    projectId?: string;
+    workspaceRoot?: string;
+    updatedAt?: number;
+  },
+  pinnedIds: readonly string[] = [],
+): HTMLElement {
   const id = String(c.id || '');
   const menu = document.createElement('span');
   menu.className = 'side-session-menu';
@@ -1621,12 +1625,12 @@ function buildSessionMenu(c: {
       return;
     }
     if (name === 'up') {
-      studioLibraries.movePinned(id, -1);
+      studioLibraries.movePinned(id, -1, pinnedIds);
       void renderSidebar();
       return;
     }
     if (name === 'down') {
-      studioLibraries.movePinned(id, 1);
+      studioLibraries.movePinned(id, 1, pinnedIds);
       void renderSidebar();
       return;
     }
@@ -1715,9 +1719,12 @@ function buildSessionMenu(c: {
   archive.addEventListener('click', run('archive'));
   menu.append(divider(), archive);
   if (local.pinned) {
+    const index = pinnedIds.indexOf(id);
     const up = item('up', 'Move up');
+    up.disabled = index <= 0;
     up.addEventListener('click', run('up'));
     const down = item('down', 'Move down');
+    down.disabled = index < 0 || index >= pinnedIds.length - 1;
     down.addEventListener('click', run('down'));
     menu.append(up, down, divider());
   }
@@ -2712,8 +2719,11 @@ async function renderSidebar() {
     head.append(toggle, actions);
     const sessions = document.createElement('div');
     sessions.className = 'mpw-project-sessions';
+    const pinnedIds = group.key === '__pinned__'
+      ? group.items.map(conversation => conversation.id)
+      : [];
     for (const c of group.items) {
-      const node = conversationNode(c, active);
+      const node = conversationNode(c, active, pinnedIds);
       sessions.appendChild(node);
     }
     project.append(head, sessions);

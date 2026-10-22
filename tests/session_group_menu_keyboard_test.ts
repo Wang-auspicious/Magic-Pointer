@@ -12,6 +12,7 @@ const ast = ts.createSourceFile(
   true,
 );
 const names = [
+  'conversationNode',
   'buildSessionMenu',
   'openGroupSubmenu',
   'bindSessionMenuKeys',
@@ -57,11 +58,14 @@ function library(cells: Map<string, string>): any {
   return context.module.exports;
 }
 
-function fixture() {
+function fixture(
+  options: {pinnedIds?: string[]; configure?: (lib: any) => void} = {},
+) {
   const cells = new Map<string, string>();
   const lib = library(cells);
   lib.addSidebarSection('Research');
   lib.addSidebarSection('Other');
+  options.configure?.(lib);
   const timers = new Map<number, () => void>();
   let sequence = 0;
   let document: any;
@@ -156,6 +160,10 @@ function fixture() {
         node.parentElement = this;
         this.children.push(node);
       }
+    }
+    appendChild(node: Element) {
+      this.append(node);
+      return node;
     }
     remove() {
       if (!this.parentElement) {
@@ -315,6 +323,11 @@ function fixture() {
       clearTimeout: (id: number) => timers.delete(id),
     },
     CdsIcons: {html: () => ''},
+    ConversationState: {derive: () => 'idle', label: () => ''},
+    studioComposerBusy: false,
+    activeConversationId: null,
+    studioT: (id: string) => id,
+    icon: () => '',
     esc: (value: unknown) => String(value),
     studioLibraries: lib,
     branchingConversations: new Set(),
@@ -325,7 +338,13 @@ function fixture() {
   const trigger = new Element('button');
   document.body.append(owner);
   owner.append(trigger);
-  const menu = context.buildSessionMenu({id: 'chat', title: 'Task'});
+  const row = context.conversationNode(
+    {id: 'chat', title: 'Task'},
+    undefined,
+    options.pinnedIds,
+  );
+  owner.append(row);
+  const menu = row.querySelector('.side-session-menu')!;
   owner.append(menu);
   menu.hidden = false;
   document.body.append(menu);
@@ -455,6 +474,49 @@ test('IME composition never invokes the session archive shortcut', () => {
   f.key('a', {isComposing: true});
   f.key('a', {keyCode: 229});
   assert.equal(Boolean(f.lib.sessionPreference('chat').archived), false);
+});
+
+test('the actual pinned menu moves across visible sessions and saves its new order', () => {
+  const f = fixture({
+    pinnedIds: ['first', 'chat', 'last'],
+    configure: lib => {
+      for (const [order, id] of [
+        'first',
+        'chat',
+        'deleted',
+        'last',
+      ].entries()) {
+        lib.setSessionPreference(id, {pinned: true, order});
+      }
+    },
+  });
+  f.menu.querySelector('[data-session-action="down"]')!.click();
+  const reopened = library(f.cells);
+  const rows = ['first', 'chat', 'last'].map(id => ({id}));
+  const pinned = reopened.sidebarSections(reopened.sidebarRows(rows), [])[0]
+    .items;
+  assert.deepEqual(
+    Array.from(pinned).map((row: any) => row.id),
+    ['first', 'last', 'chat'],
+  );
+});
+
+test('pinned menu boundary actions are disabled against the actual visible order', () => {
+  const f = fixture({
+    pinnedIds: ['chat'],
+    configure: lib => {
+      lib.setSessionPreference('chat', {pinned: true});
+      lib.setSessionPreference('deleted', {pinned: true, order: 1});
+    },
+  });
+  assert.equal(
+    f.menu.querySelector('[data-session-action="up"]')!.disabled,
+    true,
+  );
+  assert.equal(
+    f.menu.querySelector('[data-session-action="down"]')!.disabled,
+    true,
+  );
 });
 
 test('Tab closes both menus and closing a parent removes its floating child', async () => {
