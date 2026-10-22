@@ -8439,11 +8439,13 @@ function renderSelectedProjectFile() {
     return;
   }
   const renderMarkdown = selectedProjectFileMarkdown && !projectFileCodeView;
+  const media = selectedProjectPreview?.kind === 'image' || selectedProjectPreview?.kind === 'pdf';
   preview.classList.toggle('is-markdown', renderMarkdown);
   code?.setAttribute('aria-pressed', String(projectFileCodeView));
   if (code) {
     code.hidden =
       selectedProjectFileSnapshot ||
+      media ||
       selectedProjectPreview?.kind === 'document' ||
       selectedProjectPreview?.kind === 'spreadsheet';
   }
@@ -8453,10 +8455,17 @@ function renderSelectedProjectFile() {
   if (external) {
     external.disabled = selectedProjectFileSnapshot;
   }
+  const copy = document.getElementById('project-file-copy');
+  if (copy) {
+    copy.hidden = media;
+  }
+  if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
+    ProjectPreviewView.renderProjectPreview(content, selectedProjectPreview);
+    return;
+  }
+  content.classList.remove('is-office-preview', 'is-browser-pane');
   if (selectedProjectFileSnapshot && !selectedProjectFileReadFailed) {
     content.replaceChildren(ChatView.deletedFileNode(selectedProjectFileText));
-  } else if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
-    ProjectPreviewView.renderProjectPreview(content, selectedProjectPreview);
   } else if (renderMarkdown) {
     content.replaceChildren(ChatMarkdown.render(selectedProjectFileText));
   } else {
@@ -8476,9 +8485,9 @@ async function selectProjectFile(
   } = {},
 ) {
   const root = activeProjectRoot;
-  const browserFile = /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(
-    relativePath,
-  );
+  const browserFile =
+    !options.snapshot &&
+    /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(relativePath);
   const resourceKey =
     options.resourceKey ||
     `${options.snapshot ? 'snapshot' : 'file'}:${normalizedProjectRoot(root)}:${relativePath
@@ -8533,6 +8542,13 @@ async function selectProjectFile(
             sheets: response.sheets || [],
             truncated: response.truncated === true,
           }
+        : response?.ok && (response.kind === 'image' || response.kind === 'pdf')
+          ? {
+              kind: response.kind,
+              url: String(response.url || ''),
+              name: options.title || response.name || relativePath,
+              truncated: false,
+            }
         : null;
   if (selectedProjectPreview?.kind === 'document') {
     selectedProjectFileText = selectedProjectPreview.blocks

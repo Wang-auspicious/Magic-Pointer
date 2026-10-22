@@ -52,21 +52,79 @@ const openCode = ts.transpileModule(
 ).outputText;
 
 function fixture(root: string) {
-  const element = (): any => ({
-    hidden: false,
-    value: '',
-    dataset: {},
-    textContent: '',
-    children: [],
-    classList: {add() {}, remove() {}, toggle() {}},
-    setAttribute() {},
-    contains: () => false,
-    closest: () => null,
-    replaceChildren(...children: any[]) {
-      this.children = children;
-      this.textContent = children.map(n => n.textContent).join('');
-    },
-  });
+  const element = (tag = 'div'): any => {
+    const attrs = new Map<string, string>();
+    const listeners = new Map<string, () => void>();
+    let text = '';
+    const node: any = {
+      tagName: tag.toUpperCase(),
+      hidden: false,
+      value: '',
+      dataset: {},
+      get textContent() {
+        return (
+          text +
+          this.children.map((child: any) => child.textContent || '').join('')
+        );
+      },
+      set textContent(value: string) {
+        text = String(value);
+        this.children = [];
+      },
+      children: [],
+      style: {},
+      classList: {add() {}, remove() {}, toggle() {}},
+      setAttribute(key: string, value: string) {
+        attrs.set(key, String(value));
+      },
+      getAttribute: (key: string) => attrs.get(key),
+      addEventListener: (name: string, listener: () => void) =>
+        listeners.set(name, listener),
+      click: () => listeners.get('click')?.(),
+      contains: () => false,
+      closest: () => null,
+      replaceChildren(...children: any[]) {
+        text = '';
+        this.children = children;
+      },
+      append(...children: any[]) {
+        this.children.push(...children);
+      },
+      prepend(...children: any[]) {
+        this.children.unshift(...children);
+      },
+    };
+    const updateClasses = (name: string, on: boolean) => {
+      const names = new Set(
+        String(node.className || '')
+          .split(/\s+/)
+          .filter(Boolean),
+      );
+      if (on) names.add(name);
+      else names.delete(name);
+      node.className = [...names].join(' ');
+      return on;
+    };
+    node.classList = {
+      add: (...names: string[]) =>
+        names.forEach(name => updateClasses(name, true)),
+      remove: (...names: string[]) =>
+        names.forEach(name => updateClasses(name, false)),
+      contains: (name: string) =>
+        String(node.className || '')
+          .split(/\s+/)
+          .includes(name),
+      toggle: (name: string, on?: boolean) =>
+        updateClasses(
+          name,
+          on ??
+            !String(node.className || '')
+              .split(/\s+/)
+              .includes(name),
+        ),
+    };
+    return node;
+  };
   const nodes = new Map<string, any>();
   for (const id of [
     'project-inspector',
@@ -74,6 +132,7 @@ function fixture(root: string) {
     'project-file-content',
     'project-file-code',
     'project-file-open',
+    'project-file-copy',
     'project-file-name',
     'inspector-title',
     'file-tree-filter',
@@ -92,6 +151,24 @@ function fixture(root: string) {
     selectedProjectFileSnapshot: false,
     selectedProjectFileReadFailed: false,
     ChatView: require('../electron/renderer/chat_view'),
+    ProjectPreviewView: {
+      renderProjectPreview: (host: any, preview: any) => {
+        const globals = globalThis as any;
+        const oldDoc = globals.document,
+          oldT = globals.studioT;
+        globals.document = ctx.document;
+        globals.studioT = ctx.studioT;
+        try {
+          require('../electron/renderer/right_workspace').renderProjectPreview(
+            host,
+            preview,
+          );
+        } finally {
+          globals.document = oldDoc;
+          globals.studioT = oldT;
+        }
+      },
+    },
     studioT: (id: string) => (id === 'files.deleted' ? 'Deleted' : id),
     projectFileCodeView: false,
     projectFileTreeFilter: '',
@@ -288,4 +365,148 @@ test('a snapshot read error is displayed as an error instead of deleted file con
     'Unsupported binary preview',
   );
   assert.equal(nodes.get('project-file-open').disabled, true);
+});
+
+function descendants(node: any): any[] {
+  return [node, ...(node.children || []).flatMap(descendants)];
+}
+
+test('a deleted PNG and PDF retain their formats and reach the existing media viewer', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-deleted-media-'));
+  try {
+    const png = await require('sharp')({
+      create: {width: 1, height: 1, channels: 4, background: '#315a89'},
+    })
+      .png()
+      .toBuffer();
+    const {PDFDocument} = require('pdf-lib');
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100, 100]);
+    fs.writeFileSync(path.join(root, 'old.png'), png);
+    fs.writeFileSync(path.join(root, 'old.pdf'), await pdf.save());
+    const session = await EventSession.open(root, 'agent-media-preview');
+    const registry = new ToolRegistry();
+    registerCodingTools(registry, root, session);
+    const result = await registry.execute({
+      id: 'delete-media',
+      name: 'Patch',
+      arguments: {
+        patch:
+          '*** Begin Patch\n*** Delete File: old.png\n*** Delete File: old.pdf\n*** End Patch',
+      },
+    });
+    assert.equal(result.is_error, false, result.error_message);
+    const {ctx, nodes} = fixture(root);
+    for (const change of (result.value as any).fileChanges) {
+      const expected = change.path.endsWith('.png') ? 'image' : 'pdf';
+      const preview = await readProjectPreview(root, change.previewPath);
+      assert.equal(preview.kind, expected);
+      await ctx.openDelivered({
+        detail: {path: change.path, previewPath: change.previewPath},
+      });
+      const viewer = descendants(nodes.get('project-file-content')).find(
+        n => n.tagName === (expected === 'image' ? 'IMG' : 'IFRAME'),
+      );
+      assert.ok(viewer, expected + ' viewer mounted');
+      assert.equal(viewer.src, preview.url);
+      assert.equal(nodes.get('project-file-copy').hidden, true);
+      if (expected === 'image') {
+        const data = fs.readFileSync(
+          require('node:url').fileURLToPath(viewer.src),
+        );
+        assert.deepEqual(data, png);
+        const decoded = await require('sharp')(data)
+          .raw()
+          .toBuffer({resolveWithObject: true});
+        assert.equal(decoded.info.width, 1);
+        assert.equal(decoded.info.height, 1);
+        const controls = descendants(nodes.get('project-file-content'));
+        controls
+          .find(n => n.tagName === 'BUTTON' && n.textContent === '100%')
+          .click();
+        assert.equal(
+          controls
+            .find(n => n.className?.includes('mp-preview-image-viewport'))
+            .classList.contains('is-actual-size'),
+          true,
+        );
+      } else
+        assert.equal(
+          (
+            await PDFDocument.load(
+              fs.readFileSync(require('node:url').fileURLToPath(viewer.src)),
+            )
+          ).getPageCount(),
+          1,
+        );
+    }
+    fs.writeFileSync(path.join(root, 'normal.txt'), 'ordinary text');
+    await ctx.selectProjectFile('normal.txt');
+    assert.equal(nodes.get('project-file-copy').hidden, false);
+    assert.equal(
+      nodes.get('project-file-content').classList.contains('is-office-preview'),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('deleted Office files use retained document and sheet previews instead of raw binary text', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-deleted-office-'));
+  try {
+    const AdmZip = require('adm-zip');
+    const word = new AdmZip();
+    word.addFile(
+      'word/document.xml',
+      Buffer.from(
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Retained Word paragraph</w:t></w:r></w:p></w:body></w:document>',
+      ),
+    );
+    word.writeZip(path.join(root, 'old.docx'));
+    const ppt = new AdmZip();
+    ppt.addFile(
+      'ppt/slides/slide1.xml',
+      Buffer.from(
+        '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:p><a:r><a:t>Retained slide paragraph</a:t></a:r></a:p></p:sld>',
+      ),
+    );
+    ppt.writeZip(path.join(root, 'old.pptx'));
+    const ExcelJS = require('exceljs');
+    const book = new ExcelJS.Workbook();
+    book.addWorksheet('Retained').addRow(['Retained sheet cell', 7]);
+    await book.xlsx.writeFile(path.join(root, 'old.xlsx'));
+    const session = await EventSession.open(root, 'agent-office-preview');
+    const registry = new ToolRegistry();
+    registerCodingTools(registry, root, session);
+    const result = await registry.execute({
+      id: 'delete-office',
+      name: 'Patch',
+      arguments: {
+        patch:
+          '*** Begin Patch\n*** Delete File: old.docx\n*** Delete File: old.pptx\n*** Delete File: old.xlsx\n*** End Patch',
+      },
+    });
+    assert.equal(result.is_error, false, result.error_message);
+    const {ctx, nodes} = fixture(root);
+    for (const change of (result.value as any).fileChanges) {
+      const preview = await readProjectPreview(root, change.previewPath);
+      assert.equal(
+        preview.kind,
+        change.path.endsWith('xlsx') ? 'spreadsheet' : 'document',
+      );
+      await ctx.openDelivered({
+        detail: {path: change.path, previewPath: change.previewPath},
+      });
+      const text = nodes.get('project-file-content').textContent;
+      assert.match(text, /Retained/);
+      assert.doesNotMatch(text, /- Retained/);
+      assert.match(
+        nodes.get('project-file-name').textContent,
+        /old\.(?:docx|pptx|xlsx).*Deleted/,
+      );
+    }
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
 });

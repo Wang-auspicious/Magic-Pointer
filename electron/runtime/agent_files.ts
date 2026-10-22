@@ -8,6 +8,7 @@ import {
   stat,
   unlink,
   access,
+  copyFile,
 } from 'node:fs/promises';
 import path from 'node:path';
 import createIgnore, {type Ignore} from 'ignore';
@@ -196,6 +197,21 @@ export class WorkspaceFiles {
     this.rememberBaseline(file, snapshot);
     return snapshot;
   }
+  private deletionPreviewPath(file: string, baselinePath: string): string {
+    // Keep undo's .bin contract; retained preview readers dispatch by extension.
+    const extension = path.extname(file);
+    return extension ? baselinePath + extension : baselinePath;
+  }
+  private async prepareDeletionPreview(file: string): Promise<void> {
+    const baselinePath = this.turnBaselines.get(file);
+    if (!baselinePath) {
+      return;
+    }
+    const previewPath = this.deletionPreviewPath(file, baselinePath);
+    if (previewPath !== baselinePath) {
+      await copyFile(baselinePath, previewPath);
+    }
+  }
   private async changeResult(
     file: string,
     before: Pick<FileSnapshot, 'original' | 'backupPath'>,
@@ -231,12 +247,13 @@ export class WorkspaceFiles {
             ? diffStat
             : lineChangeStat(baseline?.toString('utf8') || '', finalText),
       ...(after === null && baselinePath
-        ? {previewPath: this.display(baselinePath)}
+        ? {previewPath: this.display(this.deletionPreviewPath(file, baselinePath))}
         : {}),
     };
   }
   async delete(file: string): Promise<Data> {
     const before = await this.checkpoint(file);
+    await this.prepareDeletionPreview(file);
     await unlink(file);
     if (await exists(file)) {
       throw new Error(`File deletion readback mismatch: ${file}`);
@@ -297,6 +314,9 @@ export class WorkspaceFiles {
         const snapshot = await this.snapshot(file);
         this.rememberBaseline(file, snapshot);
         snapshots.set(file, snapshot.backupPath);
+        if (!entry.existed) {
+          await this.prepareDeletionPreview(file);
+        }
       }
     }
     for (const entry of [...selected].reverse()) {
