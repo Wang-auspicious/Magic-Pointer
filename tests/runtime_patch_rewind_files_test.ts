@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import {access, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -214,3 +221,140 @@ test('deleting binary bytes keeps a snapshot without inventing text line counts'
       bytes,
     );
   }));
+
+test(
+  'a read-only target preserves completed rewind effects and consumes only restored checkpoints',
+  {skip: process.platform !== 'win32'},
+  () =>
+    fixture(async f => {
+      const blocked = path.join(f.root, 'blocked.txt');
+      const restored = path.join(f.root, 'restored.txt');
+      await writeFile(blocked, 'original blocked\n');
+      await writeFile(restored, 'original restored\n');
+      for (const name of ['blocked.txt', 'restored.txt']) {
+        await f.run('Read', {path: name});
+        await f.run('Write', {path: name, content: 'changed\n'});
+      }
+      await f.run('Write', {path: 'restored.txt', content: 'changed again\n'});
+      await chmod(blocked, 0o444);
+      try {
+        const result = await f.registry.execute({
+          id: 'partial-rewind',
+          name: 'Rewind',
+          arguments: {steps: 0},
+        });
+        assert.equal(result.is_error, true);
+        assert.match(result.error_message, /EPERM|EACCES/);
+        assert.equal(await readFile(restored, 'utf8'), 'original restored\n');
+        assert.equal(await readFile(blocked, 'utf8'), 'changed\n');
+        const partial = result.value as any;
+        assert.deepEqual(partial.restored, ['restored.txt', 'restored.txt']);
+        assert.equal(partial.fileChanges.length, 1);
+        assert.equal(partial.fileChanges[0].path, 'restored.txt');
+        assert.equal(partial.fileChanges[0].unchanged, true);
+        f.sink.onEvent({kind: 'tool_call_finished', result});
+        const html = f.html();
+        assert.match(html, /data-file-path="blocked.txt"/);
+        assert.doesNotMatch(html, /data-file-path="restored.txt"/);
+        const manifest = path.join(
+          f.root,
+          '.mp',
+          'checkpoints',
+          f.session.id,
+          'manifest.jsonl',
+        );
+        const remaining = (await readFile(manifest, 'utf8'))
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line));
+        assert.equal(remaining.length, 1);
+        assert.equal(remaining[0].path, blocked);
+        await writeFile(restored, 'user change after partial rewind\n');
+        await chmod(blocked, 0o666);
+        await f.run('Rewind', {steps: 0});
+        assert.equal(await readFile(blocked, 'utf8'), 'original blocked\n');
+        assert.equal(
+          await readFile(restored, 'utf8'),
+          'user change after partial rewind\n',
+        );
+      } finally {
+        await chmod(blocked, 0o666);
+      }
+    }),
+);
+
+test(
+  'a rewind blocked before restoring anything leaves its checkpoint available for retry',
+  {skip: process.platform !== 'win32'},
+  () =>
+    fixture(async f => {
+      const target = path.join(f.root, 'blocked.txt');
+      await writeFile(target, 'original\n');
+      await f.run('Read', {path: 'blocked.txt'});
+      await f.run('Write', {path: 'blocked.txt', content: 'changed\n'});
+      const manifest = path.join(
+        f.root,
+        '.mp',
+        'checkpoints',
+        f.session.id,
+        'manifest.jsonl',
+      );
+      const before = await readFile(manifest, 'utf8');
+      await chmod(target, 0o444);
+      try {
+        const result = await f.registry.execute({
+          id: 'blocked-rewind',
+          name: 'Rewind',
+          arguments: {steps: 0},
+        });
+        assert.equal(result.is_error, true);
+        assert.deepEqual((result.value as any).restored, []);
+        assert.deepEqual((result.value as any).fileChanges, []);
+        assert.equal(await readFile(target, 'utf8'), 'changed\n');
+        assert.equal(await readFile(manifest, 'utf8'), before);
+        f.sink.onEvent({kind: 'tool_call_finished', result});
+        assert.match(f.html(), /data-file-path="blocked.txt"/);
+      } finally {
+        await chmod(target, 0o666);
+      }
+      await f.run('Rewind', {steps: 0});
+      assert.equal(await readFile(target, 'utf8'), 'original\n');
+    }),
+);
+
+test(
+  'a checkpoint-history write failure reports verified restored files without claiming the history was updated',
+  {skip: process.platform !== 'win32'},
+  () =>
+    fixture(async f => {
+      await f.run('Write', {path: 'new.txt', content: 'new\n'});
+      const manifest = path.join(
+        f.root,
+        '.mp',
+        'checkpoints',
+        f.session.id,
+        'manifest.jsonl',
+      );
+      const before = await readFile(manifest, 'utf8');
+      await chmod(manifest, 0o444);
+      try {
+        const result = await f.registry.execute({
+          id: 'blocked-history',
+          name: 'Rewind',
+          arguments: {steps: 0},
+        });
+        assert.equal(result.is_error, true);
+        await assert.rejects(access(path.join(f.root, 'new.txt')));
+        const partial = result.value as any;
+        assert.deepEqual(partial.restored, ['new.txt']);
+        assert.equal(partial.fileChanges[0].unchanged, true);
+        assert.equal(partial.checkpointHistoryUpdated, false);
+        assert.match(result.error_message, /checkpoint history/);
+        assert.equal(await readFile(manifest, 'utf8'), before);
+        f.sink.onEvent({kind: 'tool_call_finished', result});
+        assert.doesNotMatch(f.html(), /class="mp-chat-files"/);
+      } finally {
+        await chmod(manifest, 0o666);
+      }
+    }),
+);

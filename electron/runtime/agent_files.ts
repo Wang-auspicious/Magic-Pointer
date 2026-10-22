@@ -247,7 +247,11 @@ export class WorkspaceFiles {
             ? diffStat
             : lineChangeStat(baseline?.toString('utf8') || '', finalText),
       ...(after === null && baselinePath
-        ? {previewPath: this.display(this.deletionPreviewPath(file, baselinePath))}
+        ? {
+            previewPath: this.display(
+              this.deletionPreviewPath(file, baselinePath),
+            ),
+          }
         : {}),
     };
   }
@@ -319,47 +323,85 @@ export class WorkspaceFiles {
         }
       }
     }
-    for (const entry of [...selected].reverse()) {
-      const target = this.resolve(entry.path);
-      if (entry.existed) {
-        const backup = await readFile(
-          path.join(this.checkpointDir, entry.id + '.bin'),
-        );
-        await mkdir(path.dirname(target), {recursive: true});
-        await writeFile(target, backup);
-        if (!backup.equals(await readFile(target))) {
-          throw new Error(`File restore readback mismatch: ${target}`);
+    const restoredFiles = new Set<string>();
+    let restoredCount = 0;
+    let checkpointHistoryUpdated = true;
+    const errors: string[] = [];
+    try {
+      for (const entry of [...selected].reverse()) {
+        const target = this.resolve(entry.path);
+        if (entry.existed) {
+          const backup = await readFile(
+            path.join(this.checkpointDir, entry.id + '.bin'),
+          );
+          await mkdir(path.dirname(target), {recursive: true});
+          await writeFile(target, backup);
+          if (!backup.equals(await readFile(target))) {
+            throw new Error(`File restore readback mismatch: ${target}`);
+          }
+        } else {
+          if (await exists(target)) {
+            await unlink(target);
+          }
+          if (await exists(target)) {
+            throw new Error(`File deletion readback mismatch: ${target}`);
+          }
         }
-      } else {
-        if (await exists(target)) {
-          await unlink(target);
-        }
-        if (await exists(target)) {
-          throw new Error(`File deletion readback mismatch: ${target}`);
-        }
+        this.readVersions.delete(target);
+        restoredFiles.add(target);
+        restoredCount++;
       }
-      this.readVersions.delete(target);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
     }
-    await writeFile(
-      manifest,
-      entries
-        .slice(0, entries.length - count)
-        .map(entry => JSON.stringify(entry))
-        .join('\n') + '\n',
-    );
+    if (restoredCount > 0) {
+      try {
+        await writeFile(
+          manifest,
+          entries
+            .slice(0, entries.length - restoredCount)
+            .map(entry => JSON.stringify(entry))
+            .join('\n') + '\n',
+        );
+      } catch (error) {
+        checkpointHistoryUpdated = false;
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`Could not update rewind checkpoint history: ${message}`);
+      }
+    }
     const fileChanges: Data[] = [];
-    for (const [file, backupPath] of snapshots) {
+    for (const file of restoredFiles) {
+      const backupPath = snapshots.get(file) ?? null;
       const original = backupPath ? await readFile(backupPath) : null;
       const after = (await exists(file)) ? await readFile(file) : null;
       fileChanges.push(
         await this.changeResult(file, {original, backupPath}, after),
       );
     }
-    return {
-      restored: selected.map(entry => this.display(entry.path)),
+    const result = {
+      restored: selected
+        .slice(selected.length - restoredCount)
+        .map(entry => this.display(entry.path)),
       fileChanges,
-      verification: {matched: true, method: 'checkpoint_restore'},
+      checkpointHistoryUpdated,
+      verification: {
+        matched: true,
+        method: 'checkpoint_restore',
+        scope: 'restored_files_only',
+      },
     };
+    if (errors.length) {
+      const message = errors.join('; ');
+      throw new ActionFailure(
+        'tool_error',
+        message,
+        checkpointHistoryUpdated
+          ? undefined
+          : 'Listed files were restored, but checkpoint history was not updated. Inspect current files and checkpoint history before retrying Rewind.',
+        {...result, error: message},
+      );
+    }
+    return result;
   }
   async *walk(base: string, signal: AbortSignal): AsyncGenerator<string> {
     signal.throwIfAborted();
