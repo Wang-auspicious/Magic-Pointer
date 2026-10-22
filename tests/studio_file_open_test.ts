@@ -525,7 +525,12 @@ test('an earlier Git list response cannot replace the newly selected project cha
   assert.deepEqual(paths, ['new.txt']);
 });
 
-async function clickDelivered(ctx: any, turn: any, file: string) {
+async function clickDelivered(
+  ctx: any,
+  turn: any,
+  file: string,
+  buttonClass = 'mp-chat-file-row',
+) {
   const html = ctx.ChatView.assistantTurnNode(turn)
     .map((n: any) => n.outerHTML)
     .join('');
@@ -533,7 +538,11 @@ async function clickDelivered(ctx: any, turn: any, file: string) {
     ...html.matchAll(/<button[^>]*data-mp-chat-act="open-file"[^>]*>/g),
   ]
     .map(match => match[0])
-    .find(tag => tag.includes(`data-file-path="${file}"`));
+    .find(
+      tag =>
+        tag.includes(`class="${buttonClass}"`) &&
+        tag.includes(`data-file-path="${file}"`),
+    );
   assert.ok(button, file);
   const attrs = Object.fromEntries(
     [...button.matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [
@@ -617,6 +626,7 @@ test('a relative file receipt reopens its actual execution target with no projec
     for (const selectedRoot of ['', other, origin]) {
       const {ctx, nodes, knownRoots} = fixture(selectedRoot);
       await clickDelivered(ctx, turn, 'result.txt');
+      await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-diff-path');
       assert.equal(ctx.activeProjectRoot, selectedRoot);
       if (selectedRoot === origin) {
         knownRoots.add(other);
@@ -713,6 +723,10 @@ test('older relative file and snapshot receipts use the saved turn execution dir
       {
         kind: 'tool',
         name: 'Write',
+        text: JSON.stringify({
+          path: 'result.txt',
+          content: 'saved worktree file\n',
+        }),
         result: JSON.stringify({path: 'result.txt', created: true}),
       },
       {
@@ -739,6 +753,7 @@ test('older relative file and snapshot receipts use the saved turn execution dir
       .turns[0];
     const {ctx, nodes} = fixture(other);
     await clickDelivered(ctx, turn, 'result.txt');
+    await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-diff-path');
     assert.equal(
       nodes.get('project-file-content').textContent,
       'saved worktree file\n',

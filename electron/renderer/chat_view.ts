@@ -1971,6 +1971,7 @@ const ChatView = (() => {
     title: string;
     summary: string;
     filePath?: string;
+    fileTarget?: string;
     body: string | null;
     output: string | null;
     errorSummary: string | null;
@@ -1986,6 +1987,7 @@ const ChatView = (() => {
     argsRaw: string,
     result?: {text?: string; isError?: boolean; interrupted?: boolean},
     callId = '',
+    executionRoot = '',
   ): ToolRowModel {
     const variant = classifyTool(name);
     const state: ToolState =
@@ -2153,13 +2155,20 @@ const ChatView = (() => {
         ? `${rawError.slice(0, 60)}…`
         : rawError;
     const actualStat = reportedDiffStat(result?.text || '', 'diffStat');
+    const filePath = deriveFilePath(variant, argsRaw);
+    const receipt = outputRecord(result?.text || '');
+    const target = filePath
+      ? firstString(receipt || {}, ['absolutePath']) ||
+        executionFilePath(filePath, executionRoot)
+      : '';
     return {
       variant,
       name,
       argsRaw,
       title,
       summary,
-      filePath: deriveFilePath(variant, argsRaw),
+      filePath,
+      fileTarget: /^(?:[a-z]:[\\/]|[\\/])/i.test(target) ? target : undefined,
       body: deriveBody(variant, argsRaw),
       output,
       errorSummary,
@@ -2176,11 +2185,25 @@ const ChatView = (() => {
     };
   }
 
-  function diffPreviewNode(diff: DiffView): ChatNode {
+  function diffPreviewNode(diff: DiffView, model: ToolRowModel): ChatNode {
     const root = h('div', {class: 'mp-chat-diff-previews'});
     for (const preview of diff.previews) {
       const section = h('div', {class: 'mp-chat-diff-preview'});
       const header = h('div', {class: 'mp-chat-diff-header'});
+      if (model.filePath) {
+        const file = model.fileTarget
+          ? h('button', {
+              type: 'button',
+              class: 'mp-chat-diff-path',
+              title: model.filePath,
+              'data-mp-chat-act': 'open-file',
+              'data-file-path': model.filePath,
+              'data-file-absolute-path': model.fileTarget,
+            })
+          : h('span', {class: 'mp-chat-diff-path', title: model.filePath});
+        attach(file, model.filePath);
+        attach(header, file);
+      }
       const copy = h('button', {
         type: 'button',
         class: 'mp-chat-action mp-chat-diff-copy',
@@ -3356,7 +3379,7 @@ const ChatView = (() => {
       diff !== null &&
       (model.body !== null || model.output !== null)
     ) {
-      body.push(diffPreviewNode(diff));
+      body.push(diffPreviewNode(diff, model));
       // The reference diff branch ends at the code view. Keep receipts in the
       // model/history; only unsuccessful or interrupted calls need raw detail.
       outputInCard = model.state === 'ok';
@@ -4178,6 +4201,7 @@ const ChatView = (() => {
     groupLabel?: string;
     displayLabel?: string;
     startedAtMs?: number;
+    executionRoot?: string;
     result?: {text: string; isError: boolean; interrupted?: boolean};
     subagent?: Record<string, unknown>;
   }
@@ -4318,6 +4342,7 @@ const ChatView = (() => {
       chip.argsRaw,
       chip.result,
       chip.callId,
+      chip.executionRoot,
     );
     if (chip.displayLabel?.trim()) {
       model.title = chip.displayLabel.trim();
@@ -5005,6 +5030,13 @@ const ChatView = (() => {
     }
 
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
+    for (const item of flow) {
+      if (item.type === 'chip') {
+        item.chip.executionRoot = String(
+          turn.request?.executionWorkspaceRoot || '',
+        );
+      }
+    }
     let chipRun: TurnChip[] = [];
     let workRun: FlowItem[] = [];
     const flushChips = () => {

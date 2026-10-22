@@ -226,3 +226,18 @@ test('stopped and failed edits retain their actual result details', () => {
     assert.ok(row('Edit', args, result).includes(result.text));
   }
 });
+
+test('a preview path uses its receipt target and unknown origins stay plain text', () => {
+  const args = {path: 'nested/file.txt', content: 'saved'};
+  const html = row('Write', args, {
+    text: JSON.stringify({absolutePath: 'D:/worktree/nested/file.txt'}),
+  });
+  assert.match(
+    html,
+    /class="mp-chat-diff-path"[^>]*data-mp-chat-act="open-file"/,
+  );
+  assert.match(html, /data-file-absolute-path="D:\/worktree\/nested\/file.txt"/);
+  const unknown = row('Write', args, {text: 'Saved'});
+  assert.match(unknown, /<span class="mp-chat-diff-path"/);
+  assert.doesNotMatch(unknown, /data-mp-chat-act="open-file"/);
+});

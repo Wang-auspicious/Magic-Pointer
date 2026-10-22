@@ -408,8 +408,41 @@
 
 .mp-chat-diff-header {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 0.25rem;
   padding: var(--cds-pad-sm) var(--cds-pad-md);
+}
+
+.mp-chat-diff-path {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cds-text-secondary);
+  font-family: var(--cds-font-sans);
+  font-size: var(--cds-font-size-footnote);
+  line-height: var(--cds-leading-footnote);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.mp-chat-diff-path:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+button.mp-chat-diff-path:focus-visible {
+  outline: none;
+  box-shadow: var(--cds-focus-shadow);
+}
+
+span.mp-chat-diff-path {
+  font-size: var(--cds-font-size-body);
+  line-height: var(--cds-leading-body);
 }
 
 .mp-chat-tool .mp-chat-diff.mp-chat-diff-separated {
