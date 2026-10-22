@@ -2673,6 +2673,9 @@ const ChatView = (() => {
       alt: image.title || alt,
       loading: 'lazy',
       decoding: 'async',
+      'data-mp-chat-act': 'view-image',
+      role: 'button',
+      tabindex: '0',
     });
     attach(
       tile,
@@ -4485,15 +4488,37 @@ const ChatView = (() => {
 
   function cleanDeliveryText(value: string): string {
     let insideCode = false;
-    return value
-      .split(/\r?\n/)
+    const lines = value.split(/\r?\n/);
+    const footer = lines.lastIndexOf('任务尚未全部完成：');
+    if (
+      footer >= 0 &&
+      lines.slice(0, footer).filter(line => /^\s*```/.test(line)).length % 2 ===
+        0 &&
+      lines.slice(footer + 1).some(line => line.trim()) &&
+      lines
+        .slice(footer + 1)
+        .every(
+          line =>
+            !line.trim() ||
+            /^[\w.]+ 的目标：(?:已执行，待核对|执行失败|结果未知)\s*$/u.test(
+              line.trim(),
+            ),
+        )
+    ) {
+      lines.splice(footer);
+    }
+    return lines
       .filter(line => {
         if (/^\s*```/.test(line)) {
           insideCode = !insideCode;
           return true;
         }
-        return insideCode ||
-          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(line);
+        return (
+          insideCode ||
+          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(
+            line,
+          )
+        );
       })
       .join('\n')
       .trim();
@@ -4538,7 +4563,7 @@ const ChatView = (() => {
         continue;
       }
       if (record.kind === 'message') {
-        const text = String(record.text || '').trim();
+        const text = cleanDeliveryText(String(record.text || ''));
         if (!text || (answerText && text === answerText)) {
           continue;
         }
@@ -5517,6 +5542,53 @@ const ChatView = (() => {
     }
   }
 
+  function openChatImage(source: HTMLImageElement): void {
+    if (!DOC || !source.src) {
+      return;
+    }
+    DOC.querySelector<HTMLDialogElement>('.mp-chat-image-viewer')?.close();
+    const viewer = DOC.createElement('dialog');
+    viewer.className = 'mp-chat-image-viewer';
+    viewer.setAttribute('aria-label', source.alt || lt('chat.image_preview'));
+    const toolbar = DOC.createElement('div');
+    toolbar.className = 'mp-chat-image-toolbar';
+    const caption = DOC.createElement('span');
+    caption.textContent = source.alt || lt('chat.image_preview');
+    const close = DOC.createElement('button');
+    close.type = 'button';
+    close.textContent = lt('common.close');
+    toolbar.append(caption, close);
+    const viewport = DOC.createElement('div');
+    viewport.className = 'mp-chat-image-viewport';
+    const image = DOC.createElement('img');
+    image.src = source.currentSrc || source.src;
+    image.alt = source.alt;
+    image.title = lt('chat.image_original_size');
+    viewport.append(image);
+    viewer.append(toolbar, viewport);
+    close.addEventListener('click', () => viewer.close());
+    viewer.addEventListener('click', event => {
+      if (event.target === viewer) {
+        viewer.close();
+      }
+    });
+    image.addEventListener('click', () => {
+      viewport.classList.toggle('is-original');
+    });
+    viewer.addEventListener(
+      'close',
+      () => {
+        viewer.remove();
+        if (source.isConnected) {
+          source.focus();
+        }
+      },
+      {once: true},
+    );
+    DOC.body.append(viewer);
+    viewer.showModal();
+  }
+
   function bindDelegation(
     scope: Element | Document = DOC || ({} as Element),
   ): void {
@@ -5539,7 +5611,10 @@ const ChatView = (() => {
         return;
       }
       const kind = act.getAttribute('data-mp-chat-act');
-      if (kind === 'toggle') {
+      if (kind === 'view-image' && act instanceof HTMLImageElement) {
+        event.preventDefault();
+        openChatImage(act);
+      } else if (kind === 'toggle') {
         toggleDisclosure(act);
       } else if (kind === 'open-subagent') {
         const parentCallId =
@@ -5634,7 +5709,7 @@ const ChatView = (() => {
         return;
       }
       const row = (event.target as HTMLElement | null)?.closest?.(
-        '.mp-chat-row[data-mp-chat-act]',
+        '.mp-chat-row[data-mp-chat-act], img[data-mp-chat-act="view-image"]',
       ) as HTMLElement | null;
       if (!row) {
         return;

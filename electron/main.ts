@@ -7,6 +7,7 @@ import {XResourceSource} from './resource_x_source';
 import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
 import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
 import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
+import {attachChatImageMenu} from './chat_image_menu';
 import {
   projectAttachments,
   type ProjectDetailsPatch,
@@ -1276,6 +1277,7 @@ function createStageWindow() {
     },
   });
   stageWindow.setAlwaysOnTop(true, 'screen-saver');
+  attachChatImageMenu(stageWindow, Menu);
   stageWindow.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: true});
   if (CAPSULE_CONTENT_PROTECTED) {
     try {
@@ -6373,6 +6375,7 @@ function createDashboardWindow(initialView = 'chat') {
       webSecurity: true,
     },
   });
+  attachChatImageMenu(dashboardWindow, Menu);
   dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'), {
     query: {view: initialView},
   });

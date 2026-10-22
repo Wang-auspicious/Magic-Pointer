@@ -969,6 +969,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.incomplete': {en: 'This turn did not complete.', zh: '这次没有答完。'},
   'chat.round_failed': {en: 'This round did not finish.', zh: '这一轮没有完成。'},
   'chat.copy': {en: 'Copy', zh: '复制'},
+  'chat.image_preview': {en: 'Image preview', zh: '图片预览'},
+  'chat.image_original_size': {en: 'Click for original size; right-click to copy', zh: '点击查看原始大小；右键复制图片'},
   'chat.resend': {en: 'Resend', zh: '重新发送'},
   'chat.fork_here': {en: 'Fork from here', zh: '从这里创建分支'},
   'chat.fork_failed': {
