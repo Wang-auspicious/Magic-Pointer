@@ -290,6 +290,220 @@ test('partially failed Patch retains actual file receipts and never advertises a
     assert.equal(result.value.patches[0].fileChanges[0].path, 'first.txt');
   }));
 
+test('Rewind presents actual inverse versions once per restored file and retains a removed file opener', () =>
+  withFiles(async f => {
+    await writeFile(path.join(f.root, 'edited.txt'), 'context\noriginal\n');
+    await writeFile(path.join(f.root, 'deleted.txt'), 'restored deletion\n');
+    await f.execute('Read', {path: 'edited.txt'});
+    await f.execute('Edit', {
+      path: 'edited.txt',
+      old_string: 'original',
+      new_string: 'intermediate',
+    });
+    await f.execute('Edit', {
+      path: 'edited.txt',
+      old_string: 'intermediate',
+      new_string: 'final',
+    });
+    await f.execute('Write', {
+      path: 'created.txt',
+      content: 'removed creation\n',
+    });
+    await f.execute('Patch', {
+      patch: '*** Begin Patch\n*** Delete File: deleted.txt\n*** End Patch',
+    });
+    const result = await f.execute('Rewind', {steps: 0});
+    assert.equal(result.presentation?.kind, 'file_diffs');
+    assert.equal(result.presentation.files.length, 3);
+    const versions = new Map<string, any>();
+    for (const file of result.presentation.files) {
+      const display = await readFileDiffPresentation(file.presentation);
+      assert.equal(display.ok, true);
+      versions.set(file.path, (display as any).presentation);
+    }
+    assert.deepEqual(versions.get('edited.txt'), {
+      kind: 'file_diff',
+      beforeText: 'context\nfinal\n',
+      afterText: 'context\noriginal\n',
+    });
+    assert.deepEqual(versions.get('deleted.txt'), {
+      kind: 'file_diff',
+      beforeText: '',
+      afterText: 'restored deletion\n',
+    });
+    assert.deepEqual(versions.get('created.txt'), {
+      kind: 'file_diff',
+      beforeText: 'removed creation\n',
+      afterText: '',
+    });
+    const removed = result.presentation.files.find(
+      (file: any) => file.path === 'created.txt',
+    );
+    assert.equal(
+      await readFile(removed.previewPath, 'utf8'),
+      'removed creation\n',
+    );
+    assert.match(removed.previewPath, /\.txt$/);
+    const html = chat.toolRowNode(
+      chat.toolRowModel('Rewind', '{}', {
+        text: JSON.stringify(result.value),
+        presentation: result.presentation,
+      }),
+    ).outerHTML;
+    assert.equal((html.match(/data-file-diff-reference=/g) || []).length, 3);
+    assert.ok(html.includes('data-preview-path="' + removed.previewPath + '"'));
+    assert.doesNotMatch(html, /checkpoint_restore|restored_files_only/);
+    assert.doesNotMatch(
+      JSON.stringify(result.value),
+      /\.after\.txt|beforeText|afterText/,
+    );
+    const store = createConversationStore({baseDir: f.root});
+    const saved = store.appendTurn({
+      newConversation: true,
+      question: 'Restore files',
+      answer: 'Restored',
+      trajectory: f.sink.trajectory,
+    });
+    store.flush();
+    await writeFile(path.join(f.root, 'edited.txt'), 'later text');
+    const turn = createConversationStore({baseDir: f.root}).get(saved.id)!
+      .turns[0];
+    assert.deepEqual(
+      turn.trajectory!.filter((row: any) => row.presentation).at(-1)!
+        .presentation,
+      result.presentation,
+    );
+    assert.equal(versions.get('edited.txt').afterText, 'context\noriginal\n');
+  }));
+
+test('partial-step Rewind shows the inverse of just the selected checkpoint', () =>
+  withFiles(async f => {
+    await writeFile(path.join(f.root, 'file.txt'), 'original\n');
+    await f.execute('Read', {path: 'file.txt'});
+    await f.execute('Edit', {
+      path: 'file.txt',
+      old_string: 'original',
+      new_string: 'first',
+    });
+    await f.execute('Edit', {
+      path: 'file.txt',
+      old_string: 'first',
+      new_string: 'second',
+    });
+    const result = await f.execute('Rewind', {steps: 1});
+    assert.equal(result.presentation?.files.length, 1);
+    const display = await readFileDiffPresentation(
+      result.presentation.files[0].presentation,
+    );
+    assert.deepEqual((display as any).presentation, {
+      kind: 'file_diff',
+      beforeText: 'second\n',
+      afterText: 'first\n',
+    });
+    assert.equal(
+      await readFile(path.join(f.root, 'file.txt'), 'utf8'),
+      'first\n',
+    );
+  }));
+
+test('Rewind with no retained checkpoints does not create a fake preview', () =>
+  withFiles(async f => {
+    const result = await f.execute('Rewind', {steps: 0});
+    assert.equal(result.presentation, undefined);
+    assert.deepEqual(result.value.restored, []);
+  }));
+
+test('a binary Rewind result retains its removed bytes without fabricating a text diff', () =>
+  withFiles(async f => {
+    await f.execute('Write', {
+      path: 'binary.dat',
+      content: 'prefix\u0000suffix',
+    });
+    const result = await f.execute('Rewind', {steps: 1});
+    const entry = result.presentation.files[0];
+    assert.equal(entry.exists, false);
+    assert.deepEqual(entry.presentation, {
+      kind: 'file_diff_unavailable',
+      reason: 'binary',
+    });
+    assert.equal(
+      await readFile(entry.previewPath, 'utf8'),
+      'prefix\u0000suffix',
+    );
+    const html = chat.toolRowNode(
+      chat.toolRowModel('Rewind', '{}', {
+        text: JSON.stringify(result.value),
+        presentation: result.presentation,
+      }),
+    ).outerHTML;
+    assert.match(html, /mp-chat-diff-notice/);
+    assert.doesNotMatch(
+      html,
+      /data-kind="add"|data-kind="del"|mp-chat-diff-copy/,
+    );
+  }));
+
+test('an optional Rewind snapshot failure does not undo the verified restore', async t => {
+  const files = require('node:fs/promises');
+  const original = files.writeFile;
+  await withFiles(async f => {
+    await f.execute('Write', {
+      path: 'created.txt',
+      content: 'removed creation\n',
+    });
+    t.mock.method(
+      files,
+      'writeFile',
+      async (file: unknown, ...args: unknown[]) => {
+        if (String(file).endsWith('.after.txt')) {
+          throw new Error('preview storage unavailable');
+        }
+        return original(file, ...args);
+      },
+    );
+    const result = await f.execute('Rewind', {steps: 1});
+    assert.equal(result.value.verification.matched, true);
+    assert.deepEqual(result.presentation.files[0].presentation, {
+      kind: 'file_diff_unavailable',
+      reason: 'capture_failed',
+    });
+    assert.equal(
+      await readFile(result.presentation.files[0].previewPath, 'utf8'),
+      'removed creation\n',
+    );
+  });
+});
+
+test('a failed deleted-preview copy leaves a truthful restored result and a plain filename', async t => {
+  const files = require('node:fs/promises');
+  await withFiles(async f => {
+    await f.execute('Write', {
+      path: 'created.txt',
+      content: 'removed creation\n',
+    });
+    t.mock.method(files, 'copyFile', async () => {
+      throw new Error('preview copy unavailable');
+    });
+    const result = await f.execute('Rewind', {steps: 1});
+    assert.equal(result.value.verification.matched, true);
+    const entry = result.presentation.files[0];
+    assert.equal(entry.exists, false);
+    assert.equal(entry.previewPath, undefined);
+    assert.deepEqual(entry.presentation, {
+      kind: 'file_diff_unavailable',
+      reason: 'capture_failed',
+    });
+    const html = chat.toolRowNode(
+      chat.toolRowModel('Rewind', '{}', {
+        text: JSON.stringify(result.value),
+        presentation: result.presentation,
+      }),
+    ).outerHTML;
+    assert.match(html, /<span class="mp-chat-diff-path"/);
+    assert.doesNotMatch(html, /data-mp-chat-act="open-file"/);
+  });
+});
+
 test('presentation stays per call and does not survive failed verification', async () => {
   const registry = new ToolRegistry();
   registry.register({

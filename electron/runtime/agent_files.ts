@@ -210,8 +210,10 @@ export class WorkspaceFiles {
     const extension = path.extname(file);
     return extension ? baselinePath + extension : baselinePath;
   }
-  private async prepareDeletionPreview(file: string): Promise<void> {
-    const baselinePath = this.turnBaselines.get(file);
+  private async prepareDeletionPreview(
+    file: string,
+    baselinePath = this.turnBaselines.get(file),
+  ): Promise<string | undefined> {
     if (!baselinePath) {
       return;
     }
@@ -219,6 +221,7 @@ export class WorkspaceFiles {
     if (previewPath !== baselinePath) {
       await copyFile(baselinePath, previewPath);
     }
+    return previewPath;
   }
   private async changeResult(
     file: string,
@@ -268,18 +271,21 @@ export class WorkspaceFiles {
   private async captureDiff(
     checkpoint: FileSnapshot,
     body: Buffer,
-    finalText: string,
+    finalText?: string,
   ): Promise<FileDiffPresentation> {
     if (binaryContent(checkpoint.original) || binaryContent(body)) {
       return {kind: 'file_diff_unavailable', reason: 'binary'};
     }
-    if ((checkpoint.original?.length || 0) > 4 * MAX_DIFF_PREVIEW_CHARS) {
+    if (
+      (checkpoint.original?.length || 0) > 4 * MAX_DIFF_PREVIEW_CHARS ||
+      body.length > 4 * MAX_DIFF_PREVIEW_CHARS
+    ) {
       return {kind: 'file_diff_unavailable', reason: 'too_large'};
     }
     const beforeText = checkpoint.original?.toString('utf8') || '';
     if (
       beforeText.length > MAX_DIFF_PREVIEW_CHARS ||
-      finalText.length > MAX_DIFF_PREVIEW_CHARS
+      (finalText ?? body.toString('utf8')).length > MAX_DIFF_PREVIEW_CHARS
     ) {
       return {kind: 'file_diff_unavailable', reason: 'too_large'};
     }
@@ -343,7 +349,10 @@ export class WorkspaceFiles {
       },
     };
   }
-  async rewind(steps: number): Promise<Data> {
+  async rewind(
+    steps: number,
+    present?: (presentation: ToolPresentation) => void,
+  ): Promise<Data> {
     const manifest = path.join(this.checkpointDir, 'manifest.jsonl');
     if (!(await exists(manifest))) {
       return {restored: []};
@@ -358,13 +367,13 @@ export class WorkspaceFiles {
       );
     const count = steps > 0 ? Math.min(steps, entries.length) : entries.length;
     const selected = entries.slice(-count);
-    const snapshots = new Map<string, string | null>();
+    const snapshots = new Map<string, Pick<FileSnapshot, 'id' | 'backupPath'>>();
     for (const entry of selected) {
       const file = this.resolve(entry.path);
       if (!snapshots.has(file)) {
         const snapshot = await this.snapshot(file);
         this.rememberBaseline(file, snapshot);
-        snapshots.set(file, snapshot.backupPath);
+        snapshots.set(file, {id: snapshot.id, backupPath: snapshot.backupPath});
         if (!entry.existed) {
           await this.prepareDeletionPreview(file);
         }
@@ -417,13 +426,37 @@ export class WorkspaceFiles {
       }
     }
     const fileChanges: Data[] = [];
+    const presentation: Extract<ToolPresentation, {kind: 'file_diffs'}> = {
+      kind: 'file_diffs',
+      files: [],
+    };
     for (const file of restoredFiles) {
-      const backupPath = snapshots.get(file) ?? null;
+      const snapshot = snapshots.get(file)!;
+      const backupPath = snapshot.backupPath;
       const original = backupPath ? await readFile(backupPath) : null;
       const after = (await exists(file)) ? await readFile(file) : null;
       fileChanges.push(
         await this.changeResult(file, {original, backupPath}, after),
       );
+      if (present && !errors.length) {
+        let view = await this.captureDiff({...snapshot, original}, after ?? Buffer.alloc(0));
+        let previewPath: string | undefined;
+        if (after === null && backupPath) {
+          try {
+            previewPath = (await this.prepareDeletionPreview(file, backupPath))
+              ?.replaceAll('\\', '/');
+          } catch {
+            view = {kind: 'file_diff_unavailable', reason: 'capture_failed'};
+          }
+        }
+        presentation.files.push({
+          path: this.display(file),
+          absolutePath: file.replaceAll('\\', '/'),
+          exists: after !== null,
+          ...(previewPath ? {previewPath} : {}),
+          presentation: view,
+        });
+      }
     }
     const result = {
       restored: selected
@@ -447,6 +480,9 @@ export class WorkspaceFiles {
           : 'Listed files were restored, but checkpoint history was not updated. Inspect current files and checkpoint history before retrying Rewind.',
         {...result, error: message},
       );
+    }
+    if (presentation.files.length) {
+      present?.(presentation);
     }
     return result;
   }
@@ -1100,6 +1136,7 @@ export function registerCodingTools(
             const first = firstVersions.get(file);
             if (first) {
               const entry = presentation.files[first.index];
+              entry.exists = change.exists !== false;
               if (previewPath) {
                 entry.previewPath = previewPath;
               } else {
@@ -1121,6 +1158,7 @@ export function registerCodingTools(
             presentation.files.push({
               path: space.display(file),
               absolutePath: file.replaceAll('\\', '/'),
+              exists: change.exists !== false,
               ...(previewPath ? {previewPath} : {}),
               presentation: view,
             });
@@ -1156,7 +1194,7 @@ export function registerCodingTools(
     'Rewind',
     'Restore files changed in this session from persistent checkpoints. steps=0 restores all.',
     schema({steps: integer}),
-    args => space.rewind(Number(args.steps ?? 0)),
+    (args, context) => space.rewind(Number(args.steps ?? 0), context.present),
     'reversible_write',
   );
   add(

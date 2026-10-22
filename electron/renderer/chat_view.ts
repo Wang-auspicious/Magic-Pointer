@@ -3504,7 +3504,8 @@ const ChatView = (() => {
         }
         const fileModel = {
           filePath: entry.path,
-          fileTarget: typeof entry.absolutePath === 'string'
+          fileTarget: (entry.exists !== false || entry.previewPath) &&
+            typeof entry.absolutePath === 'string'
             ? entry.absolutePath : undefined,
           filePreviewPath: typeof entry.previewPath === 'string'
             ? entry.previewPath : undefined,

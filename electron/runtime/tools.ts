@@ -33,6 +33,7 @@ export type ToolPresentation =
         path: string;
         absolutePath: string;
         previewPath?: string;
+        exists?: boolean;
         presentation: FileDiffPresentation;
       }>;
     };

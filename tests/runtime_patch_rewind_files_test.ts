@@ -4,6 +4,7 @@ import {
   chmod,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -238,12 +239,28 @@ test(
       await f.run('Write', {path: 'restored.txt', content: 'changed again\n'});
       await chmod(blocked, 0o444);
       try {
+        const checkpointDir = path.join(
+          f.root,
+          '.mp',
+          'checkpoints',
+          f.session.id,
+        );
+        const previewFilesBefore = (await readdir(checkpointDir))
+          .filter(name => name.endsWith('.after.txt'))
+          .sort();
         const result = await f.registry.execute({
           id: 'partial-rewind',
           name: 'Rewind',
           arguments: {steps: 0},
         });
         assert.equal(result.is_error, true);
+        assert.equal(result.presentation, undefined);
+        assert.deepEqual(
+          (await readdir(checkpointDir))
+            .filter(name => name.endsWith('.after.txt'))
+            .sort(),
+          previewFilesBefore,
+        );
         assert.match(result.error_message, /EPERM|EACCES/);
         assert.equal(await readFile(restored, 'utf8'), 'original restored\n');
         assert.equal(await readFile(blocked, 'utf8'), 'changed\n');
