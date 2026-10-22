@@ -580,6 +580,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'Failed to start the terminal.',
     zh: '终端启动失败。',
   },
+  'terminal.sending': {en: 'Sending…', zh: '正在提交…'},
   'terminal.write_failed': {
     en: 'Failed to write to the terminal.',
     zh: '终端输入失败。',

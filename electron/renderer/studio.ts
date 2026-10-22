@@ -6996,6 +6996,9 @@ document
   });
 
 document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing) {
+    return;
+  }
   if (
     (event.ctrlKey || event.metaKey) &&
     !event.altKey &&
@@ -7006,6 +7009,10 @@ document.addEventListener('keydown', event => {
     return;
   }
   if (event.key === 'Escape') {
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
     const globalSearchOpen =
       document.getElementById('global-search')?.hidden === false;
     if (globalSearchOpen) {
@@ -7488,6 +7495,8 @@ let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
 let projectFileCodeView = false;
 let activeInspectorTab = 'files';
+let inspectorReturnFocus: HTMLElement | null = null;
+let bottomPanelReturnFocus: HTMLElement | null = null;
 let focusedSubagentId = '';
 
 type WorkspaceResourceKind =
@@ -9401,10 +9410,29 @@ function syncInspectorGeometry() {
   scheduleProjectBrowserResize();
 }
 
+function restorePanelFocus(origin: HTMLElement | null): void {
+  if (origin?.isConnected && origin.getClientRects().length) {
+    origin.focus({preventScroll: true});
+  } else {
+    document
+      .querySelector<HTMLTextAreaElement>('#composer-form textarea')
+      ?.focus({preventScroll: true});
+  }
+}
+
 function setInspector(open: boolean, tab = activeInspectorTab) {
   const inspector = document.getElementById('project-inspector');
   if (!inspector) {
     return;
+  }
+  if (open && !inspectorState.open) {
+    const focused = document.activeElement;
+    inspectorReturnFocus =
+      focused instanceof HTMLElement &&
+      focused !== document.body &&
+      !inspector.contains(focused)
+        ? focused
+        : null;
   }
   inspectorState = inspectorStatePolicy.reduceInspectorState(
     inspectorState,
@@ -9492,6 +9520,16 @@ if (executionActivity) {
 document.getElementById('inspector-close')?.addEventListener('click', () => {
   workspaceAutoOpenedResourceKey = '';
   setInspector(false);
+  restorePanelFocus(inspectorReturnFocus);
+  inspectorReturnFocus = null;
+});
+document.getElementById('project-inspector')?.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  document.getElementById('inspector-close')?.click();
 });
 document.getElementById('inspector-maximize')?.addEventListener('click', () => {
   workspaceAutoOpenedResourceKey = '';
@@ -9909,17 +9947,14 @@ function renderTerminalPrompt() {
   }
 }
 
-async function runTerminalCommand(command: string) {
-  if (!command || !activeProjectRoot) {
-    return;
+async function runTerminalCommand(command: string): Promise<boolean> {
+  if (!command) {
+    return false;
   }
-  openWorkspaceResource({
-    kind: 'terminal',
-    title: activeTerminalRelativeDirectory
-      ? `PowerShell · ${activeTerminalRelativeDirectory}`
-      : 'PowerShell',
-    resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}:${activeTerminalRelativeDirectory}`,
-  });
+  if (!activeProjectRoot) {
+    appendTerminalOutput(`\n${studioT('project.open_first')}\n`);
+    return false;
+  }
   try {
     const started = await Data.startProjectTerminal(
       activeProjectRoot,
@@ -9928,15 +9963,17 @@ async function runTerminalCommand(command: string) {
     if (!started.ok) {
       throw new Error(started.error || studioT('terminal.start_failed'));
     }
-    appendTerminalOutput(`\n> ${command}\n`);
     const written = await Data.writeProjectTerminal(command);
     if (!written.ok) {
       throw new Error(written.error || studioT('terminal.write_failed'));
     }
+    appendTerminalOutput(`\n> ${command}\n`);
+    return true;
   } catch (error) {
     appendTerminalOutput(
       `\n${error instanceof Error ? error.message : String(error)}\n`,
     );
+    return false;
   }
 }
 
@@ -9983,16 +10020,49 @@ for (const pair of [
   ],
   ['bottom-terminal-form', 'bottom-terminal-input', 'bottom-terminal-output'],
 ] as const) {
-  document.getElementById(pair[0])?.addEventListener('submit', event => {
+  document.getElementById(pair[0])?.addEventListener('submit', async event => {
     event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
     const input = document.getElementById(pair[1]) as HTMLInputElement | null;
     const output = document.getElementById(pair[2]);
     const command = input?.value.trim() || '';
-    if (!command || !output) {
+    if (!input || !command || !output || form.dataset.submitting === 'true') {
       return;
     }
-    input!.value = '';
-    void runTerminalCommand(command);
+    const submittedText = input.value;
+    const scope = workspaceResourceScopeKey();
+    const button = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )!;
+    const label = button.textContent;
+    form.dataset.submitting = 'true';
+    form.setAttribute('aria-busy', 'true');
+    button.disabled = true;
+    button.textContent = studioT('terminal.sending');
+    try {
+      if (form.id === 'project-terminal-form' && activeProjectRoot) {
+        openWorkspaceResource({
+          kind: 'terminal',
+          title: activeTerminalRelativeDirectory
+            ? `PowerShell · ${activeTerminalRelativeDirectory}`
+            : 'PowerShell',
+          resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}:${activeTerminalRelativeDirectory}`,
+        });
+      }
+      const accepted = await runTerminalCommand(command);
+      if (
+        accepted &&
+        input.value === submittedText &&
+        workspaceResourceScopeKey() === scope
+      ) {
+        input.value = '';
+      }
+    } finally {
+      delete form.dataset.submitting;
+      form.removeAttribute('aria-busy');
+      button.disabled = false;
+      button.textContent = label;
+    }
   });
 }
 
@@ -10000,6 +10070,15 @@ function setBottomPanel(open: boolean) {
   const panel = document.getElementById('bottom-panel');
   if (!panel) {
     return;
+  }
+  if (open && panel.hidden) {
+    const focused = document.activeElement;
+    bottomPanelReturnFocus =
+      focused instanceof HTMLElement &&
+      focused !== document.body &&
+      !panel.contains(focused)
+        ? focused
+        : null;
   }
   panel.hidden = !open;
   if (open) {
@@ -10029,7 +10108,19 @@ document
   );
 document
   .getElementById('bottom-panel-close')
-  ?.addEventListener('click', () => setBottomPanel(false));
+  ?.addEventListener('click', () => {
+    setBottomPanel(false);
+    restorePanelFocus(bottomPanelReturnFocus);
+    bottomPanelReturnFocus = null;
+  });
+document.getElementById('bottom-panel')?.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  document.getElementById('bottom-panel-close')?.click();
+});
 
 let pluginDirectoryCatalog: MagicPointerSlashDirectory | null = null;
 let pluginDirectoryKind: 'skills' | 'commands' = 'skills';
