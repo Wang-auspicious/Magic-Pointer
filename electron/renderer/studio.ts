@@ -1335,7 +1335,10 @@ function positionAnchoredPopover(
   popup.style.left = `${point.left}px`;
   popup.style.top = `${point.top}px`;
   popup.style.removeProperty('visibility');
-  if (popupId === 'composer-permission-menu') {
+  if (
+    popupId === 'composer-permission-menu' ||
+    popupId === 'composer-workspace-menu'
+  ) {
     popup.style.left = `${Math.max(12, Math.min(trigger.getBoundingClientRect().left, innerWidth - popup.offsetWidth - 12))}px`;
   }
   trigger.setAttribute('aria-expanded', 'true');
