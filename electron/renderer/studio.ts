@@ -1456,6 +1456,19 @@ function conversationNode(
   const title = document.createElement('span');
   title.className = 'side-title';
   title.textContent = String(c.title || studioT('convo.untitled'));
+  if (studioLibraries.preferences.sidebar.metadata) {
+    const metadata = document.createElement('span');
+    metadata.className = 'side-metadata';
+    metadata.textContent =
+      statusLabel ||
+      (c.updatedAt
+        ? new Date(c.updatedAt).toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+          })
+        : '');
+    title.append(metadata);
+  }
   const actions = document.createElement('span');
   actions.className = 'side-actions';
   const ellipsis = document.createElement('span');
@@ -1519,35 +1532,39 @@ function buildSessionMenu(c: {
   title?: string;
   projectId?: string;
   workspaceRoot?: string;
+  updatedAt?: number;
 }): HTMLElement {
   const id = String(c.id || '');
   const menu = document.createElement('span');
   menu.className = 'side-session-menu';
   menu.hidden = true;
   menu.dataset.forSession = id;
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Session actions');
   const glyph = (
     globalThis as unknown as {
       CdsIcons: {html: (name: string, size?: string) => string};
     }
   ).CdsIcons.html;
   type MenuItem = {
-    icon: string;
     key?: string;
     danger?: boolean;
     submenu?: boolean;
   };
-  const item = (name: string, label: string, options: MenuItem) => {
+  const item = (name: string, label: string, options: MenuItem = {}) => {
     const row = document.createElement('button');
     row.type = 'button';
     row.className =
       'side-session-menu-item' + (options.danger ? ' is-danger' : '');
     row.dataset.sessionAction = name;
+    row.setAttribute('role', 'menuitem');
+    row.tabIndex = -1;
     row.innerHTML =
-      `<span class="side-menu-icon" aria-hidden="true">${glyph(options.icon)}</span><span class="side-menu-label">${esc(label)}</span>` +
+      `<span class="side-menu-label">${esc(label)}</span>` +
       (options.key
         ? `<kbd>${options.key}</kbd>`
         : options.submenu
-          ? '<span class="side-menu-chevron" aria-hidden="true">›</span>'
+          ? `<span class="side-menu-chevron" aria-hidden="true">${glyph('chevron-section', 'small')}</span>`
           : '');
     return row;
   };
@@ -1556,7 +1573,6 @@ function buildSessionMenu(c: {
     return line;
   };
   const local = studioLibraries.sessionPreference(id);
-  const inProject = Boolean(String(c.projectId ?? c.workspaceRoot ?? '').trim());
   const close = (event: Event) => {
     event.stopPropagation();
     menu.hidden = true;
@@ -1575,27 +1591,28 @@ function buildSessionMenu(c: {
       openRenameDialog(id, String(c.title || ''));
       return;
     }
-    if (name === 'archive') {
-      studioLibraries.setSessionPreference(id, {archived: !local.archived});
+    if (name === 'read') {
+      studioLibraries.setSessionPreference(id, {
+        seenAt:
+          Number(local.seenAt || 0) >= Number(c.updatedAt || 0)
+            ? 0
+            : Date.now(),
+      });
       void renderSidebar();
       return;
     }
-    if (name === 'remove-project') {
-      void Data.setConversationProject(id, '').then(result => {
-        if (result.ok) {
-          return renderSidebar();
-        }
-        const notice = document.createElement('p');
-        notice.className = 'mp-library-error';
-        notice.setAttribute('role', 'alert');
-        notice.textContent =
-          result.error === 'store_failed'
-            ? studioT('convo.save_failed')
-            : result.error || studioT('convo.save_failed');
-        menu.querySelector('[role=alert]')?.remove();
-        menu.append(notice);
-        menu.hidden = false;
-      });
+    if (name === 'fork') {
+      void Data.conversation(id).then(conversation =>
+        branchConversationFromUi(
+          id,
+          Math.max(0, (conversation?.turns?.length || 0) - 1),
+        ),
+      );
+      return;
+    }
+    if (name === 'archive') {
+      studioLibraries.setSessionPreference(id, {archived: !local.archived});
+      void renderSidebar();
       return;
     }
     if (name === 'up') {
@@ -1613,51 +1630,51 @@ function buildSessionMenu(c: {
     }
   };
   const pin = item('pin', local.pinned ? 'Unpin' : 'Pin', {
-    icon: local.pinned ? 'unpin' : 'pinned-star',
     key: 'P',
   });
   pin.dataset.sessionPinned = String(local.pinned);
   pin.addEventListener('click', run('pin'));
   menu.append(pin);
-  const rename = item('rename', 'Rename', {icon: 'mode-write', key: 'R'});
+  const read = item(
+    'read',
+    Number(local.seenAt || 0) >= Number(c.updatedAt || 0)
+      ? 'Mark as unread'
+      : 'Mark as read',
+    {key: 'U'},
+  );
+  read.addEventListener('click', run('read'));
+  menu.append(read);
+  const rename = item('rename', 'Rename', {key: 'R'});
   rename.addEventListener('click', run('rename'));
   menu.append(rename);
-  const project = item(
-    'project',
-    inProject ? 'Change project' : 'Add to project',
-    {icon: 'box', submenu: true},
-  );
+  const fork = item('fork', 'Fork', {key: 'F'});
+  fork.addEventListener('click', run('fork'));
+  menu.append(fork, divider());
+  const project = item('project', 'Move to project', {submenu: true});
   project.addEventListener('click', event => {
     event.stopPropagation();
     void openProjectAssignment(id, project);
   });
-  menu.append(project);
-  if (inProject) {
-    const removeProject = item('remove-project', 'Remove from project', {
-      icon: 'arrow-out',
-    });
-    removeProject.addEventListener('click', run('remove-project'));
-    menu.append(removeProject);
-  }
   if (!local.pinned) {
-    const parent = item('group', 'Move to group', {
-      icon: 'folder',
+    const parent = item('group', 'Move to', {
       submenu: true,
     });
     const apply = (group: string | null) => {
       if (group === null) {
-        void requestStudioText(studioT('prompt.group_name'), local.group || '', 60).then(name => {
+        void requestStudioText(
+          studioT('prompt.group_name'),
+          local.group || '',
+          60,
+        ).then(name => {
           if (name === null) {
             return;
           }
           studioLibraries.setSessionGroup(id, name);
-          studioLibraries.setFilter('group', 'custom');
           void renderSidebar();
         });
         return;
       }
       studioLibraries.setSessionGroup(id, group);
-      studioLibraries.setFilter('group', 'custom');
       void renderSidebar();
     };
     const show = () =>
@@ -1678,21 +1695,20 @@ function buildSessionMenu(c: {
     });
     menu.append(parent);
   }
+  menu.append(project);
   const archive = item('archive', local.archived ? 'Unarchive' : 'Archive', {
-    icon: 'archive',
+    key: 'A',
   });
   archive.addEventListener('click', run('archive'));
-  menu.append(archive);
-  menu.append(divider());
+  menu.append(divider(), archive);
   if (local.pinned) {
-    const up = item('up', 'Move up', {icon: 'send'});
+    const up = item('up', 'Move up');
     up.addEventListener('click', run('up'));
-    const down = item('down', 'Move down', {icon: 'arrow-down'});
+    const down = item('down', 'Move down');
     down.addEventListener('click', run('down'));
     menu.append(up, down, divider());
   }
   const remove = item('delete', 'Delete', {
-    icon: 'trash',
     key: 'D',
     danger: true,
   });
@@ -1717,7 +1733,7 @@ function openGroupSubmenu(
   const panel = document.createElement('div');
   panel.className = 'side-session-submenu is-floating';
   panel.setAttribute('role', 'menu');
-  panel.setAttribute('aria-label', 'Move to group');
+  panel.setAttribute('aria-label', 'Move to');
   panel.innerHTML =
     groups
       .map(
@@ -1725,7 +1741,7 @@ function openGroupSubmenu(
           `<button type="button" role="menuitemradio" aria-checked="${current === group}" data-session-group="${esc(group)}"><span>${esc(group)}</span>${current === group ? glyph('check') : ''}</button>`,
       )
       .join('') +
-    `<button type="button" data-session-group-new><span>New group…</span></button>`;
+    `<button type="button" data-session-group-new><span>New section…</span></button>`;
   document.body.append(panel);
   const rect = anchor.getBoundingClientRect();
   const width = panel.offsetWidth;
@@ -1773,20 +1789,56 @@ function openGroupSubmenu(
   closeGroupSubmenu = close;
 }
 
-function bindSessionMenuKeys(menu: HTMLElement): void {
+function bindSessionMenuKeys(
+  menu: HTMLElement,
+  trigger: HTMLElement,
+  owner: HTMLElement,
+): void {
   const onKey = (event: KeyboardEvent) => {
+    if (!menu.contains(event.target as Node)) {
+      return;
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      menu.hidden = true;
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      const items = studioMenuItems(menu);
+      const current = items.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? items.length - 1
+            : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) %
+              items.length;
+      event.preventDefault();
+      event.stopPropagation();
+      items[next]?.focus();
       return;
     }
     const key = event.key.toLocaleLowerCase();
     const name =
       key === 'p'
         ? 'pin'
-        : key === 'r'
-          ? 'rename'
-          : key === 'd'
-            ? 'delete'
-            : '';
+        : key === 'u'
+          ? 'read'
+          : key === 'f'
+            ? 'fork'
+            : key === 'a'
+              ? 'archive'
+              : key === 'r'
+                ? 'rename'
+                : key === 'd'
+                  ? 'delete'
+                  : '';
     if (!name) {
       return;
     }
@@ -1804,10 +1856,24 @@ function bindSessionMenuKeys(menu: HTMLElement): void {
     if (menu.hidden) {
       document.removeEventListener('keydown', onKey, true);
       observer.disconnect();
+      trigger.setAttribute('aria-expanded', 'false');
+      if (owner.isConnected) {
+        owner.append(menu);
+      } else {
+        menu.remove();
+      }
+      if (
+        trigger.isConnected &&
+        (document.activeElement === document.body ||
+          menu.contains(document.activeElement))
+      ) {
+        trigger.focus({preventScroll: true});
+      }
     }
   });
   observer.observe(menu, {attributes: true, attributeFilter: ['hidden']});
   document.addEventListener('keydown', onKey, true);
+  enterStudioMenu(menu);
 }
 
 let projectAssignmentRequest = 0;
@@ -1833,12 +1899,12 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   popover.setAttribute('aria-label', 'Change project');
   const glyph = (globalThis as any).CdsIcons.html;
   popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options">${studioLibraries.projectOptionsMarkup(projects, conversation.projectId ?? conversation.workspaceRoot ?? '')}</div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p>`;
-  const left =
-    bounds.right + 240 <= window.innerWidth - 8
-      ? bounds.right - 3
-      : bounds.left - 237;
-  popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - 248))}px`;
   document.body.append(popover);
+  const width = popover.offsetWidth;
+  const left = bounds.right + width + 4 <= window.innerWidth - 8
+    ? bounds.right + 4
+    : bounds.left - width - 4;
+  popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
   popover.style.top = `${Math.max(8, Math.min(anchorBounds.top - 4, window.innerHeight - popover.offsetHeight - 8))}px`;
   anchor.setAttribute('aria-expanded', 'true');
   const listeners = new AbortController();
@@ -1863,10 +1929,12 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     },
     {signal: listeners.signal},
   );
-  document.addEventListener(
+  popover.addEventListener(
     'keydown',
     event => {
       if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
         close();
         anchor.focus();
       }
@@ -2096,8 +2164,7 @@ function openRenameDialog(id: string, currentTitle: string) {
     const trigger = target.closest<HTMLElement>('[data-session-menu]');
     if (trigger) {
       e.stopPropagation();
-      const host =
-        trigger.parentElement?.querySelector<HTMLElement>('.side-session-menu');
+      const host = document.querySelector<HTMLElement>(`.side-session-menu[data-for-session="${CSS.escape(trigger.dataset.sessionMenu || '')}"]`);
       if (host) {
         document
           .querySelectorAll('.side-session-menu:not([hidden])')
@@ -2108,7 +2175,14 @@ function openRenameDialog(id: string, currentTitle: string) {
           });
         host.hidden = !host.hidden;
         if (!host.hidden) {
-          bindSessionMenuKeys(host);
+          const owner = host.parentElement!;
+          document.body.append(host);
+          const bounds = trigger.getBoundingClientRect();
+          host.style.position = 'fixed';
+          host.style.left = `${Math.max(8, Math.min(bounds.right - host.offsetWidth, window.innerWidth - host.offsetWidth - 8))}px`;
+          host.style.top = `${Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - host.offsetHeight - 8))}px`;
+          trigger.setAttribute('aria-expanded', 'true');
+          bindSessionMenuKeys(host, trigger, owner);
         }
       }
       return;
@@ -2248,7 +2322,7 @@ async function renderSidebar() {
     activeConversationId ??
     undefined;
   const nodes: HTMLElement[] = [];
-  let filtered = studioLibraries.filterRows(
+  let filtered = studioLibraries.sidebarRows(
     sidebarGroups.filterConversations(list, sidebarQuery),
   ) as MagicPointerConversationSummary[];
   if (sidebarRecentOnly) {
@@ -2293,7 +2367,10 @@ async function renderSidebar() {
         ]
       : []),
   ];
-  const displayGroups = studioLibraries.sections(filtered, groups) as Array<{
+  const displayGroups = studioLibraries.sidebarSections(
+    filtered,
+    groups,
+  ) as Array<{
     key: string;
     label: string;
     items: MagicPointerConversationSummary[];
@@ -2349,19 +2426,20 @@ async function renderSidebar() {
     );
     const actions = document.createElement('span');
     actions.className = 'mpw-project-actions';
+    const tools = document.createElement('button');
+    tools.type = 'button';
+    tools.dataset.projectTools = group.key;
+    tools.setAttribute('aria-label', studioT('sidebar.group_sort'));
+    tools.title = studioT('sidebar.group_sort');
+    tools.innerHTML = icon('ic-sliders');
+    actions.append(tools);
     if (group.key && !group.virtual) {
       const add = document.createElement('button');
       add.type = 'button';
       add.dataset.projectNew = group.key;
       add.setAttribute('aria-label', 'New session');
       add.innerHTML = icon('ic-plus');
-      const tools = document.createElement('button');
-      tools.type = 'button';
-      tools.dataset.projectTools = group.key;
-      tools.setAttribute('aria-label', studioT('environment.edit'));
-      tools.title = studioT('environment.edit');
-      tools.innerHTML = icon('ic-sliders');
-      actions.append(add, tools);
+      actions.append(add);
     }
     head.append(toggle, actions);
     const sessions = document.createElement('div');
@@ -2373,6 +2451,7 @@ async function renderSidebar() {
     project.append(head, sessions);
     nodes.push(project);
   }
+  document.querySelectorAll<HTMLElement>('.side-session-menu:not([hidden])').forEach(menu => { menu.hidden = true; });
   host.replaceChildren(...nodes);
 }
 
@@ -7680,7 +7759,7 @@ function openSidebarMenu(button: HTMLElement) {
     menu.append(item);
   }
   for (const [label, action] of [
-    [studioT('sidebar.group_sort'), () => libraryUi.filterMenu(button)],
+    [studioT('sidebar.group_sort'), () => libraryUi.groupMenu(button)],
     [studioT('sidebar.edit'), () => libraryUi.openSidebarEditor(button)],
   ] as Array<[string, () => void]>) {
     const item = document.createElement('button');
@@ -10663,23 +10742,7 @@ document.addEventListener('click', e => {
   }
   const projectTools = target.closest<HTMLElement>('[data-project-tools]');
   if (projectTools) {
-    const project = ProjectScope.find(
-      cachedProjects || [],
-      projectTools.dataset.projectTools || '',
-    );
-    if (project) {
-      void globalThis.ProjectEnvironments.open(
-        project,
-        Data,
-        async updated => {
-          cachedProjects = (cachedProjects || []).map(item =>
-            ProjectScope.key(item) === ProjectScope.key(updated) ? updated : item,
-          );
-          await renderSidebar();
-        },
-        projectTools,
-      );
-    }
+    libraryUi.groupMenu(projectTools);
     return;
   }
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');

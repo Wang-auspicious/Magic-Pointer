@@ -58,6 +58,22 @@
     filters: Filters;
     sessions: Record<string, SessionPreference>;
     hiddenNavigation: string[];
+    sidebar: SidebarView;
+    sections: string[];
+  };
+  interface SidebarView {
+    group: 'date' | 'state' | 'folder' | 'environment' | 'none';
+    sort: 'activity' | 'created' | 'name';
+    ascending: boolean;
+    metadata: boolean;
+    emptyGroups: boolean;
+  }
+  const defaultSidebar: SidebarView = {
+    group: 'folder',
+    sort: 'activity',
+    ascending: false,
+    metadata: false,
+    emptyGroups: false,
   };
   const STORAGE_KEY = 'mp:library-preferences';
   const defaults: Filters = {
@@ -74,9 +90,17 @@
         filters: {...defaults, ...stored.filters},
         sessions: stored.sessions || {},
         hiddenNavigation: stored.hiddenNavigation || [],
+        sidebar: {...defaultSidebar, ...stored.sidebar},
+        sections: stored.sections || [],
       };
     } catch {
-      return {filters: {...defaults}, sessions: {}, hiddenNavigation: []};
+      return {
+        filters: {...defaults},
+        sessions: {},
+        hiddenNavigation: [],
+        sidebar: {...defaultSidebar},
+        sections: [],
+      };
     }
   }
   const preferences = loadPreferences();
@@ -91,11 +115,25 @@
     preferences.filters[key] = value;
     save();
   }
+  function setSidebarOption<K extends keyof SidebarView>(
+    key: K,
+    value: SidebarView[K],
+  ): void {
+    preferences.sidebar[key] = value;
+    save();
+  }
+  function addSidebarSection(name: string): void {
+    const value = name.trim();
+    if (value && !preferences.sections.includes(value)) {
+      preferences.sections.push(value);
+      save();
+    }
+  }
   function sessionPreference(id: string): SessionPreference {
     return preferences.sessions[id] || {};
   }
   function sessionGroups(): string[] {
-    const names = new Set<string>();
+    const names = new Set<string>(preferences.sections);
     for (const value of Object.values(preferences.sessions)) {
       const group = String(value.group || '').trim();
       if (group) {
@@ -232,6 +270,153 @@
         items,
         virtual: true,
       })),
+    );
+  }
+  function sidebarRows(rows: readonly Row[]): Row[] {
+    const view = preferences.sidebar;
+    return rows
+      .filter(row => !sessionPreference(row.id).archived)
+      .sort((a, b) => {
+        const comparison =
+          view.sort === 'name'
+            ? String(a.title || '').localeCompare(String(b.title || ''))
+            : Number(
+                view.sort === 'created' ? a.createdAt || 0 : a.updatedAt || 0,
+              ) -
+              Number(
+                view.sort === 'created' ? b.createdAt || 0 : b.updatedAt || 0,
+              );
+        return (
+          (view.ascending ? comparison : -comparison) ||
+          a.id.localeCompare(b.id)
+        );
+      });
+  }
+  function sidebarSections(
+    rows: readonly Row[],
+    projectGroups: Section[],
+  ): Section[] {
+    const pinned = rows
+      .filter(row => sessionPreference(row.id).pinned)
+      .sort(
+        (a, b) =>
+          (sessionPreference(a.id).order || 0) -
+          (sessionPreference(b.id).order || 0),
+      );
+    const groups: Section[] = pinned.length
+      ? [{key: '__pinned__', label: 'Pinned', items: pinned, virtual: true}]
+      : [];
+    const rest = rows.filter(row => !sessionPreference(row.id).pinned);
+    for (const label of sessionGroups()) {
+      groups.push({
+        key: `__custom__${label}`,
+        label,
+        items: rest.filter(row => sessionPreference(row.id).group === label),
+        virtual: true,
+      });
+    }
+    const automatic = rest.filter(row => !sessionPreference(row.id).group);
+    if (preferences.sidebar.group === 'folder') {
+      const ids = new Set(automatic.map(row => row.id));
+      return groups.concat(
+        projectGroups
+          .map(group => ({
+            ...group,
+            items: group.items.filter(row => ids.has(row.id)),
+          }))
+          .filter(
+            group => group.items.length || preferences.sidebar.emptyGroups,
+          ),
+      );
+    }
+    const buckets = new Map<string, Row[]>();
+    for (const row of automatic) {
+      const label =
+        preferences.sidebar.group === 'date'
+          ? new Date(Number(row.updatedAt || 0)).toLocaleDateString(undefined, {
+              month: 'short',
+              day: 'numeric',
+            })
+          : preferences.sidebar.group === 'state'
+            ? ConversationState.label(ConversationState.derive(row))
+            : preferences.sidebar.group === 'environment'
+              ? 'Local'
+              : 'Sessions';
+      if (!buckets.has(label)) {
+        buckets.set(label, []);
+      }
+      buckets.get(label)!.push(row);
+    }
+    return groups.concat(
+      [...buckets].map(([label, items]) => ({
+        key: `__sidebar__${preferences.sidebar.group}:${label}`,
+        label,
+        items,
+        virtual: true,
+      })),
+    );
+  }
+  function groupMenuMarkup(): string {
+    const view = preferences.sidebar;
+    function choice(
+      key: keyof SidebarView,
+      value: string,
+      label: string,
+    ): string {
+      const selected = String(view[key]) === value;
+      return `<button type="button" role="menuitemradio" tabindex="-1" aria-checked="${selected}" data-sidebar-option="${key}" data-value="${value}"><span>${label}</span>${selected ? glyph('check') : ''}</button>`;
+    }
+    function parent(label: string, current: string, content: string): string {
+      return `<div class="mp-library-menu-group"><button type="button" class="mp-library-menu-parent" role="menuitem" aria-haspopup="menu" aria-expanded="false" tabindex="-1">${label}<span>${current}${glyph('chevron-section', 'small')}</span></button><div class="mp-library-submenu" role="menu" aria-label="${label}" hidden>${content}</div></div>`;
+    }
+    const groups = [
+      ['date', 'Date'],
+      ['state', 'Status'],
+      ['folder', 'Folder'],
+      ['environment', 'Environment'],
+      ['none', 'None'],
+    ];
+    const sorts = [
+      ['activity', 'Last updated'],
+      ['created', 'Date created'],
+      ['name', 'Name'],
+    ];
+    const changed = Object.keys(defaultSidebar).some(
+      key =>
+        view[key as keyof SidebarView] !==
+        defaultSidebar[key as keyof SidebarView],
+    );
+    return (
+      parent(
+        'Group by',
+        groups.find(([value]) => value === view.group)?.[1] || '',
+        groups
+          .map(
+            ([value, label]) =>
+              `${value === 'none' ? '<hr />' : ''}${choice('group', value, label)}`,
+          )
+          .join(''),
+      ) +
+      parent(
+        'Sort by',
+        sorts.find(([value]) => value === view.sort)?.[1] || '',
+        sorts.map(([value, label]) => choice('sort', value, label)).join('') +
+          '<hr />' +
+          choice('ascending', 'false', 'Descending') +
+          choice('ascending', 'true', 'Ascending'),
+      ) +
+      parent(
+        'Show',
+        '',
+        (['metadata', 'emptyGroups'] as const)
+          .map(
+            (key, index) =>
+              `<button type="button" role="menuitemcheckbox" tabindex="-1" aria-checked="${view[key]}" data-sidebar-option="${key}" data-value="${!view[key]}"><span>${index === 0 ? 'Metadata' : 'Empty groups'}</span>${view[key] ? glyph('check') : ''}</button>`,
+          )
+          .join('<hr />'),
+      ) +
+      '<hr /><button type="button" role="menuitem" data-sidebar-new-section>New section</button><hr />' +
+      `<button type="button" role="menuitem" data-sidebar-reset ${changed ? '' : 'disabled'}>Reset to defaults</button><button type="button" role="menuitem" data-sidebar-view-all>View all</button>`
     );
   }
   function scheduledSources(rows: readonly Row[]) {
@@ -684,13 +869,19 @@
         anchor.focus({preventScroll: true});
       }
     }
-    function positionMenu(button: HTMLElement, role = 'menu') {
+    function positionMenu(
+      button: HTMLElement,
+      role = 'menu',
+      groupMenu = false,
+    ) {
       anchor = button;
       root.setAttribute('role', role);
+      root.classList.toggle('is-group-sort', groupMenu);
       const bounds = button.getBoundingClientRect();
-      root.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - 260))}px`;
-      root.style.top = `${Math.min(bounds.bottom + 6, window.innerHeight - 340)}px`;
       root.hidden = false;
+      const width = root.offsetWidth;
+      root.style.left = `${Math.max(8, Math.min(groupMenu ? bounds.right - width : bounds.left, window.innerWidth - width - 8))}px`;
+      root.style.top = `${Math.max(8, Math.min(bounds.bottom + (groupMenu ? 4 : 6), window.innerHeight - root.offsetHeight - 8))}px`;
       button.setAttribute('aria-expanded', 'true');
       const menuBounds = root.getBoundingClientRect();
       root.dataset.submenuSide = submenuSide(
@@ -700,9 +891,7 @@
       );
     }
     function filterParent(group: HTMLElement): HTMLButtonElement | null {
-      return group.querySelector<HTMLButtonElement>(
-        '.mp-library-menu-parent',
-      );
+      return group.querySelector<HTMLButtonElement>('.mp-library-menu-parent');
     }
     function openFilterSubmenu(group: HTMLElement, focus = false) {
       const parent = filterParent(group);
@@ -727,7 +916,21 @@
       }
     }
     function changed() {
-      void options.refreshSidebar();
+      const focusedAnchor = anchor === document.activeElement ? anchor : null;
+      void options.refreshSidebar().then(() => {
+        const key = focusedAnchor?.dataset.projectTools;
+        if (
+          key !== undefined &&
+          !focusedAnchor?.isConnected &&
+          document.activeElement === document.body
+        ) {
+          document
+            .querySelector<HTMLElement>(
+              `[data-project-tools="${CSS.escape(key)}"]`,
+            )
+            ?.focus({preventScroll: true});
+        }
+      });
       if (activeView === 'chats') {
         paint();
       }
@@ -739,7 +942,24 @@
             `<div class="mp-library-menu-group${index === 3 ? ' has-divider' : ''}"><button type="button" class="mp-library-menu-parent" role="menuitem" aria-haspopup="menu" aria-expanded="false" tabindex="-1">${FILTER_LABELS[key]}<span>${FILTER_OPTIONS[key].find(([value]) => value === preferences.filters[key])?.[1] || ''}${glyph('chevron-section', 'micro')}</span></button><div class="mp-library-submenu" role="menu" aria-label="${FILTER_LABELS[key]}" hidden>${FILTER_OPTIONS[key].map(([value, label, separatorBefore]) => `${separatorBefore ? '<hr />' : ''}<button type="button" role="menuitemradio" tabindex="-1" aria-checked="${preferences.filters[key] === value}" data-library-filter="${key}" data-value="${value}"><span>${label}</span>${preferences.filters[key] === value ? glyph('check') : ''}</button>`).join('')}</div></div>`,
         )
         .join('');
-      positionMenu(button);
+      root.setAttribute('aria-label', 'Filters');
+      bindSubmenus(button);
+    }
+    function groupMenu(button: HTMLElement): void {
+      if (
+        !root.hidden &&
+        anchor === button &&
+        root.classList.contains('is-group-sort')
+      ) {
+        closeMenu(true);
+        return;
+      }
+      root.innerHTML = groupMenuMarkup();
+      root.setAttribute('aria-label', 'Group and sort');
+      bindSubmenus(button, true);
+    }
+    function bindSubmenus(button: HTMLElement, groupMenu = false): void {
+      positionMenu(button, 'menu', groupMenu);
       for (const group of root.querySelectorAll<HTMLElement>(
         '.mp-library-menu-group',
       )) {
@@ -747,15 +967,12 @@
         group.addEventListener('pointerenter', () => openFilterSubmenu(group));
         group.addEventListener('pointerleave', () => {
           if (!group.contains(document.activeElement)) {
-            group.querySelector<HTMLElement>(
-              '.mp-library-submenu',
-            )!.hidden = true;
+            group.querySelector<HTMLElement>('.mp-library-submenu')!.hidden =
+              true;
             parent?.setAttribute('aria-expanded', 'false');
           }
         });
-        parent?.addEventListener('click', () =>
-          openFilterSubmenu(group, true),
-        );
+        parent?.addEventListener('click', () => openFilterSubmenu(group, true));
       }
       root
         .querySelector<HTMLButtonElement>('.mp-library-menu-parent')
@@ -833,6 +1050,46 @@
     });
     root.addEventListener('click', event => {
       const target = event.target as Element;
+      const sidebarOption = target.closest<HTMLElement>(
+        '[data-sidebar-option]',
+      );
+      if (sidebarOption) {
+        const key = sidebarOption.dataset.sidebarOption as keyof SidebarView;
+        const value = sidebarOption.dataset.value!;
+        setSidebarOption(
+          key,
+          (value === 'true'
+            ? true
+            : value === 'false'
+              ? false
+              : value) as SidebarView[typeof key],
+        );
+        closeMenu(true);
+        changed();
+        return;
+      }
+      if (target.closest('[data-sidebar-new-section]')) {
+        closeMenu(true);
+        void options.requestText('New section', '', 120).then(name => {
+          if (name?.trim()) {
+            addSidebarSection(name);
+            changed();
+          }
+        });
+        return;
+      }
+      if (target.closest('[data-sidebar-reset]')) {
+        preferences.sidebar = {...defaultSidebar};
+        save();
+        closeMenu(true);
+        changed();
+        return;
+      }
+      if (target.closest('[data-sidebar-view-all]')) {
+        closeMenu(true);
+        options.show('chats');
+        return;
+      }
       const filter = target.closest<HTMLElement>('[data-library-filter]');
       if (filter) {
         setFilter(
@@ -1827,6 +2084,7 @@
       render,
       changed,
       filterMenu,
+      groupMenu,
       closeMenu,
       openSidebarEditor,
       setProjectSubmissionError(key: string, message: string) {
@@ -1847,6 +2105,11 @@
     preferences,
     filterRows,
     sections,
+    sidebarRows,
+    sidebarSections,
+    setSidebarOption,
+    addSidebarSection,
+    groupMenuMarkup,
     sessionPreference,
     sessionGroups,
     setSessionGroup,

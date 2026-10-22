@@ -547,64 +547,12 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   z-index: 90;
   top: 24px;
   right: 2px;
-  min-width: 208px;
-  padding: 4px;
-  border: 1px solid var(--mp-rule);
-  border-radius: var(--mp-r6);
-  background: var(--mp-panel);
-  box-shadow: var(--mp-shadow-menu);
-}
-
-.side-session-menu > hr {
-  height: 1px;
-  margin: 4px 10px;
-  border: 0;
-  background: var(--mp-rule);
-}
-
-.side-session-menu-item {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: var(--mp-r4);
-  color: var(--mp-text-secondary);
-  text-align: left;
-}
-
-.side-session-menu-item:hover {
-  color: var(--mp-text);
-  background: var(--mp-hover);
-}
-
-.side-session-menu-item.is-danger {
-  color: var(--mp-danger);
-}
-
-.side-menu-icon,
-.side-menu-icon .cds-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
 }
 
 .side-menu-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.side-session-menu-item kbd {
-  color: var(--mp-text-muted);
-  font-family: var(--mp-font-ui);
-  font-size: 13px;
 }
 
 .side-menu-chevron {
@@ -613,35 +561,14 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   line-height: 1;
 }
 
-.side-session-submenu {
-  width: 190px;
-  padding: 4px;
-  border: 1px solid var(--mp-rule);
-  border-radius: var(--mp-r6);
-  background: var(--mp-panel);
-  box-shadow: var(--mp-shadow-menu);
-}
-
 .side-session-submenu.is-floating {
   position: fixed;
   z-index: 96;
 }
 
 .side-session-submenu button {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: var(--mp-r4);
-  color: var(--mp-text-secondary);
-  font-size: 14px;
-  text-align: left;
 }
-
-.side-session-submenu button:hover { color: var(--mp-text); background: var(--mp-hover); }
 
 .mpw-workspace-browser.is-empty .mpw-workspace-header {
   display: none;
