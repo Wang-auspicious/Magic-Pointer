@@ -14557,6 +14557,9 @@ function refreshStashSummaries() {
 }
 
 window.magicPointerDashboard?.onShow?.(payload => {
+  if (payload?.view === 'personal' && typeof payload.personalDate === 'string') {
+    personalActivityUi?.setDate(payload.personalDate);
+  }
   if (payload?.view) {
     show(String(payload.view));
   }

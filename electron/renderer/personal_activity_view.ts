@@ -436,6 +436,9 @@
       });
     });
     return {
+      setDate(nextDate: string) {
+        date = nextDate;
+      },
       show() {
         visible = true;
         void refresh();

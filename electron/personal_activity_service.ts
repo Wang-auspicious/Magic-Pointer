@@ -199,6 +199,9 @@ export class PersonalActivityService {
     }
     const now = new Date(this.now());
     const today = localActivityDate(now);
+    const yesterday = localActivityDate(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1),
+    );
     if (this.prunedDate !== today) {
       await this.store.pruneDetails();
       this.prunedDate = today;
@@ -223,7 +226,7 @@ export class PersonalActivityService {
         join(this.directory, 'reports.json'),
         JSON.stringify(this.reportMarks),
       );
-      if (!previous) {
+      if (!previous && date >= yesterday) {
         this.options.onReport?.(report);
       }
     }

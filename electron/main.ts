@@ -28,6 +28,12 @@ import {
   type PermissionSelectionResult,
 } from './permission_mode';
 import type {ProjectCreateInput, ProjectRecord} from './project_store';
+import {
+  DesktopNotifications,
+  DESKTOP_APP_ID,
+  DEVELOPMENT_APP_ID,
+  DESKTOP_TOAST_CLSID,
+} from './desktop_notifications';
 
 const {
   app,
@@ -64,6 +70,30 @@ const {PersonalActivityService} = require('./personal_activity_service');
 const {configureDesktop} = require('./runtime/desktop');
 const fs = require('fs');
 const crypto = require('crypto');
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(app.isPackaged ? DESKTOP_APP_ID : DEVELOPMENT_APP_ID);
+  if (app.isPackaged) {
+    app.setToastActivatorCLSID(DESKTOP_TOAST_CLSID);
+  }
+}
+
+const desktopNotifications = new DesktopNotifications({
+  packaged: app.isPackaged,
+  platform: process.platform,
+  notification: require('electron').Notification,
+  open: target => {
+    const payload =
+      target.view === 'personal'
+        ? {view: target.view, personalDate: target.date}
+        : target;
+    log(
+      `notification activation view=${target.view}${target.view === 'personal' && target.date ? ` date=${target.date}` : ''}`,
+    );
+    showDashboard(payload, {activate: true});
+  },
+  onError: error => log(`desktop notification: ${String(error)}`),
+});
 
 if (fs.existsSync(path.join(__dirname, 'runtime_paths.ts'))) {
   require('tsx/cjs');
@@ -4956,18 +4986,11 @@ function initializePersonalActivity() {
             evidence: [],
           })),
       onReport: (report: {date: string}) => {
-        const {Notification} = require('electron');
-        if (!Notification.isSupported()) {
-          return;
-        }
-        const notification = new Notification({
-          title: '工作回顾已准备好',
-          body: `${report.date} 的工作片段、文件变化和可继续的对话已整理到本机。`,
-        });
-        notification.on('click', () =>
-          showDashboard({view: 'personal'}, {activate: true}),
+        desktopNotifications.show(
+          '工作回顾已准备好',
+          `${report.date} 的工作片段、文件变化和可继续的对话已整理到本机。`,
+          {view: 'personal', date: report.date},
         );
-        notification.show();
       },
     },
   );
@@ -5199,10 +5222,6 @@ function initializeContextTrackers() {
       if (!enabled || dashboardWindow?.isFocused()) {
         return;
       }
-      const {Notification} = require('electron');
-      if (!Notification.isSupported()) {
-        return;
-      }
       const title =
         run.status === 'completed'
           ? 'Routine completed'
@@ -5211,29 +5230,19 @@ function initializeContextTrackers() {
             : run.status === 'incomplete'
               ? 'Routine needs attention'
               : 'Routine failed';
-      try {
-        const notification = new Notification({
-          title,
-          body: tracker.task.slice(0, 160),
-        });
-        notification.on('click', () =>
-          showDashboard(
-            run.conversationId
-              ? {
-                  view: 'chat',
-                  conversationId: run.conversationId,
-                  ...(run.status === 'completed' && run.artifacts?.[0]
-                    ? {artifactId: run.artifacts[0].artifactId}
-                    : {}),
-                }
-              : {view: 'scheduled'},
-            {activate: true},
-          ),
-        );
-        notification.show();
-      } catch (error) {
-        log(`routine notification: ${String(error)}`);
-      }
+      desktopNotifications.show(
+        title,
+        tracker.task.slice(0, 160),
+        run.conversationId
+          ? {
+              view: 'chat',
+              conversationId: run.conversationId,
+              ...(run.status === 'completed' && run.artifacts?.[0]
+                ? {artifactId: run.artifacts[0].artifactId}
+                : {}),
+            }
+          : {view: 'scheduled'},
+      );
     },
   });
   void contextTrackerRuntime
@@ -8910,8 +8919,25 @@ if (gotLock) {
     }
     syncAgentCursorSurfaces();
     agentCursorSurfaces?.startSampling();
-    if (process.platform === 'win32') {
-      app.setAppUserModelId('com.magicpointer.desktop');
+    if (process.platform === 'win32' && app.isPackaged) {
+      const shortcut = path.join(
+        app.getPath('appData'),
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'Magic Pointer.lnk',
+      );
+      try {
+        if (fs.existsSync(shortcut)) {
+          shell.writeShortcutLink(shortcut, 'update', {
+            appUserModelId: DESKTOP_APP_ID,
+            toastActivatorClsid: DESKTOP_TOAST_CLSID,
+          });
+        }
+      } catch (error) {
+        log(`notification shortcut: ${String(error)}`);
+      }
     }
     fabricSettingsStore = new ElectronSettingsStore(
       path.join(FABRIC_DATA_DIR, 'fabric-settings.json'),
@@ -9086,6 +9112,7 @@ if (gotLock) {
     } else if (!startHidden) {
       showDashboard({view: 'general'}, {activate: true});
     }
+    desktopNotifications.registerActivation();
     const dashboardCapturePath = String(
       process.env.MAGIC_POINTER_DASHBOARD_CAPTURE || '',
     ).trim();
