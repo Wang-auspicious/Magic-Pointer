@@ -676,12 +676,17 @@
       }
     });
     let anchor: HTMLElement | null = null;
-    function closeMenu() {
+    function closeMenu(restoreFocus = false) {
+      const containedFocus = root.contains(document.activeElement);
       root.hidden = true;
       anchor?.setAttribute('aria-expanded', 'false');
+      if (restoreFocus && containedFocus && anchor?.isConnected) {
+        anchor.focus({preventScroll: true});
+      }
     }
-    function positionMenu(button: HTMLElement) {
+    function positionMenu(button: HTMLElement, role = 'menu') {
       anchor = button;
+      root.setAttribute('role', role);
       const bounds = button.getBoundingClientRect();
       root.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - 260))}px`;
       root.style.top = `${Math.min(bounds.bottom + 6, window.innerHeight - 340)}px`;
@@ -694,6 +699,33 @@
         window.innerWidth,
       );
     }
+    function filterParent(group: HTMLElement): HTMLButtonElement | null {
+      return group.querySelector<HTMLButtonElement>(
+        '.mp-library-menu-parent',
+      );
+    }
+    function openFilterSubmenu(group: HTMLElement, focus = false) {
+      const parent = filterParent(group);
+      for (const item of root.querySelectorAll<HTMLElement>(
+        '.mp-library-menu-group',
+      )) {
+        const submenu = item.querySelector<HTMLElement>('.mp-library-submenu')!;
+        const closingFocusedChild =
+          item !== group && submenu.contains(document.activeElement);
+        const expanded = item === group;
+        filterParent(item)?.setAttribute('aria-expanded', String(expanded));
+        submenu.hidden = !expanded;
+        if (closingFocusedChild) {
+          parent?.focus({preventScroll: true});
+        }
+      }
+      if (focus) {
+        (
+          group.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
+          group.querySelector<HTMLButtonElement>('[data-library-filter]')
+        )?.focus({preventScroll: true});
+      }
+    }
     function changed() {
       void options.refreshSidebar();
       if (activeView === 'chats') {
@@ -704,11 +736,101 @@
       root.innerHTML = (Object.keys(FILTER_LABELS) as Array<keyof Filters>)
         .map(
           (key, index) =>
-            `<div class="mp-library-menu-group${index === 3 ? ' has-divider' : ''}"><button type="button" class="mp-library-menu-parent">${FILTER_LABELS[key]}<span>${FILTER_OPTIONS[key].find(([value]) => value === preferences.filters[key])?.[1] || ''}${glyph('chevron-section', 'micro')}</span></button><div class="mp-library-submenu" role="menu">${FILTER_OPTIONS[key].map(([value, label, separatorBefore]) => `${separatorBefore ? '<hr />' : ''}<button type="button" role="menuitemradio" aria-checked="${preferences.filters[key] === value}" data-library-filter="${key}" data-value="${value}"><span>${label}</span>${preferences.filters[key] === value ? glyph('check') : ''}</button>`).join('')}</div></div>`,
+            `<div class="mp-library-menu-group${index === 3 ? ' has-divider' : ''}"><button type="button" class="mp-library-menu-parent" role="menuitem" aria-haspopup="menu" aria-expanded="false" tabindex="-1">${FILTER_LABELS[key]}<span>${FILTER_OPTIONS[key].find(([value]) => value === preferences.filters[key])?.[1] || ''}${glyph('chevron-section', 'micro')}</span></button><div class="mp-library-submenu" role="menu" aria-label="${FILTER_LABELS[key]}" hidden>${FILTER_OPTIONS[key].map(([value, label, separatorBefore]) => `${separatorBefore ? '<hr />' : ''}<button type="button" role="menuitemradio" tabindex="-1" aria-checked="${preferences.filters[key] === value}" data-library-filter="${key}" data-value="${value}"><span>${label}</span>${preferences.filters[key] === value ? glyph('check') : ''}</button>`).join('')}</div></div>`,
         )
         .join('');
       positionMenu(button);
+      for (const group of root.querySelectorAll<HTMLElement>(
+        '.mp-library-menu-group',
+      )) {
+        const parent = filterParent(group);
+        group.addEventListener('pointerenter', () => openFilterSubmenu(group));
+        group.addEventListener('pointerleave', () => {
+          if (!group.contains(document.activeElement)) {
+            group.querySelector<HTMLElement>(
+              '.mp-library-submenu',
+            )!.hidden = true;
+            parent?.setAttribute('aria-expanded', 'false');
+          }
+        });
+        parent?.addEventListener('click', () =>
+          openFilterSubmenu(group, true),
+        );
+      }
+      root
+        .querySelector<HTMLButtonElement>('.mp-library-menu-parent')
+        ?.focus({preventScroll: true});
     }
+    root.addEventListener('keydown', event => {
+      if (event.defaultPrevented || event.isComposing) {
+        return;
+      }
+      const target = event.target as HTMLElement;
+      const submenu = target.closest<HTMLElement>('.mp-library-submenu');
+      if (submenu && ['ArrowLeft', 'Escape'].includes(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        submenu.hidden = true;
+        const parent = filterParent(submenu.parentElement!);
+        parent?.setAttribute('aria-expanded', 'false');
+        parent?.focus({preventScroll: true});
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          closeMenu(true);
+        }
+        return;
+      }
+      if (event.key === 'Tab') {
+        closeMenu(true);
+        return;
+      }
+      const parent = target.closest<HTMLButtonElement>(
+        '.mp-library-menu-parent',
+      );
+      if (parent && event.key === 'ArrowRight') {
+        event.preventDefault();
+        event.stopPropagation();
+        openFilterSubmenu(parent.parentElement!, true);
+        return;
+      }
+      const direction =
+        event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+      if (!direction && !['Home', 'End'].includes(event.key)) {
+        return;
+      }
+      if (root.getAttribute('role') !== 'menu') {
+        return;
+      }
+      const menu = submenu || root;
+      const items = [
+        ...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+      ].filter(
+        button =>
+          button.closest('[role="menu"]') === menu &&
+          button.getClientRects().length > 0,
+      );
+      if (!items.length) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const index = items.indexOf(target as HTMLButtonElement);
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? items.length - 1
+            : index < 0
+              ? direction > 0
+                ? 0
+                : items.length - 1
+              : (index + direction + items.length) % items.length;
+      items[next].focus({preventScroll: true});
+    });
     root.addEventListener('click', event => {
       const target = event.target as Element;
       const filter = target.closest<HTMLElement>('[data-library-filter]');
@@ -717,19 +839,8 @@
           filter.dataset.libraryFilter as keyof Filters,
           String(filter.dataset.value),
         );
-        closeMenu();
+        closeMenu(true);
         changed();
-      }
-      const edit = target.closest('[data-edit-sidebar]');
-      if (edit) {
-        if (anchor) {
-          openSidebarEditor(anchor);
-        }
-      }
-      const restore = target.closest<HTMLElement>('[data-restore-nav]');
-      if (restore) {
-        options.show(String(restore.dataset.restoreNav));
-        closeMenu();
       }
     });
     root.addEventListener('change', event => {
@@ -765,7 +876,11 @@
               `<label class="mp-library-nav-option"><input type="checkbox" data-nav-visibility="${id}" ${preferences.hiddenNavigation.includes(id) ? '' : 'checked'} /><span>${id === 'designs' ? 'Design' : id[0].toUpperCase() + id.slice(1)}</span></label>`,
           )
           .join('');
-      positionMenu(button);
+      positionMenu(button, 'dialog');
+      root.setAttribute('aria-label', 'Sidebar');
+      root
+        .querySelector<HTMLInputElement>('[data-nav-visibility]')
+        ?.focus({preventScroll: true});
     }
     document.addEventListener('pointerdown', event => {
       if (

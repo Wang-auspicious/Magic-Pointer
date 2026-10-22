@@ -131,11 +131,12 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
   border-radius: var(--mp-r6);
   color: var(--mp-text-muted);
   font-size: 13px;
+  font-weight: 470;
   line-height: 24px;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast), box-shadow var(--mp-dur-fast);
 }
@@ -395,6 +396,14 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   background: var(--mp-hover);
 }
 
+.mpw-project-actions [data-project-tools] {
+  opacity: 0;
+}
+
+.mpw-project:is(:hover, :focus-within) .mpw-project-actions [data-project-tools] {
+  opacity: 1;
+}
+
 .mpw-project-actions svg {
   width: 15px;
   height: 15px;
@@ -430,19 +439,17 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mpw-project-chevron svg {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   transform: rotate(-90deg);
   transition: transform var(--mp-dur-normal) var(--mp-ease-out);
 }
 
 .mpw-project-chevron {
-  position: absolute;
-  left: -10px;
   display: grid;
   flex: none;
   place-items: center;
-  width: 10px;
+  width: 12px;
   color: var(--mp-text-muted);
   opacity: 0;
 }
@@ -466,6 +473,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mpw-project-name {
+  flex: 0 1 auto;
   font-size: 12px;
   font-weight: 400;
 }

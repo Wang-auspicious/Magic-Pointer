@@ -342,6 +342,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'sidebar.saved_dashboards': {en: 'Saved dashboards', zh: '已保存的看板'},
   'sidebar.group_sort': {en: 'Group and sort…', zh: '分组和排序…'},
   'sidebar.edit': {en: 'Edit sidebar…', zh: '编辑侧栏…'},
+  'sidebar.project_settings': {en: 'Project settings', zh: '项目设置'},
   'sidebar.recent_off': {en: 'Recent projects only', zh: '只看最近项目'},
   'sidebar.collapse': {en: 'Collapse sidebar', zh: '折叠侧栏'},
   'sidebar.expand': {en: 'Expand sidebar', zh: '展开侧栏'},

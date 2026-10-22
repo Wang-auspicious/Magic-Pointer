@@ -2316,7 +2316,7 @@ async function renderSidebar() {
     const projectName = document.createElement('span');
     projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
-    toggle.append(chevron, projectName);
+    toggle.append(projectName, chevron);
     toggle.setAttribute(
       'aria-label',
       studioT('sidebar.group_summary', {
@@ -2335,7 +2335,8 @@ async function renderSidebar() {
       const tools = document.createElement('button');
       tools.type = 'button';
       tools.dataset.projectTools = group.key;
-      tools.setAttribute('aria-label', 'Project tools');
+      tools.setAttribute('aria-label', studioT('sidebar.project_settings'));
+      tools.title = studioT('sidebar.project_settings');
       tools.innerHTML = icon('ic-sliders');
       actions.append(add, tools);
     }
@@ -6506,6 +6507,7 @@ function setProductMode(mode: ProductMode, navigate = true) {
       const selected = button.dataset.productMode === mode;
       button.classList.toggle('is-on', selected);
       button.setAttribute('aria-selected', String(selected));
+      button.tabIndex = selected ? 0 : -1;
     });
   try {
     localStorage.setItem('mp:product-mode', mode);
@@ -6536,6 +6538,29 @@ function setProductMode(mode: ProductMode, navigate = true) {
   document
     .getElementById('mode-design')
     ?.addEventListener('click', () => setProductMode('design'));
+  document.getElementById('mode-switch')?.addEventListener('keydown', event => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const mode =
+      event.key === 'Home'
+        ? 'design'
+        : event.key === 'End'
+          ? 'walker'
+          : productMode === 'walker'
+            ? 'design'
+            : 'walker';
+    setProductMode(mode);
+    document
+      .getElementById(mode === 'walker' ? 'mode-work' : 'mode-design')
+      ?.focus();
+  });
 })();
 
 (function bindDesignHome() {

@@ -155,7 +155,7 @@ button.mp-library-card:hover { background: var(--mp-hover); }
 .mp-library-submenu { position: absolute; left: calc(100% - 3px); top: -4px; display: none; width: 190px; padding: 4px; border: 1px solid var(--mp-rule); border-radius: 8px; background: var(--mp-panel); box-shadow: var(--mp-shadow-menu); }
 .mp-library-popover[data-submenu-side="left"] .mp-library-submenu { left: auto; right: calc(100% - 3px); }
 .mp-library-popover[data-submenu-side="left"] .mp-library-menu-parent .cds-icon:last-child { transform: rotate(180deg); }
-.mp-library-menu-group:is(:hover, :focus-within) > .mp-library-submenu { display: block; }
+.mp-library-submenu:not([hidden]) { display: block; }
 .mp-library-submenu button { justify-content: space-between; }
 .mp-library-submenu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--mp-rule); }
 .mp-library-popover .is-danger { color: var(--mp-danger); }
