@@ -3998,6 +3998,7 @@ const ChatView = (() => {
     created: boolean;
     deleted: boolean;
     previewPath?: string;
+    sourceCalls: Set<string>;
   }
 
   const FILE_WRITE_TOOLS = new Set([
@@ -4036,7 +4037,8 @@ const ChatView = (() => {
     executionRoot: string,
   ): DeliveredFile[] {
     const byPath = new Map<string, DeliveredFile>();
-    for (const record of trajectory || []) {
+    const callsByPath = new Map<string, Set<string>>();
+    for (const [index, record] of (trajectory || []).entries()) {
       if (
         record.kind !== 'tool' ||
         !FILE_CHANGE_TOOLS.has(String(record.name))
@@ -4079,6 +4081,13 @@ const ChatView = (() => {
           continue;
         }
         const key = deliveredFileKey(path);
+        let sourceCalls = callsByPath.get(key);
+        if (!sourceCalls) {
+          sourceCalls = new Set();
+          callsByPath.set(key, sourceCalls);
+        }
+        // A net-zero intermediate result still belongs to its earlier runs.
+        sourceCalls.add(String(record.callId ?? index));
         if (change.unchanged === true) {
           byPath.delete(key);
           continue;
@@ -4102,6 +4111,7 @@ const ChatView = (() => {
               ? {absolutePath: executionFilePath(path, executionRoot)}
               : {}),
           name: path.split(/[\\/]/).pop() || path,
+          sourceCalls,
           added: stat ? stat.added : 0,
           removed: stat ? stat.removed : 0,
           statKnown: Boolean(stat),
@@ -4709,6 +4719,10 @@ const ChatView = (() => {
     );
   }
 
+  function singleToolGroup(chips: TurnChip[], work?: FlowItem[]): boolean {
+    return chips.length === 1 && !work?.some(item => item.type === 'reasoning');
+  }
+
   function toolGroupNode(
     chips: TurnChip[],
     _running = false,
@@ -4719,8 +4733,7 @@ const ChatView = (() => {
     const root = h('details', {class: 'mp-chat-tool-group'});
     const summary = h('summary', {class: 'mp-chat-tool-group-header'});
     const label = h('span', {class: 'mp-chat-tool-group-title'});
-    const single =
-      chips.length === 1 && !work?.some(item => item.type === 'reasoning');
+    const single = singleToolGroup(chips, work);
     if (single) {
       root.setAttribute('data-single', 'true');
     }
@@ -5183,21 +5196,23 @@ const ChatView = (() => {
 
   function trajectoryFlowItems(turn: AssistantTurnInput): FlowItem[] | null {
     const records = Array.isArray(turn.trajectory) ? turn.trajectory : [];
-    const usable = records.filter(
-      record =>
-        record &&
-        typeof record === 'object' &&
-        (record.kind === 'message' ||
-          record.kind === 'think' ||
-          record.kind === 'notice' ||
-          record.kind === 'tool'),
-    );
+    const usable = records
+      .map((record, index) => ({record, index}))
+      .filter(
+        ({record}) =>
+          record &&
+          typeof record === 'object' &&
+          (record.kind === 'message' ||
+            record.kind === 'think' ||
+            record.kind === 'notice' ||
+            record.kind === 'tool'),
+      );
     if (!usable.length) {
       return null;
     }
     const answerText = cleanDeliveryText(String(turn.answer || ''));
     const items: FlowItem[] = [];
-    for (const [index, record] of usable.entries()) {
+    for (const {index, record} of usable) {
       const turn =
         record.turn === undefined || record.turn === null
           ? undefined
@@ -5326,6 +5341,7 @@ const ChatView = (() => {
     }
     let chipRun: TurnChip[] = [];
     let workRun: FlowItem[] = [];
+    const fileRuns: Array<{callIds: string[]; bareEdit: boolean}> = [];
     const flushChips = () => {
       if (!chipRun.length) {
         const hasReasoning = workRun.some(entry => entry.type === 'reasoning');
@@ -5344,6 +5360,14 @@ const ChatView = (() => {
         return;
       }
       attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
+      const chip = chipRun[0];
+      fileRuns.push({
+        callIds: chipRun.map(chip => chip.callId),
+        bareEdit:
+          singleToolGroup(chipRun, workRun) &&
+          FILE_WRITE_TOOLS.has(chip.name) &&
+          Boolean(deriveFilePath(classifyTool(chip.name), chip.argsRaw)),
+      });
       chipRun = [];
       workRun = [];
     };
@@ -5438,11 +5462,21 @@ const ChatView = (() => {
       );
     }
     const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
+    const hasArtifact = artifacts.some(artifact => Boolean(artifact?.artifactId));
+    const files = deliveredFiles(
+      turn.trajectory,
+      String(turn.request?.executionWorkspaceRoot || ''),
+    );
+    const editRuns =
+      files.length === 1
+        ? fileRuns.filter(run =>
+            run.callIds.some(id => files[0].sourceCalls.has(id)),
+          )
+        : [];
+    const soleVisibleEdit =
+      files.length === 1 && editRuns.length === 1 && editRuns[0].bareEdit;
     const results = fileResultsNode(
-      deliveredFiles(
-        turn.trajectory,
-        String(turn.request?.executionWorkspaceRoot || ''),
-      ),
+      soleVisibleEdit && !hasArtifact ? [] : files,
       artifacts,
       String(turn.conversationId || ''),
       turnScope,

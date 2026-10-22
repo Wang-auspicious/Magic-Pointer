@@ -197,7 +197,9 @@ test('persisted Edit previews retain context and actual counts', async () => {
     )!;
     for (const entry of saved.turns[0].trajectory || []) {
       if (entry.presentation) {
-        const loaded = await readFileDiffPresentation(entry.presentation as any);
+        const loaded = await readFileDiffPresentation(
+          entry.presentation as any,
+        );
         assert.equal(loaded.ok, true);
         if (loaded.ok) entry.presentation = loaded.presentation;
       }
@@ -207,10 +209,19 @@ test('persisted Edit previews retain context and actual counts', async () => {
       .assistantTurnNode(saved.turns[0])
       .map((node: {outerHTML: string}) => node.outerHTML)
       .join('');
-    assert.match(html, /data-kind="context"> {2}first retained/);
+    const rows = Array.from(
+      html.matchAll(
+        /data-kind="(context|del|add)"[^>]*data-line-number="(\d+)"[^>]*>[\s\S]*?<pre[^>]*>(.*?)<\/pre>/g,
+      ),
+      match => ({kind: match[1], number: Number(match[2]), text: match[3]}),
+    );
+    assert.deepEqual(rows, [
+      {kind: 'context', number: 1, text: 'first retained'},
+      {kind: 'del', number: 2, text: 'old changed'},
+      {kind: 'add', number: 2, text: 'new changed'},
+      {kind: 'context', number: 3, text: 'last retained'},
+    ]);
     assert.doesNotMatch(html, /[-+] first retained|[-+] last retained/);
-    assert.ok(html.includes('- old changed'));
-    assert.ok(html.includes('+ new changed'));
     assert.match(html, /mp-chat-diff-add">\+1/);
     assert.doesNotMatch(html, /mp-chat-tool-output|absolutePath|checkpointId/);
   } finally {

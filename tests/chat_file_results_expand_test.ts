@@ -19,20 +19,23 @@ function render(count: number, turnIndex = 0) {
     conversationId: 'file-expansion',
     turnIndex,
     answer: 'Saved.',
-    trajectory: Array.from({length: count}, (_, i) => ({
-      kind: 'tool',
-      name: 'Write',
-      callId: `write-${i}`,
-      text: JSON.stringify({
-        path: `folder/file-${i}.txt`,
-        content: `actual ${i}`,
-      }),
-      result: JSON.stringify({
-        path: `folder/file-${i}.txt`,
-        absolutePath: `D:/retained/folder/file-${i}.txt`,
-        created: true,
-      }),
-    })),
+    trajectory: [
+      {kind: 'tool', name: 'Read', text: '{}', result: 'Read context.'},
+      ...Array.from({length: count}, (_, i) => ({
+        kind: 'tool',
+        name: 'Write',
+        callId: `write-${i}`,
+        text: JSON.stringify({
+          path: `folder/file-${i}.txt`,
+          content: `actual ${i}`,
+        }),
+        result: JSON.stringify({
+          path: `folder/file-${i}.txt`,
+          absolutePath: `D:/retained/folder/file-${i}.txt`,
+          created: true,
+        }),
+      })),
+    ],
   })[0];
   const card = find(
     root,

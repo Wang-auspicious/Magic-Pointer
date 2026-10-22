@@ -529,7 +529,7 @@ async function clickDelivered(
   ctx: any,
   turn: any,
   file: string,
-  buttonClass = 'mp-chat-file-row',
+  buttonClass?: string,
 ) {
   const html = ctx.ChatView.assistantTurnNode(turn)
     .map((n: any) => n.outerHTML)
@@ -540,7 +540,7 @@ async function clickDelivered(
     .map(match => match[0])
     .find(
       tag =>
-        tag.includes(`class="${buttonClass}"`) &&
+        (!buttonClass || tag.includes(`class="${buttonClass}"`)) &&
         tag.includes(`data-file-path="${file}"`),
     );
   assert.ok(button, file);

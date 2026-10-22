@@ -24,20 +24,23 @@ function card(
     answer: 'Saved.',
     conversationId: 'layout',
     artifacts,
-    trajectory: files.map(file => ({
-      kind: 'tool',
-      name: 'Write',
-      text: JSON.stringify({path: file.path, content: 'actual\n'}),
-      result: JSON.stringify({
-        path: file.path,
-        absolutePath:
-          file.path.startsWith('C:') || file.path.startsWith('D:')
-            ? file.path
-            : `D:/work/${file.path}`,
-        created: true,
-        turnDiffStat: file.stat ?? null,
-      }),
-    })),
+    trajectory: [
+      {kind: 'tool', name: 'Read', text: '{}', result: 'Read context.'},
+      ...files.map(file => ({
+        kind: 'tool',
+        name: 'Write',
+        text: JSON.stringify({path: file.path, content: 'actual\n'}),
+        result: JSON.stringify({
+          path: file.path,
+          absolutePath:
+            file.path.startsWith('C:') || file.path.startsWith('D:')
+              ? file.path
+              : `D:/work/${file.path}`,
+          created: true,
+          turnDiffStat: file.stat ?? null,
+        }),
+      })),
+    ],
   })[0];
   return nodes(root, 'mp-chat-files')[0];
 }

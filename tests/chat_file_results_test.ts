@@ -16,7 +16,10 @@ function card(trajectory: unknown[], artifacts: unknown[] = []): string {
   const rendered = chat
     .assistantTurnNode({
       answer: 'Saved.',
-      trajectory,
+      trajectory: [
+        {kind: 'tool', name: 'Read', text: '{}', result: 'Read context.'},
+        ...trajectory,
+      ],
       artifacts,
       conversationId: 'files',
     })

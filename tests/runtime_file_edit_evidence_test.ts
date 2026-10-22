@@ -47,7 +47,7 @@ test('Write records actual creation and overwrite state after persistence', asyn
   }
 });
 
-test('actual overwrite status survives activity projection and history reopening into the file card', async () => {
+test('actual overwrite status survives activity projection and history reopening into the independent file row', async () => {
   const {workspace, registry} = await fixture('write-card-history');
   try {
     await writeFile(path.join(workspace, 'existing.ts'), 'old content\n');
@@ -80,10 +80,7 @@ test('actual overwrite status survives activity projection and history reopening
       .assistantTurnNode(reopened.turns[0])
       .map((node: {outerHTML: string}) => node.outerHTML)
       .join('');
-    assert.match(
-      html,
-      /data-file-path="existing.ts"[^>]*data-file-change="edited"/,
-    );
+    assert.doesNotMatch(html, /class="mp-chat-files"/);
     assert.match(html, /data-file-path="existing.ts"/);
     assert.deepEqual(
       Array.from(
