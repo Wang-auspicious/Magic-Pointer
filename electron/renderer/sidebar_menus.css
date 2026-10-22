@@ -110,6 +110,10 @@
   color: var(--cds-text-danger);
 }
 
+.side-session-menu-item[aria-expanded="true"] {
+  background: var(--cds-fill-ghost-hover);
+}
+
 .mp-workspace-menu-section {
   padding: 4px 8px;
   color: var(--cds-text-muted);

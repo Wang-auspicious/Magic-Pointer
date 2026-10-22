@@ -1665,6 +1665,8 @@ function buildSessionMenu(c: {
     const parent = item('group', 'Move to', {
       submenu: true,
     });
+    parent.setAttribute('aria-haspopup', 'menu');
+    parent.setAttribute('aria-expanded', 'false');
     const apply = (group: string | null) => {
       if (group === null) {
         void requestStudioText(
@@ -1683,21 +1685,21 @@ function buildSessionMenu(c: {
       studioLibraries.setSessionGroup(id, group);
       void renderSidebar();
     };
-    const show = () =>
+    const show = (enter = false) =>
       openGroupSubmenu(
         parent,
         studioLibraries.sessionGroups(),
         local.group || '',
         apply,
+        enter,
       );
     parent.addEventListener('mouseenter', () => {
       closeGroupSubmenu?.();
       show();
     });
-    parent.addEventListener('focusin', show);
     parent.addEventListener('click', event => {
       event.stopPropagation();
-      show();
+      show(true);
     });
     menu.append(parent);
   }
@@ -1724,11 +1726,13 @@ function buildSessionMenu(c: {
 }
 
 let closeGroupSubmenu: (() => void) | null = null;
+let groupSubmenuAnchor: HTMLElement | null = null;
 function openGroupSubmenu(
   anchor: HTMLElement,
   groups: readonly string[],
   current: string,
   pick: (group: string | null) => void,
+  focusFirst = false,
 ): void {
   closeGroupSubmenu?.();
   const glyph = (
@@ -1744,10 +1748,10 @@ function openGroupSubmenu(
     groups
       .map(
         (group: string) =>
-          `<button type="button" role="menuitemradio" aria-checked="${current === group}" data-session-group="${esc(group)}"><span>${esc(group)}</span>${current === group ? glyph('check') : ''}</button>`,
+          `<button type="button" role="menuitemradio" tabindex="-1" aria-checked="${current === group}" data-session-group="${esc(group)}"><span>${esc(group)}</span>${current === group ? glyph('check') : ''}</button>`,
       )
       .join('') +
-    `<button type="button" data-session-group-new><span>New section…</span></button>`;
+    `<button type="button" role="menuitem" tabindex="-1" data-session-group-new><span>New section…</span></button>`;
   document.body.append(panel);
   const rect = anchor.getBoundingClientRect();
   const width = panel.offsetWidth;
@@ -1760,26 +1764,79 @@ function openGroupSubmenu(
   panel.style.top = `${Math.round(Math.max(8, Math.min(rect.top - 4, window.innerHeight - height - 8)))}px`;
   let hideTimer: number | undefined;
   const close = () => {
-    if (hideTimer !== undefined) {
-      window.clearTimeout(hideTimer);
-    }
+    cancelClose();
+    anchor.removeEventListener('mouseleave', scheduleClose);
+    anchor.removeEventListener('focusout', scheduleClose);
+    anchor.setAttribute('aria-expanded', 'false');
     panel.remove();
     if (closeGroupSubmenu === close) {
       closeGroupSubmenu = null;
+      groupSubmenuAnchor = null;
     }
   };
   const scheduleClose = () => {
+    cancelClose();
+    if (panel.contains(document.activeElement)) {
+      return;
+    }
     hideTimer = window.setTimeout(close, 180);
   };
   const cancelClose = () => {
     if (hideTimer !== undefined) {
       window.clearTimeout(hideTimer);
+      hideTimer = undefined;
     }
   };
   anchor.addEventListener('mouseleave', scheduleClose);
   anchor.addEventListener('focusout', scheduleClose);
   panel.addEventListener('mouseenter', cancelClose);
   panel.addEventListener('mouseleave', scheduleClose);
+  panel.addEventListener('focusin', cancelClose);
+  panel.addEventListener('focusout', event => {
+    if (!panel.contains(event.relatedTarget as Node | null)) {
+      scheduleClose();
+    }
+  });
+  panel.addEventListener('keydown', event => {
+    if (
+      event.isComposing || event.keyCode === 229 ||
+      event.ctrlKey || event.metaKey || event.altKey
+    ) {
+      return;
+    }
+    if (event.key === 'Escape' || event.key === 'ArrowLeft' || event.key === 'Tab') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.repeat) {
+        return;
+      }
+      const menu = anchor.closest<HTMLElement>('.side-session-menu');
+      close();
+      if (event.key === 'Tab' && menu) {
+        menu.hidden = true;
+      } else if (anchor.isConnected) {
+        anchor.focus({preventScroll: true});
+      }
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      const rows = studioMenuItems(panel);
+      const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+      let next: number;
+      if (event.key === 'Home') {
+        next = 0;
+      } else if (event.key === 'End') {
+        next = rows.length - 1;
+      } else if (index < 0) {
+        next = event.key === 'ArrowDown' ? 0 : rows.length - 1;
+      } else {
+        next = (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      rows[next]?.focus();
+    }
+  });
   panel.addEventListener('click', event => {
     event.stopPropagation();
     const target = (event.target as Element).closest<HTMLElement>(
@@ -1789,10 +1846,19 @@ function openGroupSubmenu(
       return;
     }
     const value = target.dataset.sessionGroup;
+    const menu = anchor.closest<HTMLElement>('.side-session-menu');
     close();
+    if (menu) {
+      menu.hidden = true;
+    }
     pick(value === undefined ? null : String(value));
   });
+  anchor.setAttribute('aria-expanded', 'true');
+  groupSubmenuAnchor = anchor;
   closeGroupSubmenu = close;
+  if (focusFirst) {
+    enterStudioMenu(panel);
+  }
 }
 
 function bindSessionMenuKeys(
@@ -1804,13 +1870,29 @@ function bindSessionMenuKeys(
     if (!menu.contains(event.target as Node)) {
       return;
     }
-    if (event.metaKey || event.ctrlKey || event.altKey) {
+    if (
+      event.isComposing || event.keyCode === 229 ||
+      event.metaKey || event.ctrlKey || event.altKey
+    ) {
       return;
     }
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' || event.key === 'Tab') {
       event.preventDefault();
-      event.stopPropagation();
-      menu.hidden = true;
+      event.stopImmediatePropagation();
+      if (!event.repeat) {
+        menu.hidden = true;
+      }
+      return;
+    }
+    if (event.key === 'ArrowRight') {
+      const row = (event.target as Element).closest<HTMLElement>(
+        '[data-session-action="group"]',
+      );
+      if (row) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        row.click();
+      }
       return;
     }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -1860,6 +1942,9 @@ function bindSessionMenuKeys(
   };
   const observer = new MutationObserver(() => {
     if (menu.hidden) {
+      if (groupSubmenuAnchor && menu.contains(groupSubmenuAnchor)) {
+        closeGroupSubmenu?.();
+      }
       document.removeEventListener('keydown', onKey, true);
       observer.disconnect();
       trigger.setAttribute('aria-expanded', 'false');
