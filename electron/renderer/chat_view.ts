@@ -2005,8 +2005,17 @@ const ChatView = (() => {
         .join('\n')
         .trim();
     }
+    const partialError =
+      state === 'error' && result?.text
+        ? firstString(outputRecord(result.text) || {}, [
+            'error',
+            'error_message',
+          ])
+        : '';
     const rawError =
-      state === 'error' && output !== null ? firstLine(output) : null;
+      state === 'error' && output !== null
+        ? firstLine(partialError || output)
+        : null;
     const errorSummary =
       rawError !== null && rawError.length > 60
         ? `${rawError.slice(0, 60)}…`
@@ -2045,6 +2054,21 @@ const ChatView = (() => {
       attach(card, more);
     }
     return card;
+  }
+
+  function deletedFileNode(text: string): ChatNode {
+    const content = text
+      ? text
+          .replace(/\n$/, '')
+          .split('\n')
+          .map(line => `- ${line}`)
+          .join('\n')
+      : '';
+    return h(
+      'pre',
+      {class: 'mp-chat-diff mp-chat-diff-line', 'data-kind': 'del'},
+      content,
+    );
   }
 
   interface ToolCommand {
@@ -3497,6 +3521,8 @@ const ChatView = (() => {
     added: number;
     removed: number;
     created: boolean;
+    deleted: boolean;
+    previewPath?: string;
   }
 
   const FILE_WRITE_TOOLS = new Set([
@@ -3507,6 +3533,15 @@ const ChatView = (() => {
     'edit_file',
     'edit',
     'MultiEdit',
+  ]);
+  const FILE_CHANGE_TOOLS = new Set([
+    ...FILE_WRITE_TOOLS,
+    'Patch',
+    'patch',
+    'apply_patch',
+    'Rewind',
+    'rewind',
+    'restore_files',
   ]);
 
   function deliveredFileKey(path: string): string {
@@ -3521,38 +3556,73 @@ const ChatView = (() => {
     for (const record of trajectory || []) {
       if (
         record.kind !== 'tool' ||
-        !FILE_WRITE_TOOLS.has(String(record.name))
+        !FILE_CHANGE_TOOLS.has(String(record.name))
       ) {
         continue;
       }
-      if (record.result == null || record.isError) {
+      if (record.result == null) {
         continue;
       }
-      const stat = reportedDiffStat(String(record.result), 'turnDiffStat');
-      const model = toolRowModel(
-        String(record.name),
-        String(record.text || ''),
-        {text: String(record.result)},
-      );
-      const path = (model.filePath || '').trim();
-      if (!path) {
-        continue;
-      }
-      const key = deliveredFileKey(path);
-      const previous = byPath.get(key);
       const result = outputRecord(String(record.result));
-      const created =
-        previous?.created ??
-        (result?.created === true ||
-          (result?.created !== false &&
-            ['Write', 'write_file', 'write'].includes(String(record.name))));
-      byPath.set(key, {
-        path,
-        name: path.split(/[\\/]/).pop() || path,
-        added: stat ? stat.added : 0,
-        removed: stat ? stat.removed : 0,
-        created,
-      });
+      if (
+        record.isError &&
+        !Array.isArray(result?.fileChanges) &&
+        !Array.isArray(result?.patches)
+      ) {
+        continue;
+      }
+      const changes: unknown[] = Array.isArray(result?.fileChanges)
+        ? result.fileChanges
+        : Array.isArray(result?.patches)
+          ? result.patches.flatMap(patch => {
+              const entry = recordOf(patch);
+              return Array.isArray(entry?.fileChanges) ? entry.fileChanges : [];
+            })
+          : FILE_WRITE_TOOLS.has(String(record.name))
+            ? [result || {}]
+            : [];
+      for (const raw of changes) {
+        const change = recordOf(raw);
+        if (!change) {
+          continue;
+        }
+        const path =
+          typeof change.path === 'string'
+            ? change.path
+            : toolRowModel(String(record.name), String(record.text || ''), {
+                text: String(record.result),
+              }).filePath || '';
+        if (!path) {
+          continue;
+        }
+        const key = deliveredFileKey(path);
+        if (change.unchanged === true) {
+          byPath.delete(key);
+          continue;
+        }
+        const previous = byPath.get(key);
+        const stat = reportedDiffStat(JSON.stringify(change), 'turnDiffStat');
+        const created =
+          typeof change.turnCreated === 'boolean'
+            ? change.turnCreated
+            : (previous?.created ??
+              (change.created === true ||
+                (change.created !== false &&
+                  ['Write', 'write_file', 'write'].includes(
+                    String(record.name),
+                  ))));
+        byPath.set(key, {
+          path,
+          name: path.split(/[\\/]/).pop() || path,
+          added: stat ? stat.added : 0,
+          removed: stat ? stat.removed : 0,
+          created,
+          deleted: change.exists === false,
+          ...(typeof change.previewPath === 'string'
+            ? {previewPath: change.previewPath}
+            : {}),
+        });
+      }
     }
     return [...byPath.values()];
   }
@@ -3588,7 +3658,11 @@ const ChatView = (() => {
         ? `Published artifact${label ? ` ${label}` : ''}`
         : toolGroupLabel(
             files.map(file => ({
-              name: file.created ? 'Write' : 'Edit',
+              name: file.deleted
+                ? 'delete_file'
+                : file.created
+                  ? 'Write'
+                  : 'Edit',
               argsRaw: '{}',
               callId: file.path,
               result: {text: '', isError: false},
@@ -3672,6 +3746,8 @@ const ChatView = (() => {
         class: 'mp-chat-file-row',
         'data-mp-chat-act': 'open-file',
         'data-file-path': file.path,
+        'data-file-state': file.deleted ? 'deleted' : 'present',
+        ...(file.previewPath ? {'data-preview-path': file.previewPath} : {}),
       });
       const mark = h('span', {
         class: 'mp-chat-file-mark',
@@ -5714,7 +5790,12 @@ const ChatView = (() => {
         if (!path) {
           return;
         }
-        DOC.dispatchEvent(new CustomEvent('mp:open-file', {detail: {path}}));
+        const previewPath = act.getAttribute('data-preview-path') || '';
+        DOC.dispatchEvent(
+          new CustomEvent('mp:open-file', {
+            detail: {path, ...(previewPath ? {previewPath} : {})},
+          }),
+        );
       } else if (kind === 'branch') {
         const conversationId =
           act.getAttribute('data-mp-chat-branch-conversation') || '';
@@ -5752,6 +5833,7 @@ const ChatView = (() => {
     userNode,
     assistantTurnNode,
     artifactCardNode,
+    deletedFileNode,
     turnStatusNode,
     turnErrorNode,
     thinkNode,

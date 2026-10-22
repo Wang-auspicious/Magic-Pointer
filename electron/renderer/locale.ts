@@ -974,6 +974,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.resend': {en: 'Resend', zh: '重新发送'},
   'chat.fork_here': {en: 'Fork from here', zh: '从这里创建分支'},
   'convo.unread': {en: 'Unread', zh: '未读'},
+  'files.deleted': {en: 'Deleted', zh: '已删除'},
   'chat.fork_creating': {en: 'Creating a branch…', zh: '正在创建分支…'},
   'chat.fork_failed': {
     en: 'Could not create the branch. Please try again.',

@@ -397,6 +397,7 @@ declare global {
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
 
   interface MagicPointerChatViewApi {
+    deletedFileNode(text: string): Element;
     toolRowModel(
       name: string,
       argsRaw: string,

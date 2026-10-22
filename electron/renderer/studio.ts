@@ -7423,18 +7423,23 @@ document.addEventListener('mp:open-artifact', (event: Event) => {
   void openArtifactEditor(conversationId, artifactId);
 });
 
-document.addEventListener('mp:open-file', (event: Event) => {
-  const detail = (event as CustomEvent<{path?: string}>).detail;
+document.addEventListener('mp:open-file', async (event: Event) => {
+  const detail = (
+    event as CustomEvent<{path?: string; previewPath?: string}>
+  ).detail;
   const raw = String(detail?.path || '').trim();
+  const previewPath = String(detail?.previewPath || '').trim();
+  const readPath = previewPath || raw;
   const root = String(activeProjectRoot || '').replace(/[\\/]+$/, '');
   if (!raw) {
     return;
   }
-  const absolute = /^[a-z]:[\\/]/i.test(raw) || raw.startsWith('\\\\');
+  const absolute =
+    /^[a-z]:[\\/]/i.test(readPath) || readPath.startsWith('\\\\');
   const relative =
-    absolute && root && raw.toLowerCase().startsWith(root.toLowerCase())
-      ? raw.slice(root.length).replace(/^[\\/]+/, '')
-      : raw;
+    absolute && root && readPath.toLowerCase().startsWith(root.toLowerCase())
+      ? readPath.slice(root.length).replace(/^[\\/]+/, '')
+      : readPath;
   if (relative.split(/[\\/]/).includes('..')) {
     return;
   }
@@ -7442,7 +7447,12 @@ document.addEventListener('mp:open-file', (event: Event) => {
     void openProjectFromPicker();
     return;
   }
-  void selectProjectFile(relative);
+  await selectProjectFile(
+    relative,
+    previewPath
+      ? {snapshot: true, title: `${raw} · ${studioT('files.deleted')}`}
+      : {},
+  );
 });
 
 const branchingConversations = new Set<string>();
@@ -7844,6 +7854,8 @@ let selectedProjectPreview: MagicPointerProjectPreview | null = null;
 let projectFileTreeFilter = '';
 let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
+let selectedProjectFileSnapshot = false;
+let selectedProjectFileReadFailed = false;
 let projectFileCodeView = false;
 let activeInspectorTab = 'files';
 let inspectorReturnFocus: HTMLElement | null = null;
@@ -7861,6 +7873,7 @@ interface WorkspaceResourceTab {
   active: boolean;
   closable: boolean;
   path?: string;
+  snapshot?: boolean;
   url?: string;
   conversationId?: string;
   artifactId?: string;
@@ -7954,6 +7967,7 @@ function openWorkspaceResource(request: {
   title: string;
   resourceKey: string;
   path?: string;
+  snapshot?: boolean;
   url?: string;
   conversationId?: string;
   artifactId?: string;
@@ -7981,6 +7995,7 @@ function openWorkspaceResource(request: {
     active: true,
     closable: true,
     ...(request.path ? {path: request.path} : {}),
+    ...(request.snapshot ? {snapshot: true} : {}),
     ...(request.url ? {url: request.url} : {}),
     ...(request.conversationId ? {conversationId: request.conversationId} : {}),
     ...(request.artifactId ? {artifactId: request.artifactId} : {}),
@@ -8017,6 +8032,8 @@ function activateWorkspaceResource(tabId: string): void {
     void selectProjectFile(target.path, {
       fromResourceTab: true,
       resourceKey: target.resourceKey,
+      snapshot: target.snapshot,
+      title: target.title,
     });
   } else if (target.kind === 'browser') {
     const input = document.getElementById(
@@ -8396,6 +8413,8 @@ async function refreshProjectInspector() {
     fileTreeFilter.value = '';
   }
   selectedProjectFileMarkdown = false;
+  selectedProjectFileSnapshot = false;
+  selectedProjectFileReadFailed = false;
   projectFileCodeView = false;
   const preview = document.getElementById('project-file-preview');
   if (preview) {
@@ -8424,10 +8443,19 @@ function renderSelectedProjectFile() {
   code?.setAttribute('aria-pressed', String(projectFileCodeView));
   if (code) {
     code.hidden =
+      selectedProjectFileSnapshot ||
       selectedProjectPreview?.kind === 'document' ||
       selectedProjectPreview?.kind === 'spreadsheet';
   }
-  if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
+  const external = document.getElementById(
+    'project-file-open',
+  ) as HTMLButtonElement | null;
+  if (external) {
+    external.disabled = selectedProjectFileSnapshot;
+  }
+  if (selectedProjectFileSnapshot && !selectedProjectFileReadFailed) {
+    content.replaceChildren(ChatView.deletedFileNode(selectedProjectFileText));
+  } else if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
     ProjectPreviewView.renderProjectPreview(content, selectedProjectPreview);
   } else if (renderMarkdown) {
     content.replaceChildren(ChatMarkdown.render(selectedProjectFileText));
@@ -8440,7 +8468,12 @@ function renderSelectedProjectFile() {
 
 async function selectProjectFile(
   relativePath: string,
-  options: {fromResourceTab?: boolean; resourceKey?: string} = {},
+  options: {
+    fromResourceTab?: boolean;
+    resourceKey?: string;
+    snapshot?: boolean;
+    title?: string;
+  } = {},
 ) {
   const root = activeProjectRoot;
   const browserFile = /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(
@@ -8448,15 +8481,16 @@ async function selectProjectFile(
   );
   const resourceKey =
     options.resourceKey ||
-    `file:${normalizedProjectRoot(root)}:${relativePath
+    `${options.snapshot ? 'snapshot' : 'file'}:${normalizedProjectRoot(root)}:${relativePath
       .replace(/\\/g, '/')
       .toLocaleLowerCase()}`;
   if (!options.fromResourceTab) {
     openWorkspaceResource({
       kind: browserFile ? 'browser' : 'file',
-      title: relativePath.split(/[\\/]/).at(-1) || relativePath,
+      title: options.title || relativePath.split(/[\\/]/).at(-1) || relativePath,
       resourceKey,
       path: relativePath,
+      snapshot: options.snapshot,
     });
   }
   const request = ++projectFileRequest;
@@ -8481,6 +8515,8 @@ async function selectProjectFile(
   const panel = preview.closest<HTMLElement>('.mp-inspector-panel');
   panel?.classList.add('is-previewing');
   selectedProjectFile = relativePath;
+  selectedProjectFileSnapshot = options.snapshot === true;
+  selectedProjectFileReadFailed = !response?.ok;
   selectedProjectFileText = response?.ok
     ? String(response.text || '')
     : String(response?.error || studioT('files.read_failed'));
@@ -8523,7 +8559,9 @@ async function selectProjectFile(
     inspectorTitle.textContent = 'File';
   }
   if (name) {
-    name.textContent = relativePath + (response?.truncated ? studioT('files.truncated') : '');
+    name.textContent =
+      (options.title || relativePath) +
+      (response?.truncated ? studioT('files.truncated') : '');
   }
   renderSelectedProjectFile();
   renderProjectFileTree();
