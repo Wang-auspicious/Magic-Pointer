@@ -44,6 +44,7 @@ function setup() {
     activeProjectRoot: '', activeProjectId: undefined, composerAdditionalFolders: [],
     navigationSubmissions: new Map(),
     captureComposerDraft() {}, currentComposerModelSelection: () => undefined,
+    currentComposerBranch: () => '', currentComposerWorktreeEnabled: () => false,
     adoptComposerWorktreeConversation() {}, syncWindowNavigation() {},
     scrollChatToBottom() {},
     form: { ...node(), querySelector: () => textarea }, document: { getElementById: () => stream, createElement: node, querySelector: () => flow },

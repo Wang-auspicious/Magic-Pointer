@@ -9,6 +9,8 @@ export interface ProjectRunEnvironment {
   permissionPreset?: PermissionPreset;
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   additionalFolders?: string[];
+  branch?: string;
+  worktree?: boolean;
 }
 
 export interface ProjectDocument {

@@ -44,7 +44,10 @@ declare global {
     onSaved: (project: MagicPointerProject) => Promise<void>,
     trigger: HTMLElement,
   ): Promise<void> {
-    const catalog = await data.models().catch(() => null);
+    const [catalog, repository] = await Promise.all([
+      data.models().catch(() => null),
+      project.root ? data.projectEnvironment(project.root).catch(() => null) : null,
+    ]);
     if (document.querySelector('[data-project-environments]')) {
       return;
     }
@@ -108,6 +111,8 @@ declare global {
         .value.split('\n')
         .map(value => value.trim())
         .filter(Boolean);
+      environment.branch = input<HTMLInputElement>('branch').value.trim();
+      environment.worktree = input<HTMLInputElement>('worktree').checked;
       if (input<HTMLInputElement>('default').checked) {
         defaultId = environment.id;
       } else if (defaultId === environment.id) {
@@ -146,6 +151,9 @@ declare global {
           <p class="mp-environment-note" data-env-permission></p>
           <label>${studioT('environment.effort')}<select name="effort"><option value="">${studioT('environment.inherit')}</option>${efforts.EFFORT_LEVELS.map(item => `<option value="${item.value}" ${item.value === environment?.effort ? 'selected' : ''}>${escape(studioT(`environment.effort_${item.value}`))}</option>`).join('')}</select></label>
           <label>${studioT('environment.folders')}<textarea name="folders" rows="2" placeholder="${studioT('environment.folders_hint')}">${escape(environment?.additionalFolders?.join('\n'))}</textarea></label>
+          <label>${studioT('environment.branch')}<input name="branch" list="mp-environment-branches" value="${escape(environment?.branch)}" placeholder="${studioT('environment.current_branch')}"><datalist id="mp-environment-branches">${(repository?.branches || []).map(branch => `<option value="${escape(branch)}"></option>`).join('')}</datalist></label>
+          <label class="mp-environment-default"><input type="checkbox" name="worktree" ${environment?.worktree ? 'checked' : ''}>${studioT('environment.worktree')}</label>
+          <p class="mp-environment-note">${studioT('environment.git_hint')}</p>
           <label class="mp-environment-default"><input type="checkbox" name="default" ${environment && defaultId === environment.id ? 'checked' : ''}>${studioT('environment.default')}</label>
         </fieldset>
         <p class="mp-environment-note">${studioT('environment.hint')}</p>

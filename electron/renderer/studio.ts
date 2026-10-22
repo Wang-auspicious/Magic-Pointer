@@ -439,6 +439,7 @@ function setActiveProject(root: unknown, projectId?: string) {
 }
 
 interface ComposerWorktree {
+  baseBranch?: string;
   path: string;
   branch: string;
   base: string;
@@ -497,6 +498,7 @@ function loadComposerWorktreeState(): void {
                 branch: record.branch,
                 base: record.base,
                 conversationId: record.conversationId,
+                baseBranch: record.baseBranch,
               },
             );
           }
@@ -589,7 +591,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   const projectId = activeProjectId;
   const contextKey = currentComposerWorktreeKey();
   const identity = currentComposerWorktreeId();
-  if (!base || !currentComposerWorktreeEnabled()) {
+  if (!base) {
     return {
       projectRoot: base,
       projectId,
@@ -597,11 +599,14 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
       contextKey,
     };
   }
+  const isolated = currentComposerWorktreeEnabled();
+  const branchSelection = composerBranchSelection;
   const requireCurrentSelection = (): void => {
     if (
       contextKey !== currentComposerWorktreeKey() ||
       projectId !== activeProjectId ||
-      !currentComposerWorktreeEnabled()
+      currentComposerWorktreeEnabled() !== isolated ||
+      composerBranchSelection !== branchSelection
     ) {
       throw new Error(
         'Workspace selection changed. Send again from the selected workspace.',
@@ -610,25 +615,41 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   };
   await warmComposerEnvironment(base);
   requireCurrentSelection();
+  const selectedBranch = currentComposerBranch();
+  if (!isolated && !selectedBranch) {
+    return {
+      projectRoot: base,
+      projectId,
+      executionWorkspaceRoot: base,
+      contextKey,
+    };
+  }
   const result = await Data.projectWorktree({
-    action: 'create',
+    action: isolated ? 'create' : 'checkout',
     projectRoot: base,
     conversationId: identity,
-    baseBranch: currentComposerBranch(),
+    baseBranch: selectedBranch,
+    path: isolated ? composerWorktrees.get(contextKey)?.path : undefined,
+    previousBranch: isolated
+      ? composerWorktrees.get(contextKey)?.baseBranch ?? ''
+      : undefined,
   });
   if (!result?.ok || !result.path) {
     const message = String(result?.error || studioT('worktree.create_failed'));
     failComposerWorktree(document.getElementById('composer-worktree'), message);
     throw new Error(message);
   }
-  const record: ComposerWorktree = {
-    path: result.path,
-    branch: result.branch || 'worktree',
-    base,
-    conversationId: identity,
-  };
-  composerWorktrees.set(contextKey, record);
-  persistComposerWorktrees();
+  if (isolated) {
+    const record: ComposerWorktree = {
+      path: result.path,
+      branch: result.branch || 'worktree',
+      base,
+      conversationId: identity,
+      baseBranch: selectedBranch,
+    };
+    composerWorktrees.set(contextKey, record);
+    persistComposerWorktrees();
+  }
   requireCurrentSelection();
   return {
     projectRoot: base,
@@ -664,6 +685,7 @@ function adoptComposerWorktreeConversation(
 
 const COMPOSER_BRANCH_STORAGE_KEY = 'mp:composer-branches:v1';
 const composerBranches = new Map<string, string>();
+let composerBranchSelection: string | undefined;
 let branchMenuSearch = '';
 
 function loadComposerBranches(): void {
@@ -697,11 +719,12 @@ loadComposerBranches();
 function currentComposerBranch(): string {
   const key = normalizedProjectRoot(activeProjectRoot);
   return (
-    composerBranches.get(key) ||
+    composerBranchSelection ??
+    composerBranches.get(key) ??
     (projectEnvironment?.root &&
     normalizedProjectRoot(projectEnvironment.root) === key
       ? projectEnvironment.branch
-      : '') ||
+      : '') ??
     ''
   );
 }
@@ -849,8 +872,8 @@ function renderComposerBranchMenu(branches: string[]): void {
       if (!activeProjectRoot) {
         return;
       }
-      composerBranches.set(normalizedProjectRoot(activeProjectRoot), branch);
-      persistComposerBranches();
+      composerBranchSelection = branch;
+      captureComposerDraft();
       renderComposerBranch();
       closeAnchoredPopover('composer-branch-menu', 'composer-branch');
     });
@@ -6302,7 +6325,10 @@ function captureComposerDraft(): void {
       currentComposerModelSelection(),
       submission.draft.modelSelection,
     ) &&
-    composerPreset === submission.draft.permissionPreset
+    composerPreset === submission.draft.permissionPreset &&
+    composerEffort === submission.draft.effort &&
+    currentComposerBranch() === submission.draft.branch &&
+    currentComposerWorktreeEnabled() === submission.draft.worktree
   ) {
     return;
   }
@@ -6320,6 +6346,8 @@ function captureComposerDraft(): void {
     modelSelection: currentComposerModelSelection(),
     permissionPreset: composerPreset,
     effort: composerEffort,
+    branch: currentComposerBranch(),
+    worktree: currentComposerWorktreeEnabled(),
   });
 }
 
@@ -6327,7 +6355,7 @@ function restoreComposerDraft(
   location: StudioComposerLocation,
   saved?: Pick<
     MagicPointerConversation,
-    'additionalFolders' | 'modelSelection' | 'taskContext'
+    'additionalFolders' | 'modelSelection' | 'taskContext' | 'turns'
   >,
 ): void {
   const draft = windowNavigation.draft(location);
@@ -6341,6 +6369,41 @@ function restoreComposerDraft(
           item => item.id === project.defaultEnvironmentId,
         )
       : undefined;
+  const savedWorkspace = saved?.turns?.at(-1)?.request as {
+    branch?: string;
+    worktree?: boolean;
+    executionWorkspaceRoot?: string;
+    executionBranch?: string;
+  } | undefined;
+  composerBranchSelection =
+    draft?.branch ?? (saved ? savedWorkspace?.branch ?? '' : environment?.branch);
+  const worktreeKey = currentComposerWorktreeKey();
+  const worktree =
+    draft?.worktree ??
+    (saved
+      ? savedWorkspace?.worktree ?? composerWorktreeEnabledKeys.has(worktreeKey)
+      : environment?.worktree ?? false);
+  if (worktree) {
+    composerWorktreeEnabledKeys.add(worktreeKey);
+    if (
+      savedWorkspace?.executionWorkspaceRoot &&
+      !composerWorktrees.has(worktreeKey)
+    ) {
+      composerWorktrees.set(worktreeKey, {
+        path: savedWorkspace.executionWorkspaceRoot,
+        branch:
+          savedWorkspace.executionBranch || savedWorkspace.branch || 'worktree',
+        baseBranch: savedWorkspace.branch || '',
+        base: activeProjectRoot,
+        conversationId: location.id,
+      });
+    }
+  } else {
+    composerWorktreeEnabledKeys.delete(worktreeKey);
+  }
+  persistComposerWorktrees();
+  renderComposerBranch();
+  renderComposerWorktree();
   const textarea = document.querySelector<HTMLTextAreaElement>(
     '#composer-form textarea',
   );
@@ -13996,6 +14059,8 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       modelSelection: currentComposerModelSelection(),
       permissionPreset: composerPreset,
       effort: composerEffort,
+      branch: currentComposerBranch(),
+      worktree: currentComposerWorktreeEnabled(),
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
@@ -14133,6 +14198,8 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         projectId: workspace.projectId,
         additionalFolders: navigationDraft.additionalFolders,
         modelSelection: navigationDraft.modelSelection,
+        branch: navigationDraft.branch,
+        worktree: navigationDraft.worktree,
       });
       if (response?.conversationId) {
         acceptSubmissionNavigation(requestId, String(response.conversationId));

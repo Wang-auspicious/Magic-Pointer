@@ -246,12 +246,12 @@ const {
 } = require('./project_environment');
 const {
   isManagedWorktreePath,
-  worktreeAddArgs,
-  worktreePathFor,
   worktreeRemoveArgs,
-  worktreeReuseArgs,
-  worktreeSlug,
 } = require('./session_worktree');
+const {
+  listProjectWorktrees,
+  prepareProjectWorkspace,
+} = require('./project_workspace');
 const {
   normalizeBrowserUrl,
   normalizeProjectBrowserUrl,
@@ -2591,38 +2591,6 @@ function samePath(left: unknown, right: unknown): boolean {
   return Boolean(left && right) && normalize(left) === normalize(right);
 }
 
-interface GitWorktreeEntry {
-  path: string;
-  branch: string;
-}
-
-function parseGitWorktreeList(output: string): GitWorktreeEntry[] {
-  const entries: GitWorktreeEntry[] = [];
-  let current: GitWorktreeEntry | null = null;
-  for (const line of String(output || '').split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) {
-      if (current) {
-        entries.push(current);
-      }
-      current = {path: line.slice('worktree '.length).trim(), branch: ''};
-      continue;
-    }
-    if (current && line.startsWith('branch refs/heads/')) {
-      current.branch = line.slice('branch refs/heads/'.length).trim();
-    }
-  }
-  if (current) {
-    entries.push(current);
-  }
-  return entries.filter(entry => entry.path);
-}
-
-async function gitWorktreeEntries(root: string): Promise<GitWorktreeEntry[]> {
-  return parseGitWorktreeList(
-    await runGitCapture(root, ['worktree', 'list', '--porcelain']),
-  );
-}
-
 function runGitCapture(
   root: string,
   args: string[],
@@ -2695,7 +2663,7 @@ ipcMain.handle(
       return {ok: false, error: '请使用原始 git 项目作为 worktree 基准。'};
     }
     const action = String(raw?.action || '');
-    if (action !== 'create' && action !== 'remove') {
+    if (action !== 'create' && action !== 'remove' && action !== 'checkout') {
       return {ok: false, error: 'unknown_worktree_action'};
     }
 
@@ -2716,7 +2684,7 @@ ipcMain.handle(
         return {ok: false, error: 'worktree_outside_managed_dir'};
       }
       const resolved = path.resolve(target);
-      const entry = (await gitWorktreeEntries(root)).find(item =>
+      const entry = (await listProjectWorktrees(root)).find((item: {path: string}) =>
         samePath(item.path, resolved),
       );
       if (!entry) {
@@ -2734,59 +2702,16 @@ ipcMain.handle(
       return {ok: true};
     }
 
-    const conversationKey = String(raw?.conversationId || '').trim();
-    if (!conversationKey) {
-      return {ok: false, error: '需要当前会话标识才能创建 worktree。'};
-    }
-    const slug = worktreeSlug(conversationKey);
-    const target = worktreePathFor(FABRIC_DATA_DIR, root, slug);
-    const branch = `mp/${slug}`;
-    const requestedBaseBranch = String(raw?.baseBranch || '').trim();
-    const baseBranch = requestedBaseBranch || 'HEAD';
-    if (requestedBaseBranch) {
-      const branchRef = await runGitCapture(root, [
-        'rev-parse',
-        '--verify',
-        `refs/heads/${requestedBaseBranch}`,
-      ]);
-      if (!branchRef) {
-        return {ok: false, error: '所选分支不存在，无法创建 worktree。'};
-      }
-    }
-    const entries = await gitWorktreeEntries(root);
-    if (fs.existsSync(target)) {
-      const existing = entries.find(item => samePath(item.path, target));
-      if (!existing || existing.branch !== branch) {
-        return {
-          ok: false,
-          error: 'worktree 目标路径已被其他内容占用，请先清理后重试。',
-        };
-      }
-      return {ok: true, path: target, branch};
-    }
-    const branchOwner = entries.find(item => item.branch === branch);
-    if (branchOwner) {
-      return {
-        ok: false,
-        error: `worktree 分支已在 ${branchOwner.path} 使用，请先清理后重试。`,
-      };
-    }
-    fs.mkdirSync(path.dirname(target), {recursive: true});
-    let failure = await runGitCaptureCapturingError(
-      root,
-      worktreeAddArgs(target, branch, baseBranch),
-    );
-    if (failure !== null) {
-      failure = await runGitCaptureCapturingError(
-        root,
-        worktreeReuseArgs(target, branch),
-      );
-      if (failure !== null) {
-        return {ok: false, error: failure};
-      }
-    }
-    log(`worktree created path=${target} branch=${branch}`);
-    return {ok: true, path: target, branch};
+    return prepareProjectWorkspace({
+      projectRoot: root,
+      dataDir: FABRIC_DATA_DIR,
+      conversationId: String(raw?.conversationId || '').trim(),
+      branch: String(raw?.baseBranch || '').trim(),
+      worktree: action === 'create',
+      existingPath: typeof raw.path === 'string' ? raw.path : undefined,
+      previousBranch:
+        typeof raw.previousBranch === 'string' ? raw.previousBranch : undefined,
+    });
   },
 );
 
@@ -4443,8 +4368,53 @@ async function sendConversation(
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  const effectiveExecutionWorkspaceRoot =
-    executionWorkspaceRoot || effectiveWorkspaceRoot || '';
+  const effectiveAgentSessionId = studioConversationSessionId({
+    existing: existing?.agentSessionId,
+    conversationId,
+  });
+  const previousWorkspace = existing?.turns?.at(-1)?.request;
+  const selectedBranch = String(
+    raw.branch ?? previousWorkspace?.branch ?? environment?.branch ?? '',
+  ).trim();
+  const isolated =
+    raw.worktree ?? previousWorkspace?.worktree ?? environment?.worktree ?? false;
+  const explicitWorkspace =
+    raw.branch !== undefined || raw.worktree !== undefined;
+  let effectiveExecutionWorkspaceRoot =
+    executionWorkspaceRoot ||
+    (!explicitWorkspace
+      ? String(previousWorkspace?.executionWorkspaceRoot || '')
+      : '') ||
+    effectiveWorkspaceRoot ||
+    '';
+  let executionBranch = selectedBranch;
+  if (
+    !executionWorkspaceRoot &&
+    projectRoot &&
+    (explicitWorkspace || !existing) &&
+    (selectedBranch || isolated)
+  ) {
+    const prepared = await prepareProjectWorkspace({
+      projectRoot,
+      dataDir: FABRIC_DATA_DIR,
+      conversationId: effectiveAgentSessionId,
+      branch: selectedBranch,
+      worktree: isolated,
+      existingPath:
+        isolated && previousWorkspace?.worktree
+          ? String(previousWorkspace.executionWorkspaceRoot || '') || undefined
+          : undefined,
+      previousBranch:
+        typeof previousWorkspace?.branch === 'string'
+          ? previousWorkspace.branch
+          : undefined,
+    });
+    if (!prepared.ok) {
+      return prepared;
+    }
+    effectiveExecutionWorkspaceRoot = prepared.path;
+    executionBranch = prepared.branch;
+  }
   if (effectiveExecutionWorkspaceRoot && !effectiveWorkspaceRoot) {
     return {ok: false, error: 'worktree 必须依附于 git 项目。'};
   }
@@ -4461,13 +4431,15 @@ async function sendConversation(
     ) {
       return {ok: false, error: '执行目录不是当前项目的受管 worktree。'};
     }
-    const [baseCommonDir, executionCommonDir] = await Promise.all([
+    const [baseCommonDir, executionCommonDir, actualBranch] = await Promise.all([
       runGitCapture(projectRoot, ['rev-parse', '--git-common-dir']),
       runGitCapture(effectiveExecutionWorkspaceRoot, [
         'rev-parse',
         '--git-common-dir',
       ]),
+      runGitCapture(effectiveExecutionWorkspaceRoot, ['branch', '--show-current']),
     ]);
+    executionBranch = actualBranch;
     const normalizeGitDir = (root: string, value: string) =>
       path.resolve(root, String(value || '').trim());
     if (
@@ -4481,10 +4453,6 @@ async function sendConversation(
       return {ok: false, error: '执行 worktree 不属于当前项目。'};
     }
   }
-  const effectiveAgentSessionId = studioConversationSessionId({
-    existing: existing?.agentSessionId,
-    conversationId,
-  });
   const taskAttachments = projectAttachments(attachments, projectContext);
   const capturedAtMs = Date.now();
   const rawTaskInput =
@@ -4613,6 +4581,12 @@ async function sendConversation(
             existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
           attachments: taskAttachments,
           executionWorkspaceRoot: effectiveExecutionWorkspaceRoot,
+          executionBranch,
+          branch: selectedBranch,
+          worktree: Boolean(
+            effectiveExecutionWorkspaceRoot &&
+              !samePath(effectiveExecutionWorkspaceRoot, effectiveWorkspaceRoot),
+          ),
           effort,
           ...(raw.outputArtifact !== undefined
             ? {outputArtifact: raw.outputArtifact}

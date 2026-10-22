@@ -203,6 +203,8 @@ declare global {
   }
 
   interface MagicPointerConversationSend {
+    branch?: string;
+    worktree?: boolean;
     workMode?: 'work' | 'code';
     conversationId?: string | null;
     projectId?: string;
@@ -1348,11 +1350,12 @@ declare global {
       conversationId?: string | null,
     ): Promise<MagicPointerProjectEnvironment>;
     projectWorktree(payload: {
-      action: 'create' | 'remove';
+      action: 'create' | 'remove' | 'checkout';
       projectRoot: string;
       conversationId?: string;
       path?: string;
       baseBranch?: string;
+      previousBranch?: string;
     }): Promise<{ok?: boolean; path?: string; branch?: string; error?: string}>;
     showProjectContextMenu(
       projectRoot: string,

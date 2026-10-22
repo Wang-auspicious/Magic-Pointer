@@ -260,6 +260,9 @@ export function createProjectStore({
             throw new Error('Enter an environment name.');
           }
           environment.name = environment.name.trim();
+          if (environment.branch !== undefined) {
+            environment.branch = environment.branch.trim();
+          }
           if (environment.modelSelection !== undefined) {
             environment.modelSelection = normalizeModelSelection(
               environment.modelSelection,

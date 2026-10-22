@@ -92,6 +92,12 @@
 }
 .mp-environment-editor footer {
   justify-content: flex-end;
+  position: sticky;
+  bottom: -24px;
+  margin: 0 -24px -24px;
+  padding: 12px 24px 18px;
+  border-top: 1px solid var(--mp-rule);
+  background: var(--mp-panel);
 }
 .mp-environment-editor .mp-environment-default {
   display: flex;

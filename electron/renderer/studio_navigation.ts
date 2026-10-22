@@ -20,6 +20,8 @@ declare global {
     modelSelection?: MagicPointerModelSelection;
     permissionPreset?: MagicPointerPermissionPreset;
     effort?: string;
+    branch?: string;
+    worktree?: boolean;
     projectId?: string;
   }
 
