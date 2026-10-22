@@ -1783,6 +1783,27 @@ const ChatView = (() => {
     removed: number;
   }
 
+  function reportedDiffStat(
+    output: string,
+    field: 'diffStat' | 'turnDiffStat',
+  ): DiffStat | null | undefined {
+    const result = outputRecord(output);
+    if (!result || !(field in result)) {
+      return undefined;
+    }
+    const stat = recordOf(result[field]);
+    const added = stat?.added;
+    const removed = stat?.removed;
+    return typeof added === 'number' &&
+      Number.isInteger(added) &&
+      added >= 0 &&
+      typeof removed === 'number' &&
+      Number.isInteger(removed) &&
+      removed >= 0
+      ? {added, removed}
+      : null;
+  }
+
   function countLines(text: string): number {
     if (text === '') {
       return 0;
@@ -1990,6 +2011,7 @@ const ChatView = (() => {
       rawError !== null && rawError.length > 60
         ? `${rawError.slice(0, 60)}…`
         : rawError;
+    const actualStat = reportedDiffStat(result?.text || '', 'diffStat');
     return {
       variant,
       name,
@@ -2003,7 +2025,8 @@ const ChatView = (() => {
       errorTitle: Boolean(errorUrl),
       state,
       callId,
-      diffStat: deriveDiffStat(name, argsRaw),
+      diffStat:
+        actualStat === undefined ? deriveDiffStat(name, argsRaw) : actualStat,
       fileChange: fileChangeMode(name, input),
     };
   }
@@ -3505,10 +3528,7 @@ const ChatView = (() => {
       if (record.result == null || record.isError) {
         continue;
       }
-      const stat = deriveDiffStat(
-        String(record.name),
-        String(record.text || ''),
-      );
+      const stat = reportedDiffStat(String(record.result), 'turnDiffStat');
       const model = toolRowModel(
         String(record.name),
         String(record.text || ''),
@@ -3551,6 +3571,14 @@ const ChatView = (() => {
     const card = h('div', {class: 'mp-chat-files'});
     const head = h('div', {class: 'mp-chat-files-head'});
     const title = h('span', {class: 'mp-chat-files-title'});
+    const artifactPath =
+      typeof artifact?.path === 'string' ? artifact.path : '';
+    const artifactFile = artifactPath
+      ? files.find(
+          file =>
+            deliveredFileKey(file.path) === deliveredFileKey(artifactPath),
+        )
+      : undefined;
     const label = artifact
       ? String(artifact.title || artifact.name || '').trim()
       : '';
@@ -3601,8 +3629,12 @@ const ChatView = (() => {
       );
       attach(name, artifactName.split(/[\\/]/).pop() || artifactName);
       attach(row, name);
-      const added = Number(artifact.added || 0);
-      const removed = Number(artifact.removed || 0);
+      const added = artifactFile
+        ? artifactFile.added
+        : Number(artifact.added || 0);
+      const removed = artifactFile
+        ? artifactFile.removed
+        : Number(artifact.removed || 0);
       if (added > 0 || removed > 0) {
         const stat = h('span', {
           class: 'mp-chat-diff-stat',
@@ -3629,10 +3661,8 @@ const ChatView = (() => {
       attach(card, row);
     }
 
-    const artifactPath = artifact?.path;
     const visibleFiles = files.filter(
       item =>
-        typeof artifactPath !== 'string' ||
         !artifactPath ||
         deliveredFileKey(item.path) !== deliveredFileKey(artifactPath),
     );

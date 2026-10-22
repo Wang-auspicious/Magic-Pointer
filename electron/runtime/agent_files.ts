@@ -15,6 +15,7 @@ import {ToolRegistry, type ToolSpec, type Effect} from './tools';
 import {EventSession} from './session';
 import {asObject, type Data} from './agent';
 import {normalizeAdditionalFolders} from '../workspace_folders';
+import {lineChangeStat} from '../line_change_stat';
 
 const str = (value: unknown) => String(value ?? '');
 const exists = async (file: string) => {
@@ -78,6 +79,8 @@ export class WorkspaceFiles {
   readonly root: string;
   private readonly roots: string[];
   private readVersions = new Map<string, string>();
+  private turnBaselines = new Map<string, string | null>();
+  private baselineTurn: number | null | undefined;
   private checkpointDir: string;
   constructor(
     root: string,
@@ -144,12 +147,16 @@ export class WorkspaceFiles {
       );
     }
   }
-  async checkpoint(file: string): Promise<boolean> {
+  async checkpoint(
+    file: string,
+  ): Promise<{original: Buffer | null; backupPath: string | null}> {
     await mkdir(this.checkpointDir, {recursive: true});
     const old = (await exists(file)) ? await readFile(file) : null;
     const id = `${Date.now()}-${randomUUID()}`;
-    if (old) {
-      await writeFile(path.join(this.checkpointDir, id + '.bin'), old);
+    const backupPath =
+      old === null ? null : path.join(this.checkpointDir, id + '.bin');
+    if (old !== null && backupPath !== null) {
+      await writeFile(backupPath, old);
     }
     const handle = await import('node:fs/promises').then(fs =>
       fs.open(path.join(this.checkpointDir, 'manifest.jsonl'), 'a'),
@@ -162,7 +169,7 @@ export class WorkspaceFiles {
     } finally {
       await handle.close();
     }
-    return old !== null;
+    return {original: old, backupPath};
   }
   async write(
     file: string,
@@ -177,16 +184,42 @@ export class WorkspaceFiles {
       !preserveExactText && path.extname(file).toLowerCase() === '.csv'
         ? encodeCsv(content)
         : Buffer.from(content);
-    const existed = await this.checkpoint(file);
+    const checkpoint = await this.checkpoint(file);
+    const turn = this.session.openTurn;
+    if (turn !== this.baselineTurn) {
+      this.turnBaselines.clear();
+      this.baselineTurn = turn;
+    }
+    if (!this.turnBaselines.has(file)) {
+      this.turnBaselines.set(file, checkpoint.backupPath);
+    }
     await mkdir(path.dirname(file), {recursive: true});
     await writeFile(file, body);
     if (!body.equals(await readFile(file))) {
       throw new Error(`File readback mismatch: ${file}`);
     }
-    this.readVersions.set(file, body.toString('utf8'));
+    const finalText = body.toString('utf8');
+    this.readVersions.set(file, finalText);
+    const diffStat = lineChangeStat(
+      checkpoint.original?.toString('utf8') || '',
+      finalText,
+    );
+    const baselinePath = this.turnBaselines.get(file);
+    const baseline =
+      baselinePath === checkpoint.backupPath
+        ? checkpoint.original
+        : baselinePath
+          ? await readFile(baselinePath)
+          : null;
+    const turnDiffStat =
+      baselinePath === checkpoint.backupPath
+        ? diffStat
+        : lineChangeStat(baseline?.toString('utf8') || '', finalText);
     return {
       path: this.display(file),
-      created: !existed,
+      created: checkpoint.original === null,
+      diffStat,
+      turnDiffStat,
       message: `Wrote ${body.length} bytes`,
       verification: {
         matched: true,

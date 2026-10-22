@@ -113,3 +113,45 @@ test('a file created and then edited in one turn is counted once as a created fi
   assert.match(html, /mp-chat-files-title">Created a file</);
   assert.equal((html.match(/data-mp-chat-act="open-file"/g) || []).length, 1);
 });
+
+test('an artifact path keeps the actual file net statistics and an unknown statistic stays hidden', () => {
+  const html = card(
+    [
+      {
+        ...write('index.ts'),
+        result: JSON.stringify({
+          created: false,
+          diffStat: {added: 1, removed: 1},
+          turnDiffStat: {added: 3, removed: 2},
+        }),
+      },
+    ],
+    [{artifactId: 'draft', name: 'index.ts', path: 'index.ts', added: 999}],
+  );
+  assert.match(html, /mp-chat-diff-add">\+3</);
+  assert.match(html, /mp-chat-diff-del">−2</);
+  assert.doesNotMatch(html, /\+999/);
+  const unknown = card([
+    {
+      ...write('large.ts'),
+      result: JSON.stringify({
+        created: false,
+        diffStat: null,
+        turnDiffStat: null,
+      }),
+    },
+  ]);
+  assert.doesNotMatch(unknown, /mp-chat-diff-(?:add|del)/);
+  assert.equal(
+    chat.toolRowModel(
+      'Write',
+      JSON.stringify({path: 'large.ts', content: 'one\ntwo\n'}),
+      {text: JSON.stringify({diffStat: null})},
+    ).diffStat,
+    null,
+  );
+});
+
+test('legacy file records without a known turn baseline do not invent net statistics', () => {
+  assert.doesNotMatch(card([write('legacy.ts')]), /mp-chat-diff-(?:add|del)/);
+});
