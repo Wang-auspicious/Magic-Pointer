@@ -7435,15 +7435,21 @@ document.addEventListener('mp:open-file', async (event: Event) => {
     return;
   }
   const absolute =
-    /^[a-z]:[\\/]/i.test(readPath) || readPath.startsWith('\\\\');
+    /^[a-z]:[\\/]/i.test(readPath) ||
+    readPath.startsWith('\\\\') ||
+    readPath.startsWith('/');
+  const normalizedRead = readPath.replace(/\\/g, '/');
+  const normalizedRoot = root.replace(/\\/g, '/');
   const relative =
-    absolute && root && readPath.toLowerCase().startsWith(root.toLowerCase())
-      ? readPath.slice(root.length).replace(/^[\\/]+/, '')
+    absolute &&
+    root &&
+    normalizedRead.toLowerCase().startsWith(normalizedRoot.toLowerCase() + '/')
+      ? normalizedRead.slice(normalizedRoot.length + 1)
       : readPath;
   if (relative.split(/[\\/]/).includes('..')) {
     return;
   }
-  if (!activeProjectRoot) {
+  if (!activeProjectRoot && !absolute) {
     void openProjectFromPicker();
     return;
   }
@@ -8485,8 +8491,13 @@ async function selectProjectFile(
   } = {},
 ) {
   const root = activeProjectRoot;
+  const absolute =
+    /^[a-z]:[\\/]/i.test(relativePath) ||
+    relativePath.startsWith('\\\\') ||
+    relativePath.startsWith('/');
   const browserFile =
     !options.snapshot &&
+    !absolute &&
     /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(relativePath);
   const resourceKey =
     options.resourceKey ||

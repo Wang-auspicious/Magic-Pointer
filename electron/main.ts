@@ -2939,14 +2939,21 @@ ipcMain.handle(
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_project_sender'};
     }
-    const root = knownProjectRoot(raw?.projectRoot);
+    const requestedPath = String(raw?.path || '').trim();
+    const absolute = path.isAbsolute(requestedPath);
+    const root = absolute
+      ? path.dirname(requestedPath)
+      : knownProjectRoot(raw?.projectRoot);
     if (!root) {
       return {ok: false, error: '请先打开项目。'};
     }
     try {
       return {
         ok: true,
-        ...(await readProjectPreview(root, String(raw?.path || ''))),
+        ...(await readProjectPreview(
+          root,
+          absolute ? path.basename(requestedPath) : requestedPath,
+        )),
       };
     } catch (error) {
       return {
@@ -2963,13 +2970,20 @@ ipcMain.handle(
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_project_sender'};
     }
-    const root = knownProjectRoot(raw?.projectRoot);
+    const requestedPath = String(raw?.path || '').trim();
+    const absolute = path.isAbsolute(requestedPath);
+    const root = absolute
+      ? path.dirname(requestedPath)
+      : knownProjectRoot(raw?.projectRoot);
     if (!root) {
       return {ok: false, error: '请先打开项目。'};
     }
     try {
       const error = await shell.openPath(
-        projectPath(root, String(raw?.path || '')),
+        projectPath(
+          root,
+          absolute ? path.basename(requestedPath) : requestedPath,
+        ),
       );
       return error ? {ok: false, error} : {ok: true};
     } catch (error) {

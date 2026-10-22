@@ -51,7 +51,52 @@ const openCode = ts.transpileModule(
   {compilerOptions: {target: ts.ScriptTarget.ES2022}},
 ).outputText;
 
+const mainSource = fs.readFileSync('electron/main.ts', 'utf8');
+const mainAst = ts.createSourceFile(
+  'main.ts',
+  mainSource,
+  ts.ScriptTarget.Latest,
+  true,
+);
+const fileHandlerCode = mainAst.statements
+  .filter(
+    n =>
+      ts.isExpressionStatement(n) &&
+      ts.isCallExpression(n.expression) &&
+      n.expression.expression.getText(mainAst) === 'ipcMain.handle' &&
+      ["'projects:read-file'", "'projects:open-path'"].includes(
+        n.expression.arguments[0].getText(mainAst),
+      ),
+  )
+  .map(n => n.getText(mainAst))
+  .join('\n');
+const compiledFileHandlers = ts.transpileModule(fileHandlerCode, {
+  compilerOptions: {target: ts.ScriptTarget.ES2022},
+}).outputText;
+
 function fixture(root: string) {
+  const handlers = new Map<string, (...args: any[]) => Promise<any>>();
+  const openedPaths: string[] = [];
+  const mainContext = {
+    ipcMain: {
+      handle: (name: string, callback: (...args: any[]) => Promise<any>) =>
+        handlers.set(name, callback),
+    },
+    isDashboardSender: () => true,
+    knownProjectRoot: (requested: string) =>
+      requested && requested === root ? root : null,
+    path,
+    projectPath: require('../electron/project_inspector').projectPath,
+    readProjectPreview,
+    shell: {
+      openPath: async (target: string) => {
+        openedPaths.push(target);
+        return '';
+      },
+    },
+  };
+  vm.runInNewContext(compiledFileHandlers, mainContext);
+  assert.equal(handlers.size, 2);
   const element = (tag = 'div'): any => {
     const attrs = new Map<string, string>();
     const listeners = new Map<string, () => void>();
@@ -143,6 +188,11 @@ function fixture(root: string) {
     Set,
     HTMLElement: class {},
     activeProjectRoot: root,
+    pickerCalls: 0,
+    openProjectFromPicker: () => {
+      ctx.pickerCalls++;
+    },
+    inspectorError() {},
     projectFileRequest: 0,
     selectedProjectPreview: null,
     selectedProjectFile: '',
@@ -189,12 +239,16 @@ function fixture(root: string) {
     },
     Data: {
       readProjectFile: async (folder: string, file: string) => {
-        try {
-          return {ok: true, ...(await readProjectPreview(folder, file))};
-        } catch (error) {
-          return {ok: false, error: String(error)};
-        }
+        return handlers.get('projects:read-file')!(
+          {},
+          {projectRoot: folder, path: file},
+        );
       },
+      openProjectPath: (folder: string, file: string) =>
+        handlers.get('projects:open-path')!(
+          {},
+          {projectRoot: folder, path: file},
+        ),
     },
     normalizedProjectRoot: (value: string) => value,
     renderWorkspaceResourceTabs() {},
@@ -218,8 +272,118 @@ function fixture(root: string) {
   vm.createContext(ctx);
   vm.runInContext(compiled, ctx);
   vm.runInContext(openCode, ctx);
-  return {ctx, nodes};
+  return {ctx, nodes, openedPaths};
 }
+
+test('a delivered file in an additional folder opens the actual absolute target without confusing a shared directory prefix', async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-external-delivered-'));
+  try {
+    const root = path.join(base, 'project');
+    const extra = path.join(base, 'project-extra');
+    fs.mkdirSync(root);
+    fs.mkdirSync(extra);
+    const target = path.join(extra, 'delivered.txt');
+    const session = await EventSession.open(root, 'agent-external-delivered');
+    const registry = new ToolRegistry();
+    registerCodingTools(registry, root, session, [extra]);
+    const result = await registry.execute({
+      id: 'write-extra',
+      name: 'Write',
+      arguments: {path: target, content: 'actual additional-folder result\n'},
+    });
+    assert.equal(result.is_error, false, result.error_message);
+    const deliveredPath = (result.value as any).path;
+    const {ctx, nodes, openedPaths} = fixture(root);
+    await ctx.openDelivered({detail: {path: deliveredPath}});
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'actual additional-folder result\n',
+    );
+    assert.equal(ctx.activeProjectRoot, root);
+    const opened = await ctx.Data.openProjectPath(
+      root,
+      ctx.selectedProjectFile,
+    );
+    assert.equal(opened.ok, true, opened.error);
+    assert.equal(openedPaths[0], target);
+  } finally {
+    fs.rmSync(base, {recursive: true, force: true});
+  }
+});
+
+test('a delivered absolute file opens with no selected project and returns from its resource tab', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-no-project-file-'));
+  try {
+    const target = path.join(root, 'delivered.txt');
+    fs.writeFileSync(target, 'actual no-project file\n');
+    const {ctx, nodes} = fixture('');
+    await ctx.openDelivered({detail: {path: target}});
+    assert.equal(ctx.pickerCalls, 0);
+    assert.equal(ctx.activeProjectRoot, '');
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'actual no-project file\n',
+    );
+    const tab = ctx.workspaceResourceTabs[0];
+    assert.ok(tab);
+    const read = ctx.selectProjectFile;
+    let pending: Promise<void> | undefined;
+    ctx.selectProjectFile = (...args: any[]) => (pending = read(...args));
+    ctx.activateWorkspaceResource(tab.id);
+    await pending;
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'actual no-project file\n',
+    );
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('an absolute image uses the existing media preview without opening a browser or selecting a project', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-external-image-'));
+  try {
+    const target = path.join(folder, 'image.png');
+    const png = await require('sharp')({
+      create: {width: 1, height: 1, channels: 4, background: '#315a89'},
+    })
+      .png()
+      .toBuffer();
+    fs.writeFileSync(target, png);
+    const {ctx, nodes} = fixture('');
+    await ctx.openDelivered({detail: {path: target}});
+    assert.equal(ctx.pickerCalls, 0);
+    assert.equal(ctx.workspaceResourceTabs[0].kind, 'file');
+    const viewer = descendants(nodes.get('project-file-content')).find(
+      n => n.tagName === 'IMG',
+    );
+    assert.ok(viewer);
+    assert.equal(require('node:url').fileURLToPath(viewer.src), target);
+    assert.equal(nodes.get('project-file-copy').hidden, true);
+  } finally {
+    fs.rmSync(folder, {recursive: true, force: true});
+  }
+});
+
+test('a project-local absolute path with normalized slashes retains its exact relative target', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-normalized-project-'));
+  try {
+    const target = path.join(root, 'inside.txt');
+    fs.writeFileSync(target, 'inside file\n');
+    const {ctx, nodes} = fixture(root);
+    await ctx.openDelivered({detail: {path: target.replace(/\\/g, '/')}});
+    assert.equal(ctx.selectedProjectFile, 'inside.txt');
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'inside file\n',
+    );
+    const invalid = await ctx.Data.readProjectFile(root, '../outside.txt');
+    assert.equal(invalid.ok, false);
+    assert.match(invalid.error, /invalid_project_path/);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
 
 test('opening a delivered file in a closed uncached inspector displays its actual content', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-file-open-'));
