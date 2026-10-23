@@ -22,6 +22,10 @@ export interface HistoryPage {
   position: number;
 }
 export interface HistoryJob {
+  startedAt?: number;
+  initializedAt?: number;
+  mode?: 'initial' | 'check';
+  added?: number;
   url?: string;
   account: string;
   list: HistoryList;
@@ -47,7 +51,11 @@ interface HistoryOptions {
     list: HistoryList,
     reset: boolean,
   ): Promise<HistoryPage>;
-  importLink(account: string, link: HistoryLink): Promise<string>;
+  importLink(
+    account: string,
+    link: HistoryLink,
+    order: {batch: number; index: number},
+  ): Promise<string>;
 }
 
 export class ResourceBrowserHistory {
@@ -85,7 +93,7 @@ export class ResourceBrowserHistory {
     }
   }
 
-  run(account: string, list: HistoryList): Promise<void> {
+  run(account: string, list: HistoryList, incremental = false): Promise<void> {
     if (
       !/^xiaohongshu-[12]$/.test(account) ||
       !['saved', 'liked'].includes(list)
@@ -101,7 +109,7 @@ export class ResourceBrowserHistory {
         job => job.account === account && job.status === 'running',
       )
         ? active
-        : active.then(() => this.run(account, list));
+        : active.then(() => this.run(account, list, incremental));
     }
     let job = this.jobs.find(
       item => item.account === account && item.list === list,
@@ -122,6 +130,11 @@ export class ResourceBrowserHistory {
       this.jobs.push(job);
     }
     job.status = 'running';
+    job.mode = incremental && job.initializedAt ? 'check' : 'initial';
+    job.added = 0;
+    if (job.mode === 'check' || !job.startedAt) {
+      job.startedAt = Date.now();
+    }
     job.error = '';
     job.pages = 0;
     this.persist(job);
@@ -134,6 +147,8 @@ export class ResourceBrowserHistory {
 
   private async scan(job: HistoryJob): Promise<void> {
     let stale = 0;
+    let knownPages = 0;
+    const previousIds = new Set(Object.keys(job.seen));
     let previousPosition = -1;
     try {
       while (job.status === 'running') {
@@ -165,10 +180,14 @@ export class ResourceBrowserHistory {
           if (job.seen[link.id]) {
             continue;
           }
-          const resourceId = await this.options.importLink(job.account, link);
+          const resourceId = await this.options.importLink(job.account, link, {
+            batch: job.startedAt!,
+            index: job.mode === 'initial' ? job.retained : job.added || 0,
+          });
           job.seen[link.id] = resourceId;
           job.retained = Object.keys(job.seen).length;
           added++;
+          job.added = (job.added || 0) + 1;
           this.persist(job);
         }
         job.pages++;
@@ -176,8 +195,18 @@ export class ResourceBrowserHistory {
         job.coverage = page.coverage;
         stale = added || page.position !== previousPosition ? 0 : stale + 1;
         previousPosition = page.position;
-        if (page.atEnd) {
+        knownPages =
+          page.links.length &&
+          page.links.every(link => previousIds.has(link.id))
+            ? knownPages + 1
+            : 0;
+        if (job.mode === 'check' && knownPages >= 2) {
           job.status = 'complete';
+          job.coverage +=
+            ' New bookmarks retained; reached two previously retained pages.';
+        } else if (page.atEnd) {
+          job.status = 'complete';
+          job.initializedAt ||= Date.now();
           job.coverage +=
             ' The page explicitly displayed the end of this account list. Retained links may still be downloading; unavailable or hidden posts are not proved complete.';
         } else if (stale >= 3) {

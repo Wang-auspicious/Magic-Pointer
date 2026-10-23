@@ -33,6 +33,9 @@ export interface HandoffReceipt {
 }
 
 export interface ResourceCollection {
+  bookmarkBatch: number;
+  bookmarkPosition: number;
+  sourceExcerpt: string;
   sourceAccount: string;
   postPath: string;
   postTextPath: string;
@@ -98,6 +101,9 @@ export function resourceCollection(
     'error',
   ];
   return {
+    bookmarkBatch: Number(value.bookmarkBatch) || 0,
+    bookmarkPosition: Number(value.bookmarkPosition) || 0,
+    sourceExcerpt: String(value.sourceExcerpt || '').slice(0, 6000),
     sourceAccount: String(value.sourceAccount || 'web'),
     postPath: String(value.postPath || ''),
     postTextPath: String(value.postTextPath || ''),

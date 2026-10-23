@@ -22,6 +22,34 @@ const page = (links: HistoryPage['links'], atEnd = false): HistoryPage => ({
   position: links.length,
 });
 
+test('hourly checks stop at known bookmarks after a complete initial history and retain new notes', async () => {
+  let checking = false;
+  const retained: string[] = [];
+  let pages = 0;
+  const history = new ResourceBrowserHistory({
+    folder: mkdtempSync(join(tmpdir(), 'mp-history-incremental-')),
+    readPage: async (_account, _list, reset) => {
+      pages++;
+      return checking
+        ? reset
+          ? page([link('new123'), link('old123')])
+          : page([link('old123')])
+        : page([link('old123')], true);
+    },
+    importLink: async (_account, value) => {
+      retained.push(value.id);
+      return value.id;
+    },
+  });
+  await history.run('xiaohongshu-1', 'saved');
+  checking = true;
+  pages = 0;
+  await history.run('xiaohongshu-1', 'saved', true);
+  assert.deepEqual(retained, ['old123', 'new123']);
+  assert.equal(history.snapshot()[0].status, 'complete');
+  assert.ok(pages <= 3, 'an hourly check does not rescan the entire old list');
+});
+
 test('history keeps a durable per-account checkpoint and only claims the end when the page proves it', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'mp-browser-history-'));
   const imported: string[] = [];

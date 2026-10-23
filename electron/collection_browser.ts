@@ -232,6 +232,20 @@ export function postFromCollectionPage(
   return post;
 }
 
+export function readXhsAccountIdentity(): {id: string; name: string} | null {
+  const state = (
+    window as unknown as {
+      __INITIAL_STATE__?: {user?: {userInfo?: Record<string, unknown>}};
+    }
+  ).__INITIAL_STATE__;
+  const user = state?.user?.userInfo;
+  const info = (user?._value || user) as Record<string, unknown> | undefined;
+  const id = String(info?.user_id || info?.userId || info?.userID || '');
+  return id
+    ? {id, name: String(info?.nickname || info?.nickName || info?.name || '')}
+    : null;
+}
+
 export function readXhsAccountId(): string {
   const state = (
     window as unknown as {
@@ -332,7 +346,7 @@ export function readXhsHistoryPage(): HistoryPage {
     element =>
       !element.closest('section.note-item') &&
       element.getClientRects().length > 0 &&
-      /^(?:没有更多(?:了)?[~～。！!]?|已经到底(?:了)?[~～。！!]?|暂时没有收藏|还没有收藏|暂无收藏|暂无点赞|还没有赞过|暂无笔记)$/.test(
+      /^(?:没有更多(?:了)?[~～。！!]?|已经到底(?:了)?[~～。！!]?|暂时没有收藏|还没有收藏|你还没有收藏任何内容哦|暂无收藏|暂无点赞|还没有赞过|暂无笔记)$/.test(
         element.innerText.trim(),
       ),
   );

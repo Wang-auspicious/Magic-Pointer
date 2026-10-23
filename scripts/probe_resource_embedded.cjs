@@ -25,6 +25,7 @@ app.disableHardwareAcceleration();
 const deadline = setTimeout(() => app.exit(1), 60000);
 app.whenReady().then(async () => {
   let win;
+  let embeddedScreenshotError = '';
   try {
     const built = name => require(path.join(root, 'build/electron', name));
     const {BrowserViewRegistry} = built('browser_view_registry');
@@ -148,6 +149,7 @@ app.whenReady().then(async () => {
       nativeTheme,
       Menu,
       clipboard,
+      bookmarkSync: () => ({observe: async () => {}}),
       securityHardening: {registerBrowserContents() {}},
       shell: {
         openExternal() {
@@ -441,6 +443,11 @@ app.whenReady().then(async () => {
     assert.equal(externalOpens, 0);
     assert.equal(registry.snapshot().length, 1);
     view.setVisible(false);
+    for (let index = 0; index < 12; index++) {
+      await service.add({
+        text: `本地瀑布流验收 ${index}\n${'这是一条明确标记的布局测试资料。'.repeat(index + 1)}`,
+      });
+    }
     await win.loadFile(path.join(root, 'build/electron/renderer/studio.html'));
     const js = script => win.webContents.executeJavaScript(script);
     await js(
@@ -456,6 +463,25 @@ app.whenReady().then(async () => {
       throw new Error('UI timeout: ' + expression);
     };
     await wait(`!!document.querySelector('[data-rl-id="${entry.id}"]')`);
+    await wait(
+      'document.querySelector(".rl-masonry")?.dataset.columns === "5"',
+    );
+    const masonry = await js(`(() => {
+      const cards = [...document.querySelectorAll('[data-rl-id]')].map(card => {const r=card.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};});
+      return {columns:new Set(cards.map(card=>Math.round(card.x))).size,heights:new Set(cards.map(card=>Math.round(card.h))).size,overlap:cards.some((a,i)=>cards.slice(i+1).some(b=>a.x < b.x+b.w-1 && a.x+a.w > b.x+1 && a.y < b.y+b.h-1 && a.y+a.h > b.y+1))};
+    })()`);
+    assert.equal(masonry.columns, 5);
+    assert.ok(masonry.heights > 1);
+    assert.equal(masonry.overlap, false);
+    win.showInactive();
+    await js(
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+    );
+    await new Promise(resolve => setTimeout(resolve, 300));
+    fs.writeFileSync(
+      path.join(output, 'waterfall.png'),
+      (await win.webContents.capturePage()).toPNG(),
+    );
     await js(`document.querySelector('[data-rl-id="${entry.id}"]').click()`);
     await wait(
       'document.querySelector("[data-rl-post]")?.getAttribute("aria-busy")==="false"',
@@ -505,10 +531,17 @@ app.whenReady().then(async () => {
       path.join(output, 'embedded-browser.png'),
       (await win.webContents.capturePage()).toPNG(),
     );
-    fs.writeFileSync(
-      path.join(output, 'embedded-page.png'),
-      (await view.webContents.capturePage()).toPNG(),
-    );
+    try {
+      fs.writeFileSync(
+        path.join(output, 'embedded-page.png'),
+        (await view.webContents.capturePage()).toPNG(),
+      );
+    } catch (error) {
+      embeddedScreenshotError = String(error);
+      console.error(
+        `Optional child-view screenshot failed: ${embeddedScreenshotError}`,
+      );
+    }
     const foregroundUrl = view.webContents.getURL();
     await history.run(account, 'saved');
     context.releaseCollectionWorkerView(account, 'history');
@@ -517,12 +550,16 @@ app.whenReady().then(async () => {
     assert.equal(view.webContents.getURL(), foregroundUrl);
     await service.drainCaptures();
     assert.equal(
-      service.list().length,
+      service.list().filter(item => item.collection.sourceAccount === account)
+        .length,
       2,
       'a changed access token must not duplicate the first note',
     );
     assert.ok(
-      service.list().every(item => item.collection.captureStatus === 'saved'),
+      service
+        .list()
+        .filter(item => item.collection.sourceAccount === account)
+        .every(item => item.collection.captureStatus === 'saved'),
     );
     await js("document.querySelector('[data-rl-tab=sources]').click()");
     await wait(
@@ -568,6 +605,8 @@ app.whenReady().then(async () => {
     await firstSession.cookies.flushStore();
     const result = {
       ok: true,
+      waterfall: masonry,
+      embeddedScreenshotError,
       usedBackend: 'electron.WebContentsView + local page fixture + disk store',
       accountIsolation: true,
       embeddedPopup: true,

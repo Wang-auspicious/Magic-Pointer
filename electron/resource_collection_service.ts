@@ -514,6 +514,7 @@ export class ResourceCollectionService {
             ? post.title
             : latest.title,
         coverage: post.coverage,
+        sourceExcerpt: post.text.slice(0, 6000),
         exportedPath: '',
       });
     } catch (error) {

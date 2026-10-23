@@ -38,7 +38,14 @@ declare global {
       document.documentElement.lang.startsWith('zh') ? zh : en;
     let snapshot: ResourceResponse = {ok: true, items: [], projects: []};
     let selected = '';
-    let filter = 'inbox';
+    let filter = 'all';
+    let mediaScope = 'bookmarks';
+    let sort = (localStorage.getItem('mp:collection-sort') || 'time') as
+      'time' | 'importance';
+    let focus = '';
+    let cardLimit = 120;
+    let masonryFrame = 0;
+    const masonryObserver = new ResizeObserver(() => scheduleMasonry());
     let query = '';
     let searchMatches: Set<string> | undefined;
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -185,7 +192,7 @@ declare global {
     async function refresh() {
       const thisGeneration = ++generation;
       try {
-        const next = await call('list');
+        const next = await call('list', {sort, focus});
         if (thisGeneration !== generation) {
           return;
         }
@@ -193,6 +200,7 @@ declare global {
         if (visible && !dirty && tab === 'library') {
           renderList();
           renderDetail();
+          syncSummary();
         }
         if (visible && tab === 'sources') {
           syncSourceView();
@@ -235,15 +243,15 @@ declare global {
       }
       if (tab === 'sources') {
         renderSources();
-        scheduleSourceRefresh();
       }
+      scheduleSourceRefresh();
     }
     function scheduleSourceRefresh() {
       clearTimeout(sourceTimer);
-      if (visible && tab === 'sources') {
+      if (visible) {
         sourceTimer = setTimeout(() => {
           void refresh().finally(scheduleSourceRefresh);
-        }, 2500);
+        }, 5000);
       }
     }
     function renderLibrary() {
@@ -251,12 +259,12 @@ declare global {
       host.querySelector('.rl-content')!.innerHTML =
         `<form class="rl-capture" data-rl-capture><span class="rl-add-mark" aria-hidden="true">＋</span><textarea name="text" rows="1" placeholder="${t('Drop a thought. Paste a link. Keep something good.', '记下一点想法，粘贴一个链接，留住值得回看的东西。')}" aria-label="${t('Text or link to collect', '要收集的文字或链接')}" required>${esc(captureDraft)}</textarea><button type="submit" ${capturing ? 'disabled' : ''}>${t('Keep', '收下')} ↗</button></form>
         <div class="rl-tools"><div class="rl-filters">${[
+          ['all', t('All saved', '全部收藏')],
           ['inbox', t('Inbox', '待整理')],
           ['ready', t('Collected', '已整理')],
           ['reference', t('References', '参考')],
           ['todo', t('To do', '待办')],
           ['revisit', t('Revisit', '回看')],
-          ['all', t('All', '全部')],
           ['ignored', t('Ignored', '已忽略')],
         ]
           .map(
@@ -266,9 +274,71 @@ declare global {
           .join(
             '',
           )}</div><input type="search" class="rl-search" placeholder="${t('Find a resource', '搜索资料')}" aria-label="${t('Find a resource', '搜索资料')}" value="${esc(query)}"><button type="button" data-rl-action="files">${t('Add files', '添加文件')}</button><button type="button" data-rl-action="canvas">${t('Canvas', '画布')} ↗</button></div>
+        <div class="rl-library-options"><select data-rl-scope aria-label="${t('Material type', '资料类型')}"><option value="bookmarks" ${mediaScope === 'bookmarks' ? 'selected' : ''}>${t('Bookmarks and links', '收藏与链接')}</option><option value="files" ${mediaScope === 'files' ? 'selected' : ''}>${t('Files and screenshots', '文件与截图')}</option><option value="all" ${mediaScope === 'all' ? 'selected' : ''}>${t('All materials', '全部资料')}</option></select><div data-rl-sync-summary role="status"></div><label>${t('Sort', '排序')} <select data-rl-sort><option value="time" ${sort === 'time' ? 'selected' : ''}>${t('Saved order', '按收藏时间')}</option><option value="importance" ${sort === 'importance' ? 'selected' : ''}>${t('Important now', '对当下的重要性')}</option></select></label></div><div class="rl-focus" ${sort === 'importance' ? '' : 'hidden'}><label>${t('Current focus', '当前关注')} <input data-rl-focus value="${esc(focus)}" placeholder="${esc(snapshot.focus || t('Recent MP tasks', '最近的 MP 任务'))}"></label><small>${t('Uses recent tasks, project links, next steps and unread older material. You can change the focus.', '结合最近任务、关联项目、下一步和未回看的旧资料排序，也可填写当前关注的事。')}</small></div>
         <div class="rl-workspace"><div class="rl-grid" role="list" aria-label="${t('Collected resources', '收集的资料')}"></div><aside class="rl-detail" aria-label="${t('Resource details', '资料详情')}" hidden></aside></div>`;
+      masonryObserver.disconnect();
+      masonryObserver.observe(host.querySelector('.rl-grid')!);
+      host.querySelector('.rl-grid')!.addEventListener('scroll', event => {
+        const grid = event.target as HTMLElement;
+        if (
+          grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 350 &&
+          grid.querySelector('[data-rl-more]')
+        ) {
+          cardLimit += 120;
+          renderList();
+        }
+      });
       renderList();
       renderDetail();
+      syncSummary();
+    }
+    function syncSummary() {
+      const output = host.querySelector<HTMLElement>('[data-rl-sync-summary]');
+      if (!output) {
+        return;
+      }
+      const jobs = (snapshot.histories || []).filter(
+        job => job.list === 'saved',
+      );
+      const running = jobs.find(job => job.status === 'running');
+      const accounts = snapshot.accounts || [];
+      output.textContent = running
+        ? t(
+            `Importing ${running.mode === 'check' ? 'new bookmarks' : 'history'} · ${running.retained} retained`,
+            `正在${running.mode === 'check' ? '检查新增收藏' : '初始化历史收藏'} · 已收录 ${running.retained} 条`,
+          )
+        : accounts.some(account => account.enabled)
+          ? t('Bookmarks sync automatically every hour', '收藏每小时自动同步')
+          : t(
+              'Sign in to an account to import its saved posts automatically',
+              '登录账号后，自动收录历史收藏',
+            );
+    }
+    function scheduleMasonry() {
+      cancelAnimationFrame(masonryFrame);
+      masonryFrame = requestAnimationFrame(() => {
+        const grid = host.querySelector<HTMLElement>('.rl-grid');
+        const canvas = grid?.querySelector<HTMLElement>('.rl-masonry');
+        if (!grid || !canvas || !visible || tab !== 'library') {
+          return;
+        }
+        const width = grid.clientWidth - 6;
+        const columns = Math.max(
+          1,
+          Math.min(5, Math.floor((width + 16) / 170)),
+        );
+        const cardWidth = (width - (columns - 1) * 16) / columns;
+        const heights = Array<number>(columns).fill(0);
+        canvas.dataset.columns = String(columns);
+        canvas.querySelectorAll<HTMLElement>('[data-rl-id]').forEach(card => {
+          const column = heights.indexOf(Math.min(...heights));
+          card.style.width = `${cardWidth}px`;
+          card.style.left = `${column * (cardWidth + 16)}px`;
+          card.style.top = `${heights[column]}px`;
+          heights[column] += card.getBoundingClientRect().height + 16;
+        });
+        canvas.style.height = `${Math.max(...heights)}px`;
+      });
     }
     function renderList() {
       const grid = host.querySelector('.rl-grid');
@@ -284,6 +354,10 @@ declare global {
       const items = (snapshot.items || []).filter(item => {
         const detail = details(item);
         return (
+          (mediaScope === 'all' ||
+            (mediaScope === 'bookmarks'
+              ? Boolean(item.collection)
+              : !item.collection || item.media !== 'text')) &&
           (filter === 'all' ||
             (['reference', 'todo'].includes(filter) &&
               detail.state !== 'ignored' &&
@@ -318,7 +392,9 @@ declare global {
           : items[0]?.id || '';
       }
       grid.innerHTML = items.length
-        ? items
+        ? '<div class="rl-masonry">' +
+          items
+            .slice(0, cardLimit)
             .map(item => {
               const detail = details(item);
               const project = snapshot.projects?.find(
@@ -332,16 +408,21 @@ declare global {
                 item as CollectedResource & {previewUrl?: string}
               ).previewUrl;
               return `<button type="button" class="rl-item ${selected === item.id ? 'is-selected' : ''}" data-rl-id="${esc(item.id)}" tabindex="${focusedId === item.id ? 0 : -1}" aria-pressed="${selected === item.id}">
-          ${preview ? `<div class="rl-thumbnail"><img src="${esc(preview)}" alt="${esc(detail.title)}" loading="lazy"></div>` : `<div class="rl-excerpt">${esc((detail.summary || item.text || detail.url || '').slice(0, 210))}</div>`}
-          <div class="rl-item-copy"><span class="rl-item-meta">${esc(detail.authorName || item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong>${detail.tags?.length ? `<span class="rl-card-tags">${esc(detail.tags.join(' · '))}</span>` : ''}<div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent === 'save' && detail.suggestedIntent ? detail.suggestedIntent : detail.intent])}</span><span>${detail.captureStatus === 'loading' ? t('Saving original…', '保存原帖中…') : detail.captureStatus === 'partial' ? t('Media incomplete', '媒体未齐') : detail.state === 'queued' ? t('Queued', '等待整理') : detail.state === 'waiting' ? t('Needs your input', '等待你的处理') : detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
+          ${preview ? `<div class="rl-thumbnail"><img src="${esc(preview)}" alt="${esc(detail.title)}" loading="lazy"></div>` : `<div class="rl-excerpt">${esc((detail.sourceExcerpt || detail.summary || item.text || detail.url || '').slice(0, 350))}</div>`}
+          <div class="rl-item-copy"><span class="rl-item-meta">${esc(detail.authorName || item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong>${detail.tags?.length ? `<span class="rl-card-tags">${esc(detail.tags.join(' · '))}</span>` : ''}${sort === 'importance' && item.relevanceReason ? `<span class="rl-relevance">${esc(item.relevanceReason)}</span>` : ''}<div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent === 'save' && detail.suggestedIntent ? detail.suggestedIntent : detail.intent])}</span><span>${detail.captureStatus === 'loading' ? t('Saving original…', '保存原帖中…') : detail.captureStatus === 'partial' ? t('Media incomplete', '媒体未齐') : detail.state === 'queued' ? t('Queued', '等待整理') : detail.state === 'waiting' ? t('Needs your input', '等待你的处理') : detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
             })
-            .join('')
+            .join('') +
+          '</div>' +
+          (items.length > cardLimit
+            ? `<button type="button" data-rl-action="more" data-rl-more>${t('Load more', '加载更多')} · ${Math.min(cardLimit, items.length)} / ${items.length}</button>`
+            : '')
         : snapshot.items?.length
           ? `<div class="rl-empty"><h2>${t('No resources match.', '没有符合条件的资料。')}</h2><p>${t('Try another search or view your other resources.', '试试其他关键词，或查看其他分类。')}</p><button type="button" data-rl-action="clear-search">${t(query ? 'Clear search' : 'View all resources', query ? '清除搜索' : '查看全部资料')}</button></div>`
           : `<div class="rl-empty"><span class="rl-empty-mark" aria-hidden="true">↙</span><h2>${t('Room for the next good idea.', '留一点空间，给下一个好想法。')}</h2><p>${t('A screenshot, a paper, a small detail you want to borrow. Keep it here; decide what it becomes next.', '截图、论文、想借鉴的小细节。先收在这里，再决定它会成为什么。')}</p><button type="button" data-rl-tab="browser">${t('Open your browser', '打开内置浏览器')} ↗</button></div>`;
       if (restore) {
         focusCard(focusedId);
       }
+      scheduleMasonry();
     }
 
     function focusCard(id: string): void {
@@ -522,7 +603,7 @@ declare global {
         browserAccounts.find(account => account.id === browserSlot)!.url;
       host.querySelector('.rl-content')!.innerHTML =
         `<div class="rl-browser rl-embedded"><div class="rl-browser-accounts" role="group" aria-label="${t('Separate sign-in sessions', '独立登录会话')}">${browserAccounts.map(account => `<button type="button" data-rl-account="${account.id}" aria-pressed="${account.id === browserSlot}">${account.name}</button>`).join('')}<span>${t('Sign in once. Each account stays separate on this device.', '登录状态保存在本机，各账号互不串用。')}</span></div>
-        <form class="rl-browser-bar" data-rl-browser><button type="button" data-rl-browser-command="back" aria-label="${t('Back', '后退')}">←</button><button type="button" data-rl-browser-command="forward" aria-label="${t('Forward', '前进')}">→</button><button type="button" data-rl-browser-command="reload" aria-label="${t('Reload', '刷新')}">↻</button><input name="url" aria-label="URL" value="${esc(savedBrowserUrl)}" required><button type="submit">${t('Go', '前往')}</button><button type="button" data-rl-action="capture">${t('Keep this page', '收录此页')}</button></form><div class="rl-browser-canvas"><div class="rl-browser-surface" data-rl-browser-host><p>${t('Your page opens here, inside MP.', '网页在这里打开，始终留在 MP 内。')}</p></div><aside class="rl-browser-recall" data-rl-related hidden aria-label="${t('Previously saved references', '以前留下的资料')}"></aside></div></div>`;
+        <form class="rl-browser-bar" data-rl-browser><button type="button" data-rl-browser-command="back" aria-label="${t('Back', '后退')}">←</button><button type="button" data-rl-browser-command="forward" aria-label="${t('Forward', '前进')}">→</button><button type="button" data-rl-browser-command="reload" aria-label="${t('Reload', '刷新')}">↻</button><input name="url" aria-label="URL" value="${esc(savedBrowserUrl)}" required><button type="submit">${t('Go', '前往')}</button><button type="button" data-rl-action="${browserSlot.startsWith('xiaohongshu-') ? 'sync-bookmarks' : 'capture'}">${browserSlot.startsWith('xiaohongshu-') ? t('View synced bookmarks', '查看同步收藏') : t('Save this page', '保存当前网页')}</button></form><p class="rl-browser-sync-help">${browserSlot.startsWith('xiaohongshu-') ? t('After sign-in, MP imports your saved history automatically, then checks for new bookmarks every hour.', '登录后自动初始化全部历史收藏，之后每小时检查新增收藏。可返回资料页查看导入进度。') : ''}</p><div class="rl-browser-canvas"><div class="rl-browser-surface" data-rl-browser-host><p>${t('Your page opens here, inside MP.', '网页在这里打开，始终留在 MP 内。')}</p></div><aside class="rl-browser-recall" data-rl-related hidden aria-label="${t('Previously saved references', '以前留下的资料')}"></aside></div></div>`;
       browserObserver.disconnect();
       browserObserver.observe(host);
       browserObserver.observe(host.querySelector('[data-rl-browser-host]')!);
@@ -576,7 +657,7 @@ declare global {
     function renderSources() {
       const source = snapshot.source;
       host.querySelector('.rl-content')!.innerHTML =
-        `<div class="rl-sources"><h2>${t('Your accounts, inside MP.', '账号就留在 MP 里。')}</h2><p>${t('Sign in with the embedded browser. Each account keeps its own local session. Paste share links into your library to retain original posts and their available media.', '在内嵌浏览器里正常登录，各账号独立保留本机登录态。把分享链接粘贴到资料库，即可保存原帖和可取得的媒体。')}</p>
+        `<div class="rl-sources"><h2>${t('Sign in. Your bookmarks follow.', '登录一次，收藏自动收进来。')}</h2><p>${t('MP imports all available saved history after sign-in, then checks for new bookmarks every hour. Text and media remain readable here.', '登录后先初始化历史收藏，之后每小时检查新增收藏。正文和媒体保留在本机，回到资料页就能查看。')}</p>
         ${browserAccounts
           .filter(account => account.id !== 'web')
           .map(
@@ -626,17 +707,17 @@ declare global {
         .querySelectorAll<HTMLElement>('[data-rl-history-account]')
         .forEach(container => {
           const accountId = container.dataset.rlHistoryAccount!;
+          const connected = snapshot.accounts?.find(
+            account => account.account === accountId,
+          );
           const jobs = (snapshot.histories || []).filter(
             job => job.account === accountId,
           );
           const busy = jobs.some(job => job.status === 'running');
           const labels = {
-            running: t('Reading list…', '正在读取列表…'),
+            running: t('Importing bookmarks…', '正在收录收藏…'),
             paused: t('Paused · end not confirmed', '已暂停 · 未确认历史到底'),
-            complete: t(
-              'List end observed · check saved media in the library',
-              '已看到列表底部 · 媒体保存结果见资料库',
-            ),
+            complete: t('Up to date', '本次同步完成'),
             auth_required: t(
               'Sign in inside MP, then continue',
               '请在 MP 内登录此账号后继续',
@@ -648,13 +729,16 @@ declare global {
             error: t('Stopped with an error', '遇到错误，已停止'),
           };
           container.innerHTML =
+            (connected
+              ? `<p>${esc(connected.name || t('Signed in', '已登录'))} · <label><input type="checkbox" data-rl-bookmark-enabled="${accountId}" ${connected.enabled ? 'checked' : ''}> ${t('Sync bookmarks every hour', '每小时自动同步收藏')}</label></p><p>${connected.enabled && connected.nextCheckAt ? t('Next check: ', '下次检查：') + new Date(connected.nextCheckAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : ''}</p>`
+              : `<p>${t('After sign-in, history import starts automatically.', '登录后自动开始初始化历史收藏。')}</p>`) +
             (['saved', 'liked'] as const)
               .map(list => {
                 const job = jobs.find(row => row.list === list);
                 return `<div class="rl-history-list"><div><strong>${list === 'saved' ? t('Saved notes', '收藏笔记') : t('Liked notes', '点赞笔记')}</strong><p>${job ? `${esc(labels[job.status])} · ${job.retained} ${t('links retained', '条链接已留存')}` : t('Not imported yet', '尚未导入')}</p>${job?.error ? `<p class="rl-error">${esc(job.error)}</p>` : ''}</div><div class="rl-history-actions"><button type="button" data-rl-history="${job?.status === 'running' ? 'pause' : 'start'}" data-account="${accountId}" data-list="${list}" ${busy && job?.status !== 'running' ? 'disabled' : ''}>${job?.status === 'running' ? t('Pause', '暂停') : job ? t('Continue / check again', '继续 / 再次检查') : t('Import history', '导入历史')}</button>${job?.url ? `<button type="button" data-rl-history-view="${esc(job.url)}" data-account="${accountId}">${t('Check account page', '查看账号页面')} ↗</button>` : ''}</div></div>`;
               })
               .join('') +
-            `<p class="rl-history-coverage">${t('Uses the normally rendered account list. Each note is checkpointed; unchanged pages are not proof of complete history. Original text and media download separately. Repeated runs skip retained notes.', '读取正常显示的账号列表，每条保存检查点。列表不再变化不代表已拿到全部历史；正文和媒体分别显示下载结果，继续时跳过已留存笔记。')}</p>`;
+            `<details class="rl-history-coverage"><summary>${t('Import details', '导入明细')}</summary><p>${t('Saved posts are retained locally. If the platform hides older posts or requests verification, synchronization stops and keeps its progress.', '已取得的原帖保留在本机。平台隐藏旧帖、要求验证或列表加载中断时，会保留进度并明确显示暂停原因。')}</p></details>`;
         });
       const account = host.querySelector<HTMLElement>(
         '[data-rl-source-account]',
@@ -882,8 +966,8 @@ declare global {
       }
       status(
         t(
-          'Ready · keep this page to read it later in your library.',
-          '已打开 · 收录后可在资料库内直接阅读。',
+          'Ready. Signed-in Xiaohongshu accounts synchronize bookmarks automatically.',
+          '已就绪。小红书账号登录后会自动同步收藏。',
         ),
       );
       await updateRelated(savedBrowserUrl);
@@ -927,6 +1011,36 @@ declare global {
     });
     host.addEventListener('change', event => {
       const input = event.target as HTMLInputElement;
+      if (input.dataset.rlBookmarkEnabled) {
+        run(async () => {
+          await call('bookmark-configure', {
+            sourceAccount: input.dataset.rlBookmarkEnabled,
+            enabled: input.checked,
+          });
+          await refresh();
+        });
+        return;
+      }
+      if (input.matches('[data-rl-sort]')) {
+        sort = input.value as 'time' | 'importance';
+        localStorage.setItem('mp:collection-sort', sort);
+        run(async () => {
+          await refresh();
+          renderLibrary();
+        });
+        return;
+      }
+      if (input.matches('[data-rl-scope]')) {
+        mediaScope = input.value;
+        cardLimit = 120;
+        renderList();
+        return;
+      }
+      if (input.matches('[data-rl-focus]')) {
+        focus = input.value;
+        run(refresh);
+        return;
+      }
       if (input.dataset.rlXOption) {
         run(async () => {
           const result = await sourceRequest('x-configure', {
@@ -1193,6 +1307,20 @@ declare global {
           return;
         }
         const action = button.dataset.rlAction;
+        if (action === 'more') {
+          cardLimit += 120;
+          renderList();
+          return;
+        }
+        if (action === 'sync-bookmarks') {
+          tab = 'library';
+          selected = '';
+          mediaScope = 'bookmarks';
+          filter = 'all';
+          render();
+          await refresh();
+          return;
+        }
         if (action === 'adopt-intent') {
           if (!(await savePending())) {
             return;
@@ -1496,6 +1624,15 @@ declare global {
       }
     });
     host.addEventListener(
+      'load',
+      event => {
+        if ((event.target as HTMLElement).closest?.('.rl-thumbnail')) {
+          scheduleMasonry();
+        }
+      },
+      true,
+    );
+    host.addEventListener(
       'error',
       event => {
         const image = event.target;
@@ -1513,6 +1650,10 @@ declare global {
     return {
       show() {
         visible = true;
+        const grid = host.querySelector('.rl-grid');
+        if (grid) {
+          masonryObserver.observe(grid);
+        }
         const navigationLabel = document.querySelector(
           '#nav-resources .mp-nav-label',
         );
@@ -1539,6 +1680,8 @@ declare global {
         }
         cancelAnimationFrame(browserResizeFrame);
         browserObserver.disconnect();
+        masonryObserver.disconnect();
+        cancelAnimationFrame(masonryFrame);
         void api.request('browser-command', {command: 'hide'});
         preview.close();
       },

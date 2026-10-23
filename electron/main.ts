@@ -13,6 +13,7 @@ import {
   collectionBrowserPartition,
   readCollectionPage,
   readXhsAccountId,
+  readXhsAccountIdentity,
   readXhsHistoryPage,
   advanceXhsHistoryPage,
   postFromCollectionPage,
@@ -23,6 +24,8 @@ import {
   ResourceBrowserHistory,
   type HistoryList,
 } from './resource_browser_history';
+import {ResourceBookmarkSync} from './resource_bookmark_sync';
+import {chronologicalResources, prioritizeResources} from './resource_relevance';
 import {
   updatePerceptionActivity,
   type PerceptionActivity,
@@ -3338,6 +3341,22 @@ function createDashboardBrowserView(
   view.webContents.on('did-stop-loading', () =>
     emitBrowserViewState({loading: false}),
   );
+  const observeLogin = () => {
+    const account = key.replace(/^collection:/, '');
+    if (!/^xiaohongshu-[12]$/.test(account)) {
+      return;
+    }
+    void view.webContents
+      .executeJavaScript(`(${readXhsAccountIdentity.toString()})()`)
+      .then((identity: {id: string; name: string} | null) => {
+        if (identity) {
+          return bookmarkSync().observe(account, identity);
+        }
+      })
+      .catch((error: unknown) => log(`bookmark login: ${String(error)}`));
+  };
+  view.webContents.on('did-stop-loading', observeLogin);
+  view.webContents.on('did-navigate-in-page', observeLogin);
   view.webContents.on('did-navigate', () => emitBrowserViewState());
   view.webContents.on('did-navigate-in-page', () => emitBrowserViewState());
   view.webContents.on('page-title-updated', () => emitBrowserViewState());
@@ -6527,11 +6546,12 @@ let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
 let resourceService: ResourceCollectionService | null = null;
 let resourceXSource: XResourceSource | null = null;
 let resourceHistory: ResourceBrowserHistory | null = null;
+let resourceBookmarks: ResourceBookmarkSync | null = null;
 const collectionWorkerViews = new Map<string, Electron.BrowserWindow>();
 
 function collectionWorkerView(
   account: string,
-  purpose: 'capture' | 'history',
+  purpose: 'capture' | 'history' | 'account',
 ): Electron.BrowserWindow {
   const key = `${purpose}:${account}`;
   const view = collectionWorkerViews.get(key);
@@ -6566,7 +6586,7 @@ function collectionWorkerView(
 
 function releaseCollectionWorkerView(
   account: string,
-  purpose: 'capture' | 'history',
+  purpose: 'capture' | 'history' | 'account',
 ): void {
   const key = `${purpose}:${account}`;
   const view = collectionWorkerViews.get(key);
@@ -6576,15 +6596,60 @@ function releaseCollectionWorkerView(
   }
 }
 
+function bookmarkSync(): ResourceBookmarkSync {
+  if (!resourceBookmarks) {
+    resourceBookmarks = new ResourceBookmarkSync({
+      folder: FABRIC_DATA_DIR,
+      readAccount: async account => {
+        const contents = collectionWorkerView(account, 'account').webContents;
+        try {
+          await loadCollectionUrl(contents, 'https://www.xiaohongshu.com/');
+          for (let round = 0; round < 12; round++) {
+            const identity = await contents.executeJavaScript(
+              `(${readXhsAccountIdentity.toString()})()`,
+            );
+            if (identity) {
+              return identity;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          return null;
+        } finally {
+          releaseCollectionWorkerView(account, 'account');
+        }
+      },
+      sync: async account => {
+        try {
+          await resourceBrowserHistory().run(account, 'saved', true);
+          const job = resourceBrowserHistory()
+            .snapshot()
+            .find(item => item.account === account && item.list === 'saved');
+          if (job?.error) {
+            throw new Error(job.error);
+          }
+        } finally {
+          releaseCollectionWorkerView(account, 'history');
+        }
+      },
+    });
+  }
+  return resourceBookmarks;
+}
+
 function resourceBrowserHistory(): ResourceBrowserHistory {
   if (!resourceHistory) {
     resourceHistory = new ResourceBrowserHistory({
       folder: FABRIC_DATA_DIR,
       readPage: readCollectionHistoryPage,
-      importLink: async (account, link) => {
+      importLink: async (account, link, order) => {
         const items = await resources().addBatch({
           text: link.url,
           sourceAccount: account,
+        });
+        initializeStashRuntime().updateResource(items[0].id, {
+          bookmarkBatch: order.batch,
+          bookmarkPosition: order.index,
+          ...(link.title ? {title: link.title} : {}),
         });
         void resources()
           .drainCaptures()
@@ -6837,12 +6902,45 @@ ipcMain.handle(
         };
       }
       if (raw.action === 'list' || raw.action === 'search') {
+        for (const entry of dashboardBrowserRegistry.snapshot()) {
+          const account = entry.key.replace(/^collection:/, '');
+          if (
+            /^xiaohongshu-[12]$/.test(account) &&
+            !bookmarkSync()
+              .snapshot()
+              .some(item => item.account === account)
+          ) {
+            void entry.view.webContents
+              .executeJavaScript(`(${readXhsAccountIdentity.toString()})()`)
+              .then((identity: {id: string; name: string} | null) => {
+                if (identity) {
+                  return bookmarkSync().observe(account, identity);
+                }
+              })
+              .catch((error: unknown) =>
+                log(`bookmark login check: ${String(error)}`),
+              );
+          }
+        }
+        const recent: Array<{title: string; projectId: string}> =
+          conversations().list(5);
+        const focus = input.focus || recent.map(item => item.title).join(' · ');
+        const items =
+          raw.action === 'search'
+            ? service.search(String(input.text || ''))
+            : service.list();
+        const ordered =
+          input.sort === 'importance'
+            ? prioritizeResources(
+                items,
+                focus,
+                recent.map(item => item.projectId).filter(Boolean),
+              )
+            : chronologicalResources(items);
         return {
           ok: true,
-          items: (raw.action === 'search'
-            ? service.search(String(input.text || ''))
-            : service.list()
-          ).map(item => ({
+          focus,
+          items: ordered.map(item => ({
             ...item,
             previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
           })),
@@ -6855,6 +6953,7 @@ ipcMain.handle(
             })),
           source: xResourceSource().snapshot(),
           histories: resourceBrowserHistory().snapshot(),
+          accounts: bookmarkSync().snapshot(),
         };
       }
       if (raw.action === 'add') {
@@ -6880,13 +6979,33 @@ ipcMain.handle(
           .catch(error => log(`resource capture: ${String(error)}`));
         return {ok: true, items, entry: items[0]};
       }
+      if (raw.action === 'bookmark-configure') {
+        const account = input.sourceAccount || '';
+        bookmarkSync().configure(account, input.enabled === true);
+        if (input.enabled) {
+          void bookmarkSync().check();
+        } else {
+          resourceBrowserHistory().pause(account, 'saved');
+        }
+        return {
+          ok: true,
+          accounts: bookmarkSync().snapshot(),
+          histories: resourceBrowserHistory().snapshot(),
+        };
+      }
       if (raw.action === 'history-start' || raw.action === 'history-pause') {
         const account = input.sourceAccount || '';
         collectionBrowserPartition(account);
         const list = input.historyList || 'saved';
         if (raw.action === 'history-pause') {
+          if (list === 'saved') {
+            bookmarkSync().configure(account, false);
+          }
           resourceBrowserHistory().pause(account, list);
         } else {
+          if (list === 'saved') {
+            bookmarkSync().configure(account, true);
+          }
           void resourceBrowserHistory()
             .run(account, list)
             .catch(error => log(`resource history: ${String(error)}`))
@@ -9460,6 +9579,7 @@ if (gotLock) {
       try {
         initializeStashRuntime();
         xResourceSource();
+        void bookmarkSync().start().catch(error => log(`bookmark startup: ${String(error)}`));
         void resources().drain().catch(error => log(`resource recovery: ${String(error)}`));
       } catch (error) {
         log(
@@ -9714,6 +9834,7 @@ if (gotLock) {
 app.on('will-quit', () => {
   resourceHistory?.stop();
   resourceService?.stop();
+  resourceBookmarks?.stop();
   resourceXSource?.stop();
   projectTerminal.stop();
   void contextTrackerRuntime?.stop();
