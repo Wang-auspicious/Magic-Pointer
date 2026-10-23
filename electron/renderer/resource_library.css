@@ -927,3 +927,39 @@
   font-size: 13px;
   color: var(--mp-muted);
 }
+.rl-history-list {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+}
+.rl-history-list strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.rl-history-list p,
+.rl-history-coverage {
+  font-size: 12px;
+  color: var(--mp-muted);
+  line-height: 1.6;
+  margin: 4px 0;
+}
+.rl-history {
+  padding: 0 0 20px;
+  border-bottom: 1px solid var(--mp-rule);
+}
+.rl-history-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+@container (max-width: 720px) {
+  .rl-history-list {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}

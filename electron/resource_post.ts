@@ -79,6 +79,20 @@ export function postPlatform(url: string): ResourcePlatform {
   return 'web';
 }
 
+export function socialPostIdentity(url: string): string {
+  const platform = postPlatform(url);
+  const path = new URL(url).pathname;
+  const id =
+    platform === 'x'
+      ? /\/status\/(\d+)/.exec(path)?.[1]
+      : platform === 'xiaohongshu'
+        ? /\/(?:explore|search_result|note|discovery\/item|user\/profile\/[^/]+)\/([\da-f]+)(?:\/|$)/i.exec(
+            path,
+          )?.[1]
+        : undefined;
+  return id ? `${platform}:${id}` : url;
+}
+
 // Hydration contains JSON with bare undefined values. Read it as data, never eval.
 function hydration(html: string): Record<string, unknown> {
   const marker = /window\.__INITIAL_STATE__\s*=\s*/g.exec(html);

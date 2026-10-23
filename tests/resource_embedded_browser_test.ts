@@ -86,6 +86,7 @@ test('two imports in the same account cannot navigate over each other', async ()
     `${declaration('captureCollectionPost')}; captureCollectionPost`,
     {
       collectionCaptureQueues: new Map(),
+      releaseCollectionWorkerView() {},
       captureCollectionPostPage: async (url: string) => {
         calls.push('start:' + url);
         if (url === 'first') {

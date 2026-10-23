@@ -8,6 +8,7 @@ import type {
 import type {XSourceState} from './resource_x_source';
 import type {ResourcePreview} from './resource_preview';
 import type {ResourcePost} from './resource_post';
+import type {HistoryJob, HistoryList} from './resource_browser_history';
 
 export interface ResourceResponse {
   ok: boolean;
@@ -22,6 +23,7 @@ export interface ResourceResponse {
   handoffs?: ProjectInboxEntry[];
   handoffReceipts?: HandoffReceipt[];
   post?: ResourcePost;
+  histories?: Array<Omit<HistoryJob, 'seen'>>;
   browser?: {
     url: string;
     title: string;
@@ -48,6 +50,8 @@ export type ResourceAction =
   | 'read-post'
   | 'browser-command'
   | 'browser-state'
+  | 'history-start'
+  | 'history-pause'
   | 'x-connect'
   | 'x-configure'
   | 'x-sync';
@@ -55,6 +59,7 @@ export type CollectionBrowserCommand =
   'back' | 'forward' | 'reload' | 'stop' | 'resize' | 'hide';
 export interface ResourceRequest {
   sourceAccount?: string;
+  historyList?: HistoryList;
   restore?: boolean;
   command?: CollectionBrowserCommand;
   material?: 'original' | 'paper' | 'handoff';

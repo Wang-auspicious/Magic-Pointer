@@ -210,6 +210,130 @@ test('opening a resource updates revisit history without invalidating an in-flig
   );
 });
 
+test('one social note keeps its identity across changed access tokens without merging separate accounts', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-social-identity-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+  });
+  const first = await service.add({
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=old',
+    sourceAccount: 'xiaohongshu-1',
+  });
+  const repeated = await service.add({
+    url: 'https://www.xiaohongshu.com/user/profile/author/abc123?xsec_token=new',
+    sourceAccount: 'xiaohongshu-1',
+  });
+  assert.equal(repeated.id, first.id);
+  assert.match(repeated.collection!.url, /xsec_token=new/);
+  const other = await service.add({
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=other',
+    sourceAccount: 'xiaohongshu-2',
+  });
+  assert.notEqual(other.id, first.id);
+});
+
+test('enabled automatic organization queues captured originals rather than analyzing bare share links', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-source-organize-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    canOrganize: () => true,
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Reference',
+      text: 'Original details for later recall',
+      author: {name: 'Author'},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    analyze: async input => {
+      assert.ok(
+        input.attachments.some(file =>
+          readFileSync(file, 'utf8').includes(
+            'Original details for later recall',
+          ),
+        ),
+      );
+      return {
+        ok: true,
+        answer: JSON.stringify({
+          summary: 'A useful reference',
+          coverage: 'Saved original text',
+          decision: 'keep',
+          suggestedIntent: 'reference',
+        }),
+      };
+    },
+  });
+  const [item] = await service.addBatch({
+    text: 'https://example.com/auto-reference',
+  });
+  await service.drainCaptures();
+  assert.equal(stash.get(item.id).collection.state, 'queued');
+  await service.drain();
+  assert.equal(stash.get(item.id).collection.suggestedIntent, 'reference');
+  assert.equal(stash.get(item.id).collection.state, 'ready');
+});
+
+test('manual organization waits for a queued original before sending attachments to MP', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-original-before-analysis-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Original',
+      text: 'Original body must arrive before analysis',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    analyze: async input => {
+      assert.ok(
+        input.attachments.some(file =>
+          readFileSync(file, 'utf8').includes(
+            'Original body must arrive before analysis',
+          ),
+        ),
+      );
+      return {
+        ok: true,
+        answer: JSON.stringify({
+          summary: 'Original analyzed',
+          coverage: 'Full text',
+          decision: 'keep',
+        }),
+      };
+    },
+  });
+  const [item] = await service.addBatch({
+    text: 'https://example.com/original-first',
+  });
+  const result = await service.process(item.id);
+  assert.equal(result.collection!.captureStatus, 'saved');
+  assert.equal(result.collection!.state, 'ready');
+});
+
 test('collected page retains its source and editable project intent after reopening; stale analysis cannot overwrite an edit', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'mp-resources-'));
   const runtime = createStashRuntime({baseDir, clipboard});

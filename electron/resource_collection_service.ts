@@ -23,6 +23,7 @@ import {readResourcePreview, type ResourcePreview} from './resource_preview';
 import {
   parseSharedLinks,
   postPlatform,
+  socialPostIdentity,
   type ResourcePost,
 } from './resource_post';
 import {ResourcePostStore} from './resource_post_store';
@@ -252,24 +253,38 @@ export class ResourceCollectionService {
       throw new Error('Project not found.');
     }
     const text = String(input.text || url).trim();
+    const platform = url ? postPlatform(url) : 'web';
+    const sourceAccount =
+      input.sourceAccount ||
+      (platform === 'xiaohongshu'
+        ? 'xiaohongshu-1'
+        : platform === 'x'
+          ? 'x-1'
+          : 'web');
+    const identity = url ? socialPostIdentity(url) : '';
     const previous =
       url &&
       this.list().find(
         item =>
-          item.collection?.url === url &&
-          (!input.sourceAccount ||
-            item.collection?.sourceAccount === input.sourceAccount) &&
-          readFileSync(
-            resolve(this.options.stash().baseDir, item.relPath),
-            'utf8',
-          ) === text,
+          Boolean(item.collection?.url) &&
+          socialPostIdentity(item.collection!.url) === identity &&
+          item.collection?.sourceAccount === sourceAccount &&
+          (identity !== url ||
+            readFileSync(
+              resolve(this.options.stash().baseDir, item.relPath),
+              'utf8',
+            ) === text),
       );
     if (previous) {
+      const retained =
+        !previous.collection?.postPath && previous.collection?.url !== url
+          ? this.options.stash().updateResource(previous.id, {url})
+          : previous;
       return input.capture !== false &&
         this.options.capturePost &&
-        !previous.collection?.postPath
-        ? this.capture(previous.id)
-        : previous;
+        !retained.collection?.postPath
+        ? this.capture(retained.id)
+        : retained;
     }
     if (!text) {
       throw new Error('Add text, a link, or a file.');
@@ -279,13 +294,7 @@ export class ResourceCollectionService {
       app: url ? new URL(url).hostname : 'Magic Pointer',
       elementName: input.title || text.slice(0, 80),
       collection: resourceCollection({
-        sourceAccount:
-          input.sourceAccount ||
-          (url && postPlatform(url) === 'xiaohongshu'
-            ? 'xiaohongshu-1'
-            : url && postPlatform(url) === 'x'
-              ? 'x-1'
-              : 'web'),
+        sourceAccount,
         url,
         title: input.title || text.slice(0, 80),
         projectId: input.projectId,
@@ -363,15 +372,13 @@ export class ResourceCollectionService {
                 result.collection.sourceAccount &&
               item.collection.captureStatus === 'queued'
             ) {
-              this.options
-                .stash()
-                .updateResource(item.id, {
-                  captureStatus:
-                    result.collection.captureStatus === 'auth_required'
-                      ? 'auth_required'
-                      : 'error',
-                  captureError: result.collection.captureError,
-                });
+              this.options.stash().updateResource(item.id, {
+                captureStatus:
+                  result.collection.captureStatus === 'auth_required'
+                    ? 'auth_required'
+                    : 'error',
+                captureError: result.collection.captureError,
+              });
             }
           }
         }
@@ -406,9 +413,15 @@ export class ResourceCollectionService {
     if (pending) {
       return pending;
     }
-    const operation = this.capturePost(id).finally(() =>
-      this.capturing.delete(id),
-    );
+    const operation = this.capturePost(id)
+      .then(entry =>
+        entry.collection?.postPath &&
+        entry.collection.state === 'inbox' &&
+        this.options.canOrganize?.()
+          ? this.enqueue(entry.id)
+          : entry,
+      )
+      .finally(() => this.capturing.delete(id));
     this.capturing.set(id, operation);
     return operation;
   }
@@ -583,9 +596,16 @@ export class ResourceCollectionService {
       throw new Error('This resource is already being processed.');
     }
     const stash = this.options.stash();
-    const entry = stash.get(id);
+    let entry = stash.get(id);
     if (!entry) {
       throw new Error('resource_not_found');
+    }
+    if (
+      this.options.capturePost &&
+      ['queued', 'loading'].includes(entry.collection?.captureStatus || '')
+    ) {
+      await this.capture(id);
+      entry = stash.get(id)!;
     }
     const started = resourceCollection(entry.collection);
     const existingTask =
@@ -629,6 +649,7 @@ export class ResourceCollectionService {
       if (started.postPath) {
         const post = this.post(id);
         media.coverage = post.coverage;
+        media.coverage += `\n${post.media.filter(asset => asset.kind === 'image' && asset.localPath).length} images are locally available; ${post.media.filter(asset => !asset.localPath).length} media files are missing and have not been read.`;
         for (const asset of post.media) {
           if (asset.localPath && asset.kind === 'image') {
             media.attachments.push(projectPath(stash.baseDir, asset.localPath));
@@ -969,13 +990,11 @@ export class ResourceCollectionService {
         item.collection?.captureStatus === 'loading' &&
         !this.capturing.has(item.id)
       ) {
-        this.options
-          .stash()
-          .updateResource(item.id, {
-            captureStatus: 'queued',
-            captureError:
-              'Capture was interrupted. The retained original is available; missing media will resume.',
-          });
+        this.options.stash().updateResource(item.id, {
+          captureStatus: 'queued',
+          captureError:
+            'Capture was interrupted. The retained original is available; missing media will resume.',
+        });
       }
       if (
         !this.processing.has(item.id) &&

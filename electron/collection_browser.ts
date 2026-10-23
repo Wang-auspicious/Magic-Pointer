@@ -1,4 +1,5 @@
 import {parseXhsPage, type ResourcePost} from './resource_post';
+import type {HistoryPage} from './resource_browser_history';
 
 export const COLLECTION_ACCOUNTS = [
   {
@@ -62,14 +63,14 @@ export function readCollectionPage(): CollectionPage {
     truncated: false,
   };
   const verification =
-    /安全验证|verify you are human|确认您是真人/i.test(title) ||
-    (body.length < 1500 &&
-      /安全验证|完成验证|verify you are human|unusual activity|确认您是真人/i.test(
-        body,
-      ));
-  if (verification) {
-    return {...result, error: 'verification_required'};
-  }
+    /(?:^|[-|])\s*(?:安全验证|人机验证|verify you are human|确认您是真人)\s*$/i.test(
+      title,
+    ) ||
+    Boolean(
+      document.querySelector(
+        'iframe[src*="captcha"],[class*="captcha-container"]',
+      ),
+    );
   if (location.hostname.endsWith('xiaohongshu.com')) {
     const id =
       /\/(?:explore|search_result|note|discovery\/item|user\/profile\/[^/]+)\/([\da-f]+)(?:\/|$)/i.exec(
@@ -89,6 +90,9 @@ export function readCollectionPage(): CollectionPage {
       });
       return result;
     }
+    if (verification) {
+      return {...result, error: 'verification_required'};
+    }
     if (!id) {
       return {
         ...result,
@@ -101,6 +105,9 @@ export function readCollectionPage(): CollectionPage {
       return {...result, error: 'auth_required'};
     }
     return {...result, error: 'post_loading'};
+  }
+  if (verification) {
+    return {...result, error: 'verification_required'};
   }
   const xId = /\/status\/(\d+)/.exec(location.pathname)?.[1];
   let root: Element | null = null;
@@ -199,4 +206,117 @@ export function postFromCollectionPage(page: CollectionPage): ResourcePost {
     usedBackend: 'mp.embedded_browser.dom',
     timingMs: 0,
   };
+}
+
+export function readXhsAccountId(): string {
+  const state = (
+    window as unknown as {
+      __INITIAL_STATE__?: {
+        user?: {
+          userInfo?: {
+            user_id?: string;
+            userId?: string;
+            userID?: string;
+            _value?: {user_id?: string; userId?: string; userID?: string};
+          };
+        };
+      };
+    }
+  ).__INITIAL_STATE__;
+  const user = state?.user?.userInfo;
+  const info = user?._value || user;
+  return String(info?.user_id || info?.userId || info?.userID || '');
+}
+
+// Uses the user's normal rendered list; no signing, cookie export or private API.
+export function readXhsHistoryPage(): HistoryPage {
+  const body = document.body?.innerText || '';
+  const result: HistoryPage = {
+    url: location.href,
+    links: [],
+    atEnd: false,
+    error: '',
+    coverage:
+      'Notes exposed by the current account list; original captures have their own download status.',
+    position: 0,
+  };
+  if (
+    /安全验证|verify you are human/i.test(document.title) ||
+    document.querySelector(
+      'iframe[src*="captcha"],[class*="captcha-container"]',
+    )
+  ) {
+    return {...result, error: 'verification_required'};
+  }
+  if (/登录后查看|登录后可查看|请先登录|手机号登录/.test(body)) {
+    return {...result, error: 'auth_required'};
+  }
+  const cards = [
+    ...document.querySelectorAll<HTMLElement>('section.note-item'),
+  ].filter(
+    card =>
+      !card.classList.contains('query-note-item') &&
+      card.getClientRects().length > 0,
+  );
+  for (const card of cards) {
+    const anchor =
+      card.querySelector<HTMLAnchorElement>('a.cover.mask[href]') ||
+      [...card.querySelectorAll<HTMLAnchorElement>('a[href]')].find(link =>
+        /\/(?:explore|search_result|note|discovery\/item|user\/profile\/[^/]+)\/[\da-f]+(?:\?|$)/i.test(
+          link.href,
+        ),
+      );
+    if (!anchor) {
+      continue;
+    }
+    const url = new URL(anchor.href, location.origin);
+    const id =
+      /\/(?:explore|search_result|note|discovery\/item|user\/profile\/[^/]+)\/([\da-f]+)(?:\/|$)/i.exec(
+        url.pathname,
+      )?.[1];
+    if (
+      id &&
+      url.hostname.endsWith('xiaohongshu.com') &&
+      !result.links.some(link => link.id === id)
+    ) {
+      result.links.push({
+        id,
+        url: url.href,
+        title: card.querySelector('.title')?.textContent?.trim() || '',
+      });
+    }
+  }
+  let scroller: Element | null =
+    cards[0]?.parentElement || document.scrollingElement;
+  while (
+    scroller?.parentElement &&
+    scroller.scrollHeight <= scroller.clientHeight + 2
+  ) {
+    scroller = scroller.parentElement;
+  }
+  result.position = (scroller?.scrollTop || 0) + (scroller?.scrollHeight || 0);
+  result.atEnd = [
+    ...(scroller || document.body).querySelectorAll<HTMLElement>('p,div,span'),
+  ].some(
+    element =>
+      !element.closest('section.note-item') &&
+      element.getClientRects().length > 0 &&
+      /^(?:没有更多(?:了)?[~～。！!]?|已经到底(?:了)?[~～。！!]?|暂时没有收藏|还没有收藏|暂无收藏|暂无点赞|还没有赞过|暂无笔记)$/.test(
+        element.innerText.trim(),
+      ),
+  );
+  return result;
+}
+
+export function advanceXhsHistoryPage(): void {
+  let scroller: Element | null =
+    document.querySelector('section.note-item:not(.query-note-item)')
+      ?.parentElement || document.scrollingElement;
+  while (
+    scroller?.parentElement &&
+    scroller.scrollHeight <= scroller.clientHeight + 2
+  ) {
+    scroller = scroller.parentElement;
+  }
+  scroller?.scrollTo({top: scroller.scrollHeight, behavior: 'instant'});
 }

@@ -55,6 +55,7 @@ declare global {
     let sourcePending = false;
     let sourceFeedback = '';
     let sourceError = false;
+    let sourceTimer: ReturnType<typeof setTimeout> | undefined;
     let savedBrowserUrl = 'https://x.com';
     let browserSlot =
       localStorage.getItem('mp:collection-account') || 'xiaohongshu-1';
@@ -144,6 +145,17 @@ declare global {
         ...item.collection,
       }) as ResourceCollection;
     const current = () => snapshot.items?.find(item => item.id === selected);
+    function pausePostMedia(release = false) {
+      host
+        .querySelectorAll<HTMLMediaElement>('.rl-post video,.rl-post audio')
+        .forEach(media => {
+          media.pause();
+          if (release) {
+            media.removeAttribute('src');
+            media.load();
+          }
+        });
+    }
     function status(message: string, error = false) {
       const output = host.querySelector<HTMLElement>('[data-resource-status]');
       if (output) {
@@ -188,6 +200,8 @@ declare global {
       return `<option value="">${t('Choose a project', '选择项目')}</option>${(snapshot.projects || []).map(project => `<option value="${esc(project.id)}" ${value === project.id ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}`;
     }
     function render() {
+      pausePostMedia(true);
+      clearTimeout(sourceTimer);
       if (tab !== 'browser') {
         void api.request('browser-command', {command: 'hide'});
       }
@@ -213,9 +227,19 @@ declare global {
       }
       if (tab === 'sources') {
         renderSources();
+        scheduleSourceRefresh();
+      }
+    }
+    function scheduleSourceRefresh() {
+      clearTimeout(sourceTimer);
+      if (visible && tab === 'sources') {
+        sourceTimer = setTimeout(() => {
+          void refresh().finally(scheduleSourceRefresh);
+        }, 2500);
       }
     }
     function renderLibrary() {
+      pausePostMedia(true);
       host.querySelector('.rl-content')!.innerHTML =
         `<form class="rl-capture" data-rl-capture><span class="rl-add-mark" aria-hidden="true">＋</span><textarea name="text" rows="1" placeholder="${t('Drop a thought. Paste a link. Keep something good.', '记下一点想法，粘贴一个链接，留住值得回看的东西。')}" aria-label="${t('Text or link to collect', '要收集的文字或链接')}" required>${esc(captureDraft)}</textarea><button type="submit" ${capturing ? 'disabled' : ''}>${t('Keep', '收下')} ↗</button></form>
         <div class="rl-tools"><div class="rl-filters">${[
@@ -379,6 +403,7 @@ declare global {
         .querySelector('.rl-workspace')
         ?.classList.toggle('has-detail', Boolean(item));
       if (!item) {
+        pausePostMedia(true);
         host.querySelector('.rl-workspace')?.classList.remove('is-reading');
         delete panel.dataset.contentKey;
         postGeneration++;
@@ -397,6 +422,7 @@ declare global {
       if (panel.dataset.contentKey === contentKey) {
         return;
       }
+      pausePostMedia(true);
       panel.dataset.contentKey = contentKey;
       editorRevision = detail.revision;
       const busy = pending.has(item.id) || detail.state === 'processing';
@@ -503,7 +529,7 @@ declare global {
           .filter(account => account.id !== 'web')
           .map(
             account =>
-              `<section class="rl-source-row"><div><h3>${esc(account.name)}</h3><p>${t('A separate sign-in session saved on this device.', '独立登录会话，保存在这台电脑。')}</p></div><button type="button" data-rl-connect-account="${account.id}">${t('Open in MP', '在 MP 内打开')} ↗</button></section>`,
+              `<section class="rl-source-account"><div class="rl-source-row"><div><h3>${esc(account.name)}</h3><p>${t('A separate sign-in session saved on this device.', '独立登录会话，保存在这台电脑。')}</p></div><button type="button" data-rl-connect-account="${account.id}">${t('Open in MP', '在 MP 内打开')} ↗</button></div>${account.id.startsWith('xiaohongshu-') ? `<div data-rl-history-account="${account.id}" class="rl-history"></div>` : ''}</section>`,
           )
           .join('')}
         <details class="rl-api-options"><summary>${t('Optional X developer API connection', '可选：X 开发者 API 接入')}</summary>
@@ -517,7 +543,7 @@ declare global {
         <div class="rl-source-options"><label><input type="checkbox" data-rl-x-option="organize" ${source?.organize ? 'checked' : ''}> ${t('Organize new imports with MP (uses model credits)', '自动整理新导入内容（消耗模型额度）')}</label></div>
         ${[
           [
-            '小红书 / 抖音 / B站',
+            '抖音 / B站',
             t(
               'Browse and clip manually. Automatic account collection is not enabled without a verified permitted interface.',
               '可在内置浏览器中正常浏览、主动收录。未核实允许的接口前，不启用账号自动采集。',
@@ -544,6 +570,40 @@ declare global {
         return;
       }
       const source = snapshot.source;
+      host
+        .querySelectorAll<HTMLElement>('[data-rl-history-account]')
+        .forEach(container => {
+          const accountId = container.dataset.rlHistoryAccount!;
+          const jobs = (snapshot.histories || []).filter(
+            job => job.account === accountId,
+          );
+          const busy = jobs.some(job => job.status === 'running');
+          const labels = {
+            running: t('Reading list…', '正在读取列表…'),
+            paused: t('Paused · end not confirmed', '已暂停 · 未确认历史到底'),
+            complete: t(
+              'List end observed · check saved media in the library',
+              '已看到列表底部 · 媒体保存结果见资料库',
+            ),
+            auth_required: t(
+              'Sign in inside MP, then continue',
+              '请在 MP 内登录此账号后继续',
+            ),
+            verification_required: t(
+              'Complete verification inside MP, then continue',
+              '请在 MP 内完成验证后继续',
+            ),
+            error: t('Stopped with an error', '遇到错误，已停止'),
+          };
+          container.innerHTML =
+            (['saved', 'liked'] as const)
+              .map(list => {
+                const job = jobs.find(row => row.list === list);
+                return `<div class="rl-history-list"><div><strong>${list === 'saved' ? t('Saved notes', '收藏笔记') : t('Liked notes', '点赞笔记')}</strong><p>${job ? `${esc(labels[job.status])} · ${job.retained} ${t('links retained', '条链接已留存')}` : t('Not imported yet', '尚未导入')}</p>${job?.error ? `<p class="rl-error">${esc(job.error)}</p>` : ''}</div><div class="rl-history-actions"><button type="button" data-rl-history="${job?.status === 'running' ? 'pause' : 'start'}" data-account="${accountId}" data-list="${list}" ${busy && job?.status !== 'running' ? 'disabled' : ''}>${job?.status === 'running' ? t('Pause', '暂停') : job ? t('Continue / check again', '继续 / 再次检查') : t('Import history', '导入历史')}</button>${job?.url ? `<button type="button" data-rl-history-view="${esc(job.url)}" data-account="${accountId}">${t('Check account page', '查看账号页面')} ↗</button>` : ''}</div></div>`;
+              })
+              .join('') +
+            `<p class="rl-history-coverage">${t('Uses the normally rendered account list. Each note is checkpointed; unchanged pages are not proof of complete history. Original text and media download separately. Repeated runs skip retained notes.', '读取正常显示的账号列表，每条保存检查点。列表不再变化不代表已拿到全部历史；正文和媒体分别显示下载结果，继续时跳过已留存笔记。')}</p>`;
+        });
       const account = host.querySelector<HTMLElement>(
         '[data-rl-source-account]',
       );
@@ -951,6 +1011,26 @@ declare global {
             browserAccounts.find(account => account.id === browserSlot)!.url,
             true,
           );
+          return;
+        }
+        if (button.dataset.rlHistory) {
+          button.setAttribute('disabled', '');
+          const result = await call(
+            button.dataset.rlHistory === 'pause'
+              ? 'history-pause'
+              : 'history-start',
+            {
+              sourceAccount: button.dataset.account,
+              historyList: button.dataset.list as 'saved' | 'liked',
+            },
+          );
+          snapshot.histories = result.histories;
+          syncSourceView();
+          return;
+        }
+        if (button.dataset.rlHistoryView) {
+          browserSlot = button.dataset.account!;
+          await browse(button.dataset.rlHistoryView);
           return;
         }
         if (button.dataset.rlBrowserCommand) {
@@ -1363,13 +1443,16 @@ declare global {
         } else if (tab === 'browser') {
           renderBrowser();
         }
+        scheduleSourceRefresh();
         void refresh();
       },
       hide() {
+        pausePostMedia();
         visible = false;
+        clearTimeout(sourceTimer);
         postGeneration++;
         const readingPanel = host.querySelector<HTMLElement>('.rl-detail');
-        if (readingPanel) {
+        if (readingPanel?.querySelector('[data-rl-post][aria-busy="true"]')) {
           delete readingPanel.dataset.contentKey;
         }
         cancelAnimationFrame(browserResizeFrame);

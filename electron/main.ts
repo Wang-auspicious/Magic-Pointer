@@ -12,10 +12,17 @@ import type {
 import {
   collectionBrowserPartition,
   readCollectionPage,
+  readXhsAccountId,
+  readXhsHistoryPage,
+  advanceXhsHistoryPage,
   postFromCollectionPage,
   type CollectionPage,
 } from './collection_browser';
 import type {ResourcePost} from './resource_post';
+import {
+  ResourceBrowserHistory,
+  type HistoryList,
+} from './resource_browser_history';
 import {
   updatePerceptionActivity,
   type PerceptionActivity,
@@ -3283,6 +3290,10 @@ function destroyDashboardBrowserView(view: DashboardBrowserView): void {
 
 function destroyDashboardBrowserViews(): void {
   dashboardBrowserRegistry.closeAll(destroyDashboardBrowserView);
+  for (const view of collectionWorkerViews.values()) {
+    view.destroy();
+  }
+  collectionWorkerViews.clear();
   dashboardBrowserBounds = null;
 }
 
@@ -3389,8 +3400,8 @@ function createDashboardBrowserView(
       .find((item: any) => item.key === key);
     if (entry) {
       dashboardBrowserRegistry.close(key, destroyDashboardBrowserView);
+      setDashboardBrowserVisibility(dashboardBrowserRegistry.active?.key || '');
     }
-    setDashboardBrowserVisibility(dashboardBrowserRegistry.active?.key || '');
     emitBrowserViewState();
   });
   return view;
@@ -6515,6 +6526,142 @@ let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
 
 let resourceService: ResourceCollectionService | null = null;
 let resourceXSource: XResourceSource | null = null;
+let resourceHistory: ResourceBrowserHistory | null = null;
+const collectionWorkerViews = new Map<string, Electron.BrowserWindow>();
+
+function collectionWorkerView(
+  account: string,
+  purpose: 'capture' | 'history',
+): Electron.BrowserWindow {
+  const key = `${purpose}:${account}`;
+  const view = collectionWorkerViews.get(key);
+  if (!view || view.webContents.isDestroyed()) {
+    // Hidden content views suppress scroll/visibility events. A temporary offscreen
+    // renderer keeps list loading alive without taking over the user's page.
+    const created: Electron.BrowserWindow = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 900,
+      webPreferences: {
+        partition: collectionBrowserPartition(account),
+        offscreen: true,
+        backgroundThrottling: false,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+      },
+    });
+    securityHardening.registerBrowserContents(created.webContents);
+    created.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
+    created.webContents.setFrameRate(10);
+    collectionWorkerViews.set(key, created);
+    created.webContents.once('destroyed', () =>
+      collectionWorkerViews.delete(key),
+    );
+    return created;
+  }
+  return view;
+}
+
+function releaseCollectionWorkerView(
+  account: string,
+  purpose: 'capture' | 'history',
+): void {
+  const key = `${purpose}:${account}`;
+  const view = collectionWorkerViews.get(key);
+  collectionWorkerViews.delete(key);
+  if (view) {
+    view.destroy();
+  }
+}
+
+function resourceBrowserHistory(): ResourceBrowserHistory {
+  if (!resourceHistory) {
+    resourceHistory = new ResourceBrowserHistory({
+      folder: FABRIC_DATA_DIR,
+      readPage: readCollectionHistoryPage,
+      importLink: async (account, link) => {
+        const items = await resources().addBatch({
+          text: link.url,
+          sourceAccount: account,
+        });
+        void resources()
+          .drainCaptures()
+          .then(() => resources().drain())
+          .catch(error => log(`resource capture: ${String(error)}`));
+        return items[0].id;
+      },
+    });
+  }
+  return resourceHistory;
+}
+
+async function loadCollectionUrl(
+  contents: Electron.WebContents,
+  url: string,
+): Promise<void> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      contents.loadURL(url),
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => {
+          contents.stop();
+          reject(
+            new Error(
+              'Page load timed out after 30 seconds. The original link is retained.',
+            ),
+          );
+        }, 30000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+async function readCollectionHistoryPage(
+  account: string,
+  list: HistoryList,
+  reset: boolean,
+) {
+  const contents = collectionWorkerView(account, 'history').webContents;
+  if (reset) {
+    await loadCollectionUrl(contents, 'https://www.xiaohongshu.com/');
+    let userId = '';
+    for (let round = 0; round < 12 && !userId; round++) {
+      userId = await contents.executeJavaScript(
+        `(${readXhsAccountId.toString()})()`,
+      );
+      if (!userId) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    if (!userId) {
+      const page = await contents.executeJavaScript(
+        `(${readXhsHistoryPage.toString()})()`,
+      );
+      return {
+        ...page,
+        links: [],
+        error:
+          page.error ||
+          'auth_required: Sign in to this account inside MP before importing its lists.',
+      };
+    }
+    const url = new URL(
+      `https://www.xiaohongshu.com/user/profile/${encodeURIComponent(userId)}`,
+    );
+    url.searchParams.set('tab', list === 'saved' ? 'fav' : 'liked');
+    url.searchParams.set('subTab', 'note');
+    await loadCollectionUrl(contents, url.href);
+  } else {
+    await contents.executeJavaScript(`(${advanceXhsHistoryPage.toString()})()`);
+  }
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  return contents.executeJavaScript(`(${readXhsHistoryPage.toString()})()`);
+}
 function resources(): ResourceCollectionService {
   if (!resourceService) {
     resourceService = new ResourceCollectionService({
@@ -6561,6 +6708,7 @@ function resources(): ResourceCollectionService {
     resourceService.recover();
     void resourceService
       .drainCaptures()
+      .then(() => resourceService?.drain())
       .catch(error => log(`resource capture: ${String(error)}`));
   }
   return resourceService;
@@ -6599,31 +6747,16 @@ async function captureCollectionPost(
   } finally {
     if (collectionCaptureQueues.get(account) === operation) {
       collectionCaptureQueues.delete(account);
+      releaseCollectionWorkerView(account, 'capture');
     }
   }
 }
 
 async function captureCollectionPostPage(url: string, account: string) {
   const started = performance.now();
-  const partition = collectionBrowserPartition(account);
-  const key = `collection:${account}`;
-  let entry = dashboardBrowserRegistry
-    .snapshot()
-    .find(item => item.key === key);
-  if (!entry) {
-    const previous = dashboardBrowserRegistry.active?.key;
-    entry = dashboardBrowserRegistry.open(
-      {key, projectRoot: '', relativePath: '', url},
-      () => createDashboardBrowserView(key, '', partition),
-    ).entry;
-    entry.view.setVisible(false);
-    if (previous) {
-      dashboardBrowserRegistry.activate(previous);
-    }
-  }
-  const contents = entry.view.webContents;
+  const contents = collectionWorkerView(account, 'capture').webContents;
   if (contents.getURL() !== url) {
-    await contents.loadURL(url);
+    await loadCollectionUrl(contents, url);
   }
   let page: CollectionPage;
   const deadline = Date.now() + 15000;
@@ -6715,17 +6848,47 @@ ipcMain.handle(
               root: project.root,
             })),
           source: xResourceSource().snapshot(),
+          histories: resourceBrowserHistory().snapshot(),
         };
       }
       if (raw.action === 'add') {
-        return {ok: true, entry: await service.add(input)};
+        const entry = await service.add(input);
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, entry};
       }
       if (raw.action === 'add-batch') {
         const items = await service.addBatch(input);
         void service
           .drainCaptures()
+          .then(() => service.drain())
           .catch(error => log(`resource capture: ${String(error)}`));
         return {ok: true, items, entry: items[0]};
+      }
+      if (raw.action === 'history-start' || raw.action === 'history-pause') {
+        const account = input.sourceAccount || '';
+        collectionBrowserPartition(account);
+        const list = input.historyList || 'saved';
+        if (raw.action === 'history-pause') {
+          resourceBrowserHistory().pause(account, list);
+        } else {
+          void resourceBrowserHistory()
+            .run(account, list)
+            .catch(error => log(`resource history: ${String(error)}`))
+            .finally(() => {
+              if (
+                !resourceBrowserHistory()
+                  .snapshot()
+                  .some(
+                    job => job.account === account && job.status === 'running',
+                  )
+              ) {
+                releaseCollectionWorkerView(account, 'history');
+              }
+            });
+        }
+        return {ok: true, histories: resourceBrowserHistory().snapshot()};
       }
       if (raw.action === 'preview') {
         const preview = await service.preview(
@@ -6839,7 +7002,11 @@ ipcMain.handle(
         return {ok: true, browser: collectionBrowserState(account)};
       }
       if (raw.action === 'capture-source') {
-        return {ok: true, entry: await service.capture(String(input.id || ''))};
+        const entry = await service.capture(String(input.id || ''));
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, entry};
       }
       if (raw.action === 'read-post') {
         const post = service.post(String(input.id || ''));
@@ -6866,15 +7033,16 @@ ipcMain.handle(
         if (!state?.url) {
           throw new Error('Open a page in the collection browser first.');
         }
-        return {
-          ok: true,
-          entry: await service.add({
-            url: state.url,
-            sourceAccount: account,
-            note: input.note,
-            projectId: input.projectId,
-          }),
-        };
+        const entry = await service.add({
+          url: state.url,
+          sourceAccount: account,
+          note: input.note,
+          projectId: input.projectId,
+        });
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, entry};
       }
       throw new Error('Unknown resource action.');
     } catch (error) {
@@ -9530,6 +9698,7 @@ if (gotLock) {
 }
 
 app.on('will-quit', () => {
+  resourceHistory?.stop();
   resourceService?.stop();
   resourceXSource?.stop();
   projectTerminal.stop();

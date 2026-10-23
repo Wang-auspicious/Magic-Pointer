@@ -12,10 +12,12 @@ const {
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const {execFileSync} = require('node:child_process');
 const assert = require('node:assert/strict');
 const {pathToFileURL} = require('node:url');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
+const acceptanceStarted = performance.now();
 const output = path.join(root, 'data/runtime/resource-embedded-acceptance');
 fs.mkdirSync(output, {recursive: true});
 app.setPath('userData', path.join(output, 'profile'));
@@ -81,6 +83,7 @@ app.whenReady().then(async () => {
     }
     const policy = built('browser_view_policy');
     const {ResourceCollectionService} = built('resource_collection_service');
+    const {ResourceBrowserHistory} = built('resource_browser_history');
     const {resourceThumbnailUrl} = built('resource_preview');
     const {createStashRuntime} = built('stash_runtime');
     const source = ts.createSourceFile(
@@ -100,6 +103,10 @@ app.whenReady().then(async () => {
       'collectionBrowserState',
       'captureCollectionPost',
       'captureCollectionPostPage',
+      'collectionWorkerView',
+      'loadCollectionUrl',
+      'releaseCollectionWorkerView',
+      'readCollectionHistoryPage',
     ];
     const code = declarations
       .map(name => {
@@ -135,7 +142,9 @@ app.whenReady().then(async () => {
       dashboardBrowserRegistry: registry,
       dashboardBrowserBounds: null,
       collectionCaptureQueues: new Map(),
+      collectionWorkerViews: new Map(),
       WebContentsView,
+      BrowserWindow,
       nativeTheme,
       Menu,
       clipboard,
@@ -149,6 +158,7 @@ app.whenReady().then(async () => {
       Date,
       Promise,
       setTimeout,
+      clearTimeout,
       URL,
       ...browser,
       ...policy,
@@ -173,6 +183,19 @@ app.whenReady().then(async () => {
       title: '保存以后，还能回到这个想法',
       desc: '这是一条本地验收夹具，不是已登录账号的真实帖子。\n\n保留原始正文、作者和图片顺序；明天回来，还能通过正文找到它。',
       user: {nickname: '本地验收作者', userId: 'fixture'},
+      video: {
+        media: {
+          stream: {
+            h264: [
+              {
+                masterUrl: 'https://www.xiaohongshu.com/fixture.mp4',
+                width: 320,
+                height: 180,
+              },
+            ],
+          },
+        },
+      },
       imageList: [
         {
           urlDefault: 'https://www.xiaohongshu.com/fixture.png',
@@ -181,12 +204,56 @@ app.whenReady().then(async () => {
         },
       ],
     };
+    const videoPath = path.join(output, 'fixture.mp4');
+    execFileSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=0x837864:s=320x180:d=1',
+        '-c:v',
+        'libx264',
+        '-threads',
+        '1',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        videoPath,
+      ],
+      {windowsHide: true},
+    );
+    const videoBytes = fs.readFileSync(videoPath);
     firstSession.protocol.handle('https', request => {
+      if (request.url.endsWith('/fixture.mp4')) {
+        return new Response(videoBytes, {
+          headers: {'content-type': 'video/mp4'},
+        });
+      }
       if (request.url.endsWith('/fixture.png')) {
         return new Response(png, {headers: {'content-type': 'image/png'}});
       }
+      const current = new URL(request.url);
+      if (current.pathname === '/') {
+        return new Response(
+          '<title>Local account fixture</title><script>window.__INITIAL_STATE__={user:{userInfo:{_value:{userId:"self"}}}}</script>',
+          {headers: {'content-type': 'text/html'}},
+        );
+      }
+      if (current.pathname === '/user/profile/self') {
+        return new Response(
+          '<title>Local collection fixture</title><style>#notes{height:300px;overflow:auto}section{height:600px}</style><h1>本地账号列表夹具</h1><div id="notes"><section class="note-item"><a class="cover mask" href="/explore/abc123?xsec_token=history"><span class="title">第一条原帖</span></a></section></div><script>const notes=document.querySelector("#notes");notes.addEventListener("scroll",()=>{if(!notes.dataset.loaded){notes.dataset.loaded="true";notes.insertAdjacentHTML("beforeend",`<section class="note-item"><a class="cover mask" href="/explore/def456?xsec_token=history"><span class="title">第二条原帖</span></a></section><p>没有更多了</p>`);}})</script>',
+          {headers: {'content-type': 'text/html; charset=utf-8'}},
+        );
+      }
+      const noteId =
+        /\/explore\/([a-f0-9]+)/.exec(current.pathname)?.[1] || note.noteId;
       return new Response(
-        `<!doctype html><title>本地验收夹具</title><style>body{font:18px system-ui;background:#f7f6f2;color:#282828;padding:48px}h1{font-weight:500}</style><h1>MP 内嵌浏览器 · 本地验收</h1><p>${note.desc}</p><a id="popup" href="https://www.xiaohongshu.com/explore/abc123?popup=1" target="_blank">在当前 MP 会话中打开新链接</a><script>window.__INITIAL_STATE__=${JSON.stringify({note: {noteDetailMap: {abc123: {note}}}})};localStorage.setItem('mp-fixture-session','retained')</script>`,
+        `<!doctype html><title>本地验收夹具</title><style>body{font:18px system-ui;background:#f7f6f2;color:#282828;padding:48px}h1{font-weight:500}</style><h1>MP 内嵌浏览器 · 本地验收</h1><p>${note.desc}</p><a id="popup" href="https://www.xiaohongshu.com/explore/abc123?popup=1" target="_blank">在当前 MP 会话中打开新链接</a><script>window.__INITIAL_STATE__=${JSON.stringify({note: {noteDetailMap: {[noteId]: {note: {...note, noteId}}}}})};localStorage.setItem('mp-fixture-session','retained')</script>`,
         {headers: {'content-type': 'text/html; charset=utf-8'}},
       );
     });
@@ -210,6 +277,13 @@ app.whenReady().then(async () => {
         session
           .fromPartition(browser.collectionBrowserPartition(slot))
           .fetch(url, init),
+    });
+    const history = new ResourceBrowserHistory({
+      folder: fs.mkdtempSync(path.join(output, 'history-')),
+      readPage: context.readCollectionHistoryPage,
+      importLink: async (account, link) =>
+        (await service.addBatch({text: link.url, sourceAccount: account}))[0]
+          .id,
     });
     ipcMain.handle('resource-probe', async (_event, {action, input = {}}) => {
       try {
@@ -235,6 +309,7 @@ app.whenReady().then(async () => {
             })),
             projects: [],
             source: {status: 'disconnected'},
+            histories: history.snapshot(),
           };
         }
         if (action === 'edit') {
@@ -313,7 +388,13 @@ app.whenReady().then(async () => {
       (await secondSession.cookies.get({name: 'mp-fixture-session'})).length,
       0,
     );
+    await view.webContents.loadURL(url + '&reading=1');
     const entry = await service.add({url, sourceAccount: account});
+    assert.match(
+      view.webContents.getURL(),
+      /reading=1/,
+      'background imports must preserve the page the user is reading',
+    );
     assert.equal(entry.collection.captureStatus, 'saved');
     assert.equal(service.post(entry.id).text, note.desc);
     assert.ok(
@@ -361,6 +442,18 @@ app.whenReady().then(async () => {
     await wait(
       'document.querySelector(".rl-post-image img")?.naturalWidth===1200',
     );
+    await wait('document.querySelector(".rl-post video")?.readyState>=1');
+    await js(
+      'window.readerVideo=document.querySelector(".rl-post video");readerVideo.muted=true;readerVideo.play()',
+    );
+    await wait('readerVideo.currentTime>0.1');
+    await js("show('chat')");
+    assert.equal(
+      await js('readerVideo.paused'),
+      true,
+      'leaving the library must pause the original post video',
+    );
+    await js("show('resources')");
     await js('document.fonts.ready');
     win.showInactive();
     await new Promise(resolve => setTimeout(resolve, 400));
@@ -390,6 +483,41 @@ app.whenReady().then(async () => {
       path.join(output, 'embedded-page.png'),
       (await view.webContents.capturePage()).toPNG(),
     );
+    const foregroundUrl = view.webContents.getURL();
+    await history.run(account, 'saved');
+    context.releaseCollectionWorkerView(account, 'history');
+    assert.equal(history.snapshot()[0].status, 'complete');
+    assert.equal(history.snapshot()[0].retained, 2);
+    assert.equal(view.webContents.getURL(), foregroundUrl);
+    await service.drainCaptures();
+    assert.equal(
+      service.list().length,
+      2,
+      'a changed access token must not duplicate the first note',
+    );
+    assert.ok(
+      service.list().every(item => item.collection.captureStatus === 'saved'),
+    );
+    await js("document.querySelector('[data-rl-tab=sources]').click()");
+    await wait(
+      'document.querySelector("[data-rl-history-account]")?.textContent.includes("2 条链接已留存")',
+    );
+    await context.captureCollectionPost(url + '&background=1', account);
+    assert.equal(
+      view.getVisible(),
+      false,
+      'closing a background worker cannot reveal the hidden browser over the library',
+    );
+    assert.equal(
+      context.collectionWorkerViews.size,
+      0,
+      'finished imports must release their offscreen renderers',
+    );
+    await new Promise(resolve => setTimeout(resolve, 300));
+    fs.writeFileSync(
+      path.join(output, 'history-source.png'),
+      (await win.webContents.capturePage()).toPNG(),
+    );
     firstSession.flushStorageData();
     await firstSession.cookies.flushStore();
     const result = {
@@ -399,8 +527,16 @@ app.whenReady().then(async () => {
       embeddedPopup: true,
       externalOpens,
       mediaRetained: true,
+      videoRetainedPlayableAndPausedOnLeave: true,
       originalReadableInLibrary: true,
       navigationHideRestore: true,
+      backgroundImportPreservesForeground: true,
+      nativeHistoryList: {
+        retained: 2,
+        explicitEndObserved: true,
+        mediaCaptured: true,
+      },
+      timingMs: Math.round(performance.now() - acceptanceStarted),
       cookiesFlushed: true,
       realSocialAccountAcceptance: false,
     };
@@ -412,7 +548,7 @@ app.whenReady().then(async () => {
     app.exit(0);
   } catch (error) {
     console.error(error.stack);
-    if (win && !win.isDestroyed()) {
+    if (win && !win.isDestroyed() && win.webContents.getURL()) {
       console.error(
         JSON.stringify(
           await win.webContents.executeJavaScript(
