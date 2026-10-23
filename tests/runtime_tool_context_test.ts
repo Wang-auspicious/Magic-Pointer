@@ -4,7 +4,13 @@ import {mkdtemp, mkdir, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {EventSession} from '../electron/runtime/session';
-import {runAgent, buildSystemPrompt} from '../electron/runtime/agent';
+import {
+  runAgent,
+  buildSystemPrompt,
+  registerAgentTools,
+} from '../electron/runtime/agent';
+import {registerCodingTools} from '../electron/runtime/agent_files';
+import {registerDurableMemoryTools} from '../electron/runtime/agent_memory';
 import {ToolRegistry} from '../electron/runtime/tools';
 import {
   initialToolNames,
@@ -17,7 +23,7 @@ import {handleArtifact, projectArtifacts} from '../electron/runtime/artifacts';
 
 const schema = {type: 'object', properties: {}, required: []};
 
-test('initial schemas stay small while the actual registry directory and exact loading remain available', () => {
+test('the first request carries the core execution tools while long-tail discovery remains available', () => {
   const registry = new ToolRegistry();
   for (const name of [
     'Tools',
@@ -42,13 +48,82 @@ test('initial schemas stay small while the actual registry directory and exact l
   registry.setInitialTools(initialToolNames({workspace: 'C:/work'}));
   assert.deepEqual(
     registry.schemas().map(item => item.name),
-    ['Tools', 'AskUser', 'ToolResult.read', 'Read', 'Write', 'Edit', 'Patch'],
+    [
+      'Tools',
+      'AskUser',
+      'ToolResult.read',
+      'Read',
+      'Write',
+      'Edit',
+      'Patch',
+      'Glob',
+      'Bash',
+    ],
   );
-  assert(registry.directory().split(', ').includes('Bash'));
+  assert(registry.directory().split(', ').includes('Agent'));
+  assert(registry.directory().split(', ').includes('get_app_state'));
   assert(!registry.directory().split(', ').includes('Read'));
   registry.discover({names: ['Bash', 'Agent']});
   assert(registry.schemas().some(item => item.name === 'Bash'));
   assert(registry.schemas().some(item => item.name === 'Agent'));
+});
+
+test('a coding workspace exposes the core execution tools on the first request', () => {
+  const names = initialToolNames({
+    workspace: 'C:/work',
+    permissionMode: 'default',
+  });
+  for (const name of [
+    'Read',
+    'Write',
+    'Edit',
+    'Patch',
+    'Bash',
+    'Grep',
+    'Glob',
+    'BashRead',
+    'Todo',
+  ]) {
+    assert(names.includes(name), `${name} must be in the initial set`);
+  }
+  for (const mode of ['safe', 'plan'] as const) {
+    const restricted = initialToolNames({
+      workspace: 'C:/work',
+      permissionMode: mode,
+    });
+    for (const name of ['Bash', 'Write', 'Edit', 'Patch']) {
+      assert(!restricted.includes(name), `${mode} must not expose ${name}`);
+    }
+    assert(restricted.includes('Read'));
+    assert(restricted.includes('Todo'));
+  }
+});
+
+test('registered coding and agent tools reach the first request through setInitialTools', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mp-initial-tools-'));
+  const session = await EventSession.open(root, 'initial-tools');
+  const registry = new ToolRegistry();
+  registerCodingTools(registry, root, session);
+  registerAgentTools(registry, session);
+  registry.setInitialTools(
+    initialToolNames({workspace: root, permissionMode: 'default'}),
+  );
+  const initial = new Set(registry.schemas().map(item => item.name));
+  for (const name of [
+    'Read',
+    'Write',
+    'Edit',
+    'Patch',
+    'Bash',
+    'Grep',
+    'Glob',
+    'BashRead',
+    'Todo',
+  ]) {
+    assert(initial.has(name), `${name} missing from initial schemas`);
+  }
+  assert(!initial.has('Rewind'), 'long-tail tools stay out of the first request');
+  assert(registry.directory().split(', ').includes('Rewind'));
 });
 
 test('ordinary task metadata is not described as a user screen selection', async () => {
@@ -88,8 +163,6 @@ test('long saved memory keeps every source discoverable and can retrieve omitted
     prompt.length < 8000,
     'long preferences must not make the system prompt unbounded',
   );
-  const {registerDurableMemoryTools} =
-    await import('../electron/runtime/agent_memory');
   const registry = new ToolRegistry();
   registerDurableMemoryTools(registry, {userDataDir, workspace});
   const search = await registry.execute({
@@ -152,7 +225,7 @@ test('structured source and desktop target add only their direct readers without
   assert(!names.includes('Agent'));
   assert.deepEqual(
     initialToolNames({workspace: 'C:/work', permissionMode: 'safe'}),
-    ['Tools', 'AskUser', 'ToolResult.read', 'Read'],
+    ['Tools', 'AskUser', 'ToolResult.read', 'Todo', 'Read'],
   );
   assert.ok(
     initialToolNames({

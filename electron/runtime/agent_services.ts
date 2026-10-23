@@ -212,14 +212,14 @@ export function initialToolNames(context: {
   object?: Data;
   permissionMode?: string;
 }): string[] {
-  const names = ['Tools', 'AskUser', 'ToolResult.read'];
+  const names = ['Tools', 'AskUser', 'ToolResult.read', 'Todo'];
   if (context.workspace) {
     names.push('Read');
     if (
       context.permissionMode !== 'safe' &&
       context.permissionMode !== 'plan'
     ) {
-      names.push('Write', 'Edit', 'Patch');
+      names.push('Write', 'Edit', 'Patch', 'Bash', 'Grep', 'Glob', 'BashRead');
     }
   }
   if (context.taskContext?.sources?.length) {

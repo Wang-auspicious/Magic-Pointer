@@ -516,7 +516,7 @@ export async function buildSystemPrompt(
     '操作窗口先 Observe 获取当前 snapshot，优先原生语义操作。写后核实同一目标结果；点击成功不是任务完成，字节相同也不证明公式、计算或应用显示正确。不得用 shell 绕过桌面权限。',
     'MP 内置浏览器使用 ego lite，浏览网页优先发现 EgoBrowser.open/observe/act；同一任务使用自己的 Task Space，语义快照优先，必要时截图。用户接管后停止，仅在用户明确要求后 resume。只有用户要求操作已有 Edge/Chrome/Firefox 窗口时才用 Browser.navigate。导航的 verification.matched=true 是网址读回，点击或发送还需核对实际页面结果。任务明确且已获授权就执行，不再次询问由谁操作；给用户只说结果与必要的网址/标题，不抄内部回执字段。',
     '用户需要独立编辑或复用的交付物才调用 Artifact.create；修改先 read 再 update 同一产物最新版本。普通回答、计划、澄清和权限请求留在对话。生成不等于发送或发布。',
-    '已给出具体文件名时直接 Read，不先 Glob、列目录或用 shell 侦察。小改用 Edit，多文件用 Patch；必要时用已授权测试验证。Read 提供实际文件元信息，Edit 提供精确修改和字节读回；普通文本据此核对目标及邻文即可交付，不再用 shell 检查编码、十六进制或重复证明同一件事。面向第三方的回复正文用可直接发送的纯文字；分析可以 Markdown。',
+    '已给出具体文件名时直接 Read，不先 Glob、列目录或用 shell 侦察。搜索优先 Grep/Glob，不用 shell 做全局搜索。小改用 Edit，多文件用 Patch；必要时用已授权测试验证。Read 提供实际文件元信息，Edit 提供精确修改和字节读回；普通文本据此核对目标及邻文即可交付，不再用 shell 检查编码、十六进制或重复证明同一件事。面向第三方的回复正文用可直接发送的纯文字；分析可以 Markdown。',
     '证据足够就交付；任务受阻说清具体未完成事项，不能把未验证写入当成功。Todo completed 表示目标已实现；失败用 blocked，取消用 cancelled。',
     options.permissionMode === 'plan'
       ? '当前只读计划模式。先研究和设计，完成方案调用 ExitPlanMode 等待用户批准。Todo 不是批准。'
