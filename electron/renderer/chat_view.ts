@@ -19,6 +19,9 @@ const ChatView = (() => {
   const fileIcons: typeof import('./chat_file_icons') =
     typeof ChatFileIcons !== 'undefined'
       ? ChatFileIcons : require('./chat_file_icons');
+  const toolSummary: typeof import('./chat_tool_summary') =
+    typeof ChatToolSummary !== 'undefined'
+      ? ChatToolSummary : require('./chat_tool_summary');
   const StudioLocaleApi =
     typeof require === 'function' ? require('./locale') : null;
   const compaction: typeof import('../compaction_status') =
@@ -3462,6 +3465,7 @@ const ChatView = (() => {
       delayMs?: number;
       className?: string;
     },
+    content?: ChatNode[],
   ): ChatNode {
     const root = h('span', {
       class: opts.className ? `mp-shimmer ${opts.className}` : 'mp-shimmer',
@@ -3477,7 +3481,11 @@ const ChatView = (() => {
     if (vars.length > 0) {
       root.setAttribute('style', `${vars.join(';')};`);
     }
-    attach(root, text);
+    if (content) {
+      content.forEach(node => attach(root, node));
+    } else {
+      attach(root, text);
+    }
     if (opts.shimmering) {
       const clone = h('span', {
         class: 'mp-shimmer-clone',
@@ -4922,10 +4930,7 @@ const ChatView = (() => {
         }
       } else {
         const inFlight = chips.some(chip => chip.result === undefined);
-        attach(
-          label,
-          shimmerText(toolGroupLabel(chips), {shimmering: inFlight}),
-        );
+        attach(label, toolGroupSummaryNode(chips));
         if (inFlight) {
           const elapsed = runningElapsedNode(chips);
           if (elapsed) {
@@ -5086,99 +5091,6 @@ const ChatView = (() => {
     return root;
   }
 
-  /**
-   * Claude's aggregate fallback for a step line: `Used a tool` / `Used {count}
-   * tools` (`BRG8o6gNdU` and `JtrYJ8F4gT`).
-   */
-  const USED_A_TOOL = 'Used a tool';
-
-  function usedTools(count: number): string {
-    return `Used ${count} tools`;
-  }
-
-  /**
-   * The order a settled group lists its groups in. Claude sorts by a tier
-   * table (`eM`) that lives in an uncaptured chunk, so the *order* here is MP's
-   * and only the wording is the reference's; a category the reference names is
-   * listed before one it does not.
-   */
-  const GROUP_CATEGORY_ORDER: readonly ToolCategory[] = [
-    'bash',
-    'kill_bash',
-    'tmux',
-    'read',
-    'view',
-    'web_fetch',
-    'web',
-    'grep',
-    'glob',
-    'edit',
-    'write',
-    'notebook_edit',
-    'delete_file',
-    'task',
-    'skill',
-    'plan',
-    'todo',
-    'code',
-    'preview',
-    'screenshot',
-    'browser',
-    'share',
-    'tool_search',
-    'past_chats',
-    'project_knowledge',
-    'drive_search',
-    'ask_user_question',
-    'bash_output',
-    'enter_plan_mode',
-    'exit_plan_mode',
-    'artifact',
-  ];
-
-  /** Claude keeps the top three groups and accounts for the rest. */
-  const GROUP_MAX_GROUPS = 3;
-
-  /** MP's bucket wording, used only for a tool the reference cannot name. */
-  const GROUP_CLAUSES: Record<ToolVariant, (n: number) => string> = {
-    bash: n => `Ran ${n} command${n === 1 ? '' : 's'}`,
-    read: n => `Read ${n} file${n === 1 ? '' : 's'}`,
-    search: n => `Searched ${n} time${n === 1 ? '' : 's'}`,
-    write: n => `Wrote ${n} file${n === 1 ? '' : 's'}`,
-    edit: n => `Edited ${n} file${n === 1 ? '' : 's'}`,
-    code: n => usedTools(n),
-    others: n => usedTools(n),
-  };
-
-  /**
-   * In-flight group labels.
-   *
-   * The reference renders a running group as "{gerund} {count} {noun}…" and
-   * does it only for the five names in its read/write/edit/bash set — every
-   * other tool gets a single-tool label instead. The count is of the tools
-   * still in flight, not of the whole run. An empty string means "this family
-   * has no running form", which sends the caller to the single-tool fallback.
-   */
-  const GROUP_RUNNING_CLAUSES: Record<ToolVariant, (n: number) => string> = {
-    bash: n => `Running ${n} command${n === 1 ? '' : 's'}…`,
-    read: n => `Reading ${n} file${n === 1 ? '' : 's'}…`,
-    write: n => `Creating ${n} file${n === 1 ? '' : 's'}…`,
-    edit: n => `Editing ${n} file${n === 1 ? '' : 's'}…`,
-    search: n => `Searching ${n} time${n === 1 ? '' : 's'}…`,
-    code: () => '',
-    others: () => '',
-  };
-
-  const GROUP_ORDER: readonly ToolVariant[] = [
-    'bash',
-    'read',
-    'search',
-    'edit',
-    'write',
-    'code',
-    'others',
-  ];
-
   function isBlockedResult(result?: {
     text?: string;
     isError?: boolean;
@@ -5191,133 +5103,180 @@ const ChatView = (() => {
     );
   }
 
-  /** The label for a set of tools that have not settled yet. */
-  function runningGroupClause(pending: TurnChip[]): string {
-    const variants = new Set(pending.map(chip => classifyTool(chip.name)));
-    if (variants.size === 1) {
-      const clause = GROUP_RUNNING_CLAUSES[[...variants][0]](pending.length);
-      if (clause) {
-        return clause;
+  function groupSummaryCalls(
+    chips: TurnChip[],
+  ): Array<import('./chat_tool_summary').SummaryCall & {target?: string}> {
+    return chips.map((chip, index) => {
+      const input = parseArgs(chip.argsRaw) ?? {};
+      const fileCategory = FILE_WRITE_TOOLS.has(chip.name)
+        ? ['Write', 'write_file', 'write'].includes(chip.name)
+          ? 'write'
+          : 'edit'
+        : ['Read', 'read_file', 'read'].includes(chip.name)
+          ? 'read'
+          : undefined;
+      let category: string | undefined = PLAN_TOOLS.has(chip.name)
+        ? 'plan'
+        : (fileCategory ?? toolCategory(chip.name));
+      const fileContract =
+        fileCategory ||
+        ['view', 'notebook_edit', 'delete_file'].includes(category || '');
+      const path = fileContract
+        ? pickString(input, ['path', 'file_path', 'notebook_path'])
+        : undefined;
+      const filePath = path === undefined ? undefined : deliveredFileKey(path);
+      let key = filePath ?? (chip.callId || String(index));
+      const method = chip.name.split('.');
+      const artifact = ARTIFACT_TOOL_NAMES.has(aliasToolName(method[0]));
+      // A Read result is file content, not a receipt carrying routing metadata.
+      const receipt =
+        FILE_WRITE_TOOLS.has(chip.name) || artifact
+          ? outputRecord(chip.result?.text || '')
+          : null;
+      if (artifact) {
+        const action = method[1] || firstString(input, ['action']);
+        category =
+          action === 'read'
+            ? 'artifact_read'
+            : ['create', 'update'].includes(action)
+              ? 'artifact_write'
+              : undefined;
+        key =
+          firstString(input, ['artifact_id', 'artifactId']) ||
+          firstString(receipt || {}, ['artifactId', 'artifact_id']) ||
+          key;
       }
-    }
-    if (pending.length === 1) {
-      const chip = pending[0];
-      const variant = classifyTool(chip.name);
-      // `||`, not `??`: an empty variant title means "no running form", and a
-      // nullish chain would happily render that empty string as the label.
-      const active =
-        RUNNING_TITLES[chip.name] ||
-        VARIANT_RUNNING_TITLES[variant] ||
-        TOOL_TITLES[chip.name] ||
-        chip.name;
-      return `${active}…`;
-    }
-    return `${pending.length} tools running…`;
+      const interrupted = chip.result?.interrupted === true;
+      const outcome: import('./chat_tool_summary').SummaryOutcome | undefined =
+        interrupted
+          ? undefined
+          : !chip.result
+            ? 'pending'
+            : isBlockedResult(chip.result)
+              ? 'blocked'
+              : chip.result.isError
+                ? 'failed'
+                : 'succeeded';
+      const write = ['Write', 'write_file', 'write'].includes(chip.name);
+      const created =
+        outcome === 'succeeded' && write ? receipt?.created : undefined;
+      const target =
+        (outcome === 'succeeded' && FILE_WRITE_TOOLS.has(chip.name)
+          ? firstString(receipt || {}, ['absolutePath'])
+          : '') ||
+        (path ? executionFilePath(path, chip.executionRoot || '') : '');
+      return {
+        category,
+        key,
+        filePath,
+        outcome,
+        ...(typeof created === 'boolean'
+          ? {writeAs: created ? ('create' as const) : ('update' as const)}
+          : {}),
+        canLinkFile:
+          FILE_WRITE_TOOLS.has(chip.name) ||
+          ['Read', 'read', 'read_file', 'NotebookEdit'].includes(chip.name),
+        ...(/^(?:[a-z]:[\\/]|[\\/])/i.test(target) ? {target} : {}),
+      };
+    });
   }
 
   function toolGroupLabel(chips: TurnChip[]): string {
-    const blocked = chips.filter(chip => isBlockedResult(chip.result));
-    if (blocked.length) {
-      const executed = chips.filter(chip => !isBlockedResult(chip.result));
-      return (
-        `Blocked ${blocked.length} tool${blocked.length === 1 ? '' : 's'}` +
-        (executed.length ? `, ${toolGroupLabel(executed)}` : '')
-      );
-    }
-    const explicit = chips.find(
-      chip => typeof chip.groupLabel === 'string' && chip.groupLabel.trim(),
-    );
-    if (explicit?.groupLabel) {
-      return explicit.groupLabel.trim();
-    }
-    const pending = chips.filter(chip => chip.result === undefined);
-    if (pending.length) {
-      const completed = chips.filter(chip => chip.result !== undefined);
-      return (
-        runningGroupClause(pending) +
-        (completed.length ? ` · ${toolGroupLabel(completed)}` : '')
-      );
-    }
-    // Claude counts per *category* and words each group with that category's
-    // own count form. MP buckets per render variant, so a tool the reference
-    // cannot name still groups through its variant clause -- the two keys are
-    // kept apart rather than forced onto one taxonomy, because MP's `search`
-    // bucket covers `grep`, `glob` and `web`, which the reference words
-    // differently.
-    const categories = new Map<ToolCategory, {count: number; failed: number}>();
-    const buckets = new Map<ToolVariant, {count: number; failed: number}>();
-    const bump = <K>(
-      map: Map<K, {count: number; failed: number}>,
-      key: K,
-      failed: boolean,
-    ) => {
-      const entry = map.get(key);
-      if (entry === undefined) {
-        map.set(key, {count: 1, failed: failed ? 1 : 0});
-        return;
-      }
-      entry.count += 1;
-      if (failed) {
-        entry.failed += 1;
-      }
-    };
-    for (const chip of chips) {
-      const failed = chip.result?.isError === true;
-      const category = toolCategory(chip.name);
-      if (category !== undefined) {
-        bump(categories, category, failed);
-        continue;
-      }
-      bump(buckets, classifyTool(chip.name), failed);
-    }
-
-    const groups: Array<{order: number; label: string; failed: number}> = [];
-    for (const [category, entry] of categories) {
-      const index = GROUP_CATEGORY_ORDER.indexOf(category);
-      groups.push({
-        order: index === -1 ? GROUP_CATEGORY_ORDER.length : index,
-        label: categoryDoneLabel(category, entry.count) as string,
-        failed: entry.failed,
-      });
-    }
-    for (const [variant, entry] of buckets) {
-      groups.push({
-        order: GROUP_ORDER.indexOf(variant) + GROUP_CATEGORY_ORDER.length,
-        label: GROUP_CLAUSES[variant](entry.count),
-        failed: entry.failed,
-      });
-    }
-    if (!groups.length) {
-      return chips.length === 1 ? USED_A_TOOL : usedTools(chips.length);
-    }
-
-    const withFailures = (group: {label: string; failed: number}) =>
-      group.failed > 0
-        ? `${group.label} (${group.failed} failed)`
-        : group.label;
-
-    if (groups.length === 1) {
-      return withFailures(groups[0]);
-    }
-
-    groups.sort((a, b) => a.order - b.order);
-    const shown = groups.slice(0, GROUP_MAX_GROUPS);
-    const hidden = groups.length - shown.length;
-    // A failure count rides its own clause, and lands on the last shown group
-    // when no shown group carries one of its own.
-    const failureTotal = groups.reduce((sum, group) => sum + group.failed, 0);
-    const placed = shown.some(group => group.failed > 0);
-    const parts = shown.map(withFailures);
-    if (failureTotal > 0 && !placed) {
-      parts[parts.length - 1] =
-        `${parts[parts.length - 1]} (${failureTotal} failed)`;
-    }
-    const label = parts
-      .map((part, index) =>
-        index === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
+    const explicit = chips
+      .find(chip => chip.groupLabel?.trim())
+      ?.groupLabel?.trim();
+    return (
+      explicit ||
+      toolSummary.summaryText(
+        toolSummary.summarizeToolCalls(groupSummaryCalls(chips)),
       )
-      .join(', ');
-    return hidden > 0 ? `${label}, and ${hidden} more steps` : label;
+    );
+  }
+
+  function toolGroupSummaryNode(chips: TurnChip[]): ChatNode {
+    const pending = chips.find(chip => chip.result === undefined);
+    const busy = pending !== undefined;
+    const explicit = chips
+      .find(chip => chip.groupLabel?.trim())
+      ?.groupLabel?.trim();
+    if (explicit) {
+      return shimmerText(explicit, {shimmering: busy});
+    }
+    if (pending) {
+      const model = chipModel(pending);
+      return shimmerText(
+        model.summary ? model.title + ' ' + model.summary : model.title,
+        {shimmering: true},
+      );
+    }
+    const calls = groupSummaryCalls(chips);
+    const parts = toolSummary.summarizeToolCalls(calls);
+    const files = parts.some(part => part.file)
+      ? deliveredFiles(
+          chips.map(chip => ({
+            kind: 'tool',
+            name: chip.name,
+            text: chip.argsRaw,
+            result: chip.result?.text,
+            isError: chip.result?.isError,
+            callId: chip.callId,
+          })),
+          chips.find(chip => chip.executionRoot)?.executionRoot || '',
+        )
+      : [];
+    const content: ChatNode[] = [];
+    parts.forEach((part, index) => {
+      const phrase = h('span', {
+        class: 'mp-chat-group-phrase',
+        ...(part.isError ? {'data-error': 'true'} : {}),
+      });
+      const verb =
+        index === 0
+          ? part.verb.charAt(0).toUpperCase() + part.verb.slice(1)
+          : part.verb;
+      attach(phrase, (index ? ', ' : '') + verb);
+      if (part.meta) {
+        attach(phrase, ' ');
+        const file =
+          part.file &&
+          files.find(
+            file =>
+              deliveredFileKey(file.path) === deliveredFileKey(part.file!.path),
+          );
+        const target =
+          file?.absolutePath ||
+          calls.find(call => call.filePath === part.file?.path && call.target)
+            ?.target;
+        const canOpen =
+          index === parts.length - 1 &&
+          part.file &&
+          target &&
+          (!file?.deleted || file.previewPath);
+        const meta = canOpen
+          ? h(
+              'button',
+              {
+                type: 'button',
+                class: 'mp-chat-group-file',
+                'data-mp-chat-act': 'open-file',
+                'data-file-path': part.file!.path,
+                'data-file-absolute-path': target,
+                ...(file?.previewPath
+                  ? {'data-preview-path': file.previewPath}
+                  : {}),
+              },
+              part.meta,
+            )
+          : h('span', {class: 'mp-chat-group-meta'}, part.meta);
+        attach(phrase, meta);
+      }
+      content.push(phrase);
+    });
+    return shimmerText(
+      toolSummary.summaryText(parts),
+      {shimmering: false},
+      content,
+    );
   }
 
   function formatRunMeta(ms: number, tokens: number | null): string {
@@ -6617,6 +6576,10 @@ const ChatView = (() => {
           }),
         );
       } else if (kind === 'open-file') {
+        if (act.getAttribute('class')?.split(' ').includes('mp-chat-group-file')) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         const path = act.getAttribute('data-file-path') || '';
         if (!path) {
           return;
@@ -6713,7 +6676,6 @@ const ChatView = (() => {
       formatClock,
       relativeTime,
       toolGroupLabel,
-      runningGroupClause,
       normaliseToolName,
       toolCategory,
       toolLabel,

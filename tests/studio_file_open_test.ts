@@ -570,9 +570,21 @@ async function clickDelivered(
       events.set(name, listener),
   };
   vm.runInContext(`(${ctx.ChatView.bindDelegation.toString()})(fileHost)`, ctx);
+  let prevented = 0;
+  let stopped = 0;
   events.get('click')!({
     target: {closest: () => ({getAttribute: (name: string) => attrs[name]})},
+    preventDefault() {
+      prevented++;
+    },
+    stopPropagation() {
+      stopped++;
+    },
   });
+  if (attrs.class === 'mp-chat-group-file') {
+    assert.equal(prevented, 1);
+    assert.equal(stopped, 1);
+  }
   await pending;
 }
 
@@ -596,6 +608,13 @@ test('a relative file receipt reopens its actual execution target with no projec
     assert.equal((result.value as any).path, 'result.txt');
     const sink = new RuntimeActivitySink(() => {});
     sink.onEvent({kind: 'tool_call_finished', result});
+    const readResult = await registry.execute({
+      id: 'origin-read',
+      name: 'Read',
+      arguments: {path: 'result.txt'},
+    });
+    assert.equal(readResult.is_error, false, readResult.error_message);
+    sink.onEvent({kind: 'tool_call_finished', result: readResult});
     const store = createConversationStore({baseDir: origin});
     const saved = store.appendTurn({
       newConversation: true,
@@ -625,7 +644,7 @@ test('a relative file receipt reopens its actual execution target with no projec
     const states = [];
     for (const selectedRoot of ['', other, origin]) {
       const {ctx, nodes, knownRoots} = fixture(selectedRoot);
-      await clickDelivered(ctx, turn, 'result.txt');
+      await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-group-file');
       await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-diff-path');
       assert.equal(ctx.activeProjectRoot, selectedRoot);
       if (selectedRoot === origin) {
