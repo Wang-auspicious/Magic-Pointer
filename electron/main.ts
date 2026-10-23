@@ -2005,6 +2005,7 @@ function appendStageLiveProgress(token: string, record: any): void {
       [
         'tool_call',
         'tool_result',
+        'tool_progress',
         'model_request',
         'model_response',
         'model_first_chunk',
@@ -2013,7 +2014,7 @@ function appendStageLiveProgress(token: string, record: any): void {
       ].includes(phase)
     ) {
       const key = (item: any) =>
-        item.phase === 'tool_call' || item.phase === 'tool_result'
+        ['tool_call', 'tool_result', 'tool_progress'].includes(item.phase)
           ? `tool:${String(item.fields?.id || item.fields?.name || '')}`
           : item.phase === 'subagent' || item.phase === 'plan'
             ? item.phase

@@ -1112,6 +1112,8 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       for await (const event of scheduleToolCalls(calls, registry, {
         signal,
         max_parallel_tool_calls: options.maxParallel ?? 8,
+        on_progress: (call, text) =>
+          emit({kind: 'tool_progress', id: call.id, name: call.name, text}),
         before_dispatch: async call => {
           if (suspending && call !== suspending) {
             return blocked(

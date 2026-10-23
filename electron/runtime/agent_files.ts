@@ -600,11 +600,54 @@ export function commandEffect(args: Data): Effect {
     : 'local_irreversible';
 }
 
+export interface OutputThrottle {
+  push(chunk: string): void;
+  flush(): void;
+}
+
+export function createOutputThrottle(
+  onOutput: (chunk: string) => void,
+  intervalMs = 500,
+  maxBytes = 4096,
+): OutputThrottle {
+  let pending = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deliver = () => {
+    timer = undefined;
+    if (!pending) {
+      return;
+    }
+    const chunk = pending;
+    pending = '';
+    onOutput(chunk);
+  };
+  return {
+    push(chunk) {
+      pending += chunk;
+      if (pending.length >= maxBytes) {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        deliver();
+        return;
+      }
+      timer ??= setTimeout(deliver, intervalMs);
+    },
+    flush() {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      deliver();
+    },
+  };
+}
+
 export async function runShell(
   command: string,
   cwd: string,
   signal: AbortSignal,
   timeoutMs: number,
+  onOutput?: (chunk: string) => void,
 ): Promise<Data> {
   const child = spawn(command, {
     cwd,
@@ -614,11 +657,16 @@ export async function runShell(
   });
   let stdout = '';
   let stderr = '';
+  const throttle = onOutput ? createOutputThrottle(onOutput) : null;
   child.stdout?.on('data', chunk => {
-    stdout = (stdout + chunk.toString()).slice(-64000);
+    const text = chunk.toString();
+    stdout = (stdout + text).slice(-64000);
+    throttle?.push(text);
   });
   child.stderr?.on('data', chunk => {
-    stderr = (stderr + chunk.toString()).slice(-8000);
+    const text = chunk.toString();
+    stderr = (stderr + text).slice(-8000);
+    throttle?.push(text);
   });
   const kill = () => {
     if (process.platform === 'win32' && child.pid) {
@@ -647,6 +695,7 @@ export async function runShell(
     }
     return result;
   } finally {
+    throttle?.flush();
     clearTimeout(timer);
     signal.removeEventListener('abort', kill);
   }
@@ -973,7 +1022,7 @@ export function registerCodingTools(
   );
   add(
     'Bash',
-    'Run a workspace shell command. On Windows this is cmd.exe syntax, not Unix Bash. Use Read/Edit/Patch for file reads and local edits; use background=true for independent long processes, then BashRead for output.',
+    'Run a workspace shell command. On Windows this is cmd.exe syntax, not Unix Bash. Prefer Grep/Glob over shell search commands; use Read/Edit/Patch for file reads and local edits. Foreground runs must be non-interactive: pass a small timeout_s for probing commands (default 120, max 600), and launch long processes with background=true, then read their output with BashRead.',
     schema(
       {
         command: string,
@@ -997,7 +1046,8 @@ export function registerCodingTools(
         command,
         cwd,
         context.signal,
-        Math.min(600, Math.max(1, Number(args.timeout_s ?? 300))) * 1000,
+        Math.min(600, Math.max(1, Number(args.timeout_s ?? 120))) * 1000,
+        context.on_progress,
       );
       const cd = /^cd\s+(?:\/d\s+)?["']?([^"';&|]+)["']?$/i.exec(command);
       if (cd && result.exit === 0) {

@@ -244,6 +244,14 @@ export class RuntimeActivitySink {
       }
       return;
     }
+    if (kind === 'tool_progress') {
+      this.blob('tool_progress', {
+        id: event.id,
+        name: event.name,
+        text: text(event.text),
+      });
+      return;
+    }
     if (kind === 'turn_finished' || kind === 'loop_stopped') {
       this.flush();
       if (kind === 'loop_stopped') {

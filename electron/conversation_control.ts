@@ -218,6 +218,31 @@ const ConversationControl = (() => {
           latencyMs: Number(fields.latency_ms) || 0,
         });
       }
+    } else if (phase === 'tool_progress') {
+      let payload: {id?: unknown; name?: unknown; text?: unknown};
+      try {
+        payload = JSON.parse(decodeBlob(fields));
+      } catch {
+        return false;
+      }
+      const id = String(payload.id || fields.id || payload.name || '');
+      let tool = transcript.trajectory.find(
+        item => item.kind === 'tool' && item.callId === id,
+      );
+      if (!tool) {
+        tool = {
+          kind: 'tool',
+          callId: id,
+          name: fields.name,
+          turn: message?.turn || 1,
+          startedAt: at,
+          ...timeOrigin,
+        };
+        transcript.trajectory.push(tool);
+      }
+      tool.progressText = (
+        String(tool.progressText || '') + String(payload.text || '')
+      ).slice(-4000);
     } else if (phase === 'model_response') {
       if (message) {
         message.state = 'done';

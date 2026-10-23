@@ -41,6 +41,7 @@ export interface ToolContext {
   signal: AbortSignal;
   tool_call_id: string;
   scope?: unknown;
+  on_progress?: (text: string) => void;
 }
 export interface ToolSpec {
   name: string;
@@ -88,6 +89,7 @@ export interface ScheduleOptions {
     call: ToolCall,
   ) => ToolResult | undefined | Promise<ToolResult | undefined>;
   onSettled?: (event: Committed) => void;
+  on_progress?: (call: ToolCall, text: string) => void;
 }
 
 export class ActionFailure extends Error {
@@ -547,7 +549,11 @@ export class ToolRegistry {
   }
   async execute(
     call: ToolCall,
-    options: {signal?: AbortSignal; scope?: unknown} = {},
+    options: {
+      signal?: AbortSignal;
+      scope?: unknown;
+      on_progress?: (text: string) => void;
+    } = {},
   ): Promise<ToolResult> {
     const started = performance.now();
     let spec: ToolSpec | undefined;
@@ -579,6 +585,7 @@ export class ToolRegistry {
         signal,
         tool_call_id: call.id,
         scope: options.scope,
+        on_progress: options.on_progress,
       };
       for (const precondition of spec.preconditions ?? []) {
         await precondition(args, context);
@@ -629,6 +636,7 @@ export async function* scheduleToolCalls(
   const running = new Map<number, Promise<void>>();
   const settled = new Map<number, Committed>();
   const active = new Set<string>();
+  const onProgress = options.on_progress;
   let cursor = 0;
   let commit = 0;
   let exclusive = false;
@@ -680,20 +688,28 @@ export async function* scheduleToolCalls(
         exclusive = !claim.parallel;
         claim.keys.forEach(key => active.add(key));
         yield {type: 'started', call, dispatched: true};
-        const task = registry.execute(call, options).then(result => {
-          claim.keys.forEach(key => active.delete(key));
-          running.delete(index);
-          if (!claim.parallel) {
-            exclusive = false;
-          }
-          settle(index, result, true);
-          if (!result.outcome_known && result.failure_type === 'tool_error') {
-            cancellation ??= new DOMException(
-              result.error_message,
-              'AbortError',
-            );
-          }
-        });
+        const task = registry
+          .execute(call, {
+            signal: options.signal,
+            scope: options.scope,
+            on_progress: onProgress
+              ? (text: string) => onProgress(call, text)
+              : undefined,
+          })
+          .then(result => {
+            claim.keys.forEach(key => active.delete(key));
+            running.delete(index);
+            if (!claim.parallel) {
+              exclusive = false;
+            }
+            settle(index, result, true);
+            if (!result.outcome_known && result.failure_type === 'tool_error') {
+              cancellation ??= new DOMException(
+                result.error_message,
+                'AbortError',
+              );
+            }
+          });
         running.set(index, task);
       }
       while (settled.has(commit)) {

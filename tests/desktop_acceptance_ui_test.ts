@@ -19,6 +19,11 @@ try {
     thinking: 'x'.repeat(100000), trajectory: [{ text: 'y'.repeat(100000) }] }];
   assert.deepEqual(control.bridgeHistoryTurns(turns), [{ question: '原问题', answer: '原回答',
     evidence: { contentDigest: '冻结事实' } }]);
+  const runningShell = chat.assistantTurnNode({ trajectory: [
+    { kind: 'tool', name: 'Bash', callId: 'b2', text: '{"command":"ping -n 4 127.0.0.1"}',
+      state: 'running', progressText: 'reply-1\nreply-2' },
+  ] }).map((node: { outerHTML: string }) => node.outerHTML).join('');
+  assert.match(runningShell, /reply-2/, 'a running shell row shows its streamed tail');
   assert.equal(chat.toolRowModel('Todo', '{}', { text: '{}', isError: false }).title, 'Updated plan');
   assert.equal(chat.toolRowModel('AskUser', '{}', { text: '{}', isError: false }).title, 'Asked user');
   assert.equal(chat.toolRowModel('Observe', '{}', { text: '{}', isError: false }).title, 'Observed');

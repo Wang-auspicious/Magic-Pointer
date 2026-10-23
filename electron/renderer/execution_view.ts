@@ -330,6 +330,7 @@ declare global {
               interrupted: state === 'stopped',
             },
         entry.callId || '',
+        state === 'running' ? str(row.progressText) || null : null,
       );
       const result = obj(content(row.result));
       const returned = str(

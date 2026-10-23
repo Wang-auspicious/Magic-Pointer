@@ -1858,6 +1858,7 @@ const ChatView = (() => {
     argsRaw: string,
     result?: {text?: string; isError?: boolean; interrupted?: boolean},
     callId = '',
+    runningOutput: string | null = null,
   ): ToolRowModel {
     const variant = classifyTool(name);
     const state: ToolState =
@@ -1966,7 +1967,8 @@ const ChatView = (() => {
     // the opposite of what happened.
     const title =
       sentenceTitle ?? (phase === 'running' ? runningTitle : completedTitle);
-    let output = result === undefined || !result.text ? null : result.text;
+    let output =
+      runningOutput ?? (result === undefined || !result.text ? null : result.text);
     if (output) {
       try {
         const decoded = JSON.parse(output);
@@ -3840,6 +3842,7 @@ const ChatView = (() => {
     displayLabel?: string;
     startedAtMs?: number;
     result?: {text: string; isError: boolean; interrupted?: boolean};
+    progressText?: string;
     subagent?: Record<string, unknown>;
   }
 
@@ -3901,6 +3904,8 @@ const ChatView = (() => {
       displayLabel:
         typeof record.summary === 'string' ? record.summary : undefined,
       startedAtMs: Number(record.startedAt) || undefined,
+      progressText:
+        typeof record.progressText === 'string' ? record.progressText : undefined,
       subagent: record.subagent as Record<string, unknown> | undefined,
       result: hasResult
         ? {
@@ -3933,6 +3938,7 @@ const ChatView = (() => {
       chip.argsRaw,
       chip.result,
       chip.callId,
+      chip.progressText ?? null,
     );
     if (chip.displayLabel?.trim()) {
       model.title = chip.displayLabel.trim();

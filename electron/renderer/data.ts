@@ -388,6 +388,7 @@ declare global {
       argsRaw: string,
       result?: {text?: string; isError?: boolean; interrupted?: boolean},
       callId?: string,
+      runningOutput?: string | null,
     ): {
       title: string;
       summary: string;
