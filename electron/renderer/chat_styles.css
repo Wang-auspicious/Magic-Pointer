@@ -919,12 +919,6 @@ span.mp-chat-diff-path {
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
-.mp-chat-tool-group-header {
-  /* Hover padding bleeds outward so the label lines up with the prose. */
-  margin-inline: -2px;
-  transform: translateY(2px);
-}
-
 .mp-chat-tool-group[data-single='true'] > .mp-chat-tool-group-header {
   justify-content: flex-start;
 }
@@ -1020,19 +1014,26 @@ span.mp-chat-diff-path {
   text-align: inherit;
 }
 
+.mp-chat-tool-group-header,
 .mp-chat-tool > .mp-chat-disclosure > .mp-chat-row {
-  min-height: 36px;
-  border-radius: 0;
+  min-height: 0;
+  gap: var(--cds-gap-xs);
+  margin-inline-start: calc(var(--cds-assistant-message-text-inset, 0px) - var(--cds-pad-xs) - var(--cds-turn-status-hang, 0px));
+  margin-inline-end: calc(var(--cds-assistant-message-text-stop, 0px) - var(--cds-pad-xs));
+  padding: calc((var(--cds-h-control) - 1lh) / 2) var(--cds-pad-xs);
+  border-radius: var(--cds-radius);
+  font-family: var(--mp-font-ui);
+  font-size: var(--cds-font-size-body);
+  font-weight: var(--mp-weight-regular);
+  line-height: var(--cds-leading-body);
+  text-align: start;
 }
 
-.mp-chat-tool-group-body > .mp-chat-tool > .mp-chat-disclosure > .mp-chat-row {
-  padding-inline: 10px;
-}
-
-.mp-chat-tool > .mp-chat-disclosure > .mp-chat-row {
-  font-size: 14px;
-  line-height: 20px;
-  color: var(--mp-text-secondary);
+.mp-chat-tool-group-header .mp-chat-diff-stat,
+.mp-chat-tool > .mp-chat-disclosure > .mp-chat-row .mp-chat-diff-stat {
+  gap: .125rem;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .mp-chat-tool > .mp-chat-disclosure > .mp-chat-row .mp-chat-title {
