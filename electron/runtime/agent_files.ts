@@ -911,7 +911,7 @@ export async function runShell(
     const result = {exit, cwd, stdout, stderr};
     if (
       exit !== 0 &&
-      !(exit === 1 && /^\s*(rg|grep|git\s+diff)\b/.test(command))
+      !(exit === 1 && commandEffect({command}) === 'read')
     ) {
       const message =
         stderr.trim().split(/\r?\n/, 1)[0] || `Command exited with code ${exit}`;
