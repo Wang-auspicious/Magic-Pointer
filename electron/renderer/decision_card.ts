@@ -69,6 +69,9 @@ declare global {
     draft: Draft;
     busy: boolean;
     error: string;
+    errorKey?: 'decision.missing';
+    submitFocus?: string;
+    language: StudioLanguage;
     submit: (response: MagicPointerDecisionResponse) => void;
   }
   const drafts = new Map<string, Draft>();
@@ -167,12 +170,12 @@ declare global {
     busy: boolean,
   ): HTMLElement {
     const scope = element('section', 'mp-decision-scope mp-decision-dailywrap');
-    scope.setAttribute('aria-label', 'Choose DailyWrap time and saved tasks');
+    scope.setAttribute('aria-label', studioT('decision.daily_scope'));
     scope.append(
       element(
         'div',
         'mp-decision-scope-title',
-        'Choose the time and saved tasks to include',
+        studioT('decision.daily_heading'),
       ),
     );
     const selection = draft.dailyWrap!;
@@ -194,6 +197,7 @@ declare global {
       input.value = value;
       input.disabled = busy;
       input.setAttribute(marker, '');
+      input.dataset.decisionControl = marker;
       input.addEventListener('input', () => update(input.value));
       field.append(input);
       return field;
@@ -205,31 +209,41 @@ declare global {
         selection.toMs > selection.fromMs;
       rangeError.textContent = validRange
         ? ''
-        : 'Choose a valid time range with To after From.';
+        : studioT('decision.range_error');
       rangeError.hidden = validRange;
       const available = new Set(
         request.historySources?.map(source => source.id) || [],
       );
       sourceHint.textContent = !selection.sourceMode
-        ? 'Choose the source set before allowing this read.'
+        ? studioT('decision.choose_sources')
         : selection.sourceMode === 'selected' &&
             !selection.selectedIds.some(id => available.has(id))
-          ? 'Select at least one saved task.'
+          ? studioT('decision.select_task')
           : '';
       sourceHint.hidden = !sourceHint.textContent;
       allow.disabled = busy || !dailyWrapArguments(request, draft);
     };
     range.append(
-      timeField('From', selection.fromText, 'data-dailywrap-from', value => {
-        selection.fromText = value;
-        selection.fromMs = value ? new Date(value).getTime() : NaN;
-        refreshApproval();
-      }),
-      timeField('To', selection.toText, 'data-dailywrap-to', value => {
-        selection.toText = value;
-        selection.toMs = value ? new Date(value).getTime() : NaN;
-        refreshApproval();
-      }),
+      timeField(
+        studioT('decision.from'),
+        selection.fromText,
+        'data-dailywrap-from',
+        value => {
+          selection.fromText = value;
+          selection.fromMs = value ? new Date(value).getTime() : NaN;
+          refreshApproval();
+        },
+      ),
+      timeField(
+        studioT('decision.to'),
+        selection.toText,
+        'data-dailywrap-to',
+        value => {
+          selection.toText = value;
+          selection.toMs = value ? new Date(value).getTime() : NaN;
+          refreshApproval();
+        },
+      ),
     );
     scope.append(range, rangeError);
     const maxRecords = Math.max(
@@ -237,14 +251,18 @@ declare global {
       Math.min(500, Number(request.action?.arguments?.limit ?? 200)),
     );
     scope.append(
-      element('p', 'mp-decision-hint', `Read up to ${maxRecords} records.`),
+      element(
+        'p',
+        'mp-decision-hint',
+        studioT('decision.read_limit', {n: maxRecords}),
+      ),
     );
     const sources = request.historySources;
     if (!sources) {
       const status = element(
         'p',
         request.historySourcesError ? 'mp-decision-error' : 'mp-decision-hint',
-        request.historySourcesError || 'Loading saved tasks…',
+        request.historySourcesError || studioT('decision.loading_tasks'),
       );
       if (request.historySourcesError) {
         status.setAttribute('role', 'alert');
@@ -252,9 +270,10 @@ declare global {
           const retry = element(
             'button',
             'mp-decision-button',
-            'Retry loading tasks',
+            studioT('decision.retry_tasks'),
           );
           retry.type = 'button';
+          retry.dataset.decisionControl = 'history-retry';
           retry.disabled = busy;
           retry.addEventListener('click', request.retryHistorySources);
           scope.append(status, retry);
@@ -269,13 +288,14 @@ declare global {
     }
     const sourceGroup = element('div', 'mp-decision-dailywrap-sources');
     sourceGroup.setAttribute('role', 'group');
-    sourceGroup.setAttribute('aria-label', 'Saved task sources');
+    sourceGroup.setAttribute('aria-label', studioT('decision.saved_sources'));
     const mode = (label: string, value: 'all' | 'selected', marker: string) => {
       const row = element('label', 'mp-decision-dailywrap-mode');
       const radio = element('input', '');
       radio.type = 'radio';
       radio.name = `dailywrap-source-${request.key}`;
       radio.value = value;
+      radio.dataset.decisionControl = `history-${value}`;
       radio.checked = selection.sourceMode === value;
       radio.disabled = busy;
       radio.setAttribute(marker, '');
@@ -288,39 +308,57 @@ declare global {
       return {row, radio};
     };
     const all = mode(
-      `All saved tasks (${sources.length})`,
+      studioT('decision.all_tasks', {n: sources.length}),
       'all',
       'data-dailywrap-source-all',
     );
     const chosen = mode(
-      'Choose saved tasks',
+      studioT('decision.choose_tasks'),
       'selected',
       'data-dailywrap-source-selected',
     );
     sourceGroup.append(
-      element('div', 'mp-decision-scope-title', 'Sources'),
+      element('div', 'mp-decision-scope-title', studioT('decision.sources')),
       all.row,
       chosen.row,
     );
     const search = element('input', 'mp-decision-dailywrap-search');
     search.type = 'search';
-    search.placeholder = 'Find a saved task';
+    search.dataset.decisionControl = 'history-search';
+    search.placeholder = studioT('decision.find_task');
     search.value = selection.search;
     search.disabled = busy;
-    search.setAttribute('aria-label', 'Find a saved task');
+    search.setAttribute('aria-label', studioT('decision.find_task'));
     const list = element('div', 'mp-decision-dailywrap-list');
+    const empty = element(
+      'p',
+      'mp-decision-hint',
+      studioT(
+        sources.length ? 'decision.no_matching_tasks' : 'decision.no_tasks',
+      ),
+    );
+    empty.setAttribute('role', 'status');
     const selectedCount = element('span', 'mp-decision-hint', '');
     const count = () => {
       const available = new Set(sources.map(source => source.id));
-      selectedCount.textContent = `${selection.selectedIds.filter(id => available.has(id)).length} selected`;
+      selectedCount.textContent = studioT('decision.selected_count', {
+        n: selection.selectedIds.filter(id => available.has(id)).length,
+      });
     };
     const filter = () => {
       const query = selection.search.trim().toLocaleLowerCase();
-      for (const row of Array.from(list.children) as HTMLElement[]) {
+      let matches = 0;
+      for (const row of list.querySelectorAll<HTMLElement>(
+        '.mp-decision-dailywrap-source',
+      )) {
         row.hidden = Boolean(
           query && !row.textContent?.toLocaleLowerCase().includes(query),
         );
+        if (!row.hidden) {
+          matches++;
+        }
       }
+      empty.hidden = matches > 0;
     };
     search.addEventListener('input', () => {
       selection.search = search.value;
@@ -330,6 +368,7 @@ declare global {
       const row = element('label', 'mp-decision-dailywrap-source');
       const check = element('input', '');
       check.type = 'checkbox';
+      check.dataset.decisionControl = `history-source:${source.id}`;
       check.checked = selection.selectedIds.includes(source.id);
       check.disabled = busy;
       check.setAttribute('data-dailywrap-source-id', source.id);
@@ -353,11 +392,7 @@ declare global {
       row.append(check, name, id);
       list.append(row);
     }
-    if (!sources.length) {
-      list.append(
-        element('p', 'mp-decision-hint', 'No saved tasks are available.'),
-      );
-    }
+    list.append(empty);
     filter();
     count();
     sourceGroup.append(search, list, selectedCount);
@@ -377,39 +412,44 @@ declare global {
     const add = (label: string, value: unknown) => {
       const text = words(value);
       if (text) {
-        rows.push([label, text]);
+        rows.push([studioT(`decision.scope_${label}`), text]);
       }
     };
     if (request.tool === 'Recall') {
       if (args.session_id) {
-        add('Source', `saved task ${words(args.session_id)}`);
-        add('Event', args.event_seq);
-        add('Text offset', args.offset ?? 0);
-        add('Characters', args.max_chars ?? 4000);
+        add(
+          'source',
+          studioT('decision.saved_task', {id: words(args.session_id)}),
+        );
+        add('event', args.event_seq);
+        add('offset', args.offset ?? 0);
+        add('characters', args.max_chars ?? 4000);
       } else {
-        add('Source', 'all saved tasks and recent screen evidence');
-        add('Search', args.query);
-        add('Task matches', args.max_results ?? 8);
-        add('Screen matches', args.limit ?? args.max_results ?? 8);
+        add('source', studioT('decision.all_evidence'));
+        add('search', args.query);
+        add('tasks', args.max_results ?? 8);
+        add('screens', args.limit ?? args.max_results ?? 8);
         if (args.since !== undefined) {
-          add('Screen from', localTime(args.since, 1000));
+          add('screen_from', localTime(args.since, 1000));
         }
         if (args.until !== undefined) {
-          add('Screen to', localTime(args.until, 1000));
+          add('screen_to', localTime(args.until, 1000));
         }
       }
     } else if (request.tool === 'DailyWrap.read') {
-      add('Source', 'saved task records');
-      add('From', localTime(args.from_ms));
-      add('To', localTime(args.to_ms));
+      add('source', studioT('decision.task_records'));
+      add('from', localTime(args.from_ms));
+      add('to', localTime(args.to_ms));
       const conversations = Array.isArray(args.conversation_ids)
         ? args.conversation_ids.map(words).filter(Boolean)
         : [];
       add(
-        'Conversations',
-        conversations.length ? conversations.join(', ') : 'all conversations',
+        'conversations',
+        conversations.length
+          ? conversations.join(', ')
+          : studioT('decision.all_conversations'),
       );
-      add('Maximum records', args.limit ?? 200);
+      add('max_records', args.limit ?? 200);
     } else if (request.tool === 'Recipe' && args.operation === 'execute') {
       const plan = record(args.plan);
       const parameters = record(plan.parameters);
@@ -421,32 +461,32 @@ declare global {
       ) {
         return null;
       }
-      add('Recipe', recipe || provider);
+      add('recipe', recipe || provider);
       if (recipe === 'clipboard.history' || provider === 'clipboard.history') {
         add(
-          'Action',
+          'action',
           parameters.digest
-            ? 'restore one saved clipboard entry'
-            : 'search saved clipboard history',
+            ? studioT('decision.restore_clipboard')
+            : studioT('decision.search_clipboard'),
         );
-        add('Clipboard entry', parameters.digest);
-        add('Search', parameters.query);
+        add('clipboard', parameters.digest);
+        add('search', parameters.query);
       } else {
-        add('Action', 'search recent screen memory');
-        add('Search', parameters.query || plan.command);
+        add('action', studioT('decision.search_screen'));
+        add('search', parameters.query || plan.command);
         if (parameters.since !== undefined) {
-          add('From', localTime(parameters.since, 1000));
+          add('from', localTime(parameters.since, 1000));
         }
         if (parameters.until !== undefined) {
-          add('To', localTime(parameters.until, 1000));
+          add('to', localTime(parameters.until, 1000));
         }
-        add('Maximum matches', parameters.limit ?? 20);
+        add('max_matches', parameters.limit ?? 20);
       }
       const objectIds = Array.isArray(plan.objectIds)
         ? plan.objectIds.map(words).filter(Boolean)
         : [];
       if (objectIds.length) {
-        add('Selected objects', objectIds.join(', '));
+        add('objects', objectIds.join(', '));
       }
       if (Array.isArray(parameters.objects)) {
         for (const item of parameters.objects) {
@@ -454,7 +494,7 @@ declare global {
           const source = record(object.source);
           const identity =
             words(object.id || object.objectId || object.kind) ||
-            'selected object';
+            studioT('decision.selected_object');
           const location = words(
             source.path ||
               source.absolutePath ||
@@ -466,23 +506,27 @@ declare global {
           );
           const app = words(source.app);
           add(
-            'Object source',
+            'object_source',
             [identity, app, location].filter(Boolean).join(' · '),
           );
         }
       }
       if (Array.isArray(parameters.attachments)) {
         for (const attachment of parameters.attachments) {
-          add('Attachment', attachment);
+          add('attachment', attachment);
         }
       }
     } else {
       return null;
     }
     const scope = element('section', 'mp-decision-scope');
-    scope.setAttribute('aria-label', 'Scope of this approval');
+    scope.setAttribute('aria-label', studioT('decision.approval_scope'));
     scope.append(
-      element('div', 'mp-decision-scope-title', 'This approval covers'),
+      element(
+        'div',
+        'mp-decision-scope-title',
+        studioT('decision.scope_heading'),
+      ),
     );
     const list = element('dl', 'mp-decision-scope-list');
     for (const [label, value] of rows) {
@@ -495,6 +539,26 @@ declare global {
     return scope;
   }
   function paint(host: HTMLElement, view: View): void {
+    view.language = getStudioLanguage();
+    const hadFocus = host.contains(document.activeElement);
+    const focused = document.activeElement as HTMLElement | null;
+    const selection =
+      hadFocus &&
+      (focused instanceof HTMLTextAreaElement ||
+        focused instanceof HTMLInputElement) &&
+      focused.selectionStart !== null
+        ? {
+            start: focused.selectionStart,
+            end: focused.selectionEnd,
+            direction: focused.selectionDirection ?? 'none',
+          }
+        : undefined;
+    const focusControl = hadFocus
+      ? (focused?.dataset.decisionControl ??
+        (focused?.classList.contains('mp-decision-saving')
+          ? view.submitFocus
+          : undefined))
+      : undefined;
     const {request, draft} = view;
     const card = element('section', 'mp-decision-card');
     const inline = request.presentation === 'inline';
@@ -510,20 +574,14 @@ declare global {
     card.setAttribute(
       'aria-label',
       request.kind === 'permission'
-        ? 'Permission request'
-        : 'Question from Magic Pointer',
+        ? studioT('decision.permission')
+        : studioT('decision.question'),
     );
     card.setAttribute('aria-busy', String(view.busy));
-    if (view.busy) {
-      card.classList.add('is-saving');
-      const status = element('p', 'mp-decision-saving', '正在保存你的选择…');
-      status.setAttribute('role', 'status');
-      card.append(status);
-      mount(host, card, request.key);
-      return;
-    }
+    let controlIndex = 0;
     const button = (label: string, action: () => void, className = '') => {
       const node = element('button', `mp-decision-button ${className}`, label);
+      node.dataset.decisionControl = String(controlIndex++);
       node.type = 'button';
       node.disabled = view.busy;
       node.addEventListener('click', () => {
@@ -537,8 +595,12 @@ declare global {
       if (view.busy) {
         return;
       }
+      view.submitFocus = host.contains(document.activeElement)
+        ? (document.activeElement as HTMLElement).dataset.decisionControl
+        : undefined;
       view.busy = true;
       view.error = '';
+      view.errorKey = undefined;
       paint(host, view);
       view.submit(response);
     };
@@ -563,11 +625,15 @@ declare global {
       );
       card.append(actions);
     } else if (request.kind === 'plan') {
-      card.setAttribute('aria-label', 'Plan approval');
+      card.setAttribute('aria-label', studioT('decision.plan_approval'));
       const heading = element('div', 'mp-decision-heading');
       heading.append(
-        element('span', 'mp-decision-tool', 'Plan'),
-        element('span', 'mp-decision-caption', 'Ready for review'),
+        element('span', 'mp-decision-tool', studioT('decision.plan')),
+        element(
+          'span',
+          'mp-decision-caption',
+          studioT('decision.ready_review'),
+        ),
       );
       // chat_markdown.js is a classic script: its const is a global binding, not a globalThis property.
       const body =
@@ -579,9 +645,9 @@ declare global {
       const actions = element('div', 'mp-decision-actions');
       const approvals = element('div', 'mp-decision-allow');
       for (const [label, decision] of [
-        ['Keep planning', 'deny'],
-        ['Approve · manual', 'once'],
-        ['Approve · accept edits', 'grant'],
+        [studioT('decision.keep_planning'), 'deny'],
+        [studioT('decision.approve_manual'), 'once'],
+        [studioT('decision.approve_edits'), 'grant'],
       ] as const) {
         const action = button(
           label,
@@ -596,31 +662,43 @@ declare global {
     } else if (request.kind === 'permission') {
       const head = element('div', 'mp-decision-heading');
       head.append(
-        element('span', 'mp-decision-eyebrow', '需要你的授权'),
-        element('span', 'mp-decision-caption', request.tool || 'Tool'),
+        element(
+          'span',
+          'mp-decision-eyebrow',
+          studioT('decision.permission_heading'),
+        ),
+        element(
+          'span',
+          'mp-decision-caption',
+          request.tool || studioT('decision.tool'),
+        ),
       );
       const question = element(
         'p',
         'mp-decision-question',
-        request.question || `Allow ${request.tool || 'this action'}?`,
+        request.question ||
+          studioT('decision.allow_question', {
+            tool: request.tool || studioT('decision.this_action'),
+          }),
       );
       card.append(head, question);
       const actions = element('div', 'mp-decision-actions');
       const labels = request.options || [];
-      const deny = button(labels.at(-1) || 'Deny', () =>
+      const deny = button(labels.at(-1) || studioT('decision.deny'), () =>
         submit({decision: 'deny'}),
       );
       deny.dataset.decision = 'deny';
       const allow = element('div', 'mp-decision-allow');
       if (!labels.length || labels.length > 2) {
-        const session = button(labels[1] || 'Allow for this session', () =>
-          submit({decision: 'grant'}),
+        const session = button(
+          labels[1] || studioT('decision.allow_session'),
+          () => submit({decision: 'grant'}),
         );
         session.dataset.decision = 'grant';
         allow.append(session);
       }
       const once = button(
-        labels[0] || 'Allow once',
+        labels[0] || studioT('decision.allow_once'),
         () => {
           const actionArguments = dailyWrapRequest(request)
             ? dailyWrapArguments(request, draft)
@@ -660,26 +738,33 @@ declare global {
         host.hidden = true;
         return;
       }
+      const goToPage = (page: number) => {
+        draft.page = page;
+        paint(host, view);
+        host
+          .querySelector<HTMLElement>(
+            '[role="radio"][tabindex="0"], [role="checkbox"], .mp-decision-custom',
+          )
+          ?.focus({preventScroll: true});
+      };
       const header = element('div', 'mp-decision-heading');
       header.append(
         element(
           'span',
           'mp-decision-eyebrow',
-          current.header || '需要你的选择',
+          current.header || studioT('decision.choose'),
         ),
       );
       const navigation = element('div', 'mp-decision-pages');
       const back = button('‹', () => {
-        draft.page--;
-        paint(host, view);
+        goToPage(draft.page - 1);
       });
-      back.setAttribute('aria-label', 'Previous question');
+      back.setAttribute('aria-label', studioT('decision.previous'));
       back.disabled = view.busy || draft.page === 0;
       const forward = button('›', () => {
-        draft.page++;
-        paint(host, view);
+        goToPage(draft.page + 1);
       });
-      forward.setAttribute('aria-label', 'Next question');
+      forward.setAttribute('aria-label', studioT('decision.next_question'));
       forward.disabled = view.busy || draft.page >= questions.length - 1;
       navigation.append(
         back,
@@ -692,7 +777,9 @@ declare global {
       card.append(header);
       card.append(element('p', 'mp-decision-question', current.question));
       if (current.multiSelect) {
-        card.append(element('p', 'mp-decision-hint', 'Select all that apply'));
+        card.append(
+          element('p', 'mp-decision-hint', studioT('decision.multi_hint')),
+        );
       }
       const options = element('div', 'mp-decision-options');
       options.setAttribute(
@@ -707,6 +794,7 @@ declare global {
           () => {
             draft.skipped[draft.page] = false;
             view.error = '';
+            view.errorKey = undefined;
             const selection = draft.selected[draft.page];
             draft.selected[draft.page] = current.multiSelect
               ? selected
@@ -729,6 +817,15 @@ declare global {
         row.dataset.optionIndex = String(index);
         row.setAttribute('role', current.multiSelect ? 'checkbox' : 'radio');
         row.setAttribute('aria-checked', String(selected));
+        if (!current.multiSelect) {
+          row.tabIndex =
+            selected ||
+            (!draft.other[draft.page] &&
+              !draft.selected[draft.page].length &&
+              index === 0)
+              ? 0
+              : -1;
+        }
         const mark = element(
           'span',
           `mp-decision-choice-mark${current.multiSelect ? ' is-multi' : ''}`,
@@ -760,9 +857,13 @@ declare global {
       });
       card.append(options);
       const custom = element('textarea', 'mp-decision-custom');
+      custom.dataset.decisionControl = 'custom';
       custom.rows = 1;
-      custom.placeholder = 'Type something else…';
-      custom.setAttribute('aria-label', `Your answer: ${current.question}`);
+      custom.placeholder = studioT('decision.custom');
+      custom.setAttribute(
+        'aria-label',
+        studioT('decision.your_answer', {question: current.question}),
+      );
       custom.value = draft.custom[draft.page];
       custom.disabled = view.busy;
       const selectOther = () => {
@@ -773,6 +874,7 @@ declare global {
           draft.selected[draft.page] = [];
           options.querySelectorAll('[aria-checked]').forEach((row, index) => {
             row.setAttribute('aria-checked', 'false');
+            (row as HTMLElement).tabIndex = -1;
             row.classList.remove('is-selected');
             const mark = row.querySelector('.mp-decision-choice-mark');
             if (mark) {
@@ -782,6 +884,9 @@ declare global {
         }
         const row = host.querySelector('.mp-decision-other-choice');
         row?.setAttribute('aria-checked', 'true');
+        if (row && !current.multiSelect) {
+          (row as HTMLElement).tabIndex = 0;
+        }
         row?.classList.add('is-selected');
         const mark = row?.querySelector('.mp-decision-choice-mark');
         if (mark) {
@@ -795,6 +900,11 @@ declare global {
       custom.addEventListener('input', () => {
         draft.custom[draft.page] = custom.value;
         selectOther();
+        if (hasAnswer()) {
+          view.error = '';
+          view.errorKey = undefined;
+          host.querySelector('.mp-decision-error[role="alert"]')?.remove();
+        }
         continueButton.disabled = view.busy || !hasAnswer();
         custom.style.height = 'auto';
         custom.style.height = `${Math.min(88, custom.scrollHeight)}px`;
@@ -819,6 +929,10 @@ declare global {
         );
         choice.setAttribute('role', current.multiSelect ? 'checkbox' : 'radio');
         choice.setAttribute('aria-checked', String(draft.other[draft.page]));
+        if (!current.multiSelect) {
+          choice.tabIndex =
+            draft.other[draft.page] || !current.options.length ? 0 : -1;
+        }
         const mark = element(
           'span',
           `mp-decision-choice-mark${current.multiSelect ? ' is-multi' : ''}`,
@@ -827,12 +941,51 @@ declare global {
         mark.setAttribute('aria-hidden', 'true');
         choice.append(
           mark,
-          element('span', 'mp-decision-other-label', 'Other'),
+          element('span', 'mp-decision-other-label', studioT('decision.other')),
         );
         other.append(choice, custom);
-        card.append(other);
+        options.append(other);
       } else {
         card.append(custom);
+      }
+      if (!current.multiSelect) {
+        options.addEventListener('keydown', event => {
+          if (
+            event.defaultPrevented ||
+            event.isComposing ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            view.busy
+          ) {
+            return;
+          }
+          const radios = Array.from(
+            options.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+          );
+          const index = radios.indexOf(event.target as HTMLButtonElement);
+          if (index < 0) {
+            return;
+          }
+          let next: number;
+          if (event.key === 'Home') {
+            next = 0;
+          } else if (event.key === 'End') {
+            next = radios.length - 1;
+          } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+            next = (index + 1) % radios.length;
+          } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+            next = (index + radios.length - 1) % radios.length;
+          } else {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          radios[next].click();
+          const updated =
+            host.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+          updated[next]?.focus({preventScroll: true});
+        });
       }
       const hasAnswer = () =>
         draft.selected[draft.page].length > 0 ||
@@ -845,9 +998,8 @@ declare global {
             !draft.custom[index].trim(),
         );
         if (missing >= 0) {
-          draft.page = missing;
-          view.error = 'Choose an answer or explicitly skip this question.';
-          paint(host, view);
+          view.errorKey = 'decision.missing';
+          goToPage(missing);
           return;
         }
         const answers: Record<string, string | string[]> = {};
@@ -866,22 +1018,26 @@ declare global {
         if (draft.page === questions.length - 1) {
           finish();
         } else {
-          draft.page++;
-          paint(host, view);
+          goToPage(draft.page + 1);
         }
       };
       const actions = element('div', 'mp-decision-actions');
-      const skip = button('Skip', () => {
+      const skip = button(studioT('decision.skip'), () => {
         draft.selected[draft.page] = [];
         draft.custom[draft.page] = '';
         draft.other[draft.page] = false;
         draft.skipped[draft.page] = true;
         view.error = '';
+        view.errorKey = undefined;
         advance();
       });
       skip.dataset.questionSkip = '';
       const continueButton = button(
-        draft.page === questions.length - 1 ? 'Submit' : 'Next',
+        studioT(
+          draft.page === questions.length - 1
+            ? 'decision.submit'
+            : 'decision.next',
+        ),
         advance,
         'is-primary',
       );
@@ -894,8 +1050,23 @@ declare global {
       actions.append(skip, continueButton);
       card.append(actions);
     }
-    if (view.error) {
-      const error = element('p', 'mp-decision-error', view.error);
+    if (view.busy) {
+      card.classList.add('is-saving');
+      const status = element(
+        'p',
+        'mp-decision-saving',
+        studioT('decision.saving'),
+      );
+      status.setAttribute('role', 'status');
+      status.tabIndex = -1;
+      card.prepend(status);
+    }
+    if (view.error || view.errorKey) {
+      const error = element(
+        'p',
+        'mp-decision-error',
+        view.errorKey ? studioT(view.errorKey) : view.error,
+      );
       error.setAttribute('role', 'alert');
       card.append(error);
     }
@@ -913,6 +1084,27 @@ declare global {
       ),
     );
     mount(host, card, request.key);
+    if (view.busy && hadFocus) {
+      host
+        .querySelector<HTMLElement>('.mp-decision-saving')
+        ?.focus({preventScroll: true});
+    } else if (focusControl !== undefined) {
+      const control = host.querySelector<HTMLElement>(
+        `[data-decision-control="${CSS.escape(focusControl)}"]`,
+      );
+      control?.focus({preventScroll: true});
+      if (
+        selection &&
+        (control instanceof HTMLTextAreaElement ||
+          control instanceof HTMLInputElement)
+      ) {
+        control.setSelectionRange(
+          selection.start,
+          selection.end,
+          selection.direction,
+        );
+      }
+    }
   }
   function mount(host: HTMLElement, card: HTMLElement, key: string): void {
     const existing = host.firstElementChild as HTMLElement | null;
@@ -921,6 +1113,12 @@ declare global {
       existing?.classList.contains('mp-decision-card')
     ) {
       existing.className = card.className;
+      existing.dataset.kind = card.dataset.kind;
+      existing.dataset.presentation = card.dataset.presentation;
+      existing.setAttribute(
+        'aria-label',
+        card.getAttribute('aria-label') || '',
+      );
       existing.setAttribute(
         'aria-busy',
         card.getAttribute('aria-busy') || 'false',
@@ -948,7 +1146,7 @@ declare global {
         existing.request = request;
         existing.submit = submit;
         host.hidden = false;
-        if (changedSources) {
+        if (changedSources || existing.language !== getStudioLanguage()) {
           paint(host, existing);
         }
         return;
@@ -976,7 +1174,14 @@ declare global {
         };
       }
       drafts.set(request.key, draft);
-      const view = {request, submit, draft, busy: false, error: ''};
+      const view = {
+        request,
+        submit,
+        draft,
+        busy: false,
+        error: '',
+        language: getStudioLanguage(),
+      };
       views.set(host, view);
       paint(host, view);
     },
@@ -987,6 +1192,7 @@ declare global {
       }
       view.busy = busy;
       view.error = error;
+      view.errorKey = undefined;
       paint(host, view);
     },
     resolve(host) {
@@ -1039,4 +1245,16 @@ declare global {
       delete host.dataset.decisionKey;
     },
   };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('mp:language-change', () => {
+      for (const host of document.querySelectorAll<HTMLElement>(
+        '[data-decision-key]',
+      )) {
+        const view = views.get(host);
+        if (view && view.language !== getStudioLanguage()) {
+          paint(host, view);
+        }
+      }
+    });
+  }
 })();

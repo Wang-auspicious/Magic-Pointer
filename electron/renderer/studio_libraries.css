@@ -155,11 +155,12 @@ button.mp-library-card:hover { background: var(--mp-hover); }
 .mp-library-submenu { position: absolute; left: calc(100% - 3px); top: -4px; display: none; width: 190px; padding: 4px; border: 1px solid var(--mp-rule); border-radius: 8px; background: var(--mp-panel); box-shadow: var(--mp-shadow-menu); }
 .mp-library-popover[data-submenu-side="left"] .mp-library-submenu { left: auto; right: calc(100% - 3px); }
 .mp-library-popover[data-submenu-side="left"] .mp-library-menu-parent .cds-icon:last-child { transform: rotate(180deg); }
-.mp-library-menu-group:is(:hover, :focus-within) > .mp-library-submenu { display: block; }
+.mp-library-submenu:not([hidden]) { display: block; }
 .mp-library-submenu button { justify-content: space-between; }
 .mp-library-submenu hr { height: 1px; margin: 4px 6px; border: 0; background: var(--mp-rule); }
 .mp-library-popover .is-danger { color: var(--mp-danger); }
 .mp-library-menu-heading { padding: 8px 10px; color: var(--mp-text-muted); font-size: 12px; }
+.side-title .side-metadata { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11px; line-height: 16px; color: var(--mp-text-muted); }
 .mp-library-nav-option { display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 5px 10px; }
 .mp-library-dialog-mask { position: fixed; z-index: 250; inset: 0; display: grid; place-items: center; padding: 32px; background: #0007; backdrop-filter: blur(5px); }
 .mp-library-dialog { width: min(480px, 100%); max-height: 85vh; overflow: auto; padding: 24px; border: 1px solid var(--mp-rule); border-radius: 16px; background: var(--mp-panel); box-shadow: var(--mp-shadow-sheet); color: var(--mp-text); }

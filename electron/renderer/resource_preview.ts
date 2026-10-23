@@ -6,7 +6,7 @@ interface PreviewOptions {
   container?: HTMLElement;
   restoreFocus(): void;
   load(): Promise<ResourcePreview>;
-  openExternal(): Promise<void>;
+  openExternal?(): Promise<void>;
 }
 
 declare global {
@@ -51,6 +51,7 @@ declare global {
       const external = dialog.querySelector<HTMLButtonElement>(
         '[data-preview-external]',
       )!;
+      external.hidden = !options.openExternal;
       let generation = 0;
       let image: HTMLImageElement | null = null;
       let scale = 1;
@@ -317,7 +318,7 @@ declare global {
         }
         external.disabled = true;
         void options
-          .openExternal()
+          .openExternal?.()
           .catch(reason => {
             if (dialog.isConnected) {
               error.textContent = String(reason);

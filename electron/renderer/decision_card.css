@@ -37,7 +37,7 @@
 .mp-decision-card::after { inset-inline: 16px; top: calc(100% + 6px); }
 .mp-decision-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0; scrollbar-width: thin; }
 .mp-decision-eyebrow { display: inline-flex; align-items: center; gap: 7px; color: var(--decision-accent); font-size: 11px; font-weight: 550; }
-.mp-decision-saving { display: flex; align-items: center; gap: 10px; margin: 0; padding: 15px 18px; color: var(--mp-text-muted); }
+.mp-decision-saving { display: flex; align-items: center; gap: 10px; margin: 0; padding: 15px 18px; color: var(--mp-text-muted); outline: none; }
 .mp-decision-saving::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--decision-accent); animation: decision-breathe 1000ms ease-in-out infinite; }
 .mp-decision-exit { position: fixed; z-index: 30; min-height: 0; max-height: none; pointer-events: none; animation: none; margin: 0; box-sizing: border-box; }
 @keyframes decision-arrive { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }

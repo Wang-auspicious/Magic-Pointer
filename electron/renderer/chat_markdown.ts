@@ -157,6 +157,9 @@ const ChatMarkdown = (() => {
         alt: match[1],
         loading: 'lazy',
         decoding: 'async',
+        'data-mp-chat-act': 'view-image',
+        role: 'button',
+        tabindex: '0',
       };
       if (match[4]) {
         attrs.title = match[4];

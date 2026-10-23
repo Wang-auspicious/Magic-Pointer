@@ -15,6 +15,7 @@ async function main() {
   let resolve!: (value: any) => void;
   const calls: Array<Record<string, string>> = [];
   const context: any = {
+    studioT: require('../electron/renderer/locale').studioT,
     activeConversationId: 'first', pendingConversation: null, backgroundTaskViews: new Map(),
     Data: { stopSubagent(payload: Record<string, string>) { calls.push(payload); return new Promise(done => { resolve = done; }); } },
   };

@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="studio_artifacts.css?v=1" />
   <link rel="stylesheet" href="assets/library-previews/artifact-previews.css" />
   <link rel="stylesheet" href="studio_libraries.css?v=1" />
+  <link rel="stylesheet" href="sidebar_menus.css" />
   <link rel="stylesheet" href="project_workspace.css?v=1" />
   <link rel="stylesheet" href="studio_stash.css?v=1" />
   <link rel="stylesheet" href="resource_library.css?v=1" />
@@ -61,7 +62,7 @@
               <span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE0B8;" aria-hidden="true"></span><span>Work</span>
             </button>
             <button type="button" id="mode-work" data-product-mode="walker" role="tab" aria-selected="true">
-              <span class="cds-icon" data-size="small" data-glyph="&#xE10C;" aria-hidden="true"></span><span>Code</span>
+              <span class="cds-icon" data-size="small" data-cds-anim="ANIM ANM2" data-glyph="&#xE048;" aria-hidden="true"></span><span>Code</span>
             </button>
           </div>
         </div>
@@ -85,16 +86,12 @@
         <button class="mpw-customize" id="nav-customize" data-goto="customize" data-library-nav="customize">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE100;" aria-hidden="true"></span></span><span class="mp-nav-label">Customize</span>
         </button>
-        <div class="mp-nav-row"><button class="mpw-customize" id="nav-dashboard" data-goto="dashboard">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Dashboards</span>
-        </button></div>
         <button class="mpw-customize" id="sidebar-more" aria-haspopup="menu" aria-expanded="false">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE027;" aria-hidden="true"></span></span><span class="mp-nav-label">More</span>
         </button>
         </nav>
 
         <section class="mpw-workspace-browser is-searching" aria-label="Conversation browser">
-          <div class="mp-session-heading"><span>Projects</span><button type="button" data-goto="chats" aria-label="View all chats and tasks" title="View all"><span class="cds-icon" data-size="small" data-glyph="&#xE015;" aria-hidden="true"></span></button><button type="button" id="sidebar-group-sort" aria-label="Group and sort" title="Group and sort" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="small" data-glyph="&#xE070;" aria-hidden="true"></span></button></div>
           <div class="mpw-workspace-header">
             <span class="mp-projects-label">Projects</span>
             <div class="mpw-workspace-search">
@@ -567,7 +564,7 @@
           <button type="button" id="project-browser-external" aria-label="Open in web browser" title="Open in web browser"><svg class="codex-icon" aria-hidden="true"><use href="#ic-open" /></svg></button>
         </div>
         <div class="mp-browser-host" id="project-browser-host" aria-label="Built-in web browser">
-          <div class="mp-browser-empty" id="project-browser-empty"><svg class="codex-icon" aria-hidden="true"><use href="#ic-globe" /></svg><strong>ego lite</strong><p>Open websites in ego lite. Local documents and previews appear here.</p></div>
+          <div class="mp-browser-empty" id="project-browser-empty"><svg class="codex-icon" aria-hidden="true"><use href="#ic-globe" /></svg><strong>ego lite</strong><p data-browser-message="browser.empty">Open websites in ego lite. Local documents and previews appear here.</p></div>
         </div>
       </section>
       <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>
@@ -711,7 +708,11 @@
   <script defer src="chat_highlight.js?v=1"></script>
   <script defer src="locale.js?v=1"></script>
   <script defer src="dashboard_view.js?v=1"></script>
-  <script defer src="chat_view.js?v=27"></script>
+  <script defer src="compaction_status.js?v=1"></script>
+  <script defer src="chat_diff_rows.js"></script>
+  <script defer src="chat_file_icons.js"></script>
+  <script defer src="chat_tool_summary.js"></script>
+  <script defer src="chat_view.js?v=28"></script>
   <script defer src="tool_verbs.js?v=1"></script>
   <script defer src="execution_view.js"></script>
   <script defer src="../conversation_control.js?v=23"></script>

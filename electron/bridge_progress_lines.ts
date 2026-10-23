@@ -53,6 +53,9 @@ function parseProgressLine(line: unknown): ProgressRecord | null {
         }
       }
       delete fields.b64;
+      if (tool.presentation !== undefined) {
+        fields.presentation = JSON.stringify(tool.presentation);
+      }
     } catch {
       return null;
     }

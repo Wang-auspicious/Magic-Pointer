@@ -3,6 +3,10 @@
 /* exported ConversationControl */
 
 const ConversationControl = (() => {
+  const compaction: typeof import('./compaction_status') =
+    typeof CompactionStatus !== 'undefined'
+      ? CompactionStatus
+      : require('./compaction_status');
   const SESSION_READY_PHASE = 'session_ready';
   const ANSWER_CHUNK_PHASE = 'answer_chunk';
   const PLAN_PHASE = 'plan';
@@ -98,6 +102,20 @@ const ConversationControl = (() => {
     let message = [...transcript.trajectory]
       .reverse()
       .find(item => item.kind === 'message');
+    if (phase === 'context_compacting') {
+      if (fields.status === 'request' && message) {
+        message.state = 'done';
+        message.completedAt ??= at;
+      }
+      return Boolean(
+        compaction.updateCompaction(
+          transcript.trajectory,
+          fields,
+          at,
+          Number.isFinite(origin) ? origin : undefined,
+        ),
+      );
+    }
     if (phase === 'model_request') {
       if (message) {
         message.state = 'done';

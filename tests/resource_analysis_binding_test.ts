@@ -56,6 +56,7 @@ async function main(): Promise<void> {
       stashBaseDir: () => baseDir,
       figmaRuntime: {clientConfigurations: () => []},
       conversations: () => store,
+      restoreConversationContext: async (conversation: any) => conversation,
       notifyConversationChanged() {},
       activeConversations: new Map(),
       contextTrackerRuntime: null,

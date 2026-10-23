@@ -1,6 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {normalizeModelSelection} from './conversation_model';
+import {normalizePermissionPreset} from './permission_mode';
 import type {
   ProjectContext,
   ProjectDetailsPatch,
@@ -43,6 +45,9 @@ function folderKey(root: string): string {
 function copy(project: ProjectRecord): ProjectRecord {
   return {
     ...project,
+    ...(project.environments
+      ? {environments: structuredClone(project.environments)}
+      : {}),
     sharedFiles: [...(project.sharedFiles || [])],
     documents: (project.documents || []).map(document => ({...document})),
   };
@@ -243,6 +248,49 @@ export function createProjectStore({
       next.archived = patch.archived;
     }
     try {
+      if (patch.environments !== undefined) {
+        const environments = structuredClone(patch.environments);
+        const ids = new Set<string>();
+        for (const environment of environments) {
+          if (!environment.id || ids.has(environment.id)) {
+            throw new Error('Environment IDs must be unique.');
+          }
+          ids.add(environment.id);
+          if (!environment.name.trim()) {
+            throw new Error('Enter an environment name.');
+          }
+          environment.name = environment.name.trim();
+          if (environment.branch !== undefined) {
+            environment.branch = environment.branch.trim();
+          }
+          if (environment.modelSelection !== undefined) {
+            environment.modelSelection = normalizeModelSelection(
+              environment.modelSelection,
+            );
+          }
+          if (environment.permissionPreset !== undefined) {
+            environment.permissionPreset = normalizePermissionPreset(
+              environment.permissionPreset,
+            );
+          }
+          if (
+            environment.effort !== undefined &&
+            !['low', 'medium', 'high', 'xhigh', 'max'].includes(environment.effort)
+          ) {
+            throw new Error('Unknown reasoning effort.');
+          }
+        }
+        next.environments = environments;
+      }
+      if (patch.defaultEnvironmentId !== undefined) {
+        next.defaultEnvironmentId = patch.defaultEnvironmentId;
+      }
+      if (
+        next.defaultEnvironmentId &&
+        !next.environments?.some(item => item.id === next.defaultEnvironmentId)
+      ) {
+        throw new Error('Choose a saved default environment.');
+      }
       persist(load().map(project => (project.id === next.id ? next : project)));
       return {ok: true, project: copy(next)};
     } catch (error) {

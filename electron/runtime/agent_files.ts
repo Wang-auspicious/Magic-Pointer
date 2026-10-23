@@ -8,13 +8,22 @@ import {
   stat,
   unlink,
   access,
+  copyFile,
 } from 'node:fs/promises';
 import path from 'node:path';
 import createIgnore, {type Ignore} from 'ignore';
-import {ToolRegistry, type ToolSpec, type Effect} from './tools';
+import {
+  ActionFailure,
+  ToolRegistry,
+  type ToolSpec,
+  type Effect,
+  type FileDiffPresentation,
+  type ToolPresentation,
+} from './tools';
 import {EventSession} from './session';
 import {asObject, type Data} from './agent';
 import {normalizeAdditionalFolders} from '../workspace_folders';
+import {lineChangeStat} from '../line_change_stat';
 
 const str = (value: unknown) => String(value ?? '');
 const exists = async (file: string) => {
@@ -27,6 +36,9 @@ const exists = async (file: string) => {
 };
 const normalize = (value: string) =>
   value.replace(/\r\n/g, '\n').replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+const binaryContent = (value: Buffer | null) =>
+  Boolean(value?.subarray(0, 8192).includes(0));
+const MAX_DIFF_PREVIEW_CHARS = 200_000;
 const ignore = new Set([
   'node_modules',
   '.git',
@@ -74,10 +86,18 @@ function fileFacts(content: string) {
   };
 }
 
+interface FileSnapshot {
+  id: string;
+  original: Buffer | null;
+  backupPath: string | null;
+}
+
 export class WorkspaceFiles {
   readonly root: string;
   private readonly roots: string[];
   private readVersions = new Map<string, string>();
+  private turnBaselines = new Map<string, string | null>();
+  private baselineTurn: number | null | undefined;
   private checkpointDir: string;
   constructor(
     root: string,
@@ -121,7 +141,7 @@ export class WorkspaceFiles {
   }
   async read(file: string): Promise<string> {
     const buffer = await readFile(file);
-    if (buffer.subarray(0, 8192).includes(0)) {
+    if (binaryContent(buffer)) {
       throw new Error('Binary file requires its document or image reader');
     }
     const body = buffer.toString('utf8');
@@ -144,30 +164,162 @@ export class WorkspaceFiles {
       );
     }
   }
-  async checkpoint(file: string): Promise<void> {
+  private async snapshot(file: string): Promise<FileSnapshot> {
     await mkdir(this.checkpointDir, {recursive: true});
     const old = (await exists(file)) ? await readFile(file) : null;
     const id = `${Date.now()}-${randomUUID()}`;
-    if (old) {
-      await writeFile(path.join(this.checkpointDir, id + '.bin'), old);
+    const backupPath =
+      old === null ? null : path.join(this.checkpointDir, id + '.bin');
+    if (old !== null && backupPath !== null) {
+      await writeFile(backupPath, old);
     }
+    return {id, original: old, backupPath};
+  }
+  private rememberBaseline(file: string, snapshot: FileSnapshot): void {
+    const turn = this.session.openTurn;
+    if (turn !== this.baselineTurn) {
+      this.turnBaselines.clear();
+      this.baselineTurn = turn;
+    }
+    if (!this.turnBaselines.has(file)) {
+      this.turnBaselines.set(file, snapshot.backupPath);
+    }
+  }
+  async checkpoint(file: string): Promise<FileSnapshot> {
+    const snapshot = await this.snapshot(file);
     const handle = await import('node:fs/promises').then(fs =>
       fs.open(path.join(this.checkpointDir, 'manifest.jsonl'), 'a'),
     );
     try {
       await handle.writeFile(
-        JSON.stringify({id, path: file, existed: old !== null}) + '\n',
+        JSON.stringify({
+          id: snapshot.id,
+          path: file,
+          existed: snapshot.original !== null,
+        }) + '\n',
       );
       await handle.sync();
     } finally {
       await handle.close();
     }
+    this.rememberBaseline(file, snapshot);
+    return snapshot;
+  }
+  private deletionPreviewPath(file: string, baselinePath: string): string {
+    // Keep undo's .bin contract; retained preview readers dispatch by extension.
+    const extension = path.extname(file);
+    return extension ? baselinePath + extension : baselinePath;
+  }
+  private async prepareDeletionPreview(
+    file: string,
+    baselinePath = this.turnBaselines.get(file),
+  ): Promise<string | undefined> {
+    if (!baselinePath) {
+      return;
+    }
+    const previewPath = this.deletionPreviewPath(file, baselinePath);
+    if (previewPath !== baselinePath) {
+      await copyFile(baselinePath, previewPath);
+    }
+    return previewPath;
+  }
+  private async changeResult(
+    file: string,
+    before: Pick<FileSnapshot, 'original' | 'backupPath'>,
+    after: Buffer | null,
+  ): Promise<Data> {
+    const finalText = after?.toString('utf8') || '';
+    const diffStat =
+      binaryContent(before.original) || binaryContent(after)
+        ? null
+        : lineChangeStat(before.original?.toString('utf8') || '', finalText);
+    const baselinePath = this.turnBaselines.get(file);
+    const baseline =
+      baselinePath === before.backupPath
+        ? before.original
+        : baselinePath
+          ? await readFile(baselinePath)
+          : null;
+    return {
+      path: this.display(file),
+      absolutePath: file.replaceAll('\\', '/'),
+      exists: after !== null,
+      created: before.original === null && after !== null,
+      turnCreated: baseline === null && after !== null,
+      deleted: after === null,
+      unchanged:
+        baseline === null
+          ? after === null
+          : after !== null && baseline.equals(after),
+      diffStat,
+      turnDiffStat:
+        binaryContent(baseline) || binaryContent(after)
+          ? null
+          : baselinePath === before.backupPath
+            ? diffStat
+            : lineChangeStat(baseline?.toString('utf8') || '', finalText),
+      ...(after === null && baselinePath
+        ? {
+            previewPath: this.deletionPreviewPath(file, baselinePath).replaceAll(
+              '\\',
+              '/',
+            ),
+          }
+        : {}),
+    };
+  }
+  private async captureDiff(
+    checkpoint: FileSnapshot,
+    body: Buffer,
+    finalText?: string,
+  ): Promise<FileDiffPresentation> {
+    if (binaryContent(checkpoint.original) || binaryContent(body)) {
+      return {kind: 'file_diff_unavailable', reason: 'binary'};
+    }
+    if (
+      (checkpoint.original?.length || 0) > 4 * MAX_DIFF_PREVIEW_CHARS ||
+      body.length > 4 * MAX_DIFF_PREVIEW_CHARS
+    ) {
+      return {kind: 'file_diff_unavailable', reason: 'too_large'};
+    }
+    const beforeText = checkpoint.original?.toString('utf8') || '';
+    if (
+      beforeText.length > MAX_DIFF_PREVIEW_CHARS ||
+      (finalText ?? body.toString('utf8')).length > MAX_DIFF_PREVIEW_CHARS
+    ) {
+      return {kind: 'file_diff_unavailable', reason: 'too_large'};
+    }
+    const afterPath = path.join(this.checkpointDir, checkpoint.id + '.after.txt');
+    try {
+      await writeFile(afterPath, body);
+      return {kind: 'file_diff', beforePath: checkpoint.backupPath, afterPath};
+    } catch {
+      // Optional preview storage cannot invalidate a verified file operation.
+      return {kind: 'file_diff_unavailable', reason: 'capture_failed'};
+    }
+  }
+  async delete(
+    file: string,
+    present?: (presentation: FileDiffPresentation) => void,
+  ): Promise<Data> {
+    const before = await this.checkpoint(file);
+    await this.prepareDeletionPreview(file);
+    await unlink(file);
+    if (await exists(file)) {
+      throw new Error(`File deletion readback mismatch: ${file}`);
+    }
+    this.readVersions.delete(file);
+    if (present) {
+      present(await this.captureDiff(before, Buffer.alloc(0), ''));
+    }
+    return this.changeResult(file, before, null);
   }
   async write(
     file: string,
     content: string,
     check = true,
     preserveExactText = false,
+    present?: (presentation: FileDiffPresentation) => void,
   ): Promise<Data> {
     if (check) {
       await this.requireFresh(file);
@@ -176,15 +328,19 @@ export class WorkspaceFiles {
       !preserveExactText && path.extname(file).toLowerCase() === '.csv'
         ? encodeCsv(content)
         : Buffer.from(content);
-    await this.checkpoint(file);
+    const checkpoint = await this.checkpoint(file);
     await mkdir(path.dirname(file), {recursive: true});
     await writeFile(file, body);
     if (!body.equals(await readFile(file))) {
       throw new Error(`File readback mismatch: ${file}`);
     }
-    this.readVersions.set(file, body.toString('utf8'));
+    const finalText = body.toString('utf8');
+    this.readVersions.set(file, finalText);
+    if (present) {
+      present(await this.captureDiff(checkpoint, body, finalText));
+    }
     return {
-      path: this.display(file),
+      ...(await this.changeResult(file, checkpoint, body)),
       message: `Wrote ${body.length} bytes`,
       verification: {
         matched: true,
@@ -193,7 +349,10 @@ export class WorkspaceFiles {
       },
     };
   }
-  async rewind(steps: number): Promise<Data> {
+  async rewind(
+    steps: number,
+    present?: (presentation: ToolPresentation) => void,
+  ): Promise<Data> {
     const manifest = path.join(this.checkpointDir, 'manifest.jsonl');
     if (!(await exists(manifest))) {
       return {restored: []};
@@ -208,38 +367,124 @@ export class WorkspaceFiles {
       );
     const count = steps > 0 ? Math.min(steps, entries.length) : entries.length;
     const selected = entries.slice(-count);
-    for (const entry of [...selected].reverse()) {
-      const target = this.resolve(entry.path);
-      if (entry.existed) {
-        const backup = await readFile(
-          path.join(this.checkpointDir, entry.id + '.bin'),
-        );
-        await mkdir(path.dirname(target), {recursive: true});
-        await writeFile(target, backup);
-        if (!backup.equals(await readFile(target))) {
-          throw new Error(`File restore readback mismatch: ${target}`);
-        }
-      } else {
-        if (await exists(target)) {
-          await unlink(target);
-        }
-        if (await exists(target)) {
-          throw new Error(`File deletion readback mismatch: ${target}`);
+    const snapshots = new Map<string, Pick<FileSnapshot, 'id' | 'backupPath'>>();
+    for (const entry of selected) {
+      const file = this.resolve(entry.path);
+      if (!snapshots.has(file)) {
+        const snapshot = await this.snapshot(file);
+        this.rememberBaseline(file, snapshot);
+        snapshots.set(file, {id: snapshot.id, backupPath: snapshot.backupPath});
+        if (!entry.existed) {
+          await this.prepareDeletionPreview(file);
         }
       }
-      this.readVersions.delete(target);
     }
-    await writeFile(
-      manifest,
-      entries
-        .slice(0, entries.length - count)
-        .map(entry => JSON.stringify(entry))
-        .join('\n') + '\n',
-    );
-    return {
-      restored: selected.map(entry => this.display(entry.path)),
-      verification: {matched: true, method: 'checkpoint_restore'},
+    const restoredFiles = new Set<string>();
+    let restoredCount = 0;
+    let checkpointHistoryUpdated = true;
+    const errors: string[] = [];
+    try {
+      for (const entry of [...selected].reverse()) {
+        const target = this.resolve(entry.path);
+        if (entry.existed) {
+          const backup = await readFile(
+            path.join(this.checkpointDir, entry.id + '.bin'),
+          );
+          await mkdir(path.dirname(target), {recursive: true});
+          await writeFile(target, backup);
+          if (!backup.equals(await readFile(target))) {
+            throw new Error(`File restore readback mismatch: ${target}`);
+          }
+        } else {
+          if (await exists(target)) {
+            await unlink(target);
+          }
+          if (await exists(target)) {
+            throw new Error(`File deletion readback mismatch: ${target}`);
+          }
+        }
+        this.readVersions.delete(target);
+        restoredFiles.add(target);
+        restoredCount++;
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    if (restoredCount > 0) {
+      try {
+        await writeFile(
+          manifest,
+          entries
+            .slice(0, entries.length - restoredCount)
+            .map(entry => JSON.stringify(entry))
+            .join('\n') + '\n',
+        );
+      } catch (error) {
+        checkpointHistoryUpdated = false;
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`Could not update rewind checkpoint history: ${message}`);
+      }
+    }
+    const fileChanges: Data[] = [];
+    const presentation: Extract<ToolPresentation, {kind: 'file_diffs'}> = {
+      kind: 'file_diffs',
+      files: [],
     };
+    for (const file of restoredFiles) {
+      const snapshot = snapshots.get(file)!;
+      const backupPath = snapshot.backupPath;
+      const original = backupPath ? await readFile(backupPath) : null;
+      const after = (await exists(file)) ? await readFile(file) : null;
+      fileChanges.push(
+        await this.changeResult(file, {original, backupPath}, after),
+      );
+      if (present && !errors.length) {
+        let view = await this.captureDiff({...snapshot, original}, after ?? Buffer.alloc(0));
+        let previewPath: string | undefined;
+        if (after === null && backupPath) {
+          try {
+            previewPath = (await this.prepareDeletionPreview(file, backupPath))
+              ?.replaceAll('\\', '/');
+          } catch {
+            view = {kind: 'file_diff_unavailable', reason: 'capture_failed'};
+          }
+        }
+        presentation.files.push({
+          path: this.display(file),
+          absolutePath: file.replaceAll('\\', '/'),
+          exists: after !== null,
+          ...(previewPath ? {previewPath} : {}),
+          presentation: view,
+        });
+      }
+    }
+    const result = {
+      restored: selected
+        .slice(selected.length - restoredCount)
+        .map(entry => this.display(entry.path)),
+      fileChanges,
+      checkpointHistoryUpdated,
+      verification: {
+        matched: true,
+        method: 'checkpoint_restore',
+        scope: 'restored_files_only',
+      },
+    };
+    if (errors.length) {
+      const message = errors.join('; ');
+      throw new ActionFailure(
+        'tool_error',
+        message,
+        checkpointHistoryUpdated
+          ? undefined
+          : 'Listed files were restored, but checkpoint history was not updated. Inspect current files and checkpoint history before retrying Rewind.',
+        {...result, error: message},
+      );
+    }
+    if (presentation.files.length) {
+      present?.(presentation);
+    }
+    return result;
   }
   async *walk(base: string, signal: AbortSignal): AsyncGenerator<string> {
     signal.throwIfAborted();
@@ -419,6 +664,7 @@ function locate(raw: string, needle: string): Array<[number, number]> {
 export async function applyWorkspacePatch(
   space: WorkspaceFiles,
   patch: string,
+  present?: (file: string, presentation: FileDiffPresentation, change: Data) => void,
 ): Promise<Data> {
   const lines = patch
     .trim()
@@ -534,16 +780,38 @@ export async function applyWorkspacePatch(
       planned.set(target, raw);
     }
   }
-  for (const [file, content] of planned) {
-    if (content === null) {
-      await space.checkpoint(file);
-      await unlink(file);
-    } else {
-      await space.write(file, content, false);
+  const fileChanges: Data[] = [];
+  try {
+    for (const [file, content] of planned) {
+      let view: FileDiffPresentation | undefined;
+      const capture = present ? (value: FileDiffPresentation) => {
+        view = value;
+      } : undefined;
+      let change: Data;
+      if (content === null) {
+        change = await space.delete(file, capture);
+      } else {
+        change = await space.write(file, content, false, false, capture);
+      }
+      fileChanges.push(change);
+      if (view) {
+        present?.(file, view, change);
+      }
     }
+  } catch (error) {
+    if (!fileChanges.length) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ActionFailure('tool_error', message, undefined, {
+      changed: fileChanges.map(change => change.path),
+      fileChanges,
+      error: message,
+    });
   }
   return {
     changed: [...planned.keys()].map(file => space.display(file)),
+    fileChanges,
     verification: {
       matched: true,
       method: 'file_bytes_readback',
@@ -658,6 +926,8 @@ export async function runShell(
   let stdout = '';
   let stderr = '';
   const throttle = onOutput ? createOutputThrottle(onOutput) : null;
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
   child.stdout?.on('data', chunk => {
     const text = chunk.toString();
     stdout = (stdout + text).slice(-64000);
@@ -689,9 +959,14 @@ export async function runShell(
     const result = {exit, cwd, stdout, stderr};
     if (
       exit !== 0 &&
-      !(exit === 1 && /^\s*(rg|grep|git\s+diff)\b/.test(command))
+      !(exit === 1 && commandEffect({command}) === 'read')
     ) {
-      throw new Error(JSON.stringify(result));
+      const message =
+        stderr.trim().split(/\r?\n/, 1)[0] || `Command exited with code ${exit}`;
+      throw new ActionFailure('tool_error', message, undefined, {
+        ...result,
+        error: message,
+      });
     }
     return result;
   } finally {
@@ -797,7 +1072,14 @@ export function registerCodingTools(
     'Write',
     'Write a workspace text file. Read existing files first. Returns actual byte readback.',
     schema({path: string, content: string}, ['path', 'content']),
-    args => space.write(space.resolve(args.path), str(args.content)),
+    (args, context) =>
+      space.write(
+        space.resolve(args.path),
+        str(args.content),
+        true,
+        false,
+        context.present,
+      ),
     'reversible_write',
   );
   const editSchema = schema(
@@ -817,7 +1099,7 @@ export function registerCodingTools(
       },
       ['path'],
     ),
-    async args => {
+    async (args, context) => {
       const file = space.resolve(args.path);
       await space.requireFresh(file);
       const original = await readFile(file, 'utf8');
@@ -852,7 +1134,13 @@ export function registerCodingTools(
         output =
           output.slice(0, item.start) + item.text + output.slice(item.end);
       }
-      const persisted = await space.write(file, output, true, true);
+      const persisted = await space.write(
+        file,
+        output,
+        true,
+        true,
+        context.present,
+      );
       const before = fileFacts(original);
       const after = fileFacts(output);
       return {
@@ -881,12 +1169,71 @@ export function registerCodingTools(
     schema({patch: {oneOf: [string, {type: 'array', items: string}]}}, [
       'patch',
     ]),
-    async args => {
+    async (args, context) => {
       const results: Data[] = [];
-      for (const patch of Array.isArray(args.patch)
-        ? args.patch
-        : [args.patch]) {
-        results.push(await applyWorkspacePatch(space, str(patch)));
+      const presentation: Extract<ToolPresentation, {kind: 'file_diffs'}> = {
+        kind: 'file_diffs',
+        files: [],
+      };
+      const firstVersions = new Map<
+        string, {initial: FileDiffPresentation; index: number}
+      >();
+      const present = context.present
+        ? (file: string, view: FileDiffPresentation, change: Data) => {
+            const previewPath = typeof change.previewPath === 'string'
+              ? change.previewPath : undefined;
+            const first = firstVersions.get(file);
+            if (first) {
+              const entry = presentation.files[first.index];
+              entry.exists = change.exists !== false;
+              if (previewPath) {
+                entry.previewPath = previewPath;
+              } else {
+                delete entry.previewPath;
+              }
+              if (first.initial.kind === 'file_diff_unavailable') {
+                entry.presentation = first.initial;
+              } else if (view.kind === 'file_diff') {
+                entry.presentation = {...view, beforePath: first.initial.beforePath};
+              } else {
+                entry.presentation = view;
+              }
+              return;
+            }
+            firstVersions.set(file, {
+              initial: view,
+              index: presentation.files.length,
+            });
+            presentation.files.push({
+              path: space.display(file),
+              absolutePath: file.replaceAll('\\', '/'),
+              exists: change.exists !== false,
+              ...(previewPath ? {previewPath} : {}),
+              presentation: view,
+            });
+          }
+        : undefined;
+      try {
+        for (const patch of Array.isArray(args.patch)
+          ? args.patch
+          : [args.patch]) {
+          results.push(await applyWorkspacePatch(space, str(patch), present));
+        }
+      } catch (error) {
+        if (!results.length) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new ActionFailure('tool_error', message, undefined, {
+          patches: [
+            ...results,
+            ...(error instanceof ActionFailure ? [error.partial_result] : []),
+          ],
+          error: message,
+        });
+      }
+      if (presentation.files.length) {
+        context.present?.(presentation);
       }
       return results.length === 1 ? results[0] : {patches: results};
     },
@@ -896,7 +1243,7 @@ export function registerCodingTools(
     'Rewind',
     'Restore files changed in this session from persistent checkpoints. steps=0 restores all.',
     schema({steps: integer}),
-    args => space.rewind(Number(args.steps ?? 0)),
+    (args, context) => space.rewind(Number(args.steps ?? 0), context.present),
     'reversible_write',
   );
   add(

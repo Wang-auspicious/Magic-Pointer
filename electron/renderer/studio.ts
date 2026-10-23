@@ -439,6 +439,7 @@ function setActiveProject(root: unknown, projectId?: string) {
 }
 
 interface ComposerWorktree {
+  baseBranch?: string;
   path: string;
   branch: string;
   base: string;
@@ -497,6 +498,7 @@ function loadComposerWorktreeState(): void {
                 branch: record.branch,
                 base: record.base,
                 conversationId: record.conversationId,
+                baseBranch: record.baseBranch,
               },
             );
           }
@@ -589,7 +591,7 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   const projectId = activeProjectId;
   const contextKey = currentComposerWorktreeKey();
   const identity = currentComposerWorktreeId();
-  if (!base || !currentComposerWorktreeEnabled()) {
+  if (!base) {
     return {
       projectRoot: base,
       projectId,
@@ -597,11 +599,14 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
       contextKey,
     };
   }
+  const isolated = currentComposerWorktreeEnabled();
+  const branchSelection = composerBranchSelection;
   const requireCurrentSelection = (): void => {
     if (
       contextKey !== currentComposerWorktreeKey() ||
       projectId !== activeProjectId ||
-      !currentComposerWorktreeEnabled()
+      currentComposerWorktreeEnabled() !== isolated ||
+      composerBranchSelection !== branchSelection
     ) {
       throw new Error(
         'Workspace selection changed. Send again from the selected workspace.',
@@ -610,25 +615,41 @@ async function prepareComposerWorktree(): Promise<PreparedComposerWorkspace> {
   };
   await warmComposerEnvironment(base);
   requireCurrentSelection();
+  const selectedBranch = currentComposerBranch();
+  if (!isolated && !selectedBranch) {
+    return {
+      projectRoot: base,
+      projectId,
+      executionWorkspaceRoot: base,
+      contextKey,
+    };
+  }
   const result = await Data.projectWorktree({
-    action: 'create',
+    action: isolated ? 'create' : 'checkout',
     projectRoot: base,
     conversationId: identity,
-    baseBranch: currentComposerBranch(),
+    baseBranch: selectedBranch,
+    path: isolated ? composerWorktrees.get(contextKey)?.path : undefined,
+    previousBranch: isolated
+      ? composerWorktrees.get(contextKey)?.baseBranch ?? ''
+      : undefined,
   });
   if (!result?.ok || !result.path) {
     const message = String(result?.error || studioT('worktree.create_failed'));
     failComposerWorktree(document.getElementById('composer-worktree'), message);
     throw new Error(message);
   }
-  const record: ComposerWorktree = {
-    path: result.path,
-    branch: result.branch || 'worktree',
-    base,
-    conversationId: identity,
-  };
-  composerWorktrees.set(contextKey, record);
-  persistComposerWorktrees();
+  if (isolated) {
+    const record: ComposerWorktree = {
+      path: result.path,
+      branch: result.branch || 'worktree',
+      base,
+      conversationId: identity,
+      baseBranch: selectedBranch,
+    };
+    composerWorktrees.set(contextKey, record);
+    persistComposerWorktrees();
+  }
   requireCurrentSelection();
   return {
     projectRoot: base,
@@ -664,6 +685,7 @@ function adoptComposerWorktreeConversation(
 
 const COMPOSER_BRANCH_STORAGE_KEY = 'mp:composer-branches:v1';
 const composerBranches = new Map<string, string>();
+let composerBranchSelection: string | undefined;
 let branchMenuSearch = '';
 
 function loadComposerBranches(): void {
@@ -697,11 +719,12 @@ loadComposerBranches();
 function currentComposerBranch(): string {
   const key = normalizedProjectRoot(activeProjectRoot);
   return (
-    composerBranches.get(key) ||
+    composerBranchSelection ??
+    composerBranches.get(key) ??
     (projectEnvironment?.root &&
     normalizedProjectRoot(projectEnvironment.root) === key
       ? projectEnvironment.branch
-      : '') ||
+      : '') ??
     ''
   );
 }
@@ -849,8 +872,8 @@ function renderComposerBranchMenu(branches: string[]): void {
       if (!activeProjectRoot) {
         return;
       }
-      composerBranches.set(normalizedProjectRoot(activeProjectRoot), branch);
-      persistComposerBranches();
+      composerBranchSelection = branch;
+      captureComposerDraft();
       renderComposerBranch();
       closeAnchoredPopover('composer-branch-menu', 'composer-branch');
     });
@@ -1151,18 +1174,22 @@ interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   workspaceRoot: string;
-  items: MagicPointerConversation[];
+  items: MagicPointerConversationSummary[];
 }
 interface SidebarGroupModule {
   groupConversations(
-    rows: readonly MagicPointerConversation[],
-  ): Array<{key: string; label: string; items: MagicPointerConversation[]}>;
+    rows: readonly MagicPointerConversationSummary[],
+  ): Array<{
+    key: string;
+    label: string;
+    items: MagicPointerConversationSummary[];
+  }>;
   filterConversations(
-    rows: readonly MagicPointerConversation[],
+    rows: readonly MagicPointerConversationSummary[],
     query: string,
-  ): MagicPointerConversation[];
+  ): MagicPointerConversationSummary[];
   groupByWorkspace(
-    rows: readonly MagicPointerConversation[],
+    rows: readonly MagicPointerConversationSummary[],
   ): SidebarWorkspaceGroup[];
 }
 const sidebarGroups = (globalThis as {SidebarGroups?: SidebarGroupModule})
@@ -1201,7 +1228,7 @@ interface StudioSearchItem {
 }
 interface StudioSearchModule {
   buildStudioSearchIndex(sources: {
-    conversations?: readonly MagicPointerConversation[];
+    conversations?: readonly MagicPointerConversationSummary[];
     projects?: readonly MagicPointerProject[];
     commands?: readonly MagicPointerSlashEntry[];
     skills?: readonly MagicPointerSlashEntry[];
@@ -1263,13 +1290,7 @@ function closeAnchoredPopover(popupId: string, triggerId: string) {
     effortParticleController = null;
   }
   if (popupId === 'account-menu') {
-    const submenu = document.getElementById('account-submenu');
-    if (submenu) {
-      submenu.hidden = true;
-    }
-    document
-      .querySelectorAll('[data-account-command][aria-haspopup]')
-      .forEach(row => row.setAttribute('aria-expanded', 'false'));
+    closeAccountSubmenu();
   }
   if (popupId === 'composer-usage-popover') {
     setUsageDetailsOpen(false);
@@ -1314,7 +1335,10 @@ function positionAnchoredPopover(
   popup.style.left = `${point.left}px`;
   popup.style.top = `${point.top}px`;
   popup.style.removeProperty('visibility');
-  if (popupId === 'composer-permission-menu') {
+  if (
+    popupId === 'composer-permission-menu' ||
+    popupId === 'composer-workspace-menu'
+  ) {
     popup.style.left = `${Math.max(12, Math.min(trigger.getBoundingClientRect().left, innerWidth - popup.offsetWidth - 12))}px`;
   }
   trigger.setAttribute('aria-expanded', 'true');
@@ -1392,16 +1416,15 @@ function conversationNode(
     lastOutcome?: string;
     lastFailed?: boolean;
     lastPendingInputKind?: string;
-    turns?: MagicPointerTurn[];
+    turns?: number | MagicPointerTurn[];
   },
   active?: string,
+  pinnedIds: readonly string[] = [],
 ): HTMLElement {
   const row = document.createElement('button');
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
   row.dataset.open = String(c.id || '');
   row.type = 'button';
-  const dot = document.createElement('span');
-  dot.className = 'side-dot';
   const activity = ConversationState.derive(
     c,
     studioComposerBusy && c.id === activeConversationId,
@@ -1415,19 +1438,9 @@ function conversationNode(
           ? ''
           : activity;
   const statusLabel = status ? ConversationState.label(activity) : '';
+  row.title = String(c.title || studioT('convo.untitled'));
   if (status) {
-    dot.classList.add(`is-${status}`);
-    dot.innerHTML =
-      status === 'running'
-        ? ''
-        : icon(
-            status === 'error'
-              ? 'ic-warning'
-              : status === 'interrupted'
-                ? 'ic-alarm-clock'
-                : 'ic-list-checks',
-          );
-    dot.title = statusLabel;
+    row.title = `${String(c.title || studioT('convo.untitled'))}\n${statusLabel}`;
     row.dataset.taskState = status;
     row.setAttribute(
       'aria-label',
@@ -1440,15 +1453,36 @@ function conversationNode(
       row.dataset.pendingWork = 'true';
     }
   }
-  dot.setAttribute('aria-hidden', 'true');
   const title = document.createElement('span');
   title.className = 'side-title';
   title.textContent = String(c.title || studioT('convo.untitled'));
-  const stateLabel = document.createElement('span');
-  stateLabel.className = 'side-state-label';
-  stateLabel.textContent = statusLabel;
+  if (studioLibraries.preferences.sidebar.metadata) {
+    const metadata = document.createElement('span');
+    metadata.className = 'side-metadata';
+    metadata.textContent =
+      statusLabel ||
+      (c.updatedAt
+        ? new Date(c.updatedAt).toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+          })
+        : '');
+    title.append(metadata);
+  }
   const actions = document.createElement('span');
   actions.className = 'side-actions';
+  const unread = studioLibraries.sessionUnread({
+    id: String(c.id || ''),
+    updatedAt: c.updatedAt,
+  });
+  row.dataset.unread = String(unread);
+  if (unread) {
+    const mark = document.createElement('span');
+    mark.className = 'side-unread';
+    mark.setAttribute('role', 'status');
+    mark.setAttribute('aria-label', studioT('convo.unread'));
+    actions.append(mark);
+  }
   const ellipsis = document.createElement('span');
   ellipsis.className = 'side-ellipsis';
   ellipsis.setAttribute('role', 'button');
@@ -1457,8 +1491,8 @@ function conversationNode(
   ellipsis.dataset.sessionMenu = String(c.id || '');
   ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
-  actions.appendChild(buildSessionMenu(c));
-  row.append(dot, title, stateLabel, actions);
+  actions.appendChild(buildSessionMenu(c, pinnedIds));
+  row.append(title, actions);
   return row;
 }
 
@@ -1505,39 +1539,47 @@ async function deleteConversationFromUi(id: string): Promise<void> {
   }
 }
 
-function buildSessionMenu(c: {
-  id?: string;
-  title?: string;
-  workspaceRoot?: string;
-}): HTMLElement {
+function buildSessionMenu(
+  c: {
+    id?: string;
+    title?: string;
+    projectId?: string;
+    workspaceRoot?: string;
+    updatedAt?: number;
+  },
+  pinnedIds: readonly string[] = [],
+): HTMLElement {
   const id = String(c.id || '');
   const menu = document.createElement('span');
   menu.className = 'side-session-menu';
   menu.hidden = true;
   menu.dataset.forSession = id;
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Session actions');
   const glyph = (
     globalThis as unknown as {
       CdsIcons: {html: (name: string, size?: string) => string};
     }
   ).CdsIcons.html;
   type MenuItem = {
-    icon: string;
     key?: string;
     danger?: boolean;
     submenu?: boolean;
   };
-  const item = (name: string, label: string, options: MenuItem) => {
+  const item = (name: string, label: string, options: MenuItem = {}) => {
     const row = document.createElement('button');
     row.type = 'button';
     row.className =
       'side-session-menu-item' + (options.danger ? ' is-danger' : '');
     row.dataset.sessionAction = name;
+    row.setAttribute('role', 'menuitem');
+    row.tabIndex = -1;
     row.innerHTML =
-      `<span class="side-menu-icon" aria-hidden="true">${glyph(options.icon)}</span><span class="side-menu-label">${esc(label)}</span>` +
+      `<span class="side-menu-label">${esc(label)}</span>` +
       (options.key
         ? `<kbd>${options.key}</kbd>`
         : options.submenu
-          ? '<span class="side-menu-chevron" aria-hidden="true">›</span>'
+          ? `<span class="side-menu-chevron" aria-hidden="true">${glyph('chevron-section', 'small')}</span>`
           : '');
     return row;
   };
@@ -1546,7 +1588,6 @@ function buildSessionMenu(c: {
     return line;
   };
   const local = studioLibraries.sessionPreference(id);
-  const inProject = Boolean(String(c.workspaceRoot || '').trim());
   const close = (event: Event) => {
     event.stopPropagation();
     menu.hidden = true;
@@ -1565,22 +1606,31 @@ function buildSessionMenu(c: {
       openRenameDialog(id, String(c.title || ''));
       return;
     }
+    if (name === 'read') {
+      studioLibraries.setSessionPreference(id, {
+        seenAt: studioLibraries.sessionUnread({id, updatedAt: c.updatedAt})
+          ? Math.max(Date.now(), Number(c.updatedAt || 0))
+          : 0,
+      });
+      void renderSidebar();
+      return;
+    }
+    if (name === 'fork') {
+      void branchConversationFromUi(id);
+      return;
+    }
     if (name === 'archive') {
       studioLibraries.setSessionPreference(id, {archived: !local.archived});
       void renderSidebar();
       return;
     }
-    if (name === 'remove-project') {
-      void Data.setConversationProject(id, '').then(() => renderSidebar());
-      return;
-    }
     if (name === 'up') {
-      studioLibraries.movePinned(id, -1);
+      studioLibraries.movePinned(id, -1, pinnedIds);
       void renderSidebar();
       return;
     }
     if (name === 'down') {
-      studioLibraries.movePinned(id, 1);
+      studioLibraries.movePinned(id, 1, pinnedIds);
       void renderSidebar();
       return;
     }
@@ -1589,86 +1639,96 @@ function buildSessionMenu(c: {
     }
   };
   const pin = item('pin', local.pinned ? 'Unpin' : 'Pin', {
-    icon: local.pinned ? 'unpin' : 'pinned-star',
     key: 'P',
   });
   pin.dataset.sessionPinned = String(local.pinned);
   pin.addEventListener('click', run('pin'));
   menu.append(pin);
-  const rename = item('rename', 'Rename', {icon: 'mode-write', key: 'R'});
+  const read = item(
+    'read',
+    studioLibraries.sessionUnread({id, updatedAt: c.updatedAt})
+      ? 'Mark as read'
+      : 'Mark as unread',
+    {key: 'U'},
+  );
+  read.addEventListener('click', run('read'));
+  menu.append(read);
+  const rename = item('rename', 'Rename', {key: 'R'});
   rename.addEventListener('click', run('rename'));
   menu.append(rename);
-  const project = item(
-    'project',
-    inProject ? 'Change project' : 'Add to project',
-    {icon: 'box', submenu: true},
-  );
+  const fork = item('fork', 'Fork', {key: 'F'});
+  fork.disabled = branchingConversations.has(id);
+  fork.addEventListener('click', run('fork'));
+  menu.append(fork, divider());
+  const project = item('project', 'Move to project', {submenu: true});
+  project.setAttribute('aria-haspopup', 'menu');
+  project.setAttribute('aria-expanded', 'false');
   project.addEventListener('click', event => {
     event.stopPropagation();
+    closeGroupSubmenu?.();
     void openProjectAssignment(id, project);
   });
-  menu.append(project);
-  if (inProject) {
-    const removeProject = item('remove-project', 'Remove from project', {
-      icon: 'arrow-out',
-    });
-    removeProject.addEventListener('click', run('remove-project'));
-    menu.append(removeProject);
-  }
   if (!local.pinned) {
-    const parent = item('group', 'Move to group', {
-      icon: 'folder',
+    const parent = item('group', 'Move to', {
       submenu: true,
     });
+    parent.setAttribute('aria-haspopup', 'menu');
+    parent.setAttribute('aria-expanded', 'false');
     const apply = (group: string | null) => {
       if (group === null) {
-        void requestStudioText(studioT('prompt.group_name'), local.group || '', 60).then(name => {
+        void requestStudioText(
+          studioT('prompt.group_name'),
+          local.group || '',
+          60,
+        ).then(name => {
           if (name === null) {
             return;
           }
           studioLibraries.setSessionGroup(id, name);
-          studioLibraries.setFilter('group', 'custom');
           void renderSidebar();
         });
         return;
       }
       studioLibraries.setSessionGroup(id, group);
-      studioLibraries.setFilter('group', 'custom');
       void renderSidebar();
     };
-    const show = () =>
+    const show = (enter = false) =>
       openGroupSubmenu(
         parent,
         studioLibraries.sessionGroups(),
         local.group || '',
         apply,
+        enter,
       );
     parent.addEventListener('mouseenter', () => {
+      closeProjectAssignment?.();
       closeGroupSubmenu?.();
       show();
     });
-    parent.addEventListener('focusin', show);
     parent.addEventListener('click', event => {
       event.stopPropagation();
-      show();
+      closeProjectAssignment?.();
+      show(true);
     });
     menu.append(parent);
   }
+  menu.append(project);
   const archive = item('archive', local.archived ? 'Unarchive' : 'Archive', {
-    icon: 'archive',
+    key: 'A',
   });
   archive.addEventListener('click', run('archive'));
-  menu.append(archive);
-  menu.append(divider());
+  menu.append(divider(), archive);
   if (local.pinned) {
-    const up = item('up', 'Move up', {icon: 'send'});
+    const index = pinnedIds.indexOf(id);
+    const up = item('up', 'Move up');
+    up.disabled = index <= 0;
     up.addEventListener('click', run('up'));
-    const down = item('down', 'Move down', {icon: 'arrow-down'});
+    const down = item('down', 'Move down');
+    down.disabled = index < 0 || index >= pinnedIds.length - 1;
     down.addEventListener('click', run('down'));
     menu.append(up, down, divider());
   }
   const remove = item('delete', 'Delete', {
-    icon: 'trash',
     key: 'D',
     danger: true,
   });
@@ -1678,11 +1738,13 @@ function buildSessionMenu(c: {
 }
 
 let closeGroupSubmenu: (() => void) | null = null;
+let groupSubmenuAnchor: HTMLElement | null = null;
 function openGroupSubmenu(
   anchor: HTMLElement,
   groups: readonly string[],
   current: string,
   pick: (group: string | null) => void,
+  focusFirst = false,
 ): void {
   closeGroupSubmenu?.();
   const glyph = (
@@ -1693,15 +1755,15 @@ function openGroupSubmenu(
   const panel = document.createElement('div');
   panel.className = 'side-session-submenu is-floating';
   panel.setAttribute('role', 'menu');
-  panel.setAttribute('aria-label', 'Move to group');
+  panel.setAttribute('aria-label', 'Move to');
   panel.innerHTML =
     groups
       .map(
         (group: string) =>
-          `<button type="button" role="menuitemradio" aria-checked="${current === group}" data-session-group="${esc(group)}"><span>${esc(group)}</span>${current === group ? glyph('check') : ''}</button>`,
+          `<button type="button" role="menuitemradio" tabindex="-1" aria-checked="${current === group}" data-session-group="${esc(group)}"><span>${esc(group)}</span>${current === group ? glyph('check') : ''}</button>`,
       )
       .join('') +
-    `<button type="button" data-session-group-new><span>New group…</span></button>`;
+    `<button type="button" role="menuitem" tabindex="-1" data-session-group-new><span>New section…</span></button>`;
   document.body.append(panel);
   const rect = anchor.getBoundingClientRect();
   const width = panel.offsetWidth;
@@ -1714,26 +1776,79 @@ function openGroupSubmenu(
   panel.style.top = `${Math.round(Math.max(8, Math.min(rect.top - 4, window.innerHeight - height - 8)))}px`;
   let hideTimer: number | undefined;
   const close = () => {
-    if (hideTimer !== undefined) {
-      window.clearTimeout(hideTimer);
-    }
+    cancelClose();
+    anchor.removeEventListener('mouseleave', scheduleClose);
+    anchor.removeEventListener('focusout', scheduleClose);
+    anchor.setAttribute('aria-expanded', 'false');
     panel.remove();
     if (closeGroupSubmenu === close) {
       closeGroupSubmenu = null;
+      groupSubmenuAnchor = null;
     }
   };
   const scheduleClose = () => {
+    cancelClose();
+    if (panel.contains(document.activeElement)) {
+      return;
+    }
     hideTimer = window.setTimeout(close, 180);
   };
   const cancelClose = () => {
     if (hideTimer !== undefined) {
       window.clearTimeout(hideTimer);
+      hideTimer = undefined;
     }
   };
   anchor.addEventListener('mouseleave', scheduleClose);
   anchor.addEventListener('focusout', scheduleClose);
   panel.addEventListener('mouseenter', cancelClose);
   panel.addEventListener('mouseleave', scheduleClose);
+  panel.addEventListener('focusin', cancelClose);
+  panel.addEventListener('focusout', event => {
+    if (!panel.contains(event.relatedTarget as Node | null)) {
+      scheduleClose();
+    }
+  });
+  panel.addEventListener('keydown', event => {
+    if (
+      event.isComposing || event.keyCode === 229 ||
+      event.ctrlKey || event.metaKey || event.altKey
+    ) {
+      return;
+    }
+    if (event.key === 'Escape' || event.key === 'ArrowLeft' || event.key === 'Tab') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.repeat) {
+        return;
+      }
+      const menu = anchor.closest<HTMLElement>('.side-session-menu');
+      close();
+      if (event.key === 'Tab' && menu) {
+        menu.hidden = true;
+      } else if (anchor.isConnected) {
+        anchor.focus({preventScroll: true});
+      }
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      const rows = studioMenuItems(panel);
+      const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+      let next: number;
+      if (event.key === 'Home') {
+        next = 0;
+      } else if (event.key === 'End') {
+        next = rows.length - 1;
+      } else if (index < 0) {
+        next = event.key === 'ArrowDown' ? 0 : rows.length - 1;
+      } else {
+        next = (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      rows[next]?.focus();
+    }
+  });
   panel.addEventListener('click', event => {
     event.stopPropagation();
     const target = (event.target as Element).closest<HTMLElement>(
@@ -1743,26 +1858,87 @@ function openGroupSubmenu(
       return;
     }
     const value = target.dataset.sessionGroup;
+    const menu = anchor.closest<HTMLElement>('.side-session-menu');
     close();
+    if (menu) {
+      menu.hidden = true;
+    }
     pick(value === undefined ? null : String(value));
   });
+  anchor.setAttribute('aria-expanded', 'true');
+  groupSubmenuAnchor = anchor;
   closeGroupSubmenu = close;
+  if (focusFirst) {
+    enterStudioMenu(panel);
+  }
 }
 
-function bindSessionMenuKeys(menu: HTMLElement): void {
+function bindSessionMenuKeys(
+  menu: HTMLElement,
+  trigger: HTMLElement,
+  owner: HTMLElement,
+): void {
   const onKey = (event: KeyboardEvent) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) {
+    if (!menu.contains(event.target as Node)) {
+      return;
+    }
+    if (
+      event.isComposing || event.keyCode === 229 ||
+      event.metaKey || event.ctrlKey || event.altKey
+    ) {
+      return;
+    }
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) {
+        menu.hidden = true;
+      }
+      return;
+    }
+    if (event.key === 'ArrowRight') {
+      const row = (event.target as Element).closest<HTMLElement>(
+        '[data-session-action="group"], [data-session-action="project"]',
+      );
+      if (row) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        row.click();
+      }
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      const items = studioMenuItems(menu);
+      const current = items.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? items.length - 1
+            : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) %
+              items.length;
+      event.preventDefault();
+      event.stopPropagation();
+      items[next]?.focus();
       return;
     }
     const key = event.key.toLocaleLowerCase();
     const name =
       key === 'p'
         ? 'pin'
-        : key === 'r'
-          ? 'rename'
-          : key === 'd'
-            ? 'delete'
-            : '';
+        : key === 'u'
+          ? 'read'
+          : key === 'f'
+            ? 'fork'
+            : key === 'a'
+              ? 'archive'
+              : key === 'r'
+                ? 'rename'
+                : key === 'd'
+                  ? 'delete'
+                  : '';
     if (!name) {
       return;
     }
@@ -1778,12 +1954,29 @@ function bindSessionMenuKeys(menu: HTMLElement): void {
   };
   const observer = new MutationObserver(() => {
     if (menu.hidden) {
+      if (groupSubmenuAnchor && menu.contains(groupSubmenuAnchor)) {
+        closeGroupSubmenu?.();
+      }
       document.removeEventListener('keydown', onKey, true);
       observer.disconnect();
+      trigger.setAttribute('aria-expanded', 'false');
+      if (owner.isConnected) {
+        owner.append(menu);
+      } else {
+        menu.remove();
+      }
+      if (
+        trigger.isConnected &&
+        (document.activeElement === document.body ||
+          menu.contains(document.activeElement))
+      ) {
+        trigger.focus({preventScroll: true});
+      }
     }
   });
   observer.observe(menu, {attributes: true, attributeFilter: ['hidden']});
   document.addEventListener('keydown', onKey, true);
+  enterStudioMenu(menu);
 }
 
 let projectAssignmentRequest = 0;
@@ -1794,39 +1987,50 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   const parentMenu = anchor.closest<HTMLElement>(
     '.side-session-menu, .mp-library-popover',
   );
-  const bounds = (parentMenu || anchor).getBoundingClientRect();
-  const anchorBounds = anchor.getBoundingClientRect();
-  const [projects, conversation] = await Promise.all([
-    Data.projects(),
-    Data.conversation(id),
-  ]);
-  if (!conversation || request !== projectAssignmentRequest) {
+  if (!anchor.isConnected || parentMenu?.hidden) {
     return;
   }
   const popover = document.createElement('div');
   popover.className = 'mp-library-popover mp-project-assignment';
+  popover.tabIndex = -1;
   popover.setAttribute('role', 'menu');
   popover.setAttribute('aria-label', 'Change project');
   const glyph = (globalThis as any).CdsIcons.html;
-  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options">${studioLibraries.projectOptionsMarkup(projects, conversation.projectId ?? conversation.workspaceRoot ?? '')}</div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p>`;
-  const left =
-    bounds.right + 240 <= window.innerWidth - 8
-      ? bounds.right - 3
-      : bounds.left - 237;
-  popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - 248))}px`;
+  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options"></div><button type="button" role="menuitem" tabindex="-1" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p><button type="button" role="menuitem" tabindex="-1" data-project-retry hidden>${esc(studioT('common.retry'))}</button>`;
   document.body.append(popover);
-  popover.style.top = `${Math.max(8, Math.min(anchorBounds.top - 4, window.innerHeight - popover.offsetHeight - 8))}px`;
+  const position = () => {
+    const bounds = (parentMenu || anchor).getBoundingClientRect();
+    const anchorBounds = anchor.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    const left = bounds.right + width + 4 <= window.innerWidth - 8
+      ? bounds.right + 4
+      : bounds.left - width - 4;
+    popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+    popover.style.top = `${Math.max(8, Math.min(anchorBounds.top - 4, window.innerHeight - popover.offsetHeight - 8))}px`;
+  };
   anchor.setAttribute('aria-expanded', 'true');
   const listeners = new AbortController();
+  let closed = false;
   const close = () => {
+    closed = true;
     popover.remove();
     anchor.setAttribute('aria-expanded', 'false');
     listeners.abort();
+    observer.disconnect();
     if (closeProjectAssignment === close) {
       closeProjectAssignment = null;
     }
   };
+  const observer = new MutationObserver(() => {
+    if (parentMenu?.hidden) {
+      close();
+    }
+  });
+  if (parentMenu) {
+    observer.observe(parentMenu, {attributes: true, attributeFilter: ['hidden']});
+  }
   closeProjectAssignment = close;
+  popover.focus({preventScroll: true});
   document.addEventListener(
     'pointerdown',
     event => {
@@ -1839,12 +2043,98 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     },
     {signal: listeners.signal},
   );
-  document.addEventListener(
+  popover.addEventListener(
     'keydown',
     event => {
-      if (event.key === 'Escape') {
+      if (event.isComposing || event.keyCode === 229) {
+        event.stopPropagation();
+        return;
+      }
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.repeat) {
+          return;
+        }
         close();
-        anchor.focus();
+        if (event.key === 'Tab' && parentMenu) {
+          parentMenu.hidden = true;
+        } else if (anchor.isConnected) {
+          anchor.focus({preventScroll: true});
+        }
+        return;
+      }
+      const altGraph = event.getModifierState('AltGraph');
+      if (event.metaKey || ((event.ctrlKey || event.altKey) && !altGraph)) {
+        return;
+      }
+      if (loading || busy || search.disabled) {
+        return;
+      }
+      const fromSearch = event.target === search;
+      if (!fromSearch && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+        if (anchor.isConnected) {
+          anchor.focus({preventScroll: true});
+        }
+        return;
+      }
+      const vertical = event.key === 'ArrowDown' || event.key === 'ArrowUp';
+      if (
+        vertical ||
+        (!fromSearch && (event.key === 'Home' || event.key === 'End'))
+      ) {
+        const rows = studioMenuItems(popover);
+        const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+        let next: number;
+        if (
+          event.key === 'Home' ||
+          (fromSearch && event.key === 'ArrowDown')
+        ) {
+          next = 0;
+        } else if (
+          event.key === 'End' ||
+          (fromSearch && event.key === 'ArrowUp')
+        ) {
+          next = rows.length - 1;
+        } else {
+          next = (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) %
+            rows.length;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        rows[next]?.focus();
+        return;
+      }
+      // Search owns caret movement and editing; result rows forward text to it.
+      const textKey =
+        (event.key.length === 1 && event.key !== ' ') ||
+        event.key === 'Backspace' ||
+        (event.key === 'Delete' && !event.shiftKey);
+      if (!fromSearch && textKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        let start = search.selectionStart ?? search.value.length;
+        let end = search.selectionEnd ?? search.value.length;
+        if (start === end && event.key === 'Backspace') {
+          const width = (search.value.codePointAt(start - 2) ?? 0) > 0xffff ? 2 : 1;
+          start = Math.max(0, start - width);
+        } else if (start === end && event.key === 'Delete') {
+          const width = (search.value.codePointAt(end) ?? 0) > 0xffff ? 2 : 1;
+          end = Math.min(search.value.length, end + width);
+        }
+        search.focus({preventScroll: true});
+        search.setRangeText(
+          event.key === 'Backspace' || event.key === 'Delete' ? '' : event.key,
+          start,
+          end,
+          'end',
+        );
+        search.dispatchEvent(new Event('input', {bubbles: true}));
+      } else if (fromSearch) {
+        event.stopPropagation();
       }
     },
     {signal: listeners.signal},
@@ -1853,19 +2143,97 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
     popover.querySelector('.mp-library-error')!.textContent =
       reason instanceof Error ? reason.message : String(reason);
   };
+  const search = popover.querySelector<HTMLInputElement>('[data-project-search]')!;
+  const options = popover.querySelector<HTMLElement>('.mp-project-options')!;
+  const picker = popover.querySelector<HTMLButtonElement>('[data-project-picker]')!;
+  const retry = popover.querySelector<HTMLButtonElement>('[data-project-retry]')!;
+  let projects: MagicPointerProject[] = [];
+  let conversation: Awaited<ReturnType<typeof Data.conversation>>;
+  let loading = false;
+  const renderOptions = () => {
+    if (!conversation) {
+      return;
+    }
+    options.innerHTML = studioLibraries.projectOptionsMarkup(
+      projects,
+      conversation.projectId ?? conversation.workspaceRoot ?? '',
+      search.value,
+    );
+    for (const item of studioMenuItems(popover)) {
+      item.tabIndex = -1;
+    }
+  };
+  const load = async () => {
+    if (closed || loading) {
+      return;
+    }
+    loading = true;
+    if (popover.contains(document.activeElement)) {
+      popover.focus({preventScroll: true});
+    }
+    search.disabled = true;
+    picker.disabled = true;
+    retry.hidden = true;
+    popover.setAttribute('aria-busy', 'true');
+    popover.querySelector('.mp-library-error')!.textContent = '';
+    options.innerHTML = `<p class="mp-library-note" role="status">${esc(studioT('common.loading'))}</p>`;
+    position();
+    try {
+      const loaded = await Promise.all([Data.projects(), Data.conversation(id)]);
+      if (closed || request !== projectAssignmentRequest) {
+        return;
+      }
+      if (!anchor.isConnected || parentMenu?.hidden) {
+        close();
+        return;
+      }
+      const loadedConversation = loaded[1];
+      if (!loadedConversation) {
+        throw new Error(studioT('convo.not_found'));
+      }
+      projects = loaded[0];
+      conversation = loadedConversation;
+      search.disabled = false;
+      picker.disabled = false;
+      renderOptions();
+      position();
+      if (document.activeElement === popover || document.activeElement === anchor) {
+        search.focus();
+      }
+    } catch (reason) {
+      if (!closed) {
+        options.innerHTML = '';
+        report(reason);
+        retry.hidden = false;
+        position();
+        if (document.activeElement === popover) {
+          retry.focus({preventScroll: true});
+        }
+      }
+    } finally {
+      loading = false;
+      popover.setAttribute('aria-busy', 'false');
+    }
+  };
   let busy = false;
   async function move(root: string) {
-    if (busy) {
+    if (closed || busy || loading || !conversation) {
       return;
     }
     busy = true;
+    search.disabled = true;
+    popover.querySelector('.mp-library-error')!.textContent = '';
     popover.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
       button.disabled = true;
     });
     try {
       const result = await Data.setConversationProject(id, root);
       if (!result.ok) {
-        throw new Error(result.error || studioT('project.no_changes'));
+        throw new Error(
+          result.error === 'store_failed'
+            ? studioT('convo.save_failed')
+            : result.error || studioT('convo.save_failed'),
+        );
       }
       if (activeConversationId === id) {
         setActiveProject(
@@ -1881,8 +2249,12 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       }
       await renderSidebar();
     } catch (reason) {
+      if (closed) {
+        return;
+      }
       report(reason);
       busy = false;
+      search.disabled = false;
       popover.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
         button.disabled = false;
       });
@@ -1890,22 +2262,21 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
   }
   popover.addEventListener('input', event => {
     const input = event.target as HTMLInputElement;
-    if (input.matches('[data-project-search]')) {
-      popover.querySelector('.mp-project-options')!.innerHTML =
-        studioLibraries.projectOptionsMarkup(
-          projects,
-          conversation.projectId ?? conversation.workspaceRoot ?? '',
-          input.value,
-        );
+    if (!busy && conversation && input.matches('[data-project-search]')) {
+      renderOptions();
     }
   });
   popover.addEventListener('click', event => {
     event.stopPropagation();
     const button = (event.target as Element).closest<HTMLElement>('button');
+    if (button?.hasAttribute('data-project-retry')) {
+      void load();
+      return;
+    }
     if (button?.hasAttribute('data-project-root')) {
       void move(String(button.dataset.projectRoot || ''));
     }
-    if (button?.hasAttribute('data-project-picker')) {
+    if (!busy && !loading && conversation && button?.hasAttribute('data-project-picker')) {
       ProjectWorkspace.create(
         popover,
         Data,
@@ -1916,7 +2287,7 @@ async function openProjectAssignment(id: string, anchor: HTMLElement) {
       );
     }
   });
-  popover.querySelector<HTMLInputElement>('input')?.focus();
+  await load();
 }
 
 function showStudioDialog(
@@ -2041,7 +2412,7 @@ function openRenameDialog(id: string, currentTitle: string) {
     await renderSidebar();
     const head = document.getElementById('chat-title');
     if (head && activeConversationId === id) {
-      head.textContent = value;
+      head.textContent = response.title ?? value;
     }
   };
   save.addEventListener('click', () => void submit());
@@ -2068,8 +2439,7 @@ function openRenameDialog(id: string, currentTitle: string) {
     const trigger = target.closest<HTMLElement>('[data-session-menu]');
     if (trigger) {
       e.stopPropagation();
-      const host =
-        trigger.parentElement?.querySelector<HTMLElement>('.side-session-menu');
+      const host = document.querySelector<HTMLElement>(`.side-session-menu[data-for-session="${CSS.escape(trigger.dataset.sessionMenu || '')}"]`);
       if (host) {
         document
           .querySelectorAll('.side-session-menu:not([hidden])')
@@ -2080,7 +2450,14 @@ function openRenameDialog(id: string, currentTitle: string) {
           });
         host.hidden = !host.hidden;
         if (!host.hidden) {
-          bindSessionMenuKeys(host);
+          const owner = host.parentElement!;
+          document.body.append(host);
+          const bounds = trigger.getBoundingClientRect();
+          host.style.position = 'fixed';
+          host.style.left = `${Math.max(8, Math.min(bounds.right - host.offsetWidth, window.innerWidth - host.offsetWidth - 8))}px`;
+          host.style.top = `${Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - host.offsetHeight - 8))}px`;
+          trigger.setAttribute('aria-expanded', 'true');
+          bindSessionMenuKeys(host, trigger, owner);
         }
       }
       return;
@@ -2220,9 +2597,9 @@ async function renderSidebar() {
     activeConversationId ??
     undefined;
   const nodes: HTMLElement[] = [];
-  let filtered = studioLibraries.filterRows(
+  let filtered = studioLibraries.sidebarRows(
     sidebarGroups.filterConversations(list, sidebarQuery),
-  ) as MagicPointerConversation[];
+  ) as MagicPointerConversationSummary[];
   if (sidebarRecentOnly) {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     filtered = filtered.filter(
@@ -2265,10 +2642,13 @@ async function renderSidebar() {
         ]
       : []),
   ];
-  const displayGroups = studioLibraries.sections(filtered, groups) as Array<{
+  const displayGroups = studioLibraries.sidebarSections(
+    filtered,
+    groups,
+  ) as Array<{
     key: string;
     label: string;
-    items: MagicPointerConversation[];
+    items: MagicPointerConversationSummary[];
     virtual?: boolean;
   }>;
   const browser = host.closest<HTMLElement>('.mpw-workspace-browser');
@@ -2311,40 +2691,45 @@ async function renderSidebar() {
     const projectName = document.createElement('span');
     projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
-    toggle.append(chevron, projectName);
-    const count = document.createElement('span');
-    count.className = 'mpw-project-count';
-    count.textContent = String(group.items.length);
-    count.setAttribute(
+    toggle.append(projectName, chevron);
+    toggle.setAttribute(
       'aria-label',
-      `${group.items.length} sessions`,
+      studioT('sidebar.group_summary', {
+        name: group.label,
+        count: String(group.items.length),
+      }),
     );
-    toggle.append(count);
     const actions = document.createElement('span');
     actions.className = 'mpw-project-actions';
+    const tools = document.createElement('button');
+    tools.type = 'button';
+    tools.dataset.projectTools = group.key;
+    tools.setAttribute('aria-label', studioT('sidebar.group_sort'));
+    tools.title = studioT('sidebar.group_sort');
+    tools.innerHTML = icon('ic-sliders');
+    actions.append(tools);
     if (group.key && !group.virtual) {
       const add = document.createElement('button');
       add.type = 'button';
       add.dataset.projectNew = group.key;
       add.setAttribute('aria-label', 'New session');
       add.innerHTML = icon('ic-plus');
-      const tools = document.createElement('button');
-      tools.type = 'button';
-      tools.dataset.projectTools = group.key;
-      tools.setAttribute('aria-label', 'Project tools');
-      tools.innerHTML = icon('ic-sliders');
-      actions.append(add, tools);
+      actions.append(add);
     }
     head.append(toggle, actions);
     const sessions = document.createElement('div');
     sessions.className = 'mpw-project-sessions';
+    const pinnedIds = group.key === '__pinned__'
+      ? group.items.map(conversation => conversation.id)
+      : [];
     for (const c of group.items) {
-      const node = conversationNode(c, active);
+      const node = conversationNode(c, active, pinnedIds);
       sessions.appendChild(node);
     }
     project.append(head, sessions);
     nodes.push(project);
   }
+  document.querySelectorAll<HTMLElement>('.side-session-menu:not([hidden])').forEach(menu => { menu.hidden = true; });
   host.replaceChildren(...nodes);
 }
 
@@ -2486,6 +2871,7 @@ async function openProjectFromPicker(preserveProjectId?: string) {
   }
   setWorkspaceNote('');
   invalidateProjectCache();
+  await warmProjects();
   setActiveProject(picked.project.root, preserveProjectId ?? picked.project.id);
   startNewChat();
   await renderSidebar();
@@ -2574,6 +2960,9 @@ async function openWorkspaceMenu() {
     ),
   );
   if (projects.length) {
+    const divider = document.createElement('div');
+    divider.className = 'mp-workspace-menu-divider';
+    rows.push(divider);
     const label = document.createElement('div');
     label.className = 'mp-workspace-menu-section';
     label.textContent = 'Recent';
@@ -4126,7 +4515,17 @@ async function openConversation(id: string) {
     return false;
   }
   captureComposerDraft();
-  studioLibraries.setSessionPreference(c.id, {seenAt: Date.now()});
+  studioLibraries.setSessionPreference(c.id, {
+    seenAt: Math.max(Date.now(), Number(c.updatedAt || 0)),
+  });
+  document
+    .querySelectorAll<HTMLElement>('#side-convos .side-item')
+    .forEach(row => {
+      if (row.dataset.open === c.id) {
+        row.dataset.unread = 'false';
+        row.querySelector('.side-unread')?.remove();
+      }
+    });
   const switchedTask = activeConversationId !== c.id;
   if (switchedTask) {
     detachPendingConversation();
@@ -6296,7 +6695,10 @@ function captureComposerDraft(): void {
       currentComposerModelSelection(),
       submission.draft.modelSelection,
     ) &&
-    composerPreset === submission.draft.permissionPreset
+    composerPreset === submission.draft.permissionPreset &&
+    composerEffort === submission.draft.effort &&
+    currentComposerBranch() === submission.draft.branch &&
+    currentComposerWorktreeEnabled() === submission.draft.worktree
   ) {
     return;
   }
@@ -6313,6 +6715,9 @@ function captureComposerDraft(): void {
     returnToProject: windowNavigation.draft(owner.location)?.returnToProject,
     modelSelection: currentComposerModelSelection(),
     permissionPreset: composerPreset,
+    effort: composerEffort,
+    branch: currentComposerBranch(),
+    worktree: currentComposerWorktreeEnabled(),
   });
 }
 
@@ -6320,10 +6725,55 @@ function restoreComposerDraft(
   location: StudioComposerLocation,
   saved?: Pick<
     MagicPointerConversation,
-    'additionalFolders' | 'modelSelection' | 'taskContext'
+    'additionalFolders' | 'modelSelection' | 'taskContext' | 'turns'
   >,
 ): void {
   const draft = windowNavigation.draft(location);
+  const project = ProjectScope.find(
+    cachedProjects || [],
+    activeProjectId || activeProjectRoot,
+  );
+  const environment =
+    location.kind === 'draft' && !draft && !saved
+      ? project?.environments?.find(
+          item => item.id === project.defaultEnvironmentId,
+        )
+      : undefined;
+  const savedWorkspace = saved?.turns?.at(-1)?.request as {
+    branch?: string;
+    worktree?: boolean;
+    executionWorkspaceRoot?: string;
+    executionBranch?: string;
+  } | undefined;
+  composerBranchSelection =
+    draft?.branch ?? (saved ? savedWorkspace?.branch ?? '' : environment?.branch);
+  const worktreeKey = currentComposerWorktreeKey();
+  const worktree =
+    draft?.worktree ??
+    (saved
+      ? savedWorkspace?.worktree ?? composerWorktreeEnabledKeys.has(worktreeKey)
+      : environment?.worktree ?? false);
+  if (worktree) {
+    composerWorktreeEnabledKeys.add(worktreeKey);
+    if (
+      savedWorkspace?.executionWorkspaceRoot &&
+      !composerWorktrees.has(worktreeKey)
+    ) {
+      composerWorktrees.set(worktreeKey, {
+        path: savedWorkspace.executionWorkspaceRoot,
+        branch:
+          savedWorkspace.executionBranch || savedWorkspace.branch || 'worktree',
+        baseBranch: savedWorkspace.branch || '',
+        base: activeProjectRoot,
+        conversationId: location.id,
+      });
+    }
+  } else {
+    composerWorktreeEnabledKeys.delete(worktreeKey);
+  }
+  persistComposerWorktrees();
+  renderComposerBranch();
+  renderComposerWorktree();
   const textarea = document.querySelector<HTMLTextAreaElement>(
     '#composer-form textarea',
   );
@@ -6333,9 +6783,13 @@ function restoreComposerDraft(
   }
   composerAttachments = [...(draft?.attachments || [])];
   composerAdditionalFolders = [
-    ...(draft?.additionalFolders ?? saved?.additionalFolders ?? []),
+    ...(draft?.additionalFolders ??
+      saved?.additionalFolders ??
+      environment?.additionalFolders ??
+      []),
   ];
-  const selection = draft?.modelSelection ?? saved?.modelSelection;
+  const selection =
+    draft?.modelSelection ?? saved?.modelSelection ?? environment?.modelSelection;
   composerModelSelection = selection ? {...selection} : undefined;
   const savedPreset = permPresets.presetForMode(
     saved?.taskContext?.permissionMode,
@@ -6345,7 +6799,14 @@ function restoreComposerDraft(
       ? draft?.permissionPreset
       : savedPreset) ??
     draft?.permissionPreset ??
+    environment?.permissionPreset ??
     defaultComposerPreset;
+  composerEffort =
+    draft?.effort ??
+    saved?.taskContext?.effort ??
+    environment?.effort ??
+    defaultComposerEffort;
+  renderEffortChip();
   renderPermissionChip();
   renderComposerModel();
   renderComposerFolders();
@@ -6502,6 +6963,7 @@ function setProductMode(mode: ProductMode, navigate = true) {
       const selected = button.dataset.productMode === mode;
       button.classList.toggle('is-on', selected);
       button.setAttribute('aria-selected', String(selected));
+      button.tabIndex = selected ? 0 : -1;
     });
   try {
     localStorage.setItem('mp:product-mode', mode);
@@ -6532,6 +6994,29 @@ function setProductMode(mode: ProductMode, navigate = true) {
   document
     .getElementById('mode-design')
     ?.addEventListener('click', () => setProductMode('design'));
+  document.getElementById('mode-switch')?.addEventListener('keydown', event => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const mode =
+      event.key === 'Home'
+        ? 'design'
+        : event.key === 'End'
+          ? 'walker'
+          : productMode === 'walker'
+            ? 'design'
+            : 'walker';
+    setProductMode(mode);
+    document
+      .getElementById(mode === 'walker' ? 'mode-work' : 'mode-design')
+      ?.focus();
+  });
 })();
 
 (function bindDesignHome() {
@@ -6561,7 +7046,30 @@ function setProductMode(mode: ProductMode, navigate = true) {
     });
 })();
 
-function closeWindowMenu() {
+let windowMenuTrigger: HTMLElement | null = null;
+
+function studioMenuItems(menu: HTMLElement): HTMLButtonElement[] {
+  return [
+    ...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+  ].filter(
+    button =>
+      button.closest('[role="menu"]') === menu &&
+      button.getClientRects().length > 0,
+  );
+}
+
+function enterStudioMenu(menu: HTMLElement): void {
+  const items = studioMenuItems(menu);
+  for (const item of items) {
+    if (!item.hasAttribute('role')) {
+      item.setAttribute('role', 'menuitem');
+    }
+    item.tabIndex = -1;
+  }
+  items[0]?.focus();
+}
+
+function closeWindowMenu(restoreFocus = false) {
   const popover = document.getElementById('window-menu-popover');
   if (popover) {
     popover.hidden = true;
@@ -6570,6 +7078,10 @@ function closeWindowMenu() {
     .querySelectorAll<HTMLElement>('[data-window-menu]')
     .forEach(button => button.setAttribute('aria-expanded', 'false'));
   document.getElementById('app-menu')?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    windowMenuTrigger?.focus({preventScroll: true});
+  }
+  windowMenuTrigger = null;
 }
 
 function openWindowMenu(button: HTMLElement, menuName: string) {
@@ -6593,6 +7105,8 @@ function openWindowMenu(button: HTMLElement, menuName: string) {
   popover.style.left = `${Math.max(4, rect.left)}px`;
   popover.hidden = false;
   button.setAttribute('aria-expanded', 'true');
+  windowMenuTrigger = button;
+  enterStudioMenu(popover);
 }
 
 document
@@ -6727,7 +7241,9 @@ function openInformationDialog(title: string, detail: string) {
 }
 
 async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
-  closeWindowMenu();
+  closeWindowMenu(
+    document.getElementById('window-menu-popover')?.contains(document.activeElement),
+  );
   if (command === 'new-chat') {
     show('chat');
     startNewChat();
@@ -6762,11 +7278,15 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
     return;
   }
   if (command === 'toggle-inspector') {
-    setInspector(shell.dataset.inspector !== 'open', activeInspectorTab);
+    if (inspectorState.open) {
+      closeInspectorPanel();
+    } else {
+      setInspector(true, activeInspectorTab);
+    }
     return;
   }
   if (command === 'toggle-bottom-panel') {
-    setBottomPanel(shell.dataset.bottomPanel !== 'open');
+    toggleTerminalPanel();
     return;
   }
   if (command === 'toggle-theme') {
@@ -6800,12 +7320,46 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   await Data.windowCommand(command);
 }
 
-function closeAccountMenu() {
-  const submenu = document.getElementById('account-submenu');
-  if (submenu) {
-    submenu.hidden = true;
-  }
+function closeAccountMenu(restoreFocus = false) {
   closeAnchoredPopover('account-menu', 'account-footer');
+  if (restoreFocus) {
+    document.getElementById('account-footer')?.focus({preventScroll: true});
+  }
+}
+
+function closeAccountSubmenu(restoreFocus = false): void {
+  const menu = document.getElementById('account-submenu');
+  const parentCommand = menu?.dataset.parentCommand;
+  if (menu) {
+    menu.hidden = true;
+    delete menu.dataset.parentCommand;
+  }
+  document
+    .querySelectorAll('[data-account-command][aria-haspopup]')
+    .forEach(row => row.setAttribute('aria-expanded', 'false'));
+  if (restoreFocus && parentCommand) {
+    document
+      .querySelector<HTMLElement>(`[data-account-command="${parentCommand}"]`)
+      ?.focus({preventScroll: true});
+  }
+}
+
+function dismissStudioMenu(menu: HTMLElement): void {
+  if (menu.id === 'window-menu-popover') {
+    closeWindowMenu(true);
+  } else if (menu.id === 'thread-menu') {
+    closeThreadMenu(true);
+  } else if (menu.id === 'sidebar-menu') {
+    closeSidebarMenu(true);
+  } else if (menu.id === 'account-submenu') {
+    closeAccountSubmenu(true);
+  } else {
+    closeStudioPopovers();
+    const trigger = STUDIO_POPOVERS.find(([id]) => id === menu.id)?.[1];
+    document
+      .getElementById(trigger || 'composer-add')
+      ?.focus({preventScroll: true});
+  }
 }
 
 function openAccountMenu() {
@@ -6827,9 +7381,7 @@ function openAccountMenu() {
   menu.style.top = `${Math.max(36, Math.round(footerRect.top - 8 - menu.offsetHeight))}px`;
   menu.style.removeProperty('visibility');
   footer.setAttribute('aria-expanded', 'true');
-  requestAnimationFrame(() =>
-    menu.querySelector<HTMLButtonElement>('button')?.focus(),
-  );
+  requestAnimationFrame(() => enterStudioMenu(menu));
 }
 
 async function executeAccountCommand(command: string) {
@@ -6837,7 +7389,7 @@ async function executeAccountCommand(command: string) {
     openAccountSubmenu(command);
     return;
   }
-  closeAccountMenu();
+  closeAccountMenu(true);
   if (command === 'settings') {
     show('settings');
     return;
@@ -6905,14 +7457,14 @@ document
     if (row?.dataset.accountCommand === 'learn-more') {
       openAccountSubmenu('learn-more');
     } else if (row) {
-      const submenu = document.getElementById('account-submenu');
-      if (submenu) {
-        submenu.hidden = true;
-      }
+      closeAccountSubmenu();
     }
   });
 
 document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing) {
+    return;
+  }
   if (
     (event.ctrlKey || event.metaKey) &&
     !event.altKey &&
@@ -6927,34 +7479,59 @@ document.addEventListener('keydown', event => {
     return;
   }
   const target = event.target as HTMLElement;
-  const menu = target?.closest<HTMLElement>('.mp-compact-menu, #account-menu');
-  if (!menu || menu.hidden) {
+  const menu = target?.closest<HTMLElement>(
+    '.mp-compact-menu, #account-menu, #window-menu-popover, .mp-thread-menu',
+  );
+  if (!menu || menu.hidden || event.ctrlKey || event.metaKey || event.altKey) {
     return;
   }
-  const rows = [
-    ...menu.querySelectorAll<HTMLButtonElement>(
-      ':scope > button:not(:disabled)',
-    ),
-  ];
+  const rows = studioMenuItems(menu);
   const index = rows.indexOf(target.closest('button') as HTMLButtonElement);
+  if (event.key === 'ArrowRight' && menu.id === 'account-menu') {
+    const command = rows[index]?.dataset.accountCommand;
+    if (command === 'language' || command === 'learn-more') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openAccountSubmenu(command);
+    }
+    return;
+  }
+  if (event.key === 'ArrowLeft' && menu.id === 'account-submenu') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeAccountSubmenu(true);
+    return;
+  }
+  if (event.key === 'Tab') {
+    if (menu.id === 'account-submenu') {
+      closeAccountMenu();
+      document.getElementById('account-footer')?.focus({preventScroll: true});
+    } else {
+      dismissStudioMenu(menu);
+    }
+    return;
+  }
   if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
     event.preventDefault();
+    event.stopImmediatePropagation();
     const next =
       event.key === 'Home'
         ? 0
         : event.key === 'End'
           ? rows.length - 1
-          : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) %
-            rows.length;
+          : index < 0
+            ? event.key === 'ArrowDown'
+              ? 0
+              : rows.length - 1
+            : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) %
+              rows.length;
     rows[next]?.focus();
   } else if (event.key === 'Escape') {
     event.preventDefault();
     event.stopImmediatePropagation();
-    closeStudioPopovers();
-    (menu.id.startsWith('account')
-      ? document.getElementById('account-footer')
-      : document.getElementById('composer-add')
-    )?.focus();
+    if (!event.repeat) {
+      dismissStudioMenu(menu);
+    }
   }
 });
 
@@ -6973,6 +7550,9 @@ document
   });
 
 document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing) {
+    return;
+  }
   if (
     (event.ctrlKey || event.metaKey) &&
     !event.altKey &&
@@ -6983,6 +7563,10 @@ document.addEventListener('keydown', event => {
     return;
   }
   if (event.key === 'Escape') {
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
     const globalSearchOpen =
       document.getElementById('global-search')?.hidden === false;
     if (globalSearchOpen) {
@@ -6993,6 +7577,7 @@ document.addEventListener('keydown', event => {
     const menuWasOpen =
       [
         'window-menu-popover',
+        'sidebar-menu',
         'magic-brain-popover',
         'composer-add-menu',
         'composer-permission-menu',
@@ -7005,6 +7590,7 @@ document.addEventListener('keydown', event => {
       Boolean(document.querySelector('.side-session-menu:not([hidden])'));
     closeWindowMenu();
     closeThreadMenu();
+    closeSidebarMenu();
     closeSlashMenu();
     closePermissionMenu();
     closeModelMenu();
@@ -7109,27 +7695,133 @@ document.addEventListener('mp:open-artifact', (event: Event) => {
   void openArtifactEditor(conversationId, artifactId);
 });
 
-document.addEventListener('mp:open-file', (event: Event) => {
-  const detail = (event as CustomEvent<{path?: string}>).detail;
+document.addEventListener('mp:open-file', async (event: Event) => {
+  const detail = (
+    event as CustomEvent<{
+      path?: string;
+      absolutePath?: string;
+      previewPath?: string;
+      originUnknown?: boolean;
+      diffReference?: ProjectFileDiffReference;
+    }>
+  ).detail;
   const raw = String(detail?.path || '').trim();
+  const previewPath = String(detail?.previewPath || '').trim();
+  const absolutePath = String(detail?.absolutePath || '').trim();
+  const readPath = previewPath || absolutePath || raw;
   const root = String(activeProjectRoot || '').replace(/[\\/]+$/, '');
   if (!raw) {
     return;
   }
-  const absolute = /^[a-z]:[\\/]/i.test(raw) || raw.startsWith('\\\\');
+  if (detail?.originUnknown) {
+    document.getElementById('delivered-file-error')?.remove();
+    const notice = document.createElement('div');
+    notice.id = 'delivered-file-error';
+    notice.className = 'notice';
+    notice.setAttribute('role', 'alert');
+    notice.textContent = `${raw}: ${studioT('files.origin_unknown')}`;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'close';
+    close.setAttribute('aria-label', studioT('common.close'));
+    close.textContent = '×';
+    close.addEventListener('click', () => notice.remove());
+    notice.append(close);
+    document.body.append(notice);
+    return;
+  }
+  const absolute =
+    /^[a-z]:[\\/]/i.test(readPath) ||
+    readPath.startsWith('\\\\') ||
+    readPath.startsWith('/');
+  const normalizedRead = readPath.replace(/\\/g, '/');
+  const normalizedRoot = root.replace(/\\/g, '/');
   const relative =
-    absolute && root && raw.toLowerCase().startsWith(root.toLowerCase())
-      ? raw.slice(root.length).replace(/^[\\/]+/, '')
-      : raw;
+    !previewPath &&
+    !absolutePath &&
+    absolute &&
+    root &&
+    normalizedRead.toLowerCase().startsWith(normalizedRoot.toLowerCase() + '/')
+      ? normalizedRead.slice(normalizedRoot.length + 1)
+      : readPath;
   if (relative.split(/[\\/]/).includes('..')) {
     return;
   }
-  if (!activeProjectRoot) {
+  if (!activeProjectRoot && !absolute) {
     void openProjectFromPicker();
     return;
   }
-  void selectProjectFile(relative);
+  await selectProjectFile(
+    relative,
+    previewPath
+      ? {snapshot: true, title: `${raw} · ${studioT('files.deleted')}`}
+      : absolutePath
+        ? {title: raw, diffReference: detail?.diffReference}
+        : {},
+  );
 });
+
+const branchingConversations = new Set<string>();
+
+async function branchConversationFromUi(
+  conversationId: string,
+  turnIndex?: number,
+): Promise<void> {
+  if (branchingConversations.has(conversationId)) {
+    return;
+  }
+  branchingConversations.add(conversationId);
+  document.getElementById('conversation-branch-error')?.remove();
+  const progress = document.createElement('div');
+  progress.id = 'conversation-branch-progress';
+  progress.className = 'notice mp-conversation-branch-progress';
+  progress.setAttribute('role', 'status');
+  progress.textContent = studioT('chat.fork_creating');
+  document.body.append(progress);
+  const report = (error?: unknown) => {
+    const notice = document.createElement('div');
+    notice.id = 'conversation-branch-error';
+    notice.className = 'notice mp-conversation-branch-error';
+    notice.setAttribute('role', 'alert');
+    const message = document.createElement('span');
+    message.textContent =
+      !error || error === 'store_failed'
+        ? studioT('chat.fork_failed')
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', studioT('common.close'));
+    notice.append(message, close);
+    document.body.append(notice);
+  };
+  let result: Awaited<ReturnType<typeof Data.branchConversation>>;
+  try {
+    if (turnIndex === undefined) {
+      const source = await Data.conversation(conversationId);
+      if (!source?.turns?.length) {
+        throw new Error(studioT('chat.fork_failed'));
+      }
+      turnIndex = source.turns.length - 1;
+    }
+    result = await Data.branchConversation(conversationId, turnIndex);
+  } catch (error) {
+    report(error);
+    return;
+  } finally {
+    branchingConversations.delete(conversationId);
+    progress.remove();
+  }
+  if (!result?.ok || !result.conversation?.id) {
+    report(result?.error);
+    return;
+  }
+  await renderSidebar();
+  await openConversation(result.conversation.id);
+}
 
 document.addEventListener('mp:branch-conversation', (event: Event) => {
   const detail = (
@@ -7140,13 +7832,7 @@ document.addEventListener('mp:branch-conversation', (event: Event) => {
   if (!conversationId || !Number.isInteger(turnIndex)) {
     return;
   }
-  void Data.branchConversation(conversationId, turnIndex).then(async result => {
-    if (!result?.ok || !result.conversation?.id) {
-      return;
-    }
-    await renderSidebar();
-    await openConversation(result.conversation.id);
-  });
+  void branchConversationFromUi(conversationId, turnIndex);
 });
 
 function renderSidebarLayout(): void {
@@ -7250,11 +7936,14 @@ function closeAux() {
   }, 240);
 }
 
-function closeThreadMenu() {
+function closeThreadMenu(restoreFocus = false) {
   document.getElementById('thread-menu')?.remove();
   document
     .getElementById('thread-more')
     ?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    document.getElementById('thread-more')?.focus({preventScroll: true});
+  }
 }
 
 function openThreadMenu(button: HTMLElement) {
@@ -7282,7 +7971,7 @@ function openThreadMenu(button: HTMLElement) {
     item.classList.toggle('is-danger', options.danger === true);
     item.addEventListener('click', event => {
       event.stopPropagation();
-      closeThreadMenu();
+      closeThreadMenu(true);
       run();
     });
     return item;
@@ -7323,16 +8012,10 @@ function openThreadMenu(button: HTMLElement) {
         if (!activeConversationId || activeConversationTurnCount < 1) {
           return;
         }
-        void Data.branchConversation(
+        void branchConversationFromUi(
           activeConversationId,
           activeConversationTurnCount - 1,
-        ).then(async result => {
-          if (!result?.ok || !result.conversation?.id) {
-            return;
-          }
-          await renderSidebar();
-          await openConversation(result.conversation.id);
-        });
+        );
       },
       {disabled: unavailable || activeConversationTurnCount < 1, shortcut: 'F'},
     ),
@@ -7362,6 +8045,7 @@ function openThreadMenu(button: HTMLElement) {
   menu.style.top = `${rect.bottom + 6}px`;
   menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
   button.setAttribute('aria-expanded', 'true');
+  enterStudioMenu(menu);
 }
 
 document.getElementById('thread-more')?.addEventListener('click', event => {
@@ -7374,22 +8058,48 @@ document.getElementById('thread-more')?.addEventListener('click', event => {
   }
 });
 
-function closeSidebarMenu() {
+function closeSidebarMenu(restoreFocus = false) {
   document.getElementById('sidebar-menu')?.remove();
   document
     .getElementById('sidebar-more')
     ?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    document.getElementById('sidebar-more')?.focus({preventScroll: true});
+  }
 }
 
 function openSidebarMenu(button: HTMLElement) {
   closeSidebarMenu();
+  libraryUi.closeMenu();
   const menu = document.createElement('div');
   menu.id = 'sidebar-menu';
   menu.className = 'mp-thread-menu';
   menu.setAttribute('role', 'menu');
+  for (const view of studioLibraries.preferences.hiddenNavigation as string[]) {
+    if (view === 'designs') {
+      continue;
+    }
+    const source = document.querySelector<HTMLElement>(
+      `[data-library-nav="${CSS.escape(view)}"] .mp-nav-label`,
+    );
+    if (!source) {
+      continue;
+    }
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = source.textContent;
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      closeSidebarMenu(true);
+      show(view);
+    });
+    menu.append(item);
+  }
   for (const [label, view, id] of [
-    ['Review', 'personal', 'nav-personal'],
-    ['Design', 'designs', 'nav-designs'],
+    [studioT('sidebar.all_chats'), 'chats', 'nav-chats'],
+    [studioT('sidebar.review'), 'personal', 'nav-personal'],
+    [studioT('sidebar.design'), 'designs', 'nav-designs'],
+    [studioT('sidebar.saved_dashboards'), 'dashboard', 'nav-dashboard'],
   ] as Array<[string, string, string]>) {
     const item = document.createElement('button');
     item.type = 'button';
@@ -7400,8 +8110,22 @@ function openSidebarMenu(button: HTMLElement) {
     item.append(text);
     item.addEventListener('click', event => {
       event.stopPropagation();
-      closeSidebarMenu();
+      closeSidebarMenu(true);
       show(view);
+    });
+    menu.append(item);
+  }
+  for (const [label, action] of [
+    [studioT('sidebar.group_sort'), () => libraryUi.groupMenu(button)],
+    [studioT('sidebar.edit'), () => libraryUi.openSidebarEditor(button)],
+  ] as Array<[string, () => void]>) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = label;
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      closeSidebarMenu();
+      action();
     });
     menu.append(item);
   }
@@ -7410,6 +8134,7 @@ function openSidebarMenu(button: HTMLElement) {
   menu.style.top = `${rect.bottom + 6}px`;
   menu.style.left = `${Math.max(8, rect.left)}px`;
   button.setAttribute('aria-expanded', 'true');
+  enterStudioMenu(menu);
 }
 
 document.getElementById('sidebar-more')?.addEventListener('click', event => {
@@ -7435,8 +8160,19 @@ let selectedProjectPreview: MagicPointerProjectPreview | null = null;
 let projectFileTreeFilter = '';
 let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
+let selectedProjectFileSnapshot = false;
+let selectedProjectFileReadFailed = false;
+let selectedProjectFileLoading = false;
+type ProjectFileDiffReference = {beforePath: string | null; afterPath: string};
+let selectedProjectFileDiff: {
+  kind: 'file_diff';
+  beforeText: string;
+  afterText: string;
+} | null = null;
 let projectFileCodeView = false;
 let activeInspectorTab = 'files';
+let inspectorReturnFocus: HTMLElement | null = null;
+let bottomPanelReturnFocus: HTMLElement | null = null;
 let focusedSubagentId = '';
 
 type WorkspaceResourceKind =
@@ -7450,6 +8186,8 @@ interface WorkspaceResourceTab {
   active: boolean;
   closable: boolean;
   path?: string;
+  snapshot?: boolean;
+  diffReference?: ProjectFileDiffReference;
   url?: string;
   conversationId?: string;
   artifactId?: string;
@@ -7543,6 +8281,8 @@ function openWorkspaceResource(request: {
   title: string;
   resourceKey: string;
   path?: string;
+  snapshot?: boolean;
+  diffReference?: ProjectFileDiffReference;
   url?: string;
   conversationId?: string;
   artifactId?: string;
@@ -7570,6 +8310,8 @@ function openWorkspaceResource(request: {
     active: true,
     closable: true,
     ...(request.path ? {path: request.path} : {}),
+    ...(request.snapshot ? {snapshot: true} : {}),
+    ...(request.diffReference ? {diffReference: request.diffReference} : {}),
     ...(request.url ? {url: request.url} : {}),
     ...(request.conversationId ? {conversationId: request.conversationId} : {}),
     ...(request.artifactId ? {artifactId: request.artifactId} : {}),
@@ -7606,6 +8348,9 @@ function activateWorkspaceResource(tabId: string): void {
     void selectProjectFile(target.path, {
       fromResourceTab: true,
       resourceKey: target.resourceKey,
+      snapshot: target.snapshot,
+      diffReference: target.diffReference,
+      title: target.title,
     });
   } else if (target.kind === 'browser') {
     const input = document.getElementById(
@@ -7653,6 +8398,13 @@ function closeWorkspaceResource(tabId: string): void {
   }
   if (!workspaceResourceTabs.length) {
     workspaceAutoOpenedResourceKey = '';
+    projectFileRequest++;
+    selectedProjectFile = '';
+    selectedProjectFileDiff = null;
+    selectedProjectFileLoading = false;
+    selectedProjectFileText = '';
+    selectedProjectPreview = null;
+    document.getElementById('project-file-content')?.replaceChildren();
     setInspector(false);
   } else {
     renderWorkspaceResourceTabs();
@@ -7903,6 +8655,12 @@ function renderProjectFileTree() {
     return;
   }
   const query = projectFileTreeFilter.trim().toLocaleLowerCase();
+  const root = normalizedProjectRoot(activeProjectRoot);
+  const selected = normalizedProjectRoot(selectedProjectFile);
+  const selectedPath =
+    root && selected.startsWith(root + '/')
+      ? selected.slice(root.length + 1)
+      : selected;
   const buildLevel = (directory: string, depth: number): Node[] => {
     const nodes: Node[] = [];
     for (const entry of projectTreeCache.get(directory) || []) {
@@ -7917,7 +8675,7 @@ function renderProjectFileTree() {
       row.type = 'button';
       row.className =
         'mp-file-tree-row' +
-        (entry.path === selectedProjectFile ? ' is-on' : '');
+        (normalizedProjectRoot(entry.path) === selectedPath ? ' is-on' : '');
       row.dataset.projectPath = entry.path;
       row.dataset.projectKind = entry.kind;
       row.dataset.depth = String(depth);
@@ -7985,6 +8743,10 @@ async function refreshProjectInspector() {
     fileTreeFilter.value = '';
   }
   selectedProjectFileMarkdown = false;
+  selectedProjectFileSnapshot = false;
+  selectedProjectFileReadFailed = false;
+  selectedProjectFileLoading = false;
+  selectedProjectFileDiff = null;
   projectFileCodeView = false;
   const preview = document.getElementById('project-file-preview');
   if (preview) {
@@ -8009,15 +8771,39 @@ function renderSelectedProjectFile() {
     return;
   }
   const renderMarkdown = selectedProjectFileMarkdown && !projectFileCodeView;
+  const media = selectedProjectPreview?.kind === 'image' || selectedProjectPreview?.kind === 'pdf';
+  content.setAttribute('aria-busy', String(selectedProjectFileLoading));
   preview.classList.toggle('is-markdown', renderMarkdown);
   code?.setAttribute('aria-pressed', String(projectFileCodeView));
   if (code) {
     code.hidden =
+      selectedProjectFileLoading ||
+      selectedProjectFileDiff !== null ||
+      selectedProjectFileSnapshot ||
+      media ||
       selectedProjectPreview?.kind === 'document' ||
       selectedProjectPreview?.kind === 'spreadsheet';
   }
+  const external = document.getElementById(
+    'project-file-open',
+  ) as HTMLButtonElement | null;
+  if (external) {
+    external.disabled = selectedProjectFileSnapshot || selectedProjectFileLoading;
+  }
+  const copy = document.getElementById('project-file-copy');
+  if (copy) {
+    copy.hidden = media;
+    (copy as HTMLButtonElement).disabled = selectedProjectFileLoading;
+  }
   if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
     ProjectPreviewView.renderProjectPreview(content, selectedProjectPreview);
+    return;
+  }
+  content.classList.remove('is-office-preview', 'is-browser-pane');
+  if (selectedProjectFileDiff) {
+    content.replaceChildren(ChatView.fileDiffNode(selectedProjectFileDiff));
+  } else if (selectedProjectFileSnapshot && !selectedProjectFileReadFailed) {
+    content.replaceChildren(ChatView.deletedFileNode(selectedProjectFileText));
   } else if (renderMarkdown) {
     content.replaceChildren(ChatMarkdown.render(selectedProjectFileText));
   } else {
@@ -8029,25 +8815,60 @@ function renderSelectedProjectFile() {
 
 async function selectProjectFile(
   relativePath: string,
-  options: {fromResourceTab?: boolean; resourceKey?: string} = {},
+  options: {
+    fromResourceTab?: boolean;
+    resourceKey?: string;
+    snapshot?: boolean;
+    diffReference?: ProjectFileDiffReference;
+    title?: string;
+  } = {},
 ) {
-  const request = ++projectFileRequest;
   const root = activeProjectRoot;
-  const browserFile = /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(
-    relativePath,
-  );
+  const absolute =
+    /^[a-z]:[\\/]/i.test(relativePath) ||
+    relativePath.startsWith('\\\\') ||
+    relativePath.startsWith('/');
+  const browserFile =
+    !options.diffReference &&
+    !options.snapshot &&
+    !absolute &&
+    /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(relativePath);
   const resourceKey =
     options.resourceKey ||
-    `file:${normalizedProjectRoot(root)}:${relativePath
+    (options.diffReference ? `diff:${JSON.stringify(options.diffReference)}:` : '') +
+    `${options.snapshot ? 'snapshot' : 'file'}:${normalizedProjectRoot(root)}:${relativePath
       .replace(/\\/g, '/')
       .toLocaleLowerCase()}`;
   if (!options.fromResourceTab) {
     openWorkspaceResource({
       kind: browserFile ? 'browser' : 'file',
-      title: relativePath.split(/[\\/]/).at(-1) || relativePath,
+      title: options.title || relativePath.split(/[\\/]/).at(-1) || relativePath,
       resourceKey,
       path: relativePath,
+      snapshot: options.snapshot,
+      diffReference: options.diffReference,
     });
+  }
+  const request = ++projectFileRequest;
+  selectedProjectFileLoading = Boolean(options.diffReference);
+  if (options.diffReference) {
+    selectedProjectFile = relativePath;
+    selectedProjectFileReadFailed = false;
+    selectedProjectFileDiff = null;
+    selectedProjectPreview = null;
+    selectedProjectFileSnapshot = false;
+    selectedProjectFileMarkdown = false;
+    selectedProjectFileText = studioT('chat.diff_loading');
+    const preview = document.getElementById('project-file-preview');
+    if (preview) {
+      preview.hidden = false;
+      preview.closest('.mp-inspector-panel')?.classList.add('is-previewing');
+    }
+    const name = document.getElementById('project-file-name');
+    if (name) {
+      name.textContent = options.title || relativePath;
+    }
+    renderSelectedProjectFile();
   }
   if (browserFile) {
     selectedProjectFile = relativePath;
@@ -8058,7 +8879,14 @@ async function selectProjectFile(
     });
     return;
   }
-  const response = await Data.readProjectFile(root, relativePath);
+  const diff = options.diffReference
+    ? await window.magicPointer.readFileDiff(options.diffReference)
+    : null;
+  const response: MagicPointerProjectFileResponse = options.diffReference
+    ? diff?.ok
+      ? {ok: true, kind: 'text', text: diff.presentation.afterText}
+      : {ok: false, error: diff && !diff.ok ? diff.error : studioT('files.read_failed')}
+    : await Data.readProjectFile(root, relativePath);
   if (request !== projectFileRequest || root !== activeProjectRoot) {
     return;
   }
@@ -8070,6 +8898,10 @@ async function selectProjectFile(
   const panel = preview.closest<HTMLElement>('.mp-inspector-panel');
   panel?.classList.add('is-previewing');
   selectedProjectFile = relativePath;
+  selectedProjectFileSnapshot = options.snapshot === true;
+  selectedProjectFileLoading = false;
+  selectedProjectFileDiff = diff?.ok ? diff.presentation : null;
+  selectedProjectFileReadFailed = !response?.ok;
   selectedProjectFileText = response?.ok
     ? String(response.text || '')
     : String(response?.error || studioT('files.read_failed'));
@@ -8086,6 +8918,13 @@ async function selectProjectFile(
             sheets: response.sheets || [],
             truncated: response.truncated === true,
           }
+        : response?.ok && (response.kind === 'image' || response.kind === 'pdf')
+          ? {
+              kind: response.kind,
+              url: String(response.url || ''),
+              name: options.title || response.name || relativePath,
+              truncated: false,
+            }
         : null;
   if (selectedProjectPreview?.kind === 'document') {
     selectedProjectFileText = selectedProjectPreview.blocks
@@ -8104,6 +8943,7 @@ async function selectProjectFile(
       .join('\n\n');
   }
   selectedProjectFileMarkdown =
+    !options.diffReference &&
     /\.(?:md|mdx|markdown)$/i.test(relativePath) && Boolean(response?.ok);
   projectFileCodeView = false;
   const name = document.getElementById('project-file-name');
@@ -8112,7 +8952,9 @@ async function selectProjectFile(
     inspectorTitle.textContent = 'File';
   }
   if (name) {
-    name.textContent = relativePath + (response?.truncated ? studioT('files.truncated') : '');
+    name.textContent =
+      (options.title || relativePath) +
+      (response?.truncated ? studioT('files.truncated') : '');
   }
   renderSelectedProjectFile();
   renderProjectFileTree();
@@ -8305,10 +9147,14 @@ async function renderProjectChanges() {
     return;
   }
   host.innerHTML = '<p class="mp-inspector-empty">' + studioT('git.reading') + '</p>';
+  const root = activeProjectRoot;
   const response = await Data.projectEnvironment(
-    activeProjectRoot,
+    root,
     activeConversationId,
   );
+  if (root !== activeProjectRoot) {
+    return;
+  }
   projectEnvironment = response;
   if (!response.ok) {
     host.innerHTML = `<p class="mp-inspector-empty">${esc(response.error || studioT('git.env_failed'))}</p>`;
@@ -8331,6 +9177,10 @@ async function renderProjectChanges() {
     button.type = 'button';
     button.className = 'mp-change-row';
     button.dataset.changePath = change.path;
+    button.dataset.changeRoot = root;
+    if (change.deletionBase) {
+      button.dataset.deletionBase = change.deletionBase;
+    }
     button.style.setProperty('--item-index', String(index));
     button.innerHTML = `<span class="mp-change-status">${esc(change.status || 'M')}</span><span>${esc(change.path)}</span>${change.staged ? `<small>${studioT('git.staged')}</small>` : ''}`;
     list.appendChild(button);
@@ -8341,15 +9191,57 @@ async function renderProjectChanges() {
   host.replaceChildren(header, list);
 }
 
-document.getElementById('project-changes')?.addEventListener('click', event => {
-  const row = (event.target as Element | null)?.closest<HTMLElement>(
+document.getElementById('project-changes')?.addEventListener('click', async event => {
+  const row = (event.target as Element | null)?.closest<HTMLButtonElement>(
     '[data-change-path]',
   );
   if (!row?.dataset.changePath) {
     return;
   }
+  if (row.disabled) {
+    return;
+  }
+  const base = row.dataset.deletionBase;
+  if (base === 'head' || base === 'index') {
+    const root = row.dataset.changeRoot || activeProjectRoot;
+    const request = ++projectFileRequest;
+    row.disabled = true;
+    row.setAttribute('aria-busy', 'true');
+    document.getElementById('git-file-preview-error')?.remove();
+    try {
+      const response = await Data.prepareDeletedProjectFile(
+        root,
+        row.dataset.changePath,
+        base,
+      );
+      if (root !== activeProjectRoot || request !== projectFileRequest) {
+        return;
+      }
+      if (!response.ok || !response.previewPath) {
+        throw new Error(response.error || studioT('files.read_failed'));
+      }
+      await selectProjectFile(response.previewPath, {
+        snapshot: true,
+        title: `${row.dataset.changePath} · ${studioT('files.deleted')}`,
+      });
+    } catch (error) {
+      if (root === activeProjectRoot && request === projectFileRequest) {
+        const notice = document.createElement('p');
+        notice.id = 'git-file-preview-error';
+        notice.className = 'mp-inspector-empty';
+        notice.setAttribute('role', 'alert');
+        notice.textContent =
+          error instanceof Error ? error.message : String(error);
+        document.getElementById('project-changes')?.append(notice);
+      }
+    } finally {
+      row.disabled = false;
+      row.removeAttribute('aria-busy');
+    }
+    return;
+  }
   setInspector(true, 'files');
-  void selectProjectFile(row.dataset.changePath);
+  await selectProjectFile(row.dataset.changePath);
 });
 
 let browserViewVisible = false;
@@ -8370,6 +9262,49 @@ function projectBrowserBounds() {
     width: Math.max(1, Math.round(rect.width)),
     height: Math.max(1, Math.round(rect.height)),
   };
+}
+
+function renderBrowserToolbarLanguage(): void {
+  for (const [id, label] of [
+    ['project-browser-back', 'browser.back'],
+    ['project-browser-forward', 'browser.forward'],
+    [
+      'project-browser-reload',
+      latestBrowserViewState.loading
+        ? 'browser.stop_loading'
+        : 'browser.reload',
+    ],
+    ['project-browser-external', 'browser.external'],
+  ] as const) {
+    const button = document.getElementById(id);
+    button?.setAttribute('aria-label', studioT(label));
+    button?.setAttribute('title', studioT(label));
+  }
+  const input = document.getElementById('project-browser-url');
+  input?.setAttribute('aria-label', studioT('browser.address'));
+  input?.setAttribute('placeholder', studioT('browser.address_hint'));
+  const go = document.querySelector('#project-browser-form button');
+  go?.setAttribute('aria-label', studioT('browser.go'));
+  go?.setAttribute('title', studioT('browser.go'));
+  document
+    .getElementById('project-browser-host')
+    ?.setAttribute('aria-label', studioT('browser.host'));
+  const message = document.querySelector<HTMLElement>(
+    '#project-browser-empty p',
+  );
+  if (message?.dataset.browserMessage) {
+    message.textContent = studioT(message.dataset.browserMessage);
+  }
+}
+
+function setBrowserMessage(id: string, detail?: string): void {
+  const message = document.querySelector<HTMLElement>(
+    '#project-browser-empty p',
+  );
+  if (message) {
+    message.dataset.browserMessage = detail ? '' : id;
+    message.textContent = detail || studioT(id);
+  }
 }
 
 function renderBrowserViewState(state: MagicPointerBrowserViewState) {
@@ -8414,17 +9349,13 @@ function renderBrowserViewState(state: MagicPointerBrowserViewState) {
   const forward = document.getElementById(
     'project-browser-forward',
   ) as HTMLButtonElement | null;
-  const reload = document.getElementById('project-browser-reload');
   if (back) {
     back.disabled = !state.canGoBack;
   }
   if (forward) {
     forward.disabled = !state.canGoForward;
   }
-  if (reload) {
-    reload.setAttribute('aria-label', state.loading ? studioT('browser.stop_loading') : studioT('browser.reload'));
-    reload.setAttribute('title', state.loading ? studioT('browser.stop_loading') : studioT('browser.reload'));
-  }
+  renderBrowserToolbarLanguage();
   if (state.title) {
     document
       .getElementById('inspector-browser')
@@ -8437,25 +9368,6 @@ async function openProjectBrowser(
   relativePath = '',
   options: {fromResourceTab?: boolean; resourceKey?: string} = {},
 ) {
-  if (!relativePath && !rawUrl.startsWith('file:') && !/^[a-zA-Z]:[\\/]/.test(rawUrl)) {
-    await Data.browserViewCommand('hide');
-    browserViewVisible = false;
-    const empty = document.getElementById('project-browser-empty');
-    const message = empty?.querySelector('p');
-    if (empty) {
-      empty.hidden = false;
-    }
-    if (message) {
-      message.textContent = studioT('browser.ego_opening');
-    }
-    const response = await Data.openBrowserView(rawUrl, {x: 0, y: 0, width: 1, height: 1}, activeProjectRoot);
-    if (message) {
-      message.textContent = response?.ok
-        ? studioT('browser.ego_opened')
-        : String(response?.error || studioT('browser.open_failed'));
-    }
-    return;
-  }
   const localResourceKey =
     options.resourceKey ||
     (relativePath
@@ -8509,10 +9421,7 @@ async function openProjectBrowser(
   }
   if (!response?.ok && empty) {
     empty.hidden = false;
-    const message = empty.querySelector('p');
-    if (message) {
-      message.textContent = String(response?.error || studioT('browser.open_failed'));
-    }
+    setBrowserMessage('browser.open_failed', response?.error);
   }
 }
 
@@ -8560,45 +9469,45 @@ document
 
 function subagentStatusLabel(status: string): string {
   if (status === 'running') {
-    return 'Running';
+    return studioT('subagent.running');
   }
   if (status === 'awaiting_user') {
-    return 'Needs approval';
+    return studioT('subagent.awaiting_user');
   }
   if (status === 'needs_verification') {
-    return 'Needs verification';
+    return studioT('subagent.needs_verification');
   }
   if (status === 'partial') {
-    return 'Partially complete';
+    return studioT('subagent.partial');
   }
   if (status === 'stalled') {
-    return 'Stalled';
+    return studioT('subagent.stalled');
   }
   if (status === 'provider_unavailable') {
-    return 'Provider unavailable';
+    return studioT('subagent.provider_unavailable');
   }
   if (status === 'budget_exhausted') {
-    return 'Budget exhausted';
+    return studioT('subagent.budget_exhausted');
   }
   if (status === 'invariant_failed') {
-    return 'Runtime error';
+    return studioT('subagent.invariant_failed');
   }
   if (status === 'user_interrupt') {
-    return 'Interrupted';
+    return studioT('subagent.user_interrupt');
   }
   if (status === 'stop_hook') {
-    return 'Stopped by hook';
+    return studioT('subagent.stop_hook');
   }
   if (status === 'failed') {
-    return 'Failed';
+    return studioT('subagent.failed');
   }
   if (status === 'stopped') {
-    return 'Stopped';
+    return studioT('subagent.stopped');
   }
   if (status === 'completed') {
-    return 'Completed';
+    return studioT('subagent.completed');
   }
-  return 'Unknown status';
+  return studioT('subagent.unknown');
 }
 
 function subagentResumeText(task: StudioSubagentTask): string {
@@ -8768,7 +9677,7 @@ async function stopSubagentTask(row: HTMLElement) {
   }
   row.dataset.stopState = 'pending';
   row.querySelector<HTMLElement>('.mp-subagent-state')!.textContent =
-    'Stopping';
+    studioT('subagent.stopping');
   button.disabled = true;
   button.title = 'Stopping task…';
   button.setAttribute('aria-label', 'Stopping task');
@@ -8939,10 +9848,10 @@ function renderProjectTasks() {
       setText(
         row.querySelector('.mp-subagent-state')!,
         task.resumeRequired
-          ? 'Needs resume'
+          ? studioT('subagent.needs_resume')
           : task.status === 'running'
             ? row.dataset.stopState
-              ? 'Stopping'
+              ? studioT('subagent.stopping')
               : ''
             : subagentStatusLabel(task.status),
       );
@@ -8955,8 +9864,8 @@ function renderProjectTasks() {
         task.currentTool ||
           (task.status === 'running'
             ? task.phase === 'writing'
-              ? 'Writing'
-              : 'Thinking'
+              ? studioT('subagent.writing')
+              : studioT('subagent.thinking')
             : ''),
       );
       const usage = task.modelUsage;
@@ -9012,8 +9921,8 @@ function renderProjectTasks() {
       setText(
         thinking.querySelector('summary')!,
         task.status === 'running' && task.phase === 'thinking'
-          ? 'Thinking…'
-          : 'Thought',
+          ? studioT('subagent.thinking_live')
+          : studioT('subagent.thought'),
       );
       setText(thinking.querySelector('pre')!, task.reasoning || '');
       const answer = row.querySelector<HTMLElement>('.mp-subagent-answer')!;
@@ -9224,6 +10133,29 @@ function inspectorAvailableWidth(): number {
   return Math.max(0, shell.clientWidth - sidebarWidth);
 }
 
+function renderInspectorTitle() {
+  const inspector = document.getElementById('project-inspector');
+  const title = document.getElementById('inspector-title');
+  if (!inspector || !title) {
+    return;
+  }
+  const labels: Record<string, string> = {
+    activity: 'activity.log',
+    materials: 'inspector.materials',
+    files: 'inspector.files',
+    browser: 'inspector.browser',
+    terminal: 'inspector.terminal',
+    changes: 'inspector.changes',
+    tasks:
+      inspector.dataset.taskLayout === 'background'
+        ? 'inspector.background_tasks'
+        : 'inspector.tasks',
+    artifact: 'inspector.artifact',
+    modules: 'inspector.modules',
+  };
+  title.textContent = studioT(labels[inspectorState.tab] || 'inspector.task');
+}
+
 function syncInspectorGeometry() {
   const inspector = document.getElementById('project-inspector');
   const maximize = document.getElementById('inspector-maximize');
@@ -9272,12 +10204,7 @@ function syncInspectorGeometry() {
         : backgroundTasks
           ? '416px'
           : `${inspectorState.width}px`;
-  if (taskRail) {
-    const title = document.getElementById('inspector-title');
-    if (title) {
-      title.textContent = backgroundTasks ? 'Background tasks' : 'Tasks';
-    }
-  }
+  renderInspectorTitle();
   if (maximize) {
     maximize.hidden = taskRail && !backgroundTasks;
   }
@@ -9332,10 +10259,29 @@ function syncInspectorGeometry() {
   scheduleProjectBrowserResize();
 }
 
+function restorePanelFocus(origin: HTMLElement | null): void {
+  if (origin?.isConnected && origin.getClientRects().length) {
+    origin.focus({preventScroll: true});
+  } else {
+    document
+      .querySelector<HTMLTextAreaElement>('#composer-form textarea')
+      ?.focus({preventScroll: true});
+  }
+}
+
 function setInspector(open: boolean, tab = activeInspectorTab) {
   const inspector = document.getElementById('project-inspector');
   if (!inspector) {
     return;
+  }
+  if (open && !inspectorState.open) {
+    const focused = document.activeElement;
+    inspectorReturnFocus =
+      focused instanceof HTMLElement &&
+      focused !== document.body &&
+      !inspector.contains(focused)
+        ? focused
+        : null;
   }
   inspectorState = inspectorStatePolicy.reduceInspectorState(
     inspectorState,
@@ -9358,26 +10304,6 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       button.classList.toggle('is-on', active);
       button.setAttribute('aria-selected', String(active));
     });
-  const inspectorTitle = document.getElementById('inspector-title');
-  if (inspectorTitle) {
-    inspectorTitle.textContent =
-      (
-        {
-          activity: studioT('activity.log'),
-          materials: 'Materials',
-          files: 'Files',
-          browser: 'Browser',
-          terminal: 'Terminal',
-          changes: 'Changes',
-          tasks:
-            inspector.dataset.taskLayout === 'background'
-              ? 'Background tasks'
-              : 'Tasks',
-          artifact: 'Artifact',
-          modules: 'Mods',
-        } as Record<string, string>
-      )[activeInspectorTab] || 'Task';
-  }
   if (!open) {
     closeProjectBrowserView();
     return;
@@ -9430,7 +10356,11 @@ function toggleMaterialsPanel(): void {
 }
 
 function toggleTerminalPanel(): void {
-  setBottomPanel(shell.dataset.bottomPanel !== 'open');
+  if (shell.dataset.bottomPanel === 'open') {
+    closeBottomPanel();
+  } else {
+    setBottomPanel(true);
+  }
 }
 
 document
@@ -9440,9 +10370,22 @@ const executionActivity = document.getElementById('conversation-activity');
 if (executionActivity) {
   ChatView.bindDelegation(executionActivity);
 }
-document.getElementById('inspector-close')?.addEventListener('click', () => {
+function closeInspectorPanel(): void {
   workspaceAutoOpenedResourceKey = '';
   setInspector(false);
+  restorePanelFocus(inspectorReturnFocus);
+  inspectorReturnFocus = null;
+}
+document
+  .getElementById('inspector-close')
+  ?.addEventListener('click', closeInspectorPanel);
+document.getElementById('project-inspector')?.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  document.getElementById('inspector-close')?.click();
 });
 document.getElementById('inspector-maximize')?.addEventListener('click', () => {
   workspaceAutoOpenedResourceKey = '';
@@ -9750,6 +10693,7 @@ document
     renderProjectFileTree();
   });
 document.getElementById('project-file-back')?.addEventListener('click', () => {
+  projectFileRequest++;
   const preview = document.getElementById('project-file-preview');
   if (preview) {
     preview.hidden = true;
@@ -9757,6 +10701,9 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   preview?.closest('.mp-inspector-panel')?.classList.remove('is-previewing');
   selectedProjectFile = '';
   selectedProjectFileText = '';
+  selectedProjectFileDiff = null;
+  document.getElementById('project-file-content')?.replaceChildren();
+  selectedProjectFileLoading = false;
   selectedProjectFileMarkdown = false;
   projectFileCodeView = false;
   const inspectorTitle = document.getElementById('inspector-title');
@@ -9765,6 +10712,11 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   }
   renderProjectFileTree();
 });
+const projectFileContent = document.getElementById('project-file-content');
+if (projectFileContent) {
+  ChatView.bindDelegation(projectFileContent);
+}
+
 document.getElementById('project-file-code')?.addEventListener('click', () => {
   projectFileCodeView = !projectFileCodeView;
   renderSelectedProjectFile();
@@ -9855,22 +10807,53 @@ function renderTerminalPrompt() {
     const output = document.getElementById(id);
     const label = output?.querySelector('.mp-terminal-label');
     if (label) {
-      label.textContent = `PowerShell · Current project${suffix}`;
+      label.textContent = `PowerShell · ${studioT('terminal.current_project')}${suffix}`;
     }
   }
 }
 
-async function runTerminalCommand(command: string) {
-  if (!command || !activeProjectRoot) {
-    return;
+function renderTerminalLanguage(): void {
+  document
+    .getElementById('bottom-panel')
+    ?.setAttribute('aria-label', studioT('terminal.bottom_panel'));
+  document
+    .getElementById('bottom-panel-close')
+    ?.setAttribute('aria-label', studioT('terminal.close_bottom'));
+  const tools = document.querySelector('#bottom-panel nav');
+  tools?.setAttribute('aria-label', studioT('terminal.bottom_tools'));
+  const title = tools?.querySelector('button');
+  if (title) {
+    title.textContent = studioT('terminal.title');
   }
-  openWorkspaceResource({
-    kind: 'terminal',
-    title: activeTerminalRelativeDirectory
-      ? `PowerShell · ${activeTerminalRelativeDirectory}`
-      : 'PowerShell',
-    resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}:${activeTerminalRelativeDirectory}`,
-  });
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    '.mp-terminal-form',
+  )) {
+    form
+      .querySelector('input')
+      ?.setAttribute('aria-label', studioT('terminal.command'));
+    const button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.textContent = studioT(
+        form.dataset.submitting === 'true'
+          ? 'terminal.sending'
+          : 'terminal.run',
+      );
+    }
+  }
+  for (const button of document.querySelectorAll('[data-terminal-stop]')) {
+    button.textContent = studioT('terminal.stop');
+  }
+  renderTerminalPrompt();
+}
+
+async function runTerminalCommand(command: string): Promise<boolean> {
+  if (!command) {
+    return false;
+  }
+  if (!activeProjectRoot) {
+    appendTerminalOutput(`\n${studioT('project.open_first')}\n`);
+    return false;
+  }
   try {
     const started = await Data.startProjectTerminal(
       activeProjectRoot,
@@ -9879,15 +10862,17 @@ async function runTerminalCommand(command: string) {
     if (!started.ok) {
       throw new Error(started.error || studioT('terminal.start_failed'));
     }
-    appendTerminalOutput(`\n> ${command}\n`);
     const written = await Data.writeProjectTerminal(command);
     if (!written.ok) {
       throw new Error(written.error || studioT('terminal.write_failed'));
     }
+    appendTerminalOutput(`\n> ${command}\n`);
+    return true;
   } catch (error) {
     appendTerminalOutput(
       `\n${error instanceof Error ? error.message : String(error)}\n`,
     );
+    return false;
   }
 }
 
@@ -9934,16 +10919,48 @@ for (const pair of [
   ],
   ['bottom-terminal-form', 'bottom-terminal-input', 'bottom-terminal-output'],
 ] as const) {
-  document.getElementById(pair[0])?.addEventListener('submit', event => {
+  document.getElementById(pair[0])?.addEventListener('submit', async event => {
     event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
     const input = document.getElementById(pair[1]) as HTMLInputElement | null;
     const output = document.getElementById(pair[2]);
     const command = input?.value.trim() || '';
-    if (!command || !output) {
+    if (!input || !command || !output || form.dataset.submitting === 'true') {
       return;
     }
-    input!.value = '';
-    void runTerminalCommand(command);
+    const submittedText = input.value;
+    const scope = workspaceResourceScopeKey();
+    const button = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )!;
+    form.dataset.submitting = 'true';
+    form.setAttribute('aria-busy', 'true');
+    button.disabled = true;
+    button.textContent = studioT('terminal.sending');
+    try {
+      if (form.id === 'project-terminal-form' && activeProjectRoot) {
+        openWorkspaceResource({
+          kind: 'terminal',
+          title: activeTerminalRelativeDirectory
+            ? `PowerShell · ${activeTerminalRelativeDirectory}`
+            : 'PowerShell',
+          resourceKey: `terminal:${normalizedProjectRoot(activeProjectRoot)}:${activeTerminalRelativeDirectory}`,
+        });
+      }
+      const accepted = await runTerminalCommand(command);
+      if (
+        accepted &&
+        input.value === submittedText &&
+        workspaceResourceScopeKey() === scope
+      ) {
+        input.value = '';
+      }
+    } finally {
+      delete form.dataset.submitting;
+      form.removeAttribute('aria-busy');
+      button.disabled = false;
+      button.textContent = studioT('terminal.run');
+    }
   });
 }
 
@@ -9951,6 +10968,15 @@ function setBottomPanel(open: boolean) {
   const panel = document.getElementById('bottom-panel');
   if (!panel) {
     return;
+  }
+  if (open && panel.hidden) {
+    const focused = document.activeElement;
+    bottomPanelReturnFocus =
+      focused instanceof HTMLElement &&
+      focused !== document.body &&
+      !panel.contains(focused)
+        ? focused
+        : null;
   }
   panel.hidden = !open;
   if (open) {
@@ -9975,12 +11001,23 @@ function setBottomPanel(open: boolean) {
 
 document
   .getElementById('bottom-panel-toggle')
-  ?.addEventListener('click', () =>
-    setBottomPanel(shell.dataset.bottomPanel !== 'open'),
-  );
+  ?.addEventListener('click', toggleTerminalPanel);
+function closeBottomPanel(): void {
+  setBottomPanel(false);
+  restorePanelFocus(bottomPanelReturnFocus);
+  bottomPanelReturnFocus = null;
+}
 document
   .getElementById('bottom-panel-close')
-  ?.addEventListener('click', () => setBottomPanel(false));
+  ?.addEventListener('click', closeBottomPanel);
+document.getElementById('bottom-panel')?.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  document.getElementById('bottom-panel-close')?.click();
+});
 
 let pluginDirectoryCatalog: MagicPointerSlashDirectory | null = null;
 let pluginDirectoryKind: 'skills' | 'commands' = 'skills';
@@ -10221,7 +11258,7 @@ document.addEventListener('click', e => {
   }
   const projectTools = target.closest<HTMLElement>('[data-project-tools]');
   if (projectTools) {
-    libraryUi.openProject(projectTools.dataset.projectTools || '');
+    libraryUi.groupMenu(projectTools);
     return;
   }
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
@@ -10264,7 +11301,9 @@ document.addEventListener('click', e => {
     closeAnchoredPopover('composer-usage-popover', 'composer-context');
   }
 
-  const open = target.closest<HTMLElement>('[data-open]');
+  const open = target.closest('[data-session-menu], .side-session-menu')
+    ? null
+    : target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) {
     void openConversation(open.dataset.open);
     return;
@@ -10695,8 +11734,10 @@ let composerEffort = (() => {
     return 'xhigh';
   }
 })();
+let defaultComposerEffort = composerEffort;
 
 function persistEffort() {
+  defaultComposerEffort = composerEffort;
   try {
     localStorage.setItem(EFFORT_STORAGE_KEY, composerEffort);
   } catch {
@@ -11414,10 +12455,32 @@ async function selectComposerPermission(
   }
   composerPreset = selected;
   renderPermissionChip();
-  if (!result.ok) {
+  if (!result.ok || result.warning) {
     const menu = document.getElementById('composer-permission-menu');
-    menu?.replaceChildren(modelMenuNote(result.error || studioT('common.switch_failed')));
+    const note = modelMenuNote(
+      result.warning === 'conversation_not_saved'
+        ? studioT('permission.changed_not_saved')
+        : result.warning === 'permission_save_unconfirmed'
+          ? studioT('permission.save_unconfirmed')
+          : result.error || studioT('common.switch_failed'),
+    );
+    note.setAttribute('role', result.warning ? 'status' : 'alert');
+    const content = [note];
+    if (result.warning) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'mp-compact-menu-row';
+      retry.dataset.permissionRetry = 'true';
+      retry.textContent = studioT('permission.retry_save');
+      retry.addEventListener('click', () => {
+        closePermissionMenu();
+        void selectComposerPermission(selected, owner);
+      });
+      content.push(retry);
+    }
+    menu?.replaceChildren(...content);
     positionAnchoredPopover('composer-permission-menu', 'composer-permission');
+    menu?.querySelector<HTMLButtonElement>('[data-permission-retry]')?.focus({preventScroll: true});
   }
 }
 
@@ -12413,6 +13476,10 @@ window.addEventListener('resize', () => {
     positionAnchoredPopover('composer-model-menu', 'composer-model');
     positionModelMorePanel();
   }
+  const permissionMenu = document.getElementById('composer-permission-menu');
+  if (permissionMenu && !permissionMenu.hidden) {
+    positionAnchoredPopover('composer-permission-menu', 'composer-permission');
+  }
 });
 
 function menuGlyph(name: string, size = 'small'): string {
@@ -12489,6 +13556,7 @@ function openAccountSubmenu(kind: string) {
           compactMenuItem('Keyboard shortcuts', '', run('shortcuts'), 'Ctrl+/'),
         ];
   menu.replaceChildren(...rows);
+  menu.dataset.parentCommand = kind;
   menu.hidden = false;
   const rect = trigger.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(rect.right + 4, innerWidth - menu.offsetWidth - 8))}px`;
@@ -12496,19 +13564,32 @@ function openAccountSubmenu(kind: string) {
   document
     .querySelectorAll('[data-account-command][aria-haspopup]')
     .forEach(row => row.setAttribute('aria-expanded', String(row === trigger)));
-  rows[0].focus();
+  enterStudioMenu(menu);
 }
 
 function setStudioLanguage(language: 'en' | 'zh-CN'): void {
   applyStudioLanguage(language);
-  closeAccountMenu();
+  closeAccountMenu(true);
   const view = shell.dataset.view || 'chat';
   show(view);
   if (view === 'chat' && activeConversationId) {
     void openConversation(activeConversationId);
   }
-  window.dispatchEvent(new CustomEvent('mp:language-change'));
 }
+
+window.addEventListener('mp:language-change', () => {
+  renderTerminalLanguage();
+  renderBrowserToolbarLanguage();
+  if (inspectorState.open && activeInspectorTab === 'tasks') {
+    renderProjectTasks();
+  }
+  if (inspectorState.open) {
+    renderInspectorTitle();
+  }
+});
+
+renderTerminalLanguage();
+renderBrowserToolbarLanguage();
 
 try {
   applyStudioLanguage(
@@ -13339,12 +14420,18 @@ async function submitOpenUiAction(detail: {
 }): Promise<void> {
   const conversationId = detail.scope.slice(0, detail.scope.lastIndexOf('#'));
   const conversation = activeConversationRecord;
-  if (!conversationId || conversationId !== activeConversationId ||
-      conversation?.id !== conversationId || !conversation.agentSessionId) {
+  if (
+    !conversationId ||
+    conversationId !== activeConversationId ||
+    conversation?.id !== conversationId ||
+    !conversation.agentSessionId
+  ) {
     throw new Error('Open the original task to use this interface.');
   }
   if (detail.event.type === 'open_url') {
-    const result = await Data.openProjectUrl(String(detail.event.params?.url || ''));
+    const result = await Data.openProjectUrl(
+      String(detail.event.params?.url || ''),
+    );
     if (!result.ok) {
       throw new Error(result.error || 'Could not open this link.');
     }
@@ -13354,22 +14441,122 @@ async function submitOpenUiAction(detail: {
     throw new Error('This interface action is not available.');
   }
   if (pendingPermissionAsk || pendingAskInput) {
-    throw new Error('Answer the current task question before continuing this interface.');
+    throw new Error(
+      'Answer the current task question before continuing this interface.',
+    );
   }
   const question = [
-    detail.event.humanFriendlyMessage || 'Continue with these interface values.',
+    detail.event.humanFriendlyMessage ||
+      'Continue with these interface values.',
     `\n[Interactive response: ${detail.scope}, ${detail.blockId}]`,
     JSON.stringify({
       fields: detail.event.formState ?? {},
       context: detail.event.params?.context ?? null,
     }),
   ].join('\n');
+  return submitConversationFollowup({
+    conversationId,
+    question,
+    inputPrefix: 'openui',
+    allowSteer: true,
+  });
+}
+
+async function submitFileUndo(detail: {
+  conversationId: string;
+  turnIndex: number;
+}): Promise<void> {
+  const conversationId = detail.conversationId;
+  if (
+    !conversationId ||
+    conversationId !== activeConversationId ||
+    activeConversationRecord?.id !== conversationId ||
+    !activeConversationRecord.agentSessionId
+  ) {
+    throw new Error('Open the original task to undo these file changes.');
+  }
+  if (
+    studioComposerBusy ||
+    pendingConversation ||
+    externalConversationRun ||
+    pendingPermissionAsk ||
+    pendingAskInput
+  ) {
+    throw new Error(
+      'Finish the current task or answer its question before undoing file changes.',
+    );
+  }
+  const conversation = await Data.conversation(conversationId);
+  if (conversation?.hasPendingWork) {
+    throw new Error('Finish the current task before undoing file changes.');
+  }
+  const turn =
+    Number.isInteger(detail.turnIndex) && detail.turnIndex >= 0
+      ? conversation?.turns?.[detail.turnIndex]
+      : undefined;
+  const question =
+    turn && !turn.pendingInput && !turn.liveProgress
+      ? ChatView.fileUndoQuestion(turn)
+      : undefined;
+  if (!question) {
+    throw new Error('This turn has no available file changes to undo.');
+  }
+  const workspaceRoot = String(conversation?.workspaceRoot || '');
+  const executionWorkspaceRoot = String(
+    turn?.request?.executionWorkspaceRoot || workspaceRoot,
+  );
+  return submitConversationFollowup({
+    conversationId,
+    question,
+    inputPrefix: 'file-undo',
+    allowSteer: false,
+    workspace: {
+      projectRoot: workspaceRoot,
+      executionWorkspaceRoot,
+      projectId: conversation?.projectId,
+    },
+  });
+}
+
+async function submitConversationFollowup(request: {
+  conversationId: string;
+  question: string;
+  inputPrefix: string;
+  allowSteer: boolean;
+  workspace?: {
+    projectRoot: string;
+    executionWorkspaceRoot: string;
+    projectId?: string;
+  };
+}): Promise<void> {
+  const {conversationId, question} = request;
+  const conversation = activeConversationRecord;
+  if (
+    activeConversationId !== conversationId ||
+    conversation?.id !== conversationId ||
+    !conversation.agentSessionId
+  ) {
+    throw new Error('The active task changed before the request was sent.');
+  }
+  if (pendingPermissionAsk || pendingAskInput) {
+    throw new Error('Answer the current task question before continuing.');
+  }
   const requestId = crypto.randomUUID();
   const taskInput = buildStudioTaskInput(
-    question, `input:openui:${requestId}`, conversation.agentSessionId, [], [],
+    question,
+    `input:${request.inputPrefix}:${requestId}`,
+    conversation.agentSessionId,
+    [],
+    [],
   );
   if (studioComposerBusy || pendingConversation || externalConversationRun) {
-    const result = await Data.steerConversation(conversation.agentSessionId, taskInput);
+    if (!request.allowSteer) {
+      throw new Error('Finish the current task before undoing file changes.');
+    }
+    const result = await Data.steerConversation(
+      conversation.agentSessionId,
+      taskInput,
+    );
     if (!result.ok) {
       throw new Error(result.error || 'Could not send the interface response.');
     }
@@ -13411,29 +14598,46 @@ async function submitOpenUiAction(detail: {
   const effort = composerEffort;
   const modelSelection = currentComposerModelSelection();
   try {
-    const workspace = await prepareComposerWorktree();
-    if (activeConversationId !== conversationId || pendingConversation !== submitted) {
-      throw new Error('The active task changed before the interface response was sent.');
+    const workspace = request.workspace ?? (await prepareComposerWorktree());
+    if (
+      activeConversationId !== conversationId ||
+      pendingConversation !== submitted
+    ) {
+      throw new Error('The active task changed before the request was sent.');
     }
     const result = await Data.sendConversation({
-      conversationId, question, requestId, taskInput, attachments: [],
-      permissionPreset, effort, modelSelection,
+      conversationId,
+      question,
+      requestId,
+      taskInput,
+      attachments: [],
+      permissionPreset,
+      effort,
+      modelSelection,
       workspaceRoot: workspace.projectRoot,
       executionWorkspaceRoot: workspace.executionWorkspaceRoot,
       projectId: workspace.projectId,
       additionalFolders: conversation.additionalFolders,
     });
     if (!result?.ok) {
-      throw new Error(result?.error || 'The interface response did not complete.');
+      throw new Error(result?.error || 'The request did not complete.');
     }
-    if (activeConversationId === conversationId && pendingConversation === submitted) {
+    if (
+      activeConversationId === conversationId &&
+      pendingConversation === submitted
+    ) {
       await openConversation(conversationId);
     }
   } catch (error) {
-    if (activeConversationId === conversationId && pendingConversation === submitted) {
-      body.replaceChildren(ChatView.turnErrorNode(
-        error instanceof Error ? error.message : String(error),
-      ) as HTMLElement);
+    if (
+      activeConversationId === conversationId &&
+      pendingConversation === submitted
+    ) {
+      body.replaceChildren(
+        ChatView.turnErrorNode(
+          error instanceof Error ? error.message : String(error),
+        ) as HTMLElement,
+      );
     }
     throw error;
   } finally {
@@ -13449,6 +14653,17 @@ document.addEventListener('mp:openui-action', event => {
     respond?: (result: {ok: boolean; error?: string}) => void;
   }>).detail;
   void submitOpenUiAction(detail).then(
+    () => detail.respond?.({ok: true}),
+    error => detail.respond?.({ok: false, error: error instanceof Error ? error.message : String(error)}),
+  );
+});
+
+document.addEventListener('mp:undo-file-changes', event => {
+  const detail = (event as CustomEvent<{
+    conversationId: string; turnIndex: number;
+    respond?: (result: {ok: boolean; error?: string}) => void;
+  }>).detail;
+  void submitFileUndo(detail).then(
     () => detail.respond?.({ok: true}),
     error => detail.respond?.({ok: false, error: error instanceof Error ? error.message : String(error)}),
   );
@@ -13558,6 +14773,9 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         windowNavigation.draft(navigationLocation)?.returnToProject,
       modelSelection: currentComposerModelSelection(),
       permissionPreset: composerPreset,
+      effort: composerEffort,
+      branch: currentComposerBranch(),
+      worktree: currentComposerWorktreeEnabled(),
     };
     windowNavigation.saveDraft(navigationLocation, navigationDraft);
     const attachmentPaths = [...composerAttachments];
@@ -13695,6 +14913,8 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         projectId: workspace.projectId,
         additionalFolders: navigationDraft.additionalFolders,
         modelSelection: navigationDraft.modelSelection,
+        branch: navigationDraft.branch,
+        worktree: navigationDraft.worktree,
       });
       if (response?.conversationId) {
         acceptSubmissionNavigation(requestId, String(response.conversationId));
@@ -14210,6 +15430,9 @@ function refreshStashSummaries() {
 }
 
 window.magicPointerDashboard?.onShow?.(payload => {
+  if (payload?.view === 'personal' && typeof payload.personalDate === 'string') {
+    personalActivityUi?.setDate(payload.personalDate);
+  }
   if (payload?.view) {
     show(String(payload.view));
   }

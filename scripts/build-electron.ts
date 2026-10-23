@@ -80,7 +80,50 @@ buildSync({
   sourcemap: true,
 });
 
-// CommonJS preamble throws `exports is not defined` on line 1 and every global
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'compaction_status.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'compaction_status.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'CompactionStatus',
+  target: 'es2022',
+  sourcemap: true,
+});
+
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'chat_diff_rows.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'chat_diff_rows.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'ChatDiffRows',
+  target: 'es2022',
+  sourcemap: true,
+});
+
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'chat_file_icons.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'chat_file_icons.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'ChatFileIcons',
+  target: 'es2022',
+  sourcemap: true,
+});
+
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'chat_tool_summary.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'chat_tool_summary.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'ChatToolSummary',
+  target: 'es2022',
+  sourcemap: true,
+});
+
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();

@@ -4,14 +4,21 @@ import type {
   ProjectInboxEntry,
   HandoffReceipt,
   HandoffState,
+  RelatedResource,
 } from './resource_collection_contract';
 import type {XSourceState} from './resource_x_source';
 import type {ResourcePreview} from './resource_preview';
+import type {ResourcePost} from './resource_post';
+import type {HistoryJob, HistoryList} from './resource_browser_history';
+import type {BookmarkAccount} from './resource_bookmark_sync';
 
 export interface ResourceResponse {
   ok: boolean;
+  focus?: string;
   error?: string;
-  items?: Array<CollectedResource & {previewUrl?: string}>;
+  items?: Array<
+    CollectedResource & {previewUrl?: string; relevanceReason?: string}
+  >;
   entry?: CollectedResource;
   projects?: Array<{id: string; name: string; root: string}>;
   source?: XSourceState;
@@ -20,10 +27,24 @@ export interface ResourceResponse {
   preview?: ResourcePreview;
   handoffs?: ProjectInboxEntry[];
   handoffReceipts?: HandoffReceipt[];
+  post?: ResourcePost;
+  histories?: Array<Omit<HistoryJob, 'seen'>>;
+  accounts?: BookmarkAccount[];
+  related?: RelatedResource[];
+  browser?: {
+    url: string;
+    title: string;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    loading: boolean;
+  };
 }
 export type ResourceAction =
   | 'list'
+  | 'search'
+  | 'related'
   | 'add'
+  | 'add-batch'
   | 'edit'
   | 'process'
   | 'deliver'
@@ -33,10 +54,25 @@ export type ResourceAction =
   | 'open-original'
   | 'browser-open'
   | 'capture'
+  | 'capture-source'
+  | 'read-post'
+  | 'browser-command'
+  | 'browser-state'
+  | 'history-start'
+  | 'history-pause'
+  | 'bookmark-configure'
   | 'x-connect'
   | 'x-configure'
   | 'x-sync';
+export type CollectionBrowserCommand =
+  'back' | 'forward' | 'reload' | 'stop' | 'resize' | 'hide';
 export interface ResourceRequest {
+  sort?: 'time' | 'importance';
+  focus?: string;
+  sourceAccount?: string;
+  historyList?: HistoryList;
+  restore?: boolean;
+  command?: CollectionBrowserCommand;
   material?: 'original' | 'paper' | 'handoff';
   handoffState?: HandoffState;
   snoozedUntil?: number;

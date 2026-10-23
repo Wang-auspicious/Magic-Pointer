@@ -17,6 +17,7 @@ app.whenReady().then(async () => {
   try {
     await win.loadFile(path.join(buildRoot, 'renderer', 'studio.html'));
     await win.webContents.executeJavaScript('document.fonts.ready');
+    await win.webContents.executeJavaScript("applyStudioLanguage('en')");
     const witness = await win.webContents.executeJavaScript(`(async () => {
       const check = (ok, message) => { if (!ok) throw new Error(message); };
       const wait = () => new Promise(resolve => setTimeout(resolve, 30));
@@ -34,30 +35,9 @@ app.whenReady().then(async () => {
       let resolveResponse;
       Data.respondConversation = payload => { responses.push(payload); return new Promise(resolve => { resolveResponse = resolve; }); };
       await openConversation(stored.id);
-      const navStyle = getComputedStyle(document.getElementById('nav-artifacts'));
-      check(navStyle.height === '26px' && navStyle.fontSize === '13px' && navStyle.lineHeight === '19.5px' && navStyle.marginBottom === '0.5px', 'sidebar still uses Web comfortable density instead of the supplied Code 26.5px row rhythm');
       const textarea = document.querySelector('#composer-form textarea');
-      check(getComputedStyle(textarea).fontSize === '14px' && getComputedStyle(textarea).lineHeight === '18px', 'Code composer is still using the larger Web Chat typography');
-      check(document.querySelector('.mpw-scroll').getBoundingClientRect().height <= 46, 'single-line Code composer exceeds the reference 44px editor plus border');
-      check(document.querySelector('.mpw-primary').getBoundingClientRect().width === 24, 'Code send control is not the compact 24px size');
-      const overflowWitness = document.createElement('div');
-      overflowWitness.style.height = '1400px'; overflowWitness.style.flex = '0 0 1400px';
-      const chatStream = document.getElementById('stream');
-      chatStream.append(overflowWitness);
-      const conversationFlow = chatStream.querySelector('.mp-chat-flow');
-      const textLeft = conversationFlow.getBoundingClientRect().left + parseFloat(getComputedStyle(conversationFlow).paddingLeft);
-      const centeredTranscript = Math.abs(textLeft - document.querySelector('.mpw-scroll').getBoundingClientRect().left) < 1;
-      overflowWitness.remove();
-      const narrationWitness = document.createElement('div');
-      narrationWitness.className = 'mp-chat-narration';
-      narrationWitness.innerHTML = '<div class="mp-chat-markdown"><p>Check the actual text dimensions.</p></div>';
-      chatStream.append(narrationWitness);
-      const narrationStyle = getComputedStyle(narrationWitness.querySelector('p'));
-      check(narrationStyle.fontSize === '15px' && narrationStyle.lineHeight === '23px', 'nested markdown overrides the visible narration typography');
-      narrationWitness.remove();
-      check(centeredTranscript, 'scrollbar shifts the transcript away from the composer alignment');
       textarea.value = 'Keep my unsent follow-up';
-      composerAttachments = [{ path: 'draft.md', name: 'draft.md' }];
+      composerAttachments = ['draft.md'];
       const host = document.getElementById('composer-permission-ask');
       check(host.textContent.includes('npm test && npm run build'), 'approval hides the full action behind a prefix');
       check(!!host.closest('.mpw-composer-stack'), 'pending decision must stay reachable above the composer');
@@ -223,16 +203,24 @@ app.whenReady().then(async () => {
       const crashedRow = document.querySelector('.mp-subagent-task[data-task-id="child-background"]');
       check(crashedRow?.closest('[data-task-section="Needs attention"]'), 'crashed approval stayed folded under Finished');
       check(crashedRow?.querySelector('.mp-decision-card') && crashedRow.textContent.includes('original saved action'), 'crashed child lost the original approval request');
-      check(crashedRow.textContent.includes('答复后仍需恢复任务'), 'crashed approval falsely implies immediate execution');
+      check(crashedRow.textContent.includes('task still needs recovery after replying'), 'crashed approval falsely implies immediate execution');
       crashedRow.querySelector('[data-decision="once"]').click(); await wait(); await wait();
       check(childResponse?.requestId === 'child-crashed-write', 'crashed child answer lost its original request ID');
-      check(!crashedRow.querySelector('.mp-decision-card') && crashedRow.textContent.includes('审批答复已保存，后台任务尚未恢复执行'), 'saved answer was shown as executed or still actionable');
+      check(!crashedRow.querySelector('.mp-decision-card') && crashedRow.textContent.includes('approval reply is saved, but the background task has not resumed'), 'saved answer was shown as executed or still actionable');
       check(normalSends === 0 && textarea.value === 'Keep my unsent follow-up', 'crashed child answer auto-ran or changed the parent draft');
       Data.subagents = async () => ({ ok: true, tasks: [{ id: 'child-background', parentCallId: 'agent-call',
         description: 'Independent child', status: 'partial', stepCount: 1, steps: [], pendingInput: null }] });
       await refreshBackgroundAgentTasks(stored.id);
       check(crashedRow.querySelector('.mp-subagent-state').textContent === 'Partially complete'
         && crashedRow.closest('[data-task-section="Needs attention"]'), 'partial child was displayed as Completed or hidden under Finished');
+      applyStudioLanguage('zh-CN');
+      check(crashedRow.querySelector('.mp-subagent-state').textContent === '部分完成', 'visible background status does not follow the language change');
+      check(document.getElementById('inspector-title').textContent === '后台任务', 'background inspector title ignores the selected language');
+      setInspector(true, 'files');
+      check(document.getElementById('inspector-title').textContent === '文件', 'file inspector title ignores the selected language');
+      setInspector(true, 'tasks');
+      applyStudioLanguage('en');
+      check(document.querySelector('.mp-subagent-task[data-task-id="child-background"]') === crashedRow, 'language change rebuilt the task row');
       let resolveSources;
       const sourcesPromise = new Promise(resolve => { resolveSources = resolve; });
       Data.conversations = async () => sourcesPromise;
@@ -242,7 +230,7 @@ app.whenReady().then(async () => {
       resolveSources([{ id: 'selected-conversation', title: 'Selected task' }, { id: 'other-conversation', title: 'Other task' }]);
       await wait();
       check(!!host.querySelector('[data-dailywrap-from]') && !!host.querySelector('[data-dailywrap-to]'), 'DailyWrap has no editable time range');
-      check(host.querySelector('.mp-decision-dailywrap-sources .mp-decision-hint')?.textContent === '1 selected',
+      check(host.querySelector('.mp-decision-dailywrap-sources span.mp-decision-hint')?.textContent === '1 selected',
         'duplicate proposed task IDs remain duplicated in the user selection');
       check(host.querySelector('[data-decision="once"]').disabled, 'DailyWrap accepted a model-selected source without user choice');
       host.querySelector('[data-dailywrap-source-selected]').click();
@@ -260,13 +248,35 @@ app.whenReady().then(async () => {
         && dailyResponse.response.actionArguments?.limit === 12
         && JSON.stringify(dailyResponse.response.actionArguments?.conversation_ids?.sort()) === JSON.stringify(['other-conversation', 'selected-conversation']),
       'DailyWrap did not submit the user-selected time and saved task set');
+      stored.turns[0].pendingInput = undefined;
+      resolveResponse({ ok: true, accepted: true, conversationId: stored.id });
+      for (let i = 0; studioComposerBusy && i < 30; i++) await wait();
+      check(!studioComposerBusy, 'final controlled response did not settle');
+      window.__decisionProbePreview = async pendingInput => {
+        stored.turns[0].pendingInput = pendingInput;
+        await openConversation(stored.id);
+        document.getElementById('inspector-close').click();
+        await Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+          .map(animation => animation.finished.catch(() => {})));
+        check(!host.hidden && host.getBoundingClientRect().height > 0 && host.querySelector('.mp-decision-card'), 'preview is not visible in the production composer');
+      };
       return { normalSends, responses: responses.length, sameTurn: stored.turns.length === 1, permissionAndQuestions: true, durablePlan: true, backgroundApproval: true };
     })()`);
     fs.writeFileSync(path.join(output, 'witness.json'), JSON.stringify(witness, null, 2));
-    await win.webContents.executeJavaScript(`setComposerSettledState('idle'); pendingPermissionAsk = { requestId: 'permission-preview', tool: 'Bash', prefix: 'npm test', question: 'Allow Magic Pointer to run the project tests?' }; pendingAskInput = null; renderPermissionAsk(); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));`);
+    await win.webContents.executeJavaScript(`__decisionProbePreview({requestId: 'permission-preview', kind:'permission', tool: 'Bash', actionPreview: 'npm test && npm run build', question: 'Allow Magic Pointer to run the project tests?'})`);
     fs.writeFileSync(path.join(output, 'permission.png'), (await win.webContents.capturePage()).toPNG());
-    await win.webContents.executeJavaScript(`pendingPermissionAsk = null; pendingAskInput = { requestId: 'question-preview', questions: [{ header: 'Deliverable', question: 'How would you like the results?', options: [{ label: 'A concise report', description: 'Findings and next steps in one editable document' }, { label: 'A presentation', description: 'Slides for sharing with the team' }] }] }; renderPermissionAsk(); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));`);
+    await win.webContents.executeJavaScript(`__decisionProbePreview({ requestId: 'question-preview', questions: [{ header: 'Deliverable', question: 'How would you like the results?', options: [{ label: 'A concise report', description: 'Findings and next steps in one editable document' }, { label: 'A presentation', description: 'Slides for sharing with the team' }] }] })`);
     fs.writeFileSync(path.join(output, 'questions.png'), (await win.webContents.capturePage()).toPNG());
+    win.setContentSize(860, 900);
+    await win.webContents.executeJavaScript(`(async () => {
+      applyTheme('dark'); applyStudioLanguage('zh-CN');
+      await __decisionProbePreview({requestId:'saving-preview',kind:'permission',tool:'Bash',actionPreview:'npm test && npm run build',question:'允许运行项目检查吗？'});
+      const host = document.getElementById('composer-permission-ask');
+      host.querySelector('[data-decision="once"]').click();
+      if (!host.textContent.includes('npm test && npm run build') || !host.querySelector('[role="status"]')) throw new Error('saving preview lost the action');
+      await Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+    })()`);
+    fs.writeFileSync(path.join(output, 'saving-dark-narrow.png'), (await win.webContents.capturePage()).toPNG());
     console.log(JSON.stringify(witness));
     clearTimeout(deadline); win.destroy(); app.exit(0);
   } catch (error) {

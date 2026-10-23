@@ -71,6 +71,7 @@ declare global {
   }
 
   interface MagicPointerTurn {
+    request?: Record<string, unknown>;
     at?: number;
     question?: string;
     answer?: string;
@@ -164,7 +165,7 @@ declare global {
     [key: string]: unknown;
   }
 
-  interface MagicPointerConversation {
+  interface MagicPointerConversationInfo {
     workMode?: 'work' | 'code';
     id: string;
     projectId?: string;
@@ -182,8 +183,16 @@ declare global {
     additionalFolders?: string[];
     modelSelection?: MagicPointerModelSelection;
     object?: MagicPointerObject | null;
-    turns?: MagicPointerTurn[];
     [key: string]: unknown;
+  }
+
+  interface MagicPointerConversation extends MagicPointerConversationInfo {
+    turns?: MagicPointerTurn[];
+  }
+
+  interface MagicPointerConversationSummary
+    extends MagicPointerConversationInfo {
+    turns?: number;
   }
 
   interface MagicPointerConversationProgress {
@@ -195,6 +204,8 @@ declare global {
   }
 
   interface MagicPointerConversationSend {
+    branch?: string;
+    worktree?: boolean;
     workMode?: 'work' | 'code';
     conversationId?: string | null;
     projectId?: string;
@@ -273,6 +284,8 @@ declare global {
   };
 
   interface MagicPointerProject {
+    environments?: Array<import('../project_context').ProjectRunEnvironment>;
+    defaultEnvironmentId?: string;
     id?: string;
     root: string;
     name: string;
@@ -292,6 +305,8 @@ declare global {
 
   type MagicPointerProjectPatch = Pick<
     Partial<MagicPointerProject>,
+    | 'environments'
+    | 'defaultEnvironmentId'
     | 'name'
     | 'description'
     | 'instructions'
@@ -383,6 +398,13 @@ declare global {
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
 
   interface MagicPointerChatViewApi {
+    deletedFileNode(text: string): Element;
+    fileDiffNode(presentation: {
+      kind: 'file_diff';
+      beforeText: string;
+      afterText: string;
+    }): Element;
+    fileUndoQuestion(turn: MagicPointerTurn): string | undefined;
     toolRowModel(
       name: string,
       argsRaw: string,
@@ -475,6 +497,9 @@ declare global {
   const ChatIcons: {
     node(name: string, size?: number): Element;
   };
+  const ChatDiffRows: typeof import('./chat_diff_rows');
+  const ChatFileIcons: typeof import('./chat_file_icons');
+  const ChatToolSummary: typeof import('./chat_tool_summary');
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;
@@ -876,6 +901,11 @@ declare global {
         }>;
         error?: string;
       }>;
+      prepareDeletedFile(
+        projectRoot: string,
+        relativePath: string,
+        base: 'head' | 'index',
+      ): Promise<{ok: boolean; previewPath?: string; error?: string}>;
       readFile(
         projectRoot: string,
         relativePath: string,
@@ -890,10 +920,12 @@ declare global {
         conversationId?: string | null,
       ): Promise<MagicPointerProjectEnvironment>;
       worktree?(payload: {
-        action: 'create' | 'remove';
+        action: 'create' | 'remove' | 'checkout';
         projectRoot: string;
         conversationId?: string;
         path?: string;
+        baseBranch?: string;
+        previousBranch?: string;
       }): Promise<{
         ok?: boolean;
         path?: string;
@@ -988,7 +1020,7 @@ declare global {
         payload: MagicPointerInputResponse,
       ): Promise<Record<string, any>>;
       recovery?(payload: Record<string, unknown>): Promise<Record<string, any>>;
-      list(): Promise<MagicPointerConversation[]>;
+      list(): Promise<MagicPointerConversationSummary[]>;
       stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
       branch?(payload: {id?: unknown; turnIndex?: unknown}): Promise<{
@@ -1312,6 +1344,11 @@ declare global {
       entries?: Array<{name: string; path: string; kind: 'directory' | 'file'}>;
       error?: string;
     }>;
+    prepareDeletedProjectFile(
+      projectRoot: string,
+      relativePath: string,
+      base: 'head' | 'index',
+    ): Promise<{ok: boolean; previewPath?: string; error?: string}>;
     readProjectFile(
       projectRoot: string,
       relativePath: string,
@@ -1337,11 +1374,12 @@ declare global {
       conversationId?: string | null,
     ): Promise<MagicPointerProjectEnvironment>;
     projectWorktree(payload: {
-      action: 'create' | 'remove';
+      action: 'create' | 'remove' | 'checkout';
       projectRoot: string;
       conversationId?: string;
       path?: string;
       baseBranch?: string;
+      previousBranch?: string;
     }): Promise<{ok?: boolean; path?: string; branch?: string; error?: string}>;
     showProjectContextMenu(
       projectRoot: string,
@@ -1404,7 +1442,7 @@ declare global {
     updateStatus(): Promise<MagicPointerUpdateState>;
     checkForUpdates(): Promise<{ok?: boolean; reason?: string}>;
     onUpdateStatus(callback: (state: MagicPointerUpdateState) => void): void;
-    conversations(): Promise<MagicPointerConversation[]>;
+    conversations(): Promise<MagicPointerConversationSummary[]>;
     conversationStats(): Promise<MagicPointerHomeStats | null>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     branchConversation(
@@ -1575,7 +1613,12 @@ declare global {
     ahead?: number;
     behind?: number;
     changedFiles?: number;
-    fileChanges?: Array<{path: string; status: string; staged: boolean}>;
+    fileChanges?: Array<{
+      path: string;
+      status: string;
+      staged: boolean;
+      deletionBase?: 'head' | 'index';
+    }>;
     addedLines?: number;
     deletedLines?: number;
     remoteUrl?: string;
@@ -1605,6 +1648,10 @@ declare global {
   }
 
   interface MagicPointerOverlayApi {
+    readFileDiff(reference: {beforePath: string | null; afterPath: string}): Promise<
+      {ok: true; presentation: {kind: 'file_diff'; beforeText: string; afterText: string}} |
+      {ok: false; error: string}
+    >;
     ready(): void;
     gestureReady(token: unknown): void;
     hide(): void;
@@ -1913,6 +1960,17 @@ const Data: MagicPointerDataApi = {
     return projects.tree(projectRoot, relativePath);
   },
 
+  async prepareDeletedProjectFile(
+    projectRoot: string,
+    relativePath: string,
+    base: 'head' | 'index',
+  ) {
+    const projects = bridge()?.projects;
+    return projects?.prepareDeletedFile
+      ? projects.prepareDeletedFile(projectRoot, relativePath, base)
+      : {ok: false, error: '文件读取通道不可用。'};
+  },
+
   async readProjectFile(projectRoot: string, relativePath: string) {
     const projects = bridge()?.projects;
     if (!hasBridge() || !projects?.readFile) {
@@ -1974,11 +2032,12 @@ const Data: MagicPointerDataApi = {
   },
 
   async projectWorktree(payload: {
-    action: 'create' | 'remove';
+    action: 'create' | 'remove' | 'checkout';
     projectRoot: string;
     conversationId?: string;
     path?: string;
     baseBranch?: string;
+    previousBranch?: string;
   }) {
     const projects = bridge()?.projects;
     if (!hasBridge() || !projects?.worktree) {
@@ -2095,7 +2154,7 @@ const Data: MagicPointerDataApi = {
     bridge()?.updates?.onStatus?.(callback);
   },
 
-  async conversations(): Promise<MagicPointerConversation[]> {
+  async conversations(): Promise<MagicPointerConversationSummary[]> {
     if (!hasBridge()) {
       return [];
     }

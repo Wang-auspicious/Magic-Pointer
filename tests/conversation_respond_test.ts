@@ -41,7 +41,7 @@ async function main() {
       samePath: (left: string, right: string) => left === right,
       activeModelRuntimeConfig: () => ({ model: 'fake' }),
       TaskSources: { bindConversationTaskInput: () => { throw new Error('Response is not a user instruction'); } },
-      conversations: () => store, activeConversations: new Map(), stageLiveTurns: new Map(),
+      conversations: () => store, restoreConversationContext: async (conversation:any)=>conversation, activeConversations: new Map(), stageLiveTurns: new Map(),
       figmaRuntime: { clientConfigurations: () => [] }, notifyConversationChanged() {},
       handleAgentCursorProgress() {}, conversationFailureMessage: (value: any) => value.error || 'failed',
       setTimeout: () => 1, clearTimeout() {},

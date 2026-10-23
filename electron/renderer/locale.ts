@@ -40,6 +40,22 @@ interface StudioCountEntry {
 }
 
 const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
+  'activity.idle': {en: 'Not started', zh: '未开始'},
+  'activity.running': {en: 'Running', zh: '运行中'},
+  'activity.awaiting': {en: 'Needs input', zh: '需要输入'},
+  'activity.interrupted': {en: 'Interrupted', zh: '已中断'},
+  'activity.failed': {en: 'Failed', zh: '失败'},
+  'activity.pending': {en: 'Ready to continue', zh: '待继续'},
+  'activity.completed': {en: 'Completed', zh: '已完成'},
+  'permission.changed_not_saved': {
+    en: 'Selected mode is active, but the conversation could not be saved. Please try again.',
+    zh: '所选权限模式已生效，但对话设置未能保存。请重试。',
+  },
+  'permission.save_unconfirmed': {
+    en: 'Selected mode is active, but saving the permission record could not be confirmed. Please try again.',
+    zh: '所选权限模式已生效，但权限记录未确认保存。请重试。',
+  },
+  'permission.retry_save': {en: 'Retry saving', zh: '重试保存'},
   'chat.delete_active': {en: 'Stop this task and its background agents before deleting it.', zh: '请先停止此任务及其后台 Agent，再删除会话。'},
   'chat.delete_failed': {en: 'Could not save the deletion. Your conversation is kept; try again.', zh: '删除未能保存，会话已保留，请重试。'},
   'plugins.title': {en: 'Plugins', zh: '插件'},
@@ -276,6 +292,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'common.unknown_reason': {en: 'Unknown reason', zh: '未知原因'},
   'common.switch_failed': {en: 'Switch failed.', zh: '切换失败。'},
   'common.loading': {en: 'Loading…', zh: '正在读取…'},
+  'common.retry': {en: 'Retry', zh: '重试'},
+  'convo.not_found': {en: 'This chat is no longer available.', zh: '这条对话已不存在。'},
   'common.remove_named': {en: 'Remove {name}', zh: '移除 {name}'},
   'search.kind.conversation': {en: 'Chat', zh: '会'},
   'search.kind.project': {en: 'Proj', zh: '项'},
@@ -311,10 +329,56 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'Rename failed. Please try again.',
     zh: '重命名失败，请重试。',
   },
+  'convo.save_failed': {
+    en: 'Could not save the conversation. Please try again.',
+    zh: '未能保存对话设置，请重试。',
+  },
   'convo.untitled': {en: 'Untitled conversation', zh: '未命名对话'},
   'convo.jump_to': {en: 'Jump to: {label}', zh: '跳到：{label}'},
   'prompt.group_name': {en: 'Group name', zh: '分组名称'},
   'sidebar.recent_on': {en: 'Last 7 days only (on)', zh: '只看近 7 天（已启用）'},
+  'sidebar.group_summary': {en: '{name}, {count} sessions', zh: '{name}，{count} 个会话'},
+  'sidebar.all_chats': {en: 'All chats and tasks', zh: '全部对话和任务'},
+  'sidebar.review': {en: 'Review', zh: '工作回顾'},
+  'sidebar.design': {en: 'Design', zh: '设计'},
+  'sidebar.saved_dashboards': {en: 'Saved dashboards', zh: '已保存的看板'},
+  'sidebar.group_sort': {en: 'Group and sort…', zh: '分组和排序…'},
+  'sidebar.edit': {en: 'Edit sidebar…', zh: '编辑侧栏…'},
+  'sidebar.project_settings': {en: 'Project settings', zh: '项目设置'},
+  'environment.title': {en: 'Execution environments', zh: '执行环境'},
+  'environment.edit': {en: 'Edit environment', zh: '编辑执行环境'},
+  'environment.saved': {en: 'Saved environments', zh: '已保存的环境'},
+  'environment.empty': {en: 'No saved environments', zh: '尚未保存环境'},
+  'environment.new': {en: 'New', zh: '新建'},
+  'environment.duplicate': {en: 'Duplicate', zh: '复制'},
+  'environment.remove': {en: 'Remove', zh: '移除'},
+  'environment.name': {en: 'Name', zh: '名称'},
+  'environment.new_name': {en: 'Environment {n}', zh: '环境 {n}'},
+  'environment.model': {en: 'Model', zh: '模型'},
+  'environment.inherit': {en: 'Use app default', zh: '使用应用默认设置'},
+  'environment.permission': {en: 'Permissions', zh: '权限'},
+  'environment.effort': {en: 'Reasoning effort', zh: '推理强度'},
+  'environment.folders': {en: 'Additional folders', zh: '附加目录'},
+  'environment.branch': {en: 'Branch', zh: '分支'},
+  'environment.current_branch': {en: 'Use the current branch', zh: '使用当前分支'},
+  'environment.worktree': {en: 'Use an isolated worktree', zh: '使用隔离工作树'},
+  'environment.git_hint': {en: 'With isolation, new tasks branch from this selection. Without isolation, the project switches branches before running; Git preserves conflicting local edits by refusing the switch.', zh: '启用隔离时，新任务从所选分支创建工作树；关闭隔离时，运行前切换项目分支。若有冲突的本地改动，Git 会拒绝切换并保留改动。'},
+  'environment.folders_hint': {en: 'One absolute path per line', zh: '每行一个绝对路径'},
+  'environment.default': {en: 'Use for new tasks in this project', zh: '用于此项目的新任务'},
+  'environment.hint': {en: 'New tasks use the default environment. Existing chats and saved drafts keep their own settings.', zh: '新任务使用默认环境；现有会话与已保存草稿保留各自的设置。'},
+  'environment.cancel': {en: 'Cancel', zh: '取消'},
+  'environment.save': {en: 'Save', zh: '保存'},
+  'environment.save_failed': {en: 'Could not save environments. Try again.', zh: '无法保存执行环境，请重试。'},
+  'environment.permission_auto': {en: 'Magic Pointer handles permission decisions', zh: '由 Magic Pointer 处理权限决策'},
+  'environment.permission_read-only': {en: 'Always ask before making changes', zh: '修改前始终询问'},
+  'environment.permission_workspace-write': {en: 'Automatically accept all file edits', zh: '自动接受文件编辑'},
+  'environment.permission_plan': {en: 'Create a plan before making changes', zh: '修改前先制定计划'},
+  'environment.permission_danger-full-access': {en: 'Accepts all permissions', zh: '接受所有权限'},
+  'environment.effort_low': {en: 'Low', zh: '低'},
+  'environment.effort_medium': {en: 'Medium', zh: '中'},
+  'environment.effort_high': {en: 'High', zh: '高'},
+  'environment.effort_xhigh': {en: 'Extra', zh: '额外'},
+  'environment.effort_max': {en: 'Max', zh: '最高'},
   'sidebar.recent_off': {en: 'Recent projects only', zh: '只看最近项目'},
   'sidebar.collapse': {en: 'Collapse sidebar', zh: '折叠侧栏'},
   'sidebar.expand': {en: 'Expand sidebar', zh: '展开侧栏'},
@@ -501,6 +565,10 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '项目中没有可显示的文件。',
   },
   'files.read_failed': {en: 'Failed to read the file.', zh: '文件读取失败。'},
+  'files.origin_unknown': {
+    en: 'This historical result has no saved execution folder. Open the original file from its folder to view it.',
+    zh: '这条历史结果未保存执行目录，请从原文件所在目录打开查看。',
+  },
   'files.tree_failed': {en: 'Failed to read the file tree.', zh: '文件树读取失败。'},
   'files.truncated': {en: ' · truncated', zh: ' · 已截断'},
   'git.clean': {en: 'Worktree clean', zh: '工作树干净'},
@@ -549,6 +617,14 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '当前没有局部引用。',
   },
   'browser.stop_loading': {en: 'Stop loading', zh: '停止加载'},
+  'browser.back': {en: 'Back', zh: '后退'},
+  'browser.forward': {en: 'Forward', zh: '前进'},
+  'browser.address': {en: 'Browser address', zh: '浏览器地址'},
+  'browser.address_hint': {en: 'Enter a URL or localhost address', zh: '输入网址或 localhost 地址'},
+  'browser.go': {en: 'Go', zh: '前往'},
+  'browser.external': {en: 'Open in web browser', zh: '在网页浏览器中打开'},
+  'browser.host': {en: 'Built-in web browser', zh: '内置网页浏览器'},
+  'browser.empty': {en: 'Open websites in ego lite. Local documents and previews appear here.', zh: '在 ego lite 中打开网站。本地文档与预览显示在此处。'},
   'browser.reload': {en: 'Reload', zh: '重新加载'},
   'browser.open_failed': {en: 'Failed to open the page.', zh: '网页打开失败。'},
   'browser.ego_opening': {en: 'Opening in ego lite…', zh: '正在 ego lite 中打开…'},
@@ -560,6 +636,15 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'Failed to start the terminal.',
     zh: '终端启动失败。',
   },
+  'terminal.sending': {en: 'Sending…', zh: '正在提交…'},
+  'terminal.title': {en: 'Terminal', zh: '终端'},
+  'terminal.bottom_panel': {en: 'Bottom panel', zh: '底部面板'},
+  'terminal.bottom_tools': {en: 'Bottom tools', zh: '底部工具'},
+  'terminal.close_bottom': {en: 'Close bottom panel', zh: '关闭底部面板'},
+  'terminal.command': {en: 'Terminal command', zh: '终端命令'},
+  'terminal.run': {en: 'Run', zh: '运行'},
+  'terminal.stop': {en: 'Stop terminal', zh: '停止终端'},
+  'terminal.current_project': {en: 'Current project', zh: '当前项目'},
   'terminal.write_failed': {
     en: 'Failed to write to the terminal.',
     zh: '终端输入失败。',
@@ -658,6 +743,39 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'The watch settings were not saved: {error}',
     zh: '关注设置未保存：{error}',
   },
+  'subagent.running': {en: 'Running', zh: '运行中'},
+  'subagent.awaiting_user': {en: 'Needs approval', zh: '等待批准'},
+  'subagent.needs_verification': {en: 'Needs verification', zh: '等待验证'},
+  'subagent.partial': {en: 'Partially complete', zh: '部分完成'},
+  'subagent.stalled': {en: 'Stalled', zh: '已停滞'},
+  'subagent.provider_unavailable': {
+    en: 'Provider unavailable',
+    zh: '模型服务不可用',
+  },
+  'subagent.budget_exhausted': {en: 'Budget exhausted', zh: '预算已用尽'},
+  'subagent.invariant_failed': {en: 'Runtime error', zh: '运行时错误'},
+  'subagent.user_interrupt': {en: 'Interrupted', zh: '已中断'},
+  'subagent.stop_hook': {en: 'Stopped by hook', zh: '已被钩子停止'},
+  'subagent.failed': {en: 'Failed', zh: '失败'},
+  'subagent.stopped': {en: 'Stopped', zh: '已停止'},
+  'subagent.completed': {en: 'Completed', zh: '已完成'},
+  'subagent.unknown': {en: 'Unknown status', zh: '状态未知'},
+  'subagent.needs_resume': {en: 'Needs resume', zh: '等待恢复'},
+  'subagent.stopping': {en: 'Stopping', zh: '正在停止'},
+  'subagent.writing': {en: 'Writing', zh: '正在编写'},
+  'subagent.thinking': {en: 'Thinking', zh: '思考中'},
+  'subagent.thinking_live': {en: 'Thinking…', zh: '正在思考…'},
+  'subagent.thought': {en: 'Thought', zh: '思考记录'},
+  'inspector.materials': {en: 'Materials', zh: '资料'},
+  'inspector.files': {en: 'Files', zh: '文件'},
+  'inspector.browser': {en: 'Browser', zh: '浏览器'},
+  'inspector.terminal': {en: 'Terminal', zh: '终端'},
+  'inspector.changes': {en: 'Changes', zh: '变更'},
+  'inspector.background_tasks': {en: 'Background tasks', zh: '后台任务'},
+  'inspector.tasks': {en: 'Tasks', zh: '任务'},
+  'inspector.artifact': {en: 'Artifact', zh: '产物'},
+  'inspector.modules': {en: 'Mods', zh: '模块'},
+  'inspector.task': {en: 'Task', zh: '任务'},
   'task.updating': {
     en: 'The task status is updating; please try again later.',
     zh: '任务状态正在更新，请稍后重试。',
@@ -694,6 +812,138 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     en: 'Confirm you have verified the displayed read-back content and allow re-executing this operation?',
     zh: '确认已核对显示的读回内容，并允许重新执行这项操作？',
   },
+  'decision.daily_scope': {
+    en: 'Choose DailyWrap time and saved tasks',
+    zh: '选择每日回顾的时间和已保存任务',
+  },
+  'decision.daily_heading': {
+    en: 'Choose the time and saved tasks to include',
+    zh: '选择要读取的时间和已保存任务',
+  },
+  'decision.range_error': {
+    en: 'Choose a valid time range with To after From.',
+    zh: '请选择有效的时间范围，结束时间须晚于开始时间。',
+  },
+  'decision.choose_sources': {
+    en: 'Choose the source set before allowing this read.',
+    zh: '允许读取前，请先选择来源范围。',
+  },
+  'decision.select_task': {
+    en: 'Select at least one saved task.',
+    zh: '请至少选择一项已保存任务。',
+  },
+  'decision.from': {en: 'From', zh: '开始时间'},
+  'decision.to': {en: 'To', zh: '结束时间'},
+  'decision.read_limit': {
+    en: 'Read up to {n} records.',
+    zh: '最多读取 {n} 条记录。',
+  },
+  'decision.loading_tasks': {
+    en: 'Loading saved tasks…',
+    zh: '正在读取已保存任务…',
+  },
+  'decision.retry_tasks': {en: 'Retry loading tasks', zh: '重试读取任务'},
+  'decision.saved_sources': {en: 'Saved task sources', zh: '已保存任务来源'},
+  'decision.all_tasks': {
+    en: 'All saved tasks ({n})',
+    zh: '全部已保存任务（{n}）',
+  },
+  'decision.choose_tasks': {en: 'Choose saved tasks', zh: '选择已保存任务'},
+  'decision.sources': {en: 'Sources', zh: '来源'},
+  'decision.find_task': {en: 'Find a saved task', zh: '查找已保存任务'},
+  'decision.selected_count': {en: '{n} selected', zh: '已选择 {n} 项'},
+  'decision.no_tasks': {
+    en: 'No saved tasks are available.',
+    zh: '没有可用的已保存任务。',
+  },
+  'decision.no_matching_tasks': {en: 'No saved tasks match this search.', zh: '没有匹配此次搜索的已保存任务。'},
+  'decision.approval_scope': {
+    en: 'Scope of this approval',
+    zh: '本次授权的范围',
+  },
+  'decision.scope_heading': {en: 'This approval covers', zh: '本次授权范围'},
+  'decision.saved_task': {en: 'saved task {id}', zh: '已保存任务 {id}'},
+  'decision.all_evidence': {
+    en: 'all saved tasks and recent screen evidence',
+    zh: '全部已保存任务及近期屏幕证据',
+  },
+  'decision.task_records': {en: 'saved task records', zh: '已保存的任务记录'},
+  'decision.all_conversations': {en: 'all conversations', zh: '全部会话'},
+  'decision.restore_clipboard': {
+    en: 'restore one saved clipboard entry',
+    zh: '恢复一条已保存的剪贴板记录',
+  },
+  'decision.search_clipboard': {
+    en: 'search saved clipboard history',
+    zh: '搜索已保存的剪贴板历史',
+  },
+  'decision.search_screen': {
+    en: 'search recent screen memory',
+    zh: '搜索近期屏幕记忆',
+  },
+  'decision.selected_object': {en: 'selected object', zh: '所选对象'},
+  'decision.scope_source': {en: 'Source', zh: '来源'},
+  'decision.scope_event': {en: 'Event', zh: '事件'},
+  'decision.scope_offset': {en: 'Text offset', zh: '文本偏移'},
+  'decision.scope_characters': {en: 'Characters', zh: '字符数'},
+  'decision.scope_search': {en: 'Search', zh: '搜索内容'},
+  'decision.scope_tasks': {en: 'Task matches', zh: '任务匹配数'},
+  'decision.scope_screens': {en: 'Screen matches', zh: '屏幕匹配数'},
+  'decision.scope_screen_from': {en: 'Screen from', zh: '屏幕记录起始时间'},
+  'decision.scope_screen_to': {en: 'Screen to', zh: '屏幕记录结束时间'},
+  'decision.scope_from': {en: 'From', zh: '开始时间'},
+  'decision.scope_to': {en: 'To', zh: '结束时间'},
+  'decision.scope_conversations': {en: 'Conversations', zh: '会话'},
+  'decision.scope_max_records': {en: 'Maximum records', zh: '记录数上限'},
+  'decision.scope_recipe': {en: 'Recipe', zh: '配方'},
+  'decision.scope_action': {en: 'Action', zh: '操作'},
+  'decision.scope_clipboard': {en: 'Clipboard entry', zh: '剪贴板记录'},
+  'decision.scope_max_matches': {en: 'Maximum matches', zh: '匹配数上限'},
+  'decision.scope_objects': {en: 'Selected objects', zh: '所选对象'},
+  'decision.scope_object_source': {en: 'Object source', zh: '对象来源'},
+  'decision.scope_attachment': {en: 'Attachment', zh: '附件'},
+  'decision.permission': {en: 'Permission request', zh: '权限请求'},
+  'decision.question': {
+    en: 'Question from Magic Pointer',
+    zh: 'Magic Pointer 的提问',
+  },
+  'decision.saving': {en: 'Saving your choice…', zh: '正在保存你的选择…'},
+  'decision.permission_heading': {
+    en: 'Your permission is needed',
+    zh: '需要你的授权',
+  },
+  'decision.tool': {en: 'Tool', zh: '工具'},
+  'decision.this_action': {en: 'this action', zh: '此操作'},
+  'decision.allow_question': {en: 'Allow {tool}?', zh: '允许执行{tool}吗？'},
+  'decision.deny': {en: 'Deny', zh: '拒绝'},
+  'decision.allow_once': {en: 'Allow once', zh: '仅这一次允许'},
+  'decision.allow_session': {en: 'Allow for this session', zh: '本次会话允许'},
+  'decision.plan_approval': {en: 'Plan approval', zh: '计划审批'},
+  'decision.plan': {en: 'Plan', zh: '计划'},
+  'decision.ready_review': {en: 'Ready for review', zh: '等待审阅'},
+  'decision.keep_planning': {en: 'Keep planning', zh: '继续规划'},
+  'decision.approve_manual': {en: 'Approve · manual', zh: '批准 · 手动确认'},
+  'decision.approve_edits': {
+    en: 'Approve · accept edits',
+    zh: '批准 · 接受编辑',
+  },
+  'decision.choose': {en: 'Your choice is needed', zh: '需要你的选择'},
+  'decision.previous': {en: 'Previous question', zh: '上一题'},
+  'decision.next_question': {en: 'Next question', zh: '下一题'},
+  'decision.multi_hint': {en: 'Select all that apply', zh: '可选择多个选项'},
+  'decision.custom': {en: 'Type something else…', zh: '输入其他回答…'},
+  'decision.your_answer': {
+    en: 'Your answer: {question}',
+    zh: '你的回答：{question}',
+  },
+  'decision.other': {en: 'Other', zh: '其他'},
+  'decision.missing': {
+    en: 'Choose an answer or explicitly skip this question.',
+    zh: '请选择一个回答，或明确跳过此题。',
+  },
+  'decision.skip': {en: 'Skip', zh: '跳过'},
+  'decision.submit': {en: 'Submit', zh: '提交'},
+  'decision.next': {en: 'Next', zh: '下一题'},
   'ask.default_question': {en: 'Your decision is needed', zh: '需要你的决定'},
   'ask.save_failed': {
     en: 'Could not save this answer; please try again.',
@@ -725,9 +975,56 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.incomplete': {en: 'This turn did not complete.', zh: '这次没有答完。'},
   'chat.round_failed': {en: 'This round did not finish.', zh: '这一轮没有完成。'},
   'chat.copy': {en: 'Copy', zh: '复制'},
+  'chat.diff_separate_text': {
+    en: 'Too many changes to show as a diff. Showing the removed and added text separately.',
+    zh: '改动过多，无法显示逐行差异。下方分别显示删除和新增的文本。',
+  },
+  'chat.diff_removed_text': {en: 'Removed text', zh: '删除的文本'},
+  'chat.diff_unavailable_large': {
+    en: 'File changes are too large to preview. Open the file to view its contents.',
+    zh: '文件改动过大，无法在此预览。请打开文件查看内容。',
+  },
+  'chat.diff_unavailable_binary': {
+    en: 'This file cannot be shown as a text diff.',
+    zh: '此文件无法显示为文本差异。',
+  },
+  'chat.diff_added_text': {en: 'Added text', zh: '新增的文本'},
+  'chat.diff_unavailable_capture': {
+    en: 'File saved. Its change preview could not be retained.',
+    zh: '文件已保存，但未能保留此次改动预览。',
+  },
+  'chat.diff_show': {en: 'Show changes', zh: '查看改动'},
+  'chat.diff_unavailable_previous': {
+    en: 'The previous version was not retained, so a historical diff is unavailable.',
+    zh: '未保留此前版本，无法显示当时的差异。',
+  },
+  'chat.diff_loading': {en: 'Loading changes…', zh: '正在加载改动…'},
+  'chat.diff_retry': {en: 'Could not load changes. Retry', zh: '改动加载失败，点击重试'},
+  'chat.image_preview': {en: 'Image preview', zh: '图片预览'},
+  'chat.image_original_size': {en: 'Click for original size; right-click to copy', zh: '点击查看原始大小；右键复制图片'},
   'chat.resend': {en: 'Resend', zh: '重新发送'},
   'chat.fork_here': {en: 'Fork from here', zh: '从这里创建分支'},
+  'convo.unread': {en: 'Unread', zh: '未读'},
+  'files.deleted': {en: 'Deleted', zh: '已删除'},
+  'chat.fork_creating': {en: 'Creating a branch…', zh: '正在创建分支…'},
+  'chat.fork_failed': {
+    en: 'Could not create the branch. Please try again.',
+    zh: '未能创建分支，请重试。',
+  },
   'chat.copy_failed': {en: 'Copy failure', zh: '复制失败'},
+  'chat.copied': {en: 'Copied', zh: '已复制'},
+  'chat.files_show_more': {en: 'Show {count} more', zh: '显示另外 {count} 项'},
+  'chat.files_show_less': {en: 'Show less', zh: '收起'},
+  'chat.files_edited': {en: 'Edited {count} files', zh: '已修改 {count} 个文件'},
+  'chat.files_open': {en: 'Open', zh: '打开'},
+  'chat.files_open_artifact': {en: 'Open artifact {label}', zh: '打开作品 {label}'},
+  'chat.files_artifact': {en: 'Artifact', zh: '作品'},
+  'chat.files_undo': {en: 'Undo', zh: '撤销'},
+  'chat.copy_as_quote': {en: 'Copy as quote', zh: '复制为引用'},
+  'chat.thought_process': {en: 'Thought process', zh: '思考过程'},
+  'chat.thinking_actions': {en: 'Thinking actions', zh: '思考操作'},
+  'chat.files_undo_hint': {en: 'Ask Magic Pointer to undo this turn’s file changes', zh: '让 Magic Pointer 撤销本轮文件修改'},
+  'chat.files_undo_failed': {en: 'Could not send the undo request. Try again.', zh: '撤销请求发送失败，请重试。'},
   'chat.time_just_now': {en: 'just now', zh: '刚刚'},
   'chat.time_minutes_ago': {en: '{n} minutes ago', zh: '{n} 分钟前'},
   'chat.time_hours_ago': {en: '{n} hours ago', zh: '{n} 小时前'},
@@ -864,6 +1161,7 @@ function studioTCount(
 }
 
 function applyStudioLanguage(language: StudioLanguage): void {
+  const changed = studioLanguage !== language;
   studioLanguage = language;
   document.documentElement.lang = language;
   document.documentElement.dataset.language = language;
@@ -872,6 +1170,29 @@ function applyStudioLanguage(language: StudioLanguage): void {
   } catch {
     /* storage unavailable */
   }
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('mp:language-change'));
+  }
+}
+
+if (typeof document !== 'undefined') {
+  try {
+    applyStudioLanguage(
+      localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en',
+    );
+  } catch {
+    applyStudioLanguage('en');
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', event => {
+    if (event.key === 'mp:language:v1') {
+      applyStudioLanguage(
+        localStorage.getItem('mp:language:v1') === 'zh-CN' ? 'zh-CN' : 'en',
+      );
+    }
+  });
 }
 
 if (typeof module !== 'undefined' && module.exports) {

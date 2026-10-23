@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import '../electron/renderer/studio_navigation';
 
 const source = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const ast = ts.createSourceFile('studio.ts', source, ts.ScriptTarget.Latest, true);
@@ -19,7 +20,7 @@ const steerCode = ts.transpileModule(steer.getText(ast), { compilerOptions: { ta
 const detach = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'detachPendingConversation');
 assert.ok(detach);
 const detachCode = ts.transpileModule(detach.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const continuationCode = ['respondToPendingInput', 'syncConversationPendingInput'].map(name => {
+const continuationCode = ['respondToPendingInput', 'syncConversationPendingInput', 'acceptSubmissionNavigation'].map(name => {
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(declaration);
   return ts.transpileModule(declaration.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -38,6 +39,14 @@ function setup() {
   let questionVisible = false;
   let durable: any = { id: 'old', turns: [] };
   const context: any = {
+    studioT: (id: string) => id,
+    shell: {dataset: {view: 'chat'}}, productMode: 'walker',
+    activeProjectRoot: '', activeProjectId: undefined, composerAdditionalFolders: [],
+    navigationSubmissions: new Map(),
+    captureComposerDraft() {}, currentComposerModelSelection: () => undefined,
+    currentComposerBranch: () => '', currentComposerWorktreeEnabled: () => false,
+    adoptComposerWorktreeConversation() {}, syncWindowNavigation() {},
+    scrollChatToBottom() {},
     form: { ...node(), querySelector: () => textarea }, document: { getElementById: () => stream, createElement: node, querySelector: () => flow },
     window: { clearTimeout() {} },
     Data: { sendConversation: () => new Promise(resolve => { finish = resolve; }),
@@ -54,13 +63,21 @@ function setup() {
     pendingPermissionChoice: null, pendingPermissionAsk: null, pendingAskInput: null, pendingRenderTimer: null,
     setStudioHomeVisible() {}, scheduleStreamRail() {}, fitComposer() {}, clearComposerSuggestion() {},
     setComposerRunningState() {}, startPendingClock() {}, stopPendingClock() {}, renderConversationProgress() {},
-    prepareComposerWorktree: async () => '',
+    prepareComposerWorktree: async () => ({projectRoot: '', projectId: undefined, executionWorkspaceRoot: '', contextKey: 'fixture'}),
     renderPermissionAsk() { questionVisible = Boolean(context.pendingAskInput || context.pendingPermissionAsk); },
     renderComposerAttachments() {}, renderComposerMaterials() {},
     openConversation: async (id: string) => { opened.push(id); }, renderSidebar: async () => {},
     setComposerSettledState: (state: string) => settled.push(state), refreshComposerSuggestion: () => { suggestions++; },
     activeConversationTurns: [], activeConversationTurnCount: 1, activeConversationRecord: {}, activeConversationObject: {},
   };
+  const location = () => context.activeConversationId
+    ? {kind: 'conversation', id: context.activeConversationId}
+    : {kind: 'draft', id: 'fixture'};
+  const navigation = globalThis.StudioNavigation.create();
+  navigation.isCurrent = candidate => candidate.kind === location().kind && 'id' in candidate && candidate.id === location().id;
+  context.windowNavigation = navigation;
+  context.composerLocation = location;
+  Object.defineProperty(context, 'displayedComposer', {get: () => ({location: location(), workspaceRoot: ''})});
   vm.runInNewContext(submitCode + steerCode + detachCode + continuationCode, context);
   return { context, textarea, opened, settled, suggestions: () => suggestions, responses: () => responses,
     questionVisible: () => questionVisible, setDurable: (value: any) => { durable = value; },

@@ -26,6 +26,15 @@ assert.deepStrictEqual(environment.fileChanges, [
 ]);
 assert.equal(environment.addedLines, 101958);
 assert.equal(environment.deletedLines, 21219);
+assert.deepStrictEqual(parseGitEnvironment({
+  root: 'C:\\work\\project',
+  branchOutput: '## main\0 D unstaged.txt\0MD staged-then-deleted.txt\0D  staged-deletion.txt\0AD unborn.txt\0',
+}).fileChanges, [
+  {path: 'unstaged.txt', status: 'D', staged: false, deletionBase: 'index'},
+  {path: 'staged-then-deleted.txt', status: 'MD', staged: true, deletionBase: 'index'},
+  {path: 'staged-deletion.txt', status: 'D', staged: true, deletionBase: 'head'},
+  {path: 'unborn.txt', status: 'AD', staged: true, deletionBase: 'index'},
+]);
 assert.equal(environment.remoteUrl, 'https://github.com/openai/codex');
 assert.equal(environment.pullRequestUrl, 'https://github.com/openai/codex/compare/codex%2Fharness-reconstruction?expand=1');
 

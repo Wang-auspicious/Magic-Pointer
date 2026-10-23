@@ -4,9 +4,35 @@ import {resourceAnalysisTask} from './resource_analysis_task';
 import {resourceThumbnailUrl} from './resource_preview';
 import {handoffsForTurn} from './resource_handoff';
 import {XResourceSource} from './resource_x_source';
-import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
-import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
-import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
+import type {
+  ResourceAction,
+  ResourceRequest,
+  ResourceResponse,
+} from './resource_collection_api';
+import {
+  collectionBrowserPartition,
+  readCollectionPage,
+  readXhsAccountId,
+  readXhsAccountIdentity,
+  readXhsHistoryPage,
+  advanceXhsHistoryPage,
+  postFromCollectionPage,
+  type CollectionPage,
+} from './collection_browser';
+import type {ResourcePost} from './resource_post';
+import {
+  ResourceBrowserHistory,
+  type HistoryList,
+} from './resource_browser_history';
+import {ResourceBookmarkSync} from './resource_bookmark_sync';
+import {CollectionHistoryNetwork, mergeHistoryLinks} from './collection_history_network';
+import {chronologicalResources, prioritizeResources} from './resource_relevance';
+import {
+  updatePerceptionActivity,
+  type PerceptionActivity,
+} from './perception_activity';
+import {attachChatImageMenu} from './chat_image_menu';
+import {readFileDiffPresentation} from './file_diff_presentation';
 import {
   projectAttachments,
   type ProjectDetailsPatch,
@@ -28,6 +54,12 @@ import {
   type PermissionSelectionResult,
 } from './permission_mode';
 import type {ProjectCreateInput, ProjectRecord} from './project_store';
+import {
+  DesktopNotifications,
+  DESKTOP_APP_ID,
+  DEVELOPMENT_APP_ID,
+  DESKTOP_TOAST_CLSID,
+} from './desktop_notifications';
 
 const {
   app,
@@ -47,12 +79,23 @@ const {Menu, nativeImage, Tray} = require('electron');
 const {nativeTheme} = require('electron');
 const {shell} = require('electron');
 const {spawn} = require('child_process');
-const {net} = require('electron');
+const {net, session} = require('electron');
 const {expandPassage} = require('./runtime/text');
-const {resolveModelConfig, listModels, requestText, modelProviderId, combineModelUsage} = require('./runtime/model');
+const {
+  resolveModelConfig,
+  listModels,
+  requestText,
+  modelProviderId,
+  combineModelUsage,
+} = require('./runtime/model');
 import {prepareModelConnection, saveModelConnection} from './model_connection';
 import type {ModelConnectionInput} from './model_connection';
-const {listDashboards, runDashboard, dashboardTrace, dashboardTraceCsv} = require('./runtime/dashboard');
+const {
+  listDashboards,
+  runDashboard,
+  dashboardTrace,
+  dashboardTraceCsv,
+} = require('./runtime/dashboard');
 const {installEnvironmentProxy} = require('./runtime/proxy');
 
 // This process lists models directly, and undici chooses its dispatcher on the
@@ -64,6 +107,30 @@ const {PersonalActivityService} = require('./personal_activity_service');
 const {configureDesktop} = require('./runtime/desktop');
 const fs = require('fs');
 const crypto = require('crypto');
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(app.isPackaged ? DESKTOP_APP_ID : DEVELOPMENT_APP_ID);
+  if (app.isPackaged) {
+    app.setToastActivatorCLSID(DESKTOP_TOAST_CLSID);
+  }
+}
+
+const desktopNotifications = new DesktopNotifications({
+  packaged: app.isPackaged,
+  platform: process.platform,
+  notification: require('electron').Notification,
+  open: target => {
+    const payload =
+      target.view === 'personal'
+        ? {view: target.view, personalDate: target.date}
+        : target;
+    log(
+      `notification activation view=${target.view}${target.view === 'personal' && target.date ? ` date=${target.date}` : ''}`,
+    );
+    showDashboard(payload, {activate: true});
+  },
+  onError: error => log(`desktop notification: ${String(error)}`),
+});
 
 if (fs.existsSync(path.join(__dirname, 'runtime_paths.ts'))) {
   require('tsx/cjs');
@@ -210,18 +277,19 @@ const {
   readProjectPreview,
 } = require('./project_inspector');
 const {ProjectTerminal} = require('./project_terminal');
+const {GitFilePreviews} = require('./git_file_previews');
 const {
   parseGitEnvironment,
   sourceLinksFromConversation,
 } = require('./project_environment');
 const {
   isManagedWorktreePath,
-  worktreeAddArgs,
-  worktreePathFor,
   worktreeRemoveArgs,
-  worktreeReuseArgs,
-  worktreeSlug,
 } = require('./session_worktree');
+const {
+  listProjectWorktrees,
+  prepareProjectWorkspace,
+} = require('./project_workspace');
 const {
   normalizeBrowserUrl,
   normalizeProjectBrowserUrl,
@@ -375,6 +443,7 @@ const DEFAULT_USER_DATA_DIR = app.isPackaged
 const FABRIC_DATA_DIR = path.resolve(
   EXPLICIT_USER_DATA_DIR || DEFAULT_USER_DATA_DIR,
 );
+const gitFilePreviews = new GitFilePreviews(path.join(FABRIC_DATA_DIR, 'previews'));
 const FIGMA_BRIDGE_PORT = Number.parseInt(
   process.env.MAGIC_POINTER_FIGMA_PORT || '37843',
   10,
@@ -1246,6 +1315,7 @@ function createStageWindow() {
     },
   });
   stageWindow.setAlwaysOnTop(true, 'screen-saver');
+  attachChatImageMenu(stageWindow, Menu);
   stageWindow.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: true});
   if (CAPSULE_CONTENT_PROTECTED) {
     try {
@@ -2562,38 +2632,6 @@ function samePath(left: unknown, right: unknown): boolean {
   return Boolean(left && right) && normalize(left) === normalize(right);
 }
 
-interface GitWorktreeEntry {
-  path: string;
-  branch: string;
-}
-
-function parseGitWorktreeList(output: string): GitWorktreeEntry[] {
-  const entries: GitWorktreeEntry[] = [];
-  let current: GitWorktreeEntry | null = null;
-  for (const line of String(output || '').split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) {
-      if (current) {
-        entries.push(current);
-      }
-      current = {path: line.slice('worktree '.length).trim(), branch: ''};
-      continue;
-    }
-    if (current && line.startsWith('branch refs/heads/')) {
-      current.branch = line.slice('branch refs/heads/'.length).trim();
-    }
-  }
-  if (current) {
-    entries.push(current);
-  }
-  return entries.filter(entry => entry.path);
-}
-
-async function gitWorktreeEntries(root: string): Promise<GitWorktreeEntry[]> {
-  return parseGitWorktreeList(
-    await runGitCapture(root, ['worktree', 'list', '--porcelain']),
-  );
-}
-
 function runGitCapture(
   root: string,
   args: string[],
@@ -2666,7 +2704,7 @@ ipcMain.handle(
       return {ok: false, error: '请使用原始 git 项目作为 worktree 基准。'};
     }
     const action = String(raw?.action || '');
-    if (action !== 'create' && action !== 'remove') {
+    if (action !== 'create' && action !== 'remove' && action !== 'checkout') {
       return {ok: false, error: 'unknown_worktree_action'};
     }
 
@@ -2687,7 +2725,7 @@ ipcMain.handle(
         return {ok: false, error: 'worktree_outside_managed_dir'};
       }
       const resolved = path.resolve(target);
-      const entry = (await gitWorktreeEntries(root)).find(item =>
+      const entry = (await listProjectWorktrees(root)).find((item: {path: string}) =>
         samePath(item.path, resolved),
       );
       if (!entry) {
@@ -2705,59 +2743,16 @@ ipcMain.handle(
       return {ok: true};
     }
 
-    const conversationKey = String(raw?.conversationId || '').trim();
-    if (!conversationKey) {
-      return {ok: false, error: '需要当前会话标识才能创建 worktree。'};
-    }
-    const slug = worktreeSlug(conversationKey);
-    const target = worktreePathFor(FABRIC_DATA_DIR, root, slug);
-    const branch = `mp/${slug}`;
-    const requestedBaseBranch = String(raw?.baseBranch || '').trim();
-    const baseBranch = requestedBaseBranch || 'HEAD';
-    if (requestedBaseBranch) {
-      const branchRef = await runGitCapture(root, [
-        'rev-parse',
-        '--verify',
-        `refs/heads/${requestedBaseBranch}`,
-      ]);
-      if (!branchRef) {
-        return {ok: false, error: '所选分支不存在，无法创建 worktree。'};
-      }
-    }
-    const entries = await gitWorktreeEntries(root);
-    if (fs.existsSync(target)) {
-      const existing = entries.find(item => samePath(item.path, target));
-      if (!existing || existing.branch !== branch) {
-        return {
-          ok: false,
-          error: 'worktree 目标路径已被其他内容占用，请先清理后重试。',
-        };
-      }
-      return {ok: true, path: target, branch};
-    }
-    const branchOwner = entries.find(item => item.branch === branch);
-    if (branchOwner) {
-      return {
-        ok: false,
-        error: `worktree 分支已在 ${branchOwner.path} 使用，请先清理后重试。`,
-      };
-    }
-    fs.mkdirSync(path.dirname(target), {recursive: true});
-    let failure = await runGitCaptureCapturingError(
-      root,
-      worktreeAddArgs(target, branch, baseBranch),
-    );
-    if (failure !== null) {
-      failure = await runGitCaptureCapturingError(
-        root,
-        worktreeReuseArgs(target, branch),
-      );
-      if (failure !== null) {
-        return {ok: false, error: failure};
-      }
-    }
-    log(`worktree created path=${target} branch=${branch}`);
-    return {ok: true, path: target, branch};
+    return prepareProjectWorkspace({
+      projectRoot: root,
+      dataDir: FABRIC_DATA_DIR,
+      conversationId: String(raw?.conversationId || '').trim(),
+      branch: String(raw?.baseBranch || '').trim(),
+      worktree: action === 'create',
+      existingPath: typeof raw.path === 'string' ? raw.path : undefined,
+      previousBranch:
+        typeof raw.previousBranch === 'string' ? raw.previousBranch : undefined,
+    });
   },
 );
 
@@ -2978,7 +2973,7 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
-  'projects:read-file',
+  'projects:prepare-deleted-file',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_project_sender'};
@@ -2987,10 +2982,17 @@ ipcMain.handle(
     if (!root) {
       return {ok: false, error: '请先打开项目。'};
     }
+    if (raw.base !== 'head' && raw.base !== 'index') {
+      return {ok: false, error: 'Invalid deleted-file source.'};
+    }
     try {
       return {
         ok: true,
-        ...(await readProjectPreview(root, String(raw?.path || ''))),
+        previewPath: await gitFilePreviews.prepare(
+          root,
+          String(raw.path || ''),
+          raw.base,
+        ),
       };
     } catch (error) {
       return {
@@ -3002,18 +3004,73 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'projects:read-file',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_project_sender'};
+    }
+    const requestedPath = String(raw?.path || '').trim();
+    const absolute = path.isAbsolute(requestedPath);
+    const root = absolute
+      ? path.dirname(requestedPath)
+      : knownProjectRoot(raw?.projectRoot);
+    if (!root) {
+      return {ok: false, error: '请先打开项目。'};
+    }
+    try {
+      return {
+        ok: true,
+        ...(await readProjectPreview(
+          root,
+          absolute ? path.basename(requestedPath) : requestedPath,
+        )),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'files:diff-preview',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    reference: {beforePath: string | null; afterPath: string},
+  ) => {
+    const stage =
+      stageWindow &&
+      !stageWindow.isDestroyed() &&
+      event.sender === stageWindow.webContents;
+    if (!isDashboardSender(event) && !stage) {
+      return {ok: false, error: 'unauthorized_file_sender'};
+    }
+    return readFileDiffPresentation(reference);
+  },
+);
+
+ipcMain.handle(
   'projects:open-path',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isDashboardSender(event)) {
       return {ok: false, error: 'unauthorized_project_sender'};
     }
-    const root = knownProjectRoot(raw?.projectRoot);
+    const requestedPath = String(raw?.path || '').trim();
+    const absolute = path.isAbsolute(requestedPath);
+    const root = absolute
+      ? path.dirname(requestedPath)
+      : knownProjectRoot(raw?.projectRoot);
     if (!root) {
       return {ok: false, error: '请先打开项目。'};
     }
     try {
       const error = await shell.openPath(
-        projectPath(root, String(raw?.path || '')),
+        projectPath(
+          root,
+          absolute ? path.basename(requestedPath) : requestedPath,
+        ),
       );
       return error ? {ok: false, error} : {ok: true};
     } catch (error) {
@@ -3238,10 +3295,18 @@ function destroyDashboardBrowserView(view: DashboardBrowserView): void {
 
 function destroyDashboardBrowserViews(): void {
   dashboardBrowserRegistry.closeAll(destroyDashboardBrowserView);
+  for (const view of collectionWorkerViews.values()) {
+    view.destroy();
+  }
+  collectionWorkerViews.clear();
   dashboardBrowserBounds = null;
 }
 
-function createDashboardBrowserView(key: string, projectRoot: string) {
+function createDashboardBrowserView(
+  key: string,
+  projectRoot: string,
+  partition = 'persist:magic-pointer-browser',
+) {
   if (!dashboardWindow || dashboardWindow.isDestroyed()) {
     throw new Error('dashboard_unavailable');
   }
@@ -3251,7 +3316,7 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      partition: 'persist:magic-pointer-browser',
+      partition,
     },
   });
   dashboardWindow.contentView.addChildView(view);
@@ -3261,7 +3326,9 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
   );
   view.webContents.setWindowOpenHandler(({url}: {url: string}) => {
     try {
-      shell.openExternal(normalizeBrowserUrl(url));
+      void view.webContents
+        .loadURL(normalizeBrowserUrl(url))
+        .catch((error: Error) => emitBrowserViewState({error: error.message}));
     } catch (_) {}
     return {action: 'deny'};
   });
@@ -3276,6 +3343,22 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
   view.webContents.on('did-stop-loading', () =>
     emitBrowserViewState({loading: false}),
   );
+  const observeLogin = () => {
+    const account = key.replace(/^collection:/, '');
+    if (!/^xiaohongshu-[12]$/.test(account)) {
+      return;
+    }
+    void view.webContents
+      .executeJavaScript(`(${readXhsAccountIdentity.toString()})()`)
+      .then((identity: {id: string; name: string} | null) => {
+        if (identity) {
+          return bookmarkSync().observe(account, identity);
+        }
+      })
+      .catch((error: unknown) => log(`bookmark login: ${String(error)}`));
+  };
+  view.webContents.on('did-stop-loading', observeLogin);
+  view.webContents.on('did-navigate-in-page', observeLogin);
   view.webContents.on('did-navigate', () => emitBrowserViewState());
   view.webContents.on('did-navigate-in-page', () => emitBrowserViewState());
   view.webContents.on('page-title-updated', () => emitBrowserViewState());
@@ -3338,11 +3421,42 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
       .find((item: any) => item.key === key);
     if (entry) {
       dashboardBrowserRegistry.close(key, destroyDashboardBrowserView);
+      setDashboardBrowserVisibility(dashboardBrowserRegistry.active?.key || '');
     }
-    setDashboardBrowserVisibility(dashboardBrowserRegistry.active?.key || '');
     emitBrowserViewState();
   });
   return view;
+}
+
+async function openDashboardBrowser(
+  url: string,
+  options: {
+    root?: string;
+    path?: string;
+    resourceKey?: string;
+    bounds?: {x: number; y: number; width: number; height: number};
+    partition?: string;
+    restore?: boolean;
+  } = {},
+) {
+  const root = options.root || '';
+  const key =
+    options.resourceKey || browserResourceKey(root, options.path || '', url);
+  const opened = dashboardBrowserRegistry.open(
+    {key, projectRoot: root, relativePath: options.path || '', url},
+    () => createDashboardBrowserView(key, root, options.partition),
+  );
+  dashboardBrowserBounds = normalizedBrowserBounds(options.bounds);
+  opened.entry.view.setBounds(dashboardBrowserBounds);
+  setDashboardBrowserVisibility(key);
+  if (
+    !opened.reused ||
+    (!options.restore && opened.entry.view.webContents.getURL() !== url)
+  ) {
+    await opened.entry.view.webContents.loadURL(url);
+  }
+  emitBrowserViewState();
+  return {ok: true, url: opened.entry.view.webContents.getURL() || url, key};
 }
 
 ipcMain.handle(
@@ -3360,37 +3474,12 @@ ipcMain.handle(
           : root
             ? normalizeProjectBrowserUrl(requested, root)
             : normalizeBrowserUrl(requested);
-      if (/^https?:/i.test(url)) {
-        const result = await runEgoBrowser('Magic Pointer browser', {
-          operation: 'browse',
-          url,
-        });
-        return {ok: true, backend: 'ego-lite', url: result.url, title: result.title};
-      }
-      const key =
-        String(raw?.resourceKey || '').trim() ||
-        browserResourceKey(root, String(raw?.path || ''), url);
-      const opened = dashboardBrowserRegistry.open(
-        {
-          key,
-          projectRoot: root,
-          relativePath: String(raw?.path || ''),
-          url,
-        },
-        () => createDashboardBrowserView(key, root),
-      );
-      dashboardBrowserBounds = normalizedBrowserBounds(raw?.bounds);
-      opened.entry.view.setBounds(dashboardBrowserBounds);
-      setDashboardBrowserVisibility(key);
-      if (!opened.reused) {
-        await opened.entry.view.webContents.loadURL(url);
-      }
-      emitBrowserViewState();
-      return {
-        ok: true,
-        url: opened.entry.view.webContents.getURL() || url,
-        key,
-      };
+      return await openDashboardBrowser(url, {
+        root,
+        path: String(raw?.path || ''),
+        resourceKey: String(raw?.resourceKey || '').trim(),
+        bounds: raw?.bounds,
+      });
     } catch (error) {
       return {
         ok: false,
@@ -3567,10 +3656,12 @@ const restoredContextUsage = new Map<
 
 async function restoreConversationContext(conversation: any) {
   let turn = conversation.turns?.at(-1);
-  if (!turn || !conversation.agentSessionId) {
+  if (!turn) {
     return conversation;
   }
-  const sessionId = conversation.agentSessionId;
+  const sessionId =
+    conversation.agentSessionId ||
+    studioConversationSessionId({conversationId: conversation.id});
   const sessionPath = path.join(
     FABRIC_DATA_DIR,
     'agent-sessions',
@@ -3591,7 +3682,8 @@ async function restoreConversationContext(conversation: any) {
     if (
       status.ok &&
       preset &&
-      status.permissionMode !== conversation.taskContext?.permissionMode
+      (!conversation.agentSessionId ||
+        status.permissionMode !== conversation.taskContext?.permissionMode)
     ) {
       const updated = conversations().setPermissionMode(
         conversation.id,
@@ -3829,7 +3921,12 @@ function setConversationModel(
     };
     const result = conversations().setModel(id, selection);
     if (!result.ok) {
-      return {ok: false, error: 'Conversation not found.'};
+      return {
+        ok: false,
+        error: result.error === 'store_failed'
+          ? 'Could not save the model selection. Try again.'
+          : 'Conversation not found.',
+      };
     }
     notifyConversationChanged(id);
     return {ok: true, selection};
@@ -3859,11 +3956,21 @@ async function setConversationPermission(
       {action: 'permission-mode', sessionId, preset},
       FABRIC_DATA_DIR,
     );
+    let warning: PermissionSelectionResult['warning'];
     if (!result.ok) {
-      return {
-        ok: false,
-        error: String(result.error || 'Permission change failed.'),
-      };
+      // A complete line may be readable after fsync fails. Read the actual mode
+      // before deciding which selection the UI should show.
+      const observed = await handleSessionRead(
+        {action: 'status', sessionId},
+        FABRIC_DATA_DIR,
+      );
+      if (!observed.ok || observed.permissionMode !== PERMISSION_MODES[preset]) {
+        return {
+          ok: false,
+          error: String(result.error || 'Permission change failed.'),
+        };
+      }
+      warning = 'permission_save_unconfirmed';
     }
     const saved = conversations().setPermissionMode(
       id,
@@ -3873,13 +3980,14 @@ async function setConversationPermission(
     if (!saved.ok) {
       return {ok: false, error: 'Conversation not found.'};
     }
-    conversations().flush();
+    warning ||= saved.persisted ? undefined : 'conversation_not_saved';
     notifyConversationChanged(id);
     return {
       ok: true,
       sessionId,
       preset,
       permissionMode: PERMISSION_MODES[preset],
+      ...(warning ? {warning} : {}),
     };
   } catch (error) {
     return {
@@ -4193,7 +4301,6 @@ async function sendConversation(
   const conversationId = String(raw?.conversationId || '')
     .trim()
     .slice(0, 120);
-  const effort = normalizeConversationEffort(raw?.effort);
   const requestId =
     String(raw?.requestId || crypto.randomUUID())
       .trim()
@@ -4213,10 +4320,24 @@ async function sendConversation(
       ].slice(0, 32)
     : [];
   let existing = conversationId ? conversations().get(conversationId) : null;
+  const environmentProject: ProjectRecord | undefined = !existing
+    ? conversations().getProject(
+        typeof raw.projectId === 'string' ? raw.projectId.trim() : workspaceRoot,
+      )
+    : undefined;
+  const environment = environmentProject?.environments?.find(
+    item => item.id === environmentProject.defaultEnvironmentId,
+  );
+  const effort = normalizeConversationEffort(raw.effort ?? environment?.effort);
   let permissionPreset: PermissionPreset;
   try {
+    if (existing && raw.permissionPreset === undefined && !modelCommand) {
+      existing = await restoreConversationContext(existing);
+    }
     permissionPreset =
-      normalizePermissionPreset(raw.permissionPreset) ??
+      normalizePermissionPreset(
+        raw.permissionPreset ?? environment?.permissionPreset,
+      ) ??
       presetForPermissionMode(existing?.taskContext?.permissionMode) ??
       'workspace-write';
   } catch (error) {
@@ -4336,7 +4457,13 @@ async function sendConversation(
       existing.id,
       threadWorkspaceRoot,
     );
-    if (rebound.ok && rebound.conversation) {
+    if (!rebound.ok) {
+      return {
+        ok: false,
+        error: 'Could not save the conversation folder. Try again.',
+      };
+    }
+    if (rebound.conversation) {
       existing = rebound.conversation;
       notifyConversationChanged(existing.id);
     }
@@ -4365,7 +4492,10 @@ async function sendConversation(
   try {
     additionalFolders = await validateAdditionalFolders(
       projectRoot,
-      raw.additionalFolders ?? existing?.additionalFolders ?? [],
+      raw.additionalFolders ??
+        existing?.additionalFolders ??
+        environment?.additionalFolders ??
+        [],
     );
   } catch (error) {
     return {
@@ -4373,8 +4503,67 @@ async function sendConversation(
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  const effectiveExecutionWorkspaceRoot =
-    executionWorkspaceRoot || effectiveWorkspaceRoot || '';
+  // A refused request must not change the checkout owned by a running task.
+  if (
+    conversationId &&
+    [...activeConversations.values(), ...stageLiveTurns.values()].some(
+      run => run.conversationId === conversationId,
+    )
+  ) {
+    return {
+      ok: false,
+      active: true,
+      conversationId,
+      error: 'This conversation is already running. Steer or stop its current task before sending another turn.',
+    };
+  }
+  const effectiveAgentSessionId = studioConversationSessionId({
+    existing: existing?.agentSessionId,
+    conversationId,
+  });
+  const previousWorkspace = existing?.turns?.at(-1)?.request;
+  const selectedBranch = String(
+    raw.branch ?? previousWorkspace?.branch ?? environment?.branch ?? '',
+  ).trim();
+  const isolated =
+    raw.worktree ?? previousWorkspace?.worktree ?? environment?.worktree ?? false;
+  const explicitWorkspace =
+    raw.branch !== undefined || raw.worktree !== undefined;
+  let effectiveExecutionWorkspaceRoot =
+    executionWorkspaceRoot ||
+    (!explicitWorkspace
+      ? String(previousWorkspace?.executionWorkspaceRoot || '')
+      : '') ||
+    effectiveWorkspaceRoot ||
+    '';
+  let executionBranch = selectedBranch;
+  if (
+    !executionWorkspaceRoot &&
+    projectRoot &&
+    (explicitWorkspace || !existing) &&
+    (selectedBranch || isolated)
+  ) {
+    const prepared = await prepareProjectWorkspace({
+      projectRoot,
+      dataDir: FABRIC_DATA_DIR,
+      conversationId: effectiveAgentSessionId,
+      branch: selectedBranch,
+      worktree: isolated,
+      existingPath:
+        isolated && previousWorkspace?.worktree
+          ? String(previousWorkspace.executionWorkspaceRoot || '') || undefined
+          : undefined,
+      previousBranch:
+        typeof previousWorkspace?.branch === 'string'
+          ? previousWorkspace.branch
+          : undefined,
+    });
+    if (!prepared.ok) {
+      return prepared;
+    }
+    effectiveExecutionWorkspaceRoot = prepared.path;
+    executionBranch = prepared.branch;
+  }
   if (effectiveExecutionWorkspaceRoot && !effectiveWorkspaceRoot) {
     return {ok: false, error: 'worktree 必须依附于 git 项目。'};
   }
@@ -4391,13 +4580,15 @@ async function sendConversation(
     ) {
       return {ok: false, error: '执行目录不是当前项目的受管 worktree。'};
     }
-    const [baseCommonDir, executionCommonDir] = await Promise.all([
+    const [baseCommonDir, executionCommonDir, actualBranch] = await Promise.all([
       runGitCapture(projectRoot, ['rev-parse', '--git-common-dir']),
       runGitCapture(effectiveExecutionWorkspaceRoot, [
         'rev-parse',
         '--git-common-dir',
       ]),
+      runGitCapture(effectiveExecutionWorkspaceRoot, ['branch', '--show-current']),
     ]);
+    executionBranch = actualBranch;
     const normalizeGitDir = (root: string, value: string) =>
       path.resolve(root, String(value || '').trim());
     if (
@@ -4411,10 +4602,6 @@ async function sendConversation(
       return {ok: false, error: '执行 worktree 不属于当前项目。'};
     }
   }
-  const effectiveAgentSessionId = studioConversationSessionId({
-    existing: existing?.agentSessionId,
-    conversationId,
-  });
   const taskAttachments = projectAttachments(attachments, projectContext);
   const capturedAtMs = Date.now();
   const rawTaskInput =
@@ -4466,7 +4653,9 @@ async function sendConversation(
   let modelSelection: ConversationModelSelection;
   try {
     const requested =
-      normalizeModelSelection(raw.modelSelection) ?? existing?.modelSelection;
+      normalizeModelSelection(raw.modelSelection) ??
+      existing?.modelSelection ??
+      environment?.modelSelection;
     const runtime = activeModelRuntimeConfig(requested);
     modelRuntime = resolveModelConfig(runtime, ROOT, FABRIC_DATA_DIR);
     modelSelection = {
@@ -4541,6 +4730,12 @@ async function sendConversation(
             existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
           attachments: taskAttachments,
           executionWorkspaceRoot: effectiveExecutionWorkspaceRoot,
+          executionBranch,
+          branch: selectedBranch,
+          worktree: Boolean(
+            effectiveExecutionWorkspaceRoot &&
+              !samePath(effectiveExecutionWorkspaceRoot, effectiveWorkspaceRoot),
+          ),
           effort,
           ...(raw.outputArtifact !== undefined
             ? {outputArtifact: raw.outputArtifact}
@@ -4929,18 +5124,11 @@ function initializePersonalActivity() {
             evidence: [],
           })),
       onReport: (report: {date: string}) => {
-        const {Notification} = require('electron');
-        if (!Notification.isSupported()) {
-          return;
-        }
-        const notification = new Notification({
-          title: '工作回顾已准备好',
-          body: `${report.date} 的工作片段、文件变化和可继续的对话已整理到本机。`,
-        });
-        notification.on('click', () =>
-          showDashboard({view: 'personal'}, {activate: true}),
+        desktopNotifications.show(
+          '工作回顾已准备好',
+          `${report.date} 的工作片段、文件变化和可继续的对话已整理到本机。`,
+          {view: 'personal', date: report.date},
         );
-        notification.show();
       },
     },
   );
@@ -5172,10 +5360,6 @@ function initializeContextTrackers() {
       if (!enabled || dashboardWindow?.isFocused()) {
         return;
       }
-      const {Notification} = require('electron');
-      if (!Notification.isSupported()) {
-        return;
-      }
       const title =
         run.status === 'completed'
           ? 'Routine completed'
@@ -5184,29 +5368,19 @@ function initializeContextTrackers() {
             : run.status === 'incomplete'
               ? 'Routine needs attention'
               : 'Routine failed';
-      try {
-        const notification = new Notification({
-          title,
-          body: tracker.task.slice(0, 160),
-        });
-        notification.on('click', () =>
-          showDashboard(
-            run.conversationId
-              ? {
-                  view: 'chat',
-                  conversationId: run.conversationId,
-                  ...(run.status === 'completed' && run.artifacts?.[0]
-                    ? {artifactId: run.artifacts[0].artifactId}
-                    : {}),
-                }
-              : {view: 'scheduled'},
-            {activate: true},
-          ),
-        );
-        notification.show();
-      } catch (error) {
-        log(`routine notification: ${String(error)}`);
-      }
+      desktopNotifications.show(
+        title,
+        tracker.task.slice(0, 160),
+        run.conversationId
+          ? {
+              view: 'chat',
+              conversationId: run.conversationId,
+              ...(run.status === 'completed' && run.artifacts?.[0]
+                ? {artifactId: run.artifacts[0].artifactId}
+                : {}),
+            }
+          : {view: 'scheduled'},
+      );
     },
   });
   void contextTrackerRuntime
@@ -5652,7 +5826,7 @@ ipcMain.handle(
     try {
       const result = conversations().rename(id, title);
       if (!result.ok) {
-        return {ok: false, error: 'invalid_id_or_title'};
+        return {ok: false, error: result.error || 'invalid_id_or_title'};
       }
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('conversations:turn', {id});
@@ -6334,6 +6508,7 @@ function createDashboardWindow(initialView = 'chat') {
       webSecurity: true,
     },
   });
+  attachChatImageMenu(dashboardWindow, Menu);
   dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'), {
     query: {view: initialView},
   });
@@ -6372,6 +6547,231 @@ let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
 
 let resourceService: ResourceCollectionService | null = null;
 let resourceXSource: XResourceSource | null = null;
+let resourceHistory: ResourceBrowserHistory | null = null;
+let resourceBookmarks: ResourceBookmarkSync | null = null;
+const collectionWorkerViews = new Map<string, Electron.BrowserWindow>();
+const collectionHistoryReaders = new Map<string, CollectionHistoryNetwork>();
+
+function collectionWorkerView(
+  account: string,
+  purpose: 'capture' | 'history' | 'account',
+): Electron.BrowserWindow {
+  const key = `${purpose}:${account}`;
+  const view = collectionWorkerViews.get(key);
+  if (!view || view.webContents.isDestroyed()) {
+    // Hidden content views suppress scroll/visibility events. A temporary offscreen
+    // renderer keeps list loading alive without taking over the user's page.
+    const created: Electron.BrowserWindow = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 900,
+      webPreferences: {
+        partition: collectionBrowserPartition(account),
+        offscreen: true,
+        backgroundThrottling: false,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+      },
+    });
+    securityHardening.registerBrowserContents(created.webContents);
+    created.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
+    created.webContents.setFrameRate(10);
+    collectionWorkerViews.set(key, created);
+    created.webContents.once('destroyed', () =>
+      collectionWorkerViews.delete(key),
+    );
+    return created;
+  }
+  return view;
+}
+
+function releaseCollectionWorkerView(
+  account: string,
+  purpose: 'capture' | 'history' | 'account',
+): void {
+  if (purpose === 'history') {
+    collectionHistoryReaders.get(account)?.stop();
+    collectionHistoryReaders.delete(account);
+  }
+  const key = `${purpose}:${account}`;
+  const view = collectionWorkerViews.get(key);
+  collectionWorkerViews.delete(key);
+  if (view) {
+    view.destroy();
+  }
+}
+
+function bookmarkSync(): ResourceBookmarkSync {
+  if (!resourceBookmarks) {
+    resourceBookmarks = new ResourceBookmarkSync({
+      folder: FABRIC_DATA_DIR,
+      needsInitialization: account =>
+        resourceBrowserHistory()
+          .snapshot()
+          .some(
+            job =>
+              job.account === account &&
+              job.list === 'saved' &&
+              !job.initializedAt &&
+              job.status === 'paused',
+          ),
+      readAccount: async account => {
+        const contents = collectionWorkerView(account, 'account').webContents;
+        try {
+          await loadCollectionUrl(contents, 'https://www.xiaohongshu.com/');
+          for (let round = 0; round < 12; round++) {
+            const identity = await contents.executeJavaScript(
+              `(${readXhsAccountIdentity.toString()})()`,
+            );
+            if (identity) {
+              return identity;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          return null;
+        } finally {
+          releaseCollectionWorkerView(account, 'account');
+        }
+      },
+      sync: async account => {
+        try {
+          await resourceBrowserHistory().run(account, 'saved', true);
+          const job = resourceBrowserHistory()
+            .snapshot()
+            .find(item => item.account === account && item.list === 'saved');
+          if (job?.error) {
+            throw new Error(job.error);
+          }
+        } finally {
+          releaseCollectionWorkerView(account, 'history');
+        }
+      },
+    });
+  }
+  return resourceBookmarks;
+}
+
+function resourceBrowserHistory(): ResourceBrowserHistory {
+  if (!resourceHistory) {
+    resourceHistory = new ResourceBrowserHistory({
+      folder: FABRIC_DATA_DIR,
+      readPage: readCollectionHistoryPage,
+      retainOrder: (id, order) => {
+        const stash = initializeStashRuntime();
+        if (stash.get(id)) {
+          stash.updateResource(id, {
+            bookmarkBatch: order.batch,
+            bookmarkPosition: order.index,
+          });
+        }
+      },
+      importLink: async (account, link, order) => {
+        const items = await resources().addBatch({
+          text: link.url,
+          sourceAccount: account,
+        });
+        initializeStashRuntime().updateResource(items[0].id, {
+          bookmarkBatch: order.batch,
+          bookmarkPosition: order.index,
+          ...(link.title ? {title: link.title} : {}),
+        });
+        void resources()
+          .drainCaptures()
+          .then(() => resources().drain())
+          .catch(error => log(`resource capture: ${String(error)}`));
+        return items[0].id;
+      },
+    });
+  }
+  return resourceHistory;
+}
+
+async function loadCollectionUrl(
+  contents: Electron.WebContents,
+  url: string,
+): Promise<void> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      contents.loadURL(url),
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => {
+          contents.stop();
+          reject(
+            new Error(
+              'Page load timed out after 30 seconds. The original link is retained.',
+            ),
+          );
+        }, 30000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+async function readCollectionHistoryPage(
+  account: string,
+  list: HistoryList,
+  reset: boolean,
+) {
+  const contents = collectionWorkerView(account, 'history').webContents;
+  if (reset) {
+    await loadCollectionUrl(contents, 'https://www.xiaohongshu.com/');
+    const initial = await contents.executeJavaScript(
+      `(${readXhsHistoryPage.toString()})()`,
+    );
+    if (initial.error) {
+      return initial;
+    }
+    let userId = '';
+    for (let round = 0; round < 12 && !userId; round++) {
+      userId = await contents.executeJavaScript(
+        `(${readXhsAccountId.toString()})()`,
+      );
+      if (!userId) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    if (!userId) {
+      const page = await contents.executeJavaScript(
+        `(${readXhsHistoryPage.toString()})()`,
+      );
+      return {
+        ...page,
+        links: [],
+        error:
+          page.error ||
+          'auth_required: Sign in to this account inside MP before importing its lists.',
+      };
+    }
+    const url = new URL(
+      `https://www.xiaohongshu.com/user/profile/${encodeURIComponent(userId)}`,
+    );
+    collectionHistoryReaders.get(account)?.stop();
+    const reader = new CollectionHistoryNetwork(contents, list, userId);
+    collectionHistoryReaders.set(account, reader);
+    await reader.start();
+    url.searchParams.set('tab', list === 'saved' ? 'fav' : 'liked');
+    url.searchParams.set('subTab', 'note');
+    await loadCollectionUrl(contents, url.href);
+  } else {
+    await contents.executeJavaScript(`(${advanceXhsHistoryPage.toString()})()`);
+  }
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  const page = await contents.executeJavaScript(
+    `(${readXhsHistoryPage.toString()})()`,
+  );
+  const response = collectionHistoryReaders.get(account)?.snapshot();
+  if (!page.error && response) {
+    page.links = mergeHistoryLinks(page.links, response.links);
+    page.atEnd = response.atEnd;
+    page.coverage = `Normal account list response: ${response.links.length} notes; server end=${response.atEnd}.`;
+  }
+  return page;
+}
 function resources(): ResourceCollectionService {
   if (!resourceService) {
     resourceService = new ResourceCollectionService({
@@ -6380,39 +6780,126 @@ function resources(): ResourceCollectionService {
       analysisTask: (taskId, requestId) =>
         resourceAnalysisTask(conversations(), taskId, requestId),
       fetchPaper: url => net.fetch(url, {signal: AbortSignal.timeout(60000)}),
+      capturePost: captureCollectionPost,
+      fetchMedia: (url, init, account) =>
+        session
+          .fromPartition(collectionBrowserPartition(account))
+          .fetch(url, init),
       rules: () => resourceXSource?.snapshot().rules || '',
       stash: () => initializeStashRuntime(),
       projects: () => conversations().listProjects(),
       attach: (projectId, paths) => {
         const project = conversations().getProject(projectId);
-        if (!project) {throw new Error('Project not found.');}
-        const result = conversations().updateProject(projectId, {sharedFiles: [...new Set([...(project.sharedFiles || []), ...paths])]});
-        if (!result.ok) {throw new Error(result.error);}
+        if (!project) {
+          throw new Error('Project not found.');
+        }
+        const result = conversations().updateProject(projectId, {
+          sharedFiles: [...new Set([...(project.sharedFiles || []), ...paths])],
+        });
+        if (!result.ok) {
+          throw new Error(result.error);
+        }
       },
       analyze: input => {
         const {onStarted, ...request} = input;
         return sendConversation(
-          {...request, workspaceRoot: '', projectId: '', permissionPreset: 'read-only', workMode: 'work'},
+          {
+            ...request,
+            workspaceRoot: '',
+            projectId: '',
+            permissionPreset: 'read-only',
+            workMode: 'work',
+          },
           undefined,
           onStarted,
         );
       },
     });
     resourceService.recover();
+    void resourceService
+      .drainCaptures()
+      .then(() => resourceService?.drain())
+      .catch(error => log(`resource capture: ${String(error)}`));
   }
   return resourceService;
 }
+
+function collectionBrowserState(account: string) {
+  collectionBrowserPartition(account);
+  const contents = dashboardBrowserRegistry
+    .snapshot()
+    .find(entry => entry.key === `collection:${account}`)?.view.webContents;
+  if (!contents || contents.isDestroyed()) {
+    return undefined;
+  }
+  return {
+    url: contents.getURL(),
+    title: contents.getTitle(),
+    canGoBack: contents.navigationHistory.canGoBack(),
+    canGoForward: contents.navigationHistory.canGoForward(),
+    loading: contents.isLoading(),
+  };
+}
+
+const collectionCaptureQueues = new Map<string, Promise<ResourcePost>>();
+
+async function captureCollectionPost(
+  url: string,
+  account: string,
+): Promise<ResourcePost> {
+  const previous = collectionCaptureQueues.get(account);
+  const operation = (
+    previous ? previous.catch(() => undefined) : Promise.resolve()
+  ).then(() => captureCollectionPostPage(url, account));
+  collectionCaptureQueues.set(account, operation);
+  try {
+    return await operation;
+  } finally {
+    if (collectionCaptureQueues.get(account) === operation) {
+      collectionCaptureQueues.delete(account);
+      releaseCollectionWorkerView(account, 'capture');
+    }
+  }
+}
+
+async function captureCollectionPostPage(url: string, account: string) {
+  const started = performance.now();
+  const contents = collectionWorkerView(account, 'capture').webContents;
+  if (contents.getURL() !== url) {
+    await loadCollectionUrl(contents, url);
+  }
+  let page: CollectionPage;
+  const deadline = Date.now() + 15000;
+  do {
+    page = await contents.executeJavaScript(
+      `(${readCollectionPage.toString()})()`,
+    );
+    if (page.error !== 'post_loading') {
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  } while (Date.now() < deadline && !contents.isDestroyed());
+  return {
+    ...postFromCollectionPage(page!, url),
+    timingMs: performance.now() - started,
+  };
+}
 function xResourceSource(): XResourceSource {
   if (!resourceXSource) {
-    if (!credentialStore) {throw new Error('Credentials are not ready.');}
+    if (!credentialStore) {
+      throw new Error('Credentials are not ready.');
+    }
     resourceXSource = new XResourceSource({
-      folder: FABRIC_DATA_DIR, credentials: credentialStore,
+      folder: FABRIC_DATA_DIR,
+      credentials: credentialStore,
       fetch: (url, init) => net.fetch(url, init),
       add: async input => {
         const entry = await resources().add(input);
         if (resourceXSource?.snapshot().organize) {
           resources().enqueue(entry.id);
-          void resources().drain().catch(error => log(`resource processing: ${String(error)}`));
+          void resources()
+            .drain()
+            .catch(error => log(`resource processing: ${String(error)}`));
         }
         return entry;
       },
@@ -6453,15 +6940,49 @@ ipcMain.handle(
           ),
         };
       }
-      if (raw.action === 'list') {
+      if (raw.action === 'list' || raw.action === 'search') {
+        for (const entry of dashboardBrowserRegistry.snapshot()) {
+          const account = entry.key.replace(/^collection:/, '');
+          if (
+            /^xiaohongshu-[12]$/.test(account) &&
+            !bookmarkSync()
+              .snapshot()
+              .some(item => item.account === account)
+          ) {
+            void entry.view.webContents
+              .executeJavaScript(`(${readXhsAccountIdentity.toString()})()`)
+              .then((identity: {id: string; name: string} | null) => {
+                if (identity) {
+                  return bookmarkSync().observe(account, identity);
+                }
+              })
+              .catch((error: unknown) =>
+                log(`bookmark login check: ${String(error)}`),
+              );
+          }
+        }
+        const recent: Array<{title: string; projectId: string}> =
+          conversations().list(5);
+        const focus = input.focus || recent.map(item => item.title).join(' · ');
+        const items =
+          raw.action === 'search'
+            ? service.search(String(input.text || ''))
+            : service.list();
+        const ordered =
+          input.sort === 'importance'
+            ? prioritizeResources(
+                items,
+                focus,
+                recent.map(item => item.projectId).filter(Boolean),
+              )
+            : chronologicalResources(items);
         return {
           ok: true,
-          items: service
-            .list()
-            .map(item => ({
-              ...item,
-              previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
-            })),
+          focus,
+          items: ordered.map(item => ({
+            ...item,
+            previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
+          })),
           projects: conversations()
             .listProjects()
             .map((project: ProjectRecord) => ({
@@ -6470,10 +6991,76 @@ ipcMain.handle(
               root: project.root,
             })),
           source: xResourceSource().snapshot(),
+          histories: resourceBrowserHistory().snapshot(),
+          accounts: bookmarkSync().snapshot(),
         };
       }
       if (raw.action === 'add') {
-        return {ok: true, entry: await service.add(input)};
+        const entry = await service.add(input);
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, entry};
+      }
+      if (raw.action === 'related') {
+        return {
+          ok: true,
+          related: service.related(
+            normalizeBrowserUrl(String(input.url || '')),
+          ),
+        };
+      }
+      if (raw.action === 'add-batch') {
+        const items = await service.addBatch(input);
+        void service
+          .drainCaptures()
+          .then(() => service.drain())
+          .catch(error => log(`resource capture: ${String(error)}`));
+        return {ok: true, items, entry: items[0]};
+      }
+      if (raw.action === 'bookmark-configure') {
+        const account = input.sourceAccount || '';
+        bookmarkSync().configure(account, input.enabled === true);
+        if (input.enabled) {
+          void bookmarkSync().check();
+        } else {
+          resourceBrowserHistory().pause(account, 'saved');
+        }
+        return {
+          ok: true,
+          accounts: bookmarkSync().snapshot(),
+          histories: resourceBrowserHistory().snapshot(),
+        };
+      }
+      if (raw.action === 'history-start' || raw.action === 'history-pause') {
+        const account = input.sourceAccount || '';
+        collectionBrowserPartition(account);
+        const list = input.historyList || 'saved';
+        if (raw.action === 'history-pause') {
+          if (list === 'saved') {
+            bookmarkSync().configure(account, false);
+          }
+          resourceBrowserHistory().pause(account, list);
+        } else {
+          if (list === 'saved') {
+            bookmarkSync().configure(account, true);
+          }
+          void resourceBrowserHistory()
+            .run(account, list)
+            .catch(error => log(`resource history: ${String(error)}`))
+            .finally(() => {
+              if (
+                !resourceBrowserHistory()
+                  .snapshot()
+                  .some(
+                    job => job.account === account && job.status === 'running',
+                  )
+              ) {
+                releaseCollectionWorkerView(account, 'history');
+              }
+            });
+        }
+        return {ok: true, histories: resourceBrowserHistory().snapshot()};
       }
       if (raw.action === 'preview') {
         const preview = await service.preview(
@@ -6531,22 +7118,103 @@ ipcMain.handle(
         return {ok: true, source: await xResourceSource().sync(true)};
       }
       if (raw.action === 'browser-open') {
+        const account = input.sourceAccount || 'web';
+        const partition = collectionBrowserPartition(account);
         const url = normalizeBrowserUrl(String(input.url || ''));
-        const result = await openCollectionBrowser(url);
-        return {ok: true, url: result.url, title: result.title};
+        const result = await openDashboardBrowser(url, {
+          resourceKey: `collection:${account}`,
+          partition,
+          bounds: input.bounds,
+          restore: input.restore,
+        });
+        return {...result, browser: collectionBrowserState(account)};
       }
-      if (raw.action === 'capture') {
-        const result = await captureCollectionBrowserSelection();
+      if (raw.action === 'browser-state') {
         return {
           ok: true,
-          entry: await service.add({
-            url: result.url,
-            title: result.title,
-            text: result.selectedText,
-            note: input.note,
-            projectId: input.projectId,
-          }),
+          browser: collectionBrowserState(input.sourceAccount || 'web'),
         };
+      }
+      if (raw.action === 'browser-command') {
+        const account = input.sourceAccount || 'web';
+        collectionBrowserPartition(account);
+        const entry = dashboardBrowserRegistry
+          .snapshot()
+          .find(item => item.key === `collection:${account}`);
+        if (input.command === 'hide') {
+          dashboardBrowserRegistry
+            .snapshot()
+            .filter(item => item.key.startsWith('collection:'))
+            .forEach(item => item.view.setVisible(false));
+          return {ok: true};
+        }
+        if (!entry || entry.view.webContents.isDestroyed()) {
+          return {ok: false, error: 'browser_view_closed'};
+        }
+        const contents = entry.view.webContents;
+        if (input.command === 'resize' && input.bounds) {
+          dashboardBrowserBounds = normalizedBrowserBounds(input.bounds);
+          entry.view.setBounds(dashboardBrowserBounds);
+          setDashboardBrowserVisibility(entry.key);
+        } else if (
+          input.command === 'back' &&
+          contents.navigationHistory.canGoBack()
+        ) {
+          contents.navigationHistory.goBack();
+        } else if (
+          input.command === 'forward' &&
+          contents.navigationHistory.canGoForward()
+        ) {
+          contents.navigationHistory.goForward();
+        } else if (input.command === 'reload') {
+          contents.reload();
+        } else if (input.command === 'stop') {
+          contents.stop();
+        }
+        return {ok: true, browser: collectionBrowserState(account)};
+      }
+      if (raw.action === 'capture-source') {
+        const entry = await service.capture(String(input.id || ''));
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, entry};
+      }
+      if (raw.action === 'read-post') {
+        const post = service.post(String(input.id || ''));
+        return {
+          ok: true,
+          post: {
+            ...post,
+            media: post.media.map(media => ({
+              ...media,
+              ...(media.localPath
+                ? {
+                    localUrl: pathToFileURL(
+                      projectPath(stashBaseDir(), media.localPath),
+                    ).href,
+                  }
+                : {}),
+            })),
+          },
+        };
+      }
+      if (raw.action === 'capture') {
+        const account = input.sourceAccount || 'web';
+        const state = collectionBrowserState(account);
+        if (!state?.url) {
+          throw new Error('Open a page in the collection browser first.');
+        }
+        const entry = await service.add({
+          url: state.url,
+          sourceAccount: account,
+          note: input.note,
+          projectId: input.projectId,
+        });
+        void service
+          .drain()
+          .catch(error => log(`resource processing: ${String(error)}`));
+        return {ok: true, entry};
       }
       throw new Error('Unknown resource action.');
     } catch (error) {
@@ -8883,8 +9551,25 @@ if (gotLock) {
     }
     syncAgentCursorSurfaces();
     agentCursorSurfaces?.startSampling();
-    if (process.platform === 'win32') {
-      app.setAppUserModelId('com.magicpointer.desktop');
+    if (process.platform === 'win32' && app.isPackaged) {
+      const shortcut = path.join(
+        app.getPath('appData'),
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'Magic Pointer.lnk',
+      );
+      try {
+        if (fs.existsSync(shortcut)) {
+          shell.writeShortcutLink(shortcut, 'update', {
+            appUserModelId: DESKTOP_APP_ID,
+            toastActivatorClsid: DESKTOP_TOAST_CLSID,
+          });
+        }
+      } catch (error) {
+        log(`notification shortcut: ${String(error)}`);
+      }
     }
     fabricSettingsStore = new ElectronSettingsStore(
       path.join(FABRIC_DATA_DIR, 'fabric-settings.json'),
@@ -8933,6 +9618,7 @@ if (gotLock) {
       try {
         initializeStashRuntime();
         xResourceSource();
+        void bookmarkSync().start().catch(error => log(`bookmark startup: ${String(error)}`));
         void resources().drain().catch(error => log(`resource recovery: ${String(error)}`));
       } catch (error) {
         log(
@@ -9059,6 +9745,7 @@ if (gotLock) {
     } else if (!startHidden) {
       showDashboard({view: 'general'}, {activate: true});
     }
+    desktopNotifications.registerActivation();
     const dashboardCapturePath = String(
       process.env.MAGIC_POINTER_DASHBOARD_CAPTURE || '',
     ).trim();
@@ -9184,7 +9871,9 @@ if (gotLock) {
 }
 
 app.on('will-quit', () => {
+  resourceHistory?.stop();
   resourceService?.stop();
+  resourceBookmarks?.stop();
   resourceXSource?.stop();
   projectTerminal.stop();
   void contextTrackerRuntime?.stop();
@@ -9231,6 +9920,11 @@ app.on('will-quit', () => {
   try {
     dashboardWindow?.close();
   } catch (_) {}
+  try {
+    gitFilePreviews.dispose();
+  } catch (error) {
+    log(`Git preview cleanup: ${String(error)}`);
+  }
   try {
     tray?.destroy();
   } catch (_) {}

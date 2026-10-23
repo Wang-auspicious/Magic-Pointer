@@ -14,6 +14,7 @@ export interface PermissionSelectionResult {
   preset?: PermissionPreset;
   permissionMode?: PermissionMode;
   sessionId?: string;
+  warning?: 'conversation_not_saved' | 'permission_save_unconfirmed';
   error?: string;
 }
 

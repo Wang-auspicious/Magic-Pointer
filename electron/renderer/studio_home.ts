@@ -99,7 +99,6 @@ let homeRange: HomeRange = 'all';
 let cachedOptions: HomeRenderOptions | null = null;
 let controlsBound = false;
 let tooltipTimer: ReturnType<typeof setTimeout> | null = null;
-const expandedHomeSections = new Set<string>();
 
 function esc(value: unknown): string {
   return String(value ?? '')
@@ -281,25 +280,6 @@ function renderModelsCard(stats: HomeStatsLike | null): string {
   return `<div class="mp-home-model-chart" aria-label="Daily token usage">${chart}</div><div class="mp-home-model-legend"><span>Daily tokens</span><span>${compactNumber(stats.totalTokens)} total</span></div><div class="mp-home-model-list">${rows || '<p class="mp-home-stats-unavailable">No model usage in this range.</p>'}</div>`;
 }
 
-function attentionLabel(state: string): string {
-  switch (state) {
-    case 'awaiting':
-      return 'Needs your input';
-    case 'failed':
-      return 'Needs attention';
-    case 'running':
-      return 'Running';
-    case 'review':
-      return 'Ready to review';
-    case 'resumable':
-      return 'Continue';
-    case 'ready':
-      return 'New result';
-    default:
-      return '';
-  }
-}
-
 function selectedStats(stats: HomeStatsLike | null): HomeStatsLike | null {
   if (!stats) {
     return null;
@@ -476,125 +456,21 @@ function bindControlsOnce(): void {
 function render(options: HomeRenderOptions): void {
   cachedOptions = options;
   bindControlsOnce();
-  const attention = selectAttentionItems(
-    options.conversations.filter(item => stateOf(item) !== 'running'),
-  );
-  const projects = selectActiveProjects(
-    options.projects || [],
-    options.conversations,
-  );
-  const clear = attention.length === 0 && projects.length === 0;
   const title = document.getElementById('studio-home-title');
   const name = options.displayName?.trim();
   if (title) {
-    title.textContent = clear
-      ? `What's up next${name ? `, ${name}` : ''}?`
-      : `Welcome back${name ? `, ${name}` : ''}`;
+    title.textContent = `What's up next${name ? `, ${name}` : ''}?`;
   }
   const stats = document.getElementById('studio-home-stats');
   if (stats) {
-    stats.hidden = !clear;
+    stats.hidden = false;
   }
-  if (clear) {
-    renderSelectedStats();
-  } else {
-    hideTooltip();
+  const attention = document.getElementById('studio-home-attention');
+  if (attention) {
+    attention.hidden = true;
+    attention.replaceChildren();
   }
-
-  const attentionHost = document.getElementById('studio-home-attention');
-  if (!attentionHost) {
-    return;
-  }
-  attentionHost.hidden = clear;
-  const limit = Math.min(
-    5,
-    3 + Number(window.innerHeight >= 800) + Number(window.innerHeight >= 900),
-  );
-  function section(label: string, nodes: HTMLElement[]): HTMLElement {
-    const section = document.createElement('section');
-    section.className = 'mp-home-section';
-    const header = document.createElement('header');
-    const heading = document.createElement('h2');
-    heading.textContent = label;
-    header.append(heading);
-    const expanded = expandedHomeSections.has(label);
-    if (nodes.length > limit) {
-      const toggle = document.createElement('button');
-      toggle.type = 'button';
-      toggle.className = 'mp-home-section-toggle';
-      toggle.textContent = expanded
-        ? 'Show less'
-        : `Show ${nodes.length - limit} more`;
-      toggle.setAttribute('aria-expanded', String(expanded));
-      toggle.addEventListener('click', () => {
-        if (expanded) {
-          expandedHomeSections.delete(label);
-        } else {
-          expandedHomeSections.add(label);
-        }
-        render(cachedOptions!);
-      });
-      header.append(toggle);
-    }
-    const list = document.createElement('div');
-    list.className = 'mp-home-section-list';
-    list.append(...(expanded ? nodes : nodes.slice(0, limit)));
-    section.append(header, list);
-    return section;
-  }
-  function row(
-    label: string,
-    state: string,
-    detail: string,
-  ): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'mp-home-attention-row';
-    button.dataset.state = state;
-    const dot = document.createElement('i');
-    dot.className = 'mp-home-state-dot';
-    dot.setAttribute('aria-hidden', 'true');
-    const title = document.createElement('strong');
-    title.textContent = label;
-    const meta = document.createElement('span');
-    meta.textContent = detail;
-    const arrow = document.createElement('span');
-    arrow.className = 'mp-home-row-arrow';
-    arrow.setAttribute('aria-hidden', 'true');
-    arrow.textContent = '›';
-    button.append(dot, title, meta, arrow);
-    return button;
-  }
-  const sessionNodes = attention.map(item => {
-    const state = stateOf(item);
-    const button = row(item.title || 'Untitled', state, attentionLabel(state));
-    button.dataset.conversationId = item.id;
-    button.addEventListener('click', () =>
-      options.onOpenConversation?.(item.id),
-    );
-    return button;
-  });
-  const projectNodes = projects.map(item => {
-    const button = row(
-      item.project.name,
-      item.running ? 'running' : '',
-      item.running
-        ? 'Working'
-        : new Date(item.updatedAt).toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric',
-          }),
-    );
-    button.dataset.projectRoot = item.project.root;
-    button.addEventListener('click', () =>
-      options.onOpenProject?.(homeProjectScope.key(item.project)),
-    );
-    return button;
-  });
-  attentionHost.replaceChildren(
-    ...(sessionNodes.length ? [section('Sessions', sessionNodes)] : []),
-    ...(projectNodes.length ? [section('Projects', projectNodes)] : []),
-  );
+  renderSelectedStats();
 }
 
 const StudioHome: StudioHomeApi = {

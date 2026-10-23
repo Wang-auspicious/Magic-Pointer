@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import {execFileSync} from 'node:child_process';
 import ts from 'typescript';
 import {createConversationStore} from '../electron/conversation_store';
 import {ResourceCollectionService} from '../electron/resource_collection_service';
@@ -14,10 +15,29 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
   const baseDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'mp-handoff-dispatch-'),
   );
-  const store = createConversationStore({
+  let store = createConversationStore({
     baseDir: path.join(baseDir, 'history'),
   });
-  const project = store.registerProject(baseDir)!;
+  const repository = path.join(baseDir, 'repository');
+  fs.mkdirSync(repository);
+  const git = (args: string[], cwd = repository) => execFileSync('git', args, {cwd, encoding: 'utf8', windowsHide: true}).trim();
+  git(['init', '--quiet', '--initial-branch=main']);
+  git(['config', 'user.name', 'MP Fixture']);
+  git(['config', 'user.email', 'fixture@example.invalid']);
+  fs.writeFileSync(path.join(repository, 'marker.txt'), 'main content');
+  git(['add', '.']);
+  git(['commit', '--quiet', '-m', 'main fixture']);
+  git(['checkout', '--quiet', '-b', 'feature/environment']);
+  fs.writeFileSync(path.join(repository, 'marker.txt'), 'feature content');
+  git(['commit', '--quiet', '-am', 'feature fixture']);
+  git(['checkout', '--quiet', 'main']);
+  const project = store.registerProject(repository)!;
+  const additionalFolder = path.join(baseDir, 'references');
+  fs.mkdirSync(additionalFolder);
+  assert.ok(store.updateProject(project.id, {
+    environments: [{id: 'review', name: 'Review', modelSelection: {model: 'environment-model'}, permissionPreset: 'read-only', effort: 'low', additionalFolders: [additionalFolder], branch: 'feature/environment', worktree: true}],
+    defaultEnvironmentId: 'review',
+  }).ok);
   const stash = createStashRuntime({
     baseDir: path.join(baseDir, 'stash'),
     clipboard: {
@@ -62,8 +82,11 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
   let payload: any;
   let callbacks: any;
   let sequence = 0;
+  let dispatched: () => void = () => {};
+  const nextDispatch = () => new Promise<void>(resolve => { dispatched = resolve; });
   const context = {
     path,
+    fs,
     Buffer,
     console,
     Date,
@@ -77,18 +100,23 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
     ...require('../electron/conversation_model'),
     ...require('../electron/project_context'),
     ...require('../electron/workspace_folders'),
-    normalizeConversationEffort: () => 'medium',
-    resolveConversationWorkspace: () => '',
-    canonicalProjectRoot: async () => '',
+    ...require('../electron/project_workspace'),
+    ...require('../electron/session_worktree'),
+    runGitCapture: async (root: string, args: string[]) => git(args, root),
+    normalizeConversationEffort: (value: string) => value || 'medium',
+    resolveConversationWorkspace: (requested: string, saved: string) => requested || saved || '',
+    canonicalProjectRoot: async (root: string) => root || '',
     knownProjectRoot: (root: string) => root,
+    samePath: (left: string, right: string) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase(),
     studioConversationSessionId: ({existing}: any) =>
       existing || `agent-project-${sequence}`,
     TaskSources: require('../electron/task_sources'),
-    activeModelRuntimeConfig: () => ({model: 'fixture'}),
+    activeModelRuntimeConfig: (selection?: {model: string}) => ({model: selection?.model || 'fixture'}),
     resolveModelConfig: (value: unknown) => value,
     stashBaseDir: () => stash.baseDir,
     figmaRuntime: {clientConfigurations: () => []},
     conversations: () => store,
+    restoreConversationContext: async (conversation: any) => conversation,
     resources: () => service,
     handoffsForTurn,
     notifyConversationChanged() {},
@@ -108,6 +136,7 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
     ) => {
       payload = request;
       callbacks = value;
+      dispatched();
       return {};
     },
   };
@@ -116,11 +145,12 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
   }).outputText;
   const send = vm.runInNewContext(`${code}\nsendConversation`, context);
   try {
+    const firstDispatch = nextDispatch();
     const first = send({
       question: 'Read new project references',
       projectId: project.id,
     });
-    await new Promise(resolve => setImmediate(resolve));
+    await Promise.race([firstDispatch, first.then((result: unknown) => assert.fail(`Request settled before dispatch: ${JSON.stringify(result)}`))]);
     assert.equal(payload.projectContext.resourceInbox.length, 8);
     const conversation = store.list()[0];
     assert.equal(
@@ -143,11 +173,27 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
       hasPendingWork: false,
     });
     await first;
+    const executionRoot = payload.workspaceRoot;
+    assert.notEqual(executionRoot, repository, 'main applies the saved isolation setting when no renderer prepared a workspace');
+    assert.equal(fs.readFileSync(path.join(executionRoot, 'marker.txt'), 'utf8'), 'feature content');
+    assert.equal(git(['branch', '--show-current']), 'main');
+    store.flush();
+    store = createConversationStore({baseDir: path.join(baseDir, 'history')});
+    assert.equal(store.get(conversation.id)!.turns!.at(-1)!.request!.executionWorkspaceRoot, executionRoot);
+    assert.equal(payload.permissionPreset, 'read-only', 'new project tasks inherit the accepted environment at the main dispatch boundary');
+    assert.equal(payload.modelRuntime.model, 'environment-model');
+    assert.equal(payload.effort, 'low');
+    assert.deepEqual(payload.additionalFolders, [additionalFolder]);
+    const secondDispatch = nextDispatch();
     const second = send({
       question: 'Continue',
       conversationId: conversation.id,
+      permissionPreset: 'workspace-write',
+      modelSelection: {model: 'explicit-model'},
+      effort: 'max',
+      additionalFolders: [],
     });
-    await new Promise(resolve => setImmediate(resolve));
+    await Promise.race([secondDispatch, second.then((result: unknown) => assert.fail(`Request settled before dispatch: ${JSON.stringify(result)}`))]);
     assert.equal(
       payload.projectContext.resourceInbox.length,
       2,
@@ -160,14 +206,29 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
       hasPendingWork: false,
     });
     await second;
+    assert.equal(payload.workspaceRoot, executionRoot, 'a follow-up without a renderer keeps the accepted execution worktree');
+    assert.equal(payload.permissionPreset, 'workspace-write');
+    assert.equal(payload.modelRuntime.model, 'explicit-model');
+    assert.equal(payload.effort, 'max');
+    assert.deepEqual(payload.additionalFolders, []);
+    const thirdDispatch = nextDispatch();
     const third = send({
       question: 'Continue again',
       conversationId: conversation.id,
     });
-    await new Promise(resolve => setImmediate(resolve));
+    await Promise.race([thirdDispatch, third.then((result: unknown) => assert.fail(`Request settled before dispatch: ${JSON.stringify(result)}`))]);
     assert.equal(payload.projectContext.resourceInbox.length, 0);
     callbacks.onComplete({ok: true, answer: 'Done', hasPendingWork: false});
     await third;
+    assert.equal(payload.workspaceRoot, executionRoot);
+    assert.equal(payload.permissionPreset, 'workspace-write', 'existing task settings are not replaced by project defaults');
+    assert.equal(payload.modelRuntime.model, 'explicit-model');
+    context.activeConversations.set('live-task', {conversationId: conversation.id});
+    const busy = await send({question: 'Rejected workspace change', conversationId: conversation.id, branch: 'feature/environment', worktree: false});
+    assert.equal(busy.ok, false);
+    assert.equal(busy.active, true);
+    assert.equal(git(['branch', '--show-current']), 'main', 'a rejected busy request cannot switch the project branch');
+    context.activeConversations.delete('live-task');
     assert.equal(store.handoffReceipts(project.id).length, 10);
     store.flush();
     assert.equal(

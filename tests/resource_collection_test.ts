@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {ResourceCollectionService} from '../electron/resource_collection_service';
 import {createConversationStore} from '../electron/conversation_store';
 import {resourceAnalysisTask} from '../electron/resource_analysis_task';
+import type {ResourcePost} from '../electron/resource_post';
 
 const {createStashRuntime} = require('../electron/stash_runtime');
 const clipboard = {
@@ -14,6 +15,491 @@ const clipboard = {
   readImage: () => ({isEmpty: () => true}),
   write: () => {},
 };
+
+test('pasted share text captures an offline readable post and retains a failed source for retry', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-collected-post-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  let fail = true;
+  const post: ResourcePost = {
+    platform: 'xiaohongshu',
+    id: 'abc123',
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=keep',
+    title: 'Design reference',
+    text: 'The complete retained source text',
+    author: {name: 'Creator'},
+    capturedAt: Date.now(),
+    media: [],
+    links: [],
+    coverage: 'Full note text',
+    usedBackend: 'fixture.page',
+    timingMs: 5,
+  };
+  const create = () =>
+    new ResourceCollectionService({
+      stash: () => stash,
+      projects: () => [],
+      attach() {},
+      analyze: async () => {
+        throw new Error('Capture must not call a model');
+      },
+      capturePost: async () => {
+        if (fail) {
+          throw new Error('auth_required');
+        }
+        return structuredClone(post);
+      },
+      fetchMedia: async () => new Response(''),
+    });
+  const service = create();
+  const saved = await service.add({
+    text: '想借鉴这里的动效 ' + post.url,
+    sourceAccount: 'xiaohongshu-2',
+  });
+  assert.equal(saved.collection!.url, post.url);
+  assert.equal(saved.collection!.captureStatus, 'auth_required');
+  assert.equal(
+    stash.list().flatMap((group: {items: unknown[]}) => group.items).length,
+    1,
+  );
+  fail = false;
+  const captured = await service.capture(saved.id);
+  assert.equal(captured.collection!.captureStatus, 'saved');
+  assert.equal(captured.collection!.sourceAccount, 'xiaohongshu-2');
+  const reopened = create();
+  const document = reopened.post(saved.id);
+  assert.equal(document.text, post.text);
+  assert.equal(document.author.name, 'Creator');
+  assert.match(
+    readFileSync(join(baseDir, captured.collection!.postTextPath), 'utf8'),
+    /complete retained source text/,
+  );
+  assert.equal(
+    reopened.search('complete retained source').length,
+    1,
+    'search reaches original text rather than title only',
+  );
+  assert.equal(reopened.search('not in this library').length, 0);
+});
+
+test('organization proposes a use and tags without replacing the user intent; project delivery carries the saved post', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-post-handoff-'));
+  const root = mkdtempSync(join(tmpdir(), 'mp-post-project-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [{id: 'ui', name: 'UI', root}],
+    attach() {},
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Reference',
+      text: 'A complete original reference',
+      author: {name: 'Author'},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page text',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    analyze: async () => ({
+      ok: true,
+      answer: JSON.stringify({
+        summary: 'Keep this technique for the interface.',
+        coverage: 'Saved text',
+        decision: 'keep',
+        projectId: 'ui',
+        suggestedIntent: 'todo',
+        tags: ['动效', '侧栏'],
+      }),
+    }),
+  });
+  const entry = await service.add({url: 'https://example.com/reference'});
+  service.update(entry.id, {intent: 'reference'}, entry.collection!.revision);
+  const organized = await service.process(entry.id);
+  assert.equal(organized.collection!.intent, 'reference');
+  assert.equal(organized.collection!.suggestedIntent, 'todo');
+  assert.deepEqual(organized.collection!.tags, ['动效', '侧栏']);
+  const delivered = await service.deliver(entry.id);
+  assert.match(
+    readFileSync(
+      join(root, 'references', 'inbox', entry.id, 'post', 'original.txt'),
+      'utf8',
+    ),
+    /complete original reference/,
+  );
+  assert.match(
+    readFileSync(delivered.collection!.exportedPath, 'utf8'),
+    /post\/original.txt/,
+  );
+});
+
+test('a batch saves every link before capture starts and resumes queued originals after reopening', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-post-batch-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  let captures = 0;
+  const make = () =>
+    new ResourceCollectionService({
+      stash: () => stash,
+      projects: () => [],
+      attach() {},
+      analyze: async () => ({}),
+      capturePost: async url => {
+        captures++;
+        assert.equal(
+          stash.list().flatMap((group: {items: unknown[]}) => group.items)
+            .length,
+          2,
+        );
+        return {
+          platform: 'web',
+          id: url,
+          url,
+          title: url,
+          text: 'Retained ' + url,
+          author: {name: ''},
+          capturedAt: 1,
+          media: [],
+          links: [],
+          coverage: 'Full page',
+          usedBackend: 'fixture.page',
+          timingMs: 1,
+        };
+      },
+    });
+  const first = make();
+  const items = await first.addBatch({
+    text: '第一条 https://example.com/one\n第二条 https://example.com/two',
+  });
+  assert.equal(captures, 0);
+  assert.equal(items.length, 2);
+  assert.ok(items.every(item => item.collection!.captureStatus === 'queued'));
+  const reopened = make();
+  await reopened.drainCaptures();
+  assert.equal(captures, 2);
+  assert.ok(
+    reopened.list().every(item => item.collection!.captureStatus === 'saved'),
+  );
+});
+
+test('opening a resource updates revisit history without invalidating an in-flight analysis', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-resource-viewed-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+  });
+  const entry = await service.add({text: 'A useful thought'});
+  const started = stash.updateResource(entry.id, {state: 'processing'});
+  const viewed = stash.updateResource(
+    entry.id,
+    {lastViewedAt: 123456, bookmarkBatch: 123456, bookmarkPosition: 2},
+    started.collection.revision,
+  );
+  assert.equal(viewed.collection!.revision, started.collection.revision);
+  assert.equal(viewed.collection!.lastViewedAt, 123456);
+  assert.equal(viewed.collection!.bookmarkPosition, 2);
+  assert.doesNotThrow(() =>
+    stash.updateResource(
+      entry.id,
+      {summary: 'Analysis finished'},
+      started.collection.revision,
+    ),
+  );
+});
+
+test('one social note keeps its identity across changed access tokens without merging separate accounts', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-social-identity-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+  });
+  const first = await service.add({
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=old',
+    sourceAccount: 'xiaohongshu-1',
+  });
+  const repeated = await service.add({
+    url: 'https://www.xiaohongshu.com/user/profile/author/abc123?xsec_token=new',
+    sourceAccount: 'xiaohongshu-1',
+  });
+  assert.equal(repeated.id, first.id);
+  assert.match(repeated.collection!.url, /xsec_token=new/);
+  const other = await service.add({
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=other',
+    sourceAccount: 'xiaohongshu-2',
+  });
+  assert.notEqual(other.id, first.id);
+});
+
+test('enabled automatic organization queues captured originals rather than analyzing bare share links', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-source-organize-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    canOrganize: () => true,
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Reference',
+      text: 'Original details for later recall',
+      author: {name: 'Author'},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    analyze: async input => {
+      assert.ok(
+        input.attachments.some(file =>
+          readFileSync(file, 'utf8').includes(
+            'Original details for later recall',
+          ),
+        ),
+      );
+      return {
+        ok: true,
+        answer: JSON.stringify({
+          summary: 'A useful reference',
+          coverage: 'Saved original text',
+          decision: 'keep',
+          suggestedIntent: 'reference',
+        }),
+      };
+    },
+  });
+  const [item] = await service.addBatch({
+    text: 'https://example.com/auto-reference',
+  });
+  await service.drainCaptures();
+  assert.equal(stash.get(item.id).collection.state, 'queued');
+  await service.drain();
+  assert.equal(stash.get(item.id).collection.suggestedIntent, 'reference');
+  assert.equal(stash.get(item.id).collection.state, 'ready');
+});
+
+test('manual organization waits for a queued original before sending attachments to MP', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-original-before-analysis-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Original',
+      text: 'Original body must arrive before analysis',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    analyze: async input => {
+      assert.ok(
+        input.attachments.some(file =>
+          readFileSync(file, 'utf8').includes(
+            'Original body must arrive before analysis',
+          ),
+        ),
+      );
+      return {
+        ok: true,
+        answer: JSON.stringify({
+          summary: 'Original analyzed',
+          coverage: 'Full text',
+          decision: 'keep',
+        }),
+      };
+    },
+  });
+  const [item] = await service.addBatch({
+    text: 'https://example.com/original-first',
+  });
+  const result = await service.process(item.id);
+  assert.equal(result.collection!.captureStatus, 'saved');
+  assert.equal(result.collection!.state, 'ready');
+});
+
+test('revisiting a page recalls its saved note and linked references without treating a social feed as one topic', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-resource-recall-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async url => ({
+      platform: 'xiaohongshu',
+      id: 'abc123',
+      url,
+      title: 'A source',
+      text: 'See this article',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [],
+      links: ['https://example.com/article'],
+      coverage: 'Full note',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+  });
+  const note = await service.add({
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=old',
+  });
+  assert.equal(
+    service.related(
+      'https://www.xiaohongshu.com/user/profile/author/abc123?xsec_token=new',
+    )[0].entry.id,
+    note.id,
+  );
+  assert.equal(
+    service.related('https://example.com/article#part')[0].relation,
+    'link',
+  );
+  assert.equal(
+    service.related('https://www.xiaohongshu.com/explore/def456').length,
+    0,
+  );
+  service.update(
+    note.id,
+    {state: 'ignored'},
+    stash.get(note.id).collection.revision,
+  );
+  assert.equal(service.related('https://example.com/article').length, 0);
+});
+
+test('removing a collected post removes only its owned original and media directory', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-post-removal-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'A page',
+      text: 'Original',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+  });
+  const first = await service.add({url: 'https://example.com/first'});
+  const second = await service.add({url: 'https://example.com/second'});
+  assert.equal(stash.remove(first.id).ok, true);
+  assert.equal(existsSync(join(baseDir, 'posts', first.id)), false);
+  assert.equal(existsSync(join(baseDir, 'posts', second.id)), true);
+});
+
+test('a deleted item is not recreated when its pending capture returns', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-pending-post-removal-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  let release!: (post: ResourcePost) => void;
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async () =>
+      new Promise<ResourcePost>(resolve => {
+        release = resolve;
+      }),
+  });
+  const [item] = await service.addBatch({text: 'https://example.com/pending'});
+  const pending = service.capture(item.id);
+  stash.remove(item.id);
+  release({
+    platform: 'web',
+    id: 'pending',
+    url: 'https://example.com/pending',
+    title: 'Deleted page',
+    text: 'Original',
+    author: {name: ''},
+    capturedAt: 1,
+    media: [],
+    links: [],
+    coverage: 'Full page',
+    usedBackend: 'fixture.page',
+    timingMs: 1,
+  });
+  await assert.rejects(pending, /resource_not_found/);
+  assert.equal(stash.get(item.id), null);
+  assert.equal(existsSync(join(baseDir, 'posts', item.id)), false);
+});
+
+test('finishing missing media invalidates an older project delivery marker', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-post-redelivery-'));
+  const root = mkdtempSync(join(tmpdir(), 'mp-post-redelivery-project-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  let fail = true;
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [{id: 'project', name: 'Project', root}],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Original',
+      text: 'Text retained before the image',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [{kind: 'image', url: 'https://example.com/image.png'}],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    fetchMedia: async () =>
+      fail
+        ? new Response('', {status: 503})
+        : new Response(Buffer.from([137, 80, 78, 71]), {
+            headers: {'content-type': 'image/png'},
+          }),
+  });
+  const item = await service.add({
+    url: 'https://example.com/page',
+    projectId: 'project',
+  });
+  service.update(
+    item.id,
+    {summary: 'Use the original as a reference'},
+    item.collection!.revision,
+  );
+  const delivered = await service.deliver(item.id);
+  assert.ok(delivered.collection!.exportedPath);
+  fail = false;
+  const completed = await service.capture(item.id);
+  assert.equal(completed.collection!.captureStatus, 'saved');
+  assert.equal(
+    completed.collection!.exportedPath,
+    '',
+    'the earlier project copy does not yet contain the newly retained image',
+  );
+});
 
 test('collected page retains its source and editable project intent after reopening; stale analysis cannot overwrite an edit', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'mp-resources-'));

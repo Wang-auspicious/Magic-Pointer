@@ -58,6 +58,14 @@
     );
   }
 
+  function pageHeader(actions = ''): string {
+    return `<header class="personal-header"><div><p class="personal-eyebrow">ACTIVITY JOURNAL</p><h1>工作回顾</h1><p class="personal-subtitle">从本机记录中找回做过的事、留下的文件和接下来要处理的线索。</p></div><div class="personal-header-actions">${actions}</div></header>`;
+  }
+
+  function dateToolbar(date: string, query: string): string {
+    return `<div class="personal-toolbar"><label>日期 <input type="date" data-personal-date value="${escape(date)}" max="${dateKey()}" /></label><input type="search" data-personal-search value="${escape(query)}" placeholder="搜索应用、画面或文件" aria-label="搜索当天记录" /><button type="button" data-personal-action="refresh">刷新</button></div>`;
+  }
+
   function markup(snapshot: Json, date: string, query: string): string {
     const status = snapshot.status || {};
     const day = snapshot.day;
@@ -156,10 +164,8 @@
       )
       .join('');
     return `<div class="personal-page">
-      <header class="personal-header"><div><p class="personal-eyebrow">ACTIVITY JOURNAL</p><h1>工作回顾</h1><p class="personal-subtitle">从本机记录中找回做过的事、留下的文件和接下来要处理的线索。</p></div>
-        <div class="personal-header-actions"><span class="personal-status" data-recording="${recording}">${statusLabel}</span><button type="button" class="personal-analyze" data-personal-action="analyze" title="使用当前模型梳理这一天的记录" ${day ? '' : 'disabled'}>分析这一天</button>
-          <button type="button" data-personal-action="${status.enabled ? 'pause' : 'enable'}">${status.enabled ? (status.paused ? '继续记录' : '暂停') : '开启记录'}</button></div></header>
-      <div class="personal-toolbar"><label>日期 <input type="date" data-personal-date value="${escape(date)}" max="${dateKey()}" /></label><input type="search" data-personal-search value="${escape(query)}" placeholder="搜索应用、画面或文件" aria-label="搜索当天记录" /><button type="button" data-personal-action="refresh">刷新</button></div>
+      ${pageHeader(`<span class="personal-status" data-recording="${recording}">${statusLabel}</span><button type="button" class="personal-analyze" data-personal-action="analyze" title="使用当前模型梳理这一天的记录" ${day ? '' : 'disabled'}>分析这一天</button><button type="button" data-personal-action="${status.enabled ? 'pause' : 'enable'}">${status.enabled ? (status.paused ? '继续记录' : '暂停') : '开启记录'}</button>`)}
+      ${dateToolbar(date, query)}
       <p class="personal-feedback" role="status" aria-live="polite"></p>
       ${snapshot.nativeError || snapshot.screenError ? `<p class="personal-error" role="status">${escape(snapshot.nativeError || snapshot.screenError)}</p>` : ''}
       <div class="personal-date-line"><span>${escape(dateLabel)}</span>${day?.firstObservedAt ? `<span>记录始于 ${time(day.firstObservedAt)}</span>` : ''}${day?.detailsCleared ? '<span>早期明细已按保留设置清理</span>' : ''}</div>
@@ -258,6 +264,8 @@
     let query = '';
     let visible = false;
     let request = 0;
+    let readFeedback = '';
+    let pending: {date: string; request: number; work: Promise<void>} | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     const feedback = (message: string) => {
       const node = host?.querySelector('.personal-feedback');
@@ -266,7 +274,11 @@
       }
     };
     const render = () => {
-      if (!host || !snapshot) {
+      if (!host) {
+        return;
+      }
+      if (!snapshot) {
+        host.innerHTML = `<div class="personal-page">${pageHeader()}${dateToolbar(date, query)}<p class="personal-feedback" role="status" aria-live="polite">${escape(readFeedback)}</p></div>`;
         return;
       }
       const opened = Array.from(
@@ -282,29 +294,60 @@
           details.open = opened.includes(details.dataset.personalDetails);
         });
     };
-    const refresh = async () => {
-      if (!host || !api) {
+    const selectDate = (nextDate: string) => {
+      if (nextDate === date) {
         return;
       }
-      const generation = ++request;
-      try {
-        const result = await api.read(date);
-        if (generation !== request || !visible) {
-          return;
-        }
-        if (result.ok === false) {
-          throw new Error(result.error);
-        }
-        snapshot = result;
+      date = nextDate;
+      request++;
+      snapshot = undefined;
+      readFeedback = `正在读取 ${date} 的记录…`;
+      if (visible) {
         render();
-      } catch (error) {
-        if (generation === request) {
-          if (!snapshot) {
-            host.innerHTML = '<p class="personal-feedback" role="status"></p>';
-          }
-          feedback(String(error));
-        }
       }
+    };
+    const refresh = (): Promise<void> => {
+      if (!host || !api || !visible) {
+        return Promise.resolve();
+      }
+      if (pending?.date === date && pending.request === request) {
+        return pending.work;
+      }
+      const generation = ++request;
+      const readDate = date;
+      readFeedback = `正在读取 ${date} 的记录…`;
+      if (!snapshot) {
+        render();
+      }
+      const work = (async () => {
+        try {
+          const result = await api.read(readDate);
+          if (generation !== request || !visible) {
+            return;
+          }
+          if (result.ok === false) {
+            throw new Error(result.error);
+          }
+          snapshot = result;
+          readFeedback = '';
+          render();
+        } catch (error) {
+          if (generation === request && visible) {
+            readFeedback = String(error);
+            if (!snapshot) {
+              render();
+            } else {
+              feedback(readFeedback);
+            }
+          }
+        }
+      })().finally(() => {
+        if (pending?.request === generation) {
+          pending = undefined;
+        }
+      });
+      pending = {date: readDate, request: generation, work};
+      return work;
     };
     host?.addEventListener('input', event => {
       const target = event.target as HTMLInputElement;
@@ -328,7 +371,7 @@
     host?.addEventListener('change', event => {
       const target = event.target as HTMLInputElement;
       if (target.matches('[data-personal-date]')) {
-        date = target.value || dateKey();
+        selectDate(target.value || dateKey());
         void refresh();
         return;
       }
@@ -348,6 +391,7 @@
             if (result.ok === false) {
               throw new Error(result.error);
             }
+            request++;
             return refresh();
           })
           .catch(error => {
@@ -360,9 +404,19 @@
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
         'button',
       );
-      if (!button || !api || !snapshot) {
+      if (!button || !api) {
         return;
       }
+      if (button.dataset.personalAction === 'refresh') {
+        void refresh();
+        return;
+      }
+      if (!snapshot) {
+        return;
+      }
+      const actionDate = date;
+      const opensSource = button.dataset.personalScreen !== undefined ||
+        button.dataset.personalFile !== undefined;
       const run = async () => {
         button.disabled = true;
         let result: Json = {ok: true};
@@ -384,10 +438,7 @@
           );
           button.disabled = false;
           return;
-        } else if (
-          button.dataset.personalScreen !== undefined ||
-          button.dataset.personalFile !== undefined
-        ) {
+        } else if (opensSource) {
           result = await api.openSource({
             date,
             kind:
@@ -428,14 +479,27 @@
         if (result.ok === false) {
           throw new Error(result.error);
         }
+        if (
+          opensSource ||
+          (button.dataset.personalAction === 'report' && actionDate !== date)
+        ) {
+          button.disabled = false;
+          return;
+        }
+        request++;
         await refresh();
       };
       void run().catch(error => {
         button.disabled = false;
-        feedback(String(error));
+        if (visible && actionDate === date) {
+          feedback(String(error));
+        }
       });
     });
     return {
+      setDate(nextDate: string) {
+        selectDate(nextDate);
+      },
       show() {
         visible = true;
         void refresh();

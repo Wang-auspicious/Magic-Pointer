@@ -2,6 +2,7 @@
 
 import {createProjectStore} from './project_store';
 import {handoffReceipts} from './resource_handoff';
+import {settleCompactions} from './compaction_status';
 import {normalizeAdditionalFolders} from './workspace_folders';
 import type {PermissionMode} from './permission_mode';
 import {
@@ -15,6 +16,7 @@ const {projectStudioHomeStats} = require('./studio_home_stats');
 
 const MAX_CONVERSATIONS = 500;
 const TITLE_MAX = 28;
+const CUSTOM_TITLE_MAX = 60;
 
 interface ReferencedObject {
   app?: string;
@@ -362,6 +364,18 @@ function createConversationStore(
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
       items = Array.isArray(parsed) ? (parsed as Conversation[]) : [];
+      for (const conversation of items) {
+        if (conversation.titleCustom || conversation.title !== '未命名') {
+          continue;
+        }
+        const question = (conversation.turns || []).find(turn =>
+          String(turn.question || '').trim() &&
+          isSubstantiveQuestion(turn.question) && !permissionAnswerOf(turn),
+        )?.question;
+        if (question) {
+          conversation.title = titleFrom(question);
+        }
+      }
     } catch {
       items = [];
     }
@@ -631,6 +645,13 @@ function createConversationStore(
       evidence: sanitizeEvidence(turn.evidence),
       pendingInput: sanitizePendingInput(turn.pendingInput),
     };
+    if (isTurnSettled(entry.outcome)) {
+      settleCompactions(
+        entry.trajectory,
+        entry.failed || entry.outcome === '失败' ? 'failed' : 'cancelled',
+        at,
+      );
+    }
 
     if (target) {
       if (!Array.isArray(target.turns)) {
@@ -667,7 +688,12 @@ function createConversationStore(
       if (taskContext) {
         target.taskContext = taskContext;
       }
-      if (!target.titleCustom && !permissionAnswerOf(turn)) {
+      if (
+        !target.titleCustom &&
+        (target.title === '未命名' || !isSubstantiveQuestion(target.title)) &&
+        !permissionAnswerOf(turn) &&
+        String(turn.question || '').trim()
+      ) {
         target.title = titleFrom(turn.question);
       }
       const grant = String(turn.permissionGrant || '').trim();
@@ -940,6 +966,11 @@ function createConversationStore(
     turn.at = turn.startedAt;
     if (input.outcome !== undefined) {
       if (isTurnSettled(turn.outcome)) {
+        settleCompactions(
+          turn.trajectory,
+          turn.failed || turn.outcome === '失败' ? 'failed' : 'cancelled',
+          updatedAt,
+        );
         if (input.completedAt === null) {
           delete turn.completedAt;
         } else {
@@ -961,7 +992,7 @@ function createConversationStore(
     conversationId?: unknown;
     grant?: unknown;
     deny?: unknown;
-  }): {ok: boolean; conversation?: Conversation} {
+  }): {ok: boolean; conversation?: Conversation; error?: string} {
     const conversations = load();
     const target = conversations.find(
       conversation =>
@@ -972,27 +1003,37 @@ function createConversationStore(
     if (!target || (!grant && !deny)) {
       return {ok: false};
     }
-    if (grant) {
-      target.permissionGrants = target.permissionGrants || [];
-      if (!target.permissionGrants.includes(grant)) {
-        target.permissionGrants.push(grant);
-      }
-    }
-    if (deny) {
-      target.permissionDenials = target.permissionDenials || [];
-      if (!target.permissionDenials.includes(deny)) {
-        target.permissionDenials.push(deny);
-      }
-    }
     const turns = target.turns || [];
-    const lastTurn = turns[turns.length - 1];
-    if (lastTurn?.pendingInput?.kind === 'permission') {
-      delete lastTurn.pendingInput;
-    }
-    target.updatedAt = now();
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    const lastTurn = turns.at(-1);
+    return commitMetadata(
+      target,
+      {
+        ...(grant
+          ? {
+              permissionGrants: [
+                ...new Set([...(target.permissionGrants || []), grant]),
+              ],
+            }
+          : {}),
+        ...(deny
+          ? {
+              permissionDenials: [
+                ...new Set([...(target.permissionDenials || []), deny]),
+              ],
+            }
+          : {}),
+        ...(lastTurn?.pendingInput?.kind === 'permission'
+          ? {
+              turns: [
+                ...turns.slice(0, -1),
+                {...lastTurn, pendingInput: undefined},
+              ],
+            }
+          : {}),
+        updatedAt: now(),
+      },
+      'permission-decision',
+    );
   }
 
   function recoverInterruptedTurns(): void {
@@ -1005,6 +1046,7 @@ function createConversationStore(
           continue;
         }
         turn.outcome = '可恢复';
+        settleCompactions(turn.trajectory, 'cancelled', now());
         turn.failed = true;
         turn.error =
           '上次客户端会话已中断，可以继续此任务。此前操作结果需恢复后核实。';
@@ -1092,7 +1134,8 @@ function createConversationStore(
     const at = now();
     const titleSuffix = ' · 分支';
     const baseTitle = String(source.title || '未命名');
-    const title = `${baseTitle.slice(0, Math.max(1, TITLE_MAX - titleSuffix.length))}${titleSuffix}`;
+    const titleLimit = source.titleCustom ? CUSTOM_TITLE_MAX : TITLE_MAX;
+    const title = `${baseTitle.slice(0, Math.max(1, titleLimit - titleSuffix.length))}${titleSuffix}`;
     const created: Conversation = {
       id: `c${at}`,
       objectKey: source.objectKey,
@@ -1121,9 +1164,19 @@ function createConversationStore(
       permissionGrants: structuredClone(source.permissionGrants || []),
       permissionDenials: structuredClone(source.permissionDenials || []),
     };
+    const wasDirty = dirty;
     conversations.unshift(created);
     markDirty(created);
-    persist();
+    try {
+      writeNow();
+      dirty = false;
+    } catch (error) {
+      conversations.shift();
+      serializedConversations.delete(created.id);
+      dirty = wasDirty;
+      reportPersistFailure(error, 'branch');
+      throw error;
+    }
     return created;
   }
 
@@ -1306,13 +1359,43 @@ function createConversationStore(
     persist();
   }
 
+  function commitMetadata(
+    target: Conversation,
+    patch: Partial<Conversation>,
+    context: string,
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
+    const previous = {...target};
+    const wasDirty = dirty;
+    Object.assign(target, patch);
+    markDirty(target);
+    try {
+      // Explicit user settings need a durable result, even while token updates
+      // are being coalesced by the deferred transcript writer.
+      writeNow();
+      dirty = false;
+      return {ok: true, conversation: target};
+    } catch (error) {
+      for (const key of Object.keys(patch) as Array<keyof Conversation>) {
+        if (Object.hasOwn(previous, key)) {
+          Object.assign(target, {[key]: previous[key]});
+        } else {
+          delete target[key];
+        }
+      }
+      markDirty(target);
+      dirty = wasDirty;
+      reportPersistFailure(error, context);
+      return {ok: false, error: 'store_failed'};
+    }
+  }
+
   function rename(
     id: unknown,
     title: unknown,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const clean = String(title || '')
       .trim()
-      .slice(0, TITLE_MAX);
+      .slice(0, CUSTOM_TITLE_MAX);
     if (!clean) {
       return {ok: false};
     }
@@ -1321,11 +1404,7 @@ function createConversationStore(
     if (!target) {
       return {ok: false};
     }
-    target.title = clean;
-    target.titleCustom = true;
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(target, {title: clean, titleCustom: true}, 'rename');
   }
 
   function remove(id: unknown): {ok: boolean; error?: string} {
@@ -1351,7 +1430,7 @@ function createConversationStore(
   function setProject(
     id: unknown,
     projectKey: unknown,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
@@ -1361,56 +1440,65 @@ function createConversationStore(
     if (key && !project) {
       return {ok: false};
     }
-    target.projectId = project?.id || '';
-    if (project?.root) {
-      target.workspaceRoot = project.root;
-      target.additionalFolders = normalizeAdditionalFolders(
-        project.root,
-        target.additionalFolders,
-      );
-    }
-    target.updatedAt = now();
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(
+      target,
+      {
+        projectId: project?.id || '',
+        ...(project?.root
+          ? {
+              workspaceRoot: project.root,
+              additionalFolders: normalizeAdditionalFolders(
+                project.root,
+                target.additionalFolders,
+              ),
+            }
+          : {}),
+        updatedAt: now(),
+      },
+      'set-project',
+    );
   }
 
   function setWorkspace(
     id: string,
     root: string,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
     }
-    target.workspaceRoot = root || undefined;
-    target.additionalFolders = root
-      ? normalizeAdditionalFolders(root, target.additionalFolders)
-      : [];
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(
+      target,
+      {
+        workspaceRoot: root || undefined,
+        additionalFolders: root
+          ? normalizeAdditionalFolders(root, target.additionalFolders)
+          : [],
+      },
+      'set-workspace',
+    );
   }
 
   function setModel(
     id: string,
     selection: ConversationModelSelection,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
     const target = load().find(conversation => conversation.id === id);
     if (!target) {
       return {ok: false};
     }
-    target.modelSelection = normalizeModelSelection(selection);
-    markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    return commitMetadata(
+      target,
+      {modelSelection: normalizeModelSelection(selection)},
+      'set-model',
+    );
   }
 
   function setPermissionMode(
     id: string,
     sessionId: string,
     mode: PermissionMode,
-  ): {ok: boolean; conversation?: Conversation} {
+  ): {ok: boolean; persisted?: boolean; conversation?: Conversation} {
     const target = get(id);
     if (!target) {
       return {ok: false};
@@ -1425,8 +1513,17 @@ function createConversationStore(
       permissionMode: mode,
     };
     markDirty(target);
-    persist();
-    return {ok: true, conversation: target};
+    // The Session journal owns the mode. Keep this read projection current even
+    // if its index file cannot be saved; never undo an applied Session mode.
+    try {
+      writeNow();
+      dirty = false;
+      return {ok: true, persisted: true, conversation: target};
+    } catch (error) {
+      dirty = true;
+      reportPersistFailure(error, 'permission-mode-projection');
+      return {ok: true, persisted: false, conversation: target};
+    }
   }
 
   return {

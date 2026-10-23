@@ -92,9 +92,7 @@ assert(canonicalWrite.includes('class="mp-chat-diff"') && canonicalWrite.include
 const writeDiff = ChatView.toolRowNode(ChatView.toolRowModel('write_file', JSON.stringify({ path: 'n.txt', content: 'a\nb' }))).outerHTML;
 assert(/mp-chat-diff-line[^>]*data-kind="add"/.test(writeDiff) && writeDiff.includes('+ a'), 'write_file renders as an all-add diff');
 
-const bigOld = Array.from({ length: 120 }, (_, i) => `old ${i}`).join('\n');
-const capped = ChatView.__test.deriveDiff('edit_file', JSON.stringify({ path: 'p', old_string: bigOld, new_string: 'new' }));
-assert(capped && capped.hidden >= 80, `over-cap lines must collapse with a count (hidden=${capped && capped.hidden})`);
+// Complete long and batch previews are covered by chat_diff_preview_test.ts.
 assert(!/mp-chat-diff/.test(ChatView.toolRowNode(ChatView.toolRowModel('grep', JSON.stringify({ pattern: 'x' }))).outerHTML),
   'read-only tools must not grow a diff card');
 
@@ -105,19 +103,19 @@ assert(ChatView.stateDot('ongoing').outerHTML.includes('class="mp-chat-matrix"')
 
 const think = html(ChatView.thinkNode('先读这个文件\n再判断结构', false));
 assert(think.includes('mp-chat-think"'), 'reasoning must render as the Think disclosure');
-assert(think.includes('mp-chat-title">Thought</span>'), 'completed reasoning uses the interface timeline label');
-assert(think.includes('先读这个文件'), 'collapsed summary = first line of reasoning');
+assert(think.includes('mp-chat-title">Thought process</span>'), 'modern reasoning uses the original Step label');
+assert(think.includes('先读这个文件'), 'expanded body retains the original reasoning');
 assert(think.includes('class="mp-chat-think-body"'), 'expanded body must exist');
-assert(think.includes('data-open="false"'), 'Think rows start collapsed');
+assert(think.includes('data-open="true"'), 'Thinking Step starts open');
 const longThink = html(ChatView.thinkNode('推理步骤。'.repeat(120), false));
-assert(longThink.includes('data-long="true"'), 'long completed reasoning must expose the 200px disclosure cap');
+assert(!longThink.includes('data-long="true"'), 'expanded thinking has no arbitrary length threshold');
 assert(longThink.includes('class="mp-chat-think-viewport"'));
-assert(longThink.includes('class="mp-chat-think-fade"'));
-assert(longThink.includes('data-mp-chat-act="think-more"'));
-assert(longThink.includes('Show more'));
+assert(!longThink.includes('class="mp-chat-think-fade"'));
+assert(!longThink.includes('data-mp-chat-act="think-more"'));
+assert(longThink.includes('data-mp-chat-act="copy-thinking"'));
 const runningThink = html(ChatView.thinkNode('多行\n思考', true));
 assert(runningThink.includes('data-state="running"'), 'a streaming Think row must carry the running state');
-assert(runningThink.includes('Thinking…'), 'a running row uses the interface exact status label');
+assert(runningThink.includes('Thought process'), 'streaming keeps the Step label');
 assert(!runningThink.includes('data-long="true"'), 'streaming reasoning must remain uncapped');
 
 const turn = ChatView.assistantTurnNode({
@@ -263,8 +261,8 @@ assert.match(css, /\.mp-chat-disclosure > \.mp-chat-row\[data-expandable\]::afte
 assert.match(css, /\.mp-chat-tool-group-title,[^}]*\{[^}]*flex:\s*0 1 auto/s,
   'group disclosure arrows sit directly after the group label');
 assert.match(css, /\.mp-chat-disclosure:not\(\[data-open='true'\]\) > \.mp-chat-body-wrap\s*\{[^}]*display:\s*none/s);
-assert.match(css, /\.mp-chat-think\[data-long="true"\][^{]*\.mp-chat-think-viewport\s*\{[^}]*max-height:\s*200px/s);
-assert.match(css, /\.mp-chat-think-fade\s*\{[^}]*linear-gradient/s);
+assert(!css.includes('.mp-chat-think[data-long='));
+assert(!css.includes('.mp-chat-think-fade'));
 assert(!css.includes('mp-chat-state-dot-chase'), 'ongoing activity must not use decorative pixel chase');
 assert(tokens.includes('prefers-reduced-motion'), 'reduced motion must collapse spatial transitions');
 

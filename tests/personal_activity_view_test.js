@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
-const sandbox = { module: { exports: {} } };
+const sandbox = { module: { exports: {} }, setInterval, clearInterval };
 vm.runInNewContext(ts.transpileModule(fs.readFileSync('electron/renderer/personal_activity_view.ts', 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText, sandbox);
@@ -25,3 +25,12 @@ assert.match(view.markup({...snapshot,day:null}, '2026-09-28', ''), /没有记�
 assert.match(view.markup({...snapshot,nativeError:'native stopped'}, '2026-09-29', ''), /native stopped/);
 assert.doesNotMatch(view.markup(snapshot, '2026-09-29', '不存在'), /&lt;报价&gt;\.pdf/);
 console.log('personal activity view data and filtering passed');
+const selectedDates = [];
+const controller = view.mount({addEventListener() {}}, {
+  read(date) {selectedDates.push(date); return new Promise(() => {});},
+});
+controller.setDate('2026-10-20');
+controller.show();
+controller.hide();
+assert.deepEqual(selectedDates, ['2026-10-20'], 'Notification activation must read the report date, rather than defaulting to today');
+console.log('personal activity notification date selection passed');

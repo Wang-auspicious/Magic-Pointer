@@ -13,12 +13,22 @@ const ChatView = (() => {
       : typeof require === 'function'
         ? require('./chat_icons')
         : null;
+  const diffRows: typeof import('./chat_diff_rows') =
+    typeof ChatDiffRows !== 'undefined'
+      ? ChatDiffRows : require('./chat_diff_rows');
+  const fileIcons: typeof import('./chat_file_icons') =
+    typeof ChatFileIcons !== 'undefined'
+      ? ChatFileIcons : require('./chat_file_icons');
+  const toolSummary: typeof import('./chat_tool_summary') =
+    typeof ChatToolSummary !== 'undefined'
+      ? ChatToolSummary : require('./chat_tool_summary');
   const StudioLocaleApi =
     typeof require === 'function' ? require('./locale') : null;
-  function lt(
-    id: string,
-    params?: Record<string, string | number>,
-  ): string {
+  const compaction: typeof import('../compaction_status') =
+    typeof CompactionStatus !== 'undefined'
+      ? CompactionStatus
+      : require('../compaction_status');
+  function lt(id: string, params?: Record<string, string | number>): string {
     if (typeof studioT === 'function') {
       return studioT(id, params);
     }
@@ -27,16 +37,6 @@ const ChatView = (() => {
     }
     return id;
   }
-  function ltCount(id: string, count: number): string {
-    if (typeof studioTCount === 'function') {
-      return studioTCount(id, count);
-    }
-    if (StudioLocaleApi && typeof StudioLocaleApi.studioTCount === 'function') {
-      return StudioLocaleApi.studioTCount(id, count);
-    }
-    return `${count}`;
-  }
-
   interface ShimNode {
     tagName: string;
     ns: string | null;
@@ -54,6 +54,8 @@ const ChatView = (() => {
   type ChatChild = string | number | ShimNode | Node | null | undefined | false;
 
   const DOC = typeof document !== 'undefined' ? document : null;
+  const COPY_RESET_TIMERS = new WeakMap<HTMLElement, {timer?: number}>();
+  const THINKING_TEXT = new WeakMap<ChatNode, {source: string; display: string}>();
   const ESCAPES: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
@@ -157,44 +159,40 @@ const ChatView = (() => {
     return exactIcons.node(name, size) as ChatNode;
   }
 
-  const MATRIX_CELLS: ReadonlyArray<readonly [number, number]> = [
-    [0, 0],
-    [4, 0],
-    [8, 0],
-    [8, 4],
-    [8, 8],
-    [4, 8],
-    [0, 8],
-    [0, 4],
-  ];
-
   function stateDot(
     state: 'done' | 'warning' | 'ongoing' | 'error',
     size = 10,
   ): ChatNode {
     if (state === 'ongoing') {
-      const svg = h('svg', {
-        class: 'mp-chat-matrix',
+      const namespace = 'http://www.w3.org/2000/svg';
+      const svg = DOC
+        ? DOC.createElementNS(namespace, 'svg')
+        : shimNode('svg', namespace);
+      const attrs = {
+        class: 'mp-chat-status-spinner',
         width: String(size),
         height: String(size),
-        viewBox: '0 0 10 10',
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '1',
+        'stroke-linecap': 'round',
         'aria-hidden': 'true',
-      });
+      };
+      for (const [key, value] of Object.entries(attrs)) {
+        svg.setAttribute(key, value);
+      }
       svg.setAttribute('data-state', 'ongoing');
-      MATRIX_CELLS.forEach(([x, y], index) => {
-        const rect = h('rect', {
-          class: 'mp-chat-cell',
-          x: String(x),
-          y: String(y),
-          width: '2',
-          height: '2',
-        });
-        rect.setAttribute(
-          'style',
-          `animation-delay:${(index - MATRIX_CELLS.length) * 125}ms`,
-        );
-        attach(svg, rect);
-      });
+      const path = DOC
+        ? DOC.createElementNS(namespace, 'path')
+        : shimNode('path', namespace);
+      // Claude Desktop's shipped Spinner master16, extracted via local REA.
+      path.setAttribute(
+        'd',
+        'M13.5 8C13.5 11.038 11.038 13.5 8 13.5C4.962 13.5 2.5 11.038 2.5 8C2.5 4.962 4.962 2.5 8 2.5',
+      );
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      attach(svg, path);
       return svg;
     }
     const dot = h('span', {class: 'mp-chat-dot', 'aria-hidden': 'true'});
@@ -204,8 +202,13 @@ const ChatView = (() => {
   }
 
   const ROW_EXPANSION = new Map<string, boolean>();
-  const GROUP_EXPANSION = new Map<string, {open: boolean; members: string[]}>();
+  const GROUP_EXPANSION = new Map<
+    string,
+    {open: boolean; members: string[]; single?: boolean}
+  >();
   let liveTurnSequence = 0;
+  let thinkingSequence = 0;
+  let disclosureSequence = 0;
 
   function rememberExpansion(
     store: Map<string, boolean>,
@@ -225,6 +228,7 @@ const ChatView = (() => {
     GROUP_EXPANSION.set(id, {
       open,
       members: GROUP_EXPANSION.get(id)?.members || [],
+      single: GROUP_EXPANSION.get(id)?.single,
     });
   }
 
@@ -257,6 +261,7 @@ const ChatView = (() => {
   function disclosureRow(opts: DisclosureOptions): {
     root: ChatNode;
     row: ChatNode;
+    toggle: ChatNode | null;
   } {
     const remembered = opts.rowId ? ROW_EXPANSION.get(opts.rowId) : undefined;
     const open = remembered !== undefined ? remembered : Boolean(opts.open);
@@ -273,9 +278,6 @@ const ChatView = (() => {
     const row = h('div', {class: 'mp-chat-row'});
     if (expandable) {
       row.setAttribute('data-expandable', 'true');
-      row.setAttribute('role', 'button');
-      row.setAttribute('tabindex', '0');
-      row.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
     if (opts.leadingOverride) {
@@ -299,10 +301,34 @@ const ChatView = (() => {
     }
     attach(root, bodyHost);
 
+    let toggle: ChatNode | null = null;
     if (expandable) {
+      const id = `mp-chat-step:${++disclosureSequence}`;
+      title.setAttribute('id', `${id}-label`);
+      const labelledBy = [`${id}-label`];
+      for (const [index, item] of (opts.collapsed || []).entries()) {
+        if (item.getAttribute('aria-hidden') !== 'true') {
+          item.setAttribute('id', `${id}-meta-${index}`);
+          labelledBy.push(`${id}-meta-${index}`);
+        }
+      }
+      bodyHost.setAttribute('id', `${id}-body`);
+      toggle = h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-chat-row-toggle',
+          'data-mp-chat-act': 'toggle',
+          'aria-labelledby': labelledBy.join(' '),
+          'aria-expanded': open ? 'true' : 'false',
+          'aria-controls': `${id}-body`,
+        },
+        h('span', {class: 'mp-chat-row-caret', 'aria-hidden': 'true'}, '\ue02a'),
+      );
+      attach(row, toggle);
       row.setAttribute('data-mp-chat-act', 'toggle');
     }
-    return {root, row};
+    return {root, row, toggle};
   }
 
   type ToolVariant =
@@ -449,7 +475,6 @@ const ChatView = (() => {
 
   const SUBAGENT_TOOLS = new Set(['Agent', 'delegate_task']);
   const PLAN_TOOLS = new Set(['Todo', 'TodoWrite', 'todo_write']);
-  const EXTENDED_THINKING_GLYPH = String.fromCodePoint(0xe068);
   const AGENTS_SIMPLE_GLYPH = String.fromCodePoint(0xe11c);
 
   const TOOL_VARIANTS: Record<string, ToolVariant> = {
@@ -482,6 +507,7 @@ const ChatView = (() => {
     Read: 'read',
     Write: 'write',
     Edit: 'edit',
+    MultiEdit: 'edit',
     Patch: 'edit',
     Grep: 'search',
     Glob: 'search',
@@ -1234,13 +1260,6 @@ const ChatView = (() => {
   type ToolPhase = 'running' | 'done' | 'cancelled';
 
   /**
-   * Claude's `TA`. Summaries lose their trailing punctuation.
-   */
-  function stripTrailingPunctuation(value: string): string {
-    return value.trim().replace(/[.!?;:,]+$/, '');
-  }
-
-  /**
    * Claude's `Fs`/`rr` pair, both of which live in uncaptured chunks. The
    * reference applies `Fs(value).trim()` as a general normalise-then-trim, so
    * a whitespace collapse followed by a trim is what the caller observes.
@@ -1393,34 +1412,7 @@ const ChatView = (() => {
   }
 
   /**
-   * Claude's `fN`. Thinking duration wording. The reference rounds to whole
-   * seconds first and renders nothing at or below zero.
-   */
-  function thinkingDuration(ms: number): string | undefined {
-    const seconds = Math.round(ms / 1000);
-    if (seconds <= 0) {
-      return undefined;
-    }
-    if (seconds < 60) {
-      return `Thought for ${seconds}s`;
-    }
-    const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
-    if (minutes < 60) {
-      return rest > 0
-        ? `Thought for ${minutes}m ${rest}s`
-        : `Thought for ${minutes}m`;
-    }
-    const hours = Math.floor(minutes / 60);
-    const minutesRest = minutes % 60;
-    return minutesRest > 0
-      ? `Thought for ${hours}h ${minutesRest}m`
-      : `Thought for ${hours}h`;
-  }
-
-  /**
-   * Elapsed-time wording for a row that is still running. Same rounding
-   * as the thinking duration, without its past-tense prefix.
+   * Elapsed-time wording for a row that is still running.
    */
   function runningDuration(ms: number): string | undefined {
     const seconds = Math.round(ms / 1000);
@@ -1717,35 +1709,147 @@ const ChatView = (() => {
     return JSON.stringify(parsed, null, 2);
   }
 
-  interface DiffLine {
-    kind: 'del' | 'add';
+  interface DiffBlock {
+    kind: 'del' | 'add' | 'context' | 'notice';
     text: string;
   }
   interface DiffView {
-    lines: DiffLine[];
-    hidden: number;
+    blocks: DiffBlock[];
+    previews: Array<{blocks: DiffBlock[]; copyText?: string; numbered?: boolean}>;
   }
 
-  const DIFF_MAX_LINES = 40;
-
-  function diffLinesFrom(
+  function appendDiffBlock(
     text: string,
-    kind: DiffLine['kind'],
-    out: DiffLine[],
-  ): number {
-    const parts = String(text || '').split('\n');
-    let hidden = 0;
-    for (let i = 0; i < parts.length; i += 1) {
-      if (out.length >= DIFF_MAX_LINES) {
-        hidden += parts.length - i;
-        break;
-      }
-      out.push({kind, text: parts[i]});
+    kind: DiffBlock['kind'],
+    out: DiffBlock[],
+  ): void {
+    if (text) {
+      out.push({kind, text});
     }
-    return hidden;
   }
 
-  function deriveDiff(name: string, argsRaw: string): DiffView | null {
+  function replacementDiff(before: string, after: string): DiffBlock[] | null {
+    const oldLines = before.match(/[^\n]*\n|[^\n]+$/g) || [];
+    const newLines = after.match(/[^\n]*\n|[^\n]+$/g) || [];
+    let start = 0;
+    let oldEnd = oldLines.length;
+    let newEnd = newLines.length;
+    while (
+      start < oldEnd &&
+      start < newEnd &&
+      oldLines[start] === newLines[start]
+    ) {
+      start++;
+    }
+    while (
+      oldEnd > start &&
+      newEnd > start &&
+      oldLines[oldEnd - 1] === newLines[newEnd - 1]
+    ) {
+      oldEnd--;
+      newEnd--;
+    }
+    const groups: Array<{kind: DiffBlock['kind']; parts: string[]}> = [];
+    const push = (kind: DiffBlock['kind'], text: string): void => {
+      if (!text) {
+        return;
+      }
+      const last = groups.at(-1);
+      if (last?.kind === kind) {
+        last.parts.push(text);
+      } else {
+        groups.push({kind, parts: [text]});
+      }
+    };
+    push('context', oldLines.slice(0, start).join(''));
+    const oldCount = oldEnd - start;
+    const newCount = newEnd - start;
+    const oldSet = new Set(oldLines.slice(start, oldEnd));
+    if (!newLines.slice(start, newEnd).some(line => oldSet.has(line))) {
+      push('del', oldLines.slice(start, oldEnd).join(''));
+      push('add', newLines.slice(start, newEnd).join(''));
+    } else {
+      // Optional inline comparisons must not stall the UI. At this budget the
+      // table is under 2 MiB; larger comparisons retain separate full texts.
+      if (oldCount * newCount > 200_000) {
+        return null;
+      }
+      const width = newCount + 1;
+      const lengths = new Uint32Array((oldCount + 1) * width);
+      for (let i = oldCount - 1; i >= 0; i--) {
+        for (let j = newCount - 1; j >= 0; j--) {
+          lengths[i * width + j] =
+            oldLines[start + i] === newLines[start + j]
+              ? lengths[(i + 1) * width + j + 1] + 1
+              : Math.max(
+                  lengths[(i + 1) * width + j],
+                  lengths[i * width + j + 1],
+                );
+        }
+      }
+      let i = 0;
+      let j = 0;
+      while (i < oldCount || j < newCount) {
+        if (
+          i < oldCount &&
+          j < newCount &&
+          oldLines[start + i] === newLines[start + j]
+        ) {
+          push('context', oldLines[start + i++]);
+          j++;
+        } else if (
+          j === newCount ||
+          (i < oldCount &&
+            lengths[(i + 1) * width + j] >= lengths[i * width + j + 1])
+        ) {
+          push('del', oldLines[start + i++]);
+        } else {
+          push('add', newLines[start + j++]);
+        }
+      }
+    }
+    push('context', oldLines.slice(oldEnd).join(''));
+    return groups.map(group => ({
+      kind: group.kind,
+      text: group.parts.join(''),
+    }));
+  }
+
+  function deriveDiff(
+    name: string,
+    argsRaw: string,
+    presentation?: unknown,
+  ): DiffView | null {
+    const shown = typeof presentation === 'string'
+      ? outputRecord(presentation) : recordOf(presentation);
+    if (
+      shown?.kind === 'file_diff' &&
+      typeof shown.beforeText === 'string' &&
+      typeof shown.afterText === 'string'
+    ) {
+      const before = shown.beforeText.replace(/\r\n/g, '\n');
+      const after = shown.afterText.replace(/\r\n/g, '\n');
+      let blocks = replacementDiff(before, after);
+      if (!blocks) {
+        blocks = [{kind: 'notice', text: lt('chat.diff_separate_text')}];
+        appendDiffBlock(before, 'del', blocks);
+        appendDiffBlock(after, 'add', blocks);
+      }
+      return {
+        blocks,
+        previews: [{blocks, copyText: shown.afterText || shown.beforeText, numbered: true}],
+      };
+    }
+    if (shown?.kind === 'file_diff_unavailable') {
+      const blocks: DiffBlock[] = [{
+        kind: 'notice',
+        text: lt(shown.reason === 'binary'
+          ? 'chat.diff_unavailable_binary' : shown.reason === 'capture_failed'
+            ? 'chat.diff_unavailable_capture' : shown.reason === 'previous'
+              ? 'chat.diff_unavailable_previous' : 'chat.diff_unavailable_large'),
+      }];
+      return {blocks, previews: [{blocks}]};
+    }
     if (!argsRaw) {
       return null;
     }
@@ -1759,23 +1863,50 @@ const ChatView = (() => {
       return null;
     }
     const args = parsed as Record<string, unknown>;
-    const view: DiffView = {lines: [], hidden: 0};
+    const view: DiffView = {blocks: [], previews: []};
     if (name === 'Edit' || name === 'edit_file' || name === 'edit') {
-      const oldText = firstString(args, ['old_string', 'oldText', 'old_str']);
-      const newText = firstString(args, ['new_string', 'newText', 'new_str']);
-      if (!oldText && !newText) {
-        return null;
+      for (const raw of Array.isArray(args.edits) ? args.edits : [args]) {
+        const edit = recordOf(raw);
+        if (!edit) {
+          continue;
+        }
+        const beforeText = firstString(edit, [
+          'old_string',
+          'oldText',
+          'old_str',
+        ]);
+        const afterText = firstString(edit, [
+          'new_string',
+          'newText',
+          'new_str',
+        ]);
+        const before = beforeText.replace(/\r\n/g, '\n');
+        const after = afterText.replace(/\r\n/g, '\n');
+        let blocks = replacementDiff(before, after);
+        if (!blocks) {
+          blocks = [
+            {
+              kind: 'notice',
+              text: lt('chat.diff_separate_text'),
+            },
+          ];
+          appendDiffBlock(before, 'del', blocks);
+          appendDiffBlock(after, 'add', blocks);
+        }
+        if (blocks.length) {
+          view.blocks.push(...blocks);
+          view.previews.push({blocks, copyText: afterText || beforeText});
+        }
       }
-      view.hidden += diffLinesFrom(oldText, 'del', view.lines);
-      view.hidden += diffLinesFrom(newText, 'add', view.lines);
-      return view;
+      return view.blocks.length ? view : null;
     }
     if (name === 'Write' || name === 'write_file' || name === 'write') {
       const content = firstString(args, ['content', 'text', 'new_string']);
       if (!content) {
         return null;
       }
-      view.hidden += diffLinesFrom(content, 'add', view.lines);
+      appendDiffBlock(content.replace(/\r\n/g, '\n'), 'add', view.blocks);
+      view.previews.push({blocks: view.blocks, copyText: content, numbered: true});
       return view;
     }
     return null;
@@ -1784,6 +1915,27 @@ const ChatView = (() => {
   interface DiffStat {
     added: number;
     removed: number;
+  }
+
+  function reportedDiffStat(
+    output: string,
+    field: 'diffStat' | 'turnDiffStat',
+  ): DiffStat | null | undefined {
+    const result = outputRecord(output);
+    if (!result || !(field in result)) {
+      return undefined;
+    }
+    const stat = recordOf(result[field]);
+    const added = stat?.added;
+    const removed = stat?.removed;
+    return typeof added === 'number' &&
+      Number.isInteger(added) &&
+      added >= 0 &&
+      typeof removed === 'number' &&
+      Number.isInteger(removed) &&
+      removed >= 0
+      ? {added, removed}
+      : null;
   }
 
   function countLines(text: string): number {
@@ -1824,7 +1976,22 @@ const ChatView = (() => {
       if (!oldText && !newText) {
         return null;
       }
-      return {added: countLines(newText), removed: countLines(oldText)};
+      const blocks = replacementDiff(
+        oldText.replace(/\r\n/g, '\n'),
+        newText.replace(/\r\n/g, '\n'),
+      );
+      if (!blocks) {
+        return null;
+      }
+      const stat = {added: 0, removed: 0};
+      for (const block of blocks) {
+        if (block.kind === 'add') {
+          stat.added += countLines(block.text);
+        } else if (block.kind === 'del') {
+          stat.removed += countLines(block.text);
+        }
+      }
+      return stat;
     }
     if (name === 'Write' || name === 'write_file' || name === 'write') {
       const content = firstString(args, ['content', 'text', 'new_string']);
@@ -1843,6 +2010,10 @@ const ChatView = (() => {
     title: string;
     summary: string;
     filePath?: string;
+    fileTarget?: string;
+    filePreviewPath?: string;
+    fileDiffReference?: {beforePath: string | null; afterPath: string};
+    presentation?: unknown;
     body: string | null;
     output: string | null;
     errorSummary: string | null;
@@ -1856,8 +2027,9 @@ const ChatView = (() => {
   function toolRowModel(
     name: string,
     argsRaw: string,
-    result?: {text?: string; isError?: boolean; interrupted?: boolean},
+    result?: {text?: string; isError?: boolean; interrupted?: boolean; presentation?: unknown},
     callId = '',
+    executionRoot = '',
     runningOutput: string | null = null,
   ): ToolRowModel {
     const variant = classifyTool(name);
@@ -1870,6 +2042,10 @@ const ChatView = (() => {
             ? 'error'
             : 'ok';
     const input = parseArgs(argsRaw) ?? {};
+    const receipt = FILE_WRITE_TOOLS.has(name)
+      ? outputRecord(result?.text || '')
+      : null;
+    const isWrite = ['Write', 'write_file', 'write'].includes(name);
     const phase: ToolPhase =
       state === 'running'
         ? 'running'
@@ -1923,7 +2099,9 @@ const ChatView = (() => {
       (REMOTE_DEVICE_LABELS[name] === undefined
         ? undefined
         : toolLabel(name, input, phase)) ??
-      (phase === 'cancelled' ? toolLabel(name, input, 'cancelled') : undefined);
+      (phase === 'cancelled'
+        ? toolLabel(isWrite ? 'Write' : name, input, 'cancelled')
+        : undefined);
     if (sentenceTitle !== undefined) {
       summary = '';
     }
@@ -1945,9 +2123,13 @@ const ChatView = (() => {
           ? 'Failed to fetch'
           : SUBAGENT_TOOLS.has(name)
             ? 'Subagent'
-            : (connector ??
-              sentence(toolLabel(name, input, 'done')) ??
-              mpCompleted)));
+            : isWrite && state === 'error'
+              ? 'Failed to write'
+              : isWrite && state === 'ok' && receipt?.created === false
+                ? 'Updated'
+                : (connector ??
+                  sentence(toolLabel(name, input, 'done')) ??
+                  mpCompleted)));
     // An unknown tool is shown by its raw name when settled, and keeps that
     // name mid-flight too — a wrong tense beats a wrong tool.
     // `||`, not `??`: an empty variant title means "no running form", and a
@@ -1967,9 +2149,24 @@ const ChatView = (() => {
     // the opposite of what happened.
     const title =
       sentenceTitle ?? (phase === 'running' ? runningTitle : completedTitle);
-    let output =
-      runningOutput ?? (result === undefined || !result.text ? null : result.text);
-    if (output) {
+    const shellResult =
+      variant === 'bash' ? outputRecord(result?.text || '') : null;
+    const terminal =
+      shellResult !== null &&
+      (typeof shellResult.stdout === 'string' ||
+        typeof shellResult.stderr === 'string');
+    const stdout = terminal ? firstString(shellResult, ['stdout']) : '';
+    const stderr = terminal ? firstString(shellResult, ['stderr']) : '';
+    const terminalText =
+      stdout +
+      (stdout && stderr && !stdout.endsWith('\n') ? '\n' : '') +
+      stderr;
+    let output = runningOutput ?? (terminal
+      ? terminalText || firstString(shellResult, ['error', 'error_message']) || null
+      : result === undefined || !result.text
+        ? null
+        : result.text);
+    if (output && !terminal) {
       try {
         const decoded = JSON.parse(output);
         if (decoded && typeof decoded.value === 'string') {
@@ -1980,7 +2177,7 @@ const ChatView = (() => {
         output = JSON.stringify(decoded, null, 2);
       } catch {}
     }
-    if (output) {
+    if (output && !terminal) {
       output = output
         .split(/\r?\n/)
         .filter(
@@ -1989,44 +2186,344 @@ const ChatView = (() => {
         .join('\n')
         .trim();
     }
+    const partialError =
+      state === 'error' && result?.text
+        ? firstString(outputRecord(result.text) || {}, [
+            'error',
+            'error_message',
+          ]) ||
+          (terminal ? stderr.trim() : '') ||
+          (terminal &&
+          typeof shellResult.exit === 'number' &&
+          shellResult.exit !== 0
+            ? `Command exited with code ${shellResult.exit}`
+            : '')
+        : '';
     const rawError =
-      state === 'error' && output !== null ? firstLine(output) : null;
+      state === 'error' && output !== null
+        ? firstLine(partialError || output)
+        : null;
     const errorSummary =
       rawError !== null && rawError.length > 60
         ? `${rawError.slice(0, 60)}…`
         : rawError;
+    const actualStat = reportedDiffStat(result?.text || '', 'diffStat');
+    const filePath = deriveFilePath(variant, argsRaw);
+    const target = filePath
+      ? firstString(receipt || {}, ['absolutePath']) ||
+        executionFilePath(filePath, executionRoot)
+      : '';
+    const shown =
+      typeof result?.presentation === 'string'
+        ? outputRecord(result.presentation)
+        : recordOf(result?.presentation);
+    const fileDiffReference =
+      FILE_WRITE_TOOLS.has(name) &&
+      state === 'ok' &&
+      shown?.kind === 'file_diff' &&
+      (shown.beforePath === null || typeof shown.beforePath === 'string') &&
+      typeof shown.afterPath === 'string'
+        ? {beforePath: shown.beforePath, afterPath: shown.afterPath}
+        : undefined;
     return {
       variant,
       name,
       argsRaw,
       title,
       summary,
-      filePath: deriveFilePath(variant, argsRaw),
+      filePath,
+      fileTarget: /^(?:[a-z]:[\\/]|[\\/])/i.test(target) ? target : undefined,
+      fileDiffReference,
+      presentation: result?.presentation,
       body: deriveBody(variant, argsRaw),
       output,
       errorSummary,
       errorTitle: Boolean(errorUrl),
       state,
       callId,
-      diffStat: deriveDiffStat(name, argsRaw),
+      diffStat:
+        actualStat === undefined
+          ? state === 'error' ||
+            (isWrite && receipt?.created === false)
+            ? null
+            : deriveDiffStat(name, argsRaw)
+          : actualStat,
       fileChange: fileChangeMode(name, input),
     };
   }
 
-  function diffNode(diff: DiffView): ChatNode {
-    const card = h('div', {class: 'mp-chat-diff'});
-    for (const line of diff.lines) {
-      const row = h('div', {class: 'mp-chat-diff-line'});
-      row.setAttribute('data-kind', line.kind);
-      attach(row, `${line.kind === 'del' ? '-' : '+'} ${line.text}`);
-      attach(card, row);
+  function fileDiffNode(presentation: {
+    kind: 'file_diff';
+    beforeText: string;
+    afterText: string;
+  }): ChatNode {
+    return diffPreviewNode(deriveDiff('', '', presentation)!, {});
+  }
+
+  function diffPreviewNode(
+    diff: DiffView,
+    model: Pick<ToolRowModel, 'filePath' | 'fileTarget' | 'filePreviewPath'>,
+  ): ChatNode {
+    const root = h('div', {class: 'mp-chat-diff-previews'});
+    for (const preview of diff.previews) {
+      const section = h('div', {class: 'mp-chat-diff-preview'});
+      const header = h('div', {class: 'mp-chat-diff-header'});
+      if (model.filePath) {
+        const file = model.fileTarget
+          ? h('button', {
+              type: 'button',
+              class: 'mp-chat-diff-path',
+              title: model.filePath,
+              'data-mp-chat-act': 'open-file',
+              'data-file-path': model.filePath,
+              'data-file-absolute-path': model.fileTarget,
+              ...(model.filePreviewPath
+                ? {'data-preview-path': model.filePreviewPath} : {}),
+            })
+          : h('span', {class: 'mp-chat-diff-path', title: model.filePath});
+        attach(file, model.filePath);
+        attach(header, file);
+      }
+      if (preview.copyText !== undefined) {
+        const copy = h('button', {
+          type: 'button',
+          class: 'mp-chat-action mp-chat-diff-copy',
+          'aria-label': lt('chat.copy'),
+          'data-mp-chat-act': 'copy',
+          'data-mp-chat-copy': preview.copyText,
+        });
+        attach(copy, h('span', {
+          class: 'mp-chat-diff-copy-glyph',
+          'aria-hidden': 'true',
+          'data-glyph': '\ue056',
+        }));
+        attach(header, copy);
+      }
+      attach(section, header);
+      attach(section, diffNode(preview));
+      attach(root, section);
     }
-    if (diff.hidden > 0) {
-      const more = h('div', {class: 'mp-chat-diff-more'});
-      attach(more, ltCount('chat.more_lines', diff.hidden));
-      attach(card, more);
+    return root;
+  }
+
+  function deferredFileDiffNode(
+    model: Pick<ToolRowModel, 'filePath' | 'fileTarget' | 'filePreviewPath'>,
+    reference: Record<string, unknown>,
+  ): ChatNode {
+    const root = diffPreviewNode({blocks: [], previews: [{blocks: []}]}, model);
+    root.setAttribute('data-file-diff-reference', JSON.stringify(reference));
+    if (model.filePath) {
+      root.setAttribute('data-file-path', model.filePath);
+    }
+    if (model.fileTarget) {
+      root.setAttribute('data-file-absolute-path', model.fileTarget);
+    }
+    if (model.filePreviewPath) {
+      root.setAttribute('data-preview-path', model.filePreviewPath);
+    }
+    const load = h('button', {
+      type: 'button',
+      class: 'mp-chat-diff-load',
+      'data-mp-chat-act': 'load-file-diff',
+    });
+    attach(load, lt('chat.diff_show'));
+    attach(root, load);
+    return root;
+  }
+
+  async function loadFileDiff(button: HTMLElement): Promise<void> {
+    const root = button.closest<HTMLElement>('[data-file-diff-reference]');
+    if (!root || button.dataset.loading === 'true') {
+      return;
+    }
+    const restoreFocus = DOC?.activeElement === button;
+    button.dataset.loading = 'true';
+    (button as HTMLButtonElement).disabled = true;
+    button.textContent = lt('chat.diff_loading');
+    try {
+      const reference = JSON.parse(
+        root.getAttribute('data-file-diff-reference') || '{}',
+      );
+      const reply = await window.magicPointer.readFileDiff(reference);
+      if (root.isConnected === false) {
+        return;
+      }
+      if (!reply.ok) {
+        throw new Error(reply.error);
+      }
+      const diff = deriveDiff('', '', reply.presentation)!;
+      const content = diffPreviewNode(diff, {
+        filePath: root.getAttribute('data-file-path') || undefined,
+        fileTarget: root.getAttribute('data-file-absolute-path') || undefined,
+        filePreviewPath: root.getAttribute('data-preview-path') || undefined,
+      }) as HTMLElement;
+      root.replaceChildren(...Array.from(content.childNodes));
+      root.removeAttribute('data-file-diff-reference');
+      if (restoreFocus && DOC?.activeElement === button) {
+        root
+          .querySelector<HTMLElement>('[tabindex="0"]')
+          ?.focus({preventScroll: true});
+      }
+    } catch (error) {
+      if (root.isConnected === false) {
+        return;
+      }
+      button.dataset.loading = 'false';
+      (button as HTMLButtonElement).disabled = false;
+      button.textContent = lt('chat.diff_retry');
+      button.title = error instanceof Error ? error.message : String(error);
+      if (restoreFocus && DOC?.activeElement === button) {
+        button.focus({preventScroll: true});
+      }
+    }
+  }
+
+  function numberedDiffNode(blocks: DiffBlock[]): ChatNode {
+    const index = diffRows.indexDiffRows(blocks.flatMap(block =>
+      block.kind === 'notice' ? [] : [{kind: block.kind, text: block.text}],
+    ));
+    const pure = blocks.length && blocks.every(block => block.kind === blocks[0].kind)
+      && (blocks[0].kind === 'add' || blocks[0].kind === 'del') ? blocks[0].kind : '';
+    const card = h('div', {
+      class: 'mp-chat-diff',
+      'data-diff-numbered': 'true',
+      'data-diff-pure-side': pure,
+      'data-diff-total-rows': String(index.count),
+      style: `--mp-chat-diff-number-width: max(3ch, ${index.digits + (pure ? 2 : 0)}ch)`,
+      tabindex: '0',
+      role: 'group',
+      'aria-label': lt('artifact.kind.code'),
+    });
+    const render = (first: number, last: number, before: number, after: number): void => {
+      const children: ChatNode[] = [];
+      if (index.count > diffRows.INITIAL_DIFF_ROWS) {
+        children.push(h('div', {
+          class: 'mp-chat-diff-virtual-spacer', 'aria-hidden': 'true',
+          style: `height: ${before}px`,
+        }));
+      }
+      for (let i = first; i < last; i++) {
+        const row = index.get(i);
+        if (row.kind === 'separator') {
+          children.push(h('div', {
+            class: 'mp-chat-diff-hunk-separator mp-chat-diff-window-row',
+            'data-diff-row': String(i),
+            'aria-hidden': 'true',
+          }));
+          continue;
+        }
+        children.push(h('div', {
+          class: 'mp-chat-diff-code-row mp-chat-diff-window-row',
+          'data-kind': row.kind,
+          'data-diff-row': String(i),
+          'data-line-number': String(row.number),
+        },
+        h('span', {class: 'mp-chat-diff-number', 'aria-hidden': 'true'}, String(row.number)),
+        h('pre', {class: 'mp-chat-diff-code-text'}, row.text)));
+      }
+      if (index.count > diffRows.INITIAL_DIFF_ROWS) {
+        children.push(h('div', {
+          class: 'mp-chat-diff-virtual-spacer', 'aria-hidden': 'true',
+          style: `height: ${after}px`,
+        }));
+      }
+      if (DOC) {
+        (card as HTMLElement).replaceChildren(...children as HTMLElement[]);
+      } else {
+        (card as ShimNode).children = [];
+        children.forEach(child => attach(card, child));
+      }
+    };
+    const initial = Math.min(index.count, diffRows.INITIAL_DIFF_ROWS);
+    const after = index.separators.reduce((height, i) =>
+      i >= initial ? height - 13 : height, (index.count - initial) * 17);
+    render(0, initial, 0, after);
+    if (DOC) {
+      diffRows.mountDiffRows(card as HTMLElement, index, render);
     }
     return card;
+  }
+
+  function diffNode(diff: Pick<DiffView, 'blocks'> & {numbered?: boolean}): ChatNode {
+    if (diff.blocks.some(block => block.kind === 'notice')) {
+      const root = h('div', {class: 'mp-chat-diffs'});
+      let pending: DiffBlock[] = [];
+      const flush = (): void => {
+        if (pending.length) {
+          attach(root, diffNode({blocks: pending}));
+          pending = [];
+        }
+      };
+      for (let i = 0; i < diff.blocks.length; i++) {
+        const block = diff.blocks[i];
+        if (block.kind !== 'notice') {
+          pending.push(block);
+          continue;
+        }
+        flush();
+        const separate = h('div', {
+          class: 'mp-chat-diff mp-chat-diff-separated',
+        });
+        attach(separate, h('p', {class: 'mp-chat-diff-notice'}, block.text));
+        for (const side of diff.blocks.slice(i + 1, i + 3)) {
+          const row = h('pre', {
+            class: 'mp-chat-diff-line mp-chat-diff-side',
+            'data-kind': side.kind,
+            tabindex: '0',
+            role: 'group',
+            'aria-label': lt(
+              side.kind === 'del'
+                ? 'chat.diff_removed_text'
+                : 'chat.diff_added_text',
+            ),
+          });
+          const prefix = side.kind === 'del' ? '− ' : '+ ';
+          attach(
+            row,
+            side.text.replace(/\n$/, '').replace(/(^|\n)/g, '$1' + prefix),
+          );
+          attach(separate, row);
+        }
+        i += 2;
+        attach(root, separate);
+      }
+      flush();
+      return root;
+    }
+    if (diff.numbered) {
+      return numberedDiffNode(diff.blocks);
+    }
+    const card = h('div', {
+      class: 'mp-chat-diff',
+      tabindex: '0',
+      role: 'group',
+      'aria-label': lt('artifact.kind.code'),
+    });
+    for (const block of diff.blocks) {
+      const row = h('pre', {class: 'mp-chat-diff-line'});
+      row.setAttribute('data-kind', block.kind);
+      const prefix =
+        block.kind === 'del' ? '- ' : block.kind === 'add' ? '+ ' : '  ';
+      const text = block.text.replace(/\r\n/g, '\n').replace(/\n$/, '');
+      attach(row, text.replace(/(^|\n)/g, '$1' + prefix));
+      attach(card, row);
+    }
+    return card;
+  }
+
+  function deletedFileNode(text: string): ChatNode {
+    const content = text
+      ? text
+          .replace(/\n$/, '')
+          .split('\n')
+          .map(line => `- ${line}`)
+          .join('\n')
+      : '';
+    return h(
+      'pre',
+      {class: 'mp-chat-diff mp-chat-diff-line', 'data-kind': 'del'},
+      content,
+    );
   }
 
   interface ToolCommand {
@@ -2675,6 +3172,9 @@ const ChatView = (() => {
       alt: image.title || alt,
       loading: 'lazy',
       decoding: 'async',
+      'data-mp-chat-act': 'view-image',
+      role: 'button',
+      tabindex: '0',
     });
     attach(
       tile,
@@ -2980,6 +3480,7 @@ const ChatView = (() => {
       delayMs?: number;
       className?: string;
     },
+    content?: ChatNode[],
   ): ChatNode {
     const root = h('span', {
       class: opts.className ? `mp-shimmer ${opts.className}` : 'mp-shimmer',
@@ -2995,7 +3496,11 @@ const ChatView = (() => {
     if (vars.length > 0) {
       root.setAttribute('style', `${vars.join(';')};`);
     }
-    attach(root, text);
+    if (content) {
+      content.forEach(node => attach(root, node));
+    } else {
+      attach(root, text);
+    }
     if (opts.shimmering) {
       const clone = h('span', {
         class: 'mp-shimmer-clone',
@@ -3008,7 +3513,56 @@ const ChatView = (() => {
     return root;
   }
 
-  function toolRowNode(model: ToolRowModel, scope = ''): ChatNode {
+  function combinedFileDiffReference(
+    models: ToolRowModel[],
+  ): ToolRowModel['fileDiffReference'] {
+    const completed = models.filter(
+      model => FILE_WRITE_TOOLS.has(model.name) && model.state === 'ok',
+    );
+    if (!completed.length || completed.some(model => !model.fileDiffReference)) {
+      return undefined;
+    }
+    return {
+      beforePath: completed[0].fileDiffReference!.beforePath,
+      afterPath: completed[completed.length - 1].fileDiffReference!.afterPath,
+    };
+  }
+
+  function toolFileSummaryNode(model: ToolRowModel): ChatNode {
+    const reference = model.fileDiffReference;
+    const file =
+      model.filePath && model.fileTarget
+        ? h(
+            'button',
+            {
+              type: 'button',
+              class: 'mp-chat-tool-file',
+              title: model.filePath,
+              'data-mp-chat-act': 'open-file',
+              'data-file-path': model.filePath,
+              'data-file-absolute-path': model.fileTarget,
+              ...(reference
+                ? {'data-file-open-diff': JSON.stringify(reference)}
+                : {}),
+            },
+            model.summary,
+          )
+        : undefined;
+    return shimmerText(
+      model.summary,
+      {
+        shimmering: model.state === 'running',
+        className: 'mp-chat-summary',
+      },
+      file ? [file] : undefined,
+    );
+  }
+
+  function toolRowNode(
+    model: ToolRowModel,
+    scope = '',
+    members?: ToolRowModel[],
+  ): ChatNode {
     const root = h('div', {class: 'mp-chat-tool'});
     root.setAttribute('data-tool', '');
     root.setAttribute('data-state', model.state);
@@ -3040,12 +3594,7 @@ const ChatView = (() => {
       const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
       attach(sep, ' ');
       collapsed.push(sep);
-      collapsed.push(
-        shimmerText(summaryText, {
-          shimmering: model.state === 'running',
-          className: 'mp-chat-summary',
-        }),
-      );
+      collapsed.push(toolFileSummaryNode(model));
     }
 
     if (
@@ -3069,24 +3618,20 @@ const ChatView = (() => {
       collapsed.push(stat);
     }
 
-    const body: ChatNode[] = [];
-    // `too_large` is the reference's refusal to preview a change whose strings
-    // exceed 200000 characters: the row keeps its diffstat and drops the body
-    // rather than rendering a diff too big to read.
-    const diff =
-      model.fileChange === 'too_large'
-        ? null
-        : deriveDiff(model.name, model.argsRaw ?? '');
-    const command = toolCommandOf(model);
-    const singleLine = command !== null && command.rest === '';
-    let outputInCard = false;
-    // A search row is the one row whose body is content rather than a command,
-    // a diff or a JSON dump: it renders the payload's own results, and the raw
-    // output row is dropped when it does. The count lives on the row itself,
-    // so an empty result set still reports "0 results".
-    const payload = outputRecord(model.output);
-    const results = resultBodyNode(model.name, payload);
-    const webCount = webResults(model.name, payload)?.count ?? null;
+    const contents = (members ?? [model]).map(toolRowBody);
+    const body = members
+      ? contents.map((content, index) =>
+          h(
+            'div',
+            {
+              class: 'mp-chat-coalesced-result',
+              'data-call-id': members[index].callId,
+            },
+            ...content.nodes,
+          ),
+        )
+      : contents[0].nodes;
+    const webCount = contents[0].webCount;
     if (webCount !== null) {
       const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
       attach(sep, ' ');
@@ -3095,8 +3640,126 @@ const ChatView = (() => {
         h('span', {class: 'mp-chat-web-count'}, webCountLabel(webCount)),
       );
     }
+    const isSubagent = SUBAGENT_TOOLS.has(model.name) && Boolean(model.callId);
+    const {root: disclosure, row: disclosureAction} = disclosureRow({
+      leadingOverride: isSubagent
+        ? h(
+            'span',
+            {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
+            AGENTS_SIMPLE_GLYPH,
+          )
+        : undefined,
+      title: model.title,
+      collapsed,
+      body: body.length ? body : null,
+      expandable: !isSubagent && body.length > 0,
+      open:
+        defaultOpenForTool(model) ||
+        contents.some(content => content.hasResults),
+      rowId: model.callId
+        ? `tool:${scope ? `${scope}:` : ''}${model.callId}`
+        : undefined,
+    });
+    if (isSubagent) {
+      disclosure.setAttribute('data-subagent-row', '');
+      disclosureAction.setAttribute('data-mp-chat-act', 'open-subagent');
+      disclosureAction.setAttribute(
+        'data-subagent-parent-call-id',
+        model.callId,
+      );
+      disclosureAction.setAttribute('role', 'button');
+      disclosureAction.setAttribute('tabindex', '0');
+    }
+    attach(root, disclosure);
+    return root;
+  }
+
+  function toolRowBody(model: ToolRowModel): {
+    nodes: ChatNode[];
+    hasResults: boolean;
+    webCount: number | null;
+  } {
+    const body: ChatNode[] = [];
+    const payload = outputRecord(model.output);
+    const reference =
+      typeof model.presentation === 'string'
+        ? outputRecord(model.presentation)
+        : recordOf(model.presentation);
+    const deferred =
+      model.state === 'ok' &&
+      reference?.kind === 'file_diff' &&
+      typeof reference.afterPath === 'string';
+    const fileDiffs =
+      model.state === 'ok' &&
+      reference?.kind === 'file_diffs' &&
+      Array.isArray(reference.files)
+        ? reference.files
+        : null;
+    // Verified snapshots take precedence over request snippets. Old overwrites
+    // without a before-image cannot truthfully be shown as all additions.
+    const legacyOverwrite =
+      model.state === 'ok' &&
+      !model.presentation &&
+      ['Write', 'write_file', 'write'].includes(model.name) &&
+      payload?.created === false;
+    const presented =
+      model.state === 'ok'
+        ? deriveDiff(
+            model.name,
+            '',
+            legacyOverwrite
+              ? {kind: 'file_diff_unavailable', reason: 'previous'}
+              : model.presentation,
+          )
+        : null;
+    const diff =
+      presented ??
+      (model.state === 'error' || model.fileChange === 'too_large'
+        ? null
+        : deriveDiff(model.name, model.argsRaw ?? ''));
+    const command = toolCommandOf(model);
+    const singleLine = command !== null && command.rest === '';
+    let outputInCard = false;
+    // A search row is the one row whose body is content rather than a command,
+    // a diff or a JSON dump: it renders the payload's own results, and the raw
+    // output row is dropped when it does. The count lives on the row itself,
+    // so an empty result set still reports "0 results".
+    const results = resultBodyNode(model.name, payload);
+    const webCount = webResults(model.name, payload)?.count ?? null;
     const checklist = todoChecklist(model) || questionHistory(model);
-    if (checklist !== null) {
+    if (fileDiffs) {
+      for (const raw of fileDiffs) {
+        const entry = recordOf(raw);
+        if (!entry || typeof entry.path !== 'string') {
+          continue;
+        }
+        const fileModel = {
+          filePath: entry.path,
+          fileTarget:
+            (entry.exists !== false || entry.previewPath) &&
+            typeof entry.absolutePath === 'string'
+              ? entry.absolutePath
+              : undefined,
+          filePreviewPath:
+            typeof entry.previewPath === 'string'
+              ? entry.previewPath
+              : undefined,
+        };
+        const view = recordOf(entry.presentation);
+        if (view?.kind === 'file_diff' && typeof view.afterPath === 'string') {
+          body.push(deferredFileDiffNode(fileModel, view));
+        } else {
+          const fileDiff = deriveDiff(model.name, '', view);
+          if (fileDiff) {
+            body.push(diffPreviewNode(fileDiff, fileModel));
+          }
+        }
+      }
+      outputInCard = body.length > 0;
+    } else if (deferred) {
+      body.push(deferredFileDiffNode(model, reference!));
+      outputInCard = true;
+    } else if (checklist !== null) {
       body.push(checklist);
       outputInCard = model.state !== 'error';
     } else if (results !== null) {
@@ -3106,7 +3769,10 @@ const ChatView = (() => {
       diff !== null &&
       (model.body !== null || model.output !== null)
     ) {
-      body.push(diffNode(diff));
+      body.push(diffPreviewNode(diff, model));
+      // The reference diff branch ends at the code view. Keep receipts in the
+      // model/history; only unsuccessful or interrupted calls need raw detail.
+      outputInCard = model.state === 'ok';
     } else if (command !== null) {
       body.push(
         commandCardNode(command, commandPrompt(model), command.full, {
@@ -3151,165 +3817,134 @@ const ChatView = (() => {
       body.push(output);
     }
 
-    const isSubagent = SUBAGENT_TOOLS.has(model.name) && Boolean(model.callId);
-    const {root: disclosure, row: disclosureAction} = disclosureRow({
-      leadingOverride: isSubagent
-        ? h(
-            'span',
-            {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
-            AGENTS_SIMPLE_GLYPH,
-          )
-        : undefined,
-      title: model.title,
-      collapsed,
-      body: body.length ? body : null,
-      expandable: !isSubagent && body.length > 0,
-      // Rendered results are the point of the row, so they start visible the
-      // way the reference shows its own search results.
-      open: defaultOpenForTool(model) || results !== null,
-      rowId: model.callId
-        ? `tool:${scope ? `${scope}:` : ''}${model.callId}`
-        : undefined,
-    });
-
-    if (isSubagent) {
-      disclosure.setAttribute('data-subagent-row', '');
-      disclosureAction.setAttribute('data-mp-chat-act', 'open-subagent');
-      disclosureAction.setAttribute(
-        'data-subagent-parent-call-id',
-        model.callId,
-      );
-      disclosureAction.setAttribute('role', 'button');
-      disclosureAction.setAttribute('tabindex', '0');
-    }
-
-    attach(root, disclosure);
-    return root;
+    return {nodes: body, hasResults: results !== null, webCount};
   }
 
-  function thinkNode(
-    reasoning: string,
-    running = false,
-    thinkId = '',
-  ): ChatNode {
-    // Claude's `TA` trims a summary's trailing punctuation, and the bare word
-    // "Thinking" is what the reference shows when it has no summary left to
-    // derive -- it is the one case where the block renders text of its own.
-    const derived = running ? latestLine(reasoning) : firstLine(reasoning);
-    const summaryText =
-      derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
-    const summary = h('span', {class: 'mp-chat-summary'});
-    if (running) {
-      summary.setAttribute('data-follow-end', 'true');
-    }
-    attach(summary, summaryText);
+  function thinkingQuote(text: string): string {
+    return `> **Thinking** (~${Math.round(text.length / 4)} tok)\n>\n${text
+      .split(/\r\n?|[\n\u2028\u2029]/g)
+      .map(line => (line.length ? `> ${line}` : '>'))
+      .join('\n')}`;
+  }
 
+  function thinkingDisplayText(text: string): string {
+    // Step plain text follows OT/Cn; quote copying retains the original source.
+    return text
+      .split(/\r\n|\r|\n/)
+      .map(line =>
+        line
+          .split('\t')
+          .map(part =>
+            part
+              .replace(/[\t\n\v\f\r\u0085\u2028\u2029]+/g, ' ')
+              .replace(
+                /[\uD800-\uDBFF]*(?:(?!\u200C|\u200D|\uFE0E|\uFE0F)[\u{16FE4}\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800\uFFFC\u{1D159}\u{13441}\u{13442}\u{16910}\uFDD0-\uFDEF\uFFFE\uFFFF\u{1FFFE}\u{1FFFF}\u{2FFFE}\u{2FFFF}\u{3FFFE}\u{3FFFF}\u{4FFFE}\u{4FFFF}\u{5FFFE}\u{5FFFF}\u{6FFFE}\u{6FFFF}\u{7FFFE}\u{7FFFF}\u{8FFFE}\u{8FFFF}\u{9FFFE}\u{9FFFF}\u{AFFFE}\u{AFFFF}\u{BFFFE}\u{BFFFF}\u{CFFFE}\u{CFFFF}\u{DFFFE}\u{DFFFF}\u{EFFFE}\u{EFFFF}\u{FFFFE}\u{FFFFF}\u{10FFFE}\u{10FFFF}])[\uDC00-\uDFFF]*|([\uD800-\uDBFF]+)/gu,
+                '$1',
+              ),
+          )
+          .join('\t'),
+      )
+      .join('\n')
+      .replace(/^(?:[^\S\n]*\n)+/, '')
+      .replace(/(?:\n[^\S\n]*)+$/, '');
+  }
+
+  function thinkNode(reasoning: string, running = false, thinkId = ''): ChatNode {
+    const label = lt('chat.thought_process');
+    const panelId = `mp-chat-thinking:${thinkId || ++thinkingSequence}`;
     const body = h('div', {class: 'mp-chat-think-body'});
-    attach(body, reasoning);
-    const viewport = h('div', {class: 'mp-chat-think-viewport'});
+    const display = thinkingDisplayText(reasoning);
+    THINKING_TEXT.set(body, {source: reasoning, display});
+    attach(body, display);
+    const viewport = h('div', {
+      class: 'mp-chat-think-viewport',
+      id: panelId,
+      'data-cds-actions-scope': '',
+    });
     attach(viewport, body);
-    const isLong =
-      !running && (reasoning.length > 420 || reasoning.split('\n').length > 8);
+    const actions = h('div', {
+      class: 'mp-chat-think-actions',
+      role: 'toolbar',
+      'aria-label': lt('chat.thinking_actions'),
+      'data-size': 'xs',
+    });
     attach(
-      viewport,
-      h('span', {class: 'mp-chat-think-fade', 'aria-hidden': 'true'}),
-    );
-    const expandedBody: ChatNode[] = [viewport];
-    {
-      const more = h('button', {type: 'button', class: 'mp-chat-think-more'});
-      more.setAttribute('data-mp-chat-act', 'think-more');
-      attach(more, 'Show more');
-      expandedBody.push(more);
-    }
-
-    const {root, row} = disclosureRow({
-      leadingOverride: h(
-        'span',
-        {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
-        EXTENDED_THINKING_GLYPH,
+      actions,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-chat-think-copy',
+          'data-mp-chat-act': 'copy-thinking',
+          'aria-label': lt('chat.copy_as_quote'),
+          ...(!reasoning.trim() ? {hidden: 'true'} : {}),
+        },
+        h('span', {
+          class: 'mp-chat-think-copy-glyph',
+          'aria-hidden': 'true',
+          'data-glyph': '\ue056',
+        }),
       ),
-      title: running ? 'Thinking…' : 'Thought',
-      collapsed: [
-        h('span', {class: 'mp-chat-sep', 'aria-hidden': 'true'}),
-        summary,
-      ],
+    );
+    attach(viewport, actions);
+    const expandedBody: ChatNode[] = [viewport];
+
+    const {root, row, toggle} = disclosureRow({
+      title: label,
       body: expandedBody,
       expandable: true,
-      open: false,
+      open: true,
       rowId: thinkId ? `think:${thinkId}` : undefined,
     });
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'mp-chat-disclosure mp-chat-think');
-    row.setAttribute('data-thought-row', '');
-    if (isLong) {
-      root.setAttribute('data-long', 'true');
-      root.setAttribute('data-expanded', 'false');
+    root.setAttribute('data-cds', 'TurnStatusStep');
+    if (!reasoning.trim()) {
+      root.setAttribute('hidden', 'true');
     }
+    row.setAttribute('data-thought-row', '');
+    toggle!.setAttribute('class', 'mp-chat-row-toggle mp-chat-think-toggle');
+    toggle!.setAttribute('aria-label', label);
+    toggle!.removeAttribute('aria-labelledby');
+    toggle!.setAttribute('aria-controls', panelId);
     return root;
   }
 
-  /**
-   * A settled answer body. Long answers collapse behind the same
-   * Show more mechanism as long thinking blocks, with a higher bar:
-   * an answer under it renders whole, never half-hidden.
-   */
   function deliveryNode(text: string): ChatNode {
-    const rendered = markdownRenderer.render(text);
-    if (/^\s*```\s*openui\s*$/im.test(text) ||
-        (text.length <= 1500 && text.split('\n').length <= 25)) {
-      return rendered;
-    }
-    const root = h('div', {
-      class: 'mp-chat-delivery',
-      'data-long': 'true',
-      'data-expanded': 'false',
-    });
-    const viewport = h('div', {class: 'mp-chat-delivery-viewport'});
-    attach(viewport, rendered);
-    attach(
-      viewport,
-      h('span', {class: 'mp-chat-delivery-fade', 'aria-hidden': 'true'}),
-    );
-    attach(root, viewport);
-    const more = h('button', {type: 'button', class: 'mp-chat-delivery-more'});
-    more.setAttribute('data-mp-chat-act', 'delivery-more');
-    attach(more, 'Show more');
-    attach(root, more);
-    return root;
+    return markdownRenderer.render(text);
   }
 
   function updateThinkingState(
     node: HTMLElement,
     text: string,
     running: boolean,
-    durationMs?: number,
   ): void {
     node.setAttribute('data-state', running ? 'running' : 'ok');
-    // Claude's `fN` wording ("Thought for 12s") replaces the bare verb once
-    // the block settles and a real duration is known.
-    const settled =
-      durationMs === undefined ? undefined : thinkingDuration(durationMs);
-    node.querySelector('.mp-chat-title')!.textContent = running
-      ? 'Thinking…'
-      : (settled ?? 'Thought');
-    const summary = node.querySelector('.mp-chat-summary')!;
-    const derived = running ? latestLine(text) : firstLine(text);
-    const preview =
-      derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
-    if (summary.textContent !== preview) {
-      summary.textContent = preview;
+    const body = node.querySelector<HTMLElement>('.mp-chat-think-body')!;
+    const previous = THINKING_TEXT.get(body);
+    if (previous?.source !== text) {
+      const display = thinkingDisplayText(text);
+      THINKING_TEXT.set(body, {source: text, display});
+      if (display !== previous?.display) {
+        if (previous && display.startsWith(previous.display)) {
+          body.appendChild(
+            document.createTextNode(display.slice(previous.display.length)),
+          );
+          if (body.childNodes.length > 32) {
+            body.textContent = display;
+          }
+        } else {
+          body.textContent = display;
+        }
+      }
     }
-    if (running) {
-      summary.setAttribute('data-follow-end', 'true');
+    const copy = node.querySelector('.mp-chat-think-copy');
+    if (text.trim()) {
+      node.removeAttribute('hidden');
+      copy?.removeAttribute('hidden');
     } else {
-      summary.removeAttribute('data-follow-end');
-    }
-    node.setAttribute(
-      'data-long',
-      String(!running && (text.length > 420 || text.split('\n').length > 8)),
-    );
-    if (node.getAttribute('data-expanded') === null) {
-      node.setAttribute('data-expanded', 'false');
+      node.setAttribute('hidden', 'true');
+      copy?.setAttribute('hidden', 'true');
     }
   }
 
@@ -3434,7 +4069,10 @@ const ChatView = (() => {
     const root = h('div', {class: 'mp-chat-user'});
     const stack = h('div', {class: 'mp-chat-user-stack'});
     const bubble = h('div', {class: 'mp-chat-bubble'});
-    const interactive = /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(question);
+    const interactive =
+      /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(
+        question,
+      );
     let values: unknown;
     if (interactive) {
       try {
@@ -3446,8 +4084,16 @@ const ChatView = (() => {
     if (interactive && values && typeof values === 'object') {
       attach(bubble, interactive[1]);
       const details = h('details', {class: 'mp-chat-ui-receipt'});
-      attach(details, h('summary', {}, DOC?.documentElement.lang.startsWith('zh')
-        ? '已提交的选项' : 'Submitted values'));
+      attach(
+        details,
+        h(
+          'summary',
+          {},
+          DOC?.documentElement.lang.startsWith('zh')
+            ? '已提交的选项'
+            : 'Submitted values',
+        ),
+      );
       attach(details, h('pre', {}, JSON.stringify(values, null, 2)));
       attach(bubble, details);
     } else {
@@ -3487,9 +4133,15 @@ const ChatView = (() => {
 
   interface DeliveredFile {
     path: string;
+    absolutePath?: string;
     name: string;
     added: number;
     removed: number;
+    statKnown: boolean;
+    created: boolean;
+    deleted: boolean;
+    previewPath?: string;
+    sourceCalls: Set<string>;
   }
 
   const FILE_WRITE_TOOLS = new Set([
@@ -3501,49 +4153,246 @@ const ChatView = (() => {
     'edit',
     'MultiEdit',
   ]);
+  const FILE_CHANGE_TOOLS = new Set([
+    ...FILE_WRITE_TOOLS,
+    'Patch',
+    'patch',
+    'apply_patch',
+    'Rewind',
+    'rewind',
+    'restore_files',
+  ]);
+
+  function deliveredFileKey(path: string): string {
+    return path.replace(/\\/g, '/');
+  }
+
+  function executionFilePath(file: string, root: string): string {
+    if (!root || /^(?:[a-z]:[\\/]|[\\/])/i.test(file)) {
+      return file;
+    }
+    return root.replace(/[\\/]+$/, '') + '/' + file.replace(/\\/g, '/');
+  }
 
   // A result is a file the agent actually wrote, not a claim about one.
   function deliveredFiles(
     trajectory: Array<Record<string, unknown>> | undefined,
+    executionRoot: string,
   ): DeliveredFile[] {
     const byPath = new Map<string, DeliveredFile>();
-    for (const record of trajectory || []) {
+    const callsByPath = new Map<string, Set<string>>();
+    for (const [index, record] of (trajectory || []).entries()) {
       if (
         record.kind !== 'tool' ||
-        !FILE_WRITE_TOOLS.has(String(record.name))
+        !FILE_CHANGE_TOOLS.has(String(record.name))
       ) {
         continue;
       }
-      if (record.result == null || record.isError) {
+      if (record.result == null) {
         continue;
       }
-      const stat = deriveDiffStat(
-        String(record.name),
-        String(record.text || ''),
-      );
-      const model = toolRowModel(
-        String(record.name),
-        String(record.text || ''),
-        {text: String(record.result)},
-      );
-      const path = (model.filePath || '').trim();
-      if (!path) {
+      const result = outputRecord(String(record.result));
+      if (
+        record.isError &&
+        !Array.isArray(result?.fileChanges) &&
+        !Array.isArray(result?.patches)
+      ) {
         continue;
       }
-      byPath.set(path, {
-        path,
-        name: path.split(/[\\/]/).pop() || path,
-        added: stat ? stat.added : 0,
-        removed: stat ? stat.removed : 0,
-      });
+      const changes: unknown[] = Array.isArray(result?.fileChanges)
+        ? result.fileChanges
+        : Array.isArray(result?.patches)
+          ? result.patches.flatMap(patch => {
+              const entry = recordOf(patch);
+              return Array.isArray(entry?.fileChanges) ? entry.fileChanges : [];
+            })
+          : FILE_WRITE_TOOLS.has(String(record.name))
+            ? [result || {}]
+            : [];
+      for (const raw of changes) {
+        const change = recordOf(raw);
+        if (!change) {
+          continue;
+        }
+        const path =
+          typeof change.path === 'string'
+            ? change.path
+            : toolRowModel(String(record.name), String(record.text || ''), {
+                text: String(record.result),
+              }).filePath || '';
+        if (!path) {
+          continue;
+        }
+        const key = deliveredFileKey(path);
+        let sourceCalls = callsByPath.get(key);
+        if (!sourceCalls) {
+          sourceCalls = new Set();
+          callsByPath.set(key, sourceCalls);
+        }
+        // A net-zero intermediate result still belongs to its earlier runs.
+        sourceCalls.add(String(record.callId ?? index));
+        if (change.unchanged === true) {
+          byPath.delete(key);
+          continue;
+        }
+        const previous = byPath.get(key);
+        const stat = reportedDiffStat(JSON.stringify(change), 'turnDiffStat');
+        const created =
+          typeof change.turnCreated === 'boolean'
+            ? change.turnCreated
+            : (previous?.created ??
+              (change.created === true ||
+                (change.created !== false &&
+                  ['Write', 'write_file', 'write'].includes(
+                    String(record.name),
+                  ))));
+        byPath.set(key, {
+          path,
+          ...(typeof change.absolutePath === 'string'
+            ? {absolutePath: change.absolutePath}
+            : executionRoot
+              ? {absolutePath: executionFilePath(path, executionRoot)}
+              : {}),
+          name: path.split(/[\\/]/).pop() || path,
+          sourceCalls,
+          added: stat ? stat.added : 0,
+          removed: stat ? stat.removed : 0,
+          statKnown: Boolean(stat),
+          created,
+          deleted: change.exists === false,
+          ...(typeof change.previewPath === 'string'
+            ? {previewPath: executionFilePath(change.previewPath, executionRoot)}
+            : {}),
+        });
+      }
     }
     return [...byPath.values()];
+  }
+
+  function fileResultGlyph(glyph: string, className = ''): ChatNode {
+    return h('span', {
+      class: `mp-chat-file-glyph ${className}`.trim(),
+      'aria-hidden': 'true', 'data-glyph': glyph,
+    });
+  }
+
+  function fileTypeIcon(name: string): ChatNode {
+    const namespace = 'http://www.w3.org/2000/svg';
+    const selected = fileIcons.fileIconFor(name);
+    if (selected.glyph) {
+      return h('span', {
+        class: 'mp-chat-file-type-icon mp-chat-file-glyph',
+        'aria-hidden': 'true',
+        'data-file-type-icon': selected.id,
+        'data-glyph': selected.glyph,
+      });
+    }
+    const svg = DOC ? DOC.createElementNS(namespace, 'svg') : shimNode('svg', namespace);
+    svg.setAttribute('class', 'mp-chat-file-type-icon');
+    svg.setAttribute('data-file-type-icon', selected.id);
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    const append = (parent: ChatNode, nodes: typeof selected.nodes): void => {
+      for (const [tag, attributes, children] of nodes) {
+        const node = DOC ? DOC.createElementNS(namespace, tag) : shimNode(tag, namespace);
+        for (const [key, value] of Object.entries(attributes)) {
+          node.setAttribute(key, value);
+        }
+        if (children) {
+          append(node, children);
+        }
+        attach(parent, node);
+      }
+    };
+    append(svg, selected.nodes);
+    return svg;
+  }
+
+  function fileFolderHints(files: DeliveredFile[]): Map<string, string> {
+    const groups = new Map<string, DeliveredFile[]>();
+    for (const file of files) {
+      const group = groups.get(file.name) || [];
+      group.push(file);
+      groups.set(file.name, group);
+    }
+    const hints = new Map<string, string>();
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      const folders = group.map(file => {
+        const path = file.path.replace(/\\/g, '/');
+        const folder = path.slice(0, path.lastIndexOf('/')) || (path.startsWith('/') ? '/' : '');
+        const parts = folder.split('/').filter(Boolean);
+        if (folder.startsWith('//')) {
+          parts.unshift('/');
+        } else if (folder.startsWith('/')) {
+          parts.unshift('');
+        }
+        return {file, folder, parts};
+      });
+      for (const item of folders) {
+        const others = folders.filter(other => other !== item);
+        if (others.every(other => other.folder === item.folder)) {
+          continue;
+        }
+        let hint = item.folder;
+        for (let size = 1; size < item.parts.length; size++) {
+          const tail = item.parts.slice(-size).join('/');
+          if (others.every(other => other.parts.slice(-size).join('/') !== tail)) {
+            const root = item.parts[0];
+            if (!(size === item.parts.length - 1 && (root === '' || root === '/' || /^[a-z]:$/i.test(root)))) {
+              hint = tail;
+            }
+            break;
+          }
+        }
+        hints.set(item.file.path, hint);
+      }
+    }
+    return hints;
+  }
+
+  function fileResultStat(added: number, removed: number): ChatNode {
+    return h('span', {class: 'mp-chat-diff-stat'},
+      h('span', {class: 'mp-chat-diff-add'}, `+${added}`),
+      h('span', {class: 'mp-chat-diff-del'}, `−${removed}`));
+  }
+
+  function fileResultRow(options: {
+    opener: ChatNode; label: string; mark: ChatNode; hint?: string;
+    detail?: string; stat?: ChatNode | null; action?: ChatNode; chevron?: boolean;
+  }): ChatNode {
+    const item = h('li', {class: 'mp-chat-file-item'});
+    const name = h('span', {class: 'mp-chat-file-name'}, options.label);
+    if (options.hint !== undefined) {
+      options.opener.setAttribute('aria-label', `${options.label}, ${options.hint}`);
+      attach(name, h('span', {class: 'mp-chat-file-folder-hint'}, options.hint));
+    }
+    const labels = h('span', {class: 'mp-chat-file-labels'},
+      h('span', {class: 'mp-chat-file-mark'}, options.mark), name);
+    if (options.detail) {
+      attach(labels, h('span', {class: 'mp-chat-file-detail'}, options.detail));
+    }
+    attach(options.opener, labels);
+    attach(item, options.opener);
+    const trailing = h('span', {class: 'mp-chat-file-trailing'});
+    attach(trailing, options.action);
+    attach(trailing, options.stat);
+    if (options.chevron) {
+      attach(trailing, fileResultGlyph('\ue02a', 'mp-chat-file-chev'));
+    }
+    attach(item, trailing);
+    return item;
   }
 
   function fileResultsNode(
     files: DeliveredFile[],
     artifacts: Array<Record<string, unknown>>,
     conversationId: string,
+    turnScope = conversationId,
+    undo?: {conversationId: string; turnIndex: number},
   ): ChatNode | null {
     const artifact = artifacts.find(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
@@ -3552,32 +4401,46 @@ const ChatView = (() => {
       return null;
     }
     const card = h('div', {class: 'mp-chat-files'});
-    const head = h('div', {class: 'mp-chat-files-head'});
-    const title = h('span', {class: 'mp-chat-files-title'});
+    const list = h('ul', {class: 'mp-chat-files-list', role: 'list'});
+    attach(card, list);
+    const artifactPath =
+      typeof artifact?.path === 'string' ? artifact.path : '';
+    const artifactFile = artifactPath
+      ? files.find(
+          file =>
+            deliveredFileKey(file.path) === deliveredFileKey(artifactPath),
+        )
+      : undefined;
     const label = artifact
       ? String(artifact.title || artifact.name || '').trim()
       : '';
-    attach(
-      title,
-      label
-        ? `Published artifact ${label}`
-        : `Created ${files.length === 1 ? files[0].name : `${files.length} files`}`,
-    );
-    attach(head, title);
-    if (artifact) {
-      const open = h('button', {
-        type: 'button',
-        class: 'mp-chat-files-open',
-        'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': String(artifact.artifactId || ''),
-        'data-artifact-conversation': conversationId,
-      });
-      attach(open, 'Open');
-      attach(head, open);
+    const undoAction = !artifact && files.length && undo
+      ? h('button', {
+          type: 'button', class: 'mp-chat-files-undo',
+          title: lt('chat.files_undo_hint'),
+          'data-mp-chat-act': 'undo-files',
+          'data-undo-conversation': undo.conversationId,
+          'data-undo-turn': String(undo.turnIndex),
+        }, lt('chat.files_undo'))
+      : undefined;
+    if (!artifact && files.length > 1) {
+      const title = h('span', {class: 'mp-chat-files-title'},
+        lt('chat.files_edited', {count: files.length}));
+      const head = h('li', {class: 'mp-chat-files-head'},
+        h('span', {class: 'mp-chat-files-heading'},
+          fileResultGlyph('\ue02d'), title));
+      const trailing = h('span', {class: 'mp-chat-file-trailing'});
+      attach(trailing, undoAction);
+      if (files.every(file => file.statKnown)) {
+        const added = files.reduce((total, file) => total + file.added, 0);
+        const removed = files.reduce((total, file) => total + file.removed, 0);
+        attach(trailing, fileResultStat(added, removed));
+      }
+      attach(head, trailing);
+      attach(list, head);
     }
-    attach(card, head);
 
-    if (!files.length && artifact) {
+    if (artifact) {
       const row = h('button', {
         type: 'button',
         class: 'mp-chat-file-row',
@@ -3585,115 +4448,86 @@ const ChatView = (() => {
         'data-artifact-id': String(artifact.artifactId || ''),
         'data-artifact-conversation': conversationId,
       });
-      const mark = h('span', {
-        class: 'mp-chat-file-mark',
-        'aria-hidden': 'true',
-      });
-      attach(mark, icon('browse', 14));
-      attach(row, mark);
-      const name = h('span', {class: 'mp-chat-file-name'});
       const artifactName = String(
         artifact.name || artifact.path || artifact.artifactId || 'artifact',
       );
-      attach(name, artifactName.split(/[\\/]/).pop() || artifactName);
-      attach(row, name);
-      const added = Number(artifact.added || 0);
-      const removed = Number(artifact.removed || 0);
-      if (added > 0 || removed > 0) {
-        const stat = h('span', {
-          class: 'mp-chat-diff-stat',
-          'aria-hidden': 'true',
-        });
-        if (added > 0) {
-          const add = h('span', {class: 'mp-chat-diff-add'});
-          attach(add, `+${added}`);
-          attach(stat, add);
-        }
-        if (removed > 0) {
-          const del = h('span', {class: 'mp-chat-diff-del'});
-          attach(del, `−${removed}`);
-          attach(stat, del);
-        }
-        attach(row, stat);
-      }
-      const chev = h('span', {
-        class: 'mp-chat-file-chev',
-        'aria-hidden': 'true',
-      });
-      attach(chev, icon('chev', 14));
-      attach(row, chev);
-      attach(card, row);
+      const added = artifactFile
+        ? artifactFile.added
+        : Number(artifact.added || 0);
+      const removed = artifactFile
+        ? artifactFile.removed
+        : Number(artifact.removed || 0);
+      const open = h('button', {
+        type: 'button', class: 'mp-chat-files-open',
+        'aria-label': lt('chat.files_open_artifact', {label: label || artifactName}),
+        'data-mp-chat-act': 'open-artifact',
+        'data-artifact-id': String(artifact.artifactId || ''),
+        'data-artifact-conversation': conversationId,
+      }, lt('chat.files_open'));
+      const known = artifactFile ? artifactFile.statKnown
+        : typeof artifact.added === 'number' || typeof artifact.removed === 'number';
+      attach(list, fileResultRow({opener: row,
+        label: label || artifactName.split(/[\\/]/).pop() || artifactName,
+        mark: fileResultGlyph('\ue017'), detail: lt('chat.files_artifact'),
+        stat: known ? fileResultStat(added, removed) : null, action: open}));
     }
 
-    const artifactNames = new Set(
-      artifact
-        ? [
-            String(artifact.name || artifact.path || '')
-              .split(/[\\/]/)
-              .pop()
-              ?.toLocaleLowerCase() || '',
-          ]
-        : [],
-    );
     const visibleFiles = files.filter(
-      item => !artifactNames.has(item.name.toLocaleLowerCase()),
+      item =>
+        !artifactPath ||
+        deliveredFileKey(item.path) !== deliveredFileKey(artifactPath),
     );
+    const hints = fileFolderHints(visibleFiles);
     const fileRow = (file: DeliveredFile): ChatNode => {
+      const target = file.previewPath || file.absolutePath || file.path;
       const row = h('button', {
         type: 'button',
         class: 'mp-chat-file-row',
         'data-mp-chat-act': 'open-file',
         'data-file-path': file.path,
+        ...(file.absolutePath
+          ? {'data-file-absolute-path': file.absolutePath}
+          : {}),
+        'data-file-state': file.deleted ? 'deleted' : 'present',
+        'data-file-change': file.deleted ? 'deleted' : file.created ? 'created' : 'edited',
+        ...(!/^(?:[a-z]:[\\/]|[\\/])/i.test(target)
+          ? {'data-file-origin-unknown': 'true'}
+          : {}),
+        ...(file.previewPath ? {'data-preview-path': file.previewPath} : {}),
       });
-      const mark = h('span', {
-        class: 'mp-chat-file-mark',
-        'aria-hidden': 'true',
-      });
-      attach(mark, icon('browse', 14));
-      attach(row, mark);
-      const name = h('span', {class: 'mp-chat-file-name'});
-      attach(name, file.name);
-      attach(row, name);
-      if (file.added > 0 || file.removed > 0) {
-        const stat = h('span', {
-          class: 'mp-chat-diff-stat',
-          'aria-hidden': 'true',
-        });
-        if (file.added > 0) {
-          const add = h('span', {class: 'mp-chat-diff-add'});
-          attach(add, `+${file.added}`);
-          attach(stat, add);
-        }
-        if (file.removed > 0) {
-          const del = h('span', {class: 'mp-chat-diff-del'});
-          attach(del, `−${file.removed}`);
-          attach(stat, del);
-        }
-        attach(row, stat);
-      }
-      const chev = h('span', {
-        class: 'mp-chat-file-chev',
-        'aria-hidden': 'true',
-      });
-      attach(chev, icon('chev', 14));
-      attach(row, chev);
-      return row;
+      return fileResultRow({opener: row, label: file.name,
+        mark: fileTypeIcon(file.name), hint: hints.get(file.path),
+        stat: file.statKnown ? fileResultStat(file.added, file.removed) : null,
+        action: files.length === 1 ? undoAction : undefined,
+        chevron: true});
     };
-    if (visibleFiles.length) {
-      attach(card, fileRow(visibleFiles[0]));
-    }
-    if (visibleFiles.length > 1) {
-      const more = h('details', {class: 'mp-chat-files-more'});
-      const summary = h('summary', {class: 'mp-chat-files-more-summary'});
-      attach(
-        summary,
-        `Show ${visibleFiles.length - 1} more file${visibleFiles.length === 2 ? '' : 's'}`,
-      );
-      const rest = h('div', {class: 'mp-chat-files-more-list'});
-      visibleFiles.slice(1).forEach(file => attach(rest, fileRow(file)));
-      attach(more, summary);
+    visibleFiles.slice(0, 3).forEach(file => attach(list, fileRow(file)));
+    if (visibleFiles.length > 3) {
+      const key = `files:${turnScope}:${deliveredFileKey(visibleFiles[0].path)}`;
+      const expanded = ROW_EXPANSION.get(key) === true;
+      const more = h('li', {class: 'mp-chat-files-more'});
+      const rest = h('ul', {
+        class: 'mp-chat-files-more-list',
+        role: 'presentation',
+        ...(!expanded ? {hidden: 'true'} : {}),
+      });
+      visibleFiles.slice(3).forEach(file => attach(rest, fileRow(file)));
       attach(more, rest);
-      attach(card, more);
+      const collapsedLabel = lt('chat.files_show_more', {count: visibleFiles.length - 3});
+      const toggle = h('button', {
+        type: 'button',
+        class: 'mp-chat-files-more-summary',
+        'data-mp-chat-act': 'toggle-files',
+        'data-files-expansion-key': key,
+        'data-files-collapsed-label': collapsedLabel,
+        'aria-expanded': String(expanded),
+      });
+      attach(toggle, h('span', {class: 'mp-chat-files-more-spacer', 'aria-hidden': 'true'}));
+      attach(toggle, h('span', {class: 'mp-chat-files-more-label'},
+        expanded ? lt('chat.files_show_less') : collapsedLabel));
+      attach(toggle, fileResultGlyph('\ue02a', 'mp-chat-files-more-chevron'));
+      attach(more, toggle);
+      attach(list, more);
     }
 
     return card;
@@ -3712,25 +4546,7 @@ const ChatView = (() => {
     if (!artifact) {
       return null;
     }
-    const name =
-      String(artifact.title || artifact.name || 'Draft artifact').trim() ||
-      'Draft artifact';
-    const card = h('div', {class: 'mp-chat-files'});
-    const head = h('div', {class: 'mp-chat-files-head'});
-    attach(head, h('span', {class: 'mp-chat-files-title'}, `Draft ${name}`));
-    attach(card, head);
-    const row = h('button', {
-      type: 'button',
-      class: 'mp-chat-file-row',
-      'data-mp-chat-act': 'open-artifact',
-      'data-artifact-id': String(artifact.artifactId),
-      'data-artifact-conversation': conversationId,
-    });
-    attach(row, h('span', {class: 'mp-chat-file-mark'}, icon('browse', 14)));
-    attach(row, h('span', {class: 'mp-chat-file-name'}, name));
-    attach(row, h('span', {class: 'mp-chat-file-chev'}, icon('chev', 14)));
-    attach(card, row);
-    return card;
+    return fileResultsNode([], [artifact], conversationId);
   }
 
   function sparkMark(running = true): ChatNode {
@@ -3790,7 +4606,10 @@ const ChatView = (() => {
     if (tone === 'warning') {
       title.setAttribute('data-tone', 'warning');
     }
-    attach(title, tone === 'error' ? lt('chat.round_failed') : lt('common.notice'));
+    attach(
+      title,
+      tone === 'error' ? lt('chat.round_failed') : lt('common.notice'),
+    );
     const body = h('span', {class: 'mp-chat-turn-error-message'});
     attach(body, message);
     attach(copy, title);
@@ -3805,6 +4624,7 @@ const ChatView = (() => {
   }
 
   interface AssistantTurnInput {
+    request?: Record<string, unknown>;
     answer?: string;
     thinking?: string;
     trace?: Array<
@@ -3841,13 +4661,15 @@ const ChatView = (() => {
     groupLabel?: string;
     displayLabel?: string;
     startedAtMs?: number;
-    result?: {text: string; isError: boolean; interrupted?: boolean};
+    executionRoot?: string;
+    result?: {text: string; isError: boolean; interrupted?: boolean; presentation?: unknown};
     progressText?: string;
     subagent?: Record<string, unknown>;
   }
 
   interface TurnPresentation {
     taskPanel?: boolean;
+    undoFileChanges?: boolean;
   }
 
   type FlowItem =
@@ -3859,7 +4681,12 @@ const ChatView = (() => {
         running?: boolean;
         turn?: string;
       }
-    | {type: 'notice'; text: string; turn?: string}
+    | {
+        type: 'notice';
+        text: string;
+        turn?: string;
+        compaction?: Record<string, unknown>;
+      }
     | {type: 'chip'; chip: TurnChip; turn?: string};
 
   function trajectoryReasoning(
@@ -3915,6 +4742,7 @@ const ChatView = (() => {
             text: String(record.result ?? ''),
             isError: record.isError === true || record.state === 'error',
             interrupted,
+            presentation: record.presentation,
           }
         : undefined,
     };
@@ -3935,19 +4763,65 @@ const ChatView = (() => {
     return root;
   }
 
-  function chipNode(chip: TurnChip, scope = ''): ChatNode {
+  function compactionNode(
+    record: Record<string, unknown>,
+    live = false,
+  ): ChatNode {
+    const language =
+      typeof document !== 'undefined'
+        ? document.documentElement.lang || 'en'
+        : StudioLocaleApi?.getStudioLanguage() || 'en';
+    const label = compaction.compactionLabel(record, language);
+    const running = record.state === 'running';
+    const root = h('div', {
+      class: 'mp-chat-notice mp-chat-compaction',
+      role: 'status',
+      'aria-live': live ? 'polite' : 'off',
+      'aria-atomic': 'true',
+      'data-state': String(record.state),
+      'data-compaction-id': String(record.compactionId),
+    });
+    attach(
+      root,
+      stateDot(
+        running
+          ? 'ongoing'
+          : record.state === 'error'
+            ? 'error'
+            : record.state === 'done'
+              ? 'done'
+              : 'warning',
+      ),
+    );
+    const copy = h('span', {class: 'mp-chat-notice-copy'});
+    attach(copy, label);
+    if (record.error) {
+      const error = h('small', {class: 'mp-chat-compaction-error'});
+      attach(error, String(record.error));
+      attach(copy, error);
+    }
+    attach(root, copy);
+    return root;
+  }
+
+  function chipModel(chip: TurnChip): ToolRowModel {
     const model = toolRowModel(
       chip.name,
       chip.argsRaw,
       chip.result,
       chip.callId,
+      chip.executionRoot,
       chip.progressText ?? null,
     );
     if (chip.displayLabel?.trim()) {
       model.title = chip.displayLabel.trim();
       model.summary = '';
     }
-    const node = toolRowNode(model, scope);
+    return model;
+  }
+
+  function chipNode(chip: TurnChip, scope = ''): ChatNode {
+    const node = toolRowNode(chipModel(chip), scope);
     if (SUBAGENT_TOOLS.has(chip.name)) {
       attach(
         node,
@@ -4022,6 +4896,104 @@ const ChatView = (() => {
     );
   }
 
+  function fileRowKey(chip: TurnChip): string | null {
+    const family = FILE_WRITE_TOOLS.has(chip.name)
+      ? ['Write', 'write_file', 'write'].includes(chip.name)
+        ? 'Write'
+        : 'Edit'
+      : ['Read', 'read', 'read_file'].includes(chip.name)
+        ? 'Read'
+        : null;
+    const path = deriveFilePath(classifyTool(chip.name), chip.argsRaw);
+    return family && path ? `${family} ${path}` : null;
+  }
+
+  function singleToolGroup(chips: TurnChip[], work?: FlowItem[]): boolean {
+    if (!chips.length || work?.some(item => item.type !== 'chip')) {
+      return false;
+    }
+    const key = fileRowKey(chips[0]);
+    return (
+      chips.length === 1 ||
+      (key !== null && chips.every(chip => fileRowKey(chip) === key))
+    );
+  }
+
+  function coalescedToolModel(
+    chips: TurnChip[],
+    models: ToolRowModel[],
+  ): ToolRowModel {
+    if (models.length === 1) {
+      return models[0];
+    }
+    const first = chips[0];
+    const state = models.some(model => model.state === 'running')
+      ? 'running'
+      : models[models.length - 1].state;
+    const allFailed =
+      state === 'error' && models.every(model => model.state === 'error');
+    const header = toolRowModel(
+      first.name,
+      first.argsRaw,
+      state === 'running'
+        ? undefined
+        : {
+            ...first.result,
+            isError: allFailed,
+            interrupted: state === 'stopped',
+          },
+      first.callId,
+      first.executionRoot,
+    );
+    header.state = state;
+    header.fileDiffReference =
+      state === 'ok' ? combinedFileDiffReference(models) : undefined;
+    if (allFailed && !isBlockedResult(first.result)) {
+      header.title = fileRowKey(first)?.startsWith('Write ')
+        ? 'Failed to write'
+        : fileRowKey(first)?.startsWith('Read ')
+          ? 'Failed to read'
+          : 'Failed to edit';
+    }
+    const completed = models.filter(model => model.state === 'ok');
+    const write = ['Write', 'write_file', 'write'].includes(first.name);
+    const stats = write ? completed.slice(-1) : completed;
+    header.diffStat =
+      stats.length && stats.every(model => model.diffStat !== null)
+        ? stats.reduce(
+            (total, model) => ({
+              added: total.added + model.diffStat!.added,
+              removed: total.removed + model.diffStat!.removed,
+            }),
+            {added: 0, removed: 0},
+          )
+        : null;
+    if (fileRowKey(first)?.startsWith('Read ')) {
+      header.diffStat = null;
+      const ranges = chips.map(chip => {
+        const input = parseArgs(chip.argsRaw) ?? {};
+        const offset =
+          typeof input.offset === 'number' ? input.offset : undefined;
+        const limit = typeof input.limit === 'number' ? input.limit : undefined;
+        if (offset === undefined && limit === undefined) {
+          return null;
+        }
+        const start = offset ?? 1;
+        return limit === undefined
+          ? `${start}–`
+          : `${start}–${start + limit - 1}`;
+      });
+      if (ranges.every(range => range !== null)) {
+        header.summary += ` (${ranges.join(', ')})`;
+      }
+    }
+    if (first.displayLabel?.trim()) {
+      header.title = first.displayLabel.trim();
+      header.summary = '';
+    }
+    return header;
+  }
+
   function toolGroupNode(
     chips: TurnChip[],
     _running = false,
@@ -4032,23 +5004,19 @@ const ChatView = (() => {
     const root = h('details', {class: 'mp-chat-tool-group'});
     const summary = h('summary', {class: 'mp-chat-tool-group-header'});
     const label = h('span', {class: 'mp-chat-tool-group-title'});
-    const single =
-      chips.length === 1 && !work?.some(item => item.type === 'reasoning');
+    const single = singleToolGroup(chips, work);
     if (single) {
       root.setAttribute('data-single', 'true');
     }
     if (thoughtOnly) {
       root.setAttribute('data-thought-only', 'true');
     }
-    const model = single
-      ? toolRowModel(
-          chips[0].name,
-          chips[0].argsRaw,
-          chips[0].result,
-          chips[0].callId,
-        )
-      : null;
-    if (model?.errorTitle) {
+    const models = single ? chips.map(chipModel) : null;
+    const model = models ? coalescedToolModel(chips, models) : null;
+    if (model) {
+      root.setAttribute('data-state', model.state);
+    }
+    if (model?.errorTitle || model?.state === 'error') {
       root.setAttribute('data-error-title', 'true');
     }
     if (!thoughtOnly) {
@@ -4062,10 +5030,7 @@ const ChatView = (() => {
             attach(label, h('span', {class: 'mp-chat-tool-sep'}, ' '));
             attach(
               label,
-              shimmerText(model.summary, {
-                shimmering: model.state === 'running',
-                className: 'mp-chat-summary',
-              }),
+              toolFileSummaryNode(model),
             );
           }
         }
@@ -4077,10 +5042,7 @@ const ChatView = (() => {
         }
       } else {
         const inFlight = chips.some(chip => chip.result === undefined);
-        attach(
-          label,
-          shimmerText(toolGroupLabel(chips), {shimmering: inFlight}),
-        );
+        attach(label, toolGroupSummaryNode(chips));
         if (inFlight) {
           const elapsed = runningElapsedNode(chips);
           if (elapsed) {
@@ -4108,6 +5070,20 @@ const ChatView = (() => {
       }
       attach(label, stat);
     }
+    if (model && model.state !== 'ok') {
+      attach(
+        summary,
+        h(
+          'span',
+          {class: 'mp-chat-vh'},
+          model.state === 'running'
+            ? 'Running'
+            : model.state === 'error'
+              ? 'Failed'
+              : 'Stopped',
+        ),
+      );
+    }
     attach(summary, label);
     const body = h('div', {class: 'mp-chat-tool-group-body'});
     const entries: FlowItem[] =
@@ -4134,6 +5110,11 @@ const ChatView = (() => {
     const open =
       thoughtOnly ||
       previous?.open === true ||
+      (single &&
+        previous?.single !== true &&
+        ROW_EXPANSION.get(
+          `tool:${scope ? `${scope}:` : ''}${chips[0]?.callId}`,
+        ) === true) ||
       members.some(
         id =>
           !previousMembers.has(id) &&
@@ -4148,8 +5129,10 @@ const ChatView = (() => {
         );
         if (
           source?.open &&
-          childToolIds?.length === 1 &&
-          (!previousMembers.has(id) || previousMembers.size === 1)
+          childToolIds?.length &&
+          (source.single ||
+            (childToolIds.length === 1 &&
+              (!previousMembers.has(id) || previousMembers.size === 1)))
         ) {
           rememberExpansion(
             ROW_EXPANSION,
@@ -4159,30 +5142,49 @@ const ChatView = (() => {
         }
       }
     }
-    GROUP_EXPANSION.set(groupId, {open, members});
+    GROUP_EXPANSION.set(groupId, {open, members, single});
     if (open) {
       root.setAttribute('open', '');
     }
     summary.setAttribute('aria-expanded', open ? 'true' : 'false');
     summary.setAttribute('data-group-id', groupId);
 
-    entries.forEach(entry => {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
       if (entry.type === 'reasoning') {
         attach(
           body,
           thinkNode(entry.text, entry.running === true, reasoningId(entry)),
         );
-        return;
+        continue;
       }
       if (entry.type === 'narration') {
         attach(body, narrationNode(entry.text));
-        return;
+        continue;
       }
       if (entry.type !== 'chip') {
-        return;
+        continue;
       }
       const chip = entry.chip;
-      const node = chipNode(chip, scope);
+      const grouped = [chip];
+      const key = fileRowKey(chip);
+      while (key !== null && entries[index + 1]?.type === 'chip') {
+        const next = entries[index + 1] as Extract<FlowItem, {type: 'chip'}>;
+        if (fileRowKey(next.chip) !== key) {
+          break;
+        }
+        grouped.push(next.chip);
+        index++;
+      }
+      const groupedModels =
+        grouped.length > 1 ? (models ?? grouped.map(chipModel)) : null;
+      const node = groupedModels
+        ? toolRowNode(
+            coalescedToolModel(grouped, groupedModels),
+            scope,
+            groupedModels,
+          )
+        : chipNode(chip, scope);
       if (single) {
         const disclosure = DOC
           ? (node as Element).querySelector('.mp-chat-disclosure')
@@ -4195,104 +5197,11 @@ const ChatView = (() => {
         disclosure?.removeAttribute('data-row-id');
       }
       attach(body, node);
-    });
+    }
     attach(root, summary);
     attach(root, body);
     return root;
   }
-
-  /**
-   * Claude's aggregate fallback for a step line: `Used a tool` / `Used {count}
-   * tools` (`BRG8o6gNdU` and `JtrYJ8F4gT`).
-   */
-  const USED_A_TOOL = 'Used a tool';
-
-  function usedTools(count: number): string {
-    return `Used ${count} tools`;
-  }
-
-  /**
-   * The order a settled group lists its groups in. Claude sorts by a tier
-   * table (`eM`) that lives in an uncaptured chunk, so the *order* here is MP's
-   * and only the wording is the reference's; a category the reference names is
-   * listed before one it does not.
-   */
-  const GROUP_CATEGORY_ORDER: readonly ToolCategory[] = [
-    'bash',
-    'kill_bash',
-    'tmux',
-    'read',
-    'view',
-    'web_fetch',
-    'web',
-    'grep',
-    'glob',
-    'edit',
-    'write',
-    'notebook_edit',
-    'delete_file',
-    'task',
-    'skill',
-    'plan',
-    'todo',
-    'code',
-    'preview',
-    'screenshot',
-    'browser',
-    'share',
-    'tool_search',
-    'past_chats',
-    'project_knowledge',
-    'drive_search',
-    'ask_user_question',
-    'bash_output',
-    'enter_plan_mode',
-    'exit_plan_mode',
-    'artifact',
-  ];
-
-  /** Claude keeps the top three groups and accounts for the rest. */
-  const GROUP_MAX_GROUPS = 3;
-
-  /** MP's bucket wording, used only for a tool the reference cannot name. */
-  const GROUP_CLAUSES: Record<ToolVariant, (n: number) => string> = {
-    bash: n => `Ran ${n} command${n === 1 ? '' : 's'}`,
-    read: n => `Read ${n} file${n === 1 ? '' : 's'}`,
-    search: n => `Searched ${n} time${n === 1 ? '' : 's'}`,
-    write: n => `Wrote ${n} file${n === 1 ? '' : 's'}`,
-    edit: n => `Edited ${n} file${n === 1 ? '' : 's'}`,
-    code: n => usedTools(n),
-    others: n => usedTools(n),
-  };
-
-  /**
-   * In-flight group labels.
-   *
-   * The reference renders a running group as "{gerund} {count} {noun}…" and
-   * does it only for the five names in its read/write/edit/bash set — every
-   * other tool gets a single-tool label instead. The count is of the tools
-   * still in flight, not of the whole run. An empty string means "this family
-   * has no running form", which sends the caller to the single-tool fallback.
-   */
-  const GROUP_RUNNING_CLAUSES: Record<ToolVariant, (n: number) => string> = {
-    bash: n => `Running ${n} command${n === 1 ? '' : 's'}…`,
-    read: n => `Reading ${n} file${n === 1 ? '' : 's'}…`,
-    write: n => `Creating ${n} file${n === 1 ? '' : 's'}…`,
-    edit: n => `Editing ${n} file${n === 1 ? '' : 's'}…`,
-    search: n => `Searching ${n} time${n === 1 ? '' : 's'}…`,
-    code: () => '',
-    others: () => '',
-  };
-
-  const GROUP_ORDER: readonly ToolVariant[] = [
-    'bash',
-    'read',
-    'search',
-    'edit',
-    'write',
-    'code',
-    'others',
-  ];
 
   function isBlockedResult(result?: {
     text?: string;
@@ -4306,133 +5215,194 @@ const ChatView = (() => {
     );
   }
 
-  /** The label for a set of tools that have not settled yet. */
-  function runningGroupClause(pending: TurnChip[]): string {
-    const variants = new Set(pending.map(chip => classifyTool(chip.name)));
-    if (variants.size === 1) {
-      const clause = GROUP_RUNNING_CLAUSES[[...variants][0]](pending.length);
-      if (clause) {
-        return clause;
+  function groupSummaryCalls(
+    chips: TurnChip[],
+  ): Array<import('./chat_tool_summary').SummaryCall & {target?: string}> {
+    return chips.map((chip, index) => {
+      const input = parseArgs(chip.argsRaw) ?? {};
+      const fileCategory = FILE_WRITE_TOOLS.has(chip.name)
+        ? ['Write', 'write_file', 'write'].includes(chip.name)
+          ? 'write'
+          : 'edit'
+        : ['Read', 'read_file', 'read'].includes(chip.name)
+          ? 'read'
+          : undefined;
+      let category: string | undefined = PLAN_TOOLS.has(chip.name)
+        ? 'plan'
+        : (fileCategory ?? toolCategory(chip.name));
+      const fileContract =
+        fileCategory ||
+        ['view', 'notebook_edit', 'delete_file'].includes(category || '');
+      const path = fileContract
+        ? pickString(input, ['path', 'file_path', 'notebook_path'])
+        : undefined;
+      const filePath = path === undefined ? undefined : deliveredFileKey(path);
+      let key = filePath ?? (chip.callId || String(index));
+      const method = chip.name.split('.');
+      const artifact = ARTIFACT_TOOL_NAMES.has(aliasToolName(method[0]));
+      // A Read result is file content, not a receipt carrying routing metadata.
+      const receipt =
+        FILE_WRITE_TOOLS.has(chip.name) || artifact
+          ? outputRecord(chip.result?.text || '')
+          : null;
+      if (artifact) {
+        const action = method[1] || firstString(input, ['action']);
+        category =
+          action === 'read'
+            ? 'artifact_read'
+            : ['create', 'update'].includes(action)
+              ? 'artifact_write'
+              : undefined;
+        key =
+          firstString(input, ['artifact_id', 'artifactId']) ||
+          firstString(receipt || {}, ['artifactId', 'artifact_id']) ||
+          key;
       }
-    }
-    if (pending.length === 1) {
-      const chip = pending[0];
-      const variant = classifyTool(chip.name);
-      // `||`, not `??`: an empty variant title means "no running form", and a
-      // nullish chain would happily render that empty string as the label.
-      const active =
-        RUNNING_TITLES[chip.name] ||
-        VARIANT_RUNNING_TITLES[variant] ||
-        TOOL_TITLES[chip.name] ||
-        chip.name;
-      return `${active}…`;
-    }
-    return `${pending.length} tools running…`;
+      const interrupted = chip.result?.interrupted === true;
+      const outcome: import('./chat_tool_summary').SummaryOutcome | undefined =
+        interrupted
+          ? undefined
+          : !chip.result
+            ? 'pending'
+            : isBlockedResult(chip.result)
+              ? 'blocked'
+              : chip.result.isError
+                ? 'failed'
+                : 'succeeded';
+      const write = ['Write', 'write_file', 'write'].includes(chip.name);
+      const created =
+        outcome === 'succeeded' && write ? receipt?.created : undefined;
+      const target =
+        (outcome === 'succeeded' && FILE_WRITE_TOOLS.has(chip.name)
+          ? firstString(receipt || {}, ['absolutePath'])
+          : '') ||
+        (path ? executionFilePath(path, chip.executionRoot || '') : '');
+      return {
+        category,
+        key,
+        filePath,
+        outcome,
+        ...(typeof created === 'boolean'
+          ? {writeAs: created ? ('create' as const) : ('update' as const)}
+          : {}),
+        canLinkFile:
+          FILE_WRITE_TOOLS.has(chip.name) ||
+          ['Read', 'read', 'read_file', 'NotebookEdit'].includes(chip.name),
+        ...(/^(?:[a-z]:[\\/]|[\\/])/i.test(target) ? {target} : {}),
+      };
+    });
   }
 
   function toolGroupLabel(chips: TurnChip[]): string {
-    const blocked = chips.filter(chip => isBlockedResult(chip.result));
-    if (blocked.length) {
-      const executed = chips.filter(chip => !isBlockedResult(chip.result));
-      return (
-        `Blocked ${blocked.length} tool${blocked.length === 1 ? '' : 's'}` +
-        (executed.length ? `, ${toolGroupLabel(executed)}` : '')
-      );
-    }
-    const explicit = chips.find(
-      chip => typeof chip.groupLabel === 'string' && chip.groupLabel.trim(),
-    );
-    if (explicit?.groupLabel) {
-      return explicit.groupLabel.trim();
-    }
-    const pending = chips.filter(chip => chip.result === undefined);
-    if (pending.length) {
-      const completed = chips.filter(chip => chip.result !== undefined);
-      return (
-        runningGroupClause(pending) +
-        (completed.length ? ` · ${toolGroupLabel(completed)}` : '')
-      );
-    }
-    // Claude counts per *category* and words each group with that category's
-    // own count form. MP buckets per render variant, so a tool the reference
-    // cannot name still groups through its variant clause -- the two keys are
-    // kept apart rather than forced onto one taxonomy, because MP's `search`
-    // bucket covers `grep`, `glob` and `web`, which the reference words
-    // differently.
-    const categories = new Map<ToolCategory, {count: number; failed: number}>();
-    const buckets = new Map<ToolVariant, {count: number; failed: number}>();
-    const bump = <K>(
-      map: Map<K, {count: number; failed: number}>,
-      key: K,
-      failed: boolean,
-    ) => {
-      const entry = map.get(key);
-      if (entry === undefined) {
-        map.set(key, {count: 1, failed: failed ? 1 : 0});
-        return;
-      }
-      entry.count += 1;
-      if (failed) {
-        entry.failed += 1;
-      }
-    };
-    for (const chip of chips) {
-      const failed = chip.result?.isError === true;
-      const category = toolCategory(chip.name);
-      if (category !== undefined) {
-        bump(categories, category, failed);
-        continue;
-      }
-      bump(buckets, classifyTool(chip.name), failed);
-    }
-
-    const groups: Array<{order: number; label: string; failed: number}> = [];
-    for (const [category, entry] of categories) {
-      const index = GROUP_CATEGORY_ORDER.indexOf(category);
-      groups.push({
-        order: index === -1 ? GROUP_CATEGORY_ORDER.length : index,
-        label: categoryDoneLabel(category, entry.count) as string,
-        failed: entry.failed,
-      });
-    }
-    for (const [variant, entry] of buckets) {
-      groups.push({
-        order: GROUP_ORDER.indexOf(variant) + GROUP_CATEGORY_ORDER.length,
-        label: GROUP_CLAUSES[variant](entry.count),
-        failed: entry.failed,
-      });
-    }
-    if (!groups.length) {
-      return chips.length === 1 ? USED_A_TOOL : usedTools(chips.length);
-    }
-
-    const withFailures = (group: {label: string; failed: number}) =>
-      group.failed > 0
-        ? `${group.label} (${group.failed} failed)`
-        : group.label;
-
-    if (groups.length === 1) {
-      return withFailures(groups[0]);
-    }
-
-    groups.sort((a, b) => a.order - b.order);
-    const shown = groups.slice(0, GROUP_MAX_GROUPS);
-    const hidden = groups.length - shown.length;
-    // A failure count rides its own clause, and lands on the last shown group
-    // when no shown group carries one of its own.
-    const failureTotal = groups.reduce((sum, group) => sum + group.failed, 0);
-    const placed = shown.some(group => group.failed > 0);
-    const parts = shown.map(withFailures);
-    if (failureTotal > 0 && !placed) {
-      parts[parts.length - 1] =
-        `${parts[parts.length - 1]} (${failureTotal} failed)`;
-    }
-    const label = parts
-      .map((part, index) =>
-        index === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
+    const explicit = chips
+      .find(chip => chip.groupLabel?.trim())
+      ?.groupLabel?.trim();
+    return (
+      explicit ||
+      toolSummary.summaryText(
+        toolSummary.summarizeToolCalls(groupSummaryCalls(chips)),
       )
-      .join(', ');
-    return hidden > 0 ? `${label}, and ${hidden} more steps` : label;
+    );
+  }
+
+  function toolGroupSummaryNode(chips: TurnChip[]): ChatNode {
+    const pending = chips.find(chip => chip.result === undefined);
+    const busy = pending !== undefined;
+    const explicit = chips
+      .find(chip => chip.groupLabel?.trim())
+      ?.groupLabel?.trim();
+    if (explicit) {
+      return shimmerText(explicit, {shimmering: busy});
+    }
+    if (pending) {
+      const model = chipModel(pending);
+      return shimmerText(
+        model.summary ? model.title + ' ' + model.summary : model.title,
+        {shimmering: true},
+      );
+    }
+    const calls = groupSummaryCalls(chips);
+    const parts = toolSummary.summarizeToolCalls(calls);
+    const files = parts.some(part => part.file)
+      ? deliveredFiles(
+          chips.map(chip => ({
+            kind: 'tool',
+            name: chip.name,
+            text: chip.argsRaw,
+            result: chip.result?.text,
+            isError: chip.result?.isError,
+            callId: chip.callId,
+          })),
+          chips.find(chip => chip.executionRoot)?.executionRoot || '',
+        )
+      : [];
+    const content: ChatNode[] = [];
+    parts.forEach((part, index) => {
+      const phrase = h('span', {
+        class: 'mp-chat-group-phrase',
+        ...(part.isError ? {'data-error': 'true'} : {}),
+      });
+      const verb =
+        index === 0
+          ? part.verb.charAt(0).toUpperCase() + part.verb.slice(1)
+          : part.verb;
+      attach(phrase, (index ? ', ' : '') + verb);
+      if (part.meta) {
+        attach(phrase, ' ');
+        const file =
+          part.file &&
+          files.find(
+            file =>
+              deliveredFileKey(file.path) === deliveredFileKey(part.file!.path),
+          );
+        const target =
+          file?.absolutePath ||
+          calls.find(call => call.filePath === part.file?.path && call.target)
+            ?.target;
+        const canOpen =
+          index === parts.length - 1 &&
+          part.file &&
+          target &&
+          (!file?.deleted || file.previewPath);
+        const reference = part.file?.preferDiff
+          ? combinedFileDiffReference(
+              chips.filter(chip => {
+                if (!FILE_WRITE_TOOLS.has(chip.name)) {
+                  return false;
+                }
+                const path = deriveFilePath(classifyTool(chip.name), chip.argsRaw);
+                return path && deliveredFileKey(path) === deliveredFileKey(part.file!.path);
+              }).map(chipModel),
+            )
+          : undefined;
+        const meta = canOpen
+          ? h(
+              'button',
+              {
+                type: 'button',
+                class: 'mp-chat-group-file',
+                'data-mp-chat-act': 'open-file',
+                'data-file-path': part.file!.path,
+                'data-file-absolute-path': target,
+                ...(reference
+                  ? {'data-file-open-diff': JSON.stringify(reference)}
+                  : {}),
+                ...(file?.previewPath
+                  ? {'data-preview-path': file.previewPath}
+                  : {}),
+              },
+              part.meta,
+            )
+          : h('span', {class: 'mp-chat-group-meta'}, part.meta);
+        attach(phrase, meta);
+      }
+      content.push(phrase);
+    });
+    return shimmerText(
+      toolSummary.summaryText(parts),
+      {shimmering: false},
+      content,
+    );
   }
 
   function formatRunMeta(ms: number, tokens: number | null): string {
@@ -4448,15 +5418,37 @@ const ChatView = (() => {
 
   function cleanDeliveryText(value: string): string {
     let insideCode = false;
-    return value
-      .split(/\r?\n/)
+    const lines = value.split(/\r?\n/);
+    const footer = lines.lastIndexOf('任务尚未全部完成：');
+    if (
+      footer >= 0 &&
+      lines.slice(0, footer).filter(line => /^\s*```/.test(line)).length % 2 ===
+        0 &&
+      lines.slice(footer + 1).some(line => line.trim()) &&
+      lines
+        .slice(footer + 1)
+        .every(
+          line =>
+            !line.trim() ||
+            /^[\w.]+ 的目标：(?:已执行，待核对|执行失败|结果未知)\s*$/u.test(
+              line.trim(),
+            ),
+        )
+    ) {
+      lines.splice(footer);
+    }
+    return lines
       .filter(line => {
         if (/^\s*```/.test(line)) {
           insideCode = !insideCode;
           return true;
         }
-        return insideCode ||
-          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(line);
+        return (
+          insideCode ||
+          !/视觉工具不可用|visual tool unavailable|我改用(?:文本|命令行|bash)/iu.test(
+            line,
+          )
+        );
       })
       .join('\n')
       .trim();
@@ -4474,21 +5466,23 @@ const ChatView = (() => {
 
   function trajectoryFlowItems(turn: AssistantTurnInput): FlowItem[] | null {
     const records = Array.isArray(turn.trajectory) ? turn.trajectory : [];
-    const usable = records.filter(
-      record =>
-        record &&
-        typeof record === 'object' &&
-        (record.kind === 'message' ||
-          record.kind === 'think' ||
-          record.kind === 'notice' ||
-          record.kind === 'tool'),
-    );
+    const usable = records
+      .map((record, index) => ({record, index}))
+      .filter(
+        ({record}) =>
+          record &&
+          typeof record === 'object' &&
+          (record.kind === 'message' ||
+            record.kind === 'think' ||
+            record.kind === 'notice' ||
+            record.kind === 'tool'),
+      );
     if (!usable.length) {
       return null;
     }
     const answerText = cleanDeliveryText(String(turn.answer || ''));
     const items: FlowItem[] = [];
-    for (const [index, record] of usable.entries()) {
+    for (const {index, record} of usable) {
       const turn =
         record.turn === undefined || record.turn === null
           ? undefined
@@ -4501,7 +5495,7 @@ const ChatView = (() => {
         continue;
       }
       if (record.kind === 'message') {
-        const text = String(record.text || '').trim();
+        const text = cleanDeliveryText(String(record.text || ''));
         if (!text || (answerText && text === answerText)) {
           continue;
         }
@@ -4515,7 +5509,11 @@ const ChatView = (() => {
       if (record.kind === 'notice') {
         const text = String(record.text || '').trim();
         if (text) {
-          items.push({type: 'notice', text});
+          items.push({
+            type: 'notice',
+            text,
+            ...(record.noticeType === 'compaction' ? {compaction: record} : {}),
+          });
         }
         continue;
       }
@@ -4556,6 +5554,7 @@ const ChatView = (() => {
                   text: String(event.result || ''),
                   isError: Boolean(event.isError),
                   interrupted: event.interrupted === true,
+                  presentation: event.presentation,
                 }
               : undefined,
         },
@@ -4603,8 +5602,16 @@ const ChatView = (() => {
     }
 
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
+    for (const item of flow) {
+      if (item.type === 'chip') {
+        item.chip.executionRoot = String(
+          turn.request?.executionWorkspaceRoot || '',
+        );
+      }
+    }
     let chipRun: TurnChip[] = [];
     let workRun: FlowItem[] = [];
+    const fileRuns: Array<{callIds: string[]; bareEdit: boolean}> = [];
     const flushChips = () => {
       if (!chipRun.length) {
         const hasReasoning = workRun.some(entry => entry.type === 'reasoning');
@@ -4623,6 +5630,14 @@ const ChatView = (() => {
         return;
       }
       attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
+      const chip = chipRun[0];
+      fileRuns.push({
+        callIds: chipRun.map(chip => chip.callId),
+        bareEdit:
+          singleToolGroup(chipRun, workRun) &&
+          FILE_WRITE_TOOLS.has(chip.name) &&
+          Boolean(deriveFilePath(classifyTool(chip.name), chip.argsRaw)),
+      });
       chipRun = [];
       workRun = [];
     };
@@ -4649,7 +5664,12 @@ const ChatView = (() => {
         attach(bodyHost, narrationNode(item.text));
       } else if (item.type === 'notice') {
         flushChips();
-        attach(bodyHost, noticeNode(item.text));
+        attach(
+          bodyHost,
+          item.compaction
+            ? compactionNode(item.compaction)
+            : noticeNode(item.text),
+        );
       } else {
         chipRun.push(item.chip);
         workRun.push(item);
@@ -4712,16 +5732,54 @@ const ChatView = (() => {
       );
     }
     const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
+    const hasArtifact = artifacts.some(artifact => Boolean(artifact?.artifactId));
+    const files = deliveredFiles(
+      turn.trajectory,
+      String(turn.request?.executionWorkspaceRoot || ''),
+    );
+    const editRuns =
+      files.length === 1
+        ? fileRuns.filter(run =>
+            run.callIds.some(id => files[0].sourceCalls.has(id)),
+          )
+        : [];
+    const soleVisibleEdit =
+      files.length === 1 && editRuns.length === 1 && editRuns[0].bareEdit;
     const results = fileResultsNode(
-      deliveredFiles(turn.trajectory),
+      soleVisibleEdit && !hasArtifact ? [] : files,
       artifacts,
       String(turn.conversationId || ''),
+      turnScope,
+      options.undoFileChanges && !turn.running && !turn.pendingInput &&
+      turn.conversationId && Number.isInteger(turn.turnIndex)
+        ? {conversationId: turn.conversationId, turnIndex: Number(turn.turnIndex)}
+        : undefined,
     );
     if (results) {
       attach(root, results);
     }
     items.push(root);
     return items;
+  }
+
+  function fileUndoQuestion(turn: AssistantTurnInput): string | undefined {
+    if (turn.artifacts?.some(artifact => Boolean(artifact?.artifactId))) {
+      return undefined;
+    }
+    const files = deliveredFiles(
+      turn.trajectory,
+      String(turn.request?.executionWorkspaceRoot || ''),
+    );
+    const paths = files.map(file => `\`${file.path}\``);
+    if (!paths.length) {
+      return undefined;
+    }
+    return paths.length === 1
+      ? `Undo the changes you made to ${paths[0]} in your last turn and restore it to its previous state.`
+      : [
+          `Undo the changes you made to these ${paths.length} files in your last turn and restore them to their previous state:`,
+          ...paths.map(path => `- ${path}`),
+        ].join('\n');
   }
 
   function liveActivityNode(
@@ -4779,6 +5837,7 @@ const ChatView = (() => {
                 text:
                   fields.result !== undefined ? String(fields.result) : detail,
                 isError: fields.state === 'error',
+                presentation: fields.presentation,
               }
             : undefined,
           String(fields.id || ''),
@@ -4806,29 +5865,11 @@ const ChatView = (() => {
     const rows = new Map<string, {node: HTMLElement; record: string}>();
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
-    let thinkingText = '';
-    // Claude's duration comes from the pair of timestamps on the thinking
-    // block; the live snapshot carries none, so the span this row observed is
-    // the clock instead of a fabricated number.
-    let thinkingStartedAt = 0;
     const traceNodes = new Map<
       string,
       {node: HTMLElement; signature: string}
     >();
     let traceStatus: HTMLElement | null = null;
-    const appendText = (node: HTMLElement, previous: string, next: string) => {
-      if (previous === next) {
-        return;
-      }
-      if (next.startsWith(previous)) {
-        node.appendChild(document.createTextNode(next.slice(previous.length)));
-        if (node.childNodes.length > 32) {
-          node.textContent = next;
-        }
-      } else {
-        node.textContent = next;
-      }
-    };
     const updateLiveMarkdown = (node: HTMLElement, text: string) => {
       const next = markdownRenderer.render(text) as HTMLElement;
       const current = node.querySelector<HTMLElement>('.mp-chat-markdown');
@@ -4843,7 +5884,8 @@ const ChatView = (() => {
         if (!existing) {
           current.appendChild(block);
         } else if (
-          existing instanceof HTMLElement && block instanceof HTMLElement &&
+          existing instanceof HTMLElement &&
+          block instanceof HTMLElement &&
           existing.hasAttribute('data-openui-source') &&
           block.hasAttribute('data-openui-source')
         ) {
@@ -4908,12 +5950,6 @@ const ChatView = (() => {
                     item.type === 'reasoning',
                 );
                 if (currentThought && nextWork) {
-                  const target = currentThought.querySelector<HTMLElement>(
-                    '.mp-chat-think-body',
-                  );
-                  if (target) {
-                    appendText(target, target.textContent || '', nextWork.text);
-                  }
                   updateThinkingState(
                     currentThought,
                     nextWork.text,
@@ -4935,6 +5971,7 @@ const ChatView = (() => {
                   'data-single',
                   'data-thought-only',
                   'data-error-title',
+                  'aria-live',
                 ]) {
                   const value = replacement.getAttribute(attribute);
                   if (value === null) {
@@ -5058,9 +6095,25 @@ const ChatView = (() => {
               }
             } else if (record.kind === 'notice') {
               flush();
-              render(`notice:${index}`, record, () =>
-                noticeNode(String(record.text || '')),
-              );
+              if (record.noticeType === 'compaction') {
+                const signature = {
+                  state: record.state,
+                  pass: record.pass,
+                  chunk: record.chunk,
+                  chunks: record.chunks,
+                  error: record.error,
+                  beforeTokens: record.beforeTokens,
+                  afterTokens: record.afterTokens,
+                  language: document.documentElement.lang,
+                };
+                render(`compaction:${record.compactionId}`, signature, () =>
+                  compactionNode(record, true),
+                );
+              } else {
+                render(`notice:${index}`, record, () =>
+                  noticeNode(String(record.text || '')),
+                );
+              }
             }
           });
           flush();
@@ -5082,17 +6135,36 @@ const ChatView = (() => {
               row =>
                 row.kind === 'permission-review' && row.state === 'running',
             );
-          const statusText = activeReview
-            ? liveStatusLabel('permission_review_started', {
-                name: activeReview.name,
-              })
-            : activeChildren
-              ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
-              : activeTools
-                ? 'Running tools'
-                : snapshot.answer
-                  ? 'Writing'
-                  : 'Thinking';
+          const activeCompaction = [...snapshot.trajectory]
+            .reverse()
+            .find(
+              row => row.noticeType === 'compaction' && row.state === 'running',
+            );
+          const latestRecord = snapshot.trajectory.at(-1);
+          const compactionSettled =
+            latestRecord?.noticeType === 'compaction' &&
+            latestRecord.state !== 'running' &&
+            !activeReview &&
+            !activeTools &&
+            !snapshot.trajectory.some(
+              row => row.kind === 'message' && row.state === 'running',
+            );
+          const statusText = activeCompaction
+            ? compaction.compactionLabel(
+                activeCompaction,
+                document.documentElement.lang || 'en',
+              )
+            : activeReview
+              ? liveStatusLabel('permission_review_started', {
+                  name: activeReview.name,
+                })
+              : activeChildren
+                ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
+                : activeTools
+                  ? 'Running tools'
+                  : snapshot.answer
+                    ? 'Writing'
+                    : 'Thinking';
           const statusLabel = traceStatus.querySelector(
             '.mp-chat-turn-status-label',
           );
@@ -5104,7 +6176,13 @@ const ChatView = (() => {
             String(statusText === 'Thinking'),
           );
           traceStatus.setAttribute('aria-label', statusText);
-          desired.push(traceStatus);
+          traceStatus.setAttribute(
+            'aria-live',
+            activeCompaction ? 'off' : 'polite',
+          );
+          if (!activeCompaction && !compactionSettled) {
+            desired.push(traceStatus);
+          }
           for (const child of Array.from(host.children)) {
             if (!desired.includes(child as HTMLElement)) {
               child.remove();
@@ -5198,28 +6276,10 @@ const ChatView = (() => {
           if (!thinking) {
             thinking = thinkNode('', true, `${scope}:head`) as HTMLElement;
           }
-          if (!thinkingStartedAt) {
-            thinkingStartedAt = Date.now();
-          }
-          const body = thinking.querySelector<HTMLElement>(
-            '.mp-chat-think-body',
-          )!;
-          appendText(body, thinkingText, nextThinking);
-          const summary = thinking.querySelector('.mp-chat-summary')!;
-          const derived = latestLine(nextThinking);
-          const latestSummary =
-            derived.trim() === ''
-              ? 'Thinking'
-              : stripTrailingPunctuation(derived);
-          if (summary.textContent !== latestSummary) {
-            summary.textContent = latestSummary;
-          }
-          thinkingText = nextThinking;
           updateThinkingState(
             thinking,
             nextThinking,
             !snapshot.answer,
-            Date.now() - thinkingStartedAt,
           );
           desired.push(thinking);
         }
@@ -5264,11 +6324,14 @@ const ChatView = (() => {
         host: HTMLElement;
         live: ReturnType<typeof createLiveTurn>;
         final: string | null;
+        presentation: TurnPresentation;
       }
     >();
     return {
       update(conversation: {
         id: string;
+        agentSessionId?: string;
+        hasPendingWork?: boolean;
         turns?: Array<
           AssistantTurnInput & {
             question?: string;
@@ -5278,6 +6341,9 @@ const ChatView = (() => {
           }
         >;
       }) {
+        const undoFileChanges = Boolean(conversation.agentSessionId) &&
+          !conversation.hasPendingWork &&
+          !conversation.turns?.some(item => item.liveProgress || item.outcome === '进行中');
         for (const [turnIndex, turn] of (conversation.turns || []).entries()) {
           let current = turns.get(turnIndex);
           if (!current) {
@@ -5297,15 +6363,16 @@ const ChatView = (() => {
             host.className = 'mp-chat-flow-item';
             host.dataset.turnIndex = String(turnIndex);
             flow.appendChild(host);
+            const presentation: TurnPresentation = {taskPanel: true, undoFileChanges};
             current = {
               host,
-              live: createLiveTurn(host, `${conversation.id}#${turnIndex}`, {
-                taskPanel: true,
-              }),
+              live: createLiveTurn(host, `${conversation.id}#${turnIndex}`, presentation),
               final: null,
+              presentation,
             };
             turns.set(turnIndex, current);
           }
+          current.presentation.undoFileChanges = undoFileChanges;
           if (turn.liveProgress || turn.outcome === '进行中') {
             current.live.update(
               turn.liveProgress || {
@@ -5315,7 +6382,7 @@ const ChatView = (() => {
             );
             current.final = null;
           } else {
-            const signature = JSON.stringify(turn);
+            const signature = JSON.stringify([turn, undoFileChanges]);
             if (signature !== current.final) {
               current.live.finish({
                 ...turn,
@@ -5341,7 +6408,9 @@ const ChatView = (() => {
       session_ready: lt('phase.session_ready'),
       agent_start: lt('phase.agent_start'),
       agent_turn: turn ? lt('phase.agent_turn', {turn}) : lt('phase.reasoning'),
-      model_request: turn ? lt('phase.agent_turn', {turn}) : lt('phase.reasoning'),
+      model_request: turn
+        ? lt('phase.agent_turn', {turn})
+        : lt('phase.reasoning'),
       model_first_chunk: lt('phase.model_first_chunk'),
       model_response: lt('phase.model_response'),
       budget_renewed: lt('phase.budget_renewed'),
@@ -5370,9 +6439,21 @@ const ChatView = (() => {
     if (!row || !disclosure) {
       return;
     }
+    const toggle = row.querySelector<HTMLElement>('.mp-chat-row-toggle');
+    if (
+      toggle &&
+      act !== toggle &&
+      DOC?.getSelection?.()?.isCollapsed === false
+    ) {
+      return;
+    }
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
-    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    (toggle || row).setAttribute('aria-expanded', open ? 'false' : 'true');
+    if (!open) {
+      disclosure.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
+        .forEach(button => { void loadFileDiff(button); });
+    }
     const rowId = disclosure.getAttribute('data-row-id');
     if (rowId) {
       rememberExpansion(ROW_EXPANSION, rowId, !open);
@@ -5389,6 +6470,14 @@ const ChatView = (() => {
       return;
     }
     const summary = target.querySelector(':scope > .mp-chat-tool-group-header');
+    if (target.hasAttribute('open')) {
+      target.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
+        .forEach(button => {
+          if (button.closest('.mp-chat-disclosure')?.getAttribute('data-open') === 'true') {
+            void loadFileDiff(button);
+          }
+        });
+    }
     const groupId = summary?.getAttribute('data-group-id');
     if (!groupId) {
       return;
@@ -5429,6 +6518,53 @@ const ChatView = (() => {
     }
   }
 
+  function openChatImage(source: HTMLImageElement): void {
+    if (!DOC || !source.src) {
+      return;
+    }
+    DOC.querySelector<HTMLDialogElement>('.mp-chat-image-viewer')?.close();
+    const viewer = DOC.createElement('dialog');
+    viewer.className = 'mp-chat-image-viewer';
+    viewer.setAttribute('aria-label', source.alt || lt('chat.image_preview'));
+    const toolbar = DOC.createElement('div');
+    toolbar.className = 'mp-chat-image-toolbar';
+    const caption = DOC.createElement('span');
+    caption.textContent = source.alt || lt('chat.image_preview');
+    const close = DOC.createElement('button');
+    close.type = 'button';
+    close.textContent = lt('common.close');
+    toolbar.append(caption, close);
+    const viewport = DOC.createElement('div');
+    viewport.className = 'mp-chat-image-viewport';
+    const image = DOC.createElement('img');
+    image.src = source.currentSrc || source.src;
+    image.alt = source.alt;
+    image.title = lt('chat.image_original_size');
+    viewport.append(image);
+    viewer.append(toolbar, viewport);
+    close.addEventListener('click', () => viewer.close());
+    viewer.addEventListener('click', event => {
+      if (event.target === viewer) {
+        viewer.close();
+      }
+    });
+    image.addEventListener('click', () => {
+      viewport.classList.toggle('is-original');
+    });
+    viewer.addEventListener(
+      'close',
+      () => {
+        viewer.remove();
+        if (source.isConnected) {
+          source.focus();
+        }
+      },
+      {once: true},
+    );
+    DOC.body.append(viewer);
+    viewer.showModal();
+  }
+
   function bindDelegation(
     scope: Element | Document = DOC || ({} as Element),
   ): void {
@@ -5441,6 +6577,14 @@ const ChatView = (() => {
     }
     (host as unknown as {__mpChatBound?: boolean}).__mpChatBound = true;
     host.addEventListener('toggle', rememberGroupToggle, true);
+    host.addEventListener('mousedown', (event: MouseEvent) => {
+      if (
+        (event.target as Element | null)?.closest('.mp-chat-diff-copy') ||
+        (event.target as Element | null)?.closest('.mp-chat-think-copy')
+      ) {
+        event.preventDefault();
+      }
+    });
     host.addEventListener('click', (event: Event) => {
       const target = event.target as HTMLElement | null;
       if (!target) {
@@ -5451,7 +6595,31 @@ const ChatView = (() => {
         return;
       }
       const kind = act.getAttribute('data-mp-chat-act');
-      if (kind === 'toggle') {
+      if (kind === 'toggle-files') {
+        const more = act.closest('.mp-chat-files-more');
+        const rest = more?.querySelector('.mp-chat-files-more-list');
+        const label = more?.querySelector('.mp-chat-files-more-label');
+        if (!rest || !label) {
+          return;
+        }
+        const expanded = act.getAttribute('aria-expanded') !== 'true';
+        if (expanded) {
+          rest.removeAttribute('hidden');
+        } else {
+          rest.setAttribute('hidden', 'true');
+        }
+        act.setAttribute('aria-expanded', String(expanded));
+        label.textContent = expanded ? lt('chat.files_show_less')
+          : act.getAttribute('data-files-collapsed-label') || '';
+        rememberExpansion(ROW_EXPANSION, act.getAttribute('data-files-expansion-key') || '', expanded);
+        return;
+      }
+      if (kind === 'view-image' && act instanceof HTMLImageElement) {
+        event.preventDefault();
+        openChatImage(act);
+      } else if (kind === 'load-file-diff') {
+        void loadFileDiff(act);
+      } else if (kind === 'toggle') {
         toggleDisclosure(act);
       } else if (kind === 'open-subagent') {
         const parentCallId =
@@ -5464,42 +6632,70 @@ const ChatView = (() => {
             detail: {parentCallId},
           }),
         );
-      } else if (kind === 'think-more') {
-        const disclosure = act.closest<HTMLElement>('.mp-chat-think');
-        if (!disclosure) {
-          return;
-        }
-        const expanded = disclosure.dataset.expanded === 'true';
-        disclosure.dataset.expanded = expanded ? 'false' : 'true';
-        act.textContent = expanded ? 'Show more' : 'Show less';
-      } else if (kind === 'delivery-more') {
-        const wrap = act.closest<HTMLElement>('.mp-chat-delivery');
-        if (!wrap) {
-          return;
-        }
-        const expanded = wrap.dataset.expanded === 'true';
-        wrap.dataset.expanded = expanded ? 'false' : 'true';
-        act.textContent = expanded ? 'Show more' : 'Show less';
-      } else if (kind === 'copy') {
-        const text = act.getAttribute('data-mp-chat-copy') || '';
+      } else if (kind === 'copy' || kind === 'copy-thinking') {
+        const thinkingCopy = kind === 'copy-thinking';
+        const thinkingBody = thinkingCopy
+          ? act.closest('.mp-chat-think')?.querySelector('.mp-chat-think-body')
+          : null;
+        const text = thinkingCopy
+          ? thinkingQuote(
+              (thinkingBody && THINKING_TEXT.get(thinkingBody)?.source) ??
+                thinkingBody?.textContent ?? '',
+            ).trim()
+          : act.getAttribute('data-mp-chat-copy') || '';
         const button = act;
+        const diffCopy = button.getAttribute('class')?.split(' ').includes('mp-chat-diff-copy');
+        const previous = COPY_RESET_TIMERS.get(button);
+        if (previous?.timer !== undefined) {
+          window.clearTimeout(previous.timer);
+        }
+        const feedback: {timer?: number} = {};
+        COPY_RESET_TIMERS.set(button, feedback);
         void copyToClipboard(text).then((ok: boolean) => {
-          const original = button.querySelector('svg');
-          if (original) {
-            original.remove();
+          if (COPY_RESET_TIMERS.get(button) !== feedback) {
+            return;
           }
-          button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
+          if (button.isConnected === false) {
+            COPY_RESET_TIMERS.delete(button);
+            return;
+          }
+          const glyph =
+            button.querySelector('.mp-chat-diff-copy-glyph') ||
+            button.querySelector('.mp-chat-think-copy-glyph');
+          if (glyph) {
+            glyph.setAttribute('data-glyph', ok ? '\ue03b' : '\ue056');
+          } else {
+            button.querySelector('svg')?.remove();
+            button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
+          }
           if (!ok) {
             button.setAttribute('aria-label', lt('chat.copy_failed'));
+          } else if (diffCopy || thinkingCopy) {
+            button.setAttribute('aria-label', lt('chat.copied'));
           }
-          window.setTimeout(() => {
-            const check = button.querySelector('svg');
-            if (check) {
-              check.remove();
+          const timer = window.setTimeout(() => {
+            if (COPY_RESET_TIMERS.get(button) !== feedback) {
+              return;
             }
-            button.appendChild(icon('copy', 16) as Element);
-            button.setAttribute('aria-label', lt('chat.copy'));
-          }, 2000);
+            COPY_RESET_TIMERS.delete(button);
+            if (button.isConnected === false) {
+              return;
+            }
+            const glyph =
+              button.querySelector('.mp-chat-diff-copy-glyph') ||
+              button.querySelector('.mp-chat-think-copy-glyph');
+            if (glyph) {
+              glyph.setAttribute('data-glyph', '\ue056');
+            } else {
+              button.querySelector('svg')?.remove();
+              button.appendChild(icon('copy', 16) as Element);
+            }
+            button.setAttribute(
+              'aria-label',
+              lt(thinkingCopy ? 'chat.copy_as_quote' : 'chat.copy'),
+            );
+          }, diffCopy ? 1200 : 2000);
+          feedback.timer = timer;
         });
       } else if (kind === 'retry') {
         const question = act.getAttribute('data-mp-chat-retry') || '';
@@ -5509,6 +6705,41 @@ const ChatView = (() => {
         DOC.dispatchEvent(
           new CustomEvent('mp:retry-question', {detail: {question}}),
         );
+      } else if (kind === 'undo-files') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (act.dataset.undoPending === 'true') {
+          return;
+        }
+        const conversationId = act.getAttribute('data-undo-conversation') || '';
+        const turnIndex = Number(act.getAttribute('data-undo-turn'));
+        if (!conversationId || !Number.isInteger(turnIndex) || turnIndex < 0) {
+          return;
+        }
+        act.dataset.undoPending = 'true';
+        (act as HTMLButtonElement).disabled = true;
+        const card = act.closest('.mp-chat-files');
+        card?.querySelector('.mp-chat-files-error')?.remove();
+        DOC.dispatchEvent(new CustomEvent('mp:undo-file-changes', {
+          detail: {
+            conversationId,
+            turnIndex,
+            respond: (result: {ok: boolean; error?: string}) => {
+              if (act.isConnected === false) {
+                return;
+              }
+              act.dataset.undoPending = 'false';
+              (act as HTMLButtonElement).disabled = false;
+              if (!result.ok) {
+                const error = DOC.createElement('span');
+                error.className = 'mp-chat-files-error';
+                error.setAttribute('role', 'alert');
+                error.textContent = result.error || lt('chat.files_undo_failed');
+                card?.appendChild(error);
+              }
+            },
+          },
+        }));
       } else if (kind === 'open-artifact') {
         const artifactId = act.getAttribute('data-artifact-id') || '';
         const conversationId =
@@ -5522,11 +6753,28 @@ const ChatView = (() => {
           }),
         );
       } else if (kind === 'open-file') {
+        event.preventDefault();
+        event.stopPropagation();
         const path = act.getAttribute('data-file-path') || '';
         if (!path) {
           return;
         }
-        DOC.dispatchEvent(new CustomEvent('mp:open-file', {detail: {path}}));
+        const previewPath = act.getAttribute('data-preview-path') || '';
+        const absolutePath = act.getAttribute('data-file-absolute-path') || '';
+        const originUnknown =
+          act.getAttribute('data-file-origin-unknown') === 'true';
+        const reference = act.getAttribute('data-file-open-diff');
+        DOC.dispatchEvent(
+          new CustomEvent('mp:open-file', {
+            detail: {
+              path,
+              ...(absolutePath ? {absolutePath} : {}),
+              ...(previewPath ? {previewPath} : {}),
+              ...(originUnknown ? {originUnknown} : {}),
+              ...(reference ? {diffReference: JSON.parse(reference)} : {}),
+            },
+          }),
+        );
       } else if (kind === 'branch') {
         const conversationId =
           act.getAttribute('data-mp-chat-branch-conversation') || '';
@@ -5545,8 +6793,21 @@ const ChatView = (() => {
       if (event.key !== 'Enter' && event.key !== ' ') {
         return;
       }
+      if (
+        event.repeat &&
+        ((event.target as Element | null)?.closest('.mp-chat-diff-copy') ||
+          (event.target as Element | null)?.closest('.mp-chat-think-copy'))
+      ) {
+        event.preventDefault();
+        return;
+      }
+      if (
+        (event.target as Element | null)?.closest('button, a, input, textarea, select')
+      ) {
+        return;
+      }
       const row = (event.target as HTMLElement | null)?.closest?.(
-        '.mp-chat-row[data-mp-chat-act]',
+        '.mp-chat-row[data-mp-chat-act], img[data-mp-chat-act="view-image"]',
       ) as HTMLElement | null;
       if (!row) {
         return;
@@ -5564,6 +6825,9 @@ const ChatView = (() => {
     userNode,
     assistantTurnNode,
     artifactCardNode,
+    fileDiffNode,
+    fileUndoQuestion,
+    deletedFileNode,
     turnStatusNode,
     turnErrorNode,
     thinkNode,
@@ -5588,21 +6852,23 @@ const ChatView = (() => {
       },
     },
     __test: {
+      thinkingDisplayText,
+      thinkingText: THINKING_TEXT,
+      thinkingQuote,
       firstLine,
       latestLine,
       classifyTool,
       deriveSummary,
       deriveDiff,
+      diffPreviewNode,
       formatClock,
       relativeTime,
       toolGroupLabel,
-      runningGroupClause,
       normaliseToolName,
       toolCategory,
       toolLabel,
       commandSummary,
       fileChangeMode,
-      thinkingDuration,
       runningDuration,
       connectorDisplayName,
       shortenPath,

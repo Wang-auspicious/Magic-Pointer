@@ -57,6 +57,8 @@ function onSignal(channel: string, callback: SignalCallback): void {
 }
 
 contextBridge.exposeInMainWorld('magicPointer', {
+  readFileDiff: (reference: {beforePath: string | null; afterPath: string}) =>
+    ipcRenderer.invoke('files:diff-preview', reference),
   ready: () => ipcRenderer.send('overlay:renderer-ready'),
   gestureReady: (token: unknown) =>
     ipcRenderer.send('overlay:gesture-ready', {token}),
@@ -390,6 +392,16 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           .trim()
           .slice(0, 1000),
       }),
+    prepareDeletedFile: (
+      projectRoot: string,
+      relativePath: string,
+      base: 'head' | 'index',
+    ) =>
+      ipcRenderer.invoke('projects:prepare-deleted-file', {
+        projectRoot,
+        path: relativePath,
+        base,
+      }),
     readFile: (projectRoot: unknown, relativePath: unknown) =>
       ipcRenderer.invoke('projects:read-file', {
         projectRoot: String(projectRoot || '')
@@ -415,10 +427,16 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         conversationId?: unknown;
         path?: unknown;
         baseBranch?: unknown;
+        previousBranch?: unknown;
       } = {},
     ) =>
       ipcRenderer.invoke('projects:worktree', {
-        action: payload?.action === 'remove' ? 'remove' : 'create',
+        action:
+          payload?.action === 'remove'
+            ? 'remove'
+            : payload?.action === 'checkout'
+              ? 'checkout'
+              : 'create',
         projectRoot: String(payload?.projectRoot || '')
           .trim()
           .slice(0, 500),
@@ -431,6 +449,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         baseBranch: String(payload?.baseBranch || '')
           .trim()
           .slice(0, 200),
+        ...(typeof payload.previousBranch === 'string'
+          ? {previousBranch: payload.previousBranch.trim()}
+          : {}),
       }),
     contextMenu: (projectRoot: unknown, relativePath: unknown, kind: unknown) =>
       ipcRenderer.invoke('projects:context-menu', {
@@ -529,6 +550,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       }),
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
     send: (payload: {
+      branch?: unknown;
+      worktree?: unknown;
       workMode?: unknown;
       conversationId?: unknown;
       projectId?: unknown;
@@ -547,6 +570,12 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       permissionGrantOnce?: unknown;
     }) =>
       ipcRenderer.invoke('conversations:send', {
+        ...(typeof payload.branch === 'string'
+          ? {branch: payload.branch.trim()}
+          : {}),
+        ...(typeof payload.worktree === 'boolean'
+          ? {worktree: payload.worktree}
+          : {}),
         workMode: payload.workMode === 'work' ? 'work' : 'code',
         conversationId: String(payload?.conversationId || '').slice(0, 120),
         ...(typeof payload?.projectId === 'string'
@@ -591,7 +620,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
                 .slice(0, 500),
             }
           : {}),
-        effort: normalizeEffort(payload?.effort),
+        ...(payload.effort !== undefined
+          ? {effort: normalizeEffort(payload.effort)}
+          : {}),
         ...(String(payload?.permissionGrant || '').trim()
           ? {
               permissionGrant: String(payload?.permissionGrant)
