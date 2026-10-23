@@ -25,7 +25,7 @@ import {
   type HistoryList,
 } from './resource_browser_history';
 import {ResourceBookmarkSync} from './resource_bookmark_sync';
-import {CollectionHistoryNetwork} from './collection_history_network';
+import {CollectionHistoryNetwork, mergeHistoryLinks} from './collection_history_network';
 import {chronologicalResources, prioritizeResources} from './resource_relevance';
 import {
   updatePerceptionActivity,
@@ -6765,7 +6765,7 @@ async function readCollectionHistoryPage(
   );
   const response = collectionHistoryReaders.get(account)?.snapshot();
   if (!page.error && response) {
-    page.links = response.links;
+    page.links = mergeHistoryLinks(page.links, response.links);
     page.atEnd = response.atEnd;
     page.coverage = `Normal account list response: ${response.links.length} notes; server end=${response.atEnd}.`;
   }

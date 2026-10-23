@@ -1,6 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readHistoryResponse} from '../electron/collection_history_network';
+import {
+  readHistoryResponse,
+  mergeHistoryLinks,
+} from '../electron/collection_history_network';
+
+test('the server-rendered first page stays ahead of later network pages', () => {
+  const first = {
+    id: 'first',
+    title: 'Initial page',
+    url: 'https://www.xiaohongshu.com/explore/first',
+  };
+  const next = {
+    id: 'next',
+    title: 'Later page',
+    url: 'https://www.xiaohongshu.com/explore/next',
+  };
+  assert.deepEqual(
+    mergeHistoryLinks([first, next], [next]).map(link => link.id),
+    ['first', 'next'],
+  );
+});
 
 test('the account list response proves its end and preserves signed note URLs without a visible footer', () => {
   const result = readHistoryResponse({

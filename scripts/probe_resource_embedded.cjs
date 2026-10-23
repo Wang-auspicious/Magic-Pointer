@@ -147,6 +147,7 @@ app.whenReady().then(async () => {
       collectionHistoryReaders: new Map(),
       CollectionHistoryNetwork: built('collection_history_network')
         .CollectionHistoryNetwork,
+      mergeHistoryLinks: built('collection_history_network').mergeHistoryLinks,
       WebContentsView,
       BrowserWindow,
       nativeTheme,

@@ -1,5 +1,18 @@
 import type {HistoryLink, HistoryList} from './resource_browser_history';
 
+export function mergeHistoryLinks(
+  rendered: HistoryLink[],
+  received: HistoryLink[],
+): HistoryLink[] {
+  const links = new Map<string, HistoryLink>();
+  for (const link of [...rendered, ...received]) {
+    if (!links.has(link.id)) {
+      links.set(link.id, link);
+    }
+  }
+  return [...links.values()];
+}
+
 export function readHistoryResponse(
   value: unknown,
 ): {links: HistoryLink[]; atEnd: boolean} | null {
