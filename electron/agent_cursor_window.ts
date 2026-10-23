@@ -187,7 +187,7 @@ export class AgentCursorSurfaces {
         window.webContents.send('overlay:agent-cursor', {kind: 'clear'});
         window.hide();
       }
-      if (![...this.surfaces.values()].some(item => item.window?.isVisible())) {
+      if (!this.isVisible()) {
         this.stopSampling();
       }
     }, delayMs);
@@ -200,9 +200,13 @@ export class AgentCursorSurfaces {
     }
     let delivered = false;
     for (const surface of this.surfaces.values()) {
-      const window = surface.window;
+      let window = surface.window;
       if (!window || window.isDestroyed()) {
-        continue;
+        if (command.kind === 'clear') {
+          continue;
+        }
+        window = this.createWindow(surface);
+        surface.window = window;
       }
       if (
         command.kind === 'clear' ||
@@ -283,9 +287,7 @@ export class AgentCursorSurfaces {
     if (this.sampleTimer) {
       return;
     }
-    if (
-      ![...this.surfaces.values()].some(surface => surface.window?.isVisible())
-    ) {
+    if (!this.isVisible()) {
       return;
     }
     this.sampleTimer = setInterval(() => {
@@ -331,7 +333,11 @@ export class AgentCursorSurfaces {
 
   isVisible(): boolean {
     return [...this.surfaces.values()].some(surface =>
-      surface.window?.isVisible(),
+      Boolean(
+        surface.window &&
+        !surface.window.isDestroyed() &&
+        surface.window.isVisible(),
+      ),
     );
   }
 }
