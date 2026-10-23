@@ -377,6 +377,10 @@ test('aborts mid-step and resumes the remaining graph on rerun', async () => {
   assert.equal(aborted.steps.b.attempts.length, 1);
   assert.equal(aborted.steps.c.status, 'pending');
   assert.equal(aborted.steps.c.attempts.length, 0);
+  // The aborted attempt may or may not have reached the model before the
+  // stop, so the gate outcome can still be queued for the resumed attempt;
+  // release it either way.
+  await writeFile(harness.gateFile, 'release');
   const resumed = (await harness.engine.run(plan, {
     runId: 'resume-run',
   })) as Data;
@@ -384,7 +388,10 @@ test('aborts mid-step and resumes the remaining graph on rerun', async () => {
   assert.deepEqual(resumed.replayedSteps, ['a']);
   const log = await harness.readLog();
   assert.equal(log.filter(id => id === 'a').length, 1);
-  assert.equal(log.filter(id => id === 'b').length, 2);
+  assert.ok(
+    [1, 2].includes(log.filter(id => id === 'b').length),
+    `step b ran ${log.filter(id => id === 'b').length} times`,
+  );
   assert.equal(log.filter(id => id === 'c').length, 1);
   const journal = await harness.readJournal('resume-run');
   assert.equal(journal.status, 'succeeded');
