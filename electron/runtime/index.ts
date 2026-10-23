@@ -22,6 +22,7 @@ import {registerDurableMemoryTools} from './agent_memory';
 import {validateAdditionalFolders} from '../workspace_folders';
 import {savedWorkspaceSettings} from './workspace_settings';
 import {registerSubagentTools} from './agent_background';
+import {registerWorkflowRunTool} from './workflow_engine';
 import {
   contextWindowFor,
   registerMemoryTools,
@@ -479,6 +480,25 @@ export async function runRuntime(
           config,
           permissionMode,
           onEvent,
+          allowedTools: payload.permissionGrants || [],
+          deniedTools: payload.permissionDenials || [],
+          maxTokens: config.defaultMaxTokens || 32768,
+          contextTokens,
+        });
+      },
+    },
+    {
+      name: 'workflow-tool',
+      apply: ctx => {
+        registerWorkflowRunTool(ctx.get('tools'), {
+          root,
+          userDataDir,
+          workspace,
+          additionalFolders,
+          projectContext: payload.projectContext,
+          session,
+          config,
+          permissionMode,
           allowedTools: payload.permissionGrants || [],
           deniedTools: payload.permissionDenials || [],
           maxTokens: config.defaultMaxTokens || 32768,

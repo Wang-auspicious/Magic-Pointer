@@ -227,6 +227,29 @@ async function ownedChild(
   }
   return child;
 }
+
+function inheritedGrants(
+  parent: EventSession,
+  base: readonly string[] | undefined,
+): string[] {
+  const inherited = [...(base ?? [])];
+  for (const event of parent.events) {
+    if (
+      event.type === 'user_input/answered' &&
+      asObject(event.data.response).decision === 'grant'
+    ) {
+      const input = asObject(event.data.pendingInput);
+      if (input.kind === 'permission') {
+        inherited.push(
+          input.prefix
+            ? `${input.tool}(${input.prefix})`
+            : str(input.tool),
+        );
+      }
+    }
+  }
+  return inherited;
+}
 export async function respondToAgent(
   userDataDir: string,
   parentId: string,
@@ -390,6 +413,65 @@ async function launch(payload: BackgroundPayload): Promise<Data> {
   return {...meta, status: 'running'};
 }
 
+/**
+ * Run one subagent to completion inside this process on the same runner the
+ * spawned worker uses. Caller picks the child session id; bookkeeping (child
+ * session, subagent events, status file) mirrors the Agent tool so the step
+ * stays visible through AgentStatus and the parent inbox.
+ */
+export async function runSubagentInline(
+  payload: BackgroundPayload,
+): Promise<Data> {
+  const {userDataDir, sessionId} = payload;
+  const previous = await readAgentStatus(userDataDir, sessionId);
+  if (previous && active.has(str(previous.status))) {
+    throw new Error('subagent_already_running');
+  }
+  await unlink(
+    filename(userDataDir, sessionId, '.agent.stop'),
+  ).catch(() => {});
+  const parent = await EventSession.open(userDataDir, payload.parentId, false);
+  const child = await EventSession.open(
+    userDataDir,
+    sessionId,
+    true,
+    payload.parentId,
+  );
+  if (!child.events.some(event => event.type === 'subagent/configured')) {
+    await child.append('subagent/configured', {
+      task: payload.instruction,
+      readonly: payload.readonly,
+    });
+    await parent.append('subagent/created', {
+      childSessionId: sessionId,
+      task: payload.instruction,
+      readonly: payload.readonly,
+    });
+  }
+  await persist(filename(userDataDir, sessionId), {
+    id: sessionId,
+    parentSessionId: payload.parentId,
+    parentCallId: payload.parentCallId,
+    description: payload.instruction,
+    readonly: payload.readonly,
+    status: 'starting',
+    phase: 'starting',
+    background: true,
+    stepCount: 0,
+    steps: [],
+    trajectory: [],
+    currentTool: '',
+    startedAt: Date.now(),
+    model: payload.config?.model,
+    effort: payload.config?.effort,
+  });
+  await runBackgroundAgent({
+    ...payload,
+    allowedTools: inheritedGrants(parent, payload.allowedTools),
+  });
+  return (await readAgentStatus(userDataDir, sessionId))!;
+}
+
 export function registerSubagentTools(
   registry: ToolRegistry,
   options: Pick<
@@ -485,22 +567,7 @@ export function registerSubagentTools(
             readonly,
           });
         }
-        const inherited = [...(options.allowedTools ?? [])];
-        for (const event of parent.events) {
-          if (
-            event.type === 'user_input/answered' &&
-            asObject(event.data.response).decision === 'grant'
-          ) {
-            const input = asObject(event.data.pendingInput);
-            if (input.kind === 'permission') {
-              inherited.push(
-                input.prefix
-                  ? `${input.tool}(${input.prefix})`
-                  : str(input.tool),
-              );
-            }
-          }
-        }
+        const inherited = inheritedGrants(parent, options.allowedTools);
         const payload: BackgroundPayload = {
           root: options.root,
           userDataDir,
