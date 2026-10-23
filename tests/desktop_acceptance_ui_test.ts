@@ -79,7 +79,11 @@ try {
     /reply-2/,
     'a settled shell row shows the structured result, not the streamed tail',
   );
-  assert.match(settledShell, /exit/, 'a settled shell row shows the structured result');
+  assert.match(
+    settledShell,
+    /done/,
+    'a settled shell row shows the structured stdout from the result',
+  );
   assert.equal(
     chat.toolRowModel('Todo', '{}', {text: '{}', isError: false}).title,
     'Updated plan',

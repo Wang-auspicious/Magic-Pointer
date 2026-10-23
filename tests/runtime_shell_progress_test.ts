@@ -26,7 +26,9 @@ test('a foreground Bash run with timeout_s=1 is killed quickly and returns struc
   const elapsed = Date.now() - started;
   assert.equal(result.is_error, true);
   assert.ok(elapsed < 8000, `expected a fast kill, took ${elapsed}ms`);
-  const value = JSON.parse(String(result.value)) as {
+  const value = (typeof result.value === 'string'
+    ? JSON.parse(result.value)
+    : result.value) as {
     exit: unknown;
     stdout: string;
     stderr: string;
