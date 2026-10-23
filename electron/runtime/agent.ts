@@ -550,6 +550,8 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
   let wrote = false;
   let verified = false;
   let nudged = false;
+  let totalToolCalls = 0;
+  let callBudgetNoted = false;
   let reason = 'invariant_failed';
   let answer = '';
   let pending: Data | null = null;
@@ -1341,6 +1343,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         }
         const result = event.result;
         const call = event.call;
+        totalToolCalls++;
         const post = await options.hooks?.run('post', {
           tool_name: call.name,
           input: call.arguments,
@@ -1465,6 +1468,16 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           origin: 'instruction',
           injected: true,
           content: [...new Set(warnings)].join('\n'),
+        });
+      }
+      if (totalToolCalls > 80 && !callBudgetNoted) {
+        callBudgetNoted = true;
+        await session.appendMessage({
+          role: 'user',
+          origin: 'instruction',
+          injected: true,
+          content:
+            '本任务累计工具调用已超过 80 次。长任务可以继续，无需因此停止；但如果近期的调用在重复同一动作，请先核对已有结果或向用户说明当前进展，不要原地循环。',
         });
       }
       if (pending) {

@@ -390,22 +390,35 @@ export class ProgressTracker {
   private evidence = new Map<string, number>();
   private failures = new Map<string, number>();
   private actions = new Map<string, number>();
+  private repeatIdentity: string | null = null;
+  private repeatCount = 0;
   observe(
     call: ToolCall,
     result: ToolResult,
     effect: Effect,
   ): {progress: boolean; warning: string; stalled: boolean} {
     const value = parse(result.value);
+    // Calls that never ran (steer or a pending permission ask) neither count
+    // as repetitions nor break a repetition run.
+    if (
+      result.is_error &&
+      (result.failure_type === 'steer_pending' ||
+        (result.failure_type === 'permission_denied' &&
+          value.awaitingUserInput === true))
+    ) {
+      return {progress: false, warning: '', stalled: false};
+    }
+    const identity = canonicalJson([call.name, call.arguments]);
+    this.repeatCount =
+      this.repeatIdentity === identity ? this.repeatCount + 1 : 1;
+    this.repeatIdentity = identity;
+    const loopWarning =
+      this.repeatCount === 3
+        ? 'The identical call ran three times in a row. Change method, or verify the current result before repeating it.'
+        : '';
     let count: number;
     let warning: string;
     if (result.is_error) {
-      if (
-        result.failure_type === 'steer_pending' ||
-        (result.failure_type === 'permission_denied' &&
-          value.awaitingUserInput === true)
-      ) {
-        return {progress: false, warning: '', stalled: false};
-      }
       const key = `${call.name}:${result.failure_type || 'tool_error'}`;
       count = (this.failures.get(key) ?? 0) + 1;
       this.failures.set(key, count);
@@ -419,12 +432,12 @@ export class ProgressTracker {
       }
       const key = canonicalJson(facts(result.value));
       const store = effect === 'read' ? this.evidence : this.actions;
-      const identity =
+      const resultIdentity =
         effect === 'read'
           ? key
           : canonicalJson([call.name, call.arguments, key]);
-      count = (store.get(identity) ?? 0) + 1;
-      store.set(identity, count);
+      count = (store.get(resultIdentity) ?? 0) + 1;
+      store.set(resultIdentity, count);
       if (effect !== 'read' && count === 1) {
         this.evidence.clear();
       }
@@ -444,9 +457,10 @@ export class ProgressTracker {
         return {
           progress: false,
           warning:
-            count === 2
+            loopWarning ||
+            (count === 2
               ? 'Repeated input is not result verification; observe the changed target when needed.'
-              : '',
+              : ''),
           stalled: false,
         };
       }
@@ -461,7 +475,7 @@ export class ProgressTracker {
             !!object(call.arguments).expect ||
             !!object(call.arguments).condition);
       if (waiting) {
-        return {progress: true, warning: '', stalled: false};
+        return {progress: true, warning: loopWarning, stalled: false};
       }
       warning =
         effect === 'read'
@@ -470,7 +484,7 @@ export class ProgressTracker {
     }
     return {
       progress: !result.is_error && count === 1,
-      warning: count >= 2 ? warning : '',
+      warning: loopWarning || (count >= 2 ? warning : ''),
       stalled: count >= 4,
     };
   }

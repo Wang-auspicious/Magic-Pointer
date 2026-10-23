@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventSession } from '../electron/runtime/session';
 import { runAgent, type ModelReply } from '../electron/runtime/agent';
-import { ActionFailure, ToolRegistry } from '../electron/runtime/tools';
-import { operationOutcomes, taskOutcomes } from '../electron/runtime/agent_outcomes';
+import { ActionFailure, type ToolResult, ToolRegistry } from '../electron/runtime/tools';
+import { operationOutcomes, ProgressTracker, taskOutcomes } from '../electron/runtime/agent_outcomes';
 
 const schema = { type: 'object', properties: {}, required: [], additionalProperties: true };
 const call = (id: string, name: string, args = {}) => ({ id, name, arguments: args });
@@ -237,6 +237,55 @@ test('repeated non-idempotent keyboard input is not mistaken for a duplicate suc
   const result = await runAgent({ ...options, registry, model: async () => ++turn <= 4 ? reply([call(`key-${turn}`, 'press_key', { state_id: 'state', keys: 'down' })]) : reply() });
   assert.equal(result.reason, 'completed');
   assert.equal(result.receipt.status, 'unverified');
+});
+
+test('three identical consecutive calls warn once on the third without stalling', () => {
+  const tracker = new ProgressTracker();
+  let n = 0;
+  const observe = (name: string, args: Record<string, unknown>) => tracker.observe(
+    call(`${name}-${++n}`, name, args),
+    { tool_call_id: `c${n}`, value: { n }, is_error: false, failure_type: null,
+      used_backend: 'test', latency_ms: 1, outcome_known: true } satisfies ToolResult,
+    'read');
+  assert.equal(observe('poll', { q: 'status' }).warning, '');
+  assert.equal(observe('poll', { q: 'status' }).warning, '');
+  const third = observe('poll', { q: 'status' });
+  assert.match(third.warning, /three times in a row/);
+  assert.equal(third.stalled, false);
+  assert.equal(observe('poll', { q: 'status' }).warning, '');
+});
+
+test('changed arguments or an interleaved call restart the identical-call counter', () => {
+  const tracker = new ProgressTracker();
+  let n = 0;
+  const observe = (name: string, args: Record<string, unknown>) => tracker.observe(
+    call(`${name}-${++n}`, name, args),
+    { tool_call_id: `c${n}`, value: { n }, is_error: false, failure_type: null,
+      used_backend: 'test', latency_ms: 1, outcome_known: true } satisfies ToolResult,
+    'read');
+  for (const args of [{ q: 'a' }, { q: 'b' }, { q: 'a' }, { q: 'b' }]) {
+    assert.equal(observe('poll', args).warning, '');
+  }
+  assert.equal(observe('step', { i: 1 }).warning, '');
+  assert.equal(observe('step', { i: 1 }).warning, '');
+  assert.equal(observe('other', { i: 1 }).warning, '');
+  assert.equal(observe('step', { i: 1 }).warning, '');
+});
+
+test('crossing eighty cumulative tool calls injects one reminder without stopping the task', async () => {
+  const options = await fixture('call-budget'), registry = new ToolRegistry();
+  registry.register({ name: 'Tick', description: 'numbered read', input_schema: schema,
+    execute: args => ({ n: args.n }) });
+  let round = 0;
+  const result = await runAgent({ ...options, registry, model: async () => ++round <= 2
+    ? reply(Array.from({ length: 81 }, (_, i) => call(`t${round}-${i}`, 'Tick', { n: round * 100 + i })))
+    : reply() });
+  assert.equal(result.reason, 'completed');
+  const reminders = options.session.events.filter(event =>
+    event.type === 'user/message' &&
+    String((event.data.message as { content?: unknown } | undefined)?.content)
+      .includes('工具调用已超过 80 次'));
+  assert.equal(reminders.length, 1);
 });
 
 test('desktop batch receipts use each action and explicit waits resolve only the bound non-send action', async () => {
