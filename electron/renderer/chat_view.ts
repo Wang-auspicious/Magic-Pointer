@@ -54,7 +54,7 @@ const ChatView = (() => {
   type ChatChild = string | number | ShimNode | Node | null | undefined | false;
 
   const DOC = typeof document !== 'undefined' ? document : null;
-  const COPY_RESET_TIMERS = new WeakMap<HTMLElement, number>();
+  const COPY_RESET_TIMERS = new WeakMap<HTMLElement, {timer?: number}>();
   const ESCAPES: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
@@ -6659,12 +6659,17 @@ const ChatView = (() => {
         const button = act;
         const diffCopy = button.getAttribute('class')?.split(' ').includes('mp-chat-diff-copy');
         const previous = COPY_RESET_TIMERS.get(button);
-        if (previous !== undefined) {
-          window.clearTimeout(previous);
-          COPY_RESET_TIMERS.delete(button);
+        if (previous?.timer !== undefined) {
+          window.clearTimeout(previous.timer);
         }
+        const feedback: {timer?: number} = {};
+        COPY_RESET_TIMERS.set(button, feedback);
         void copyToClipboard(text).then((ok: boolean) => {
+          if (COPY_RESET_TIMERS.get(button) !== feedback) {
+            return;
+          }
           if (button.isConnected === false) {
+            COPY_RESET_TIMERS.delete(button);
             return;
           }
           const glyph =
@@ -6682,6 +6687,9 @@ const ChatView = (() => {
             button.setAttribute('aria-label', lt('chat.copied'));
           }
           const timer = window.setTimeout(() => {
+            if (COPY_RESET_TIMERS.get(button) !== feedback) {
+              return;
+            }
             COPY_RESET_TIMERS.delete(button);
             if (button.isConnected === false) {
               return;
@@ -6700,7 +6708,7 @@ const ChatView = (() => {
               lt(thinkingCopy ? 'chat.copy_as_quote' : 'chat.copy'),
             );
           }, diffCopy ? 1200 : 2000);
-          COPY_RESET_TIMERS.set(button, timer);
+          feedback.timer = timer;
         });
       } else if (kind === 'retry') {
         const question = act.getAttribute('data-mp-chat-retry') || '';

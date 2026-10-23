@@ -87,7 +87,11 @@ test('thinking exposes a quote-copy action without duplicating the full body in 
   );
 });
 
-async function copyThinking(reasoning: string, fail = false) {
+async function copyThinking(
+  reasoning: string,
+  fail = false,
+  write?: (value: string) => Promise<void>,
+) {
   const root = chat.thinkNode(reasoning, false);
   const body = nodes(root, 'mp-chat-think-body')[0];
   const button = nodes(root, 'mp-chat-think-copy')[0];
@@ -136,6 +140,7 @@ async function copyThinking(reasoning: string, fail = false) {
       clipboard: {
         writeText: async (value: string) => {
           copied.push(value);
+          await write?.(value);
           if (fail) throw new Error('Clipboard unavailable');
         },
       },
@@ -230,3 +235,52 @@ test('a failed thinking copy does not display success and resets to its original
   f.timers[0]();
   assert.equal(f.button.getAttribute('aria-label'), 'Copy as quote');
 });
+
+for (const latestFails of [false, true]) {
+  test(`a late earlier clipboard result cannot replace the latest ${latestFails ? 'failed' : 'successful'} copy feedback`, async () => {
+    const pending: Array<{
+      resolve: () => void;
+      reject: (error: Error) => void;
+    }> = [];
+    const f = await copyThinking(
+      'first',
+      false,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          pending.push({resolve, reject});
+        }),
+    );
+    await f.click();
+    f.body.appendChild(' updated');
+    await f.click();
+    assert.equal(pending.length, 2);
+    if (latestFails) {
+      pending[1].reject(new Error('Latest copy refused'));
+    } else {
+      pending[1].resolve();
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(
+      f.button.getAttribute('aria-label'),
+      latestFails ? 'Copy failure' : 'Copied',
+    );
+    const timers = f.timers.length;
+    if (latestFails) {
+      pending[0].resolve();
+    } else {
+      pending[0].reject(new Error('Earlier copy refused'));
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(
+      f.button.getAttribute('aria-label'),
+      latestFails ? 'Copy failure' : 'Copied',
+    );
+    assert.equal(
+      f.glyph.getAttribute('data-glyph'),
+      latestFails ? '\ue056' : '\ue03b',
+    );
+    assert.equal(f.timers.length, timers);
+    f.timers.at(-1)!();
+    assert.equal(f.button.getAttribute('aria-label'), 'Copy as quote');
+  });
+}
