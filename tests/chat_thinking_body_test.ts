@@ -17,7 +17,7 @@ function text(root: any): string {
   return typeof root === 'string' ? root : root.children.map(text).join('');
 }
 
-test('expanded thinking retains the full original text without invented length caps or Show more', () => {
+test('expanded thinking retains all meaningful lines without invented length caps or Show more', () => {
   for (const reasoning of [
     'short',
     'one long paragraph '.repeat(120),
@@ -28,7 +28,10 @@ test('expanded thinking retains the full original text without invented length c
       assert.equal(root.getAttribute('data-long'), null);
       assert.equal(nodes(root, 'mp-chat-think-more').length, 0);
       assert.equal(nodes(root, 'mp-chat-think-fade').length, 0);
-      assert.equal(text(nodes(root, 'mp-chat-think-body')[0]), reasoning);
+      assert.equal(
+        text(nodes(root, 'mp-chat-think-body')[0]),
+        reasoning.replace(/\n$/, ''),
+      );
     }
   }
 });
@@ -133,6 +136,7 @@ async function copyThinking(
   }
   visit(ast);
   const context = vm.createContext({
+    THINKING_TEXT: chat.__test.thinkingText,
     DOC: {},
     COPY_RESET_TIMERS: new WeakMap(),
     rememberGroupToggle() {},
@@ -195,17 +199,16 @@ async function copyThinking(
   };
 }
 
-test('the actual delegated clipboard action quotes the latest complete thinking body and preserves text selection', async () => {
+test('the actual delegated clipboard action quotes complete original reasoning and preserves text selection', async () => {
   const value = 'first\r\n\r\nlast\u2028tail\r';
   const f = await copyThinking(value);
-  f.body.appendChild('new evidence');
   assert.equal(f.event('mousedown'), true);
   assert.equal(f.event('keydown', {key: 'Enter', repeat: true}), true);
   assert.equal(f.copied.length, 0);
   await f.click();
-  const current = value + 'new evidence';
+  const current = value;
   assert.deepEqual(f.copied, [
-    `> **Thinking** (~${Math.round(current.length / 4)} tok)\n>\n> first\n>\n> last\n> tail\n> new evidence`,
+    `> **Thinking** (~${Math.round(current.length / 4)} tok)\n>\n> first\n>\n> last\n> tail\n>`,
   ]);
   assert.equal(f.glyph.getAttribute('data-glyph'), '\ue03b');
   assert.equal(f.button.getAttribute('aria-label'), 'Copied');
@@ -251,7 +254,6 @@ for (const latestFails of [false, true]) {
         }),
     );
     await f.click();
-    f.body.appendChild(' updated');
     await f.click();
     assert.equal(pending.length, 2);
     if (latestFails) {

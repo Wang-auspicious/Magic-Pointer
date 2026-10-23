@@ -55,6 +55,7 @@ const ChatView = (() => {
 
   const DOC = typeof document !== 'undefined' ? document : null;
   const COPY_RESET_TIMERS = new WeakMap<HTMLElement, {timer?: number}>();
+  const THINKING_TEXT = new WeakMap<ChatNode, {source: string; display: string}>();
   const ESCAPES: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
@@ -3802,11 +3803,35 @@ const ChatView = (() => {
       .join('\n')}`;
   }
 
+  function thinkingDisplayText(text: string): string {
+    // Step plain text follows OT/Cn; quote copying retains the original source.
+    return text
+      .split(/\r\n|\r|\n/)
+      .map(line =>
+        line
+          .split('\t')
+          .map(part =>
+            part
+              .replace(/[\t\n\v\f\r\u0085\u2028\u2029]+/g, ' ')
+              .replace(
+                /[\uD800-\uDBFF]*(?:(?!\u200C|\u200D|\uFE0E|\uFE0F)[\u{16FE4}\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800\uFFFC\u{1D159}\u{13441}\u{13442}\u{16910}\uFDD0-\uFDEF\uFFFE\uFFFF\u{1FFFE}\u{1FFFF}\u{2FFFE}\u{2FFFF}\u{3FFFE}\u{3FFFF}\u{4FFFE}\u{4FFFF}\u{5FFFE}\u{5FFFF}\u{6FFFE}\u{6FFFF}\u{7FFFE}\u{7FFFF}\u{8FFFE}\u{8FFFF}\u{9FFFE}\u{9FFFF}\u{AFFFE}\u{AFFFF}\u{BFFFE}\u{BFFFF}\u{CFFFE}\u{CFFFF}\u{DFFFE}\u{DFFFF}\u{EFFFE}\u{EFFFF}\u{FFFFE}\u{FFFFF}\u{10FFFE}\u{10FFFF}])[\uDC00-\uDFFF]*|([\uD800-\uDBFF]+)/gu,
+                '$1',
+              ),
+          )
+          .join('\t'),
+      )
+      .join('\n')
+      .replace(/^(?:[^\S\n]*\n)+/, '')
+      .replace(/(?:\n[^\S\n]*)+$/, '');
+  }
+
   function thinkNode(reasoning: string, running = false, thinkId = ''): ChatNode {
     const label = lt('chat.thought_process');
     const panelId = `mp-chat-thinking:${thinkId || ++thinkingSequence}`;
     const body = h('div', {class: 'mp-chat-think-body'});
-    attach(body, reasoning);
+    const display = thinkingDisplayText(reasoning);
+    THINKING_TEXT.set(body, {source: reasoning, display});
+    attach(body, display);
     const viewport = h('div', {
       class: 'mp-chat-think-viewport',
       id: panelId,
@@ -3892,6 +3917,24 @@ const ChatView = (() => {
     running: boolean,
   ): void {
     node.setAttribute('data-state', running ? 'running' : 'ok');
+    const body = node.querySelector<HTMLElement>('.mp-chat-think-body')!;
+    const previous = THINKING_TEXT.get(body);
+    if (previous?.source !== text) {
+      const display = thinkingDisplayText(text);
+      THINKING_TEXT.set(body, {source: text, display});
+      if (display !== previous?.display) {
+        if (previous && display.startsWith(previous.display)) {
+          body.appendChild(
+            document.createTextNode(display.slice(previous.display.length)),
+          );
+          if (body.childNodes.length > 32) {
+            body.textContent = display;
+          }
+        } else {
+          body.textContent = display;
+        }
+      }
+    }
     const copy = node.querySelector('.mp-chat-think-copy');
     if (text.trim()) {
       node.removeAttribute('hidden');
@@ -5812,25 +5855,11 @@ const ChatView = (() => {
     const rows = new Map<string, {node: HTMLElement; record: string}>();
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
-    let thinkingText = '';
     const traceNodes = new Map<
       string,
       {node: HTMLElement; signature: string}
     >();
     let traceStatus: HTMLElement | null = null;
-    const appendText = (node: HTMLElement, previous: string, next: string) => {
-      if (previous === next) {
-        return;
-      }
-      if (next.startsWith(previous)) {
-        node.appendChild(document.createTextNode(next.slice(previous.length)));
-        if (node.childNodes.length > 32) {
-          node.textContent = next;
-        }
-      } else {
-        node.textContent = next;
-      }
-    };
     const updateLiveMarkdown = (node: HTMLElement, text: string) => {
       const next = markdownRenderer.render(text) as HTMLElement;
       const current = node.querySelector<HTMLElement>('.mp-chat-markdown');
@@ -5911,12 +5940,6 @@ const ChatView = (() => {
                     item.type === 'reasoning',
                 );
                 if (currentThought && nextWork) {
-                  const target = currentThought.querySelector<HTMLElement>(
-                    '.mp-chat-think-body',
-                  );
-                  if (target) {
-                    appendText(target, target.textContent || '', nextWork.text);
-                  }
                   updateThinkingState(
                     currentThought,
                     nextWork.text,
@@ -6243,11 +6266,6 @@ const ChatView = (() => {
           if (!thinking) {
             thinking = thinkNode('', true, `${scope}:head`) as HTMLElement;
           }
-          const body = thinking.querySelector<HTMLElement>(
-            '.mp-chat-think-body',
-          )!;
-          appendText(body, thinkingText, nextThinking);
-          thinkingText = nextThinking;
           updateThinkingState(
             thinking,
             nextThinking,
@@ -6606,10 +6624,13 @@ const ChatView = (() => {
         );
       } else if (kind === 'copy' || kind === 'copy-thinking') {
         const thinkingCopy = kind === 'copy-thinking';
+        const thinkingBody = thinkingCopy
+          ? act.closest('.mp-chat-think')?.querySelector('.mp-chat-think-body')
+          : null;
         const text = thinkingCopy
           ? thinkingQuote(
-              act.closest('.mp-chat-think')?.querySelector('.mp-chat-think-body')
-                ?.textContent || '',
+              (thinkingBody && THINKING_TEXT.get(thinkingBody)?.source) ??
+                thinkingBody?.textContent ?? '',
             ).trim()
           : act.getAttribute('data-mp-chat-copy') || '';
         const button = act;
@@ -6821,6 +6842,8 @@ const ChatView = (() => {
       },
     },
     __test: {
+      thinkingDisplayText,
+      thinkingText: THINKING_TEXT,
       thinkingQuote,
       firstLine,
       latestLine,
