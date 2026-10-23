@@ -208,6 +208,7 @@ const ChatView = (() => {
   >();
   let liveTurnSequence = 0;
   let thinkingSequence = 0;
+  let disclosureSequence = 0;
 
   function rememberExpansion(
     store: Map<string, boolean>,
@@ -260,6 +261,7 @@ const ChatView = (() => {
   function disclosureRow(opts: DisclosureOptions): {
     root: ChatNode;
     row: ChatNode;
+    toggle: ChatNode | null;
   } {
     const remembered = opts.rowId ? ROW_EXPANSION.get(opts.rowId) : undefined;
     const open = remembered !== undefined ? remembered : Boolean(opts.open);
@@ -276,9 +278,6 @@ const ChatView = (() => {
     const row = h('div', {class: 'mp-chat-row'});
     if (expandable) {
       row.setAttribute('data-expandable', 'true');
-      row.setAttribute('role', 'button');
-      row.setAttribute('tabindex', '0');
-      row.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
     if (opts.leadingOverride) {
@@ -302,10 +301,34 @@ const ChatView = (() => {
     }
     attach(root, bodyHost);
 
+    let toggle: ChatNode | null = null;
     if (expandable) {
+      const id = `mp-chat-step:${++disclosureSequence}`;
+      title.setAttribute('id', `${id}-label`);
+      const labelledBy = [`${id}-label`];
+      for (const [index, item] of (opts.collapsed || []).entries()) {
+        if (item.getAttribute('aria-hidden') !== 'true') {
+          item.setAttribute('id', `${id}-meta-${index}`);
+          labelledBy.push(`${id}-meta-${index}`);
+        }
+      }
+      bodyHost.setAttribute('id', `${id}-body`);
+      toggle = h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-chat-row-toggle',
+          'data-mp-chat-act': 'toggle',
+          'aria-labelledby': labelledBy.join(' '),
+          'aria-expanded': open ? 'true' : 'false',
+          'aria-controls': `${id}-body`,
+        },
+        h('span', {class: 'mp-chat-row-caret', 'aria-hidden': 'true'}, '\ue02a'),
+      );
+      attach(row, toggle);
       row.setAttribute('data-mp-chat-act', 'toggle');
     }
-    return {root, row};
+    return {root, row, toggle};
   }
 
   type ToolVariant =
@@ -3865,7 +3888,7 @@ const ChatView = (() => {
     attach(viewport, actions);
     const expandedBody: ChatNode[] = [viewport];
 
-    const {root, row} = disclosureRow({
+    const {root, row, toggle} = disclosureRow({
       title: label,
       body: expandedBody,
       expandable: true,
@@ -3878,32 +3901,11 @@ const ChatView = (() => {
     if (!reasoning.trim()) {
       root.setAttribute('hidden', 'true');
     }
-    row.removeAttribute('role');
-    row.removeAttribute('tabindex');
-    row.removeAttribute('aria-expanded');
     row.setAttribute('data-thought-row', '');
-    attach(
-      row,
-      h(
-        'button',
-        {
-          type: 'button',
-          class: 'mp-chat-think-toggle',
-          'data-mp-chat-act': 'toggle',
-          'aria-label': label,
-          'aria-expanded': root.getAttribute('data-open') || 'true',
-          'aria-controls': panelId,
-        },
-        h(
-          'span',
-          {
-            class: 'mp-chat-think-caret',
-            'aria-hidden': 'true',
-          },
-          '\ue02a',
-        ),
-      ),
-    );
+    toggle!.setAttribute('class', 'mp-chat-row-toggle mp-chat-think-toggle');
+    toggle!.setAttribute('aria-label', label);
+    toggle!.removeAttribute('aria-labelledby');
+    toggle!.setAttribute('aria-controls', panelId);
     return root;
   }
 
@@ -6429,17 +6431,17 @@ const ChatView = (() => {
     if (!row || !disclosure) {
       return;
     }
-    const thinkingToggle = row.querySelector<HTMLElement>('.mp-chat-think-toggle');
+    const toggle = row.querySelector<HTMLElement>('.mp-chat-row-toggle');
     if (
-      thinkingToggle &&
-      act !== thinkingToggle &&
+      toggle &&
+      act !== toggle &&
       DOC?.getSelection?.()?.isCollapsed === false
     ) {
       return;
     }
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
-    (thinkingToggle || row).setAttribute('aria-expanded', open ? 'false' : 'true');
+    (toggle || row).setAttribute('aria-expanded', open ? 'false' : 'true');
     if (!open) {
       disclosure.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
         .forEach(button => { void loadFileDiff(button); });
