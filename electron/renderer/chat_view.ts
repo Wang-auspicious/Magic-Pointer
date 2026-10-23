@@ -4260,6 +4260,14 @@ const ChatView = (() => {
   function fileTypeIcon(name: string): ChatNode {
     const namespace = 'http://www.w3.org/2000/svg';
     const selected = fileIcons.fileIconFor(name);
+    if (selected.glyph) {
+      return h('span', {
+        class: 'mp-chat-file-type-icon mp-chat-file-glyph',
+        'aria-hidden': 'true',
+        'data-file-type-icon': selected.id,
+        'data-glyph': selected.glyph,
+      });
+    }
     const svg = DOC ? DOC.createElementNS(namespace, 'svg') : shimNode('svg', namespace);
     svg.setAttribute('class', 'mp-chat-file-type-icon');
     svg.setAttribute('data-file-type-icon', selected.id);

@@ -155,6 +155,52 @@ test('ordinary extensionless filenames do not resolve inherited icon-map propert
   );
 });
 
+test('files without dedicated SVGs use the original category glyph instead of the default page', () => {
+  const root = card([
+    {path: 'data.parquet'},
+    {path: 'deck.pptx'},
+    {path: 'diagram.mmd'},
+    {path: 'app.cs'},
+    {path: 'rules.skill'},
+    {path: 'bundle.plugin'},
+  ]);
+  const icons = nodes(root, 'mp-chat-file-type-icon');
+  assert.deepEqual(
+    icons.map(icon => icon.getAttribute('data-file-type-icon')),
+    ['Database', 'Slides', 'Image', 'Code', 'Scroll', 'Scroll'],
+  );
+  assert.deepEqual(
+    icons.map(icon => icon.getAttribute('data-glyph')),
+    [57436, 57570, 57484, 57416, 57554, 57554].map(code =>
+      String.fromCodePoint(code),
+    ),
+  );
+  assert.ok(icons.every(icon => icon.tagName === 'span'));
+  assert.ok(icons.every(icon => icon.getAttribute('aria-hidden') === 'true'));
+  assert.equal(
+    nodes(root, 'mp-chat-file-row')[0].getAttribute('data-file-absolute-path'),
+    'D:/work/data.parquet',
+  );
+});
+
+test('dedicated compound/name icons precede category glyphs and unknown files keep the retained default SVG', () => {
+  const {fileIconFor} = require('../electron/renderer/chat_file_icons');
+  for (const [name, expected] of [
+    ['SKILL.md', 'markdown'],
+    ['config.JSONL', 'json'],
+    ['view.xhtml', 'html'],
+    ['archive.tar.gz', 'zip'],
+    ['schema.d.ts', 'typescript'],
+    ['ordinary.unknown', 'default'],
+    ['constructor', 'default'],
+  ]) {
+    const selected = fileIconFor(name);
+    assert.equal(selected.id, expected);
+    assert.ok(selected.nodes.length > 0);
+    assert.equal(selected.glyph, undefined);
+  }
+});
+
 test('both product surfaces load the real icon entry with bundled data and no browser fetch', () => {
   const ast = ts.createSourceFile(
     'scripts/build-electron.ts',
