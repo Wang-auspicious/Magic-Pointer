@@ -33,6 +33,24 @@ export interface HandoffReceipt {
 }
 
 export interface ResourceCollection {
+  sourceAccount: string;
+  postPath: string;
+  postTextPath: string;
+  thumbnailPath: string;
+  captureStatus:
+    | 'link'
+    | 'queued'
+    | 'loading'
+    | 'saved'
+    | 'partial'
+    | 'auth_required'
+    | 'error';
+  captureError: string;
+  authorName: string;
+  platform: string;
+  tags: string[];
+  lastViewedAt: number;
+  suggestedIntent: ResourceIntent | '';
   url: string;
   title: string;
   projectId: string;
@@ -80,6 +98,31 @@ export function resourceCollection(
     'error',
   ];
   return {
+    sourceAccount: String(value.sourceAccount || 'web'),
+    postPath: String(value.postPath || ''),
+    postTextPath: String(value.postTextPath || ''),
+    thumbnailPath: String(value.thumbnailPath || ''),
+    captureStatus: [
+      'link',
+      'queued',
+      'loading',
+      'saved',
+      'partial',
+      'auth_required',
+      'error',
+    ].includes(value.captureStatus || '')
+      ? value.captureStatus!
+      : 'link',
+    captureError: String(value.captureError || ''),
+    authorName: String(value.authorName || ''),
+    platform: String(value.platform || ''),
+    tags: Array.isArray(value.tags)
+      ? value.tags.filter(tag => typeof tag === 'string')
+      : [],
+    lastViewedAt: Number(value.lastViewedAt) || 0,
+    suggestedIntent: intents.includes(value.suggestedIntent as ResourceIntent)
+      ? value.suggestedIntent!
+      : '',
     url: String(value.url || ''),
     title: String(value.title || '').slice(0, 300),
     projectId: String(value.projectId || ''),

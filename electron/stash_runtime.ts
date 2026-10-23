@@ -494,7 +494,10 @@ function createStashRuntime(options: StashRuntimeOptions) {
     const readingStateOnly =
       keys.length > 0 &&
       keys.every(
-        key => key === 'handoffState' || key === 'handoffSnoozedUntil',
+        key =>
+          key === 'handoffState' ||
+          key === 'handoffSnoozedUntil' ||
+          key === 'lastViewedAt',
       );
     entry.collection = resourceCollection({
       ...current,

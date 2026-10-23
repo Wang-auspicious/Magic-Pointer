@@ -9368,21 +9368,6 @@ async function openProjectBrowser(
   relativePath = '',
   options: {fromResourceTab?: boolean; resourceKey?: string} = {},
 ) {
-  if (!relativePath && !rawUrl.startsWith('file:') && !/^[a-zA-Z]:[\\/]/.test(rawUrl)) {
-    await Data.browserViewCommand('hide');
-    browserViewVisible = false;
-    const empty = document.getElementById('project-browser-empty');
-    if (empty) {
-      empty.hidden = false;
-    }
-    setBrowserMessage('browser.ego_opening');
-    const response = await Data.openBrowserView(rawUrl, {x: 0, y: 0, width: 1, height: 1}, activeProjectRoot);
-    setBrowserMessage(
-      response?.ok ? 'browser.ego_opened' : 'browser.open_failed',
-      response?.ok ? undefined : response?.error,
-    );
-    return;
-  }
   const localResourceKey =
     options.resourceKey ||
     (relativePath

@@ -45,6 +45,9 @@ export function resourceThumbnailUrl(
   baseDir: string,
   item: CollectedResource,
 ): string | undefined {
+  if (item.collection?.thumbnailPath) {
+    return pathToFileURL(resolve(baseDir, item.collection.thumbnailPath)).href;
+  }
   return IMAGE_EXTENSIONS.has(extname(item.relPath).toLowerCase())
     ? pathToFileURL(resolve(baseDir, item.relPath)).href
     : undefined;

@@ -4,9 +4,22 @@ import {resourceAnalysisTask} from './resource_analysis_task';
 import {resourceThumbnailUrl} from './resource_preview';
 import {handoffsForTurn} from './resource_handoff';
 import {XResourceSource} from './resource_x_source';
-import type {ResourceAction, ResourceRequest, ResourceResponse} from './resource_collection_api';
-import {runEgoBrowser, openCollectionBrowser, captureCollectionBrowserSelection} from './ego_browser';
-import {updatePerceptionActivity, type PerceptionActivity} from './perception_activity';
+import type {
+  ResourceAction,
+  ResourceRequest,
+  ResourceResponse,
+} from './resource_collection_api';
+import {
+  collectionBrowserPartition,
+  readCollectionPage,
+  postFromCollectionPage,
+  type CollectionPage,
+} from './collection_browser';
+import type {ResourcePost} from './resource_post';
+import {
+  updatePerceptionActivity,
+  type PerceptionActivity,
+} from './perception_activity';
 import {attachChatImageMenu} from './chat_image_menu';
 import {readFileDiffPresentation} from './file_diff_presentation';
 import {
@@ -55,12 +68,23 @@ const {Menu, nativeImage, Tray} = require('electron');
 const {nativeTheme} = require('electron');
 const {shell} = require('electron');
 const {spawn} = require('child_process');
-const {net} = require('electron');
+const {net, session} = require('electron');
 const {expandPassage} = require('./runtime/text');
-const {resolveModelConfig, listModels, requestText, modelProviderId, combineModelUsage} = require('./runtime/model');
+const {
+  resolveModelConfig,
+  listModels,
+  requestText,
+  modelProviderId,
+  combineModelUsage,
+} = require('./runtime/model');
 import {prepareModelConnection, saveModelConnection} from './model_connection';
 import type {ModelConnectionInput} from './model_connection';
-const {listDashboards, runDashboard, dashboardTrace, dashboardTraceCsv} = require('./runtime/dashboard');
+const {
+  listDashboards,
+  runDashboard,
+  dashboardTrace,
+  dashboardTraceCsv,
+} = require('./runtime/dashboard');
 const {installEnvironmentProxy} = require('./runtime/proxy');
 
 // This process lists models directly, and undici chooses its dispatcher on the
@@ -3262,7 +3286,11 @@ function destroyDashboardBrowserViews(): void {
   dashboardBrowserBounds = null;
 }
 
-function createDashboardBrowserView(key: string, projectRoot: string) {
+function createDashboardBrowserView(
+  key: string,
+  projectRoot: string,
+  partition = 'persist:magic-pointer-browser',
+) {
   if (!dashboardWindow || dashboardWindow.isDestroyed()) {
     throw new Error('dashboard_unavailable');
   }
@@ -3272,7 +3300,7 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      partition: 'persist:magic-pointer-browser',
+      partition,
     },
   });
   dashboardWindow.contentView.addChildView(view);
@@ -3282,7 +3310,9 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
   );
   view.webContents.setWindowOpenHandler(({url}: {url: string}) => {
     try {
-      shell.openExternal(normalizeBrowserUrl(url));
+      void view.webContents
+        .loadURL(normalizeBrowserUrl(url))
+        .catch((error: Error) => emitBrowserViewState({error: error.message}));
     } catch (_) {}
     return {action: 'deny'};
   });
@@ -3366,6 +3396,37 @@ function createDashboardBrowserView(key: string, projectRoot: string) {
   return view;
 }
 
+async function openDashboardBrowser(
+  url: string,
+  options: {
+    root?: string;
+    path?: string;
+    resourceKey?: string;
+    bounds?: {x: number; y: number; width: number; height: number};
+    partition?: string;
+    restore?: boolean;
+  } = {},
+) {
+  const root = options.root || '';
+  const key =
+    options.resourceKey || browserResourceKey(root, options.path || '', url);
+  const opened = dashboardBrowserRegistry.open(
+    {key, projectRoot: root, relativePath: options.path || '', url},
+    () => createDashboardBrowserView(key, root, options.partition),
+  );
+  dashboardBrowserBounds = normalizedBrowserBounds(options.bounds);
+  opened.entry.view.setBounds(dashboardBrowserBounds);
+  setDashboardBrowserVisibility(key);
+  if (
+    !opened.reused ||
+    (!options.restore && opened.entry.view.webContents.getURL() !== url)
+  ) {
+    await opened.entry.view.webContents.loadURL(url);
+  }
+  emitBrowserViewState();
+  return {ok: true, url: opened.entry.view.webContents.getURL() || url, key};
+}
+
 ipcMain.handle(
   'browser:view-open',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
@@ -3381,37 +3442,12 @@ ipcMain.handle(
           : root
             ? normalizeProjectBrowserUrl(requested, root)
             : normalizeBrowserUrl(requested);
-      if (/^https?:/i.test(url)) {
-        const result = await runEgoBrowser('Magic Pointer browser', {
-          operation: 'browse',
-          url,
-        });
-        return {ok: true, backend: 'ego-lite', url: result.url, title: result.title};
-      }
-      const key =
-        String(raw?.resourceKey || '').trim() ||
-        browserResourceKey(root, String(raw?.path || ''), url);
-      const opened = dashboardBrowserRegistry.open(
-        {
-          key,
-          projectRoot: root,
-          relativePath: String(raw?.path || ''),
-          url,
-        },
-        () => createDashboardBrowserView(key, root),
-      );
-      dashboardBrowserBounds = normalizedBrowserBounds(raw?.bounds);
-      opened.entry.view.setBounds(dashboardBrowserBounds);
-      setDashboardBrowserVisibility(key);
-      if (!opened.reused) {
-        await opened.entry.view.webContents.loadURL(url);
-      }
-      emitBrowserViewState();
-      return {
-        ok: true,
-        url: opened.entry.view.webContents.getURL() || url,
-        key,
-      };
+      return await openDashboardBrowser(url, {
+        root,
+        path: String(raw?.path || ''),
+        resourceKey: String(raw?.resourceKey || '').trim(),
+        bounds: raw?.bounds,
+      });
     } catch (error) {
       return {
         ok: false,
@@ -6487,39 +6523,140 @@ function resources(): ResourceCollectionService {
       analysisTask: (taskId, requestId) =>
         resourceAnalysisTask(conversations(), taskId, requestId),
       fetchPaper: url => net.fetch(url, {signal: AbortSignal.timeout(60000)}),
+      capturePost: captureCollectionPost,
+      fetchMedia: (url, init, account) =>
+        session
+          .fromPartition(collectionBrowserPartition(account))
+          .fetch(url, init),
       rules: () => resourceXSource?.snapshot().rules || '',
       stash: () => initializeStashRuntime(),
       projects: () => conversations().listProjects(),
       attach: (projectId, paths) => {
         const project = conversations().getProject(projectId);
-        if (!project) {throw new Error('Project not found.');}
-        const result = conversations().updateProject(projectId, {sharedFiles: [...new Set([...(project.sharedFiles || []), ...paths])]});
-        if (!result.ok) {throw new Error(result.error);}
+        if (!project) {
+          throw new Error('Project not found.');
+        }
+        const result = conversations().updateProject(projectId, {
+          sharedFiles: [...new Set([...(project.sharedFiles || []), ...paths])],
+        });
+        if (!result.ok) {
+          throw new Error(result.error);
+        }
       },
       analyze: input => {
         const {onStarted, ...request} = input;
         return sendConversation(
-          {...request, workspaceRoot: '', projectId: '', permissionPreset: 'read-only', workMode: 'work'},
+          {
+            ...request,
+            workspaceRoot: '',
+            projectId: '',
+            permissionPreset: 'read-only',
+            workMode: 'work',
+          },
           undefined,
           onStarted,
         );
       },
     });
     resourceService.recover();
+    void resourceService
+      .drainCaptures()
+      .catch(error => log(`resource capture: ${String(error)}`));
   }
   return resourceService;
 }
+
+function collectionBrowserState(account: string) {
+  collectionBrowserPartition(account);
+  const contents = dashboardBrowserRegistry
+    .snapshot()
+    .find(entry => entry.key === `collection:${account}`)?.view.webContents;
+  if (!contents || contents.isDestroyed()) {
+    return undefined;
+  }
+  return {
+    url: contents.getURL(),
+    title: contents.getTitle(),
+    canGoBack: contents.navigationHistory.canGoBack(),
+    canGoForward: contents.navigationHistory.canGoForward(),
+    loading: contents.isLoading(),
+  };
+}
+
+const collectionCaptureQueues = new Map<string, Promise<ResourcePost>>();
+
+async function captureCollectionPost(
+  url: string,
+  account: string,
+): Promise<ResourcePost> {
+  const previous = collectionCaptureQueues.get(account);
+  const operation = (
+    previous ? previous.catch(() => undefined) : Promise.resolve()
+  ).then(() => captureCollectionPostPage(url, account));
+  collectionCaptureQueues.set(account, operation);
+  try {
+    return await operation;
+  } finally {
+    if (collectionCaptureQueues.get(account) === operation) {
+      collectionCaptureQueues.delete(account);
+    }
+  }
+}
+
+async function captureCollectionPostPage(url: string, account: string) {
+  const started = performance.now();
+  const partition = collectionBrowserPartition(account);
+  const key = `collection:${account}`;
+  let entry = dashboardBrowserRegistry
+    .snapshot()
+    .find(item => item.key === key);
+  if (!entry) {
+    const previous = dashboardBrowserRegistry.active?.key;
+    entry = dashboardBrowserRegistry.open(
+      {key, projectRoot: '', relativePath: '', url},
+      () => createDashboardBrowserView(key, '', partition),
+    ).entry;
+    entry.view.setVisible(false);
+    if (previous) {
+      dashboardBrowserRegistry.activate(previous);
+    }
+  }
+  const contents = entry.view.webContents;
+  if (contents.getURL() !== url) {
+    await contents.loadURL(url);
+  }
+  let page: CollectionPage;
+  const deadline = Date.now() + 15000;
+  do {
+    page = await contents.executeJavaScript(
+      `(${readCollectionPage.toString()})()`,
+    );
+    if (page.error !== 'post_loading') {
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  } while (Date.now() < deadline && !contents.isDestroyed());
+  return {
+    ...postFromCollectionPage(page!),
+    timingMs: performance.now() - started,
+  };
+}
 function xResourceSource(): XResourceSource {
   if (!resourceXSource) {
-    if (!credentialStore) {throw new Error('Credentials are not ready.');}
+    if (!credentialStore) {
+      throw new Error('Credentials are not ready.');
+    }
     resourceXSource = new XResourceSource({
-      folder: FABRIC_DATA_DIR, credentials: credentialStore,
+      folder: FABRIC_DATA_DIR,
+      credentials: credentialStore,
       fetch: (url, init) => net.fetch(url, init),
       add: async input => {
         const entry = await resources().add(input);
         if (resourceXSource?.snapshot().organize) {
           resources().enqueue(entry.id);
-          void resources().drain().catch(error => log(`resource processing: ${String(error)}`));
+          void resources()
+            .drain()
+            .catch(error => log(`resource processing: ${String(error)}`));
         }
         return entry;
       },
@@ -6560,15 +6697,16 @@ ipcMain.handle(
           ),
         };
       }
-      if (raw.action === 'list') {
+      if (raw.action === 'list' || raw.action === 'search') {
         return {
           ok: true,
-          items: service
-            .list()
-            .map(item => ({
-              ...item,
-              previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
-            })),
+          items: (raw.action === 'search'
+            ? service.search(String(input.text || ''))
+            : service.list()
+          ).map(item => ({
+            ...item,
+            previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
+          })),
           projects: conversations()
             .listProjects()
             .map((project: ProjectRecord) => ({
@@ -6581,6 +6719,13 @@ ipcMain.handle(
       }
       if (raw.action === 'add') {
         return {ok: true, entry: await service.add(input)};
+      }
+      if (raw.action === 'add-batch') {
+        const items = await service.addBatch(input);
+        void service
+          .drainCaptures()
+          .catch(error => log(`resource capture: ${String(error)}`));
+        return {ok: true, items, entry: items[0]};
       }
       if (raw.action === 'preview') {
         const preview = await service.preview(
@@ -6638,18 +6783,94 @@ ipcMain.handle(
         return {ok: true, source: await xResourceSource().sync(true)};
       }
       if (raw.action === 'browser-open') {
+        const account = input.sourceAccount || 'web';
+        const partition = collectionBrowserPartition(account);
         const url = normalizeBrowserUrl(String(input.url || ''));
-        const result = await openCollectionBrowser(url);
-        return {ok: true, url: result.url, title: result.title};
+        const result = await openDashboardBrowser(url, {
+          resourceKey: `collection:${account}`,
+          partition,
+          bounds: input.bounds,
+          restore: input.restore,
+        });
+        return {...result, browser: collectionBrowserState(account)};
+      }
+      if (raw.action === 'browser-state') {
+        return {
+          ok: true,
+          browser: collectionBrowserState(input.sourceAccount || 'web'),
+        };
+      }
+      if (raw.action === 'browser-command') {
+        const account = input.sourceAccount || 'web';
+        collectionBrowserPartition(account);
+        const entry = dashboardBrowserRegistry
+          .snapshot()
+          .find(item => item.key === `collection:${account}`);
+        if (input.command === 'hide') {
+          dashboardBrowserRegistry
+            .snapshot()
+            .filter(item => item.key.startsWith('collection:'))
+            .forEach(item => item.view.setVisible(false));
+          return {ok: true};
+        }
+        if (!entry || entry.view.webContents.isDestroyed()) {
+          return {ok: false, error: 'browser_view_closed'};
+        }
+        const contents = entry.view.webContents;
+        if (input.command === 'resize' && input.bounds) {
+          dashboardBrowserBounds = normalizedBrowserBounds(input.bounds);
+          entry.view.setBounds(dashboardBrowserBounds);
+          setDashboardBrowserVisibility(entry.key);
+        } else if (
+          input.command === 'back' &&
+          contents.navigationHistory.canGoBack()
+        ) {
+          contents.navigationHistory.goBack();
+        } else if (
+          input.command === 'forward' &&
+          contents.navigationHistory.canGoForward()
+        ) {
+          contents.navigationHistory.goForward();
+        } else if (input.command === 'reload') {
+          contents.reload();
+        } else if (input.command === 'stop') {
+          contents.stop();
+        }
+        return {ok: true, browser: collectionBrowserState(account)};
+      }
+      if (raw.action === 'capture-source') {
+        return {ok: true, entry: await service.capture(String(input.id || ''))};
+      }
+      if (raw.action === 'read-post') {
+        const post = service.post(String(input.id || ''));
+        return {
+          ok: true,
+          post: {
+            ...post,
+            media: post.media.map(media => ({
+              ...media,
+              ...(media.localPath
+                ? {
+                    localUrl: pathToFileURL(
+                      projectPath(stashBaseDir(), media.localPath),
+                    ).href,
+                  }
+                : {}),
+            })),
+          },
+        };
       }
       if (raw.action === 'capture') {
-        const result = await captureCollectionBrowserSelection();
+        const account = input.sourceAccount || 'web';
+        const state = collectionBrowserState(account);
+        if (!state?.url) {
+          throw new Error('Open a page in the collection browser first.');
+        }
         return {
           ok: true,
           entry: await service.add({
-            url: result.url,
-            title: result.title,
-            text: result.selectedText,
+            url: state.url,
+            sourceAccount: account,
             note: input.note,
             projectId: input.projectId,
           }),

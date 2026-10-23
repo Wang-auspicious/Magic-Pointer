@@ -7,6 +7,7 @@ import type {
 } from './resource_collection_contract';
 import type {XSourceState} from './resource_x_source';
 import type {ResourcePreview} from './resource_preview';
+import type {ResourcePost} from './resource_post';
 
 export interface ResourceResponse {
   ok: boolean;
@@ -20,10 +21,20 @@ export interface ResourceResponse {
   preview?: ResourcePreview;
   handoffs?: ProjectInboxEntry[];
   handoffReceipts?: HandoffReceipt[];
+  post?: ResourcePost;
+  browser?: {
+    url: string;
+    title: string;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    loading: boolean;
+  };
 }
 export type ResourceAction =
   | 'list'
+  | 'search'
   | 'add'
+  | 'add-batch'
   | 'edit'
   | 'process'
   | 'deliver'
@@ -33,10 +44,19 @@ export type ResourceAction =
   | 'open-original'
   | 'browser-open'
   | 'capture'
+  | 'capture-source'
+  | 'read-post'
+  | 'browser-command'
+  | 'browser-state'
   | 'x-connect'
   | 'x-configure'
   | 'x-sync';
+export type CollectionBrowserCommand =
+  'back' | 'forward' | 'reload' | 'stop' | 'resize' | 'hide';
 export interface ResourceRequest {
+  sourceAccount?: string;
+  restore?: boolean;
+  command?: CollectionBrowserCommand;
   material?: 'original' | 'paper' | 'handoff';
   handoffState?: HandoffState;
   snoozedUntil?: number;
