@@ -983,7 +983,11 @@ span.mp-chat-diff-path {
   color: var(--mp-danger);
 }
 
-.mp-chat-group-file {
+.mp-chat-group-file,
+.mp-chat-tool-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0;
   border: 0;
   border-radius: 0.25rem;
@@ -993,14 +997,22 @@ span.mp-chat-diff-path {
   cursor: pointer;
 }
 
-.mp-chat-group-file:hover {
+.mp-chat-group-file:hover,
+.mp-chat-tool-file:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
-.mp-chat-group-file:focus-visible {
+.mp-chat-group-file:focus-visible,
+.mp-chat-tool-file:focus-visible {
   outline: none;
   box-shadow: var(--cds-focus-shadow);
+}
+
+.mp-chat-tool-file {
+  display: block;
+  max-width: 100%;
+  text-align: inherit;
 }
 
 .mp-chat-tool > .mp-chat-disclosure > .mp-chat-row {

@@ -7702,6 +7702,7 @@ document.addEventListener('mp:open-file', async (event: Event) => {
       absolutePath?: string;
       previewPath?: string;
       originUnknown?: boolean;
+      diffReference?: ProjectFileDiffReference;
     }>
   ).detail;
   const raw = String(detail?.path || '').trim();
@@ -7755,7 +7756,7 @@ document.addEventListener('mp:open-file', async (event: Event) => {
     previewPath
       ? {snapshot: true, title: `${raw} · ${studioT('files.deleted')}`}
       : absolutePath
-        ? {title: raw}
+        ? {title: raw, diffReference: detail?.diffReference}
         : {},
   );
 });
@@ -8161,6 +8162,13 @@ let projectFileRequest = 0;
 let selectedProjectFileMarkdown = false;
 let selectedProjectFileSnapshot = false;
 let selectedProjectFileReadFailed = false;
+let selectedProjectFileLoading = false;
+type ProjectFileDiffReference = {beforePath: string | null; afterPath: string};
+let selectedProjectFileDiff: {
+  kind: 'file_diff';
+  beforeText: string;
+  afterText: string;
+} | null = null;
 let projectFileCodeView = false;
 let activeInspectorTab = 'files';
 let inspectorReturnFocus: HTMLElement | null = null;
@@ -8179,6 +8187,7 @@ interface WorkspaceResourceTab {
   closable: boolean;
   path?: string;
   snapshot?: boolean;
+  diffReference?: ProjectFileDiffReference;
   url?: string;
   conversationId?: string;
   artifactId?: string;
@@ -8273,6 +8282,7 @@ function openWorkspaceResource(request: {
   resourceKey: string;
   path?: string;
   snapshot?: boolean;
+  diffReference?: ProjectFileDiffReference;
   url?: string;
   conversationId?: string;
   artifactId?: string;
@@ -8301,6 +8311,7 @@ function openWorkspaceResource(request: {
     closable: true,
     ...(request.path ? {path: request.path} : {}),
     ...(request.snapshot ? {snapshot: true} : {}),
+    ...(request.diffReference ? {diffReference: request.diffReference} : {}),
     ...(request.url ? {url: request.url} : {}),
     ...(request.conversationId ? {conversationId: request.conversationId} : {}),
     ...(request.artifactId ? {artifactId: request.artifactId} : {}),
@@ -8338,6 +8349,7 @@ function activateWorkspaceResource(tabId: string): void {
       fromResourceTab: true,
       resourceKey: target.resourceKey,
       snapshot: target.snapshot,
+      diffReference: target.diffReference,
       title: target.title,
     });
   } else if (target.kind === 'browser') {
@@ -8386,6 +8398,13 @@ function closeWorkspaceResource(tabId: string): void {
   }
   if (!workspaceResourceTabs.length) {
     workspaceAutoOpenedResourceKey = '';
+    projectFileRequest++;
+    selectedProjectFile = '';
+    selectedProjectFileDiff = null;
+    selectedProjectFileLoading = false;
+    selectedProjectFileText = '';
+    selectedProjectPreview = null;
+    document.getElementById('project-file-content')?.replaceChildren();
     setInspector(false);
   } else {
     renderWorkspaceResourceTabs();
@@ -8726,6 +8745,8 @@ async function refreshProjectInspector() {
   selectedProjectFileMarkdown = false;
   selectedProjectFileSnapshot = false;
   selectedProjectFileReadFailed = false;
+  selectedProjectFileLoading = false;
+  selectedProjectFileDiff = null;
   projectFileCodeView = false;
   const preview = document.getElementById('project-file-preview');
   if (preview) {
@@ -8751,10 +8772,13 @@ function renderSelectedProjectFile() {
   }
   const renderMarkdown = selectedProjectFileMarkdown && !projectFileCodeView;
   const media = selectedProjectPreview?.kind === 'image' || selectedProjectPreview?.kind === 'pdf';
+  content.setAttribute('aria-busy', String(selectedProjectFileLoading));
   preview.classList.toggle('is-markdown', renderMarkdown);
   code?.setAttribute('aria-pressed', String(projectFileCodeView));
   if (code) {
     code.hidden =
+      selectedProjectFileLoading ||
+      selectedProjectFileDiff !== null ||
       selectedProjectFileSnapshot ||
       media ||
       selectedProjectPreview?.kind === 'document' ||
@@ -8764,18 +8788,21 @@ function renderSelectedProjectFile() {
     'project-file-open',
   ) as HTMLButtonElement | null;
   if (external) {
-    external.disabled = selectedProjectFileSnapshot;
+    external.disabled = selectedProjectFileSnapshot || selectedProjectFileLoading;
   }
   const copy = document.getElementById('project-file-copy');
   if (copy) {
     copy.hidden = media;
+    (copy as HTMLButtonElement).disabled = selectedProjectFileLoading;
   }
   if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
     ProjectPreviewView.renderProjectPreview(content, selectedProjectPreview);
     return;
   }
   content.classList.remove('is-office-preview', 'is-browser-pane');
-  if (selectedProjectFileSnapshot && !selectedProjectFileReadFailed) {
+  if (selectedProjectFileDiff) {
+    content.replaceChildren(ChatView.fileDiffNode(selectedProjectFileDiff));
+  } else if (selectedProjectFileSnapshot && !selectedProjectFileReadFailed) {
     content.replaceChildren(ChatView.deletedFileNode(selectedProjectFileText));
   } else if (renderMarkdown) {
     content.replaceChildren(ChatMarkdown.render(selectedProjectFileText));
@@ -8792,6 +8819,7 @@ async function selectProjectFile(
     fromResourceTab?: boolean;
     resourceKey?: string;
     snapshot?: boolean;
+    diffReference?: ProjectFileDiffReference;
     title?: string;
   } = {},
 ) {
@@ -8801,11 +8829,13 @@ async function selectProjectFile(
     relativePath.startsWith('\\\\') ||
     relativePath.startsWith('/');
   const browserFile =
+    !options.diffReference &&
     !options.snapshot &&
     !absolute &&
     /\.(?:html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(relativePath);
   const resourceKey =
     options.resourceKey ||
+    (options.diffReference ? `diff:${JSON.stringify(options.diffReference)}:` : '') +
     `${options.snapshot ? 'snapshot' : 'file'}:${normalizedProjectRoot(root)}:${relativePath
       .replace(/\\/g, '/')
       .toLocaleLowerCase()}`;
@@ -8816,9 +8846,30 @@ async function selectProjectFile(
       resourceKey,
       path: relativePath,
       snapshot: options.snapshot,
+      diffReference: options.diffReference,
     });
   }
   const request = ++projectFileRequest;
+  selectedProjectFileLoading = Boolean(options.diffReference);
+  if (options.diffReference) {
+    selectedProjectFile = relativePath;
+    selectedProjectFileReadFailed = false;
+    selectedProjectFileDiff = null;
+    selectedProjectPreview = null;
+    selectedProjectFileSnapshot = false;
+    selectedProjectFileMarkdown = false;
+    selectedProjectFileText = studioT('chat.diff_loading');
+    const preview = document.getElementById('project-file-preview');
+    if (preview) {
+      preview.hidden = false;
+      preview.closest('.mp-inspector-panel')?.classList.add('is-previewing');
+    }
+    const name = document.getElementById('project-file-name');
+    if (name) {
+      name.textContent = options.title || relativePath;
+    }
+    renderSelectedProjectFile();
+  }
   if (browserFile) {
     selectedProjectFile = relativePath;
     setInspector(true, 'browser');
@@ -8828,7 +8879,14 @@ async function selectProjectFile(
     });
     return;
   }
-  const response = await Data.readProjectFile(root, relativePath);
+  const diff = options.diffReference
+    ? await window.magicPointer.readFileDiff(options.diffReference)
+    : null;
+  const response: MagicPointerProjectFileResponse = options.diffReference
+    ? diff?.ok
+      ? {ok: true, kind: 'text', text: diff.presentation.afterText}
+      : {ok: false, error: diff && !diff.ok ? diff.error : studioT('files.read_failed')}
+    : await Data.readProjectFile(root, relativePath);
   if (request !== projectFileRequest || root !== activeProjectRoot) {
     return;
   }
@@ -8841,6 +8899,8 @@ async function selectProjectFile(
   panel?.classList.add('is-previewing');
   selectedProjectFile = relativePath;
   selectedProjectFileSnapshot = options.snapshot === true;
+  selectedProjectFileLoading = false;
+  selectedProjectFileDiff = diff?.ok ? diff.presentation : null;
   selectedProjectFileReadFailed = !response?.ok;
   selectedProjectFileText = response?.ok
     ? String(response.text || '')
@@ -8883,6 +8943,7 @@ async function selectProjectFile(
       .join('\n\n');
   }
   selectedProjectFileMarkdown =
+    !options.diffReference &&
     /\.(?:md|mdx|markdown)$/i.test(relativePath) && Boolean(response?.ok);
   projectFileCodeView = false;
   const name = document.getElementById('project-file-name');
@@ -10647,6 +10708,7 @@ document
     renderProjectFileTree();
   });
 document.getElementById('project-file-back')?.addEventListener('click', () => {
+  projectFileRequest++;
   const preview = document.getElementById('project-file-preview');
   if (preview) {
     preview.hidden = true;
@@ -10654,6 +10716,9 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   preview?.closest('.mp-inspector-panel')?.classList.remove('is-previewing');
   selectedProjectFile = '';
   selectedProjectFileText = '';
+  selectedProjectFileDiff = null;
+  document.getElementById('project-file-content')?.replaceChildren();
+  selectedProjectFileLoading = false;
   selectedProjectFileMarkdown = false;
   projectFileCodeView = false;
   const inspectorTitle = document.getElementById('inspector-title');
@@ -10662,6 +10727,11 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   }
   renderProjectFileTree();
 });
+const projectFileContent = document.getElementById('project-file-content');
+if (projectFileContent) {
+  ChatView.bindDelegation(projectFileContent);
+}
+
 document.getElementById('project-file-code')?.addEventListener('click', () => {
   projectFileCodeView = !projectFileCodeView;
   renderSelectedProjectFile();

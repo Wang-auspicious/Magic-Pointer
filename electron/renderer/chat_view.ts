@@ -2022,6 +2022,7 @@ const ChatView = (() => {
     filePath?: string;
     fileTarget?: string;
     filePreviewPath?: string;
+    fileDiffReference?: {beforePath: string | null; afterPath: string};
     presentation?: unknown;
     body: string | null;
     output: string | null;
@@ -2050,7 +2051,9 @@ const ChatView = (() => {
             ? 'error'
             : 'ok';
     const input = parseArgs(argsRaw) ?? {};
-    const receipt = outputRecord(result?.text || '');
+    const receipt = FILE_WRITE_TOOLS.has(name)
+      ? outputRecord(result?.text || '')
+      : null;
     const isWrite = ['Write', 'write_file', 'write'].includes(name);
     const phase: ToolPhase =
       state === 'running'
@@ -2219,6 +2222,18 @@ const ChatView = (() => {
       ? firstString(receipt || {}, ['absolutePath']) ||
         executionFilePath(filePath, executionRoot)
       : '';
+    const shown =
+      typeof result?.presentation === 'string'
+        ? outputRecord(result.presentation)
+        : recordOf(result?.presentation);
+    const fileDiffReference =
+      FILE_WRITE_TOOLS.has(name) &&
+      state === 'ok' &&
+      shown?.kind === 'file_diff' &&
+      (shown.beforePath === null || typeof shown.beforePath === 'string') &&
+      typeof shown.afterPath === 'string'
+        ? {beforePath: shown.beforePath, afterPath: shown.afterPath}
+        : undefined;
     return {
       variant,
       name,
@@ -2227,6 +2242,7 @@ const ChatView = (() => {
       summary,
       filePath,
       fileTarget: /^(?:[a-z]:[\\/]|[\\/])/i.test(target) ? target : undefined,
+      fileDiffReference,
       presentation: result?.presentation,
       body: deriveBody(variant, argsRaw),
       output,
@@ -2243,6 +2259,14 @@ const ChatView = (() => {
           : actualStat,
       fileChange: fileChangeMode(name, input),
     };
+  }
+
+  function fileDiffNode(presentation: {
+    kind: 'file_diff';
+    beforeText: string;
+    afterText: string;
+  }): ChatNode {
+    return diffPreviewNode(deriveDiff('', '', presentation)!, {});
   }
 
   function diffPreviewNode(
@@ -3498,6 +3522,51 @@ const ChatView = (() => {
     return root;
   }
 
+  function combinedFileDiffReference(
+    models: ToolRowModel[],
+  ): ToolRowModel['fileDiffReference'] {
+    const completed = models.filter(
+      model => FILE_WRITE_TOOLS.has(model.name) && model.state === 'ok',
+    );
+    if (!completed.length || completed.some(model => !model.fileDiffReference)) {
+      return undefined;
+    }
+    return {
+      beforePath: completed[0].fileDiffReference!.beforePath,
+      afterPath: completed[completed.length - 1].fileDiffReference!.afterPath,
+    };
+  }
+
+  function toolFileSummaryNode(model: ToolRowModel): ChatNode {
+    const reference = model.fileDiffReference;
+    const file =
+      model.filePath && model.fileTarget
+        ? h(
+            'button',
+            {
+              type: 'button',
+              class: 'mp-chat-tool-file',
+              title: model.filePath,
+              'data-mp-chat-act': 'open-file',
+              'data-file-path': model.filePath,
+              'data-file-absolute-path': model.fileTarget,
+              ...(reference
+                ? {'data-file-open-diff': JSON.stringify(reference)}
+                : {}),
+            },
+            model.summary,
+          )
+        : undefined;
+    return shimmerText(
+      model.summary,
+      {
+        shimmering: model.state === 'running',
+        className: 'mp-chat-summary',
+      },
+      file ? [file] : undefined,
+    );
+  }
+
   function toolRowNode(
     model: ToolRowModel,
     scope = '',
@@ -3534,12 +3603,7 @@ const ChatView = (() => {
       const sep = h('span', {class: 'mp-chat-tool-sep', 'aria-hidden': 'true'});
       attach(sep, ' ');
       collapsed.push(sep);
-      collapsed.push(
-        shimmerText(summaryText, {
-          shimmering: model.state === 'running',
-          className: 'mp-chat-summary',
-        }),
-      );
+      collapsed.push(toolFileSummaryNode(model));
     }
 
     if (
@@ -4833,6 +4897,8 @@ const ChatView = (() => {
       first.executionRoot,
     );
     header.state = state;
+    header.fileDiffReference =
+      state === 'ok' ? combinedFileDiffReference(models) : undefined;
     if (allFailed && !isBlockedResult(first.result)) {
       header.title = fileRowKey(first)?.startsWith('Write ')
         ? 'Failed to write'
@@ -4915,10 +4981,7 @@ const ChatView = (() => {
             attach(label, h('span', {class: 'mp-chat-tool-sep'}, ' '));
             attach(
               label,
-              shimmerText(model.summary, {
-                shimmering: model.state === 'running',
-                className: 'mp-chat-summary',
-              }),
+              toolFileSummaryNode(model),
             );
           }
         }
@@ -5252,6 +5315,17 @@ const ChatView = (() => {
           part.file &&
           target &&
           (!file?.deleted || file.previewPath);
+        const reference = part.file?.preferDiff
+          ? combinedFileDiffReference(
+              chips.filter(chip => {
+                if (!FILE_WRITE_TOOLS.has(chip.name)) {
+                  return false;
+                }
+                const path = deriveFilePath(classifyTool(chip.name), chip.argsRaw);
+                return path && deliveredFileKey(path) === deliveredFileKey(part.file!.path);
+              }).map(chipModel),
+            )
+          : undefined;
         const meta = canOpen
           ? h(
               'button',
@@ -5261,6 +5335,9 @@ const ChatView = (() => {
                 'data-mp-chat-act': 'open-file',
                 'data-file-path': part.file!.path,
                 'data-file-absolute-path': target,
+                ...(reference
+                  ? {'data-file-open-diff': JSON.stringify(reference)}
+                  : {}),
                 ...(file?.previewPath
                   ? {'data-preview-path': file.previewPath}
                   : {}),
@@ -6576,10 +6653,8 @@ const ChatView = (() => {
           }),
         );
       } else if (kind === 'open-file') {
-        if (act.getAttribute('class')?.split(' ').includes('mp-chat-group-file')) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
+        event.preventDefault();
+        event.stopPropagation();
         const path = act.getAttribute('data-file-path') || '';
         if (!path) {
           return;
@@ -6588,6 +6663,7 @@ const ChatView = (() => {
         const absolutePath = act.getAttribute('data-file-absolute-path') || '';
         const originUnknown =
           act.getAttribute('data-file-origin-unknown') === 'true';
+        const reference = act.getAttribute('data-file-open-diff');
         DOC.dispatchEvent(
           new CustomEvent('mp:open-file', {
             detail: {
@@ -6595,6 +6671,7 @@ const ChatView = (() => {
               ...(absolutePath ? {absolutePath} : {}),
               ...(previewPath ? {previewPath} : {}),
               ...(originUnknown ? {originUnknown} : {}),
+              ...(reference ? {diffReference: JSON.parse(reference)} : {}),
             },
           }),
         );
@@ -6623,6 +6700,11 @@ const ChatView = (() => {
         event.preventDefault();
         return;
       }
+      if (
+        (event.target as Element | null)?.closest('button, a, input, textarea, select')
+      ) {
+        return;
+      }
       const row = (event.target as HTMLElement | null)?.closest?.(
         '.mp-chat-row[data-mp-chat-act], img[data-mp-chat-act="view-image"]',
       ) as HTMLElement | null;
@@ -6642,6 +6724,7 @@ const ChatView = (() => {
     userNode,
     assistantTurnNode,
     artifactCardNode,
+    fileDiffNode,
     deletedFileNode,
     turnStatusNode,
     turnErrorNode,

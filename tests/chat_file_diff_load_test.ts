@@ -226,7 +226,11 @@ async function fixture(
         );
         assert.ok(header);
         header.closest = () => header;
-        listeners.get('click')!({target: header});
+        listeners.get('click')!({
+          target: header,
+          preventDefault() {},
+          stopPropagation() {},
+        });
       },
       settle,
       count: () => count,

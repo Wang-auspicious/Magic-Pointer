@@ -398,6 +398,11 @@ declare global {
 
   interface MagicPointerChatViewApi {
     deletedFileNode(text: string): Element;
+    fileDiffNode(presentation: {
+      kind: 'file_diff';
+      beforeText: string;
+      afterText: string;
+    }): Element;
     toolRowModel(
       name: string,
       argsRaw: string,

@@ -30,6 +30,7 @@ const names = [
   'renderProjectFileTree',
   'normalizedProjectRoot',
   'renderProjectChanges',
+  'closeWorkspaceResource',
 ];
 const code = names
   .map(name => {
@@ -90,6 +91,7 @@ const fileHandlerCode = mainAst.statements
         "'projects:read-file'",
         "'projects:open-path'",
         "'projects:prepare-deleted-file'",
+        "'files:diff-preview'",
       ].includes(n.expression.arguments[0].getText(mainAst)),
   )
   .map(n => n.getText(mainAst))
@@ -112,6 +114,9 @@ function fixture(root: string) {
         handlers.set(name, callback),
     },
     isDashboardSender: () => true,
+    stageWindow: null,
+    readFileDiffPresentation: require('../electron/file_diff_presentation')
+      .readFileDiffPresentation,
     knownProjectRoot: (requested: string) =>
       requested && knownRoots.has(requested) ? requested : null,
     path,
@@ -126,7 +131,7 @@ function fixture(root: string) {
     },
   };
   vm.runInNewContext(compiledFileHandlers, mainContext);
-  assert.equal(handlers.size, 3);
+  assert.equal(handlers.size, 4);
   const element = (tag = 'div'): any => {
     const attrs = new Map<string, string>();
     const listeners = new Map<string, () => void>();
@@ -254,6 +259,14 @@ function fixture(root: string) {
     selectedProjectFileMarkdown: false,
     selectedProjectFileSnapshot: false,
     selectedProjectFileReadFailed: false,
+    selectedProjectFileLoading: false,
+    selectedProjectFileDiff: null,
+    window: {
+      magicPointer: {
+        readFileDiff: (reference: any) =>
+          handlers.get('files:diff-preview')!({}, reference),
+      },
+    },
     ChatView: require('../electron/renderer/chat_view'),
     ProjectPreviewView: {
       renderProjectPreview: (host: any, preview: any) => {
@@ -547,7 +560,11 @@ async function clickDelivered(
   const attrs = Object.fromEntries(
     [...button.matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [
       match[1],
-      match[2],
+      match[2].replace(
+        /&(quot|amp|lt|gt|#39);/g,
+        (_all, entity: string) =>
+          ({quot: '"', amp: '&', lt: '<', gt: '>', '#39': "'"})[entity]!,
+      ),
     ]),
   );
   const events = new Map<string, (event: any) => void>();
@@ -581,12 +598,209 @@ async function clickDelivered(
       stopped++;
     },
   });
-  if (attrs.class === 'mp-chat-group-file') {
-    assert.equal(prevented, 1);
-    assert.equal(stopped, 1);
-  }
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 1);
   await pending;
 }
+
+test('file metadata opens the saved edit span through main and restores it from its resource tab', async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-tool-file-diff-'));
+  const origin = path.join(base, 'origin');
+  const other = path.join(base, 'other');
+  fs.mkdirSync(origin);
+  fs.mkdirSync(other);
+  const session = await EventSession.open(origin, 'tool-file-diff');
+  try {
+    fs.writeFileSync(path.join(origin, 'result.txt'), 'version zero\n');
+    fs.writeFileSync(path.join(other, 'result.txt'), 'wrong project\n');
+    const registry = new ToolRegistry();
+    registerCodingTools(registry, origin, session);
+    const initialRead = await registry.execute({
+      id: 'initial-read',
+      name: 'Read',
+      arguments: {path: 'result.txt'},
+    });
+    assert.equal(initialRead.is_error, false, initialRead.error_message);
+    const sink = new RuntimeActivitySink(() => {});
+    for (const [id, oldText, newText] of [
+      ['first', 'zero', 'one'],
+      ['second', 'one', 'two'],
+    ]) {
+      const result = await registry.execute({
+        id,
+        name: 'Edit',
+        arguments: {
+          path: 'result.txt',
+          old_string: oldText,
+          new_string: newText,
+        },
+      });
+      assert.equal(result.is_error, false, result.error_message);
+      sink.onEvent({kind: 'tool_call_finished', result});
+    }
+    const store = createConversationStore({baseDir: origin});
+    const saved = store.appendTurn({
+      newConversation: true,
+      question: 'Edit twice',
+      answer: 'Saved',
+      trajectory: sink.trajectory,
+    });
+    store.flush();
+    const turn = createConversationStore({baseDir: origin}).get(saved.id)
+      .turns[0];
+    fs.writeFileSync(path.join(origin, 'result.txt'), 'later current disk\n');
+    const {ctx, nodes} = fixture(other);
+    let currentReads = 0;
+    const read = ctx.Data.readProjectFile;
+    ctx.Data.readProjectFile = (...args: any[]) => {
+      currentReads++;
+      return read(...args);
+    };
+    await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-tool-file');
+    assert.equal(currentReads, 0);
+    assert.equal(ctx.selectedProjectFileText, 'version two\n');
+    const html = nodes.get('project-file-content').children[0].outerHTML;
+    assert.match(html, /version zero/);
+    assert.match(html, /version two/);
+    assert.doesNotMatch(html, /version one|later current disk|wrong project/);
+    assert.ok(ctx.workspaceResourceTabs[0].diffReference);
+    const diffTab = ctx.workspaceResourceTabs[0].id;
+    await ctx.selectProjectFile(path.join(origin, 'result.txt'));
+    assert.equal(ctx.selectedProjectFileText, 'later current disk\n');
+    const select = ctx.selectProjectFile;
+    let restored: Promise<void> | undefined;
+    ctx.selectProjectFile = (...args: any[]) => (restored = select(...args));
+    ctx.activateWorkspaceResource(diffTab);
+    await restored;
+    assert.equal(ctx.selectedProjectFileText, 'version two\n');
+    assert.match(
+      nodes.get('project-file-content').children[0].outerHTML,
+      /version zero/,
+    );
+    assert.equal(ctx.activeProjectRoot, other);
+    assert.equal(ctx.pickerCalls, 0);
+    const edits = turn.trajectory.filter((entry: any) => entry.kind === 'tool');
+    for (const [index, before, after] of [
+      [0, 'version zero', 'version one'],
+      [1, 'version one', 'version two'],
+    ] as const) {
+      await clickDelivered(
+        ctx,
+        {...turn, trajectory: [edits[index]]},
+        'result.txt',
+        'mp-chat-tool-file',
+      );
+      const versionHtml = nodes.get('project-file-content').children[0]
+        .outerHTML;
+      assert.match(versionHtml, new RegExp(before));
+      assert.match(versionHtml, new RegExp(after));
+      assert.equal(ctx.selectedProjectFileText, after + '\n');
+    }
+  } finally {
+    fs.rmSync(base, {recursive: true, force: true});
+  }
+});
+
+test('missing saved diff reports the read failure and the same tab can retry its actual snapshots', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-diff-retry-'));
+  try {
+    const {ctx, nodes} = fixture(root);
+    const beforePath = path.join(root, 'before.txt');
+    const afterPath = path.join(root, 'after.txt');
+    fs.writeFileSync(beforePath, 'before\n');
+    const options = {diffReference: {beforePath, afterPath}};
+    const target = path.join(root, 'target.txt');
+    await ctx.selectProjectFile(target, options);
+    assert.equal(ctx.selectedProjectFileReadFailed, true);
+    assert.equal(ctx.selectedProjectFileDiff, null);
+    assert.match(nodes.get('project-file-content').textContent, /ENOENT/);
+    fs.writeFileSync(afterPath, 'after\n');
+    await ctx.selectProjectFile(target, options);
+    assert.equal(ctx.workspaceResourceTabs.length, 1);
+    assert.equal(ctx.selectedProjectFileReadFailed, false);
+    assert.equal(ctx.selectedProjectFileText, 'after\n');
+    assert.match(
+      nodes.get('project-file-content').children[0].outerHTML,
+      /before/,
+    );
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('a pending historical diff cannot replace a newer selected file', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-diff-pending-'));
+  try {
+    fs.writeFileSync(path.join(root, 'new.txt'), 'current selection\n');
+    const {ctx, nodes} = fixture(root);
+    let finish: (reply: any) => void = () => {};
+    ctx.window.magicPointer.readFileDiff = () =>
+      new Promise(resolve => {
+        finish = resolve;
+      });
+    const pending = ctx.selectProjectFile(path.join(root, 'old.txt'), {
+      diffReference: {
+        beforePath: null,
+        afterPath: path.join(root, 'saved.txt'),
+      },
+    });
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'chat.diff_loading',
+    );
+    assert.equal(nodes.get('project-file-copy').disabled, true);
+    await ctx.selectProjectFile('new.txt');
+    finish({
+      ok: true,
+      presentation: {
+        kind: 'file_diff',
+        beforeText: '',
+        afterText: 'old saved version\n',
+      },
+    });
+    await pending;
+    assert.equal(ctx.selectedProjectFileText, 'current selection\n');
+    assert.equal(ctx.selectedProjectFileDiff, null);
+    assert.equal(
+      nodes.get('project-file-content').textContent,
+      'current selection\n',
+    );
+    assert.equal(nodes.get('project-file-copy').disabled, false);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('closing the last diff tab releases its contents and cancels a pending repaint', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-diff-close-'));
+  try {
+    const {ctx, nodes} = fixture(root);
+    let finish: (reply: any) => void = () => {};
+    ctx.window.magicPointer.readFileDiff = () =>
+      new Promise(resolve => {
+        finish = resolve;
+      });
+    const pending = ctx.selectProjectFile(path.join(root, 'target.txt'), {
+      diffReference: {
+        beforePath: null,
+        afterPath: path.join(root, 'saved.txt'),
+      },
+    });
+    ctx.closeWorkspaceResource(ctx.workspaceResourceTabs[0].id);
+    finish({
+      ok: true,
+      presentation: {kind: 'file_diff', beforeText: '', afterText: 'saved\n'},
+    });
+    await pending;
+    assert.equal(ctx.selectedProjectFileText, '');
+    assert.equal(ctx.selectedProjectFileDiff, null);
+    assert.equal(nodes.get('project-file-content').children.length, 0);
+    assert.equal(ctx.inspectorState.open, false);
+    assert.equal(ctx.workspaceResourceTabs.length, 0);
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+});
 
 test('a relative file receipt reopens its actual execution target with no project or another project selected', async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-origin-file-'));
@@ -643,7 +857,7 @@ test('a relative file receipt reopens its actual execution target with no projec
     );
     const states = [];
     for (const selectedRoot of ['', other, origin]) {
-      const {ctx, nodes, knownRoots} = fixture(selectedRoot);
+      const {ctx, knownRoots} = fixture(selectedRoot);
       await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-group-file');
       await clickDelivered(ctx, turn, 'result.txt', 'mp-chat-diff-path');
       assert.equal(ctx.activeProjectRoot, selectedRoot);
@@ -658,7 +872,7 @@ test('a relative file receipt reopens its actual execution target with no projec
       }
       states.push({
         picker: ctx.pickerCalls,
-        content: nodes.get('project-file-content').textContent,
+        content: ctx.selectedProjectFileText,
       });
     }
     assert.deepEqual(
@@ -1017,6 +1231,8 @@ test('a deleted-file action opens its actual retained snapshot and restores that
     );
     events.get('click')!({
       target: {closest: () => ({getAttribute: (name: string) => attrs[name]})},
+      preventDefault() {},
+      stopPropagation() {},
     });
     await delivered;
     await selected;
