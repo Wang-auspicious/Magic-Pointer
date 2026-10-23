@@ -206,6 +206,7 @@ const ChatView = (() => {
     {open: boolean; members: string[]; single?: boolean}
   >();
   let liveTurnSequence = 0;
+  let thinkingSequence = 0;
 
   function rememberExpansion(
     store: Map<string, boolean>,
@@ -450,7 +451,6 @@ const ChatView = (() => {
 
   const SUBAGENT_TOOLS = new Set(['Agent', 'delegate_task']);
   const PLAN_TOOLS = new Set(['Todo', 'TodoWrite', 'todo_write']);
-  const EXTENDED_THINKING_GLYPH = String.fromCodePoint(0xe068);
   const AGENTS_SIMPLE_GLYPH = String.fromCodePoint(0xe11c);
 
   const TOOL_VARIANTS: Record<string, ToolVariant> = {
@@ -1236,13 +1236,6 @@ const ChatView = (() => {
   type ToolPhase = 'running' | 'done' | 'cancelled';
 
   /**
-   * Claude's `TA`. Summaries lose their trailing punctuation.
-   */
-  function stripTrailingPunctuation(value: string): string {
-    return value.trim().replace(/[.!?;:,]+$/, '');
-  }
-
-  /**
    * Claude's `Fs`/`rr` pair, both of which live in uncaptured chunks. The
    * reference applies `Fs(value).trim()` as a general normalise-then-trim, so
    * a whitespace collapse followed by a trim is what the caller observes.
@@ -1395,34 +1388,7 @@ const ChatView = (() => {
   }
 
   /**
-   * Claude's `fN`. Thinking duration wording. The reference rounds to whole
-   * seconds first and renders nothing at or below zero.
-   */
-  function thinkingDuration(ms: number): string | undefined {
-    const seconds = Math.round(ms / 1000);
-    if (seconds <= 0) {
-      return undefined;
-    }
-    if (seconds < 60) {
-      return `Thought for ${seconds}s`;
-    }
-    const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
-    if (minutes < 60) {
-      return rest > 0
-        ? `Thought for ${minutes}m ${rest}s`
-        : `Thought for ${minutes}m`;
-    }
-    const hours = Math.floor(minutes / 60);
-    const minutesRest = minutes % 60;
-    return minutesRest > 0
-      ? `Thought for ${hours}h ${minutesRest}m`
-      : `Thought for ${hours}h`;
-  }
-
-  /**
-   * Elapsed-time wording for a row that is still running. Same rounding
-   * as the thinking duration, without its past-tense prefix.
+   * Elapsed-time wording for a row that is still running.
    */
   function runningDuration(ms: number): string | undefined {
     const seconds = Math.round(ms / 1000);
@@ -3836,29 +3802,25 @@ const ChatView = (() => {
       .join('\n')}`;
   }
 
-  function thinkNode(
-    reasoning: string,
-    running = false,
-    thinkId = '',
-  ): ChatNode {
-    // Claude's `TA` trims a summary's trailing punctuation, and the bare word
-    // "Thinking" is what the reference shows when it has no summary left to
-    // derive -- it is the one case where the block renders text of its own.
-    const derived = running ? latestLine(reasoning) : firstLine(reasoning);
-    const summaryText =
-      derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
-    const summary = h('span', {class: 'mp-chat-summary'});
-    if (running) {
-      summary.setAttribute('data-follow-end', 'true');
-    }
-    attach(summary, summaryText);
-
+  function thinkNode(reasoning: string, running = false, thinkId = ''): ChatNode {
+    const label = lt('chat.thought_process');
+    const panelId = `mp-chat-thinking:${thinkId || ++thinkingSequence}`;
     const body = h('div', {class: 'mp-chat-think-body'});
     attach(body, reasoning);
-    const viewport = h('div', {class: 'mp-chat-think-viewport'});
+    const viewport = h('div', {
+      class: 'mp-chat-think-viewport',
+      id: panelId,
+      'data-cds-actions-scope': '',
+    });
     attach(viewport, body);
+    const actions = h('div', {
+      class: 'mp-chat-think-actions',
+      role: 'toolbar',
+      'aria-label': lt('chat.thinking_actions'),
+      'data-size': 'xs',
+    });
     attach(
-      viewport,
+      actions,
       h(
         'button',
         {
@@ -3875,27 +3837,48 @@ const ChatView = (() => {
         }),
       ),
     );
+    attach(viewport, actions);
     const expandedBody: ChatNode[] = [viewport];
 
     const {root, row} = disclosureRow({
-      leadingOverride: h(
-        'span',
-        {class: 'mp-chat-font-icon', 'aria-hidden': 'true'},
-        EXTENDED_THINKING_GLYPH,
-      ),
-      title: running ? 'Thinking…' : 'Thought',
-      collapsed: [
-        h('span', {class: 'mp-chat-sep', 'aria-hidden': 'true'}),
-        summary,
-      ],
+      title: label,
       body: expandedBody,
       expandable: true,
-      open: false,
+      open: true,
       rowId: thinkId ? `think:${thinkId}` : undefined,
     });
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'mp-chat-disclosure mp-chat-think');
+    root.setAttribute('data-cds', 'TurnStatusStep');
+    if (!reasoning.trim()) {
+      root.setAttribute('hidden', 'true');
+    }
+    row.removeAttribute('role');
+    row.removeAttribute('tabindex');
+    row.removeAttribute('aria-expanded');
     row.setAttribute('data-thought-row', '');
+    attach(
+      row,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-chat-think-toggle',
+          'data-mp-chat-act': 'toggle',
+          'aria-label': label,
+          'aria-expanded': root.getAttribute('data-open') || 'true',
+          'aria-controls': panelId,
+        },
+        h(
+          'span',
+          {
+            class: 'mp-chat-think-caret',
+            'aria-hidden': 'true',
+          },
+          '\ue02a',
+        ),
+      ),
+    );
     return root;
   }
 
@@ -3907,32 +3890,14 @@ const ChatView = (() => {
     node: HTMLElement,
     text: string,
     running: boolean,
-    durationMs?: number,
   ): void {
     node.setAttribute('data-state', running ? 'running' : 'ok');
-    // Claude's `fN` wording ("Thought for 12s") replaces the bare verb once
-    // the block settles and a real duration is known.
-    const settled =
-      durationMs === undefined ? undefined : thinkingDuration(durationMs);
-    node.querySelector('.mp-chat-title')!.textContent = running
-      ? 'Thinking…'
-      : (settled ?? 'Thought');
-    const summary = node.querySelector('.mp-chat-summary')!;
-    const derived = running ? latestLine(text) : firstLine(text);
-    const preview =
-      derived.trim() === '' ? 'Thinking' : stripTrailingPunctuation(derived);
-    if (summary.textContent !== preview) {
-      summary.textContent = preview;
-    }
-    if (running) {
-      summary.setAttribute('data-follow-end', 'true');
-    } else {
-      summary.removeAttribute('data-follow-end');
-    }
     const copy = node.querySelector('.mp-chat-think-copy');
     if (text.trim()) {
+      node.removeAttribute('hidden');
       copy?.removeAttribute('hidden');
     } else {
+      node.setAttribute('hidden', 'true');
       copy?.setAttribute('hidden', 'true');
     }
   }
@@ -5848,10 +5813,6 @@ const ChatView = (() => {
     let answer: HTMLElement | null = null;
     let thinking: HTMLElement | null = null;
     let thinkingText = '';
-    // Claude's duration comes from the pair of timestamps on the thinking
-    // block; the live snapshot carries none, so the span this row observed is
-    // the clock instead of a fabricated number.
-    let thinkingStartedAt = 0;
     const traceNodes = new Map<
       string,
       {node: HTMLElement; signature: string}
@@ -6282,28 +6243,15 @@ const ChatView = (() => {
           if (!thinking) {
             thinking = thinkNode('', true, `${scope}:head`) as HTMLElement;
           }
-          if (!thinkingStartedAt) {
-            thinkingStartedAt = Date.now();
-          }
           const body = thinking.querySelector<HTMLElement>(
             '.mp-chat-think-body',
           )!;
           appendText(body, thinkingText, nextThinking);
-          const summary = thinking.querySelector('.mp-chat-summary')!;
-          const derived = latestLine(nextThinking);
-          const latestSummary =
-            derived.trim() === ''
-              ? 'Thinking'
-              : stripTrailingPunctuation(derived);
-          if (summary.textContent !== latestSummary) {
-            summary.textContent = latestSummary;
-          }
           thinkingText = nextThinking;
           updateThinkingState(
             thinking,
             nextThinking,
             !snapshot.answer,
-            Date.now() - thinkingStartedAt,
           );
           desired.push(thinking);
         }
@@ -6463,9 +6411,17 @@ const ChatView = (() => {
     if (!row || !disclosure) {
       return;
     }
+    const thinkingToggle = row.querySelector<HTMLElement>('.mp-chat-think-toggle');
+    if (
+      thinkingToggle &&
+      act !== thinkingToggle &&
+      DOC?.getSelection?.()?.isCollapsed === false
+    ) {
+      return;
+    }
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
-    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    (thinkingToggle || row).setAttribute('aria-expanded', open ? 'false' : 'true');
     if (!open) {
       disclosure.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
         .forEach(button => { void loadFileDiff(button); });
@@ -6880,7 +6836,6 @@ const ChatView = (() => {
       toolLabel,
       commandSummary,
       fileChangeMode,
-      thinkingDuration,
       runningDuration,
       connectorDisplayName,
       shortenPath,

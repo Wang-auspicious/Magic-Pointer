@@ -103,10 +103,10 @@ assert(ChatView.stateDot('ongoing').outerHTML.includes('class="mp-chat-matrix"')
 
 const think = html(ChatView.thinkNode('先读这个文件\n再判断结构', false));
 assert(think.includes('mp-chat-think"'), 'reasoning must render as the Think disclosure');
-assert(think.includes('mp-chat-title">Thought</span>'), 'completed reasoning uses the interface timeline label');
-assert(think.includes('先读这个文件'), 'collapsed summary = first line of reasoning');
+assert(think.includes('mp-chat-title">Thought process</span>'), 'modern reasoning uses the original Step label');
+assert(think.includes('先读这个文件'), 'expanded body retains the original reasoning');
 assert(think.includes('class="mp-chat-think-body"'), 'expanded body must exist');
-assert(think.includes('data-open="false"'), 'Think rows start collapsed');
+assert(think.includes('data-open="true"'), 'Thinking Step starts open');
 const longThink = html(ChatView.thinkNode('推理步骤。'.repeat(120), false));
 assert(!longThink.includes('data-long="true"'), 'expanded thinking has no arbitrary length threshold');
 assert(longThink.includes('class="mp-chat-think-viewport"'));
@@ -115,7 +115,7 @@ assert(!longThink.includes('data-mp-chat-act="think-more"'));
 assert(longThink.includes('data-mp-chat-act="copy-thinking"'));
 const runningThink = html(ChatView.thinkNode('多行\n思考', true));
 assert(runningThink.includes('data-state="running"'), 'a streaming Think row must carry the running state');
-assert(runningThink.includes('Thinking…'), 'a running row uses the interface exact status label');
+assert(runningThink.includes('Thought process'), 'streaming keeps the Step label');
 assert(!runningThink.includes('data-long="true"'), 'streaming reasoning must remain uncapped');
 
 const turn = ChatView.assistantTurnNode({

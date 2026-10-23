@@ -902,10 +902,6 @@ span.mp-chat-diff-path {
   background: transparent;
 }
 
-.mp-chat-tool-group[data-thought-only='true'] .mp-chat-think > .mp-chat-row {
-  padding-inline: 0;
-}
-
 .mp-chat-tool-group-header,
 .mp-chat-disclosure > summary {
   display: flex;
@@ -1768,21 +1764,45 @@ span.mp-chat-diff-path {
   background: var(--cds-bg-git-removed);
 }
 
-/* A thought is a row, not a panel: same box, height, type and chevron as a tool row. */
 .mp-chat-think {
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--mp-text-muted);
 }
 
+.mp-chat-think[hidden] { display: none; }
+
 .mp-chat-think > .mp-chat-row {
-  min-height: 36px;
-  padding-inline: 10px;
-  font-size: 14px;
-  line-height: 20px;
-  color: var(--mp-text-secondary);
+  position: relative;
+  isolation: isolate;
+  min-height: 0;
+  gap: var(--cds-gap-xs);
+  margin-inline-start: calc(var(--cds-assistant-message-text-inset, 0px) - var(--cds-pad-xs) - var(--cds-turn-status-hang, 0px));
+  margin-inline-end: calc(var(--cds-assistant-message-text-stop, 0px) - var(--cds-pad-xs));
+  padding: calc((var(--cds-h-control) - 1lh) / 2) var(--cds-pad-xs);
+  font-family: var(--mp-font-ui);
+  font-size: var(--cds-font-size-body);
+  font-weight: var(--mp-weight-regular);
+  line-height: var(--cds-leading-body);
+  color: var(--cds-text-muted);
+  text-align: start;
+}
+
+.mp-chat-think > .mp-chat-row:hover {
+  background: transparent;
+}
+
+.mp-chat-think .mp-chat-title {
+  flex: 0 1 auto;
+  max-width: 100%;
+  color: var(--cds-text-muted);
+}
+
+.mp-chat-think > .mp-chat-row:hover .mp-chat-title,
+.mp-chat-think > .mp-chat-row:focus-within .mp-chat-title {
+  color: var(--cds-text-secondary);
 }
 
 .mp-chat-think > .mp-chat-row::after {
@@ -1790,37 +1810,131 @@ span.mp-chat-diff-path {
 }
 
 .mp-chat-think .mp-chat-body-wrap {
-  padding: 0 10px 10px 32px;
+  padding: var(--cds-pad-xs) 0 0 var(--cds-assistant-message-text-inset, 0px);
+  animation: none;
 }
 
-.mp-chat-think .mp-chat-title,
-.mp-chat-think .mp-chat-summary,
-.mp-chat-think .mp-chat-sep {
-  color: var(--mp-text-muted);
+.mp-chat-think-toggle {
+  position: static;
+  display: inline-flex;
+  height: 1lh;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: -.25rem;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: var(--cds-cursor-interactive);
 }
 
-.mp-chat-tool-group-body > .mp-chat-think + .mp-chat-tool,
-.mp-chat-tool-group-body > .mp-chat-tool + .mp-chat-think,
-.mp-chat-tool-group-body > .mp-chat-think + .mp-chat-think {
-  border-top: 1px solid var(--mp-rule);
+.mp-chat-think-toggle::after {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--cds-radius);
+  content: '';
+  transition: box-shadow var(--cds-dur-fast);
+}
+
+.mp-chat-think-toggle:focus-visible::after {
+  box-shadow: inset 0 0 0 1px var(--cds-fill-accent);
+}
+
+.mp-chat-think-caret {
+  display: inline-flex;
+  height: 1lh;
+  align-items: center;
+  justify-content: center;
+  color: var(--cds-text-muted);
+  font-family: 'Anthropicons Code';
+  font-size: calc(.75rem * var(--cds-rem-scale, 1));
+  font-weight: 577.8;
+  transition: transform var(--cds-dur-fast);
+}
+
+.mp-chat-think[data-open='true'] .mp-chat-think-caret {
+  color: var(--cds-text-secondary);
+  transform: rotate(90deg);
+}
+
+.mp-chat-think[data-open='true'] > .mp-chat-row {
+  user-select: text;
+}
+
+.mp-chat-think[data-open='true'] .mp-chat-think-toggle::after {
+  pointer-events: none;
 }
 
 .mp-chat-think-viewport {
-  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--cds-gap-xs);
+  color: var(--cds-text-secondary);
+  font-size: var(--cds-font-size-body);
+  line-height: var(--cds-leading-body);
+}
+
+.mp-chat-think-actions {
+  display: flex;
+  height: 1lh;
+  flex: none;
+  align-items: center;
+  user-select: none;
+  opacity: 0;
+  transition: opacity var(--cds-message-actions-reveal-out-duration) var(--cds-message-actions-reveal-out-ease) var(--cds-message-actions-reveal-out-delay);
 }
 
 .mp-chat-think-copy {
-  position: absolute;
-  top: 0;
-  right: 0;
-  opacity: 0;
-  pointer-events: none;
+  width: var(--cds-h-control--xs);
+  height: var(--cds-h-control--xs);
+  border-radius: var(--cds-radius--xs);
+  color: var(--cds-text-muted);
 }
+
+.mp-chat-think-copy-glyph {
+  font-size: var(--cds-icon--xs);
+  font-weight: 577.8;
+}
+
+[data-density='comfortable'] .mp-chat-think-copy-glyph {
+  font-weight: 533.3;
+}
+
 .mp-chat-think-copy[hidden] { display: none; }
-.mp-chat-think-viewport:hover .mp-chat-think-copy,
-.mp-chat-think-viewport:focus-within .mp-chat-think-copy {
+
+.mp-chat-think-viewport:hover .mp-chat-think-actions {
   opacity: 1;
-  pointer-events: auto;
+  transition-duration: var(--cds-message-actions-reveal-in-duration);
+  transition-timing-function: var(--cds-message-actions-reveal-in-ease);
+  transition-delay: var(--cds-message-actions-reveal-in-delay);
+}
+
+.mp-chat-think-viewport:focus-within .mp-chat-think-actions,
+.mp-chat-think > .mp-chat-row:has(.mp-chat-think-toggle:focus-visible) + .mp-chat-body-wrap .mp-chat-think-actions {
+  opacity: 1;
+  transition-duration: var(--cds-message-actions-reveal-in-duration);
+  transition-timing-function: var(--cds-message-actions-reveal-in-ease);
+  transition-delay: 0s;
+}
+
+@media (pointer: coarse), (hover: none) {
+  .mp-chat-think-actions {
+    opacity: 1;
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-chat-think-actions,
+  .mp-chat-think-caret,
+  .mp-chat-think-toggle::after {
+    transition: none;
+  }
 }
 
 .mp-chat-subagent-heartbeat {
@@ -1836,12 +1950,13 @@ span.mp-chat-diff-path {
 .mp-chat-subagent-heartbeat:empty { display: none; }
 
 .mp-chat-think-body {
-  padding: var(--cds-pad-xs) 0 0;
-  padding-inline-end: calc(var(--cds-h-control) + var(--cds-pad-xs));
-  color: var(--mp-text-secondary);
+  min-width: 0;
+  flex: 1;
+  color: var(--cds-text-secondary);
   font-family: var(--mp-font-ui);
   font-size: var(--cds-font-size-body);
   font-weight: var(--mp-weight-regular);
+  font-style: normal;
   line-height: var(--cds-leading-body);
   white-space: pre-wrap;
   overflow-wrap: break-word;

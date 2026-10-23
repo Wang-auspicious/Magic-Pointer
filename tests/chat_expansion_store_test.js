@@ -61,9 +61,13 @@ const thinkTurn = turn({
   answer: '',
   trajectory: [{ kind: 'message', turn: 0, reasoning: '先读文件。\n再看结构。', text: '' }],
 });
+const thinkDefault = html(chat.assistantTurnNode(thinkTurn));
+assert(/class="mp-chat-disclosure mp-chat-think"[^>]*data-open="true"/.test(thinkDefault),
+  'modern thinking Step starts open, as GZ explicitly requests');
+chat.expansion.setRow('think:c1#0:r0', false);
 const thinkCollapsed = html(chat.assistantTurnNode(thinkTurn));
 assert(/class="mp-chat-disclosure mp-chat-think"[^>]*data-open="false"/.test(thinkCollapsed),
-  'thinking starts collapsed, matching the CLI collapsed form');
+  'an explicit user collapse overrides the Step default');
 chat.expansion.setRow('think:c1#0:r0', true);
 const thinkOpen = html(chat.assistantTurnNode(thinkTurn));
 assert(/class="mp-chat-disclosure mp-chat-think"[^>]*data-open="true"/.test(thinkOpen),

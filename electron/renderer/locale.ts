@@ -1021,6 +1021,8 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'chat.files_artifact': {en: 'Artifact', zh: '作品'},
   'chat.files_undo': {en: 'Undo', zh: '撤销'},
   'chat.copy_as_quote': {en: 'Copy as quote', zh: '复制为引用'},
+  'chat.thought_process': {en: 'Thought process', zh: '思考过程'},
+  'chat.thinking_actions': {en: 'Thinking actions', zh: '思考操作'},
   'chat.files_undo_hint': {en: 'Ask Magic Pointer to undo this turn’s file changes', zh: '让 Magic Pointer 撤销本轮文件修改'},
   'chat.files_undo_failed': {en: 'Could not send the undo request. Try again.', zh: '撤销请求发送失败，请重试。'},
   'chat.time_just_now': {en: 'just now', zh: '刚刚'},
