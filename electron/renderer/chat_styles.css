@@ -1267,7 +1267,8 @@ span.mp-chat-diff-path {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mp-chat-files-open {
+.mp-chat-files-open,
+.mp-chat-files-undo {
   pointer-events: auto;
   /* The original xxs Button uses data-step=1, independent of density. */
   height: calc(1.25rem * var(--cds-rem-scale, 1));
@@ -1282,9 +1283,17 @@ span.mp-chat-diff-path {
   cursor: pointer;
 }
 .mp-chat-files-open:hover { background: var(--cds-fill-secondary-hover); }
-.mp-chat-files-open:focus-visible {
+.mp-chat-files-open:focus-visible,
+.mp-chat-files-undo:focus-visible {
   outline: none;
   box-shadow: var(--cds-focus-shadow);
+}
+.mp-chat-files-undo { background: transparent; }
+.mp-chat-files-undo:hover { background: var(--cds-fill-ghost-hover); }
+.mp-chat-files-error {
+  color: var(--mp-danger);
+  font-size: var(--cds-font-size-footnote);
+  line-height: var(--cds-leading-footnote);
 }
 .mp-chat-file-row {
   display: flex;

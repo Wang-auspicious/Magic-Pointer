@@ -4373,6 +4373,7 @@ const ChatView = (() => {
     artifacts: Array<Record<string, unknown>>,
     conversationId: string,
     turnScope = conversationId,
+    undo?: {conversationId: string; turnIndex: number},
   ): ChatNode | null {
     const artifact = artifacts.find(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
@@ -4394,17 +4395,29 @@ const ChatView = (() => {
     const label = artifact
       ? String(artifact.title || artifact.name || '').trim()
       : '';
+    const undoAction = !artifact && files.length && undo
+      ? h('button', {
+          type: 'button', class: 'mp-chat-files-undo',
+          title: lt('chat.files_undo_hint'),
+          'data-mp-chat-act': 'undo-files',
+          'data-undo-conversation': undo.conversationId,
+          'data-undo-turn': String(undo.turnIndex),
+        }, lt('chat.files_undo'))
+      : undefined;
     if (!artifact && files.length > 1) {
       const title = h('span', {class: 'mp-chat-files-title'},
         lt('chat.files_edited', {count: files.length}));
       const head = h('li', {class: 'mp-chat-files-head'},
         h('span', {class: 'mp-chat-files-heading'},
           fileResultGlyph('\ue02d'), title));
+      const trailing = h('span', {class: 'mp-chat-file-trailing'});
+      attach(trailing, undoAction);
       if (files.every(file => file.statKnown)) {
         const added = files.reduce((total, file) => total + file.added, 0);
         const removed = files.reduce((total, file) => total + file.removed, 0);
-        attach(head, h('span', {class: 'mp-chat-file-trailing'}, fileResultStat(added, removed)));
+        attach(trailing, fileResultStat(added, removed));
       }
+      attach(head, trailing);
       attach(list, head);
     }
 
@@ -4466,6 +4479,7 @@ const ChatView = (() => {
       return fileResultRow({opener: row, label: file.name,
         mark: fileTypeIcon(file.name), hint: hints.get(file.path),
         stat: file.statKnown ? fileResultStat(file.added, file.removed) : null,
+        action: files.length === 1 ? undoAction : undefined,
         chevron: true});
     };
     visibleFiles.slice(0, 3).forEach(file => attach(list, fileRow(file)));
@@ -4635,6 +4649,7 @@ const ChatView = (() => {
 
   interface TurnPresentation {
     taskPanel?: boolean;
+    undoFileChanges?: boolean;
   }
 
   type FlowItem =
@@ -5709,12 +5724,36 @@ const ChatView = (() => {
       artifacts,
       String(turn.conversationId || ''),
       turnScope,
+      options.undoFileChanges && !turn.running && !turn.pendingInput &&
+      turn.conversationId && Number.isInteger(turn.turnIndex)
+        ? {conversationId: turn.conversationId, turnIndex: Number(turn.turnIndex)}
+        : undefined,
     );
     if (results) {
       attach(root, results);
     }
     items.push(root);
     return items;
+  }
+
+  function fileUndoQuestion(turn: AssistantTurnInput): string | undefined {
+    if (turn.artifacts?.some(artifact => Boolean(artifact?.artifactId))) {
+      return undefined;
+    }
+    const files = deliveredFiles(
+      turn.trajectory,
+      String(turn.request?.executionWorkspaceRoot || ''),
+    );
+    const paths = files.map(file => `\`${file.path}\``);
+    if (!paths.length) {
+      return undefined;
+    }
+    return paths.length === 1
+      ? `Undo the changes you made to ${paths[0]} in your last turn and restore it to its previous state.`
+      : [
+          `Undo the changes you made to these ${paths.length} files in your last turn and restore them to their previous state:`,
+          ...paths.map(path => `- ${path}`),
+        ].join('\n');
   }
 
   function liveActivityNode(
@@ -6301,11 +6340,14 @@ const ChatView = (() => {
         host: HTMLElement;
         live: ReturnType<typeof createLiveTurn>;
         final: string | null;
+        presentation: TurnPresentation;
       }
     >();
     return {
       update(conversation: {
         id: string;
+        agentSessionId?: string;
+        hasPendingWork?: boolean;
         turns?: Array<
           AssistantTurnInput & {
             question?: string;
@@ -6315,6 +6357,9 @@ const ChatView = (() => {
           }
         >;
       }) {
+        const undoFileChanges = Boolean(conversation.agentSessionId) &&
+          !conversation.hasPendingWork &&
+          !conversation.turns?.some(item => item.liveProgress || item.outcome === '进行中');
         for (const [turnIndex, turn] of (conversation.turns || []).entries()) {
           let current = turns.get(turnIndex);
           if (!current) {
@@ -6334,15 +6379,16 @@ const ChatView = (() => {
             host.className = 'mp-chat-flow-item';
             host.dataset.turnIndex = String(turnIndex);
             flow.appendChild(host);
+            const presentation: TurnPresentation = {taskPanel: true, undoFileChanges};
             current = {
               host,
-              live: createLiveTurn(host, `${conversation.id}#${turnIndex}`, {
-                taskPanel: true,
-              }),
+              live: createLiveTurn(host, `${conversation.id}#${turnIndex}`, presentation),
               final: null,
+              presentation,
             };
             turns.set(turnIndex, current);
           }
+          current.presentation.undoFileChanges = undoFileChanges;
           if (turn.liveProgress || turn.outcome === '进行中') {
             current.live.update(
               turn.liveProgress || {
@@ -6352,7 +6398,7 @@ const ChatView = (() => {
             );
             current.final = null;
           } else {
-            const signature = JSON.stringify(turn);
+            const signature = JSON.stringify([turn, undoFileChanges]);
             if (signature !== current.final) {
               current.live.finish({
                 ...turn,
@@ -6648,6 +6694,41 @@ const ChatView = (() => {
         DOC.dispatchEvent(
           new CustomEvent('mp:retry-question', {detail: {question}}),
         );
+      } else if (kind === 'undo-files') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (act.dataset.undoPending === 'true') {
+          return;
+        }
+        const conversationId = act.getAttribute('data-undo-conversation') || '';
+        const turnIndex = Number(act.getAttribute('data-undo-turn'));
+        if (!conversationId || !Number.isInteger(turnIndex) || turnIndex < 0) {
+          return;
+        }
+        act.dataset.undoPending = 'true';
+        (act as HTMLButtonElement).disabled = true;
+        const card = act.closest('.mp-chat-files');
+        card?.querySelector('.mp-chat-files-error')?.remove();
+        DOC.dispatchEvent(new CustomEvent('mp:undo-file-changes', {
+          detail: {
+            conversationId,
+            turnIndex,
+            respond: (result: {ok: boolean; error?: string}) => {
+              if (act.isConnected === false) {
+                return;
+              }
+              act.dataset.undoPending = 'false';
+              (act as HTMLButtonElement).disabled = false;
+              if (!result.ok) {
+                const error = DOC.createElement('span');
+                error.className = 'mp-chat-files-error';
+                error.setAttribute('role', 'alert');
+                error.textContent = result.error || lt('chat.files_undo_failed');
+                card?.appendChild(error);
+              }
+            },
+          },
+        }));
       } else if (kind === 'open-artifact') {
         const artifactId = act.getAttribute('data-artifact-id') || '';
         const conversationId =
@@ -6733,6 +6814,7 @@ const ChatView = (() => {
     assistantTurnNode,
     artifactCardNode,
     fileDiffNode,
+    fileUndoQuestion,
     deletedFileNode,
     turnStatusNode,
     turnErrorNode,

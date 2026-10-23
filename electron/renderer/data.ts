@@ -71,6 +71,7 @@ declare global {
   }
 
   interface MagicPointerTurn {
+    request?: Record<string, unknown>;
     at?: number;
     question?: string;
     answer?: string;
@@ -403,6 +404,7 @@ declare global {
       beforeText: string;
       afterText: string;
     }): Element;
+    fileUndoQuestion(turn: MagicPointerTurn): string | undefined;
     toolRowModel(
       name: string,
       argsRaw: string,

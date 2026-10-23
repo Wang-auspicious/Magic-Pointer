@@ -14435,12 +14435,18 @@ async function submitOpenUiAction(detail: {
 }): Promise<void> {
   const conversationId = detail.scope.slice(0, detail.scope.lastIndexOf('#'));
   const conversation = activeConversationRecord;
-  if (!conversationId || conversationId !== activeConversationId ||
-      conversation?.id !== conversationId || !conversation.agentSessionId) {
+  if (
+    !conversationId ||
+    conversationId !== activeConversationId ||
+    conversation?.id !== conversationId ||
+    !conversation.agentSessionId
+  ) {
     throw new Error('Open the original task to use this interface.');
   }
   if (detail.event.type === 'open_url') {
-    const result = await Data.openProjectUrl(String(detail.event.params?.url || ''));
+    const result = await Data.openProjectUrl(
+      String(detail.event.params?.url || ''),
+    );
     if (!result.ok) {
       throw new Error(result.error || 'Could not open this link.');
     }
@@ -14450,22 +14456,122 @@ async function submitOpenUiAction(detail: {
     throw new Error('This interface action is not available.');
   }
   if (pendingPermissionAsk || pendingAskInput) {
-    throw new Error('Answer the current task question before continuing this interface.');
+    throw new Error(
+      'Answer the current task question before continuing this interface.',
+    );
   }
   const question = [
-    detail.event.humanFriendlyMessage || 'Continue with these interface values.',
+    detail.event.humanFriendlyMessage ||
+      'Continue with these interface values.',
     `\n[Interactive response: ${detail.scope}, ${detail.blockId}]`,
     JSON.stringify({
       fields: detail.event.formState ?? {},
       context: detail.event.params?.context ?? null,
     }),
   ].join('\n');
+  return submitConversationFollowup({
+    conversationId,
+    question,
+    inputPrefix: 'openui',
+    allowSteer: true,
+  });
+}
+
+async function submitFileUndo(detail: {
+  conversationId: string;
+  turnIndex: number;
+}): Promise<void> {
+  const conversationId = detail.conversationId;
+  if (
+    !conversationId ||
+    conversationId !== activeConversationId ||
+    activeConversationRecord?.id !== conversationId ||
+    !activeConversationRecord.agentSessionId
+  ) {
+    throw new Error('Open the original task to undo these file changes.');
+  }
+  if (
+    studioComposerBusy ||
+    pendingConversation ||
+    externalConversationRun ||
+    pendingPermissionAsk ||
+    pendingAskInput
+  ) {
+    throw new Error(
+      'Finish the current task or answer its question before undoing file changes.',
+    );
+  }
+  const conversation = await Data.conversation(conversationId);
+  if (conversation?.hasPendingWork) {
+    throw new Error('Finish the current task before undoing file changes.');
+  }
+  const turn =
+    Number.isInteger(detail.turnIndex) && detail.turnIndex >= 0
+      ? conversation?.turns?.[detail.turnIndex]
+      : undefined;
+  const question =
+    turn && !turn.pendingInput && !turn.liveProgress
+      ? ChatView.fileUndoQuestion(turn)
+      : undefined;
+  if (!question) {
+    throw new Error('This turn has no available file changes to undo.');
+  }
+  const workspaceRoot = String(conversation?.workspaceRoot || '');
+  const executionWorkspaceRoot = String(
+    turn?.request?.executionWorkspaceRoot || workspaceRoot,
+  );
+  return submitConversationFollowup({
+    conversationId,
+    question,
+    inputPrefix: 'file-undo',
+    allowSteer: false,
+    workspace: {
+      projectRoot: workspaceRoot,
+      executionWorkspaceRoot,
+      projectId: conversation?.projectId,
+    },
+  });
+}
+
+async function submitConversationFollowup(request: {
+  conversationId: string;
+  question: string;
+  inputPrefix: string;
+  allowSteer: boolean;
+  workspace?: {
+    projectRoot: string;
+    executionWorkspaceRoot: string;
+    projectId?: string;
+  };
+}): Promise<void> {
+  const {conversationId, question} = request;
+  const conversation = activeConversationRecord;
+  if (
+    activeConversationId !== conversationId ||
+    conversation?.id !== conversationId ||
+    !conversation.agentSessionId
+  ) {
+    throw new Error('The active task changed before the request was sent.');
+  }
+  if (pendingPermissionAsk || pendingAskInput) {
+    throw new Error('Answer the current task question before continuing.');
+  }
   const requestId = crypto.randomUUID();
   const taskInput = buildStudioTaskInput(
-    question, `input:openui:${requestId}`, conversation.agentSessionId, [], [],
+    question,
+    `input:${request.inputPrefix}:${requestId}`,
+    conversation.agentSessionId,
+    [],
+    [],
   );
   if (studioComposerBusy || pendingConversation || externalConversationRun) {
-    const result = await Data.steerConversation(conversation.agentSessionId, taskInput);
+    if (!request.allowSteer) {
+      throw new Error('Finish the current task before undoing file changes.');
+    }
+    const result = await Data.steerConversation(
+      conversation.agentSessionId,
+      taskInput,
+    );
     if (!result.ok) {
       throw new Error(result.error || 'Could not send the interface response.');
     }
@@ -14507,29 +14613,46 @@ async function submitOpenUiAction(detail: {
   const effort = composerEffort;
   const modelSelection = currentComposerModelSelection();
   try {
-    const workspace = await prepareComposerWorktree();
-    if (activeConversationId !== conversationId || pendingConversation !== submitted) {
-      throw new Error('The active task changed before the interface response was sent.');
+    const workspace = request.workspace ?? (await prepareComposerWorktree());
+    if (
+      activeConversationId !== conversationId ||
+      pendingConversation !== submitted
+    ) {
+      throw new Error('The active task changed before the request was sent.');
     }
     const result = await Data.sendConversation({
-      conversationId, question, requestId, taskInput, attachments: [],
-      permissionPreset, effort, modelSelection,
+      conversationId,
+      question,
+      requestId,
+      taskInput,
+      attachments: [],
+      permissionPreset,
+      effort,
+      modelSelection,
       workspaceRoot: workspace.projectRoot,
       executionWorkspaceRoot: workspace.executionWorkspaceRoot,
       projectId: workspace.projectId,
       additionalFolders: conversation.additionalFolders,
     });
     if (!result?.ok) {
-      throw new Error(result?.error || 'The interface response did not complete.');
+      throw new Error(result?.error || 'The request did not complete.');
     }
-    if (activeConversationId === conversationId && pendingConversation === submitted) {
+    if (
+      activeConversationId === conversationId &&
+      pendingConversation === submitted
+    ) {
       await openConversation(conversationId);
     }
   } catch (error) {
-    if (activeConversationId === conversationId && pendingConversation === submitted) {
-      body.replaceChildren(ChatView.turnErrorNode(
-        error instanceof Error ? error.message : String(error),
-      ) as HTMLElement);
+    if (
+      activeConversationId === conversationId &&
+      pendingConversation === submitted
+    ) {
+      body.replaceChildren(
+        ChatView.turnErrorNode(
+          error instanceof Error ? error.message : String(error),
+        ) as HTMLElement,
+      );
     }
     throw error;
   } finally {
@@ -14545,6 +14668,17 @@ document.addEventListener('mp:openui-action', event => {
     respond?: (result: {ok: boolean; error?: string}) => void;
   }>).detail;
   void submitOpenUiAction(detail).then(
+    () => detail.respond?.({ok: true}),
+    error => detail.respond?.({ok: false, error: error instanceof Error ? error.message : String(error)}),
+  );
+});
+
+document.addEventListener('mp:undo-file-changes', event => {
+  const detail = (event as CustomEvent<{
+    conversationId: string; turnIndex: number;
+    respond?: (result: {ok: boolean; error?: string}) => void;
+  }>).detail;
+  void submitFileUndo(detail).then(
     () => detail.respond?.({ok: true}),
     error => detail.respond?.({ok: false, error: error instanceof Error ? error.message : String(error)}),
   );
