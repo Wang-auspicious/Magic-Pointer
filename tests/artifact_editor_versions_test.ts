@@ -52,7 +52,7 @@ async function main() {
     assert.equal(restored.artifact.acceptedRevision, null);
     assert.equal(editor.state().preview, null);
     const reopened = await invoke('read', {artifactId: draft.artifactId});
-    assert.equal(reopened.artifact.revision, 3);
+    assert.equal((reopened.artifact as {revision: number}).revision, 3);
     assert.equal((await editor.restoreVersion(99)).ok, false);
     assert.equal((await editor.restoreVersion(3)).ok, true);
     editor.updateContent('unsaved work');
@@ -109,12 +109,16 @@ async function main() {
       expectedRevision: 2,
     });
     assert.equal(restoredPatch.ok, true);
-    assert.equal(
-      restoredPatch.artifact.patchPayload.operations[0].after,
-      'first',
-    );
-    assert.equal(restoredPatch.artifact.patchPayload.artifactRevision, 3);
-    assert.equal(restoredPatch.artifact.acceptedRevision, null);
+    const restoredArtifact = restoredPatch.artifact as {
+      patchPayload: {
+        operations: Array<{after: string}>;
+        artifactRevision: number;
+      };
+      acceptedRevision: number | null;
+    };
+    assert.equal(restoredArtifact.patchPayload.operations[0].after, 'first');
+    assert.equal(restoredArtifact.patchPayload.artifactRevision, 3);
+    assert.equal(restoredArtifact.acceptedRevision, null);
     console.log(
       'Durable artifact history, preview, text/patch restore and stale/dirty protection passed',
     );

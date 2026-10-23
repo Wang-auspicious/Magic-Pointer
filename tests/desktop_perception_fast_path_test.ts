@@ -34,7 +34,7 @@ async function main() {
         return window;
       },
       ocr: async () => { pixelsStarted = true; return { blocks: [] }; },
-    }, event => progress.push(event));
+    }, (event: {provider: string; state: string}) => progress.push(event));
     assert.ok(progress.some(event => event.provider === 'window-identity' && event.state === 'fulfilled'));
     assert.ok(progress.some(event => event.provider === 'pixel-ocr' && event.state === 'fulfilled'));
     const result = await Promise.race([

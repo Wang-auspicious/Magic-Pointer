@@ -18,7 +18,7 @@ function base(overrides = {}) {
   };
 }
 
-const run = (startedAtMs, ok = true) => ({
+const run = (startedAtMs: number, ok = true) => ({
   startedAtMs,
   finishedAtMs: startedAtMs + 1000,
   ok,
@@ -47,7 +47,10 @@ const run = (startedAtMs, ok = true) => ({
 
 // History is bounded; non-object entries are dropped, not kept.
 {
-  const history = Array.from({length: 25}, (_, i) => run(1000 + i));
+  const history: Array<ReturnType<typeof run> | null | string> = Array.from(
+    {length: 25},
+    (_, i) => run(1000 + i),
+  );
   history.push(null, 'nope');
   const tracker = normalizeContextTracker(base({runHistory: history}));
   assert.equal(tracker.runHistory.length, 20);

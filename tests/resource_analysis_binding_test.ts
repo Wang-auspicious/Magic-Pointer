@@ -83,7 +83,7 @@ async function main(): Promise<void> {
         assert.equal(calls, 0, 'resource binding precedes worker dispatch');
         const persisted = createConversationStore({baseDir}).get(id)!;
         assert.equal(
-          (persisted.turns[0].request?.taskInput as any).inputId,
+          (persisted.turns![0].request?.taskInput as any).inputId,
           'input:studio:bound-analysis',
         );
       },
@@ -113,7 +113,7 @@ async function main(): Promise<void> {
     const failed = createConversationStore({baseDir}).get(
       conflict.conversationId,
     )!;
-    assert.equal(failed.turns[0].outcome, '失败');
+    assert.equal(failed.turns![0].outcome, '失败');
     assert.equal(failed.hasPendingWork, false);
     assert.equal(Boolean(failed.resumePending), false);
     console.log(

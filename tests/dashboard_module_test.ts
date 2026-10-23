@@ -124,7 +124,10 @@ test('the Dashboard module queries a real CSV, preserves the shown snapshot and 
     await writeFile(file, 'region,revenue\nNorth,212\nSouth,18\n');
     const args = {dashboard_id: saved.dashboardId};
     const value = await tools.find(tool => tool.name === 'Dashboard.open')!
-      .execute(args, {tool_call_id: 'agent-query'});
+      .execute(args, {
+        tool_call_id: 'agent-query',
+        signal: new AbortController().signal,
+      });
     await session.append('operation/prepared', {
       operationId: 'agent-query', callId: 'agent-query',
       name: 'Dashboard.open', arguments: args, effect: 'read',

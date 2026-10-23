@@ -125,7 +125,7 @@ test('project task dispatch journals exact versions and accepts bounded handoffs
     const conversation = store.list()[0];
     assert.equal(
       (
-        store.get(conversation.id)!.turns[0].request
+        store.get(conversation.id)!.turns![0].request
           ?.projectHandoffs as unknown[]
       )?.length,
       8,

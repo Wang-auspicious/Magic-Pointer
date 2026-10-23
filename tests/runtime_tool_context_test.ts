@@ -20,8 +20,11 @@ import {
 import ExcelJS from 'exceljs';
 import {prepareTaskContext} from '../electron/runtime/context_prepare';
 import {handleArtifact, projectArtifacts} from '../electron/runtime/artifacts';
+import {closeDesktop} from '../electron/runtime/desktop';
 
 const schema = {type: 'object', properties: {}, required: []};
+
+test.afterEach(() => closeDesktop());
 
 test('the first request carries the core execution tools while long-tail discovery remains available', () => {
   const registry = new ToolRegistry();

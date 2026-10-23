@@ -35,7 +35,7 @@ test('new project task receives collected handoffs as data, and removing them re
       messages.some(
         message =>
           message.origin === 'data' &&
-          message.content.includes('Useful baseline'),
+          message.content?.includes('Useful baseline'),
       ),
     );
     const cleared = await synchronizeProjectSettings(session, {
@@ -45,7 +45,7 @@ test('new project task receives collected handoffs as data, and removing them re
     });
     assert.ok(
       !withProjectSettings([], cleared).some(message =>
-        message.content.includes('Useful baseline'),
+        message.content?.includes('Useful baseline'),
       ),
     );
   } finally {

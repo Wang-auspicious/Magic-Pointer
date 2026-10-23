@@ -9,7 +9,12 @@ const path = require('node:path');
 const {pruneToolResults} = require('../electron/runtime/session');
 const {lookStaleness} = require('../electron/runtime/desktop_perception');
 
-const tool = (id, name, content, isError = false) => ({
+const tool = (
+  id: string,
+  name: string,
+  content: string,
+  isError = false,
+) => ({
   role: 'tool',
   content,
   tool_call_id: id,
