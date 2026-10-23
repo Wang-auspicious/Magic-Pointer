@@ -448,6 +448,58 @@ test('a deleted item is not recreated when its pending capture returns', async (
   assert.equal(existsSync(join(baseDir, 'posts', item.id)), false);
 });
 
+test('finishing missing media invalidates an older project delivery marker', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-post-redelivery-'));
+  const root = mkdtempSync(join(tmpdir(), 'mp-post-redelivery-project-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  let fail = true;
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [{id: 'project', name: 'Project', root}],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'Original',
+      text: 'Text retained before the image',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [{kind: 'image', url: 'https://example.com/image.png'}],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+    fetchMedia: async () =>
+      fail
+        ? new Response('', {status: 503})
+        : new Response(Buffer.from([137, 80, 78, 71]), {
+            headers: {'content-type': 'image/png'},
+          }),
+  });
+  const item = await service.add({
+    url: 'https://example.com/page',
+    projectId: 'project',
+  });
+  service.update(
+    item.id,
+    {summary: 'Use the original as a reference'},
+    item.collection!.revision,
+  );
+  const delivered = await service.deliver(item.id);
+  assert.ok(delivered.collection!.exportedPath);
+  fail = false;
+  const completed = await service.capture(item.id);
+  assert.equal(completed.collection!.captureStatus, 'saved');
+  assert.equal(
+    completed.collection!.exportedPath,
+    '',
+    'the earlier project copy does not yet contain the newly retained image',
+  );
+});
+
 test('collected page retains its source and editable project intent after reopening; stale analysis cannot overwrite an edit', async () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'mp-resources-'));
   const runtime = createStashRuntime({baseDir, clipboard});

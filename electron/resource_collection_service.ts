@@ -514,6 +514,7 @@ export class ResourceCollectionService {
             ? post.title
             : latest.title,
         coverage: post.coverage,
+        exportedPath: '',
       });
     } catch (error) {
       if (!stash.get(id)) {

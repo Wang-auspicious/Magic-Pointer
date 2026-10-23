@@ -62,6 +62,33 @@ test('a note about verification is still a note; a real challenge is a gate', ()
     document: {...context.document, title: '小红书 - 安全验证'},
   });
   assert.equal(gated.error, 'verification_required');
+  const visibleChallenge = runInNewContext(script, {
+    ...context,
+    getComputedStyle: () => ({visibility: 'visible'}),
+    document: {
+      ...context.document,
+      querySelector: () => ({
+        getClientRects: () => [{width: 300, height: 200}],
+      }),
+    },
+  });
+  assert.equal(
+    visibleChallenge.error,
+    'verification_required',
+    'a visible challenge stops capture even when old note data is still present',
+  );
+  const hiddenChallenge = runInNewContext(script, {
+    ...context,
+    document: {
+      ...context.document,
+      querySelector: () => ({getClientRects: () => []}),
+    },
+  });
+  assert.equal(
+    hiddenChallenge.error,
+    '',
+    'an inactive challenge widget does not block a readable note',
+  );
 });
 
 function page(url: string): CollectionPage {

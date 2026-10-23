@@ -67,15 +67,23 @@ export function readCollectionPage(): CollectionPage {
     error: '',
     truncated: false,
   };
+  const challenge = document.querySelector(
+    'iframe[src*="captcha"],[class*="captcha-container"]',
+  );
   const verification =
     /(?:^|[-|])\s*(?:安全验证|人机验证|verify you are human|确认您是真人)\s*$/i.test(
       title,
     ) ||
     Boolean(
-      document.querySelector(
-        'iframe[src*="captcha"],[class*="captcha-container"]',
-      ),
+      challenge &&
+      [...challenge.getClientRects()].some(
+        rect => rect.width > 0 && rect.height > 0,
+      ) &&
+      getComputedStyle(challenge).visibility !== 'hidden',
     );
+  if (verification) {
+    return {...result, error: 'verification_required'};
+  }
   if (location.hostname.endsWith('xiaohongshu.com')) {
     const id =
       /\/(?:explore|search_result|note|discovery\/item|user\/profile\/[^/]+)\/([\da-f]+)(?:\/|$)/i.exec(
@@ -95,9 +103,6 @@ export function readCollectionPage(): CollectionPage {
       });
       return result;
     }
-    if (verification) {
-      return {...result, error: 'verification_required'};
-    }
     if (!id) {
       return {
         ...result,
@@ -110,9 +115,6 @@ export function readCollectionPage(): CollectionPage {
       return {...result, error: 'auth_required'};
     }
     return {...result, error: 'post_loading'};
-  }
-  if (verification) {
-    return {...result, error: 'verification_required'};
   }
   const xId = /\/status\/(\d+)/.exec(location.pathname)?.[1];
   let root: Element | null = null;
@@ -262,11 +264,18 @@ export function readXhsHistoryPage(): HistoryPage {
       'Notes exposed by the current account list; original captures have their own download status.',
     position: 0,
   };
+  const challenge = document.querySelector(
+    'iframe[src*="captcha"],[class*="captcha-container"]',
+  );
   if (
-    /安全验证|verify you are human/i.test(document.title) ||
-    document.querySelector(
-      'iframe[src*="captcha"],[class*="captcha-container"]',
-    )
+    /(?:^|[-|])\s*(?:安全验证|人机验证|verify you are human|确认您是真人)\s*$/i.test(
+      document.title,
+    ) ||
+    (challenge &&
+      [...challenge.getClientRects()].some(
+        rect => rect.width > 0 && rect.height > 0,
+      ) &&
+      getComputedStyle(challenge).visibility !== 'hidden')
   ) {
     return {...result, error: 'verification_required'};
   }

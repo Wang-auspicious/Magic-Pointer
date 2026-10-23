@@ -6629,6 +6629,12 @@ async function readCollectionHistoryPage(
   const contents = collectionWorkerView(account, 'history').webContents;
   if (reset) {
     await loadCollectionUrl(contents, 'https://www.xiaohongshu.com/');
+    const initial = await contents.executeJavaScript(
+      `(${readXhsHistoryPage.toString()})()`,
+    );
+    if (initial.error) {
+      return initial;
+    }
     let userId = '';
     for (let round = 0; round < 12 && !userId; round++) {
       userId = await contents.executeJavaScript(
