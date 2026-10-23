@@ -6657,6 +6657,15 @@ function resourceBrowserHistory(): ResourceBrowserHistory {
     resourceHistory = new ResourceBrowserHistory({
       folder: FABRIC_DATA_DIR,
       readPage: readCollectionHistoryPage,
+      retainOrder: (id, order) => {
+        const stash = initializeStashRuntime();
+        if (stash.get(id)) {
+          stash.updateResource(id, {
+            bookmarkBatch: order.batch,
+            bookmarkPosition: order.index,
+          });
+        }
+      },
       importLink: async (account, link, order) => {
         const items = await resources().addBatch({
           text: link.url,

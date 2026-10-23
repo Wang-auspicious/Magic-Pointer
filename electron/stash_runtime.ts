@@ -497,6 +497,8 @@ function createStashRuntime(options: StashRuntimeOptions) {
         key =>
           key === 'handoffState' ||
           key === 'handoffSnoozedUntil' ||
+          key === 'bookmarkBatch' ||
+          key === 'bookmarkPosition' ||
           key === 'lastViewedAt',
       );
     entry.collection = resourceCollection({

@@ -50,6 +50,24 @@ test('hourly checks stop at known bookmarks after a complete initial history and
   assert.ok(pages <= 3, 'an hourly check does not rescan the entire old list');
 });
 
+test('initialization records the actual list order for bookmarks retained before automatic sync existed', async () => {
+  const orders: Array<{id: string; index: number}> = [];
+  const history = new ResourceBrowserHistory({
+    folder: mkdtempSync(join(tmpdir(), 'mp-history-existing-order-')),
+    readPage: async () => page([link('first123'), link('last123')], true),
+    importLink: async (_account, value) => value.id,
+    retainOrder: (id, order) => {
+      orders.push({id, index: order.index});
+    },
+  });
+  await history.run('xiaohongshu-1', 'saved');
+  await history.run('xiaohongshu-1', 'saved');
+  assert.deepEqual(orders, [
+    {id: 'first123', index: 0},
+    {id: 'last123', index: 1},
+  ]);
+});
+
 test('history keeps a durable per-account checkpoint and only claims the end when the page proves it', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'mp-browser-history-'));
   const imported: string[] = [];

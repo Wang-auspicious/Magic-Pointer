@@ -194,13 +194,14 @@ test('opening a resource updates revisit history without invalidating an in-flig
   });
   const entry = await service.add({text: 'A useful thought'});
   const started = stash.updateResource(entry.id, {state: 'processing'});
-  const viewed = service.update(
+  const viewed = stash.updateResource(
     entry.id,
-    {lastViewedAt: 123456},
+    {lastViewedAt: 123456, bookmarkBatch: 123456, bookmarkPosition: 2},
     started.collection.revision,
   );
   assert.equal(viewed.collection!.revision, started.collection.revision);
   assert.equal(viewed.collection!.lastViewedAt, 123456);
+  assert.equal(viewed.collection!.bookmarkPosition, 2);
   assert.doesNotThrow(() =>
     stash.updateResource(
       entry.id,

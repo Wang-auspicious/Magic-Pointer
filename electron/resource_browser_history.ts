@@ -56,6 +56,7 @@ interface HistoryOptions {
     link: HistoryLink,
     order: {batch: number; index: number},
   ): Promise<string>;
+  retainOrder?(id: string, order: {batch: number; index: number}): void;
 }
 
 export class ResourceBrowserHistory {
@@ -147,6 +148,7 @@ export class ResourceBrowserHistory {
 
   private async scan(job: HistoryJob): Promise<void> {
     let stale = 0;
+    const positions = new Map<string, number>();
     let knownPages = 0;
     const previousIds = new Set(Object.keys(job.seen));
     let previousPosition = -1;
@@ -177,13 +179,19 @@ export class ResourceBrowserHistory {
           if (job.status !== 'running') {
             return;
           }
+          if (!positions.has(link.id)) {
+            positions.set(link.id, positions.size);
+          }
+          const order = {batch: job.startedAt!, index: positions.get(link.id)!};
           if (job.seen[link.id]) {
+            this.options.retainOrder?.(job.seen[link.id], order);
             continue;
           }
-          const resourceId = await this.options.importLink(job.account, link, {
-            batch: job.startedAt!,
-            index: job.mode === 'initial' ? job.retained : job.added || 0,
-          });
+          const resourceId = await this.options.importLink(
+            job.account,
+            link,
+            order,
+          );
           job.seen[link.id] = resourceId;
           job.retained = Object.keys(job.seen).length;
           added++;
