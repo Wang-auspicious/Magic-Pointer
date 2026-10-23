@@ -4,7 +4,7 @@ import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {EventSession} from '../electron/runtime/session';
-import {registerSubagentTools} from '../electron/runtime/agent_background';
+import {registerSubagentTools, stopAgent} from '../electron/runtime/agent_background';
 import {ToolRegistry} from '../electron/runtime/tools';
 import {
   WorkflowEngine,
@@ -480,4 +480,22 @@ test('registers Workflow.run as a deferred tool beside the subagent tools', asyn
   });
   assert.equal(bad.is_error, true);
   assert.match(String(bad.error_message), /workflow_cycle: a -> b -> a/);
+});
+
+test('stopping a child whose status is not yet persisted still leaves the stop flag', async () => {
+  const harness = await createHarness();
+  const childSessionId = 'wf-abortrace-a-a1';
+  await harness.parent.append('subagent/created', {
+    childSessionId,
+    task: 'registered before the status file is written',
+    readonly: true,
+  });
+  const stopFile = path.join(
+    harness.root,
+    'agent-sessions',
+    `${childSessionId}.agent.stop`,
+  );
+  const stopped = await stopAgent(harness.root, harness.parent.id, childSessionId);
+  assert.equal(stopped.ok, true);
+  assert.equal(await readFile(stopFile, 'utf8'), 'stop');
 });

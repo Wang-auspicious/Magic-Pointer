@@ -294,9 +294,25 @@ export async function stopAgent(
   parentId: string,
   childId: string,
 ): Promise<Data> {
-  const child = await ownedChild(userDataDir, parentId, childId);
+  let child: EventSession;
+  try {
+    child = await ownedChild(userDataDir, parentId, childId);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+    // The child session file does not exist yet: the agent sits between the
+    // parent's subagent/created event and its first persist, and only the
+    // stop flag can reach it there.
+    await writeFile(filename(userDataDir, childId, '.agent.stop'), 'stop');
+    return {ok: true, sessionId: childId};
+  }
   const status = await readAgentStatus(userDataDir, childId);
-  if (!status || !active.has(str(status.status))) {
+  if (!status) {
+    await writeFile(filename(userDataDir, childId, '.agent.stop'), 'stop');
+    return {ok: true, sessionId: childId};
+  }
+  if (!active.has(str(status.status))) {
     throw new Error('subagent_not_running');
   }
   await writeFile(filename(userDataDir, childId, '.agent.stop'), 'stop');
@@ -427,9 +443,13 @@ export async function runSubagentInline(
   if (previous && active.has(str(previous.status))) {
     throw new Error('subagent_already_running');
   }
-  await unlink(
-    filename(userDataDir, sessionId, '.agent.stop'),
-  ).catch(() => {});
+  if (previous) {
+    // Only a finished run's flag can be stale; one written for the run this
+    // call is about to start must survive until the post-persist check.
+    await unlink(
+      filename(userDataDir, sessionId, '.agent.stop'),
+    ).catch(() => {});
+  }
   const parent = await EventSession.open(userDataDir, payload.parentId, false);
   const child = await EventSession.open(
     userDataDir,
@@ -465,6 +485,27 @@ export async function runSubagentInline(
     model: payload.config?.model,
     effort: payload.config?.effort,
   });
+  if (
+    await readFile(filename(userDataDir, sessionId, '.agent.stop')).then(
+      () => true,
+      () => false,
+    )
+  ) {
+    // A stop request landed between the stale-flag cleanup above and this
+    // persist; honor it instead of running the agent.
+    await persist(filename(userDataDir, sessionId), {
+      id: sessionId,
+      parentSessionId: payload.parentId,
+      status: 'user_interrupt',
+      phase: 'user_interrupt',
+      summary: 'Stopped before the subagent started.',
+      completedAt: Date.now(),
+    });
+    return {
+      status: 'user_interrupt',
+      summary: 'Stopped before the subagent started.',
+    };
+  }
   await runBackgroundAgent({
     ...payload,
     allowedTools: inheritedGrants(parent, payload.allowedTools),
