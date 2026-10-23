@@ -144,6 +144,9 @@ app.whenReady().then(async () => {
       dashboardBrowserBounds: null,
       collectionCaptureQueues: new Map(),
       collectionWorkerViews: new Map(),
+      collectionHistoryReaders: new Map(),
+      CollectionHistoryNetwork: built('collection_history_network')
+        .CollectionHistoryNetwork,
       WebContentsView,
       BrowserWindow,
       nativeTheme,
@@ -231,6 +234,24 @@ app.whenReady().then(async () => {
     );
     const videoBytes = fs.readFileSync(videoPath);
     firstSession.protocol.handle('https', request => {
+      if (request.url.includes('/note/collect/page?')) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              has_more: false,
+              notes: [
+                {
+                  note_id: 'abc123',
+                  xsec_token: 'fixture',
+                  title: 'Native list response',
+                },
+              ],
+            },
+          }),
+          {headers: {'content-type': 'application/json'}},
+        );
+      }
       if (request.url.endsWith('/fixture.mp4')) {
         return new Response(videoBytes, {
           headers: {'content-type': 'video/mp4'},
@@ -543,6 +564,31 @@ app.whenReady().then(async () => {
       );
     }
     const foregroundUrl = view.webContents.getURL();
+    const networkWorker = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        partition: browser.collectionBrowserPartition(account),
+        offscreen: true,
+      },
+    });
+    const networkReader = new (built(
+      'collection_history_network',
+    ).CollectionHistoryNetwork)(networkWorker.webContents, 'saved', 'fixture');
+    await networkWorker.loadURL('https://www.xiaohongshu.com/fixture-network');
+    await networkReader.start();
+    await networkWorker.webContents.executeJavaScript(
+      "fetch('/api/sns/web/v2/note/collect/page?user_id=fixture').then(response=>response.json())",
+    );
+    for (let index = 0; index < 50 && !networkReader.snapshot(); index++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(
+      networkReader.snapshot()?.atEnd,
+      true,
+      'native list responses prove the end without a visible footer',
+    );
+    networkReader.stop();
+    networkWorker.destroy();
     await history.run(account, 'saved');
     context.releaseCollectionWorkerView(account, 'history');
     assert.equal(history.snapshot()[0].status, 'complete');

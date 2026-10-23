@@ -25,6 +25,7 @@ import {
   type HistoryList,
 } from './resource_browser_history';
 import {ResourceBookmarkSync} from './resource_bookmark_sync';
+import {CollectionHistoryNetwork} from './collection_history_network';
 import {chronologicalResources, prioritizeResources} from './resource_relevance';
 import {
   updatePerceptionActivity,
@@ -6548,6 +6549,7 @@ let resourceXSource: XResourceSource | null = null;
 let resourceHistory: ResourceBrowserHistory | null = null;
 let resourceBookmarks: ResourceBookmarkSync | null = null;
 const collectionWorkerViews = new Map<string, Electron.BrowserWindow>();
+const collectionHistoryReaders = new Map<string, CollectionHistoryNetwork>();
 
 function collectionWorkerView(
   account: string,
@@ -6588,6 +6590,10 @@ function releaseCollectionWorkerView(
   account: string,
   purpose: 'capture' | 'history' | 'account',
 ): void {
+  if (purpose === 'history') {
+    collectionHistoryReaders.get(account)?.stop();
+    collectionHistoryReaders.delete(account);
+  }
   const key = `${purpose}:${account}`;
   const view = collectionWorkerViews.get(key);
   collectionWorkerViews.delete(key);
@@ -6600,6 +6606,16 @@ function bookmarkSync(): ResourceBookmarkSync {
   if (!resourceBookmarks) {
     resourceBookmarks = new ResourceBookmarkSync({
       folder: FABRIC_DATA_DIR,
+      needsInitialization: account =>
+        resourceBrowserHistory()
+          .snapshot()
+          .some(
+            job =>
+              job.account === account &&
+              job.list === 'saved' &&
+              !job.initializedAt &&
+              job.status === 'paused',
+          ),
       readAccount: async account => {
         const contents = collectionWorkerView(account, 'account').webContents;
         try {
@@ -6724,6 +6740,10 @@ async function readCollectionHistoryPage(
     const url = new URL(
       `https://www.xiaohongshu.com/user/profile/${encodeURIComponent(userId)}`,
     );
+    collectionHistoryReaders.get(account)?.stop();
+    const reader = new CollectionHistoryNetwork(contents, list, userId);
+    collectionHistoryReaders.set(account, reader);
+    await reader.start();
     url.searchParams.set('tab', list === 'saved' ? 'fav' : 'liked');
     url.searchParams.set('subTab', 'note');
     await loadCollectionUrl(contents, url.href);
@@ -6731,7 +6751,16 @@ async function readCollectionHistoryPage(
     await contents.executeJavaScript(`(${advanceXhsHistoryPage.toString()})()`);
   }
   await new Promise(resolve => setTimeout(resolve, 1500));
-  return contents.executeJavaScript(`(${readXhsHistoryPage.toString()})()`);
+  const page = await contents.executeJavaScript(
+    `(${readXhsHistoryPage.toString()})()`,
+  );
+  const response = collectionHistoryReaders.get(account)?.snapshot();
+  if (!page.error && response) {
+    page.links = response.links;
+    page.atEnd = response.atEnd;
+    page.coverage = `Normal account list response: ${response.links.length} notes; server end=${response.atEnd}.`;
+  }
+  return page;
 }
 function resources(): ResourceCollectionService {
   if (!resourceService) {

@@ -21,6 +21,7 @@ interface BookmarkSyncOptions {
   readAccount(account: string): Promise<{id: string; name: string} | null>;
   sync(account: string): Promise<void>;
   now?(): number;
+  needsInitialization?(account: string): boolean;
 }
 
 /** Account sign-in starts history import; the next check is durable across restarts. */
@@ -71,6 +72,9 @@ export class ResourceBookmarkSync {
       };
       this.accounts.push(saved);
     } else {
+      if (saved.error === 'auth_required') {
+        saved.nextCheckAt = 0;
+      }
       if (saved.userId !== identity.id) {
         saved.nextCheckAt = 0;
         saved.lastCheckedAt = 0;
@@ -79,7 +83,11 @@ export class ResourceBookmarkSync {
       saved.name = identity.name;
     }
     this.persist();
-    if (saved.enabled && saved.nextCheckAt <= this.now()) {
+    if (
+      saved.enabled &&
+      (saved.nextCheckAt <= this.now() ||
+        this.options.needsInitialization?.(account))
+    ) {
       await this.run(saved);
     }
     this.schedule();
@@ -91,7 +99,12 @@ export class ResourceBookmarkSync {
         break;
       }
       const saved = this.accounts.find(item => item.account === account);
-      if (saved && (!saved.enabled || saved.nextCheckAt > this.now())) {
+      if (
+        saved &&
+        (!saved.enabled ||
+          (saved.nextCheckAt > this.now() &&
+            !this.options.needsInitialization?.(account)))
+      ) {
         continue;
       }
       try {

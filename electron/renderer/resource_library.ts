@@ -729,7 +729,7 @@ declare global {
             error: t('Stopped with an error', '遇到错误，已停止'),
           };
           container.innerHTML =
-            (connected
+            (connected && connected.error !== 'auth_required'
               ? `<p>${esc(connected.name || t('Signed in', '已登录'))} · <label><input type="checkbox" data-rl-bookmark-enabled="${accountId}" ${connected.enabled ? 'checked' : ''}> ${t('Sync bookmarks every hour', '每小时自动同步收藏')}</label></p><p>${connected.enabled && connected.nextCheckAt ? t('Next check: ', '下次检查：') + new Date(connected.nextCheckAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : ''}</p>`
               : `<p>${t('After sign-in, history import starts automatically.', '登录后自动开始初始化历史收藏。')}</p>`) +
             (['saved', 'liked'] as const)

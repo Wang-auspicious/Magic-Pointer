@@ -5,8 +5,27 @@ import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
 import {
   postFromCollectionPage,
+  readXhsAccountIdentity,
   type CollectionPage,
 } from '../electron/collection_browser';
+
+test('a guest user id is not a signed-in collection account', () => {
+  const context = {
+    window: {
+      __INITIAL_STATE__: {
+        user: {
+          loggedIn: {_value: false},
+          userInfo: {_value: {userId: 'anonymous-id'}},
+        },
+      },
+    },
+  };
+  const identity = runInNewContext(
+    `(${readXhsAccountIdentity.toString()})()`,
+    context,
+  );
+  assert.equal(identity, null);
+});
 
 const source = ts.createSourceFile(
   'collection_browser.ts',

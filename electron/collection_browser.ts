@@ -235,9 +235,18 @@ export function postFromCollectionPage(
 export function readXhsAccountIdentity(): {id: string; name: string} | null {
   const state = (
     window as unknown as {
-      __INITIAL_STATE__?: {user?: {userInfo?: Record<string, unknown>}};
+      __INITIAL_STATE__?: {
+        user?: {
+          userInfo?: Record<string, unknown>;
+          loggedIn?: boolean | {_value?: boolean};
+        };
+      };
     }
   ).__INITIAL_STATE__;
+  const loggedIn = state?.user?.loggedIn;
+  if ((typeof loggedIn === 'object' ? loggedIn?._value : loggedIn) === false) {
+    return null;
+  }
   const user = state?.user?.userInfo;
   const info = (user?._value || user) as Record<string, unknown> | undefined;
   const id = String(info?.user_id || info?.userId || info?.userID || '');
