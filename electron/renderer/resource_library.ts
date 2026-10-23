@@ -353,10 +353,14 @@ declare global {
       }
       const items = (snapshot.items || []).filter(item => {
         const detail = details(item);
+        const accountHome =
+          /^https?:\/\/(?:www\.)?xiaohongshu\.com\/(?:explore)?(?:[?#]|$)/i.test(
+            detail.url,
+          );
         return (
           (mediaScope === 'all' ||
             (mediaScope === 'bookmarks'
-              ? Boolean(item.collection)
+              ? Boolean(item.collection) && !accountHome
               : !item.collection || item.media !== 'text')) &&
           (filter === 'all' ||
             (['reference', 'todo'].includes(filter) &&
