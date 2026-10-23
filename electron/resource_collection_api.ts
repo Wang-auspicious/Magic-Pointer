@@ -4,6 +4,7 @@ import type {
   ProjectInboxEntry,
   HandoffReceipt,
   HandoffState,
+  RelatedResource,
 } from './resource_collection_contract';
 import type {XSourceState} from './resource_x_source';
 import type {ResourcePreview} from './resource_preview';
@@ -24,6 +25,7 @@ export interface ResourceResponse {
   handoffReceipts?: HandoffReceipt[];
   post?: ResourcePost;
   histories?: Array<Omit<HistoryJob, 'seen'>>;
+  related?: RelatedResource[];
   browser?: {
     url: string;
     title: string;
@@ -35,6 +37,7 @@ export interface ResourceResponse {
 export type ResourceAction =
   | 'list'
   | 'search'
+  | 'related'
   | 'add'
   | 'add-batch'
   | 'edit'

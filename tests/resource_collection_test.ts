@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {ResourceCollectionService} from '../electron/resource_collection_service';
@@ -332,6 +332,120 @@ test('manual organization waits for a queued original before sending attachments
   const result = await service.process(item.id);
   assert.equal(result.collection!.captureStatus, 'saved');
   assert.equal(result.collection!.state, 'ready');
+});
+
+test('revisiting a page recalls its saved note and linked references without treating a social feed as one topic', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-resource-recall-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async url => ({
+      platform: 'xiaohongshu',
+      id: 'abc123',
+      url,
+      title: 'A source',
+      text: 'See this article',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [],
+      links: ['https://example.com/article'],
+      coverage: 'Full note',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+  });
+  const note = await service.add({
+    url: 'https://www.xiaohongshu.com/explore/abc123?xsec_token=old',
+  });
+  assert.equal(
+    service.related(
+      'https://www.xiaohongshu.com/user/profile/author/abc123?xsec_token=new',
+    )[0].entry.id,
+    note.id,
+  );
+  assert.equal(
+    service.related('https://example.com/article#part')[0].relation,
+    'link',
+  );
+  assert.equal(
+    service.related('https://www.xiaohongshu.com/explore/def456').length,
+    0,
+  );
+  service.update(
+    note.id,
+    {state: 'ignored'},
+    stash.get(note.id).collection.revision,
+  );
+  assert.equal(service.related('https://example.com/article').length, 0);
+});
+
+test('removing a collected post removes only its owned original and media directory', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-post-removal-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async url => ({
+      platform: 'web',
+      id: url,
+      url,
+      title: 'A page',
+      text: 'Original',
+      author: {name: ''},
+      capturedAt: 1,
+      media: [],
+      links: [],
+      coverage: 'Full page',
+      usedBackend: 'fixture.page',
+      timingMs: 1,
+    }),
+  });
+  const first = await service.add({url: 'https://example.com/first'});
+  const second = await service.add({url: 'https://example.com/second'});
+  assert.equal(stash.remove(first.id).ok, true);
+  assert.equal(existsSync(join(baseDir, 'posts', first.id)), false);
+  assert.equal(existsSync(join(baseDir, 'posts', second.id)), true);
+});
+
+test('a deleted item is not recreated when its pending capture returns', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-pending-post-removal-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  let release!: (post: ResourcePost) => void;
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach() {},
+    analyze: async () => ({}),
+    capturePost: async () =>
+      new Promise<ResourcePost>(resolve => {
+        release = resolve;
+      }),
+  });
+  const [item] = await service.addBatch({text: 'https://example.com/pending'});
+  const pending = service.capture(item.id);
+  stash.remove(item.id);
+  release({
+    platform: 'web',
+    id: 'pending',
+    url: 'https://example.com/pending',
+    title: 'Deleted page',
+    text: 'Original',
+    author: {name: ''},
+    capturedAt: 1,
+    media: [],
+    links: [],
+    coverage: 'Full page',
+    usedBackend: 'fixture.page',
+    timingMs: 1,
+  });
+  await assert.rejects(pending, /resource_not_found/);
+  assert.equal(stash.get(item.id), null);
+  assert.equal(existsSync(join(baseDir, 'posts', item.id)), false);
 });
 
 test('collected page retains its source and editable project intent after reopening; stale analysis cannot overwrite an edit', async () => {

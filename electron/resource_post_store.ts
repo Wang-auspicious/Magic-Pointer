@@ -7,11 +7,20 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import {join, relative} from 'node:path';
+import {join, relative, resolve, sep} from 'node:path';
 import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {projectPath} from './project_inspector';
 import type {PostMedia, ResourcePost} from './resource_post';
+
+export function removeResourcePost(folder: string, resourceId: string): void {
+  const root = resolve(folder, 'posts');
+  const directory = resolve(root, resourceId);
+  if (!directory.startsWith(root + sep)) {
+    throw new Error('Invalid post directory.');
+  }
+  rmSync(directory, {recursive: true, force: true});
+}
 
 export class ResourcePostStore {
   constructor(

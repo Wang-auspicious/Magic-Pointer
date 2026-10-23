@@ -238,6 +238,20 @@ app.whenReady().then(async () => {
         return new Response(png, {headers: {'content-type': 'image/png'}});
       }
       const current = new URL(request.url);
+      if (current.searchParams.has('slow')) {
+        return new Promise(resolve =>
+          setTimeout(
+            () =>
+              resolve(
+                new Response(
+                  '<title>Delayed first-account page</title><p>First account fixture</p>',
+                  {headers: {'content-type': 'text/html'}},
+                ),
+              ),
+            800,
+          ),
+        );
+      }
       if (current.pathname === '/') {
         return new Response(
           '<title>Local account fixture</title><script>window.__INITIAL_STATE__={user:{userInfo:{_value:{userId:"self"}}}}</script>',
@@ -257,6 +271,14 @@ app.whenReady().then(async () => {
         {headers: {'content-type': 'text/html; charset=utf-8'}},
       );
     });
+    secondSession.protocol.handle(
+      'https',
+      () =>
+        new Response(
+          '<title>Second account fixture</title><p>Separate second-account browser page.</p>',
+          {headers: {'content-type': 'text/html'}},
+        ),
+    );
     const stash = createStashRuntime({
       baseDir: fs.mkdtempSync(path.join(output, 'stash-')),
       clipboard: {
@@ -317,6 +339,9 @@ app.whenReady().then(async () => {
             ok: true,
             entry: service.update(input.id, input.patch, input.revision),
           };
+        }
+        if (action === 'related') {
+          return {ok: true, related: service.related(input.url)};
         }
         if (action === 'browser-open') {
           return context.openDashboardBrowser(input.url, {
@@ -463,6 +488,7 @@ app.whenReady().then(async () => {
     );
     await js("document.querySelector('[data-rl-action=source]').click()");
     await wait('!!document.querySelector("[data-rl-browser-host]")');
+    await wait('!!document.querySelector("[data-rl-revisit]")');
     await new Promise(resolve => setTimeout(resolve, 400));
     assert.equal(view.getVisible(), true);
     await js("show('chat')");
@@ -518,6 +544,26 @@ app.whenReady().then(async () => {
       path.join(output, 'history-source.png'),
       (await win.webContents.capturePage()).toPNG(),
     );
+    await js(
+      "document.querySelector('[data-rl-connect-account=xiaohongshu-1]').click()",
+    );
+    await wait('!!document.querySelector("[data-rl-browser-host]")');
+    await js(
+      "document.querySelector('[data-rl-browser] input').value='https://www.xiaohongshu.com/?slow=1';document.querySelector('[data-rl-browser]').requestSubmit()",
+    );
+    await new Promise(resolve => setTimeout(resolve, 80));
+    await js(
+      "document.querySelector('[data-rl-account=xiaohongshu-2]').click()",
+    );
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    const secondView = registry
+      .snapshot()
+      .find(entry => entry.key === 'collection:xiaohongshu-2').view;
+    assert.equal(
+      secondView.getVisible(),
+      true,
+      'a late response from the first account cannot hide the newly selected account',
+    );
     firstSession.flushStorageData();
     await firstSession.cookies.flushStore();
     const result = {
@@ -530,6 +576,7 @@ app.whenReady().then(async () => {
       videoRetainedPlayableAndPausedOnLeave: true,
       originalReadableInLibrary: true,
       navigationHideRestore: true,
+      urlRecallVisible: true,
       backgroundImportPreservesForeground: true,
       nativeHistoryList: {
         retained: 2,

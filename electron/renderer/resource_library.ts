@@ -75,6 +75,8 @@ declare global {
     ];
     let browserResizeFrame = 0;
     let explicitBrowserNavigation = false;
+    let relatedGeneration = 0;
+    let relatedUrl = '';
     let postGeneration = 0;
     let detailView: 'post' | 'notes' = 'post';
     let displayedPost: ResourcePost | undefined;
@@ -122,6 +124,9 @@ declare global {
       }
       if (forward) {
         forward.disabled = !state.canGoForward;
+      }
+      if (state.url && !state.loading) {
+        void updateRelated(state.url);
       }
     });
     const labels = () => ({
@@ -191,6 +196,9 @@ declare global {
         }
         if (visible && tab === 'sources') {
           syncSourceView();
+        }
+        if (visible && tab === 'browser') {
+          await updateRelated(savedBrowserUrl, true);
         }
       } catch (error) {
         status(String(error), true);
@@ -418,7 +426,10 @@ declare global {
           'is-reading',
           Boolean(detail.postPath && detailView === 'post'),
         );
-      const contentKey = `${item.id}:${detail.revision}:${detailView}`;
+      const contentKey =
+        detail.postPath && detailView === 'post'
+          ? `${item.id}:post:${detail.postPath}:${detail.captureStatus}:${detail.thumbnailPath}`
+          : `${item.id}:${detail.revision}:${detailView}`;
       if (panel.dataset.contentKey === contentKey) {
         return;
       }
@@ -504,12 +515,14 @@ declare global {
       }
     }
     function renderBrowser() {
+      relatedGeneration++;
+      relatedUrl = '';
       savedBrowserUrl =
         localStorage.getItem('mp:collection-url:' + browserSlot) ||
         browserAccounts.find(account => account.id === browserSlot)!.url;
       host.querySelector('.rl-content')!.innerHTML =
         `<div class="rl-browser rl-embedded"><div class="rl-browser-accounts" role="group" aria-label="${t('Separate sign-in sessions', '独立登录会话')}">${browserAccounts.map(account => `<button type="button" data-rl-account="${account.id}" aria-pressed="${account.id === browserSlot}">${account.name}</button>`).join('')}<span>${t('Sign in once. Each account stays separate on this device.', '登录状态保存在本机，各账号互不串用。')}</span></div>
-        <form class="rl-browser-bar" data-rl-browser><button type="button" data-rl-browser-command="back" aria-label="${t('Back', '后退')}">←</button><button type="button" data-rl-browser-command="forward" aria-label="${t('Forward', '前进')}">→</button><button type="button" data-rl-browser-command="reload" aria-label="${t('Reload', '刷新')}">↻</button><input name="url" aria-label="URL" value="${esc(savedBrowserUrl)}" required><button type="submit">${t('Go', '前往')}</button><button type="button" data-rl-action="capture">${t('Keep this page', '收录此页')}</button></form><div class="rl-browser-surface" data-rl-browser-host><p>${t('Your page opens here, inside MP.', '网页在这里打开，始终留在 MP 内。')}</p></div></div>`;
+        <form class="rl-browser-bar" data-rl-browser><button type="button" data-rl-browser-command="back" aria-label="${t('Back', '后退')}">←</button><button type="button" data-rl-browser-command="forward" aria-label="${t('Forward', '前进')}">→</button><button type="button" data-rl-browser-command="reload" aria-label="${t('Reload', '刷新')}">↻</button><input name="url" aria-label="URL" value="${esc(savedBrowserUrl)}" required><button type="submit">${t('Go', '前往')}</button><button type="button" data-rl-action="capture">${t('Keep this page', '收录此页')}</button></form><div class="rl-browser-canvas"><div class="rl-browser-surface" data-rl-browser-host><p>${t('Your page opens here, inside MP.', '网页在这里打开，始终留在 MP 内。')}</p></div><aside class="rl-browser-recall" data-rl-related hidden aria-label="${t('Previously saved references', '以前留下的资料')}"></aside></div></div>`;
       browserObserver.disconnect();
       browserObserver.observe(host);
       browserObserver.observe(host.querySelector('[data-rl-browser-host]')!);
@@ -519,6 +532,45 @@ declare global {
             run(() => browse(savedBrowserUrl, true));
           }
         });
+      }
+    }
+    async function updateRelated(url: string, force = false) {
+      if (!/^https?:/.test(url)) {
+        return;
+      }
+      const key = browserSlot + ':' + url;
+      if (!force && relatedUrl === key) {
+        return;
+      }
+      relatedUrl = key;
+      const epoch = ++relatedGeneration;
+      try {
+        const result = await call('related', {url});
+        if (epoch !== relatedGeneration || !visible || tab !== 'browser') {
+          return;
+        }
+        const aside = host.querySelector<HTMLElement>('[data-rl-related]');
+        if (!aside) {
+          return;
+        }
+        const rows = result.related || [];
+        aside.hidden = !rows.length;
+        aside.parentElement?.classList.toggle(
+          'has-related',
+          Boolean(rows.length),
+        );
+        aside.innerHTML = rows.length
+          ? `<h3>${t('You kept something here.', '你以前在这里留过东西。')}</h3><p class="rl-recall-intro">${t('A note, a reference, a next step. Pick it up where you left it.', '当时的一点想法、一个参考，或留给下次的事。')}</p>${rows
+              .map(row => {
+                const detail = details(row.entry);
+                return `<button type="button" data-rl-revisit="${esc(row.entry.id)}"><small>${row.relation === 'page' ? t('This page', '同一页面') : row.relation === 'link' ? t('Links to this page', '提到了这个页面') : t('From this website', '同一网站的资料')} · ${esc(labels()[detail.intent === 'save' && detail.suggestedIntent ? detail.suggestedIntent : detail.intent])}</small><strong>${esc(detail.title)}</strong><p>${esc((detail.note || detail.summary || detail.nextStep || '').slice(0, 220))}</p></button>`;
+              })
+              .join('')}`
+          : '';
+      } catch (error) {
+        if (epoch === relatedGeneration && visible && tab === 'browser') {
+          status(String(error), true);
+        }
       }
     }
     function renderSources() {
@@ -813,7 +865,10 @@ declare global {
         sourceAccount: slot,
         restore,
       });
-      if (!visible || tab !== 'browser' || slot !== browserSlot) {
+      if (slot !== browserSlot) {
+        return;
+      }
+      if (!visible || tab !== 'browser') {
         await api.request('browser-command', {command: 'hide'});
         return;
       }
@@ -831,6 +886,7 @@ declare global {
           '已打开 · 收录后可在资料库内直接阅读。',
         ),
       );
+      await updateRelated(savedBrowserUrl);
     }
     const run = (operation: () => Promise<void>) => {
       void operation().catch(error => status(String(error), true));
@@ -1031,6 +1087,31 @@ declare global {
         if (button.dataset.rlHistoryView) {
           browserSlot = button.dataset.account!;
           await browse(button.dataset.rlHistoryView);
+          return;
+        }
+        if (button.dataset.rlRevisit) {
+          if (!(await savePending())) {
+            return;
+          }
+          await refresh();
+          selected = button.dataset.rlRevisit;
+          detailView = 'post';
+          filter = 'all';
+          tab = 'library';
+          const item = current();
+          if (item) {
+            const result = await call('edit', {
+              id: item.id,
+              revision: details(item).revision,
+              patch: {lastViewedAt: Date.now()},
+            });
+            snapshot.items = snapshot.items?.map(row =>
+              row.id === selected && result.entry
+                ? {...row, ...result.entry}
+                : row,
+            );
+          }
+          render();
           return;
         }
         if (button.dataset.rlBrowserCommand) {
@@ -1447,6 +1528,7 @@ declare global {
         void refresh();
       },
       hide() {
+        relatedGeneration++;
         pausePostMedia();
         visible = false;
         clearTimeout(sourceTimer);

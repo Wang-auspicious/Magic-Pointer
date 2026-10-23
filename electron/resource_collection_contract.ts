@@ -169,3 +169,8 @@ export interface CollectedResource {
   app?: string;
   collection?: ResourceCollection;
 }
+
+export interface RelatedResource {
+  entry: CollectedResource;
+  relation: 'page' | 'link' | 'site';
+}

@@ -523,6 +523,12 @@ function createStashRuntime(options: StashRuntimeOptions) {
       return {ok: false};
     }
     const [entry] = entries.splice(index, 1);
+    try {
+      persist();
+    } catch (error) {
+      entries.splice(index, 0, entry);
+      throw error;
+    }
     const root = path.resolve(baseDir);
     const artifactPath = path.resolve(baseDir, entry.relPath);
     if (artifactPath !== root && artifactPath.startsWith(root + path.sep)) {
@@ -534,7 +540,11 @@ function createStashRuntime(options: StashRuntimeOptions) {
         // A missing derived artifact does not resurrect its index row.
       }
     }
-    persist();
+    if (entry.collection?.postPath) {
+      const {removeResourcePost} =
+        require('./resource_post_store') as typeof import('./resource_post_store');
+      removeResourcePost(baseDir, String(entry.id));
+    }
     return {ok: true, entry: {...entry}};
   }
 

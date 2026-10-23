@@ -14,6 +14,7 @@ import {
   type ResourceCollection,
   type ProjectInboxEntry,
   type HandoffState,
+  type RelatedResource,
 } from './resource_collection_contract';
 import {prepareResourceMedia} from './resource_media';
 import {fetchLinkedPaper} from './resource_paper';
@@ -26,7 +27,7 @@ import {
   socialPostIdentity,
   type ResourcePost,
 } from './resource_post';
-import {ResourcePostStore} from './resource_post_store';
+import {ResourcePostStore, removeResourcePost} from './resource_post_store';
 
 interface AnalysisResponse {
   ok?: boolean;
@@ -129,6 +130,43 @@ export class ResourceCollectionService {
       }
       return terms.every(term => body.includes(term));
     });
+  }
+
+  related(url: string): RelatedResource[] {
+    const page = new URL(url);
+    const identity = (source: string) => {
+      const value = new URL(source);
+      value.hash = '';
+      return socialPostIdentity(value.href);
+    };
+    const key = identity(url);
+    const pages: RelatedResource[] = [];
+    const links: RelatedResource[] = [];
+    const sites: RelatedResource[] = [];
+    for (const entry of this.list()) {
+      const detail = resourceCollection(entry.collection);
+      if (!detail.url || detail.state === 'ignored') {
+        continue;
+      }
+      if (identity(detail.url) === key) {
+        pages.push({entry, relation: 'page'});
+      } else if (
+        detail.postPath &&
+        existsSync(
+          projectPath(this.options.stash().baseDir, detail.postPath),
+        ) &&
+        this.post(entry.id).links.some(link => identity(link) === key)
+      ) {
+        links.push({entry, relation: 'link'});
+      } else if (
+        postPlatform(url) === 'web' &&
+        postPlatform(detail.url) === 'web' &&
+        new URL(detail.url).hostname === page.hostname
+      ) {
+        sites.push({entry, relation: 'site'});
+      }
+    }
+    return [...pages, ...links, ...sites].slice(0, 8);
   }
 
   projectInbox(projectId: string): ProjectInboxEntry[] {
@@ -361,7 +399,15 @@ export class ResourceCollectionService {
         if (!next || !this.options.capturePost) {
           return;
         }
-        const result = await this.capture(next.id);
+        let result: CollectedResource;
+        try {
+          result = await this.capture(next.id);
+        } catch (error) {
+          if (!this.options.stash().get(next.id)) {
+            continue;
+          }
+          throw error;
+        }
         if (
           result.collection?.captureStatus === 'auth_required' ||
           result.collection?.captureError.includes('verification_required')
@@ -470,6 +516,10 @@ export class ResourceCollectionService {
         coverage: post.coverage,
       });
     } catch (error) {
+      if (!stash.get(id)) {
+        removeResourcePost(stash.baseDir, id);
+        throw new Error('resource_not_found');
+      }
       const message = error instanceof Error ? error.message : String(error);
       return stash.updateResource(id, {
         captureStatus: message.includes('auth_required')

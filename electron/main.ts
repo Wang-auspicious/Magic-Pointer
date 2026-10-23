@@ -6858,6 +6858,14 @@ ipcMain.handle(
           .catch(error => log(`resource processing: ${String(error)}`));
         return {ok: true, entry};
       }
+      if (raw.action === 'related') {
+        return {
+          ok: true,
+          related: service.related(
+            normalizeBrowserUrl(String(input.url || '')),
+          ),
+        };
+      }
       if (raw.action === 'add-batch') {
         const items = await service.addBatch(input);
         void service
