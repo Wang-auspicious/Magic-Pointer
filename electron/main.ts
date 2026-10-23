@@ -6770,7 +6770,7 @@ async function captureCollectionPostPage(url: string, account: string) {
     await new Promise(resolve => setTimeout(resolve, 300));
   } while (Date.now() < deadline && !contents.isDestroyed());
   return {
-    ...postFromCollectionPage(page!),
+    ...postFromCollectionPage(page!, url),
     timingMs: performance.now() - started,
   };
 }

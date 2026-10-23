@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
+import {
+  postFromCollectionPage,
+  type CollectionPage,
+} from '../electron/collection_browser';
 
 const source = ts.createSourceFile(
   'collection_browser.ts',
@@ -58,4 +62,58 @@ test('a note about verification is still a note; a real challenge is a gate', ()
     document: {...context.document, title: '小红书 - 安全验证'},
   });
   assert.equal(gated.error, 'verification_required');
+});
+
+function page(url: string): CollectionPage {
+  return {
+    url,
+    title: 'A page',
+    text: 'Open the app to continue',
+    selectedText: '',
+    author: '',
+    handle: '',
+    publishedAt: '',
+    images: [],
+    videos: [],
+    links: [],
+    xhsData: '',
+    error: '',
+    truncated: false,
+  };
+}
+
+test('a social share landing page or redirected different note cannot be saved as the requested original', () => {
+  assert.throws(
+    () => postFromCollectionPage(page('https://xhslink.com/o/share')),
+    /post_unavailable/,
+  );
+  const note = {
+    ...page('https://www.xiaohongshu.com/explore/abc123'),
+    xhsData: JSON.stringify({
+      note: {
+        noteDetailMap: {
+          abc123: {note: {noteId: 'abc123', desc: 'The actual note'}},
+        },
+      },
+    }),
+  };
+  assert.throws(
+    () =>
+      postFromCollectionPage(
+        note,
+        'https://www.xiaohongshu.com/explore/def456',
+      ),
+    /post_unavailable/,
+  );
+  assert.equal(
+    postFromCollectionPage(note, 'https://xhslink.com/o/share').id,
+    'abc123',
+  );
+});
+
+test('a numeric status path on an ordinary website remains a web page', () => {
+  assert.equal(
+    postFromCollectionPage(page('https://example.com/status/123456')).platform,
+    'web',
+  );
 });

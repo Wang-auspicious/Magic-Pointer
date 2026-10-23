@@ -1,4 +1,9 @@
-import {parseXhsPage, type ResourcePost} from './resource_post';
+import {
+  parseXhsPage,
+  postPlatform,
+  socialPostIdentity,
+  type ResourcePost,
+} from './resource_post';
 import type {HistoryPage} from './resource_browser_history';
 
 export const COLLECTION_ACCOUNTS = [
@@ -174,38 +179,55 @@ export function readCollectionPage(): CollectionPage {
   return result;
 }
 
-export function postFromCollectionPage(page: CollectionPage): ResourcePost {
+export function postFromCollectionPage(
+  page: CollectionPage,
+  sourceUrl = page.url,
+): ResourcePost {
   if (page.error) {
     throw new Error(page.error);
   }
-  if (page.xhsData) {
-    return {
-      ...parseXhsPage(
-        page.url,
-        `<script>window.__INITIAL_STATE__=${page.xhsData}</script>`,
-      ),
-      usedBackend: 'mp.embedded_browser.xiaohongshu',
-    };
+  const xId =
+    postPlatform(page.url) === 'x'
+      ? /\/status\/(\d+)/.exec(new URL(page.url).pathname)?.[1]
+      : undefined;
+  const post: ResourcePost = page.xhsData
+    ? {
+        ...parseXhsPage(
+          page.url,
+          `<script>window.__INITIAL_STATE__=${page.xhsData}</script>`,
+        ),
+        usedBackend: 'mp.embedded_browser.xiaohongshu',
+      }
+    : {
+        platform: xId ? 'x' : 'web',
+        id: xId || page.url,
+        url: page.url,
+        title: page.title,
+        text: page.text,
+        author: {name: page.author, handle: page.handle},
+        publishedAt: Date.parse(page.publishedAt) || undefined,
+        capturedAt: Date.now(),
+        media: [
+          ...page.images.map(url => ({kind: 'image' as const, url})),
+          ...page.videos.map(url => ({kind: 'video' as const, url})),
+        ],
+        links: page.links,
+        coverage: `${page.truncated ? 'First 200000 characters' : 'Rendered page text'} and available web images. ${xId ? 'Replies and linked articles were not read. Video streams not exposed as downloadable URLs are not retained.' : 'Navigation, interactive states and media not loaded by this page may be absent.'}`,
+        usedBackend: 'mp.embedded_browser.dom',
+        timingMs: 0,
+      };
+  const sourcePlatform = postPlatform(sourceUrl);
+  const identity = socialPostIdentity(sourceUrl);
+  if (
+    sourcePlatform !== 'web' &&
+    (post.platform !== sourcePlatform ||
+      (identity !== sourceUrl && identity !== `${post.platform}:${post.id}`))
+  ) {
+    throw new Error(
+      'post_unavailable: The share link did not expose the requested original post. Open that individual post in the MP browser, then retry.',
+    );
   }
-  const xId = /\/status\/(\d+)/.exec(new URL(page.url).pathname)?.[1];
-  return {
-    platform: xId ? 'x' : 'web',
-    id: xId || page.url,
-    url: page.url,
-    title: page.title,
-    text: page.text,
-    author: {name: page.author, handle: page.handle},
-    publishedAt: Date.parse(page.publishedAt) || undefined,
-    capturedAt: Date.now(),
-    media: [
-      ...page.images.map(url => ({kind: 'image' as const, url})),
-      ...page.videos.map(url => ({kind: 'video' as const, url})),
-    ],
-    links: page.links,
-    coverage: `${page.truncated ? 'First 200000 characters' : 'Rendered page text'} and available web images. ${xId ? 'Replies and linked articles were not read. Video streams not exposed as downloadable URLs are not retained.' : 'Navigation, interactive states and media not loaded by this page may be absent.'}`,
-    usedBackend: 'mp.embedded_browser.dom',
-    timingMs: 0,
-  };
+  return post;
 }
 
 export function readXhsAccountId(): string {
