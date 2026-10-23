@@ -108,11 +108,11 @@ assert(think.includes('先读这个文件'), 'collapsed summary = first line of 
 assert(think.includes('class="mp-chat-think-body"'), 'expanded body must exist');
 assert(think.includes('data-open="false"'), 'Think rows start collapsed');
 const longThink = html(ChatView.thinkNode('推理步骤。'.repeat(120), false));
-assert(longThink.includes('data-long="true"'), 'long completed reasoning must expose the 200px disclosure cap');
+assert(!longThink.includes('data-long="true"'), 'expanded thinking has no arbitrary length threshold');
 assert(longThink.includes('class="mp-chat-think-viewport"'));
-assert(longThink.includes('class="mp-chat-think-fade"'));
-assert(longThink.includes('data-mp-chat-act="think-more"'));
-assert(longThink.includes('Show more'));
+assert(!longThink.includes('class="mp-chat-think-fade"'));
+assert(!longThink.includes('data-mp-chat-act="think-more"'));
+assert(longThink.includes('data-mp-chat-act="copy-thinking"'));
 const runningThink = html(ChatView.thinkNode('多行\n思考', true));
 assert(runningThink.includes('data-state="running"'), 'a streaming Think row must carry the running state');
 assert(runningThink.includes('Thinking…'), 'a running row uses the interface exact status label');
@@ -261,8 +261,8 @@ assert.match(css, /\.mp-chat-disclosure > \.mp-chat-row\[data-expandable\]::afte
 assert.match(css, /\.mp-chat-tool-group-title,[^}]*\{[^}]*flex:\s*0 1 auto/s,
   'group disclosure arrows sit directly after the group label');
 assert.match(css, /\.mp-chat-disclosure:not\(\[data-open='true'\]\) > \.mp-chat-body-wrap\s*\{[^}]*display:\s*none/s);
-assert.match(css, /\.mp-chat-think\[data-long="true"\][^{]*\.mp-chat-think-viewport\s*\{[^}]*max-height:\s*200px/s);
-assert.match(css, /\.mp-chat-think-fade\s*\{[^}]*linear-gradient/s);
+assert(!css.includes('.mp-chat-think[data-long='));
+assert(!css.includes('.mp-chat-think-fade'));
 assert(!css.includes('mp-chat-state-dot-chase'), 'ongoing activity must not use decorative pixel chase');
 assert(tokens.includes('prefers-reduced-motion'), 'reduced motion must collapse spatial transitions');
 

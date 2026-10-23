@@ -134,9 +134,10 @@ thoughtRoot.setAttribute('data-open', 'true');
 thoughtLive.update({ trajectory: [{ kind: 'message', turn: 1, reasoning: longThought, state: 'done' }] });
 assert.equal(thoughtHost.querySelector('.mp-chat-think'), thoughtRoot);
 assert.equal(thoughtRoot.getAttribute('data-state'), 'ok', 'unchanged text must still settle thinking state');
-assert.equal(thoughtRoot.getAttribute('data-long'), 'true', 'completed streamed thought needs bounded preview');
+assert.equal(thoughtRoot.getAttribute('data-long'), null, 'settled thinking keeps the complete expanded text');
 assert.equal(thoughtRoot.getAttribute('data-open'), 'true');
-assert.ok(thoughtRoot.querySelector('.mp-chat-think-more'));
+assert.equal(thoughtRoot.querySelector('.mp-chat-think-more'), null);
+assert.ok(thoughtRoot.querySelector('.mp-chat-think-copy'));
 
 const agentHost = new TestNode('div');
 const agentLive = ChatView.createLiveTurn(agentHost);

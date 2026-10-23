@@ -3829,6 +3829,13 @@ const ChatView = (() => {
     return {nodes: body, hasResults: results !== null, webCount};
   }
 
+  function thinkingQuote(text: string): string {
+    return `> **Thinking** (~${Math.round(text.length / 4)} tok)\n>\n${text
+      .split(/\r\n?|[\n\u2028\u2029]/g)
+      .map(line => (line.length ? `> ${line}` : '>'))
+      .join('\n')}`;
+  }
+
   function thinkNode(
     reasoning: string,
     running = false,
@@ -3850,19 +3857,25 @@ const ChatView = (() => {
     attach(body, reasoning);
     const viewport = h('div', {class: 'mp-chat-think-viewport'});
     attach(viewport, body);
-    const isLong =
-      !running && (reasoning.length > 420 || reasoning.split('\n').length > 8);
     attach(
       viewport,
-      h('span', {class: 'mp-chat-think-fade', 'aria-hidden': 'true'}),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-chat-think-copy',
+          'data-mp-chat-act': 'copy-thinking',
+          'aria-label': lt('chat.copy_as_quote'),
+          ...(!reasoning.trim() ? {hidden: 'true'} : {}),
+        },
+        h('span', {
+          class: 'mp-chat-think-copy-glyph',
+          'aria-hidden': 'true',
+          'data-glyph': '\ue056',
+        }),
+      ),
     );
     const expandedBody: ChatNode[] = [viewport];
-    {
-      const more = h('button', {type: 'button', class: 'mp-chat-think-more'});
-      more.setAttribute('data-mp-chat-act', 'think-more');
-      attach(more, 'Show more');
-      expandedBody.push(more);
-    }
 
     const {root, row} = disclosureRow({
       leadingOverride: h(
@@ -3883,10 +3896,6 @@ const ChatView = (() => {
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'mp-chat-disclosure mp-chat-think');
     row.setAttribute('data-thought-row', '');
-    if (isLong) {
-      root.setAttribute('data-long', 'true');
-      root.setAttribute('data-expanded', 'false');
-    }
     return root;
   }
 
@@ -3920,12 +3929,11 @@ const ChatView = (() => {
     } else {
       summary.removeAttribute('data-follow-end');
     }
-    node.setAttribute(
-      'data-long',
-      String(!running && (text.length > 420 || text.split('\n').length > 8)),
-    );
-    if (node.getAttribute('data-expanded') === null) {
-      node.setAttribute('data-expanded', 'false');
+    const copy = node.querySelector('.mp-chat-think-copy');
+    if (text.trim()) {
+      copy?.removeAttribute('hidden');
+    } else {
+      copy?.setAttribute('hidden', 'true');
     }
   }
 
@@ -6586,7 +6594,10 @@ const ChatView = (() => {
     (host as unknown as {__mpChatBound?: boolean}).__mpChatBound = true;
     host.addEventListener('toggle', rememberGroupToggle, true);
     host.addEventListener('mousedown', (event: MouseEvent) => {
-      if ((event.target as Element | null)?.closest('.mp-chat-diff-copy')) {
+      if (
+        (event.target as Element | null)?.closest('.mp-chat-diff-copy') ||
+        (event.target as Element | null)?.closest('.mp-chat-think-copy')
+      ) {
         event.preventDefault();
       }
     });
@@ -6637,16 +6648,14 @@ const ChatView = (() => {
             detail: {parentCallId},
           }),
         );
-      } else if (kind === 'think-more') {
-        const disclosure = act.closest<HTMLElement>('.mp-chat-think');
-        if (!disclosure) {
-          return;
-        }
-        const expanded = disclosure.dataset.expanded === 'true';
-        disclosure.dataset.expanded = expanded ? 'false' : 'true';
-        act.textContent = expanded ? 'Show more' : 'Show less';
-      } else if (kind === 'copy') {
-        const text = act.getAttribute('data-mp-chat-copy') || '';
+      } else if (kind === 'copy' || kind === 'copy-thinking') {
+        const thinkingCopy = kind === 'copy-thinking';
+        const text = thinkingCopy
+          ? thinkingQuote(
+              act.closest('.mp-chat-think')?.querySelector('.mp-chat-think-body')
+                ?.textContent || '',
+            ).trim()
+          : act.getAttribute('data-mp-chat-copy') || '';
         const button = act;
         const diffCopy = button.getAttribute('class')?.split(' ').includes('mp-chat-diff-copy');
         const previous = COPY_RESET_TIMERS.get(button);
@@ -6658,7 +6667,9 @@ const ChatView = (() => {
           if (button.isConnected === false) {
             return;
           }
-          const glyph = button.querySelector('.mp-chat-diff-copy-glyph');
+          const glyph =
+            button.querySelector('.mp-chat-diff-copy-glyph') ||
+            button.querySelector('.mp-chat-think-copy-glyph');
           if (glyph) {
             glyph.setAttribute('data-glyph', ok ? '\ue03b' : '\ue056');
           } else {
@@ -6667,7 +6678,7 @@ const ChatView = (() => {
           }
           if (!ok) {
             button.setAttribute('aria-label', lt('chat.copy_failed'));
-          } else if (diffCopy) {
+          } else if (diffCopy || thinkingCopy) {
             button.setAttribute('aria-label', lt('chat.copied'));
           }
           const timer = window.setTimeout(() => {
@@ -6675,14 +6686,19 @@ const ChatView = (() => {
             if (button.isConnected === false) {
               return;
             }
-            const glyph = button.querySelector('.mp-chat-diff-copy-glyph');
+            const glyph =
+              button.querySelector('.mp-chat-diff-copy-glyph') ||
+              button.querySelector('.mp-chat-think-copy-glyph');
             if (glyph) {
               glyph.setAttribute('data-glyph', '\ue056');
             } else {
               button.querySelector('svg')?.remove();
               button.appendChild(icon('copy', 16) as Element);
             }
-            button.setAttribute('aria-label', lt('chat.copy'));
+            button.setAttribute(
+              'aria-label',
+              lt(thinkingCopy ? 'chat.copy_as_quote' : 'chat.copy'),
+            );
           }, diffCopy ? 1200 : 2000);
           COPY_RESET_TIMERS.set(button, timer);
         });
@@ -6784,7 +6800,8 @@ const ChatView = (() => {
       }
       if (
         event.repeat &&
-        (event.target as Element | null)?.closest('.mp-chat-diff-copy')
+        ((event.target as Element | null)?.closest('.mp-chat-diff-copy') ||
+          (event.target as Element | null)?.closest('.mp-chat-think-copy'))
       ) {
         event.preventDefault();
         return;
@@ -6840,6 +6857,7 @@ const ChatView = (() => {
       },
     },
     __test: {
+      thinkingQuote,
       firstLine,
       latestLine,
       classifyTool,
