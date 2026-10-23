@@ -3905,7 +3905,10 @@ const ChatView = (() => {
         typeof record.summary === 'string' ? record.summary : undefined,
       startedAtMs: Number(record.startedAt) || undefined,
       progressText:
-        typeof record.progressText === 'string' ? record.progressText : undefined,
+        record.state === 'running' &&
+        typeof record.progressText === 'string'
+          ? record.progressText
+          : undefined,
       subagent: record.subagent as Record<string, unknown> | undefined,
       result: hasResult
         ? {

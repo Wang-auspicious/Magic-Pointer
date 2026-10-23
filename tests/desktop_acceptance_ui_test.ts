@@ -24,6 +24,14 @@ try {
       state: 'running', progressText: 'reply-1\nreply-2' },
   ] }).map((node: { outerHTML: string }) => node.outerHTML).join('');
   assert.match(runningShell, /reply-2/, 'a running shell row shows its streamed tail');
+  const settledShell = chat.assistantTurnNode({ trajectory: [
+    { kind: 'tool', name: 'Bash', callId: 'b3', text: '{"command":"ping -n 4 127.0.0.1"}',
+      state: 'ok', result: '{"exit":0,"cwd":"C:/tmp","stdout":"done","stderr":""}',
+      isError: false, progressText: 'reply-1\nreply-2' },
+  ] }).map((node: { outerHTML: string }) => node.outerHTML).join('');
+  assert.doesNotMatch(settledShell, /reply-2/,
+    'a settled shell row shows the structured result, not the streamed tail');
+  assert.match(settledShell, /exit/, 'a settled shell row shows the structured result');
   assert.equal(chat.toolRowModel('Todo', '{}', { text: '{}', isError: false }).title, 'Updated plan');
   assert.equal(chat.toolRowModel('AskUser', '{}', { text: '{}', isError: false }).title, 'Asked user');
   assert.equal(chat.toolRowModel('Observe', '{}', { text: '{}', isError: false }).title, 'Observed');
