@@ -80,7 +80,7 @@ test('a legacy history Recipe asks for this exact approval before reading', asyn
     instruction: 'Read past screen history', model: async () => reply([call('old-plan', 'Recipe', args)]) });
   assert.equal(result.reason, 'awaiting_user');
   assert.equal(result.pending_input?.tool, 'Recipe');
-  assert.deepEqual(result.pending_input?.options, ['仅这一次允许', '拒绝']);
+  assert.deepEqual(result.pending_input?.options, ['允许这一次', '拒绝']);
   assert.equal(reads, 0);
 });
 

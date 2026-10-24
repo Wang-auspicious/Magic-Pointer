@@ -112,6 +112,15 @@ function describeCycle(
   return [...path.slice(seen.get(cursor)!), cursor].join(' -> ');
 }
 
+/**
+ * A child that finished its work without a final readback
+ * (needs_verification) still settles its step: re-running it would repeat
+ * real writes. Every other non-completed status keeps the retry budget.
+ */
+export function stepChildSucceeded(childStatus: string): boolean {
+  return childStatus === 'completed' || childStatus === 'needs_verification';
+}
+
 export function parseWorkflowPlan(plan: unknown): ParsedWorkflowPlan {
   const root = asRecord(plan);
   if (!root) {
@@ -740,7 +749,10 @@ export class WorkflowEngine {
         settledAt: Date.now(),
       };
       state.attempts.push(record);
-      const succeeded = childStatus === 'completed';
+      // needs_verification means the child finished its work without a final
+      // readback; re-running it would repeat real writes, so it settles the
+      // step instead of burning the remaining attempts.
+      const succeeded = stepChildSucceeded(childStatus);
       state.status = succeeded
         ? 'succeeded'
         : signal?.aborted

@@ -1216,6 +1216,12 @@ export async function withFileLock<T>(
 export class EventSession {
   events: SessionEvent[] = [];
   private size = 0;
+  // Concurrent refresh() calls on one instance (the unlocked poll paths such
+  // as consumeCancel race locked appends) must not interleave: one refresh
+  // adopting new lines mutates this.events mid-validation of another and the
+  // incremental chain check then rejects lines it already owns. Serialize the
+  // body per instance; cross-instance safety comes from the file lock.
+  private refreshChain: Promise<void> = Promise.resolve();
   private releaseTurn?: () => Promise<void>;
   constructor(
     readonly file: string,
@@ -1258,6 +1264,12 @@ export class EventSession {
   }
 
   async refresh(): Promise<void> {
+    const run = this.refreshChain.then(() => this.refreshNow());
+    this.refreshChain = run.catch(() => {});
+    await run;
+  }
+
+  private async refreshNow(): Promise<void> {
     const info = await stat(this.file);
     if (info.size === this.size && this.events.length) {
       return;
@@ -1356,10 +1368,21 @@ export class EventSession {
     data: Data,
     surfaceOp?: string,
   ): Promise<SessionEvent> {
-    return withFileLock(`${this.file}.ts-lock`, async () => {
-      await this.refresh();
-      return this.write(type, data, surfaceOp);
-    });
+    return this.serialized(() =>
+      withFileLock(`${this.file}.ts-lock`, async () => {
+        await this.refreshNow();
+        return this.write(type, data, surfaceOp);
+      }),
+    );
+  }
+
+  private serialized<T>(action: () => Promise<T>): Promise<T> {
+    const run = this.refreshChain.then(action);
+    this.refreshChain = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
   }
 
   private async write(
@@ -1595,18 +1618,20 @@ export class EventSession {
     expected?: AgentMessage[],
     expectedTurn: number | null = null,
   ): Promise<boolean> {
-    return withFileLock(`${this.file}.ts-lock`, async () => {
-      await this.refresh();
-      if (
-        expected &&
-        (this.openTurn !== expectedTurn ||
-          canonicalJson(this.deriveMessages()) !== canonicalJson(expected))
-      ) {
-        return false;
-      }
-      await this.write('surface/replace', {messages: next, reason}, 'replace');
-      return true;
-    });
+    return this.serialized(() =>
+      withFileLock(`${this.file}.ts-lock`, async () => {
+        await this.refreshNow();
+        if (
+          expected &&
+          (this.openTurn !== expectedTurn ||
+            canonicalJson(this.deriveMessages()) !== canonicalJson(expected))
+        ) {
+          return false;
+        }
+        await this.write('surface/replace', {messages: next, reason}, 'replace');
+        return true;
+      }),
+    );
   }
   async freezePrompt(system: string): Promise<string> {
     const saved = this.events.find(
@@ -1795,8 +1820,9 @@ export class EventSession {
     return child;
   }
   async claimInbox(target: string): Promise<Data[]> {
-    return withFileLock(`${this.file}.ts-lock`, async () => {
-      await this.refresh();
+    return this.serialized(() =>
+      withFileLock(`${this.file}.ts-lock`, async () => {
+        await this.refreshNow();
       const pending = this.pendingInbox(target);
       if (!pending.length) {
         return [];
@@ -1836,7 +1862,8 @@ export class EventSession {
         'append_many',
       );
       return pending;
-    });
+      }),
+    );
   }
   async requestCancel(reason = ''): Promise<void> {
     await this.refresh();

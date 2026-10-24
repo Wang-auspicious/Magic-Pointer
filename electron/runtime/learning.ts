@@ -47,7 +47,28 @@ export function writeAtomic(file: string, value: unknown): void {
       ? value
       : `${JSON.stringify(value, null, 2)}\n`,
   );
-  renameSync(temp, file);
+  // Windows fails rename with EPERM while a concurrent reader (or the
+  // indexer) holds the destination; it clears within milliseconds.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(temp, file);
+      return;
+    } catch (error) {
+      if (
+        !['EPERM', 'EBUSY'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        ) ||
+        attempt >= 5
+      ) {
+        throw error;
+      }
+      sleepSync(20 * (attempt + 1));
+    }
+  }
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 export function redactSecrets(value: string): string {

@@ -84,7 +84,7 @@ test('actual overwrite status survives activity projection and history reopening
     assert.match(html, /data-file-path="existing.ts"/);
     assert.deepEqual(
       Array.from(
-        html.matchAll(/class="mp-chat-title">([^<]*)<\/span>/g),
+        html.matchAll(/class="mp-chat-title"[^>]*>([^<]*)<\/span>/g),
         match => match[1],
       ),
       ['Updated', 'Updated'],
