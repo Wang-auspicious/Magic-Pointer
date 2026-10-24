@@ -32,10 +32,11 @@ assert.strictEqual(model.state, 'ok');
 const row = html(ChatView.toolRowNode(model));
 assert(row.includes('class="mp-chat-tool"'), 'tool row root');
 assert(row.includes('class="mp-chat-row"'), 'tool rows must share the 24px disclosure row chrome');
-assert(row.includes('class="mp-chat-title">Created</span>'),
+assert(/class="mp-chat-title"[^>]*>Created<\/span>/.test(row),
   'row title is the completed action ("Created a.txt"), never the bare noun');
 assert(row.includes('class="mp-chat-diff"'), 'the expanded write body renders its actual added lines');
-assert(row.includes('class="mp-chat-tool-output"'), 'the result renders as plain output text below the card');
+assert(!row.includes('mp-chat-tool-output'),
+  'file rows fold the raw output into the diff card instead of a duplicate plain line');
 assert(!row.includes('mp-chat-io-label'), 'the IN/OUT gutter labels are gone');
 assert(row.includes('data-mp-chat-act="toggle"'), 'the row must be expandable via the shared delegation');
 assert(html(ChatView.toolRowNode(ChatView.toolRowModel('Read', '{"path":"a.txt"}'))).includes('data-mp-chat-act="copy"'),
@@ -85,12 +86,17 @@ assert(!editDiff.includes('old_string'), 'raw argument names must not leak into 
 const canonicalEdit = ChatView.toolRowNode(ChatView.toolRowModel('Edit', editArgs)).outerHTML;
 assert(canonicalEdit.includes('class="mp-chat-diff"') && canonicalEdit.includes('- x = 1'),
   'the production Edit tool must render the same removed and added lines');
-const canonicalWrite = ChatView.toolRowNode(ChatView.toolRowModel('Write', JSON.stringify({ path: 'a.txt', content: 'written' }))).outerHTML;
-assert(canonicalWrite.includes('class="mp-chat-diff"') && canonicalWrite.includes('+ written'),
-  'the production Write tool must render its actual new content');
+const canonicalWrite = ChatView.toolRowNode(ChatView.toolRowModel('Write', JSON.stringify({ path: 'a.txt', content: 'written' }), {text: 'ok', isError: false})).outerHTML;
+assert(canonicalWrite.includes('class="mp-chat-diff"'),
+  'the settled production Write tool renders the snapshot-backed diff card');
+assert(!canonicalWrite.includes('+ written'),
+  'Write must not synthesize diff lines from raw args; only real snapshots provide content');
 
-const writeDiff = ChatView.toolRowNode(ChatView.toolRowModel('write_file', JSON.stringify({ path: 'n.txt', content: 'a\nb' }))).outerHTML;
-assert(/mp-chat-diff-line[^>]*data-kind="add"/.test(writeDiff) && writeDiff.includes('+ a'), 'write_file renders as an all-add diff');
+const writeDiff = ChatView.toolRowNode(ChatView.toolRowModel('write_file', JSON.stringify({ path: 'n.txt', content: 'a\nb' }), {text: 'ok', isError: false})).outerHTML;
+assert(writeDiff.includes('mp-chat-diff-preview') && writeDiff.includes('+2'),
+  'write_file shows the snapshot-backed preview with its all-add stat');
+assert(!writeDiff.includes('+ a'),
+  'write_file must not synthesize literal diff lines from raw args');
 
 // Complete long and batch previews are covered by chat_diff_preview_test.ts.
 assert(!/mp-chat-diff/.test(ChatView.toolRowNode(ChatView.toolRowModel('grep', JSON.stringify({ pattern: 'x' }))).outerHTML),
@@ -99,11 +105,13 @@ assert(!/mp-chat-diff/.test(ChatView.toolRowNode(ChatView.toolRowModel('grep', J
 assert(ChatView.stateDot('done').outerHTML.includes('data-state="done"'));
 assert(ChatView.stateDot('warning').outerHTML.includes('data-state="warning"'));
 assert(ChatView.stateDot('error').outerHTML.includes('data-state="error"'));
-assert(ChatView.stateDot('ongoing').outerHTML.includes('class="mp-chat-matrix"'));
+assert(ChatView.stateDot('ongoing').outerHTML.includes('mp-chat-status-spinner'),
+  'ongoing renders the shared spinner');
 
 const think = html(ChatView.thinkNode('先读这个文件\n再判断结构', false));
 assert(think.includes('mp-chat-think"'), 'reasoning must render as the Think disclosure');
-assert(think.includes('mp-chat-title">Thought process</span>'), 'modern reasoning uses the original Step label');
+assert(/mp-chat-title[^>]*>Thought process<\/span>/.test(think),
+  'modern reasoning uses the original Step label');
 assert(think.includes('先读这个文件'), 'expanded body retains the original reasoning');
 assert(think.includes('class="mp-chat-think-body"'), 'expanded body must exist');
 assert(think.includes('data-open="true"'), 'Thinking Step starts open');
@@ -165,7 +173,7 @@ assert(flowingTurn.indexOf('我先看看目录结构。') < flowingTurn.indexOf(
   'narration precedes the first tool chip it introduces');
 assert(flowingTurn.indexOf('找到文件了，我读一下。') > flowingTurn.indexOf('obsidian-daily-log/README.md'),
   'the second narration comes after the first tool chip');
-assert(flowingTurn.indexOf('找到文件了，我读一下。') < flowingTurn.indexOf('Read 2 files'),
+assert(flowingTurn.indexOf('找到文件了，我读一下。') < flowingTurn.indexOf('2 files (1 failed)'),
   'the second narration precedes the tool group it introduces');
 assert(flowingTurn.includes('mp-chat-code'), 'expanded evidence (the command card) must survive');
 assert(flowingTurn.includes('not found: README.md'));
@@ -182,7 +190,7 @@ const groupedReads = ChatView.assistantTurnNode({
     name: 'read_file', arguments: { path: `f${index}.md` }, result: 'x', isError: false,
   })),
 }).map(html).join('');
-assert(groupedReads.includes('Read 3 files'),
+assert(groupedReads.includes('3 files'),
   'consecutive reads must collapse into one "Read N files" group header');
 assert(groupedReads.includes('f0.md') && groupedReads.includes('f2.md'),
   'the collapsed group still carries the per-file chips inside');
@@ -251,13 +259,16 @@ assert(errorTurn.includes('class="mp-chat-dot"'), 'the error row leads with the 
 assert(ChatView.turnStatusNode('Thinking').outerHTML.includes('class="mp-chat-turn-status"'));
 assert(!css.includes('@keyframes mp-chat-turn-status-shimmer'), 'perpetual status shimmer must be removed');
 
-assert(tokens.includes('--mp-page: #FCFCFB'), 'light page token matches the measured reference');
+assert(tokens.includes('--mp-page: #F5F5F3'), 'light page token matches the open-claude-ui alignment (6be99bc)');
 assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (full platform)');
-assert(tokens.includes('--mp-page: #151515'), 'dark page token matches the measured CDS surface (was #20201F before token alignment)');
-assert.match(css, /\.mp-chat-bubble\s*\{[^}]*border-radius:\s*12px/s, 'user bubble uses the measured restrained radius');
+assert(tokens.includes('--mp-page: #0B0B0A'), 'dark page token matches the open-claude-ui alignment (6be99bc)');
+assert.match(css, /\.mp-chat-bubble\s*\{[^}]*border-radius:\s*var\(--mp-r-bubble\)/s, 'user bubble radius rides the aligned bubble token');
+assert(tokens.includes('--mp-r-bubble: 18px'), 'bubble radius token matches the open-claude-ui alignment (6be99bc)');
 assert.match(css, /\.mp-chat-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Studio height');
-assert.match(css, /\.mp-chat-disclosure > \.mp-chat-row\[data-expandable\]::after[\s\S]*?margin-left:\s*5px/s,
-  'tool disclosure arrows sit directly after the action text (chevron ::after, caret class gone)');
+assert.match(css, /\.mp-chat-row-caret\s*\{[^}]*font-family:\s*'Anthropicons Code'/s,
+  'tool disclosure arrows use the original icon font caret (E02A), rotating open');
+assert.match(css, /\.mp-chat-disclosure\[data-open='true'\] > \.mp-chat-row \.mp-chat-row-caret\s*\{[^}]*transform:\s*rotate\(90deg\)/s,
+  'the caret rotates with the disclosure state');
 assert.match(css, /\.mp-chat-tool-group-title,[^}]*\{[^}]*flex:\s*0 1 auto/s,
   'group disclosure arrows sit directly after the group label');
 assert.match(css, /\.mp-chat-disclosure:not\(\[data-open='true'\]\) > \.mp-chat-body-wrap\s*\{[^}]*display:\s*none/s);
@@ -300,7 +311,7 @@ const mixedGroup = ChatView.assistantTurnNode({
     { kind: 'tool', name: 'Grep', callId: 's1', state: 'done', isError: false, text: '{"pattern":"x"}', result: 'ok' },
   ],
 }).map(html).join('');
-assert(mixedGroup.includes('Ran a command (1 failed)'),
+assert(mixedGroup.includes('Ran') && mixedGroup.includes('a command (1 failed)'),
   `the failure count rides the clause it belongs to, got ${mixedGroup}`);
 assert(/ran|read|searched/.test(mixedGroup),
   'later clauses stay lowercase so the line reads as one sentence');

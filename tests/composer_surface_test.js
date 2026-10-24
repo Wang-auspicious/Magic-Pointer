@@ -47,12 +47,14 @@ assert.strictEqual(typeof Composer.remainingAttachmentEntries, 'function');
   assert.strictEqual(Composer.shouldRestoreFocus(null, composerInput), true);
 }
 assert.match(composerSource,
-  /next === 'idle' && shouldRestoreFocus\(document\.activeElement, input\)[\s\S]*input\.focus\(\)/,
+  /next === 'idle' &&\s*shouldRestoreFocus\(document\.activeElement, input\)[\s\S]*input\.focus\(\)/,
   'shared Composer idle transition must use the guarded focus policy');
 assert(!/input\.disabled\s*=\s*next === 'running'/.test(composerSource),
   'running state must never disable the shared textarea');
-assert.match(composerSource, /input\.placeholder = next === 'running' \? '插一句（下一轮生效）…'/,
+assert.match(composerSource, /state === 'running' \? '插一句（下一轮生效）…' : idlePlaceholder/,
   'running state must explain that typed text will steer the next round');
+assert.match(composerSource, /input\.placeholder = show \? suggestion : hint/,
+  'the idle hint and the prediction share one placeholder writer');
 assert.match(composerSource, /input\.value\.trim\(\) \? '插话' : '停止'/,
   'running submit affordance must distinguish steer from empty stop');
 
@@ -69,9 +71,9 @@ assert.match(composerSource, /readAsDataURL\(f\)/, '图片附件仍应保留 dat
 assert.match(composerSource, /class: 'mcomp-error'/, '超限文本必须有组件内可见错误');
 assert.match(composerSource, /accept: 'image\/\*,\.txt,\.md,\.log,\.csv,\.json,\.py,\.ts,\.js'/,
   'file picker must expose the bounded image + text extension set');
-assert.match(composerSource, /item:[\s\S]*\{ name: f\.name, text:/,
+assert.match(composerSource, /item:[\s\S]*\{\s*name: f\.name, text:/,
   'text attachments must be stored as {name,text}');
-assert.match(composerSource, /await Promise\.all\(pendingReadsThrough\(/,
+assert.match(composerSource, /await Promise\.all\(\s*pendingReadsThrough\(/,
   'submit must wait for FileReaders selected before its cutoff');
 assert.match(composerSource, /attachmentEntries = remainingAttachmentEntries\(/,
   'successful submit must remove only its attachment snapshot');
@@ -136,7 +138,7 @@ assert.ok(read('companion.html').includes('id="cp-composer"'));
 const companionSource = read('companion.ts');
 assert.ok(!/onSubmit:\s*\(\)\s*=>\s*\{\}/.test(companionSource),
   'Companion 不能把可见输入条接到 no-op submit');
-assert.match(companionSource, /onSteer:\s*\(text\)/,
+assert.match(companionSource, /onSteer:\s*\(?text\)?\s*=>/,
   'Companion 运行中输入必须接真实 steer 回调');
 assert.match(companionSource, /Data\.sendConversation\(/,
   'Companion 的共享输入条必须走真实 conversation send 链');
@@ -148,9 +150,9 @@ assert.match(companionSource, /Data\.stopConversation\(/,
   'Companion 空输入停止必须走真实 stop 通道');
 assert.match(companionSource, /allowAttachments: false/,
   'Companion must hide attachments until its IPC can actually deliver them');
-assert.match(companionSource, /if \(payload\.attachments\.length\) return false;/,
+assert.match(companionSource, /if \(payload\.attachments\.length\) \{\s*return false;\s*\}/,
   'Companion must reject programmatic attachments rather than discard them');
-assert.match(companionSource, /onSubmit: \(payload\) => submitCompanionTurn\(payload\)/,
+assert.match(companionSource, /onSubmit: \(?payload\)? => submitCompanionTurn\(payload\)/,
   'Companion submit must return the delivery acknowledgement to Composer');
 assert.match(companionSource, /cpStopGate\.tryEnter\(\)/,
   'Companion stop must reject duplicate in-flight IPC calls');
@@ -159,16 +161,16 @@ assert.match(companionSource, /cpStopGate\.leave\(\)/,
 
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.ts'), 'utf8');
 const sendHandler = mainSource.slice(
-  mainSource.indexOf("ipcMain.handle('conversations:send'"),
-  mainSource.indexOf("ipcMain.handle('conversations:stop'"),
+  mainSource.indexOf("'conversations:send'"),
+  mainSource.indexOf("'conversations:stop'"),
 );
 const stopHandler = mainSource.slice(
-  mainSource.indexOf("ipcMain.handle('conversations:stop'"),
-  mainSource.indexOf("ipcMain.handle('conversations:steer'"),
+  mainSource.indexOf("'conversations:stop'"),
+  mainSource.indexOf("'conversations:steer'"),
 );
 const steerHandler = mainSource.slice(
-  mainSource.indexOf("ipcMain.handle('conversations:steer'"),
-  mainSource.indexOf("ipcMain.handle('conversations:timeline'"),
+  mainSource.indexOf("'conversations:steer'"),
+  mainSource.indexOf("'conversations:timeline'"),
 );
 for (const [name, handler] of [['send', sendHandler], ['stop', stopHandler], ['steer', steerHandler]]) {
   assert.match(handler, /isConversationSender\(event, dashboardWindow, companionWindow\)/,
@@ -183,7 +185,7 @@ async function verifyAcknowledgedCallbacks() {
   assert.strictEqual(await Composer.callAcknowledged(() => Promise.resolve(false)), false);
   assert.strictEqual(await Composer.callAcknowledged(() => { throw new Error('ipc failed'); }), false);
 }
-assert.match(companionSource, /if \(!cpAgentSessionId\) return false;/,
+assert.match(companionSource, /if \(!cpAgentSessionId\) \{\s*return false;\s*\}/,
   'Companion 在 durable session 就绪前必须明确拒绝而不是 no-op');
 
 const beam = read('beam.css');
