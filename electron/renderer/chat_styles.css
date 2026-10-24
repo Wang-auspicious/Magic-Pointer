@@ -3887,3 +3887,176 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-chat-ui-receipt { margin-top: 8px; white-space: normal; }
 .mp-chat-ui-receipt summary { cursor: pointer; font-size: 12px; color: var(--mp-text-secondary); }
 .mp-chat-ui-receipt pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+
+/* Workflow.run DAG card. One horizontal rail: a station is a light plus its
+   step name, the segment between neighbours is the track, dependencies that
+   skip stations arc over the rail in stacked elbow lanes. */
+.wf-card {
+  margin: 6px 0 10px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  min-width: 0;
+}
+
+.wf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wf-glyph {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--mp-text-muted);
+}
+
+.wf-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mp-text);
+  font-size: var(--mp-text-footnote);
+  font-weight: var(--mp-weight-medium);
+}
+
+.wf-badge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--mp-text-caption);
+  line-height: var(--mp-leading-caption);
+}
+.wf-badge[data-status='succeeded'] {
+  color: var(--mp-success);
+  background: color-mix(in srgb, var(--mp-success) 12%, transparent);
+}
+.wf-badge[data-status='failed'] {
+  color: var(--mp-danger);
+  background: color-mix(in srgb, var(--mp-danger) 12%, transparent);
+}
+.wf-badge[data-status='aborted'] {
+  color: var(--mp-text-muted);
+  background: var(--mp-hover);
+}
+.wf-badge[data-status='running'] {
+  color: var(--mp-clay-strong);
+  background: color-mix(in srgb, var(--mp-clay) 14%, transparent);
+}
+
+.wf-summary {
+  margin-left: auto;
+  flex: none;
+  color: var(--mp-text-muted);
+  font-size: var(--mp-text-caption);
+  white-space: nowrap;
+}
+
+.wf-track {
+  position: relative;
+  margin-top: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+
+.wf-arcs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.wf-arc {
+  fill: none;
+  stroke: var(--mp-text-muted);
+  stroke-width: 1.5;
+  opacity: 0.55;
+}
+
+.wf-arc-arrow {
+  stroke: none;
+  fill: var(--mp-text-muted);
+  opacity: 0.55;
+}
+
+.wf-rail {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  margin-top: var(--wf-arc-zone, 0px);
+}
+
+.wf-station {
+  display: flex;
+  width: 150px;
+  flex: 0 0 150px;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+}
+
+.wf-light {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
+.wf-station[data-status='succeeded'] .wf-light {
+  background: var(--mp-success);
+}
+.wf-station[data-status='failed'] .wf-light {
+  background: var(--mp-danger);
+}
+.wf-station[data-status='running'] .wf-light {
+  background: var(--mp-clay);
+  animation: wf-pulse 1.6s ease-out infinite;
+}
+.wf-station[data-status='pending'] .wf-light {
+  background: transparent;
+  border: 1.5px solid var(--mp-text-muted);
+}
+.wf-station[data-status='skipped'] .wf-light {
+  background: var(--mp-text-muted);
+  opacity: 0.5;
+}
+
+@keyframes wf-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--mp-clay) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-station[data-status='running'] .wf-light {
+    animation: none;
+  }
+}
+
+.wf-station-title {
+  margin-top: 4px;
+  max-width: 140px;
+  color: var(--mp-text-secondary);
+  font-size: var(--mp-text-caption);
+  line-height: var(--mp-leading-caption);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.wf-link {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 2px;
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--mp-text-muted) 45%, transparent);
+}

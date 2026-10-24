@@ -124,6 +124,28 @@ buildSync({
   sourcemap: true,
 });
 
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'workflow_card.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'workflow_card.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'WorkflowCard',
+  target: 'es2022',
+  sourcemap: true,
+});
+
+buildSync({
+  entryPoints: [path.join(sourceRoot, 'renderer', 'studio_workflow_panel.ts')],
+  outfile: path.join(outputRoot, 'renderer', 'studio_workflow_panel.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  globalName: 'StudioWorkflowPanel',
+  target: 'es2022',
+  sourcemap: true,
+});
+
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();

@@ -1390,6 +1390,16 @@ const studioSubagentGlobals = (
   globalThis as {StudioSubagents?: StudioSubagentsModule}
 ).StudioSubagents!;
 
+interface StudioWorkflowPanelModule {
+  groupWorkflowTasks: typeof import('./studio_workflow_panel')['groupWorkflowTasks'];
+  isWorkflowStepTaskId: typeof import('./studio_workflow_panel')['isWorkflowStepTaskId'];
+}
+type WorkflowRunBlockView =
+  import('./studio_workflow_panel').WorkflowRunBlock;
+const studioWorkflowPanel = (
+  globalThis as {StudioWorkflowPanel?: StudioWorkflowPanelModule}
+).StudioWorkflowPanel!;
+
 const STUDIO_SEARCH_ROUTES = [
   {id: 'chat', label: studioT('search.route.new_chat'), keywords: ['首页', '会话', 'new']},
   {id: 'design', label: 'Design', keywords: ['设计', '素材', '画布']},
@@ -9706,6 +9716,175 @@ async function stopSubagentTask(row: HTMLElement) {
   }
 }
 
+async function stopWorkflowRun(block: HTMLElement) {
+  const conversationId = block.dataset.conversationId || '';
+  const runId = block.dataset.runId || '';
+  const button = block.querySelector<HTMLButtonElement>('.mpwf-stop')!;
+  const error = block.querySelector<HTMLElement>('.mpwf-stop-error')!;
+  if (!conversationId || !runId || button.disabled) {
+    return;
+  }
+  block.dataset.stopState = 'pending';
+  button.disabled = true;
+  button.title = 'Stopping run…';
+  button.setAttribute('aria-label', 'Stopping run');
+  error.hidden = true;
+  try {
+    const result = await Data.stopWorkflow({conversationId, runId});
+    if (block.dataset.active !== '1') {
+      return;
+    }
+    if (!result.ok) {
+      throw new Error(result.error || 'Could not stop this run. Try again.');
+    }
+    block.dataset.stopState = 'requested';
+  } catch (failure) {
+    if (block.dataset.active !== '1') {
+      return;
+    }
+    delete block.dataset.stopState;
+    button.disabled = false;
+    button.title = 'Stop run';
+    button.setAttribute('aria-label', 'Stop run');
+    error.textContent =
+      failure instanceof Error ? failure.message : String(failure);
+    error.hidden = false;
+  }
+}
+
+function workflowTokensText(tokens: number): string {
+  return tokens > 0
+    ? `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
+    : '';
+}
+
+function renderWorkflowRunBlocks(
+  host: HTMLElement,
+  blocks: WorkflowRunBlockView[],
+  conversationId: string,
+): HTMLElement[] {
+  const existing = new Map(
+    Array.from(host.querySelectorAll<HTMLElement>('.mpwf-run')).map(block => [
+      block.dataset.runId,
+      block,
+    ]),
+  );
+  const setText = (node: Element, text: string) => {
+    if (node.textContent !== text) {
+      node.textContent = text;
+    }
+  };
+  const rendered: HTMLElement[] = [];
+  for (const block of blocks) {
+    let section = existing.get(block.runId);
+    if (!section) {
+      section = document.createElement('section');
+      section.className = 'mpwf-run';
+      section.innerHTML =
+        '<header class="mpwf-header"><strong class="mpwf-name"></strong>' +
+        '<button type="button" class="mpwf-stop" title="Stop run" aria-label="Stop run"><svg aria-hidden="true"><use href="#ic-stop" /></svg></button></header>' +
+        '<p class="mpwf-meta"><span class="mpwf-state"></span><span class="mpwf-progress"></span><span class="mpwf-tokens"></span></p>' +
+        '<ol class="mpwf-timeline"></ol>' +
+        '<p class="mpwf-stop-error" role="status" hidden></p>';
+      const created = section;
+      created
+        .querySelector('.mpwf-stop')!
+        .addEventListener('click', () => {
+          void stopWorkflowRun(created);
+        });
+    }
+    section.dataset.runId = block.runId;
+    section.dataset.conversationId = conversationId;
+    section.dataset.active = block.active ? '1' : '0';
+    setText(
+      section.querySelector('.mpwf-name')!,
+      `Workflow ${block.runId.slice(0, 8)}`,
+    );
+    const succeeded = block.steps.filter(
+      step => step.status === 'succeeded',
+    ).length;
+    const failed = block.steps.some(step => step.status === 'failed');
+    setText(
+      section.querySelector('.mpwf-state')!,
+      block.active
+        ? 'Running'
+        : failed
+          ? 'Failed'
+          : succeeded === block.steps.length
+            ? 'Completed'
+            : 'Stopped',
+    );
+    setText(
+      section.querySelector('.mpwf-progress')!,
+      `${succeeded}/${block.steps.length} steps`,
+    );
+    setText(
+      section.querySelector('.mpwf-tokens')!,
+      workflowTokensText(
+        block.steps.reduce((sum, step) => sum + step.tokens, 0),
+      ),
+    );
+    const stop = section.querySelector<HTMLButtonElement>('.mpwf-stop')!;
+    stop.hidden = !block.active || !conversationId;
+    if (!block.active) {
+      delete section.dataset.stopState;
+      section.querySelector<HTMLElement>('.mpwf-stop-error')!.hidden = true;
+    }
+    stop.disabled = Boolean(section.dataset.stopState);
+    const timeline = section.querySelector<HTMLElement>('.mpwf-timeline')!;
+    const stepRows = new Map(
+      Array.from(timeline.children).map(item => [
+        (item as HTMLElement).dataset.stepId,
+        item as HTMLElement,
+      ]),
+    );
+    const wanted: HTMLElement[] = [];
+    for (const step of block.steps) {
+      let item = stepRows.get(step.stepId);
+      if (!item) {
+        item = document.createElement('li');
+        item.className = 'mpwf-step';
+        item.dataset.stepId = step.stepId;
+        item.innerHTML =
+          '<span class="mpwf-dot" aria-hidden="true"></span>' +
+          '<span class="mpwf-step-title"><code class="mpwf-step-id"></code><span class="mpwf-step-name"></span></span>' +
+          '<span class="mpwf-step-attempts"></span>' +
+          '<span class="mpwf-step-tokens"></span>';
+      }
+      item.dataset.status = step.status;
+      item.title = step.title;
+      setText(item.querySelector('.mpwf-step-id')!, step.stepId);
+      setText(item.querySelector('.mpwf-step-name')!, step.title);
+      setText(
+        item.querySelector('.mpwf-step-attempts')!,
+        step.attempts > 1 ? `⟳${step.attempts}` : '',
+      );
+      setText(
+        item.querySelector('.mpwf-step-tokens')!,
+        workflowTokensText(step.tokens),
+      );
+      wanted.push(item);
+    }
+    for (const child of Array.from(timeline.children)) {
+      if (!wanted.includes(child as HTMLElement)) {
+        child.remove();
+      }
+    }
+    wanted.forEach((item, index) => {
+      if (timeline.children[index] !== item) {
+        timeline.insertBefore(item, timeline.children[index] || null);
+      }
+    });
+    rendered.push(section);
+  }
+  for (const [runId, section] of existing) {
+    if (!blocks.some(block => block.runId === runId)) {
+      section.remove();
+    }
+  }
+  return rendered;
+}
+
 function renderProjectTasks() {
   renderPlanCard();
   scheduleBackgroundAgentRefresh();
@@ -9739,6 +9918,14 @@ function renderProjectTasks() {
     host.replaceChildren(empty);
     return;
   }
+  const workflowBlocks = studioWorkflowPanel.groupWorkflowTasks(
+    tasks as Array<Record<string, any>>,
+  );
+  const plainTasks = workflowBlocks.length
+    ? tasks.filter(
+        task => !studioWorkflowPanel.isWorkflowStepTaskId(task.id),
+      )
+    : tasks;
   const rows = new Map(
     Array.from(host.querySelectorAll<HTMLElement>('.mp-subagent-task')).map(
       row => [row.dataset.taskId, row],
@@ -10008,14 +10195,20 @@ function renderProjectTasks() {
     }
     return section;
   };
-  const running = tasks.filter(task => childActive(task.status));
-  const attention = tasks.filter(
+  const running = plainTasks.filter(task => childActive(task.status));
+  const attention = plainTasks.filter(
     task => !childActive(task.status) && childNeedsAttention(task),
   );
-  const finished = tasks.filter(
+  const finished = plainTasks.filter(
     task => !childActive(task.status) && !attention.includes(task),
   );
-  const sections: HTMLElement[] = [];
+  const sections: HTMLElement[] = [
+    ...renderWorkflowRunBlocks(
+      host,
+      workflowBlocks,
+      activeConversationId || pendingConversation?.conversationId || '',
+    ),
+  ];
   if (running.length) {
     sections.push(makeSection('Running', running));
   }
@@ -10026,7 +10219,7 @@ function renderProjectTasks() {
     sections.push(makeSection('Finished', finished));
   }
   for (const row of rows.values()) {
-    if (!tasks.some(task => task.id === row.dataset.taskId)) {
+    if (!plainTasks.some(task => task.id === row.dataset.taskId)) {
       row.remove();
     }
   }

@@ -22,6 +22,9 @@ const ChatView = (() => {
   const toolSummary: typeof import('./chat_tool_summary') =
     typeof ChatToolSummary !== 'undefined'
       ? ChatToolSummary : require('./chat_tool_summary');
+  const workflowCard: typeof import('./workflow_card') =
+    typeof WorkflowCard !== 'undefined'
+      ? WorkflowCard : require('./workflow_card');
   const StudioLocaleApi =
     typeof require === 'function' ? require('./locale') : null;
   const compaction: typeof import('../compaction_status') =
@@ -3674,6 +3677,149 @@ const ChatView = (() => {
     return root;
   }
 
+  // Fixed track geometry: station width and the solid link between neighbours
+  // are known constants so arc endpoints can be computed without measuring
+  // the DOM (which headless tests cannot do).
+  const WF_STATION_W = 150;
+  const WF_LINK_W = 28;
+  const WF_LANE_GAP = 14;
+  const WF_LIGHT_CENTER_IN_RAIL = 9;
+
+  const WF_BADGES: Readonly<Record<string, string>> = {
+    succeeded: '已完成',
+    failed: '失败',
+    aborted: '已中止',
+    running: '运行中',
+  };
+
+  function wfSvgElement(tag: string): ChatNode {
+    const namespace = 'http://www.w3.org/2000/svg';
+    return DOC
+      ? DOC.createElementNS(namespace, tag)
+      : shimNode(tag, namespace);
+  }
+
+  function workflowRunBadgeLabel(status: string): string {
+    return WF_BADGES[status] ?? status;
+  }
+
+  /**
+   * The Workflow.run DAG card: header line plus one horizontal track. The
+   * settled presentation wins; while the call is in flight the latest snapshot
+   * accumulated in the row's progress text lights the stations instead.
+   */
+  function workflowCardNode(model: ToolRowModel): ChatNode | null {
+    if (model.name !== 'Workflow.run') {
+      return null;
+    }
+    const snapshot = model.presentation
+      ? null
+      : workflowCard.parseWorkflowSnapshot(model.output ?? '');
+    const card = workflowCard.buildWorkflowCardModel(
+      model.presentation ?? null,
+      snapshot,
+    );
+    if (card === null) {
+      return null;
+    }
+
+    const root = h('div', {class: 'wf-card', 'data-wf-status': card.status});
+    root.setAttribute('data-run-id', card.runId);
+
+    const head = h('div', {class: 'wf-head'});
+    const glyph = wfSvgElement('svg');
+    glyph.setAttribute('class', 'wf-glyph');
+    glyph.setAttribute('viewBox', '0 0 16 16');
+    glyph.setAttribute('aria-hidden', 'true');
+    const triangle = wfSvgElement('path');
+    triangle.setAttribute('d', 'M5 3.5 L12.5 8 L5 12.5 Z');
+    triangle.setAttribute('fill', 'currentColor');
+    attach(glyph, triangle);
+    attach(head, glyph);
+    const title = h('span', {class: 'wf-title', title: card.title});
+    attach(title, card.title);
+    attach(head, title);
+    const badge = h('span', {class: 'wf-badge', 'data-status': card.status});
+    attach(badge, workflowRunBadgeLabel(card.status));
+    attach(head, badge);
+    const tokens = card.tokens >= 1000
+      ? `${(card.tokens / 1000).toFixed(1)}k`
+      : String(card.tokens);
+    const summary = h('span', {class: 'wf-summary'});
+    attach(
+      summary,
+      `${card.total} 个步骤 · ${card.doneCount}/${card.total} · ${tokens} tokens`,
+    );
+    attach(head, summary);
+    attach(root, head);
+
+    const lanes = workflowCard.layoutWorkflowArcs(card.arcs);
+    const maxLevel = lanes.reduce((top, arc) => Math.max(top, arc.level), 0);
+    const arcZone = maxLevel * WF_LANE_GAP + 10;
+    const lightY = arcZone + WF_LIGHT_CENTER_IN_RAIL;
+    const railWidth =
+      card.stations.length * WF_STATION_W +
+      Math.max(0, card.stations.length - 1) * WF_LINK_W;
+
+    const track = h('div', {class: 'wf-track'});
+    track.setAttribute('style', `--wf-arc-zone:${arcZone}px`);
+    if (lanes.length > 0) {
+      const svg = wfSvgElement('svg');
+      svg.setAttribute('class', 'wf-arcs');
+      svg.setAttribute('viewBox', `0 0 ${railWidth} ${lightY + 1}`);
+      svg.setAttribute('width', String(railWidth));
+      svg.setAttribute('height', String(lightY + 1));
+      svg.setAttribute('aria-hidden', 'true');
+      for (const arc of lanes) {
+        const xa = WF_STATION_W / 2 + arc.fromIndex * (WF_STATION_W + WF_LINK_W);
+        const xb = WF_STATION_W / 2 + arc.toIndex * (WF_STATION_W + WF_LINK_W);
+        const ly = 10 + (maxLevel - arc.level) * WF_LANE_GAP;
+        const elbow = wfSvgElement('path');
+        elbow.setAttribute('class', 'wf-arc');
+        elbow.setAttribute(
+          'd',
+          `M ${xa} ${lightY} V ${ly + 8} Q ${xa} ${ly} ${xa + 8} ${ly}` +
+            ` H ${xb - 8} Q ${xb} ${ly} ${xb} ${ly + 8} V ${lightY}`,
+        );
+        attach(svg, elbow);
+        const arrow = wfSvgElement('path');
+        arrow.setAttribute('class', 'wf-arc wf-arc-arrow');
+        arrow.setAttribute(
+          'd',
+          `M ${xb - 3.5} ${lightY - 7.5} L ${xb + 3.5} ${lightY - 7.5}` +
+            ` L ${xb} ${lightY - 1.5} Z`,
+        );
+        attach(svg, arrow);
+      }
+      attach(track, svg);
+    }
+
+    const rail = h('div', {class: 'wf-rail'});
+    rail.setAttribute('style', `width:${railWidth}px`);
+    for (const [position, station] of card.stations.entries()) {
+      const stationNode = h('div', {
+        class: 'wf-station',
+        'data-status': station.status,
+        'data-step-id': station.stepId,
+        title: station.title,
+      });
+      attach(
+        stationNode,
+        h('span', {class: 'wf-light', 'aria-hidden': 'true'}),
+      );
+      const name = h('span', {class: 'wf-station-title'});
+      attach(name, station.title);
+      attach(stationNode, name);
+      attach(rail, stationNode);
+      if (position < card.stations.length - 1) {
+        attach(rail, h('span', {class: 'wf-link', 'aria-hidden': 'true'}));
+      }
+    }
+    attach(track, rail);
+    attach(root, track);
+    return root;
+  }
+
   function toolRowBody(model: ToolRowModel): {
     nodes: ChatNode[];
     hasResults: boolean;
@@ -3727,7 +3873,12 @@ const ChatView = (() => {
     const results = resultBodyNode(model.name, payload);
     const webCount = webResults(model.name, payload)?.count ?? null;
     const checklist = todoChecklist(model) || questionHistory(model);
-    if (fileDiffs) {
+    const workflow = workflowCardNode(model);
+    if (workflow !== null) {
+      // The DAG card replaces every other body form for a workflow run.
+      body.push(workflow);
+      outputInCard = true;
+    } else if (fileDiffs) {
       for (const raw of fileDiffs) {
         const entry = recordOf(raw);
         if (!entry || typeof entry.path !== 'string') {
@@ -3817,7 +3968,11 @@ const ChatView = (() => {
       body.push(output);
     }
 
-    return {nodes: body, hasResults: results !== null, webCount};
+    return {
+      nodes: body,
+      hasResults: results !== null || workflow !== null,
+      webCount,
+    };
   }
 
   function thinkingQuote(text: string): string {

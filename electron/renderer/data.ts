@@ -500,6 +500,8 @@ declare global {
   const ChatDiffRows: typeof import('./chat_diff_rows');
   const ChatFileIcons: typeof import('./chat_file_icons');
   const ChatToolSummary: typeof import('./chat_tool_summary');
+  const WorkflowCard: typeof import('./workflow_card');
+  const StudioWorkflowPanel: typeof import('./studio_workflow_panel');
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;
