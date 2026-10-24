@@ -22,7 +22,7 @@ import {registerDurableMemoryTools} from './agent_memory';
 import {validateAdditionalFolders} from '../workspace_folders';
 import {savedWorkspaceSettings} from './workspace_settings';
 import {registerSubagentTools} from './agent_background';
-import {registerWorkflowRunTool} from './workflow_engine';
+import {expandWorkflowCommand, registerWorkflowRunTool} from './workflow_engine';
 import {
   contextWindowFor,
   registerMemoryTools,
@@ -600,13 +600,27 @@ export async function runRuntime(
       },
     };
     common.system = await prompt.build(common);
+    const expandedWorkflow = expandWorkflowCommand(instruction);
+    if (expandedWorkflow) {
+      instruction = expandedWorkflow;
+    }
     const command =
-      /^\/(help|compact|permission|model|cwd|rewind)(?:\s+([\s\S]*))?$/.exec(
+      /^\/(help|compact|permission|model|cwd|rewind|workflow)(?:\s+([\s\S]*))?$/.exec(
         instruction,
       );
     if (command) {
       const name = command[1];
       const rest = (command[2] || '').trim();
+      if (name === 'workflow') {
+        return {
+          ok: true,
+          answer:
+            '用法：/workflow <任务描述>。MP 会把任务编排成步骤计划并用 Workflow.run 逐步执行，每步由一个子代理完成后向主任务汇报。',
+          command: {type: name},
+          agentSessionId: session.id,
+          usedBackend: 'runtime.slash_help',
+        };
+      }
       if (name === 'help') {
         return {
           ok: true,

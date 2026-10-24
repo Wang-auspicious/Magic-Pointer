@@ -36,6 +36,22 @@ export type ToolPresentation =
         exists?: boolean;
         presentation: FileDiffPresentation;
       }>;
+    }
+  | {
+      kind: 'workflow_run';
+      runId: string;
+      title: string;
+      status: 'succeeded' | 'failed' | 'aborted';
+      tokens: number;
+      steps: Array<{
+        id: string;
+        title: string;
+        status: string;
+        attempts: number;
+        depends_on: string[];
+        readonly: boolean;
+        summary?: string;
+      }>;
     };
 export interface ToolCall {
   id: string;

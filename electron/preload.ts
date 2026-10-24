@@ -649,6 +649,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       ipcRenderer.invoke('conversations:respond', payload),
     stopSubagent: (payload: {conversationId: string; subagentId: string}) =>
       ipcRenderer.invoke('conversations:stop-subagent', payload),
+    stopWorkflow: (payload: {conversationId: string; runId: string}) =>
+      ipcRenderer.invoke('conversations:stop-workflow', payload),
     subagents: (payload: {conversationId: string}) =>
       ipcRenderer.invoke('conversations:subagents', payload),
     respondSubagent: (payload: unknown) =>

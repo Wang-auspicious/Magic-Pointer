@@ -1016,6 +1016,10 @@ declare global {
         sessionId?: string;
         turn?: number;
       }>;
+      stopWorkflow?(payload: {
+        conversationId: string;
+        runId: string;
+      }): Promise<{ok?: boolean; error?: string}>;
       respond?(
         payload: MagicPointerInputResponse,
       ): Promise<Record<string, any>>;
@@ -1468,6 +1472,10 @@ declare global {
       sessionId?: string;
       turn?: number;
     }>;
+    stopWorkflow(payload: {
+      conversationId: string;
+      runId: string;
+    }): Promise<{ok?: boolean; error?: string}>;
     pickWorkspace(): Promise<{
       ok?: boolean;
       canceled?: boolean;
@@ -2275,6 +2283,13 @@ const Data: MagicPointerDataApi = {
   }> {
     const stop = bridge()?.conversations?.stopSubagent;
     return stop ? stop(payload) : {ok: false, error: '子任务停止通道不可用。'};
+  },
+  async stopWorkflow(payload: {
+    conversationId: string;
+    runId: string;
+  }): Promise<{ok?: boolean; error?: string}> {
+    const stop = bridge()?.conversations?.stopWorkflow;
+    return stop ? stop(payload) : {ok: false, error: '工作流停止通道不可用。'};
   },
   async subagents(payload: {conversationId: string}): Promise<{
     ok?: boolean;

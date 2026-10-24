@@ -1,9 +1,10 @@
 import {randomUUID} from 'node:crypto';
+import {readFile, rm} from 'node:fs/promises';
 import path from 'node:path';
 import {readJson, writeAtomic} from './learning';
 import {canonicalJson} from './session';
 import {runSubagentInline, stopAgent} from './agent_background';
-import {ToolRegistry} from './tools';
+import {ToolRegistry, type ToolPresentation} from './tools';
 import type {AgentOptions, Data, PermissionMode} from './agent';
 
 // Hard ceilings keep one submitted plan inside the same envelope as the
@@ -300,7 +301,13 @@ function composeInstruction(
   step: WorkflowStep,
   journal: RunJournal,
 ): string {
-  const parts = [`[workflow-step ${step.id}] ${step.title}`, step.instructions];
+  const parts = [
+    `[workflow-step ${step.id}] ${step.title}`,
+    step.instructions,
+    // Steps report facts to the parent run; the parent agent decides what
+    // the user sees. Steps never address the user directly.
+    'Report concrete results with paths, numbers and remaining limitations. You are reporting to the coordinating agent, not to the user; do not ask questions and do not announce progress.',
+  ];
   const upstream = step.depends_on
     .map(dep => journal.steps[dep])
     .filter(
@@ -341,6 +348,39 @@ async function runPool<T>(
 
 const activeRuns = new Set<string>();
 
+/**
+ * Rewrite a `/workflow <task>` composer command into an instruction that has
+ * the agent author a plan and execute it through the Workflow.run tool.
+ * Returns null when the instruction is not a workflow command with a task.
+ */
+export function expandWorkflowCommand(instruction: string): string | null {
+  const match = /^\/workflow[ \t]+([\s\S]+)$/.exec(instruction.trim());
+  if (!match) {
+    return null;
+  }
+  return [
+    '用户通过 /workflow 命令发起编排任务。先用 Tools 工具加载 Workflow.run，把下面的任务设计成步骤计划：依赖关系明确、每步独立可验证、只读步骤标 readonly，常规任务 2-6 步，不要拆得过细。然后用 Workflow.run 执行该计划，执行中依据步骤回执汇报进展，全部结束后汇总各步结果与遗留缺口。',
+    `任务：${match[1]!.trim()}`,
+  ].join('\n\n');
+}
+
+/** Write the stop marker a running engine polls to abort its run. */
+export async function requestWorkflowStop(
+  userDataDir: string,
+  runId: string,
+): Promise<void> {
+  if (!RUN_ID_PATTERN.test(runId)) {
+    throw new Error(`workflow_invalid_run_id: ${runId}`);
+  }
+  const file = path.join(
+    userDataDir,
+    'workflow-runs',
+    runId,
+    'stop',
+  );
+  await writeAtomic(file, 'stop');
+}
+
 export class WorkflowEngine {
   private readonly options: WorkflowEngineOptions;
 
@@ -368,6 +408,7 @@ export class WorkflowEngine {
       runId?: string;
       signal?: AbortSignal;
       parentCallId?: string;
+      onStep?: (snapshot: Data) => void;
     } = {},
   ): Promise<Data> {
     const parsed = parseWorkflowPlan(plan);
@@ -423,9 +464,30 @@ export class WorkflowEngine {
         ),
       };
     }
-    const signal = options.signal;
+    const stopController = new AbortController();
+    const signal: AbortSignal | undefined = options.signal
+      ? AbortSignal.any([options.signal, stopController.signal])
+      : stopController.signal;
     const session = this.options.session;
     const activeChildren = new Map<string, string>();
+    const tokens = {value: 0};
+    const emitSnapshot = (status: string) => {
+      options.onStep?.({
+        runId,
+        title: parsed.title,
+        status,
+        tokens: tokens.value,
+        steps: parsed.steps.map(step => {
+          const state = journal.steps[step.id]!;
+          return {
+            id: state.id,
+            title: state.title,
+            status: state.status,
+            attempts: state.attempts.length,
+          };
+        }),
+      });
+    };
     let stopped = false;
     const stopChildren = () => {
       stopped = true;
@@ -438,6 +500,19 @@ export class WorkflowEngine {
     signal?.addEventListener('abort', stopChildren, {once: true});
     const replayedSteps: string[] = [];
     activeRuns.add(runId);
+    const stopMarker = path.join(
+      this.options.userDataDir,
+      'workflow-runs',
+      runId,
+      'stop',
+    );
+    await rm(stopMarker, {force: true}).catch(() => {});
+    const stopWatch = setInterval(() => {
+      readFile(stopMarker)
+        .then(() => stopController.abort(new Error('workflow_stopped')))
+        .catch(() => {});
+    }, 500);
+    emitSnapshot('running');
     try {
       await session.refresh();
       const mode = session.permissionMode(
@@ -489,12 +564,14 @@ export class WorkflowEngine {
               signal,
               permissionMode,
               options.parentCallId,
+              tokens,
             );
           });
         }
         if (stopped || signal?.aborted) {
           break;
         }
+        emitSnapshot('running');
         for (const step of parsed.steps) {
           const state = journal.steps[step.id]!;
           if (state.status !== 'pending') {
@@ -535,9 +612,25 @@ export class WorkflowEngine {
         skipped: skippedSteps.length,
         replayed: replayedSteps.length,
       });
+      emitSnapshot(status);
       if (aborted) {
         throw signal?.reason ?? new Error('workflow_aborted');
       }
+      const steps = parsed.steps.map(step => {
+        const state = journal.steps[step.id]!;
+        return {
+          id: state.id,
+          title: state.title,
+          status: state.status,
+          attempts: state.attempts.length,
+          depends_on: step.depends_on,
+          readonly: step.readonly === true,
+          ...(replayedSteps.includes(step.id) ? {replayed: true} : {}),
+          ...(state.attempts.length
+            ? {summary: state.attempts.at(-1)!.summary}
+            : {}),
+        };
+      });
       return {
         ok: status === 'succeeded',
         runId,
@@ -545,23 +638,21 @@ export class WorkflowEngine {
         status,
         resumed,
         replayedSteps,
-        steps: parsed.steps.map(step => {
-          const state = journal.steps[step.id]!;
-          return {
-            id: state.id,
-            title: state.title,
-            status: state.status,
-            attempts: state.attempts.length,
-            ...(replayedSteps.includes(step.id) ? {replayed: true} : {}),
-            ...(state.attempts.length
-              ? {summary: state.attempts.at(-1)!.summary}
-              : {}),
-          };
-        }),
+        tokens: tokens.value,
+        steps,
         failedSteps,
         skippedSteps,
+        presentation: {
+          kind: 'workflow_run',
+          runId,
+          title: parsed.title,
+          status,
+          tokens: tokens.value,
+          steps,
+        },
       };
     } finally {
+      clearInterval(stopWatch);
       signal?.removeEventListener('abort', stopChildren);
       activeRuns.delete(runId);
     }
@@ -576,6 +667,7 @@ export class WorkflowEngine {
     signal: AbortSignal | undefined,
     permissionMode: PermissionMode,
     parentCallId: string | undefined,
+    tokens: {value: number},
   ): Promise<void> {
     const state = journal.steps[step.id]!;
     const session = this.options.session;
@@ -622,6 +714,11 @@ export class WorkflowEngine {
           contextTokens: this.options.contextTokens,
         });
         childStatus = String(status.status ?? 'failed');
+        tokens.value +=
+          Number(
+            (status.modelUsage as Record<string, unknown> | undefined)
+              ?.totalTokens,
+          ) || 0;
         summary = String(status.summary ?? '').slice(
           0,
           MAX_RECEIPT_SUMMARY_CHARS,
@@ -738,11 +835,21 @@ export function registerWorkflowRunTool(
     deferred: true,
     timeout_ms: WORKFLOW_RUN_TIMEOUT_MS,
     used_backend: 'workflow_engine',
-    execute: (args, context) =>
-      engine.run(args, {
+    execute: async (args, context) => {
+      const result = await engine.run(args, {
         runId: args.run_id === undefined ? undefined : String(args.run_id),
         signal: context.signal,
         parentCallId: context.tool_call_id,
-      }),
+        onStep: snapshot =>
+          context.on_progress?.(JSON.stringify(snapshot)),
+      });
+      const presentation = result.presentation as ToolPresentation | undefined;
+      const value = {...result} as Partial<typeof result>;
+      delete value.presentation;
+      if (presentation) {
+        context.present?.(presentation);
+      }
+      return value as typeof result;
+    },
   });
 }

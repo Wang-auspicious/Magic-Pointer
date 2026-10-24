@@ -424,6 +424,10 @@ export async function directoryPayload(
     ok: true,
     commands: [
       {name: 'help', description: '显示命令帮助'},
+      {
+        name: 'workflow',
+        description: '把任务编排成步骤计划并用 Workflow.run 逐步执行',
+      },
       {name: 'compact', description: '压缩当前任务上下文'},
       {name: 'model', description: '选择模型'},
       {name: 'permission', description: '选择权限模式'},

@@ -5749,6 +5749,35 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'conversations:stop-workflow',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isConversationSender(event, dashboardWindow, companionWindow)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    const runId = String(raw.runId || '').trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(runId)) {
+      return {ok: false, error: 'invalid_workflow_run_id'};
+    }
+    try {
+      const marker = path.join(
+        FABRIC_DATA_DIR,
+        'workflow-runs',
+        runId,
+        'stop',
+      );
+      await fs.promises.mkdir(path.dirname(marker), {recursive: true});
+      await fs.promises.writeFile(marker, 'stop');
+      return {ok: true};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
   'conversations:steer',
   async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
     if (!isConversationSender(event, dashboardWindow, companionWindow)) {
