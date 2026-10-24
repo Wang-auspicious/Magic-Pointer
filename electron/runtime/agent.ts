@@ -195,6 +195,11 @@ export function decidePermission(
   ) {
     return 'allow';
   }
+  // The ladder keeps auto one step under bypass: everything local runs, the
+  // reviewer only judges effects that leave the machine or destroy data.
+  if (mode === 'accept_reversible' && effect === 'local_irreversible') {
+    return 'allow';
+  }
   return 'ask';
 }
 
@@ -331,7 +336,7 @@ export function permissionFor(
   const decision = decidePermission(mode, effect);
   return decision === 'ask' &&
     mode === 'accept_reversible' &&
-    effect !== 'purchase'
+    ['external_send', 'destructive'].includes(effect)
     ? 'review'
     : decision;
 }
@@ -1161,6 +1166,9 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             }
           }
           let decision = permissionFor(options, call, claimedOnce);
+          const mode = session.permissionMode(
+            options.permissionMode ?? 'default',
+          );
           let review: AutoPermissionReview | undefined;
           if (decision === 'review') {
             const reviewStartedAt = Date.now();
@@ -1259,20 +1267,31 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             const canGrantTool =
               !exactHistoryRead &&
               ['reversible_write', 'local_irreversible'].includes(effect);
+            const raiseMode =
+              ['local_irreversible', 'external_send', 'destructive'].includes(
+                effect,
+              ) && ['default', 'safe'].includes(mode)
+                ? 'auto'
+                : undefined;
+            const preview =
+              spec.name === 'Bash'
+                ? `命令：${canonicalJson(args).slice(0, 16000)}\n\n完整查看上述命令后再允许。`
+                : canonicalJson(args).slice(0, 16000);
             const request = {
               kind: 'permission',
               tool: spec.name,
               question: review
-                ? `${review.reason}\nAllow ${spec.name}?`
-                : `Allow ${spec.name}?`,
+                ? `${review.reason}\n允许执行 ${spec.name}？`
+                : `允许执行 ${spec.name}？`,
               options: canGrantTool
-                ? ['仅这一次允许', `本会话总是允许 ${spec.name}`, '拒绝']
-                : ['仅这一次允许', '拒绝'],
+                ? ['允许这一次', `本会话总是允许 ${spec.name}`, '拒绝']
+                : ['允许这一次', '拒绝'],
               awaitingUserInput: true,
               harnessPermission: true,
               requestId: call.id,
               action: {tool: spec.name, arguments: args},
-              actionPreview: canonicalJson(args).slice(0, 16000),
+              actionPreview: preview,
+              ...(raiseMode ? {modeRaise: raiseMode} : {}),
             };
             await session.append('permission/requested', {
               requestId: call.id,

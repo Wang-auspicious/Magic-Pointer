@@ -98,6 +98,7 @@ declare global {
       requestId?: string;
       question?: string;
       options?: string[];
+      modeRaise?: 'auto';
       questions?: Array<{
         header?: string;
         question: string;

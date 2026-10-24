@@ -918,6 +918,10 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'decision.deny': {en: 'Deny', zh: '拒绝'},
   'decision.allow_once': {en: 'Allow once', zh: '仅这一次允许'},
   'decision.allow_session': {en: 'Allow for this session', zh: '本次会话允许'},
+  'decision.allow_mode_raise': {
+    en: 'Allow and switch to auto this session',
+    zh: '允许并本会话切到自动模式',
+  },
   'decision.plan_approval': {en: 'Plan approval', zh: '计划审批'},
   'decision.plan': {en: 'Plan', zh: '计划'},
   'decision.ready_review': {en: 'Ready for review', zh: '等待审阅'},

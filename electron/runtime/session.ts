@@ -1892,7 +1892,7 @@ export class EventSession {
       }
       normalized.applicationResult = applied.data.result;
     }
-    return this.append('user_input/answered', {
+    const answered = await this.append('user_input/answered', {
       requestId,
       pendingInput: pending,
       response: normalized,
@@ -1916,6 +1916,13 @@ export class EventSession {
         }),
       },
     });
+    if (text(normalized.modeRaise) === 'auto') {
+      await this.append('permission/mode', {
+        mode: 'accept_reversible',
+        requested: 'accept_reversible',
+      });
+    }
+    return answered;
   }
   private verifiedArtifactApplication(pending: Data): SessionEvent | undefined {
     const latest = [...this.events]
@@ -2123,6 +2130,13 @@ export function normalizeResponse(pending: Data, response: Data): Data {
     if (!['once', 'grant', 'deny'].includes(decision)) {
       throw new Error('invalid_permission_decision');
     }
+    const modeRaise =
+      response.modeRaise === undefined ? undefined : text(response.modeRaise);
+    if (modeRaise !== undefined) {
+      if (decision === 'deny' || modeRaise !== 'auto') {
+        throw new Error('invalid_mode_raise');
+      }
+    }
     if (response.actionArguments !== undefined) {
       if (
         pending.kind !== 'permission' ||
@@ -2170,7 +2184,10 @@ export function normalizeResponse(pending: Data, response: Data): Data {
         },
       };
     }
-    return {decision};
+    return {
+      decision,
+      ...(modeRaise === undefined ? {} : {modeRaise}),
+    };
   }
   const questions = array(
     pending.questions ?? [

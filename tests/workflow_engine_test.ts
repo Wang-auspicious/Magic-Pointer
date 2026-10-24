@@ -427,7 +427,7 @@ test('caps same-layer concurrency at max_concurrency', async () => {
       ).length >= 2
     );
   });
-  await new Promise(resolve => setTimeout(resolve, 200));
+  await waitFor(async () => (await readFile(harness.peakFile, 'utf8')) === '2');
   assert.equal(await readFile(harness.peakFile, 'utf8'), '2');
   await writeFile(harness.gateFile, 'release');
   const result = (await running) as Data;

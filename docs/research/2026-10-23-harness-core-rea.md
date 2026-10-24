@@ -368,3 +368,17 @@ aLe(used,W): used ≥ W-3000 → "blocked";  used ≥ xY(W) → "compact";  used
 - 循环：malformed/thinking-only 各 1 次重试、截断续写 3 次、Stop-hook 阻止 8 次封顶、API 重试
   10 次 + retry-after 60 s 放弃线、压缩阈值"绝对 token 余量（−13 k）而非百分比"、3 轮内回填
   连续 3 次熔断——这组数字是 Claude Code 两版本间稳定的生产常量。
+
+## G. 权限模式阶梯与 auto 定义（2026-10-23 补充，CLI295exe 静态证据）
+
+- 模式枚举与阶梯：`var d0=["acceptEdits","auto","bypassPermissions","default","dontAsk","plan"]`；权威阶梯 `mr={plan:0,bubble:1,default:1,dontAsk:1,acceptEdits:2,auto:3,bypassPermissions:4}`，`Rz(e,n)` 用它裁决模式抬升是否合法（CLI295exe@212,711,123 区域）。
+- 各模式官方描述（zod schema，CLI295exe@212,091,453–212,091,654）：'default'——危险操作提示；'acceptEdits'——自动接受文件编辑；'bypassPermissions'——跳过全部权限检查（需 allowDangerouslySkipPermissions）；'plan'——只规划不执行；'dontAsk'——不提示、未预批则拒；**'auto'——"Use a model classifier to approve/deny permission prompts"（用模型分类器批准/拒绝权限弹窗）**。
+- 桌面端批准卡的模式抬升文案（JE 表，cache fc725cbb30.js）：Accept / "Accept and allow edits" / **"Accept and auto mode"** / "Accept and bypass permissions"——批准一个动作时可顺带抬升会话模式；另有独立 onModeChange 通道。
+- 桌面端仍在询问时的原因行（同 chunk @101,070–104,640）：bypass 被组织关闭/进程未带 bypass 启动/远程控制中/自动审批暂停等，每条一句解释"为什么这次还在问"。
+- auto 模式有可用性闸与熔断（isAutoModeAvailable、circuit breaker `LW()`、`s6` 在熔断时回退 default，CLI295exe@222,701,051、@227,199,562）。
+
+## H. 本批对 MP 的落点（权限批）
+
+- decidePermission 阶梯改为 safe < default < auto(accept_reversible) < bypass 单调放宽：auto 放行 local_irreversible（原与 default 完全同权、每个本地动作都走模型评审后弹卡，即用户反馈"开 auto 也一直弹窗"的根因），external_send/destructive 仍走评审（与 'auto'=模型分类器 官方定义一致），purchase 永远问。
+- 权限卡新增"允许并本会话切到自动模式"（Accept and auto mode 模式抬升）：后端按 mode+effect 标 modeRaise，session.answer 校验 modeRaise==='auto' 且非 deny，追加 permission/mode 事件即时生效。
+- 卡片文案对齐：中文问句"允许执行 X？"、Bash 预览带"命令："前缀与"完整查看上述命令后再允许。"提示（对应原件 commandHint "Scroll through the whole command to allow it."）。

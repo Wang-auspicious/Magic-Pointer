@@ -4733,6 +4733,7 @@ function syncConversationPendingInput(turns: MagicPointerTurn[]) {
       action: pending.action,
       question: String(pending.question || '').trim() || undefined,
       options: options.length ? options : undefined,
+      ...(pending.modeRaise === 'auto' ? {modeRaise: 'auto'} : {}),
     };
   } else if (
     pending &&
@@ -12859,6 +12860,7 @@ let pendingPermissionAsk: {
   action?: {tool?: string; arguments?: Record<string, unknown>};
   question?: string;
   options?: string[];
+  modeRaise?: 'auto';
 } | null = null;
 let pendingPermissionChoice: {
   grant?: string;

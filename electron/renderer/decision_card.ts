@@ -18,6 +18,7 @@ declare global {
     action?: {tool?: string; arguments?: Record<string, unknown>};
     question?: string;
     options?: string[];
+    modeRaise?: 'auto';
     questions?: MagicPointerDecisionQuestion[];
     presentation?: 'inline' | 'dock';
     historySources?: Array<{id: string; title?: string}>;
@@ -27,6 +28,7 @@ declare global {
   type MagicPointerDecisionResponse =
     | {
         decision: 'once' | 'grant' | 'deny';
+        modeRaise?: 'auto';
         actionArguments?: {
           from_ms: number;
           to_ms: number;
@@ -696,6 +698,14 @@ declare global {
         );
         session.dataset.decision = 'grant';
         allow.append(session);
+      }
+      if (request.modeRaise === 'auto') {
+        const raise = button(
+          studioT('decision.allow_mode_raise'),
+          () => submit({decision: 'once', modeRaise: 'auto'}),
+        );
+        raise.dataset.decision = 'mode-raise';
+        allow.append(raise);
       }
       const once = button(
         labels[0] || studioT('decision.allow_once'),
