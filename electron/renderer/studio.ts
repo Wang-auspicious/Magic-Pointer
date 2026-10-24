@@ -1194,6 +1194,23 @@ interface SidebarGroupModule {
 }
 const sidebarGroups = (globalThis as {SidebarGroups?: SidebarGroupModule})
   .SidebarGroups!;
+interface InputHistoryModule {
+  normalizeHistory(entries: readonly unknown[]): string[];
+  stepHistory(
+    index: number,
+    direction: 'older' | 'newer',
+    total: number,
+  ): number;
+  historyLabel(index: number, total: number): string | null;
+  historyKeyAction(
+    key: string,
+    value: string,
+    selectionStart: number,
+    selectionEnd: number,
+  ): 'older' | 'newer' | null;
+}
+const inputHistory = (globalThis as {InputHistory?: InputHistoryModule})
+  .InputHistory!;
 const studioLibraries = (globalThis as any).StudioLibraries;
 interface StudioHomeModule {
   render(options: {
@@ -1421,6 +1438,7 @@ function conversationNode(
     id?: string;
     title?: string;
     updatedAt?: number;
+    workMode?: 'work' | 'code';
     hasPendingWork?: boolean;
     failed?: boolean;
     lastOutcome?: string;
@@ -1448,6 +1466,7 @@ function conversationNode(
           ? ''
           : activity;
   const statusLabel = status ? ConversationState.label(activity) : '';
+  row.dataset.workMode = c.workMode === 'work' ? 'work' : 'code';
   row.title = String(c.title || studioT('convo.untitled'));
   if (status) {
     row.title = `${String(c.title || studioT('convo.untitled'))}\n${statusLabel}`;
@@ -1502,7 +1521,10 @@ function conversationNode(
   ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
   actions.appendChild(buildSessionMenu(c, pinnedIds));
-  row.append(title, actions);
+  const modeDot = document.createElement('span');
+  modeDot.className = 'side-dot';
+  modeDot.setAttribute('aria-hidden', 'true');
+  row.append(modeDot, title, actions);
   return row;
 }
 
@@ -6791,6 +6813,7 @@ function restoreComposerDraft(
   if (textarea) {
     textarea.value = draft?.text || '';
     fitComposer(textarea);
+    resetComposerHistory();
   }
   composerAttachments = [...(draft?.attachments || [])];
   composerAdditionalFolders = [
@@ -14879,6 +14902,50 @@ document
     void stopActiveConversation();
   });
 
+// Composer input history (↑ recalls past questions with a counter): entries
+// are the current conversation's questions plus anything submitted in this
+// app session, so recall works even before the turn is durably recorded.
+let composerHistoryIndex = -1;
+let composerHistoryDraft = '';
+let composerHistoryConversationId: string | null = null;
+const composerSessionHistory: string[] = [];
+
+function syncComposerHistoryChip(): void {
+  const chip = document.getElementById('composer-history');
+  if (!chip) {
+    return;
+  }
+  const entries = composerHistoryEntries();
+  const label = inputHistory.historyLabel(
+    composerHistoryIndex,
+    entries.length,
+  );
+  chip.textContent = label || '';
+  chip.hidden = label === null;
+}
+
+function resetComposerHistory(): void {
+  composerHistoryIndex = -1;
+  composerHistoryDraft = '';
+  syncComposerHistoryChip();
+}
+
+function composerHistoryEntries(): string[] {
+  if (composerHistoryConversationId !== (activeConversationId ?? null)) {
+    composerHistoryConversationId = activeConversationId ?? null;
+    composerSessionHistory.length = 0;
+    composerHistoryIndex = -1;
+    composerHistoryDraft = '';
+  }
+  const questions = (activeConversationRecord?.turns || []).map(
+    turn => turn.question || '',
+  );
+  return inputHistory.normalizeHistory([
+    ...composerSessionHistory,
+    ...questions,
+  ]);
+}
+
 document.querySelectorAll('form.mpw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');
   if (ta) {
@@ -14935,6 +15002,56 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         e.preventDefault();
         return;
       }
+      if (
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+        !e.shiftKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.isComposing
+      ) {
+        const entries = composerHistoryEntries();
+        const action = inputHistory.historyKeyAction(
+          e.key,
+          ta.value,
+          ta.selectionStart ?? 0,
+          ta.selectionEnd ?? 0,
+        );
+        if (entries.length && action) {
+          e.preventDefault();
+          if (composerHistoryIndex === -1 && action === 'older') {
+            composerHistoryDraft = ta.value;
+          }
+          const next = inputHistory.stepHistory(
+            composerHistoryIndex,
+            action,
+            entries.length,
+          );
+          if (next === -1) {
+            ta.value = composerHistoryDraft;
+            composerHistoryDraft = '';
+          } else {
+            ta.value = entries[next] ?? '';
+          }
+          composerHistoryIndex = next;
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+          fitComposer(ta);
+          syncComposerSubmitState();
+          syncComposerHistoryChip();
+          return;
+        }
+      }
+      if (e.key === 'Escape' && composerHistoryIndex !== -1) {
+        e.preventDefault();
+        ta.value = composerHistoryDraft;
+        composerHistoryDraft = '';
+        composerHistoryIndex = -1;
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+        fitComposer(ta);
+        syncComposerSubmitState();
+        syncComposerHistoryChip();
+        return;
+      }
       if (e.key !== 'Enter' || e.shiftKey || e.isComposing) {
         return;
       }
@@ -14946,6 +15063,10 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     e.preventDefault();
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
     const question = textarea?.value.trim() || '';
+    if (question) {
+      composerSessionHistory.push(question);
+    }
+    resetComposerHistory();
     if (!textarea || !question) {
       textarea?.focus();
       return;

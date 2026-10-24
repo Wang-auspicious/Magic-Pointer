@@ -2973,6 +2973,23 @@ span.mp-chat-diff-path {
   flex: 1;
 }
 
+/* While history recall is active the counter sits above the text, so the
+ * row flips to a column for that time only. */
+.mpw-grow:has(.mpw-input-history:not([hidden])) {
+  flex-direction: column;
+}
+
+.mpw-input-history {
+  padding: 8px 10px 0;
+  color: var(--mp-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.mpw-input-history[hidden] {
+  display: none;
+}
+
 .mpw-input {
   width: 100%;
   min-height: 44px;

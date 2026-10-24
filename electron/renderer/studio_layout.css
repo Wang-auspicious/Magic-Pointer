@@ -472,6 +472,20 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   white-space: nowrap;
 }
 
+/* Leading mode dot on session rows (6x6 like the reference skeleton):
+ * blue = code, orange = work. */
+.side-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cds-text-tint-blue);
+}
+
+.side-item[data-work-mode='work'] .side-dot {
+  background: var(--cds-text-tint-orange);
+}
+
 .mpw-project-name {
   flex: 0 1 auto;
   font-size: 12px;
