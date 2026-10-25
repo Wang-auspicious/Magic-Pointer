@@ -7432,7 +7432,7 @@ async function executeAccountCommand(command: string) {
     show('settings');
     requestAnimationFrame(() => {
       document
-        .querySelector<HTMLElement>('[data-settings-page="models-agents"]')
+        .querySelector<HTMLElement>('[data-settings-page="account"]')
         ?.dispatchEvent(new MouseEvent('click', {bubbles: true}));
     });
     return;
@@ -11386,11 +11386,10 @@ document.addEventListener('click', e => {
   if (settingsTarget) {
     show('settings');
     requestAnimationFrame(() => {
-      const requested =
-        settingsTarget.dataset.settingsSection || 'models-agents';
+      const requested = settingsTarget.dataset.settingsSection || 'account';
       (
         document.querySelector(`[data-settings-page="${requested}"]`) ||
-        document.querySelector('[data-settings-page="models-agents"]')
+        document.querySelector('[data-settings-page="account"]')
       )?.dispatchEvent(new MouseEvent('click', {bubbles: true}));
     });
     return;

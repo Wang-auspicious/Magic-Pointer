@@ -26,7 +26,7 @@
   type SettingSection = {title: string; rows: SettingRow[]};
   type SettingsPage = {
     description: string;
-    group: 'Startup' | 'AppPreferences' | 'GlobalShortcut' | 'MCP' | 'Extensions' | 'AppConfig' | 'DesktopInfo' | 'AppFeatures' | 'HistoryImport' | 'CcdCli' | 'FilePickers' | 'Custom3pSetup' | 'Custom3pHelperRun' | 'Custom3pUsage' | 'ClaudeAiImport' | 'SupportBundle' | 'WakeScheduler';
+    group: 'Customize' | 'This computer';
     icon: string;
     id: string;
     /* Counterpart group on the reference settings surface
@@ -103,30 +103,26 @@
   }
 
   /* Page order, ids, groups and the pinned titles below are asserted by
-   * tests/settings_ui_model_test.ts. Pages are grouped by the reference
-   * namespace skeleton below (one group per claude.settings namespace that
-   * has real rows; empty namespaces render no page). MP-only pages keep
-   * their own names and sit in the nearest namespace group.
-   *
-   * Reference skeleton (claude.settings IPC surface, static evidence in
-   * D:/Desktop/ClaudeDesktopRE/report/13-ipc-catalog.md; chunk lines are
-   * pretty/main-index.chunk.js offsets): AppConfig 59400, Startup 59414,
-   * CcdCli 59422, GlobalShortcut 59429, MCP 59435, Extensions 59457,
-   * FilePickers 59549, AppPreferences 59555, AppFeatures 59568,
-   * DesktopInfo 59569, Custom3pSetup 59576, Custom3pHelperRun 59652,
-   * ClaudeAiImport 59677, HistoryImport 59726, SupportBundle 59773,
-   * WakeScheduler 59774, Custom3pUsage 59780.
-   * Pages with a real counterpart carry it in `ref` and use the
-   * reference section vocabulary; MP-only pages (models-agents, skills,
-   * permissions, memory-context) keep their own names — nothing invented. */
+   * tests/settings_ui_model_test.ts. Nav shape follows the Claude Desktop
+   * settings page (static REA 2026-10-24, evidence in
+   * docs/research/claude-settings-page-rea-20261024.md): grouped nav with
+   * "Customize" / "This computer" headers and the reference section
+   * vocabulary General, Appearance, Account, Privacy, Capabilities,
+   * Memory, Connectors, Extensions (Plugins/Skills), Developer. Pages the
+   * reference has but MP has no real data for (Billing, Usage, System
+   * prompt, Claude Code, Cowork, Import, Claude in Chrome, System) are
+   * omitted — nothing invented. Rows keep their real schema paths; row
+   * wording follows the reference where the semantics match (e.g. "Run on
+   * startup"). Pages with a claude.settings IPC counterpart carry it in
+   * `ref` (namespace + pretty/main-index.chunk.js offset). */
   const SETTINGS_PAGES: SettingsPage[] = [
     {
       id: 'general',
-      group: 'Startup',
+      group: 'Customize',
       icon: 'ic-window',
       ref: 'claude.settings.Startup (59414)',
       title: 'General',
-      description: 'Startup, background behavior, and updates.',
+      description: 'Startup, wake and input, shortcuts, and updates.',
       sections: [
         {
           title: 'Startup',
@@ -134,8 +130,9 @@
             {
               path: 'general.launch_at_login',
               control: 'toggle',
-              label: 'Launch at login',
-              description: 'Start quietly after you sign in.',
+              label: 'Run on startup',
+              description:
+                'Automatically start Magic Pointer when you log in to your computer.',
             },
             {
               path: 'general.keep_running',
@@ -145,19 +142,8 @@
             },
           ],
         },
-      ],
-    },
-    {
-      id: 'interaction',
-      group: 'AppPreferences',
-      icon: 'ic-cursor',
-      ref: 'claude.settings.AppPreferences (59555)',
-      title: 'Interaction',
-      description:
-        'Choose how Magic Pointer wakes, captures intent, and accepts input.',
-      sections: [
         {
-          title: 'Activation',
+          title: 'Wake & input',
           rows: [
             {
               path: 'activation.wake_mode',
@@ -213,140 +199,48 @@
             },
           ],
         },
-      ],
-    },
-    {
-      id: 'perception-privacy',
-      group: 'AppPreferences',
-      icon: 'ic-eye',
-      ref: 'claude.settings.AppPreferences (59555)',
-      title: 'Perception & privacy',
-      description:
-        'Control what the Agent can inspect, what may leave the device, and which apps remain private.',
-      sections: [
         {
-          title: 'Reading',
+          title: 'Shortcuts',
           rows: [
             {
-              path: 'privacy.default_capture_mode',
+              path: 'shortcuts.wake',
+              control: 'text',
+              label: 'Wake Magic Pointer',
+            },
+            {
+              path: 'shortcuts.text_mode',
+              control: 'text',
+              label: 'Start text input',
+            },
+            {path: 'shortcuts.pause', control: 'text', label: 'Pause input'},
+          ],
+        },
+        {
+          title: 'Updates',
+          rows: [
+            {
+              path: 'general.update_channel',
               control: 'select',
-              label: 'Default capture mode',
+              label: 'Update channel',
               options: [
-                option('follow_global', 'Auto'),
-                option('structured_only', 'Structured only'),
-                option('local_screenshot', 'Local screenshot only'),
-                option('deny', 'Deny'),
+                option('stable', 'Stable'),
+                option('preview', 'Preview'),
               ],
             },
             {
-              path: 'privacy.upload_screenshots',
-              control: 'toggle',
-              label: 'Allow screenshots to reach the model',
-            },
-          ],
-        },
-        {
-          title: 'Boundaries',
-          rows: [
-            {
-              path: 'privacy.sensitive_apps',
-              control: 'tags',
-              label: 'Apps Magic Pointer never reads',
-              description: 'No reading, capture, or memory.',
-            },
-          ],
-        },
-        {
-          title: 'Browser',
-          rows: [
-            {
-              path: 'connections.browser_devtools_enabled',
-              control: 'toggle',
-              label: 'Read authorized browser pages',
-            },
-            {
-              path: 'connections.browser_devtools_endpoints',
-              control: 'tags',
-              label: 'Local debugging endpoints',
-              description: 'Only localhost and 127.0.0.1 are accepted.',
+              control: 'info',
+              infoKey: 'updates',
+              label: 'Installed status',
+              description:
+                'Download and relaunch state also appears at the bottom of the sidebar.',
             },
           ],
         },
       ],
     },
     {
-      id: 'storage',
-      group: 'AppPreferences',
-      icon: 'ic-stash',
-      ref: 'claude.settings.AppPreferences (59555)',
-      title: 'Storage',
-      description:
-        'Choose how captures, artifacts, and audit data remain on this device.',
-      sections: [
-        {
-          title: 'Collection',
-          rows: [
-            {path: 'stash.dir', control: 'text', label: 'Save directory'},
-            {
-              path: 'stash.clipboard',
-              control: 'toggle',
-              label: 'Continuously collect clipboard images',
-              description:
-                'Off by default. You can still add an image to task materials explicitly.',
-            },
-            {
-              path: 'stash.text',
-              control: 'toggle',
-              label: 'Continuously collect clipboard text',
-              description:
-                'Off by default. This watches future clipboard changes; adding a chosen file or note does not require it.',
-            },
-            {
-              path: 'stash.burst_window_ms',
-              control: 'select',
-              label: 'Group within',
-              options: [
-                option(30000, '30 seconds'),
-                option(120000, '2 minutes'),
-                option(600000, '10 minutes'),
-              ],
-            },
-          ],
-        },
-        {
-          title: 'Retention',
-          rows: [
-            {
-              path: 'privacy.retain_captures_days',
-              control: 'select',
-              label: 'Captures and frozen frames',
-              description:
-                'Screenshots taken at the moment of a gesture, and the selections drawn on them. Older ones are deleted.',
-              options: [
-                option(1, '1 day'),
-                option(3, '3 days'),
-                option(7, '7 days'),
-                option(0, 'Forever'),
-              ],
-            },
-            {
-              path: 'privacy.retain_artifacts_days',
-              control: 'select',
-              label: 'Generated artifacts',
-              options: [
-                option(7, '7 days'),
-                option(30, '30 days'),
-                option(90, '90 days'),
-                option(0, 'Forever'),
-              ],
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'appearance-accessibility',
-      group: 'AppPreferences',
+      id: 'appearance',
+      group: 'Customize',
       icon: 'ic-img',
       ref: 'claude.settings.AppPreferences (59555)',
       title: 'Appearance',
@@ -408,157 +302,11 @@
       ],
     },
     {
-      id: 'shortcuts',
-      group: 'GlobalShortcut',
-      icon: 'ic-cursor',
-      ref: 'claude.settings.GlobalShortcut (59429)',
-      title: 'Shortcuts',
-      description: 'Keyboard access for Studio and selections.',
-      sections: [
-        {
-          title: 'Global shortcut',
-          rows: [
-            {
-              path: 'shortcuts.wake',
-              control: 'text',
-              label: 'Wake Magic Pointer',
-            },
-            {
-              path: 'shortcuts.text_mode',
-              control: 'text',
-              label: 'Start text input',
-            },
-            {path: 'shortcuts.pause', control: 'text', label: 'Pause input'},
-          ],
-        },
-      ],
-    },
-    {
-      id: 'connectors',
-      group: 'MCP',
-      icon: 'ic-globe',
-      ref: 'claude.settings.MCP (59435)',
-      title: 'MCP & connectors',
-      description:
-        'Connect local MCP servers, browsers, and structured capabilities.',
-      sections: [
-        {
-          title: 'Servers',
-          rows: [
-            {
-              control: 'info',
-              infoKey: 'connectors',
-              label: 'MCP servers',
-              description:
-                'Capabilities are discovered lazily for the current task instead of remaining in every prompt.',
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'plugins',
-      group: 'Extensions',
-      icon: 'ic-plug',
-      ref: 'claude.settings.Extensions (59457)',
-      title: 'Plugins',
-      description:
-        'Manage local Harness plugins that take effect only after approval.',
-      sections: [
-        {
-          title: 'Extensions',
-          rows: [
-            {
-              control: 'info',
-              infoKey: 'plugins',
-              label: 'Personal plugins',
-              description:
-                'Each candidate retains its diff, approval, rejection, audit, and rollback record.',
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'skills',
-      group: 'Extensions',
+      id: 'account',
+      group: 'Customize',
       icon: 'ic-spark',
       ref: null,
-      title: 'Skills',
-      description: 'View and invoke Skills installed on this device.',
-      sections: [
-        {
-          title: 'On this device',
-          rows: [
-            {
-              control: 'info',
-              infoKey: 'skills',
-              label: 'Your skills',
-              description:
-                'Project and user directories are merged by priority; choosing one inserts its real Slash name.',
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'updates',
-      group: 'AppConfig',
-      icon: 'ic-refresh',
-      ref: 'claude.settings.AppConfig (59400)',
-      title: 'Updates',
-      description: 'Update channel and installed application status.',
-      sections: [
-        {
-          title: 'Application',
-          rows: [
-            {
-              path: 'general.update_channel',
-              control: 'select',
-              label: 'Update channel',
-              options: [
-                option('stable', 'Stable'),
-                option('preview', 'Preview'),
-              ],
-            },
-            {
-              control: 'info',
-              infoKey: 'updates',
-              label: 'Installed status',
-              description:
-                'Download and relaunch state also appears at the bottom of the sidebar.',
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'diagnostics',
-      group: 'DesktopInfo',
-      icon: 'ic-term',
-      ref: 'claude.settings.DesktopInfo (59569)',
-      title: 'Diagnostics & about',
-      description: 'Version, runtime information, logs, and local diagnostics.',
-      sections: [
-        {
-          title: 'System information',
-          rows: [
-            {
-              control: 'info',
-              infoKey: 'diagnostics',
-              label: 'Diagnostics and logs',
-              description:
-                'Shows the installed version, Electron/Chromium build, and local diagnostic entry points.',
-            },
-          ],
-        },
-      ],
-    },    {
-      id: 'models-agents',
-      group: 'AppFeatures',
-      icon: 'ic-spark',
-      ref: null,
-      title: 'Models & runtime',
+      title: 'Account',
       description:
         'Model selection, reasoning display, and Magic Pointer’s own execution runtime.',
       sections: [
@@ -650,11 +398,129 @@
       ],
     },
     {
-      id: 'permissions',
-      group: 'AppFeatures',
+      id: 'privacy',
+      group: 'This computer',
+      icon: 'ic-eye',
+      ref: 'claude.settings.AppPreferences (59555)',
+      title: 'Privacy',
+      description:
+        'What the Agent can inspect, what may leave the device, what is stored, and for how long.',
+      sections: [
+        {
+          title: 'Reading',
+          rows: [
+            {
+              path: 'privacy.default_capture_mode',
+              control: 'select',
+              label: 'Default capture mode',
+              options: [
+                option('follow_global', 'Auto'),
+                option('structured_only', 'Structured only'),
+                option('local_screenshot', 'Local screenshot only'),
+                option('deny', 'Deny'),
+              ],
+            },
+            {
+              path: 'privacy.upload_screenshots',
+              control: 'toggle',
+              label: 'Allow screenshots to reach the model',
+            },
+          ],
+        },
+        {
+          title: 'Boundaries',
+          rows: [
+            {
+              path: 'privacy.sensitive_apps',
+              control: 'tags',
+              label: 'Apps Magic Pointer never reads',
+              description: 'No reading, capture, or memory.',
+            },
+          ],
+        },
+        {
+          title: 'Collection',
+          rows: [
+            {path: 'stash.dir', control: 'text', label: 'Save directory'},
+            {
+              path: 'stash.clipboard',
+              control: 'toggle',
+              label: 'Continuously collect clipboard images',
+              description:
+                'Off by default. You can still add an image to task materials explicitly.',
+            },
+            {
+              path: 'stash.text',
+              control: 'toggle',
+              label: 'Continuously collect clipboard text',
+              description:
+                'Off by default. This watches future clipboard changes; adding a chosen file or note does not require it.',
+            },
+            {
+              path: 'stash.burst_window_ms',
+              control: 'select',
+              label: 'Group within',
+              options: [
+                option(30000, '30 seconds'),
+                option(120000, '2 minutes'),
+                option(600000, '10 minutes'),
+              ],
+            },
+          ],
+        },
+        {
+          title: 'Retention',
+          rows: [
+            {
+              path: 'privacy.retain_captures_days',
+              control: 'select',
+              label: 'Captures and frozen frames',
+              description:
+                'Screenshots taken at the moment of a gesture, and the selections drawn on them. Older ones are deleted.',
+              options: [
+                option(1, '1 day'),
+                option(3, '3 days'),
+                option(7, '7 days'),
+                option(0, 'Forever'),
+              ],
+            },
+            {
+              path: 'privacy.retain_artifacts_days',
+              control: 'select',
+              label: 'Generated artifacts',
+              options: [
+                option(7, '7 days'),
+                option(30, '30 days'),
+                option(90, '90 days'),
+                option(0, 'Forever'),
+              ],
+            },
+          ],
+        },
+        {
+          title: 'Browser',
+          rows: [
+            {
+              path: 'connections.browser_devtools_enabled',
+              control: 'toggle',
+              label: 'Read authorized browser pages',
+            },
+            {
+              path: 'connections.browser_devtools_endpoints',
+              control: 'tags',
+              label: 'Local debugging endpoints',
+              description: 'Only localhost and 127.0.0.1 are accepted.',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'capabilities',
+      group: 'This computer',
       icon: 'ic-shield',
       ref: null,
-      title: 'Permissions',
+      title: 'Capabilities',
       description:
         'Choose whether each effect is allowed, asks first, or is denied.',
       sections: [
@@ -725,11 +591,11 @@
       ],
     },
     {
-      id: 'memory-context',
-      group: 'HistoryImport',
+      id: 'memory',
+      group: 'This computer',
       icon: 'ic-memory',
-      ref: null,
-      title: 'Memory & context',
+      ref: 'claude.settings.HistoryImport (59726)',
+      title: 'Memory',
       description:
         'Control what the Agent remembers and inspect context formed on this device.',
       sections: [
@@ -771,7 +637,96 @@
         },
       ],
     },
-
+    {
+      id: 'connectors',
+      group: 'This computer',
+      icon: 'ic-globe',
+      ref: 'claude.settings.MCP (59435)',
+      title: 'Connectors',
+      description:
+        'Connect local MCP servers, browsers, and structured capabilities.',
+      sections: [
+        {
+          title: 'Servers',
+          rows: [
+            {
+              control: 'info',
+              infoKey: 'connectors',
+              label: 'MCP servers',
+              description:
+                'Capabilities are discovered lazily for the current task instead of remaining in every prompt.',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'plugins',
+      group: 'This computer',
+      icon: 'ic-plug',
+      ref: 'claude.settings.Extensions (59457)',
+      title: 'Plugins',
+      description:
+        'Manage local Harness plugins that take effect only after approval.',
+      sections: [
+        {
+          title: 'Extensions',
+          rows: [
+            {
+              control: 'info',
+              infoKey: 'plugins',
+              label: 'Personal plugins',
+              description:
+                'Each candidate retains its diff, approval, rejection, audit, and rollback record.',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'skills',
+      group: 'This computer',
+      icon: 'ic-spark',
+      ref: null,
+      title: 'Skills',
+      description: 'View and invoke Skills installed on this device.',
+      sections: [
+        {
+          title: 'On this device',
+          rows: [
+            {
+              control: 'info',
+              infoKey: 'skills',
+              label: 'Your skills',
+              description:
+                'Project and user directories are merged by priority; choosing one inserts its real Slash name.',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'developer',
+      group: 'This computer',
+      icon: 'ic-term',
+      ref: 'claude.settings.DesktopInfo (59569)',
+      title: 'Developer',
+      description: 'Version, runtime information, logs, and local diagnostics.',
+      sections: [
+        {
+          title: 'System information',
+          rows: [
+            {
+              control: 'info',
+              infoKey: 'diagnostics',
+              label: 'Diagnostics and logs',
+              description:
+                'Shows the installed version, Electron/Chromium build, and local diagnostic entry points.',
+            },
+          ],
+        },
+      ],
+    },
   ];
 
   function valueForSetting(path: string, settings: Record<string, any>) {

@@ -25,7 +25,7 @@ declare global {
     readStatus(): Promise<DesktopPerceptionStatus>;
     activate(): Promise<{ok: boolean; error?: string; state?: string}>;
     setPaused?(paused: boolean): Promise<{ok: boolean; error?: string}>;
-    openSettings(page: 'interaction' | 'perception-privacy'): void;
+    openSettings(page: 'general' | 'privacy'): void;
     openMaterials(sourceId?: string): void;
     language(): string;
   }
@@ -566,7 +566,7 @@ interface DesktopPerceptionSummary {
       }
     });
     settings.addEventListener('click', () =>
-      options.openSettings('interaction'),
+      options.openSettings('general'),
     );
     pause.addEventListener('click', async () => {
       if (!options.setPaused || changingPause || !status || pause.disabled) {

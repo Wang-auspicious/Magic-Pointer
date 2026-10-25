@@ -133,17 +133,19 @@ function renderSettingsRow(row: any) {
   const value = row.path
     ? settingsModel.valueForSetting(row.path, canonicalSettings)
     : undefined;
-  return `<div class="mp-settings-row" data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
-    <div class="mp-settings-copy"><b>${escSetting(row.label)}</b>${row.description ? `<small>${escSetting(row.description)}</small>` : ''}</div>
-    <div class="mp-settings-control">${controlForSetting(row, value)}</div>
+  const rowId = `set-row-${escSetting(row.path || row.infoKey || row.label)}`;
+  const descId = `${rowId}-desc`;
+  return `<div class="mp-settings-row" data-settings-row="" data-settings-item="" role="group" aria-labelledby="${rowId}"${row.description ? ` aria-describedby="${descId}"` : ''} data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
+    <div class="mp-settings-copy"><b id="${rowId}">${escSetting(row.label)}</b>${row.description ? `<small data-settings-desc="" id="${descId}">${escSetting(row.description)}</small>` : ''}</div>
+    <div class="mp-settings-control" data-settings-control="">${controlForSetting(row, value)}</div>
     <p class="settings-row-error" hidden></p>
   </div>`;
 }
 
 function renderSettingsSection(title: string, rows: any[]) {
-  return `<section class="mp-settings-section">
-    <h3>${escSetting(title)}</h3>
-    <div class="mp-settings-list">${rows.map(renderSettingsRow).join('')}</div>
+  return `<section class="mp-settings-section" data-settings-section-titled="" aria-labelledby="set-sec-${escSetting(title)}">
+    <h3 data-settings-group-title="" id="set-sec-${escSetting(title)}" class="text-heading-semibold">${escSetting(title)}</h3>
+    <div class="mp-settings-list settings-group-dividers">${rows.map(renderSettingsRow).join('')}</div>
   </section>`;
 }
 
@@ -277,7 +279,7 @@ function renderSettingsPage(page: any) {
     <div class="mp-settings-sections">
       ${page.sections.map((section: any) => renderSettingsSection(section.title, section.rows)).join('')}
     </div>
-    ${page.id === 'memory-context' ? renderMemoryLibrary() : ''}
+    ${page.id === 'memory' ? renderMemoryLibrary() : ''}
   </section>`;
 }
 
@@ -376,7 +378,7 @@ function renderSettings() {
     entry => entry.id === activeSettingsPage,
   );
   body.innerHTML = renderSettingsPage(page);
-  if (page.id === 'models-agents') {
+  if (page.id === 'account') {
     const container = document.createElement('div');
     body.querySelector('.mp-settings-page-head')?.after(container);
     window.ModelConnections.mount(

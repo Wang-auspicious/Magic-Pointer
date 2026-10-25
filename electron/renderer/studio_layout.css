@@ -2751,6 +2751,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+  container-type: inline-size;
 }
 
 .mpw-settings-header {
@@ -3309,15 +3310,15 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 .mp-settings-sections {
   display: flex;
   flex-direction: column;
+  gap: 32px;
 }
 
 .mp-settings-section {
   min-width: 0;
-  padding: 24px 0 0;
 }
 
 .mp-settings-section h3 {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   color: var(--mp-text);
   font-size: 16px;
   line-height: 22px;
@@ -3326,20 +3327,35 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 
 .mp-settings-list {
   min-width: 0;
-  border-top: 1px solid var(--mp-rule);
+  padding: 0 16px;
+  border: 1px solid var(--mp-rule);
+  border-radius: 10px;
   overflow: hidden;
+}
+
+.settings-group-dividers > * + * {
+  border-top: 1px solid var(--mp-rule);
 }
 
 .mp-settings-row {
   position: relative;
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, auto);
-  min-height: 64px;
-  align-items: center;
-  gap: 24px;
+  min-height: 56px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--mp-rule);
+}
+
+@container (min-width: 52rem) {
+  .mp-settings-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+  }
 }
 
 .mp-settings-copy {
@@ -3364,7 +3380,13 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 
 .mp-settings-control {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+}
+
+@container (min-width: 52rem) {
+  .mp-settings-control {
+    justify-content: flex-end;
+  }
 }
 
 .settings-select {
@@ -3585,11 +3607,6 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 
   .mp-settings-plugin-add {
     grid-column: 2;
-  }
-
-  .mp-settings-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
   }
 
   .settings-select,

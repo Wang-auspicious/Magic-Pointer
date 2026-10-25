@@ -360,7 +360,7 @@ function statePreparationScript(state, theme) {
     } else if (state === 'customize') {
       setProductMode('walker', false);
       show('settings');
-      activeSettingsPage = 'models-agents';
+      activeSettingsPage = 'account';
       renderSettings();
     } else if (state === 'design') {
       setProductMode('design', false);
