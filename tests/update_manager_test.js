@@ -198,6 +198,86 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(manualFailureDialogs.length, 1,
     'a manual failed check keeps the one-shot native explanation');
 
+  const recurringTimers = [];
+  const activeTimers = new Map();
+  const fire = (index) => {
+    const entry = recurringTimers[index];
+    activeTimers.delete(entry.handle);
+    entry.callback();
+  };
+  const recurringUpdater = new FakeUpdater();
+  const recurring = createUpdateManager({
+    app: { isPackaged: true, getVersion: () => '1.0.0' },
+    updater: recurringUpdater,
+    dialog: { showMessageBox: async () => ({ response: 1 }) },
+    log: () => {},
+    setTimeoutFn: (callback, delayMs) => {
+      const handle = {};
+      activeTimers.set(handle, true);
+      recurringTimers.push({ handle, callback, delayMs });
+      return handle;
+    },
+    clearTimeoutFn: (handle) => {
+      activeTimers.delete(handle);
+    },
+    automaticDelayMs: 50,
+    intervalMs: 400,
+  });
+  recurring.start({ channel: 'stable', automatic: true });
+  assert.strictEqual(recurringTimers.length, 1,
+    'startup arms exactly one automatic check');
+  assert.strictEqual(recurringTimers[0].delayMs, 50,
+    'the startup check keeps its short delay');
+  fire(0);
+  await tick();
+  await tick();
+  assert.strictEqual(recurringUpdater.checkCount, 1);
+  assert.strictEqual(recurringTimers.length, 2,
+    'a settled automatic check arms the recurring timer');
+  assert.strictEqual(recurringTimers[1].delayMs, 400,
+    'the recurring timer uses the hourly interval delay');
+  fire(1);
+  await tick();
+  await tick();
+  assert.strictEqual(recurringUpdater.checkCount, 2,
+    'the recurring timer performs the next check');
+  recurring.dispose();
+  assert.strictEqual(activeTimers.size, 0,
+    'dispose cancels any pending periodic check');
+
+  const recurringFailureUpdater = new FakeUpdater();
+  recurringFailureUpdater.checkForUpdates = async function checkForUpdates() {
+    this.checkCount += 1;
+    throw new Error('offline');
+  };
+  const failureTimers = [];
+  const failureActive = new Set();
+  const recurringFailure = createUpdateManager({
+    app: { isPackaged: true, getVersion: () => '1.0.0' },
+    updater: recurringFailureUpdater,
+    dialog: { showMessageBox: async () => ({ response: 1 }) },
+    log: () => {},
+    setTimeoutFn: (callback, delayMs) => {
+      const handle = {};
+      failureActive.add(handle);
+      failureTimers.push({ handle, callback, delayMs });
+      return handle;
+    },
+    clearTimeoutFn: (handle) => {
+      failureActive.delete(handle);
+    },
+    automaticDelayMs: 10,
+    intervalMs: 20,
+  });
+  recurringFailure.start({ channel: 'stable', automatic: true });
+  failureTimers[0].callback();
+  failureActive.delete(failureTimers[0].handle);
+  await tick();
+  await tick();
+  assert.strictEqual(recurringFailureUpdater.checkCount, 1);
+  assert.strictEqual(failureTimers.length, 2,
+    'a failed automatic check still re-arms the next periodic check');
+
   console.log('update manager test ok');
 })().catch((error) => {
   console.error(error);

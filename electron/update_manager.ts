@@ -58,6 +58,7 @@ interface UpdateManagerOptions {
   setTimeoutFn?: (callback: () => void, delayMs: number) => TimerHandle;
   clearTimeoutFn?: (handle: TimerHandle) => void;
   automaticDelayMs?: number;
+  intervalMs?: number;
 }
 
 interface CheckResult {
@@ -107,6 +108,7 @@ function createUpdateManager({
   setTimeoutFn = setTimeout,
   clearTimeoutFn = handle => clearTimeout(handle as NodeJS.Timeout),
   automaticDelayMs = 20_000,
+  intervalMs = 3_600_000,
 }: UpdateManagerOptions = {}): UpdateManager {
   if (!appDependency || !updaterDependency || !dialogDependency) {
     throw new Error('update_manager_dependencies_missing');
@@ -316,6 +318,19 @@ function createUpdateManager({
     return inFlight;
   }
 
+  function armAutomatic(delayMs: number): void {
+    if (automaticTimer) {
+      return;
+    }
+    automaticTimer = setTimeoutFn(() => {
+      automaticTimer = null;
+      void check({manual: false}).finally(() => {
+        armAutomatic(intervalMs);
+      });
+    }, delayMs);
+    automaticTimer.unref?.();
+  }
+
   function start({
     channel = 'stable',
     automatic = true,
@@ -325,11 +340,7 @@ function createUpdateManager({
     updater.autoInstallOnAppQuit = false;
     setChannel(channel);
     if (automatic && app.isPackaged && !automaticTimer) {
-      automaticTimer = setTimeoutFn(() => {
-        automaticTimer = null;
-        void check({manual: false});
-      }, automaticDelayMs);
-      automaticTimer.unref?.();
+      armAutomatic(automaticDelayMs);
     }
     return state;
   }
