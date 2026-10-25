@@ -105,6 +105,8 @@ test('direct external effects require application-level evidence, while genuine 
     const result = await runAgent({ ...options, registry, permissionMode: 'bypass', model: async () => ++round === 1
       ? reply([call('delivery', 'Deliver', { recipient: 'approved@example.test' })]) : reply() });
     assert.equal(result.receipt.status, expected);
+    assert.equal(result.receipt.effect, effect, 'external actions must not be relabeled reversible writes');
+    assert.equal(result.receipt.memoryEligible, expected === 'succeeded', 'only verified completed work can support reusable procedures');
   }
   const options = await fixture('validator-only'), registry = new ToolRegistry();
   registry.register({ name: 'Deliver', description: 'submit', input_schema: schema, effect: 'external_send',

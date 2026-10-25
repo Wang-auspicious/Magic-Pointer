@@ -64,6 +64,47 @@ export interface TargetOutcome {
   effect?: string;
 }
 
+export function receiptEffect(
+  targets: readonly TargetOutcome[],
+): Effect | 'unknown' {
+  if (!targets.length) {
+    return 'read';
+  }
+  const effects = new Set(targets.map(target => target.effect));
+  if (effects.has(undefined) || effects.has('unknown')) {
+    return 'unknown';
+  }
+  for (const effect of [
+    'purchase',
+    'destructive',
+    'external_send',
+    'local_irreversible',
+    'reversible_write',
+  ] as const) {
+    if (effects.has(effect)) {
+      return effect;
+    }
+  }
+  return 'read';
+}
+
+export function receiptMemoryEligible(receipt: Data): boolean {
+  const targets = rows(receipt.targets).map(object);
+  return (
+    receipt.status === 'succeeded' &&
+    receipt.wrote === true &&
+    receipt.verified === true &&
+    receipt.effect !== 'unknown' &&
+    targets.length > 0 &&
+    targets.every(
+      target =>
+        target.status === 'verified' &&
+        typeof target.method === 'string' &&
+        target.method !== 'not_verified',
+    )
+  );
+}
+
 function targetKeys(args: Data, value: Data, fallback: string): string[] {
   const files = [
     value.path ?? args.path,

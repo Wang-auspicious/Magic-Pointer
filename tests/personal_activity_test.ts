@@ -36,6 +36,24 @@ async function run() {
     assert.match(report.markdown, /记录范围/);
     assert.match(report.markdown, /应用未运行/);
     assert.equal(report.day?.keyboard.KeyA, 8);
+    await store.recordKeyboardBatch({
+      at: new Date(2026, 8, 29, 23, 59, 30).toISOString(),
+      counts: {
+        Space: 2,
+        Delete: 1,
+        KeyB: 40,
+        KeyC: 40,
+        KeyD: 40,
+        KeyE: 40,
+        KeyF: 40,
+        KeyG: 40,
+        KeyH: 40,
+      },
+    });
+    const actionKeyReport = await store.getReport('2026-09-29');
+    assert.match(actionKeyReport.markdown, /Space：2 次/);
+    assert.match(actionKeyReport.markdown, /Delete：1 次/);
+    assert.doesNotMatch(actionKeyReport.markdown, /KeyH：40 次/);
     const facts = await store.getFacts();
     assert.equal(facts.keyboard.Enter, 5);
     assert.equal(facts.observedDays, 2);

@@ -847,6 +847,7 @@ export async function runRuntime(
         {
           sessionId: session.id,
           terminalReason: terminal.reason,
+          throughSeq: [...session.events].reverse().find(event => event.type === 'receipt/issued')?.seq ?? 0,
           modelRuntime: config,
         },
         options,

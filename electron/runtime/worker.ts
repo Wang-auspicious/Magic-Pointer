@@ -48,7 +48,11 @@ export async function dispatchRuntime(
     return reviewLearning(
       options.userDataDir,
       session.id,
-      session.deriveMessages(),
+      session.events.filter(
+        event =>
+          event.seq <=
+          Number(payload.throughSeq ?? session.events.at(-1)?.seq ?? 0),
+      ),
       payload.terminalReason,
       resolveModelConfig(
         payload.modelRuntime,

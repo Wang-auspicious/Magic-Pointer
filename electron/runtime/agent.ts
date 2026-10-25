@@ -62,6 +62,8 @@ import {
 } from './agent_services';
 import {
   operationOutcomes,
+  receiptEffect,
+  receiptMemoryEligible,
   taskOutcomes,
   ProgressTracker,
 } from './agent_outcomes';
@@ -1589,7 +1591,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           : reason === 'awaiting_user'
             ? 'partial'
             : 'failed',
-    effect: wrote ? 'reversible_write' : 'read',
+    effect: receiptEffect(outcomes.targets),
     verificationMethod:
       reason === 'completed'
         ? recoveryPending
@@ -1614,6 +1616,16 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         : reason,
     memoryEligible: false,
   };
+  receipt.memoryEligible = receiptMemoryEligible(receipt);
+  if (reason === 'completed' && receipt.status !== 'succeeded') {
+    const incomplete = outcomes.targets
+      .filter(row => row.status !== 'verified')
+      .map(
+        row =>
+          `${row.target.startsWith('operation:') ? `${row.tool} 的目标` : row.target.replace(/^file:/, '')}：${row.status === 'unknown' ? '结果未知' : row.status === 'failed' ? '执行失败' : '已执行，待核对'}`,
+      );
+    answer += `\n\n任务尚未全部完成：\n${[...incomplete, ...outcomes.unfinished.map(item => `未完成：${item}`), ...(recoveryPending ? ['仍有中断动作需要核对，不能自动重做。'] : [])].join('\n')}`;
+  }
   try {
     await session.append('receipt/issued', receipt);
     await session.append('turn/result', {

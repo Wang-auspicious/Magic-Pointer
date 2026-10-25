@@ -16,6 +16,8 @@ import {
   type ActivityWorkItem,
 } from './activity_sources';
 
+const ACTION_KEYS = ['Enter', 'Space', 'Delete', 'Backspace', 'Tab'] as const;
+
 export interface ActivityCoverage {
   activeMs: number;
   idleMs: number;
@@ -1206,12 +1208,13 @@ export class PersonalActivityStore {
       const keys = Object.entries(day.keyboard)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 6);
-      if (
-        day.keyboard.Enter !== undefined &&
-        !keys.some(([key]) => key === 'Enter')
-      ) {
-        keys.push(['Enter', day.keyboard.Enter]);
+      for (const key of ACTION_KEYS) {
+        const count = day.keyboard[key];
+        if (count !== undefined && !keys.some(([name]) => name === key)) {
+          keys.push([key, count]);
+        }
       }
+      keys.sort((a, b) => b[1] - a[1]);
       if (keys.length) {
         lines.push(
           keys.map(([key, value]) => `${key}：${value} 次`).join('；') + '。',
