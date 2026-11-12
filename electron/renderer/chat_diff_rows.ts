@@ -320,7 +320,10 @@ export function mountDiffRows(
       }
     }
     // Keep the first visible logical row stable when wrapped heights settle.
-    card.scrollTop += heights.offset(anchor) - oldOffset;
+    card.scrollTop = Math.max(
+      0,
+      card.scrollTop + heights.offset(anchor) - oldOffset,
+    );
     schedule();
   });
   const dispose = (): void => {

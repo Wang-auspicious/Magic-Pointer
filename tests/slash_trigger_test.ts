@@ -5,6 +5,7 @@ assert.strictEqual(detectSlashToken('/'), '', 'bare slash triggers with empty to
 assert.strictEqual(detectSlashToken('查一下 /perm'), 'perm');
 assert.strictEqual(detectSlashToken('\n/model'), 'model');
 assert.strictEqual(detectSlashToken('/Model-X'), 'model-x', 'case-insensitive, dash kept');
+assert.strictEqual(detectSlashToken('/run_test'), 'run_test', 'underscores kept in slash token');
 assert.strictEqual(detectSlashToken('plain text'), null);
 assert.strictEqual(detectSlashToken('a/b'), null, 'slash must follow start or whitespace');
 assert.strictEqual(detectSlashToken('/perm '), null, 'token ended by a space = already submitted shape');

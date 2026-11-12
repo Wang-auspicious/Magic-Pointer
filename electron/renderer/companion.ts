@@ -152,6 +152,7 @@ async function renderConversation(id: string | null) {
   }
   currentId = target.id;
   currentWorkspaceRoot = String(target.workspaceRoot || '');
+  cpAgentSessionId = String(target.agentSessionId || '') || cpAgentSessionId;
   setTitle(target.title || '未命名对话', target.objectKey || target.id);
   bindComposerToObject(target.object);
   const turns = target.turns || [];
@@ -194,7 +195,7 @@ async function submitCompanionTurn(payload: {
   attachments: MagicPointerAttachment[];
 }) {
   const text = String(payload.text || '').trim();
-  if (!text || cpRequestId || !currentWorkspaceRoot) {
+  if (!text || cpRequestId || (!currentWorkspaceRoot && !currentId)) {
     return false;
   }
   if (payload.attachments.length) {
@@ -203,7 +204,6 @@ async function submitCompanionTurn(payload: {
   const requestId =
     globalThis.crypto?.randomUUID?.() || `companion-${Date.now()}`;
   cpRequestId = requestId;
-  cpAgentSessionId = null;
   cpComposer?.running(true);
   try {
     const response = await Data.sendConversation({
@@ -211,7 +211,7 @@ async function submitCompanionTurn(payload: {
       question: text,
       permissionPreset: 'workspace-write',
       requestId,
-      workspaceRoot: currentWorkspaceRoot,
+      ...(currentWorkspaceRoot ? {workspaceRoot: currentWorkspaceRoot} : {}),
     });
     if (response?.ok && response.conversationId) {
       currentId = String(response.conversationId);
@@ -309,8 +309,10 @@ Data.onConversationProgress(payload => {
     payload.record.fields && typeof payload.record.fields === 'object'
       ? (payload.record.fields as Record<string, unknown>)
       : {};
-  if (String(payload.record.phase || '') === 'session_ready') {
-    cpAgentSessionId = String(fields.sid || '') || null;
+  const phase = String(payload.record.phase || '');
+  if (phase === 'session_ready' || phase === 'loop_started') {
+    cpAgentSessionId =
+      String(fields.sid || fields.session || cpAgentSessionId || '') || null;
   }
 });
 

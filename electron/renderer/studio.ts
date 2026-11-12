@@ -5251,6 +5251,7 @@ function bindArtifactView() {
       if (input) {
         input.value = String(create.dataset.artifactCreate || '');
         fitComposer(input);
+        syncComposerSubmitState();
         input.focus();
       }
       return;
@@ -5931,7 +5932,7 @@ function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   const undo = document.getElementById(
     'artifact-editor-undo',
   ) as HTMLButtonElement | null;
-  if (content && document.activeElement !== content) {
+  if (content && (document.activeElement !== content || !state.dirty)) {
     content.value = state.content;
   }
   if (kind) {
@@ -6039,12 +6040,12 @@ function renderArtifactVersions(
       }),
     );
     select.value = String(state.preview?.revision || state.revision);
-    select.disabled = busy || Boolean(state.patchError) || versions.length < 2;
+    select.disabled = busy || versions.length < 2;
     select.setAttribute('aria-label', studioT('artifact.version_history'));
   }
   if (restore) {
     restore.hidden = !state.preview;
-    restore.disabled = busy || state.dirty;
+    restore.disabled = busy;
     restore.textContent = studioT('artifact.restore_version');
   }
   if (preview) {
@@ -6563,6 +6564,7 @@ function composeLibraryPrompt(prompt: string): void {
   if (input) {
     input.value = prompt;
     fitComposer(input);
+    syncComposerSubmitState();
     input.focus();
   }
 }
@@ -11457,6 +11459,7 @@ document.addEventListener('click', e => {
       textarea.setRangeText('@', start, textarea.selectionEnd, 'end');
       textarea.focus();
       fitComposer(textarea);
+      syncComposerSubmitState();
     }
     return;
   }
@@ -11847,9 +11850,13 @@ function moveSlashSelection(delta: number): boolean {
   }
   const current = activeSlashRow();
   const index = current ? rows.indexOf(current) : -1;
-  const next =
-    rows[Math.min(rows.length - 1, Math.max(0, index + delta))] ||
-    (delta < 0 ? rows[rows.length - 1] : rows[0]);
+  const nextIndex =
+    index < 0
+      ? delta < 0
+        ? rows.length - 1
+        : 0
+      : (index + delta + rows.length) % rows.length;
+  const next = rows[nextIndex];
   setActiveSlashRow(next);
   return true;
 }
@@ -11881,21 +11888,25 @@ async function openSlashMenu(inlineFilter?: string) {
   const search = document.getElementById(
     'composer-slash-search',
   ) as HTMLInputElement | null;
-  if (search && !inline) {
-    search.value = '';
-    search.focus();
+  if (search) {
+    search.value = inline ? inlineFilter : '';
+    if (!inline) {
+      search.focus();
+    }
   }
 }
 
 function insertSlashToken(name: string) {
-  const ta = document.querySelector<HTMLTextAreaElement>('.mpw-input');
+  const ta = document.querySelector<HTMLTextAreaElement>(
+    '#composer-input, #composer-form textarea, .mpw-input',
+  );
   if (!ta) {
     return;
   }
   const token = `/${name} `;
   const caret = ta.selectionStart ?? ta.value.length;
   const before = ta.value.slice(0, caret);
-  const trimmed = before.replace(/\/[a-z0-9-]*$/i, '');
+  const trimmed = before.replace(/\/[a-z0-9_-]*$/i, '');
   ta.value = trimmed + token + ta.value.slice(caret);
   const nextCaret = (trimmed + token).length;
   ta.setSelectionRange(nextCaret, nextCaret);
@@ -14143,7 +14154,10 @@ function renderConversationProgress(record: Record<string, unknown>) {
       renderPlanCard();
     }
   }
-  if (String(record.phase || '') === 'subagent') {
+  if (
+    String(record.phase || '') === 'subagent' ||
+    String(record.phase || '') === 'tool_progress'
+  ) {
     schedulePendingRender();
     return;
   }
@@ -14940,8 +14954,8 @@ function composerHistoryEntries(): string[] {
     turn => turn.question || '',
   );
   return inputHistory.normalizeHistory([
-    ...composerSessionHistory,
     ...questions,
+    ...composerSessionHistory,
   ]);
 }
 
@@ -14951,6 +14965,9 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     fitComposer(ta);
     syncComposerSubmitState();
     ta.addEventListener('input', () => {
+      if (composerHistoryIndex !== -1) {
+        resetComposerHistory();
+      }
       fitComposer(ta);
       syncComposerSubmitState();
     });

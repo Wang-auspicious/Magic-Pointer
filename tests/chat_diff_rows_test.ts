@@ -414,6 +414,13 @@ test('wrapped measured heights and density changes retain the visible logical an
   f.measured.clear();
   f.resize(400, 19);
   assert.equal(f.card.scrollTop, 100 * 19 + 4);
+  f.scroll(10);
+  f.measured.set(0, 80);
+  f.resize(600, 19);
+  f.scroll(10);
+  f.measured.set(0, 19);
+  f.resize(600, 19);
+  assert.ok(f.card.scrollTop >= 0);
   assert.ok(f.rows().length < 100);
   f.remove();
 });

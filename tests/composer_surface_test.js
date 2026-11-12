@@ -146,6 +146,8 @@ assert.match(companionSource, /Data\.steerConversation\(/,
   'Companion 必须把 running 文本写进 durable steer 通道');
 assert.match(companionSource, /fields\.sid/,
   'Companion 必须读取 session_ready 协议真实字段 sid');
+assert.match(companionSource, /loop_started/,
+  'Companion 必须在 loop_started 时同步 sessionId 以便即时插话');
 assert.match(companionSource, /Data\.stopConversation\(/,
   'Companion 空输入停止必须走真实 stop 通道');
 assert.match(companionSource, /allowAttachments: false/,

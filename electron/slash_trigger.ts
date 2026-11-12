@@ -3,7 +3,7 @@
 /* exported SlashTrigger */
 
 const SlashTrigger = (() => {
-  const TRAILING_TOKEN = /(?:^|\s)\/([a-zA-Z0-9-]*)$/;
+  const TRAILING_TOKEN = /(?:^|\s)\/([a-zA-Z0-9_-]*)$/;
 
   function detectSlashToken(textBeforeCaret: string): string | null {
     const match = TRAILING_TOKEN.exec(String(textBeforeCaret || ''));

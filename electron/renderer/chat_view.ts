@@ -6358,17 +6358,38 @@ const ChatView = (() => {
               ? (record.fields as Record<string, unknown>)
               : {};
           if (phase === 'tool_call' || phase === 'tool_result') {
+            let decoded: Record<string, unknown> = {};
+            if (typeof fields.b64 === 'string' && fields.b64) {
+              try {
+                const rawJson =
+                  typeof Buffer !== 'undefined'
+                    ? Buffer.from(fields.b64, 'base64').toString('utf8')
+                    : new TextDecoder().decode(
+                        Uint8Array.from(atob(fields.b64), c => c.charCodeAt(0)),
+                      );
+                const parsed = JSON.parse(rawJson);
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  !Array.isArray(parsed)
+                ) {
+                  decoded = parsed as Record<string, unknown>;
+                }
+              } catch {
+                // Keep top-level fields if b64 is malformed.
+              }
+            }
+            const toolName = String(decoded.name ?? fields.name ?? '');
+            const toolState = String(decoded.state ?? fields.state ?? '');
+            const toolId = String(decoded.id ?? fields.id ?? toolName);
             if (
               options.taskPanel &&
-              PLAN_TOOLS.has(String(fields.name)) &&
-              fields.state !== 'error'
+              PLAN_TOOLS.has(toolName) &&
+              toolState !== 'error'
             ) {
               continue;
             }
-            latest.set(
-              `tool:${String(fields.id || fields.name || '')}`,
-              record,
-            );
+            latest.set(`tool:${toolId}`, record);
           } else if (
             [
               'model_request',
@@ -6885,6 +6906,7 @@ const ChatView = (() => {
               }
               act.dataset.undoPending = 'false';
               (act as HTMLButtonElement).disabled = false;
+              card?.querySelector('.mp-chat-files-error')?.remove();
               if (!result.ok) {
                 const error = DOC.createElement('span');
                 error.className = 'mp-chat-files-error';

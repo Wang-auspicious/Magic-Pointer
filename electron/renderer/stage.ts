@@ -831,6 +831,7 @@
     return [
       targetingOutline,
       frozenGlow,
+      selectionStretch,
       capsule,
       threadPanel,
       errorCard,
@@ -881,6 +882,11 @@
     if (!consentBox.hidden) {
       elements.push(consentBox);
     }
+    if (selectionStretch && !selectionStretch.hidden) {
+      elements.push(
+        ...selectionStretch.querySelectorAll('.selection-stretch-handle'),
+      );
+    }
     for (const container of [chipsBox, threadPanel, errorCard]) {
       if (container.hidden) {
         continue;
@@ -916,11 +922,11 @@
       hasInteractiveSurface,
       pointer: lastPointerPoint,
       interactiveRegions,
-      dragging: Boolean(capsuleDrag || surfaceDrag),
+      dragging: Boolean(capsuleDrag || surfaceDrag || selectionStretchDrag),
     });
     const requestFocus = name === 'capsule-text';
     const regions =
-      capsuleDrag || surfaceDrag
+      capsuleDrag || surfaceDrag || selectionStretchDrag
         ? [{x: 0, y: 0, width: window.innerWidth, height: window.innerHeight}]
         : visibleStageRegions();
     const nextHitRegionKey = JSON.stringify(regions);
@@ -1871,12 +1877,17 @@
     consentTarget.textContent = session.targetAppLabel
       ? `写回 ${session.targetAppLabel}`
       : '写回你刚才那个窗口';
-    if (consentBox.hidden) {
+    if (state.name !== 'delivering') {
       resetConsentButton();
-      const text = resultPlainText(resultCard);
-      if (capsuleInput.value.trim() !== text) {
-        capsuleInput.value = text;
-      }
+    }
+    const latestText = resultPlainText(resultCard);
+    if (
+      (consentBox.hidden || capsule.hidden) &&
+      capsuleInput.value.trim() !== latestText
+    ) {
+      capsuleInput.value = latestText;
+    }
+    if (consentBox.hidden) {
       consentBox.hidden = false;
       scheduleHitRegionRefresh();
     }
@@ -2912,6 +2923,18 @@
 
   window.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
+      if (event.defaultPrevented || event.isComposing) {
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        stageDecision.contains(active) &&
+        (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')
+      ) {
+        active.blur();
+        return;
+      }
       requestDismiss();
     }
   });

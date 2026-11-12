@@ -812,7 +812,6 @@ declare global {
                 : [...selection, index]
               : [index];
             if (!current.multiSelect) {
-              draft.custom[draft.page] = '';
               draft.other[draft.page] = false;
             }
             paint(host, view);
@@ -904,7 +903,9 @@ declare global {
         }
       };
       custom.addEventListener('focus', () => {
-        selectOther();
+        if (inline || draft.other[draft.page] || custom.value.trim()) {
+          selectOther();
+        }
         continueButton.disabled = view.busy || !hasAnswer();
       });
       custom.addEventListener('input', () => {
@@ -997,15 +998,20 @@ declare global {
           updated[next]?.focus({preventScroll: true});
         });
       }
+      const customActive = (index: number) =>
+        Boolean(
+          questions[index]?.multiSelect ||
+            draft.other[index] ||
+            !draft.selected[index].length,
+        ) && Boolean(draft.custom[index].trim());
       const hasAnswer = () =>
-        draft.selected[draft.page].length > 0 ||
-        Boolean(draft.custom[draft.page].trim());
+        draft.selected[draft.page].length > 0 || customActive(draft.page);
       const finish = () => {
         const missing = questions.findIndex(
           (_question, index) =>
             !draft.skipped[index] &&
             !draft.selected[index].length &&
-            !draft.custom[index].trim(),
+            !customActive(index),
         );
         if (missing >= 0) {
           view.errorKey = 'decision.missing';
@@ -1017,7 +1023,7 @@ declare global {
           const selected = draft.selected[index]
             .map(option => question.options[option]?.label)
             .filter(Boolean);
-          const free = draft.custom[index].trim();
+          const free = customActive(index) ? draft.custom[index].trim() : '';
           answers[question.question] = question.multiSelect
             ? [...selected, ...(free ? [free] : [])]
             : free || selected[0] || '';

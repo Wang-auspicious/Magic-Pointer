@@ -24,4 +24,14 @@ assert.match(
   'a bounded fallback refresh must cover missed transition events',
 );
 
+assert.match(
+  source,
+  /function visibleStageRegions\(\)[\s\S]*selectionStretch/,
+  'visibleStageRegions must include selectionStretch so stretch handles receive clicks',
+);
+assert.match(
+  source,
+  /capsuleDrag \|\| surfaceDrag \|\| selectionStretchDrag/,
+  'syncHitRegions must treat selectionStretchDrag as an active drag',
+);
 console.log('stage_hit_region_transition_test: all assertions passed');
