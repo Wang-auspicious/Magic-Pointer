@@ -27,6 +27,25 @@ html, body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+img, svg, a, button {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+pre,
+code,
+.msg-user,
+.msg-ai,
+.card-body {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 button, input, textarea { font: inherit; color: inherit; }

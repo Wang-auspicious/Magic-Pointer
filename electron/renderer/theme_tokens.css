@@ -272,6 +272,33 @@ body {
   line-height: var(--mp-leading-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+img,
+svg,
+a,
+button {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+pre,
+code,
+.mp-chat-bubble,
+.mp-chat-markdown,
+.mp-chat-stream-live,
+.mp-diff-table,
+.mp-diff-line,
+.mp-terminal-output,
+.mp-artifact-body,
+.mp-selectable {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 html {

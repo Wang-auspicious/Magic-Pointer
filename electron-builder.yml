@@ -14,6 +14,10 @@ directories:
 
 asar: false
 npmRebuild: false
+afterPack: packaging/after_pack.js
+electronLanguages:
+  - zh-CN
+  - en-US
 
 files:
   - build/electron/**
@@ -36,6 +40,25 @@ files:
   - data/plugins/**
   - package.json
   - THIRD_PARTY_NOTICES.md
+  - "!**/*.map"
+  - "!**/*.d.ts"
+  - "!**/*.d.mts"
+  - "!**/*.d.cts"
+  - "!node_modules/pdf-lib/dist/**"
+  - "!node_modules/pdf-lib/es/**"
+  - "!node_modules/pdf-lib/src/**"
+  - "!node_modules/pdf-lib/ts3.4/**"
+  - "!node_modules/exceljs/dist/**"
+  - "!node_modules/pdfjs-dist/build/**"
+  - "!node_modules/pdfjs-dist/web/**"
+  - "!node_modules/pdfjs-dist/legacy/web/**"
+  - "!node_modules/pdfjs-dist/legacy/build/*.min.mjs"
+  - "!node_modules/docx/dist/index.cjs"
+  - "!node_modules/docx/dist/index.iife.js"
+  - "!node_modules/docx/dist/index.mjs"
+  - "!node_modules/pptxgenjs/dist/pptxgen.bundle.js"
+  - "!node_modules/pptxgenjs/dist/pptxgen.es.js"
+  - "!node_modules/pptxgenjs/dist/pptxgen.min.js"
 win:
   icon: assets/app/icon.ico
   target:

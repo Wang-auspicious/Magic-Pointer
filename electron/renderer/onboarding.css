@@ -28,6 +28,8 @@ body {
   font-family: var(--onboarding-font);
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 button,
