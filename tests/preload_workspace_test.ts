@@ -69,12 +69,15 @@ test('production preload retains explicit workspace choices and leaves omitted c
     question: 'Read the current workspace',
     branch: 'feature/environment',
     worktree: false,
+    resume: true,
   });
   assert.equal(calls.at(-1)![1].branch, 'feature/environment');
   assert.equal(calls.at(-1)![1].worktree, false);
+  assert.equal(calls.at(-1)![1].resume, true);
   await api.conversations.send({question: 'Use project defaults'});
   assert.equal(Object.hasOwn(calls.at(-1)![1], 'branch'), false);
   assert.equal(Object.hasOwn(calls.at(-1)![1], 'worktree'), false);
+  assert.equal(Object.hasOwn(calls.at(-1)![1], 'resume'), false);
   assert.equal(
     Object.hasOwn(calls.at(-1)![1], 'effort'),
     false,

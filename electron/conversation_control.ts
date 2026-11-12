@@ -208,7 +208,19 @@ const ConversationControl = (() => {
         return false;
       }
     } else if (phase === 'tool_call' || phase === 'tool_result') {
-      const id = String(fields.id || fields.name || '');
+      let decoded: Record<string, unknown> = {};
+      if (fields.b64) {
+        try {
+          const parsed = JSON.parse(decodeBlob(fields));
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            decoded = parsed as Record<string, unknown>;
+          }
+        } catch {
+          return false;
+        }
+      }
+      const toolName = String(decoded.name ?? fields.name ?? '') || undefined;
+      const id = String(decoded.id ?? fields.id ?? toolName ?? '');
       let tool = transcript.trajectory.find(
         item => item.kind === 'tool' && item.callId === id,
       );
@@ -216,24 +228,34 @@ const ConversationControl = (() => {
         tool = {
           kind: 'tool',
           callId: id,
-          name: fields.name,
+          name: toolName,
           turn: message?.turn || 1,
           startedAt: at,
           ...timeOrigin,
         };
         transcript.trajectory.push(tool);
+      } else if (!tool.name && toolName) {
+        tool.name = toolName;
       }
+      const argsValue = decoded.args ?? fields.args;
+      const argsText =
+        typeof argsValue === 'string'
+          ? argsValue
+          : argsValue !== undefined
+            ? JSON.stringify(argsValue)
+            : '';
+      const resultState = String(decoded.state ?? fields.state ?? 'done');
       Object.assign(tool, {
-        state: phase === 'tool_call' ? 'running' : fields.state,
-        text: fields.args || tool.text || '',
+        state: phase === 'tool_call' ? 'running' : resultState,
+        text: argsText || tool.text || '',
       });
       if (phase === 'tool_result') {
         Object.assign(tool, {
-          result: fields.result || '',
-          isError: fields.state === 'error',
+          result: String(decoded.result ?? fields.result ?? ''),
+          isError: resultState === 'error',
           completedAt: at,
-          usedBackend: fields.backend,
-          latencyMs: Number(fields.latency_ms) || 0,
+          usedBackend: (decoded.backend ?? fields.backend) as string | undefined,
+          latencyMs: Number(decoded.latency_ms ?? fields.latency_ms) || 0,
         });
       }
     } else if (phase === 'tool_progress') {
@@ -243,7 +265,8 @@ const ConversationControl = (() => {
       } catch {
         return false;
       }
-      const id = String(payload.id || fields.id || payload.name || '');
+      const toolName = String(payload.name || fields.name || '') || undefined;
+      const id = String(payload.id || fields.id || toolName || '');
       let tool = transcript.trajectory.find(
         item => item.kind === 'tool' && item.callId === id,
       );
@@ -251,16 +274,49 @@ const ConversationControl = (() => {
         tool = {
           kind: 'tool',
           callId: id,
-          name: fields.name,
+          name: toolName,
           turn: message?.turn || 1,
           startedAt: at,
           ...timeOrigin,
         };
         transcript.trajectory.push(tool);
+      } else if (!tool.name && toolName) {
+        tool.name = toolName;
       }
       tool.progressText = (
         String(tool.progressText || '') + String(payload.text || '')
       ).slice(-4000);
+    } else if (phase === 'steer_absorbed') {
+      let texts: string[] = [];
+      if (fields.b64) {
+        try {
+          const parsed = JSON.parse(decodeBlob(fields)) as {texts?: unknown};
+          if (Array.isArray(parsed?.texts)) {
+            texts = parsed.texts
+              .map(item => String(item || '').trim())
+              .filter(Boolean);
+          }
+        } catch {
+          return false;
+        }
+      } else if (typeof fields.text === 'string' && fields.text.trim()) {
+        texts = [fields.text.trim()];
+      }
+      if (!texts.length) {
+        return false;
+      }
+      const turn = Number(fields.turn || message?.turn) || 1;
+      for (const item of texts) {
+        transcript.trajectory.push({
+          kind: 'notice',
+          noticeType: 'steer',
+          state: 'done',
+          text: item,
+          turn,
+          startedAt: at,
+          ...timeOrigin,
+        });
+      }
     } else if (phase === 'model_response') {
       if (message) {
         message.state = 'done';

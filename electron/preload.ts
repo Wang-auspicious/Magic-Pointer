@@ -557,6 +557,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       projectId?: unknown;
       modelSelection?: unknown;
       question?: unknown;
+      resume?: unknown;
       attachments?: unknown;
       taskInput?: unknown;
       permissionPreset?: unknown;
@@ -575,6 +576,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           : {}),
         ...(typeof payload.worktree === 'boolean'
           ? {worktree: payload.worktree}
+          : {}),
+        ...(typeof payload?.resume === 'boolean'
+          ? {resume: payload.resume}
           : {}),
         workMode: payload.workMode === 'work' ? 'work' : 'code',
         conversationId: String(payload?.conversationId || '').slice(0, 120),

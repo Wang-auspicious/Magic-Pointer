@@ -113,7 +113,7 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
   assert.match(dialogCalls[0].message, /1\.1\.0/);
 
   updater.emit('download-progress', { percent: 48.5 });
-  assert(states.some((status) => status.state === 'downloading' && status.progress === 48.5));
+  assert(states.some((status) => status.state === 'downloading' && status.progress === 48.5 && status.version === '1.1.0'));
 
   updater.emit('update-downloaded', { version: '1.1.0' });
   await tick();

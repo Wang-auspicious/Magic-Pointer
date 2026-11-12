@@ -74,7 +74,7 @@ interface StepAttempt {
 interface StepState {
   id: string;
   title: string;
-  status: 'pending' | 'succeeded' | 'failed' | 'skipped';
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped';
   attempts: StepAttempt[];
 }
 
@@ -574,6 +574,7 @@ export class WorkflowEngine {
               permissionMode,
               options.parentCallId,
               tokens,
+              emitSnapshot,
             );
           });
         }
@@ -677,6 +678,7 @@ export class WorkflowEngine {
     permissionMode: PermissionMode,
     parentCallId: string | undefined,
     tokens: {value: number},
+    emitSnapshot: (status: string) => void,
   ): Promise<void> {
     const state = journal.steps[step.id]!;
     const session = this.options.session;
@@ -690,6 +692,8 @@ export class WorkflowEngine {
       const childSessionId = `wf-${runId.slice(0, 8)}-${step.id}-a${attempt}`;
       const instruction = composeInstruction(step, journal);
       const readonly = step.readonly === true;
+      state.status = 'running';
+      emitSnapshot('running');
       activeChildren.set(step.id, childSessionId);
       const startedAt = Date.now();
       await session.append('workflow/step_started', {
@@ -759,6 +763,7 @@ export class WorkflowEngine {
           ? 'pending'
           : 'failed';
       this.save(file, journal);
+      emitSnapshot('running');
       await session.append('workflow/step_settled', {
         runId,
         stepId: step.id,

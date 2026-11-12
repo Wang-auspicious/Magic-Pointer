@@ -5,6 +5,7 @@ import type {
 } from 'electron';
 import {
   DesktopNotifications,
+  parseDesktopNotificationTarget,
   type DesktopNotificationTarget,
 } from '../electron/desktop_notifications';
 
@@ -67,6 +68,11 @@ assert.deepEqual(
   opened[1],
   {view: 'personal'},
   'Legacy notifications still open the application',
+);
+assert.deepEqual(
+  parseDesktopNotificationTarget(JSON.stringify({view: 'personal'})),
+  {view: 'personal'},
+  'Personal target without a date must parse cleanly',
 );
 created[0].handlers.get('failed')!({}, 'Windows toast failed');
 assert.deepEqual(errors, ['Windows toast failed']);

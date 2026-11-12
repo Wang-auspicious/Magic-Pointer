@@ -260,10 +260,22 @@ export class RuntimeActivitySink {
       return;
     }
     if (kind === 'tool_progress') {
+      const progressText = text(event.text);
+      const callId = text(event.id);
+      const record =
+        this.tools.get(callId) ??
+        this.trajectory.find(
+          item => item.kind === 'tool' && item.callId === callId,
+        );
+      if (record && progressText) {
+        record.progressText = (
+          text(record.progressText) + progressText
+        ).slice(-4000);
+      }
       this.blob('tool_progress', {
         id: event.id,
         name: event.name,
-        text: text(event.text),
+        text: progressText,
       });
       return;
     }
@@ -332,8 +344,28 @@ export class RuntimeActivitySink {
       this.blob('plan', event.plan);
       return;
     }
+    if (kind === 'steered') {
+      const texts = Array.isArray(event.texts)
+        ? event.texts.map(item => text(item).trim()).filter(Boolean)
+        : [];
+      const at = this.blob('steer_absorbed', {
+        turn: event.turn,
+        texts,
+        input_ids: event.input_ids,
+      });
+      for (const item of texts) {
+        this.add({
+          kind: 'notice',
+          noticeType: 'steer',
+          state: 'done',
+          text: item,
+          turn: event.turn,
+          startedAt: at,
+        });
+      }
+      return;
+    }
     const phases: Record<string, string> = {
-      steered: 'steer_absorbed',
       followup_continued: 'followup_continued',
       context_compacted: 'context_compacted',
       budget_renewed: 'budget_renewed',

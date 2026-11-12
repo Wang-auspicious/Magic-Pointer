@@ -218,7 +218,11 @@ function createUpdateManager({
     updater.on('download-progress', (value = {}) => {
       const progress = progressFrom(value);
       const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
-      publish({state: 'downloading', progress: percent});
+      publish({
+        state: 'downloading',
+        ...(state.version ? {version: state.version} : {}),
+        progress: percent,
+      });
     });
     updater.on('update-downloaded', async (value = {}) => {
       const info = infoFrom(value);
@@ -313,7 +317,6 @@ function createUpdateManager({
       })
       .finally(() => {
         inFlight = null;
-        lastCheckWasManual = false;
       });
     return inFlight;
   }

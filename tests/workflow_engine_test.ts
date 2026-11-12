@@ -154,10 +154,19 @@ test('executes steps in dependency order and journals every settle', async () =>
       {id: 'c', title: 'Third', instructions: 'Run step c.', depends_on: ['b']},
     ],
   };
+  const seenRunning = new Set<string>();
   const result = (await harness.engine.run(plan, {
     runId: 'order-run',
+    onStep: snapshot => {
+      for (const step of snapshot.steps) {
+        if (step.status === 'running') {
+          seenRunning.add(step.id);
+        }
+      }
+    },
   })) as Data;
   assert.equal(result.ok, true);
+  assert.deepEqual([...seenRunning].sort(), ['a', 'b', 'c']);
   assert.equal(result.status, 'succeeded');
   assert.deepEqual(
     (await harness.readLog()).filter(id => id === 'a').length >= 1,

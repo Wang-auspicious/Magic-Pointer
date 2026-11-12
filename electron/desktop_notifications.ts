@@ -36,12 +36,17 @@ export function parseDesktopNotificationTarget(
 ): DesktopNotificationTarget | null {
   try {
     const target = JSON.parse(argumentsText);
-    if (
-      target?.view === 'personal' &&
-      typeof target.date === 'string' &&
-      /^\d{4}-\d{2}-\d{2}$/.test(target.date)
-    ) {
-      return {view: 'personal', date: target.date};
+    if (target?.view === 'personal') {
+      if (target.date === undefined) {
+        return {view: 'personal'};
+      }
+      if (
+        typeof target.date === 'string' &&
+        /^\d{4}-\d{2}-\d{2}$/.test(target.date)
+      ) {
+        return {view: 'personal', date: target.date};
+      }
+      return null;
     }
     if (
       target?.view === 'chat' &&

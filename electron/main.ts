@@ -2012,6 +2012,7 @@ function beginStageLiveTurn(token: string, payload: any): void {
     const entry = selectionSessions.get(token);
     const object: any = entry ? episodeObjectForSession(entry) : {};
     const conversation = conversations().appendTurn({
+      newConversation: true,
       question,
       answer: '',
       outcome: '进行中',
@@ -2071,11 +2072,12 @@ function appendStageLiveProgress(token: string, record: any): void {
       live.progress.agentSessionId = String(
         fields.sid || fields.session || live.progress.agentSessionId,
       );
+    } else if (phase === 'tool_progress') {
+      // appendTranscript above already updates live.progress.trajectory.
     } else if (
       [
         'tool_call',
         'tool_result',
-        'tool_progress',
         'model_request',
         'model_response',
         'model_first_chunk',
@@ -2083,9 +2085,26 @@ function appendStageLiveProgress(token: string, record: any): void {
         'subagent',
       ].includes(phase)
     ) {
+      const toolKey = (item: any) => {
+        const direct = String(item.fields?.id || item.fields?.name || '');
+        if (direct) {
+          return `tool:${direct}`;
+        }
+        if (item.fields?.b64) {
+          try {
+            const parsed = JSON.parse(
+              Buffer.from(String(item.fields.b64), 'base64').toString('utf8'),
+            );
+            return `tool:${String(parsed?.id || parsed?.name || '')}`;
+          } catch {
+            return 'tool:';
+          }
+        }
+        return 'tool:';
+      };
       const key = (item: any) =>
-        ['tool_call', 'tool_result', 'tool_progress'].includes(item.phase)
-          ? `tool:${String(item.fields?.id || item.fields?.name || '')}`
+        ['tool_call', 'tool_result'].includes(item.phase)
+          ? toolKey(item)
           : item.phase === 'subagent' || item.phase === 'plan'
             ? item.phase
             : 'status';
@@ -2221,6 +2240,7 @@ function recordConversationTurn(
           return updated.conversation || null;
         })()
       : store.appendTurn({
+          newConversation: true,
           agentSessionId: (result as any).agentSessionId,
           runtimeTurn: (result as any).runtimeTurn,
           taskContext: (result as any).taskContext,
@@ -3889,11 +3909,7 @@ ipcMain.handle(
       if (!conversation) {
         return {ok: false, error: 'invalid_conversation_or_turn'};
       }
-      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        dashboardWindow.webContents.send('conversations:turn', {
-          id: conversation.id,
-        });
-      }
+      notifyConversationChanged(conversation.id);
       return {ok: true, conversation};
     } catch (_) {
       return {ok: false, error: 'store_failed'};
@@ -4189,7 +4205,11 @@ ipcMain.handle(
     if (result.ok !== true) {
       return result;
     }
-    showDashboard({view: 'chat', conversationId: conversation.id, artifactId});
+    showDashboard(
+      {view: 'chat', conversationId: conversation.id, artifactId},
+      {activate: true},
+    );
+    hideStage();
     return {ok: true, conversationId: conversation.id, artifactId};
   },
 );
@@ -4351,6 +4371,17 @@ async function sendConversation(
   }
   if (resume && !existing?.hasPendingWork) {
     return {ok: false, error: 'This conversation has no unfinished task.'};
+  }
+  if (
+    modelCommand &&
+    !continuation &&
+    !normalizeModelSelection({model: modelCommand[1]})
+  ) {
+    return {
+      ok: false,
+      ...(existing ? {conversationId: existing.id} : {}),
+      error: 'Choose a model.',
+    };
   }
   if (modelCommand && existing && !continuation) {
     try {
@@ -4910,8 +4941,12 @@ async function sendConversation(
         });
         return;
       }
+      const awaitingInput = Boolean(
+        parsed?.pendingInput || parsed?.awaitingUserInput,
+      );
       const failed =
-        parsed?.ok !== true || !String(parsed?.answer || '').trim();
+        parsed?.ok !== true ||
+        (!awaitingInput && !String(parsed?.answer || '').trim());
       const terminated =
         parsed?.loopTerminated === true ||
         Boolean(parsed?.loopTerminatedReason);
@@ -5008,7 +5043,7 @@ async function sendConversation(
               answer: `此会话的模型已切换为 ${selected.selection!.model}，下一次发送即生效。`,
               hasPendingWork: hadPendingWork,
             }
-          : selected,
+          : {...selected, hasPendingWork: hadPendingWork},
       );
       return;
     }
@@ -5356,7 +5391,10 @@ function initializeContextTrackers() {
       const enabled =
         run.status === 'completed'
           ? fabricSettings.notifications?.completion !== false
-          : fabricSettings.notifications?.failure !== false;
+          : run.status === 'waiting'
+            ? fabricSettings.notifications?.completion !== false ||
+              fabricSettings.notifications?.failure !== false
+            : fabricSettings.notifications?.failure !== false;
       if (!enabled || dashboardWindow?.isFocused()) {
         return;
       }
@@ -5579,14 +5617,18 @@ ipcMain.handle(
           cadence: raw.cadence,
           startAtMs:
             raw.startAtMs === undefined
-              ? existing?.trigger.kind === 'schedule'
+              ? existing?.trigger.kind === 'schedule' &&
+                existing.trigger.calendar === raw.cadence
                 ? existing.trigger.startAtMs
                 : undefined
               : Number(raw.startAtMs),
           trackerId: existing?.trackerId || crypto.randomUUID(),
           isDirectory: fs.statSync(materialPath).isDirectory(),
         });
-        contextTrackerRuntime.upsert(tracker);
+        contextTrackerRuntime.upsert({
+          ...tracker,
+          outputType: raw.outputType ?? existing?.outputType ?? 'draft',
+        });
       } else if (raw.action !== 'get') {
         return {ok: false, error: '未知材料关注操作。'};
       }
@@ -5857,9 +5899,7 @@ ipcMain.handle(
       if (!result.ok) {
         return {ok: false, error: result.error || 'invalid_id_or_title'};
       }
-      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        dashboardWindow.webContents.send('conversations:turn', {id});
-      }
+      notifyConversationChanged(id);
       return {ok: true, title: result.conversation?.title || title};
     } catch (_) {
       return {ok: false, error: 'store_failed'};
@@ -7692,7 +7732,25 @@ function createCompanionWindow() {
 
 let companionPinned = true;
 
+function windowIntersectsAnyDisplay(bounds: Electron.Rectangle): boolean {
+  const displays = screen.getAllDisplays();
+  if (!displays.length) {
+    return true;
+  }
+  return displays.some((display: Electron.Display) => {
+    const area = display.workArea || display.bounds;
+    const overlapX =
+      Math.min(bounds.x + bounds.width, area.x + area.width) -
+      Math.max(bounds.x, area.x);
+    const overlapY =
+      Math.min(bounds.y + bounds.height, area.y + area.height) -
+      Math.max(bounds.y, area.y);
+    return overlapX >= 80 && overlapY >= 60;
+  });
+}
+
 function showCompanion(payload = {}, options: {activate?: boolean} = {}) {
+  const existed = Boolean(companionWindow && !companionWindow.isDestroyed());
   const win = createCompanionWindow();
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -7709,11 +7767,17 @@ function showCompanion(payload = {}, options: {activate?: boolean} = {}) {
     if (!companionWindow || companionWindow.isDestroyed()) {
       return;
     }
-    companionWindow.setBounds(bounds);
+    if (!existed || !windowIntersectsAnyDisplay(companionWindow.getBounds())) {
+      companionWindow.setBounds(bounds);
+    }
     if (options.activate === false) {
       companionWindow.showInactive();
     } else {
+      if (companionWindow.isMinimized()) {
+        companionWindow.restore();
+      }
       companionWindow.show();
+      companionWindow.focus();
     }
     kickTaskWatch();
     companionWindow.webContents.send('companion:show', payload);
@@ -7730,6 +7794,7 @@ function showDashboard(
   payload: Record<string, unknown> = {},
   options: {activate?: boolean} = {},
 ) {
+  const existed = Boolean(dashboardWindow && !dashboardWindow.isDestroyed());
   const win = createDashboardWindow(String(payload.view || 'chat'));
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -7746,11 +7811,17 @@ function showDashboard(
     if (!dashboardWindow || dashboardWindow.isDestroyed()) {
       return;
     }
-    dashboardWindow.setBounds(bounds);
+    if (!existed || !windowIntersectsAnyDisplay(dashboardWindow.getBounds())) {
+      dashboardWindow.setBounds(bounds);
+    }
     if (options.activate === false) {
       dashboardWindow.showInactive();
     } else {
+      if (dashboardWindow.isMinimized()) {
+        dashboardWindow.restore();
+      }
       dashboardWindow.show();
+      dashboardWindow.focus();
     }
     kickTaskWatch();
     dashboardWindow.webContents.send('dashboard:show', payload);

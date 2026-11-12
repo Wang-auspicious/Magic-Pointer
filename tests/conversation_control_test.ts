@@ -46,6 +46,36 @@ append('tool_progress', { b64: Buffer.from(JSON.stringify({ id: 'shell-1', name:
 const shellRow = transcript.trajectory.find((row: any) => row.callId === 'shell-1');
 assert.equal(shellRow.progressText, 'line-1\nline-2\n', 'streamed shell fragments accumulate on the running tool row');
 assert.equal(shellRow.state, 'running', 'streamed output must not settle the tool row');
+
+const blobTranscript = transcriptApi.createTranscript();
+const appendBlob = (phase: string, payload: Record<string, unknown>) =>
+  transcriptApi.appendTranscript(blobTranscript, {
+    phase,
+    fields: { b64: Buffer.from(JSON.stringify(payload)).toString('base64'), atMs: 12, timeOriginMs: 1000 },
+  });
+appendBlob('tool_call', { id: 'blob-call-1', name: 'Read', args: '{"path":"README.md"}' });
+appendBlob('tool_progress', { id: 'blob-call-1', name: 'Read', text: 'reading...\n' });
+appendBlob('tool_result', {
+  id: 'blob-call-1',
+  name: 'Read',
+  state: 'done',
+  backend: 'fs.read',
+  latency_ms: 42,
+  args: '{"path":"README.md"}',
+  result: 'ok-content',
+});
+appendBlob('steer_absorbed', { turn: 1, texts: ['focus on section 2'] });
+const blobTool = blobTranscript.trajectory.find((row: any) => row.callId === 'blob-call-1');
+assert.ok(blobTool, 'b64-encoded tool_call from RuntimeActivitySink must preserve callId');
+assert.equal(blobTool.name, 'Read');
+assert.equal(blobTool.text, '{"path":"README.md"}');
+assert.equal(blobTool.progressText, 'reading...\n');
+assert.equal(blobTool.result, 'ok-content');
+assert.equal(blobTool.usedBackend, 'fs.read');
+assert.equal(blobTool.latencyMs, 42);
+const steerNotice = blobTranscript.trajectory.find((row: any) => row.kind === 'notice' && row.noticeType === 'steer');
+assert.ok(steerNotice, 'steer_absorbed must record a visible notice in the live trajectory');
+assert.equal(steerNotice.text, 'focus on section 2');
 append('tool_call', { id: 'parent-a', name: 'Agent' });
 append('tool_call', { id: 'parent-b', name: 'Agent' });
 append('subagent', { b64: Buffer.from(JSON.stringify({ id: 'child-a', parentCallId: 'parent-a', reasoning: 'Inspecting A', status: 'running' })).toString('base64') });
