@@ -216,18 +216,26 @@ export function saveModelConnection(
     stores.credentials.set(ref, config.credential || '');
   }
   try {
+    const existingProfiles = settings.models.profiles || [];
+    const nextProfiles = previous
+      ? existingProfiles.map(item => (item.id === profile.id ? profile : item))
+      : [
+          ...existingProfiles.filter(item => item.id !== profile.id),
+          profile,
+        ];
+    const nextDefaultProfileId =
+      input.makeDefault || !settings.models.defaultProfileId
+        ? profile.id
+        : input.makeDefault === false &&
+            settings.models.defaultProfileId === profile.id
+          ? nextProfiles.find(item => item.id !== profile.id)?.id || profile.id
+          : settings.models.defaultProfileId;
     stores.settings.save({
       ...settings,
       models: {
         ...settings.models,
-        defaultProfileId:
-          input.makeDefault || !settings.models.defaultProfileId
-            ? profile.id
-            : settings.models.defaultProfileId,
-        profiles: [
-          ...settings.models.profiles.filter(item => item.id !== profile.id),
-          profile,
-        ],
+        defaultProfileId: nextDefaultProfileId,
+        profiles: nextProfiles,
       },
     });
   } catch (error) {

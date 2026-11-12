@@ -124,16 +124,18 @@ window.ModelConnections = (() => {
             : group.provider === input.provider,
         )
         .flatMap(group => group.models.map(model => model.id));
-      return [
+      const known = [
         ...new Set([
           ...discoveredModels,
           ...entries,
           ...(profile?.models || [])
             .map(model => String(model.id || ''))
             .filter(Boolean),
-          ...(input.model ? [input.model] : []),
         ]),
       ];
+      return known.length && input.model && !known.includes(input.model)
+        ? [...known, input.model]
+        : known;
     };
     const render = (): void => {
       if (!container.isConnected) {

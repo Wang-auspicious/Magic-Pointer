@@ -195,7 +195,7 @@ function renderPluginsPage(page: any) {
         matchesState &&
         `${item.name || item.id} ${item.description || ''}`
           .toLocaleLowerCase()
-          .includes(pluginSearchQuery.toLocaleLowerCase())
+          .includes(pluginSearchQuery.trim().toLocaleLowerCase())
       );
     })
     .sort(
@@ -414,10 +414,22 @@ function hydrateCanonical(
           : 'light'
         : theme;
     document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
     document.body.toggleAttribute(
       'data-ds-dark-theme',
       resolvedTheme === 'dark',
     );
+    document
+      .getElementById('theme-toggle-icon')
+      ?.setAttribute('href', resolvedTheme === 'dark' ? '#ic-sun' : '#ic-moon');
+    document
+      .getElementById('theme-toggle')
+      ?.setAttribute(
+        'aria-label',
+        resolvedTheme === 'dark'
+          ? studioT('theme.to_light')
+          : studioT('theme.to_dark'),
+      );
     try {
       localStorage.setItem('mp:theme', resolvedTheme);
     } catch {
@@ -427,13 +439,42 @@ function hydrateCanonical(
   }
 }
 
+window.addEventListener('mp:settings-open', () => {
+  void hydrateSettings();
+});
+
+window.addEventListener('mp:theme-toggle', event => {
+  const next = (event as CustomEvent<string>).detail;
+  if (
+    (next === 'light' || next === 'dark') &&
+    canonicalSettings.appearance?.theme &&
+    canonicalSettings.appearance.theme !== next
+  ) {
+    canonicalSettings.appearance.theme = next;
+    void settingsApi()?.saveFabricSettings?.({
+      appearance: {theme: next},
+    });
+  }
+});
+
 systemThemeQuery.addEventListener('change', () => {
   if (canonicalSettings.appearance?.theme !== 'system') {
     return;
   }
   const dark = systemThemeQuery.matches;
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const resolvedTheme = dark ? 'dark' : 'light';
+  document.documentElement.dataset.theme = resolvedTheme;
+  document.documentElement.style.colorScheme = resolvedTheme;
   document.body.toggleAttribute('data-ds-dark-theme', dark);
+  document
+    .getElementById('theme-toggle-icon')
+    ?.setAttribute('href', dark ? '#ic-sun' : '#ic-moon');
+  document
+    .getElementById('theme-toggle')
+    ?.setAttribute(
+      'aria-label',
+      dark ? studioT('theme.to_light') : studioT('theme.to_dark'),
+    );
 });
 
 async function persistSetting(path: string, value: unknown) {
@@ -572,16 +613,23 @@ document.addEventListener('input', event => {
     '.mp-settings-plugin-search input',
   );
   if (pluginSearch) {
-    const query = pluginSearch.value.trim().toLocaleLowerCase();
-    pluginSearchQuery = query;
-    const caret = pluginSearch.selectionStart;
+    pluginSearchQuery = pluginSearch.value;
+    if ((event as InputEvent).isComposing) {
+      return;
+    }
+    const start = pluginSearch.selectionStart;
+    const end = pluginSearch.selectionEnd;
     renderSettings();
     const replacement = document.querySelector<HTMLInputElement>(
       '.mp-settings-plugin-search input',
     );
     replacement?.focus();
-    if (caret !== null) {
-      replacement?.setSelectionRange(caret, caret);
+    if (start !== null && end !== null) {
+      try {
+        replacement?.setSelectionRange(start, end);
+      } catch {
+        /* type=search may not support selection range in all builds */
+      }
     }
     return;
   }
@@ -590,9 +638,20 @@ document.addEventListener('input', event => {
   );
   if (search) {
     settingsQuery = search.value;
+    if ((event as InputEvent).isComposing) {
+      return;
+    }
+    const start = search.selectionStart;
+    const end = search.selectionEnd;
     renderSettings();
     search.focus();
-    search.setSelectionRange(search.value.length, search.value.length);
+    if (start !== null && end !== null) {
+      try {
+        search.setSelectionRange(start, end);
+      } catch {
+        /* type=search may not support selection range in all builds */
+      }
+    }
     return;
   }
   const range = (event.target as HTMLElement).closest<HTMLInputElement>(

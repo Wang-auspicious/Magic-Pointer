@@ -33,6 +33,35 @@ function mergeSettingsPatch(base: unknown, patch: unknown): any {
           : value;
     }
   }
+  const rawActivation = (patch as UnknownRecord).activation;
+  if (
+    rawActivation &&
+    typeof rawActivation === 'object' &&
+    !Array.isArray(rawActivation) &&
+    merged.activation &&
+    typeof merged.activation === 'object'
+  ) {
+    if (
+      rawActivation.wake_mode === 'mouse_button' &&
+      rawActivation.mouse_side_button === undefined &&
+      (!merged.activation.mouse_side_button ||
+        merged.activation.mouse_side_button === 'none')
+    ) {
+      merged.activation = {
+        ...merged.activation,
+        mouse_side_button: 'xbutton1',
+      };
+    } else if (
+      rawActivation.mouse_side_button === 'none' &&
+      rawActivation.wake_mode === undefined &&
+      merged.activation.wake_mode === 'mouse_button'
+    ) {
+      merged.activation = {
+        ...merged.activation,
+        wake_mode: 'wiggle_hotkey',
+      };
+    }
+  }
   return merged;
 }
 

@@ -251,11 +251,15 @@ function renderDashboard(
     } else if (meta.type === 'line') {
       body += dashboardLineSvg(splitLineSeries(chart.groups), meta);
     } else if (chart.table) {
-      body += `<div class="mp-dash-table-scroll"><table class="mp-dash-table"><thead><tr>${chart.table.columns.map(column => `<th>${dashboardEscape(column)}</th>`).join('')}</tr></thead><tbody>`;
-      for (const row of chart.table.rows) {
-        body += `<tr><th scope="row">${dashboardEscape(row.key)}</th>${row.cells.map((value, index) => `<td>${dashboardNumber(value, index === 0 ? meta : (meta.columns?.[index - 1] ?? {}))}</td>`).join('')}</tr>`;
+      if (!chart.table.rows.length) {
+        body += `<p class="mp-dash-note">${studioT('dashboard.no_query_values')}</p>`;
+      } else {
+        body += `<div class="mp-dash-table-scroll"><table class="mp-dash-table"><thead><tr>${chart.table.columns.map(column => `<th>${dashboardEscape(column)}</th>`).join('')}</tr></thead><tbody>`;
+        for (const row of chart.table.rows) {
+          body += `<tr><th scope="row">${dashboardEscape(row.key)}</th>${row.cells.map((value, index) => `<td>${dashboardNumber(value, index === 0 ? meta : {currency: meta.currency, ...(meta.columns?.[index - 1] ?? {})})}</td>`).join('')}</tr>`;
+        }
+        body += '</tbody></table></div>';
       }
-      body += '</tbody></table></div>';
     }
     if (chart.warnings?.length) {
       body += `<details class="mp-dash-note"><summary>Data notes (${chart.warnings.length})</summary><ul>${chart.warnings.map(warning => `<li>${dashboardEscape(warning)}</li>`).join('')}</ul></details>`;

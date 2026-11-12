@@ -1002,3 +1002,29 @@ test('task lookup uses the saved analysis request even after unrelated later tur
     'waiting',
   );
 });
+
+test('viewing a resource with a stale revision while queued does not conflict or abort analysis', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'mp-resource-view-stale-'));
+  const stash = createStashRuntime({baseDir, clipboard});
+  const service = new ResourceCollectionService({
+    stash: () => stash,
+    projects: () => [],
+    attach: () => {},
+    analyze: async () => ({
+      ok: true,
+      answer: JSON.stringify({
+        summary: 'Analyzed cleanly.',
+        coverage: 'Full text',
+        decision: 'keep',
+      }),
+    }),
+  });
+  const item = await service.add({text: 'Note to view while queued'});
+  const staleRevision = item.collection!.revision;
+  const queued = service.enqueue(item.id);
+  assert.ok(queued.collection!.revision > staleRevision);
+  const viewed = service.update(item.id, {lastViewedAt: 1700000000000}, staleRevision);
+  assert.equal(viewed.collection!.lastViewedAt, 1700000000000);
+  assert.equal(viewed.collection!.state, 'queued');
+  assert.equal(viewed.collection!.revision, viewed.collection!.analysisRevision);
+});

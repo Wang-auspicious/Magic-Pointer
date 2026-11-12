@@ -28,6 +28,50 @@ try {
   assert.deepEqual(resolveActiveModelRuntimeConfig(loaded, null).models, catalog);
   store.save(loaded);
   assert.deepEqual(store.load().models.profiles[0].models, catalog);
+
+  const { saveModelConnection } = require('../electron/model_connection');
+  loaded.models.profiles.push({
+    schemaVersion: 1,
+    id: 'second-profile',
+    displayName: 'Second',
+    provider: 'local',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: 'second-model',
+    apiMode: 'local',
+    credentialRef: '',
+    enabled: true,
+    models: [],
+  });
+  store.save(loaded);
+  const edited = saveModelConnection(
+    {
+      profileId: 'local-audit',
+      displayName: 'Local Renamed',
+      provider: 'local',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'local-audit',
+      apiMode: 'local',
+      makeDefault: false,
+    },
+    {
+      settings: store,
+      credentials: {
+        get: () => '',
+        set: () => {},
+        delete: () => {},
+      },
+    },
+  );
+  assert.deepEqual(
+    edited.settings.models.profiles.map((p: { id: string }) => p.id),
+    ['local-audit', 'second-profile'],
+    'editing a model connection must preserve its list order',
+  );
+  assert.equal(
+    edited.settings.models.defaultProfileId,
+    'second-profile',
+    'unchecking makeDefault on the default profile must hand off defaultProfileId',
+  );
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
 }

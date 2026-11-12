@@ -1580,11 +1580,17 @@
             options.startProjectChat(project, prompt);
           },
           onChanged: updated => {
+            const oldKey = ProjectScope.key(project);
+            const newKey = ProjectScope.key(updated);
             projects = projects.map(item =>
-              ProjectScope.key(item) === ProjectScope.key(updated)
+              ProjectScope.key(item) === oldKey ||
+              ProjectScope.key(item) === newKey
                 ? updated
                 : item,
             );
+            if (selectedProjectKey === oldKey) {
+              selectedProjectKey = newKey;
+            }
             void options.refreshSidebar();
           },
         });
@@ -2007,6 +2013,13 @@
         }
         if ('librarySettings' in d) {
           options.show('settings');
+          requestAnimationFrame(() =>
+            document
+              .querySelector<HTMLElement>(
+                `[data-settings-page="${d.librarySettings || 'plugins'}"]`,
+              )
+              ?.click(),
+          );
         }
         if ('libraryFilters' in d) {
           filterMenu(target);

@@ -79,11 +79,21 @@ interface DesktopPerceptionSummary {
       ? labels.unknown
       : status.paused
         ? labels.paused
-        : status.pointerStateFresh === false
-          ? zh ? '鼠标输入不可用' : 'Pointer input unavailable'
-          : status.polling
-            ? zh ? '正在监听' : 'Listening'
-            : zh ? '未在监听' : 'Not listening';
+        : status.wakeMode === 'mouse_button' && !status.detectMouseButton
+          ? zh
+            ? '已关闭'
+            : 'Off'
+          : status.pointerStateFresh === false
+            ? zh
+              ? '鼠标输入不可用'
+              : 'Pointer input unavailable'
+            : status.polling
+              ? zh
+                ? '正在监听'
+                : 'Listening'
+              : zh
+                ? '未在监听'
+                : 'Not listening';
     return {
       state,
       label: labels[state],
@@ -462,11 +472,13 @@ interface DesktopPerceptionSummary {
           : text('None registered', '未注册'),
         value.hotkeys.some(key => !key.ready),
       );
-      if (status?.detectMouseButton) {
+      if (status?.detectMouseButton || status?.wakeMode === 'mouse_button') {
         addChannel(
           text('Mouse button', '鼠标侧键'),
           value.pointer,
-          !status.polling || status.pointerStateFresh === false,
+          !status.detectMouseButton ||
+            !status.polling ||
+            status.pointerStateFresh === false,
         );
       }
       action.textContent = activating
@@ -617,10 +629,16 @@ interface DesktopPerceptionSummary {
         render();
       },
       updateContext(next) {
+        if (disposed) {
+          return;
+        }
         context = next;
         renderMaterials();
       },
       updateEvidence(object) {
+        if (disposed) {
+          return;
+        }
         evidence = record(object);
         renderEvidence();
       },

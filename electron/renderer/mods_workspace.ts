@@ -452,6 +452,11 @@ declare global {
         });
         if (result.ok) {
           snapshot = result;
+          if (inputs) {
+            for (const field of Object.keys(inputs)) {
+              drafts.delete(`${identity}:${actionId}:${field}`);
+            }
+          }
           const target = result.result?.panelId;
           if (selected === identity && target && result.modules.some(module =>
             module.id === moduleId && module.panels.some(panel => panel.id === target),

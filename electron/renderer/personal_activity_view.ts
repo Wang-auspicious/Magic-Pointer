@@ -281,6 +281,10 @@
         host.innerHTML = `<div class="personal-page">${pageHeader()}${dateToolbar(date, query)}<p class="personal-feedback" role="status" aria-live="polite">${escape(readFeedback)}</p></div>`;
         return;
       }
+      const prevScrollTop = host.scrollTop;
+      const prevRecordScrollTop =
+        host.querySelector<HTMLElement>('.personal-record-content')
+          ?.scrollTop ?? 0;
       const opened = Array.from(
         host.querySelectorAll<HTMLDetailsElement>(
           'details[open][data-personal-details]',
@@ -293,6 +297,15 @@
         .forEach(details => {
           details.open = opened.includes(details.dataset.personalDetails);
         });
+      const nextRecord = host.querySelector<HTMLElement>(
+        '.personal-record-content',
+      );
+      if (nextRecord && prevRecordScrollTop > 0) {
+        nextRecord.scrollTop = prevRecordScrollTop;
+      }
+      if (prevScrollTop > 0) {
+        host.scrollTop = prevScrollTop;
+      }
     };
     const selectDate = (nextDate: string) => {
       if (nextDate === date) {
@@ -449,7 +462,11 @@
           });
         } else if (button.dataset.personalRemoveRoot !== undefined) {
           result = await api.configure({
-            roots: (snapshot!.status.roots || []).filter(
+            roots: (
+              snapshot!.status.roots ||
+              snapshot!.status.watchedRoots ||
+              []
+            ).filter(
               (_root: string, index: number) =>
                 index !== Number(button.dataset.personalRemoveRoot),
             ),
@@ -472,6 +489,14 @@
               result = await api.pickRoot();
               break;
             case 'clear':
+              if (
+                typeof window !== 'undefined' &&
+                typeof window.confirm === 'function' &&
+                !window.confirm('确定要删除全部本机个人活动记录吗？此操作无法撤销。')
+              ) {
+                button.disabled = false;
+                return;
+              }
               result = await api.clear();
               break;
           }

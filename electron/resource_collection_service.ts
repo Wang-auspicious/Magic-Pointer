@@ -549,6 +549,11 @@ export class ResourceCollectionService {
     const contentChanged = (
       ['title', 'projectId', 'intent', 'note', 'summary', 'nextStep'] as const
     ).some(key => patch[key] !== undefined && patch[key] !== previous[key]);
+    const patchKeys = Object.keys(patch).filter(
+      key => patch[key as keyof ResourceCollection] !== undefined,
+    );
+    const viewOnly =
+      patchKeys.length > 0 && patchKeys.every(key => key === 'lastViewedAt');
     return this.options.stash().updateResource(
       id,
       {
@@ -570,7 +575,7 @@ export class ResourceCollectionService {
           : {}),
         ...(contentChanged ? {exportedPath: ''} : {}),
       },
-      revision,
+      viewOnly ? undefined : revision,
     );
   }
 

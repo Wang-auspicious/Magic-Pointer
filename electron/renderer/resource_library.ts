@@ -1416,6 +1416,11 @@ declare global {
           document
             .querySelector<HTMLElement>('[data-account-command="settings"]')
             ?.click();
+          requestAnimationFrame(() =>
+            document
+              .querySelector<HTMLElement>('[data-settings-page="privacy"]')
+              ?.click(),
+          );
           return;
         }
         if (action === 'capture') {

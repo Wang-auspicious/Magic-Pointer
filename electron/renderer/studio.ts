@@ -6698,6 +6698,7 @@ function show(view: string, projectKey?: string) {
   }
   if (view === 'settings') {
     renderSettings();
+    window.dispatchEvent(new Event('mp:settings-open'));
   }
   if (view === 'personal') {
     personalActivityUi?.show();
@@ -7221,6 +7222,7 @@ function applyTheme(theme: 'light' | 'dark') {
     /* renderer storage unavailable */
   }
   window.magicPointerDashboard?.setTheme?.(theme);
+  window.dispatchEvent(new CustomEvent('mp:theme-toggle', {detail: theme}));
   const use = document.getElementById('theme-toggle-icon');
   use?.setAttribute('href', theme === 'dark' ? '#ic-sun' : '#ic-moon');
   const toggle = document.getElementById('theme-toggle');
@@ -13917,7 +13919,9 @@ if (modulesHost && globalThis.ModsWorkspace) {
       ? window.magicPointerDashboard.modules.invoke({...request, conversationId: activeConversationId})
       : unavailableModules(),
     composeAgentRequest: (sessionId, request) => {
-      const textarea = document.querySelector<HTMLTextAreaElement>('.mpw-input');
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '#composer-input, #composer-form textarea, .mpw-input',
+      );
       if (
         !sessionId ||
         activeConversationRecord?.agentSessionId !== sessionId ||
@@ -13930,6 +13934,7 @@ if (modulesHost && globalThis.ModsWorkspace) {
         : `Continue this module action in the current task: ${request.moduleTitle} / ${request.actionLabel}.\nModule: ${request.moduleId}\nTool: ${request.toolName}\nArguments:\n${JSON.stringify(request.arguments, null, 2)}`;
       textarea.value += `${textarea.value ? '\n\n' : ''}${requestText}`;
       textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
       textarea.focus();
       textarea.setSelectionRange(textarea.value.length, textarea.value.length);
       return true;

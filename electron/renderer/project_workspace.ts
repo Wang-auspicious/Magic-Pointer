@@ -151,9 +151,6 @@ declare global {
     root.className = 'mp-project-workspace';
     root.setAttribute('aria-label', project.name);
     host.replaceChildren(root);
-    const rows = conversations
-      .filter(row => ProjectScope.contains(project, row))
-      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
     function status(message: string): void {
       statusText = message;
@@ -165,6 +162,10 @@ declare global {
     }
 
     function paint(): void {
+      root.setAttribute('aria-label', project.name);
+      const rows = conversations
+        .filter(row => ProjectScope.contains(project, row))
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       const active = document.activeElement as HTMLElement | null;
       const focusedMenu = [
         ...root.querySelectorAll('.mp-project-menu summary'),

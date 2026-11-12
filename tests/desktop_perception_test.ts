@@ -50,6 +50,18 @@ assert.equal(
   ).hotkeys[0].ready,
   false,
 );
+assert.equal(
+  summarize(
+    {
+      ...available,
+      wakeMode: 'mouse_button',
+      detectWiggle: false,
+      detectMouseButton: false,
+    },
+    'en',
+  ).pointer,
+  'Off',
+);
 console.log(
   'desktop perception: real availability, pause, setup and registration states passed',
 );
