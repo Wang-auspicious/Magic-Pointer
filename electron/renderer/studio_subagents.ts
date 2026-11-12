@@ -101,26 +101,52 @@
     }
   }
 
+  function decodeFields(record: Record<string, unknown>): Record<string, unknown> {
+    const fields = objectOf(record.fields);
+    if (typeof fields.b64 === 'string' && fields.b64) {
+      try {
+        const raw =
+          typeof Buffer !== 'undefined'
+            ? Buffer.from(fields.b64, 'base64').toString('utf8')
+            : new TextDecoder().decode(
+                Uint8Array.from(atob(fields.b64), c => c.charCodeAt(0)),
+              );
+        return {...fields, ...objectOf(JSON.parse(raw))};
+      } catch {
+        return fields;
+      }
+    }
+    return fields;
+  }
+
   function activeSubagentParentCallId(
     records: ReadonlyArray<Record<string, unknown>>,
   ): string {
-    let active = '';
+    const running: string[] = [];
     for (const record of records || []) {
-      if (clean(record.phase) !== 'tool_call') {
+      const phase = clean(record.phase);
+      if (phase !== 'tool_call' && phase !== 'tool_result') {
         continue;
       }
-      const fields = objectOf(record.fields);
-      if (!AGENT_NAMES.has(clean(fields.name || record.name))) {
-        continue;
-      }
+      const fields = decodeFields(record);
       const callId = clean(
         fields.id || fields.callId || record.callId || record.id,
       );
-      if (callId) {
-        active = callId;
+      if (phase === 'tool_result') {
+        const idx = running.indexOf(callId);
+        if (idx >= 0) {
+          running.splice(idx, 1);
+        }
+        continue;
+      }
+      if (!AGENT_NAMES.has(clean(fields.name || record.name))) {
+        continue;
+      }
+      if (callId && !running.includes(callId)) {
+        running.push(callId);
       }
     }
-    return active;
+    return running.at(-1) || '';
   }
 
   function taskFromRecord(
@@ -190,7 +216,8 @@
       turn: live.turn ?? base?.turn ?? 0,
       model: live.model ?? base?.model ?? '',
       modelUsage: live.modelUsage ?? base?.modelUsage,
-      pendingInput: live.pendingInput,
+      pendingInput:
+        live.pendingInput !== undefined ? live.pendingInput : base?.pendingInput,
       resumeRequired: live.resumeRequired ?? base?.resumeRequired ?? false,
       answerSaved: live.answerSaved ?? base?.answerSaved ?? false,
     };

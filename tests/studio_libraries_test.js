@@ -42,6 +42,11 @@ lib.setFilter('type', 'all'); lib.setFilter('group', 'custom');
 lib.setSessionPreference('a', { group: 'Research' });
 assert.equal(lib.sections(lib.filterRows(rows), [])[0].label, 'Pinned');
 assert.ok(lib.sections(lib.filterRows(rows), []).some(group => group.label === 'Research'));
+assert.equal(
+  lib.sidebarSections([], []).some(group => group.label === 'Research'),
+  false,
+  'empty custom sidebar sections must be hidden when emptyGroups is false',
+);
 assert.ok(cells.size > 0, 'organization preferences persist across views and relaunches');
 lib.setSessionPreference('a', { pinned: true, order: 2 });
 lib.movePinned('a', -1, lib.sections(lib.filterRows(rows), [])[0].items.map(row => row.id));

@@ -80,11 +80,14 @@
       case 'select-tab':
         return {...state, open: true, tab: action.tab};
       case 'resize': {
-        if (state.maximized) {
-          return state;
-        }
         const width = clampInspectorWidth(action.width, action.availableWidth);
-        return {...state, open: true, width, previousWidth: width};
+        return {
+          ...state,
+          open: true,
+          maximized: false,
+          width,
+          previousWidth: width,
+        };
       }
       case 'viewport': {
         if (state.maximized) {

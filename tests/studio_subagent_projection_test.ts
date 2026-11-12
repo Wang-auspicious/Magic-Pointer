@@ -79,6 +79,14 @@ assert.strictEqual(activeSubagentParentCallId([
 assert.strictEqual(activeSubagentParentCallId([
   { phase: 'tool_call', fields: { id: 'read-1', name: 'Read' } },
 ]), '');
+assert.strictEqual(activeSubagentParentCallId([
+  { phase: 'tool_call', fields: { id: 'read-1', name: 'Read' } },
+  { phase: 'tool_call', fields: { b64: Buffer.from(JSON.stringify({ id: 'parent-b64', name: 'Agent' })).toString('base64') } },
+]), 'parent-b64', 'activeSubagentParentCallId must decode b64 tool_call records');
+assert.strictEqual(activeSubagentParentCallId([
+  { phase: 'tool_call', fields: { id: 'parent-done', name: 'Agent' } },
+  { phase: 'tool_result', fields: { id: 'parent-done', name: 'Agent', state: 'done' } },
+]), '', 'activeSubagentParentCallId must clear settled parent Agent tool calls');
 console.log('studio subagent projection test ok');
 
 const restored = projectSubagentTasks([{ trajectory: [{

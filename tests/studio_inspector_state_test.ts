@@ -84,4 +84,11 @@ assert.strictEqual(
   null,
 );
 
+const resizedFromMaximized = reduceInspectorState(
+  reduceInspectorState(state, { type: 'maximize' }),
+  { type: 'resize', width: 520, availableWidth: 1200 },
+);
+assert.strictEqual(resizedFromMaximized.maximized, false, 'resizing the inspector exits maximized mode');
+assert.strictEqual(resizedFromMaximized.width, 520);
+
 console.log('studio inspector state test ok');

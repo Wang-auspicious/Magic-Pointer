@@ -1417,18 +1417,36 @@ const studioWorkflowPanel = (
   globalThis as {StudioWorkflowPanel?: StudioWorkflowPanelModule}
 ).StudioWorkflowPanel!;
 
-const STUDIO_SEARCH_ROUTES = [
-  {id: 'chat', label: studioT('search.route.new_chat'), keywords: ['首页', '会话', 'new']},
-  {id: 'design', label: 'Design', keywords: ['设计', '素材', '画布']},
-  {
-    id: 'settings',
-    label: studioT('search.route.customize'),
-    keywords: ['设置', '插件', '模型', '权限', 'Skills', 'MCP'],
-  },
-  {id: 'changes', label: studioT('search.route.changes'), keywords: ['Git', 'Review', '拉取请求']},
-  {id: 'browser', label: studioT('search.route.browser'), keywords: ['站点', '网页', 'localhost']},
-  {id: 'tasks', label: studioT('search.route.tasks'), keywords: ['已安排', '后台', '运行中']},
-] as const;
+function studioSearchRoutes() {
+  return [
+    {
+      id: 'chat',
+      label: studioT('search.route.new_chat'),
+      keywords: ['首页', '会话', 'new'],
+    },
+    {id: 'design', label: 'Design', keywords: ['设计', '素材', '画布']},
+    {
+      id: 'settings',
+      label: studioT('search.route.customize'),
+      keywords: ['设置', '插件', '模型', '权限', 'Skills', 'MCP'],
+    },
+    {
+      id: 'changes',
+      label: studioT('search.route.changes'),
+      keywords: ['Git', 'Review', '拉取请求'],
+    },
+    {
+      id: 'browser',
+      label: studioT('search.route.browser'),
+      keywords: ['站点', '网页', 'localhost'],
+    },
+    {
+      id: 'tasks',
+      label: studioT('search.route.tasks'),
+      keywords: ['已安排', '后台', '运行中'],
+    },
+  ];
+}
 let studioSearchIndex: StudioSearchItem[] = [];
 let visibleSearchResults: StudioSearchItem[] = [];
 let globalSearchActiveIndex = 0;
@@ -2442,6 +2460,7 @@ function openRenameDialog(id: string, currentTitle: string) {
     }
     overlay.close();
     await renderSidebar();
+    void libraryUi.render(shell.dataset.view || 'chat');
     const head = document.getElementById('chat-title');
     if (head && activeConversationId === id) {
       head.textContent = response.title ?? value;
@@ -4265,6 +4284,12 @@ function setStudioHomeVisible(visible: boolean) {
   if (home) {
     home.hidden = !visible;
   }
+  if (!visible) {
+    const homeTooltip = document.getElementById('studio-home-tooltip');
+    if (homeTooltip) {
+      homeTooltip.hidden = true;
+    }
+  }
   if (header) {
     header.hidden = visible;
   }
@@ -4333,7 +4358,7 @@ async function refreshGlobalSearchIndex() {
     projects,
     commands: directory?.commands ?? [],
     skills: directory?.skills ?? [],
-    routes: [...STUDIO_SEARCH_ROUTES],
+    routes: studioSearchRoutes(),
   });
 }
 
@@ -4401,6 +4426,9 @@ function renderGlobalSearchResults(query: string) {
     return row;
   });
   host.replaceChildren(...rows);
+  host
+    .querySelector<HTMLElement>('.mp-global-search-row.is-active')
+    ?.scrollIntoView({block: 'nearest'});
 }
 
 function selectGlobalSearchResult(item: StudioSearchItem) {
@@ -4421,17 +4449,25 @@ function selectGlobalSearchResult(item: StudioSearchItem) {
     if (view === 'changes' || view === 'browser' || view === 'tasks') {
       show('chat');
       setInspector(true, view);
+    } else if (view === 'chat') {
+      startNewChat();
+      show('chat');
     } else {
       show(view);
     }
     return;
   }
   const name = String(item.target.command || item.target.skill || '');
-  const textarea = document.querySelector<HTMLTextAreaElement>('.mpw-input');
+  show('chat');
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    '#composer-input, #composer-form textarea, .mpw-input',
+  );
   if (!textarea || !name) {
     return;
   }
   textarea.value = `/${name} `;
+  fitComposer(textarea);
+  syncComposerSubmitState();
   textarea.dispatchEvent(new Event('input', {bubbles: true}));
   textarea.focus();
 }
@@ -4450,9 +4486,11 @@ async function openGlobalSearch() {
   globalSearchActiveIndex = 0;
   input.value = '';
   renderGlobalSearchResults('');
-  await refreshGlobalSearchIndex();
-  renderGlobalSearchResults(input.value);
   input.focus();
+  await refreshGlobalSearchIndex();
+  if (!overlay.hidden) {
+    renderGlobalSearchResults(input.value);
+  }
 }
 
 function closeGlobalSearch() {
@@ -6514,7 +6552,16 @@ const VIEWS: Record<string, string> = Object.fromEntries(
   ]),
 );
 const libraryUi = studioLibraries.createController({
-  data: Data,
+  data: {
+    ...Data,
+    deleteConversation: async (id: string) => {
+      const result = await Data.deleteConversation(id);
+      if (result?.ok && activeConversationId === id) {
+        startNewChat();
+      }
+      return result;
+    },
+  },
   show,
   compose: composeLibraryPrompt,
   startProjectChat: (project: MagicPointerProject, prompt: string) => {
@@ -7444,6 +7491,7 @@ async function executeAccountCommand(command: string) {
     return;
   }
   if (command === 'usage') {
+    startNewChat();
     show('chat');
     setStudioHomeVisible(true);
     return;
@@ -8445,7 +8493,7 @@ function closeWorkspaceResource(tabId: string): void {
   } else {
     renderWorkspaceResourceTabs();
     const active = workspaceResourceTabs.find(tab => tab.active);
-    if (active) {
+    if (wasActive && active) {
       activateWorkspaceResource(active.id);
     }
   }
@@ -8985,7 +9033,7 @@ async function selectProjectFile(
   const name = document.getElementById('project-file-name');
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = 'File';
+    inspectorTitle.textContent = studioT('inspector.files');
   }
   if (name) {
     name.textContent =
@@ -9362,7 +9410,7 @@ function renderBrowserViewState(state: MagicPointerBrowserViewState) {
           active:
             syncActive && state.activeKey
               ? browser.key === state.activeKey
-              : browser.active,
+              : tab.active,
         };
       });
     if (syncActive && state.activeKey) {
@@ -10553,7 +10601,19 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
     renderArtifactEditor();
   }
   if (activeInspectorTab === 'browser') {
-    browserViewVisible = Boolean(latestBrowserViewState.url);
+    const bounds = projectBrowserBounds();
+    if (latestBrowserViewState.url && !browserViewVisible && bounds) {
+      browserViewVisible = true;
+      void Data.openBrowserView(
+        latestBrowserViewState.url,
+        bounds,
+        activeProjectRoot,
+        '',
+        latestBrowserViewState.activeKey || undefined,
+      );
+    } else {
+      browserViewVisible = Boolean(latestBrowserViewState.url);
+    }
     scheduleProjectBrowserResize();
   }
 }
@@ -10925,9 +10985,13 @@ document.getElementById('project-file-back')?.addEventListener('click', () => {
   selectedProjectFileLoading = false;
   selectedProjectFileMarkdown = false;
   projectFileCodeView = false;
+  workspaceResourceTabs = workspaceResourceTabs.map(tab =>
+    tab.kind === 'file' ? {...tab, active: false} : tab,
+  );
+  renderWorkspaceResourceTabs();
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = 'Files';
+    inspectorTitle.textContent = studioT('inspector.files');
   }
   renderProjectFileTree();
 });

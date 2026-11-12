@@ -323,12 +323,15 @@
       : [];
     const rest = rows.filter(row => !sessionPreference(row.id).pinned);
     for (const label of sessionGroups()) {
-      groups.push({
-        key: `__custom__${label}`,
-        label,
-        items: rest.filter(row => sessionPreference(row.id).group === label),
-        virtual: true,
-      });
+      const items = rest.filter(row => sessionPreference(row.id).group === label);
+      if (items.length || preferences.sidebar.emptyGroups) {
+        groups.push({
+          key: `__custom__${label}`,
+          label,
+          items,
+          virtual: true,
+        });
+      }
     }
     const automatic = rest.filter(row => !sessionPreference(row.id).group);
     if (preferences.sidebar.group === 'folder') {
@@ -1164,8 +1167,8 @@
       }
     });
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') {
-        closeMenu();
+      if (event.key === 'Escape' && !root.hidden) {
+        closeMenu(true);
       }
     });
     applyNavigation();
@@ -2083,15 +2086,26 @@
                   return;
                 }
                 if (action === 'delete') {
+                  closeMenu();
                   void options.data
                     .deleteConversation(row.id)
-                    .then(() => render('chats'));
+                    .then(async res => {
+                      if (!res?.ok) {
+                        error = res?.error || 'Could not delete conversation.';
+                      }
+                      await render('chats');
+                      changed();
+                    });
+                  return;
                 }
                 closeMenu();
                 changed();
               }),
             );
           positionMenu(target);
+          requestAnimationFrame(() => {
+            root.querySelector<HTMLElement>('button')?.focus({preventScroll: true});
+          });
         }
       });
     }

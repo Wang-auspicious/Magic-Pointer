@@ -344,6 +344,12 @@ function bindTooltips(): void {
       target.addEventListener('blur', hideTooltip);
       target.addEventListener('click', () => showTooltip(target));
     });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      hideTooltip();
+    }
+  });
+  document.addEventListener('scroll', hideTooltip, {capture: true, passive: true});
 }
 
 function updateTabState(): void {
