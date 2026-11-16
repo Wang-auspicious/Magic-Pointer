@@ -59,6 +59,7 @@
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.11.1",
     "ignore": "5.3.2",
+    "katex": "0.19.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "pptxgenjs": "^4.0.1",

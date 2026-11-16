@@ -1,4 +1,4 @@
-import {cpSync, readFileSync, readdirSync, rmSync} from 'node:fs';
+import {cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {buildSync} from 'esbuild';
@@ -145,6 +145,37 @@ buildSync({
   target: 'es2022',
   sourcemap: true,
 });
+
+(function bundleKatexAssets(): void {
+  const katexEntry = require.resolve('katex');
+  const katexDist = path.dirname(katexEntry);
+  const vendorOut = path.join(outputRoot, 'renderer', 'vendor', 'katex');
+  const fontsOut = path.join(vendorOut, 'fonts');
+  mkdirSync(fontsOut, {recursive: true});
+  buildSync({
+    entryPoints: [katexEntry],
+    outfile: path.join(vendorOut, 'katex.js'),
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    globalName: 'katex',
+    target: 'es2022',
+    minify: true,
+  });
+  const rawCss = readFileSync(path.join(katexDist, 'katex.min.css'), 'utf8');
+  // Strip legacy .woff/.ttf fallback descriptors so packaged builds ship only .woff2.
+  const woff2OnlyCss = rawCss.replace(
+    /,url\(fonts\/[^)]+\.woff\) format\("woff"\),url\(fonts\/[^)]+\.ttf\) format\("truetype"\)/g,
+    '',
+  );
+  writeFileSync(path.join(vendorOut, 'katex.css'), woff2OnlyCss, 'utf8');
+  const fontsSrc = path.join(katexDist, 'fonts');
+  for (const entry of readdirSync(fontsSrc)) {
+    if (entry.endsWith('.woff2')) {
+      cpSync(path.join(fontsSrc, entry), path.join(fontsOut, entry));
+    }
+  }
+})();
 
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');

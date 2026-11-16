@@ -41,8 +41,16 @@ for (const exclusion of [
   '!node_modules/pdf-lib/dist/**',
   '!node_modules/exceljs/dist/**',
   '!node_modules/pdfjs-dist/build/**',
+  '!node_modules/docx/dist/index.iife.js',
+  '!node_modules/docx/dist/index.umd.cjs',
 ]) {
   assert.ok(builder.includes(exclusion), `missing builder exclusion: ${exclusion}`);
+}
+for (const keptEntry of [
+  '!node_modules/docx/dist/index.mjs',
+  '!node_modules/docx/dist/index.cjs',
+]) {
+  assert.ok(!builder.includes(keptEntry), `must keep docx exports entry: ${keptEntry}`);
 }
 assert.ok(fs.existsSync(path.join(root, 'packaging/after_pack.js')), 'missing packaging/after_pack.js hook');
 const os = require('node:os');

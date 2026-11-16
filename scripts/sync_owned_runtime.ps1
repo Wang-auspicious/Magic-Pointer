@@ -9,7 +9,7 @@ if ($sourceBase -eq $installedBase) { throw 'Source and installation must differ
 
 # These directories contain only packaged code. User data and secrets are not
 # mirrored, including any historical data directory under resources/app.
-$ownedRuntimeDirectories = @('resources\app\app', 'resources\app\build', 'resources\app\scripts', 'resources\app\node_modules', 'resources\python-runtime')
+$ownedRuntimeDirectories = @('locales', 'resources\app\app', 'resources\app\build', 'resources\app\scripts', 'resources\app\node_modules', 'resources\python-runtime')
 foreach ($relative in $ownedRuntimeDirectories) {
     $sourceDirectory = [IO.Path]::GetFullPath((Join-Path $sourceBase $relative))
     $installedDirectory = [IO.Path]::GetFullPath((Join-Path $installedBase $relative))
@@ -25,5 +25,11 @@ foreach ($relative in $ownedRuntimeDirectories) {
     }
     & robocopy.exe $sourceDirectory $installedDirectory /MIR /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
     if ($LASTEXITCODE -ge 8) { throw "Runtime mirror failed for $relative ($LASTEXITCODE)" }
+}
+$sourceChromiumLicenses = Join-Path $sourceBase 'LICENSES.chromium.html'
+$installedChromiumLicenses = Join-Path $installedBase 'LICENSES.chromium.html'
+if (-not (Test-Path -LiteralPath $sourceChromiumLicenses -PathType Leaf) -and
+    (Test-Path -LiteralPath $installedChromiumLicenses -PathType Leaf)) {
+    Remove-Item -LiteralPath $installedChromiumLicenses -Force
 }
 exit 0

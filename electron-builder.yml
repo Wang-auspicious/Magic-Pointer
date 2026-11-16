@@ -53,12 +53,15 @@ files:
   - "!node_modules/pdfjs-dist/web/**"
   - "!node_modules/pdfjs-dist/legacy/web/**"
   - "!node_modules/pdfjs-dist/legacy/build/*.min.mjs"
-  - "!node_modules/docx/dist/index.cjs"
   - "!node_modules/docx/dist/index.iife.js"
-  - "!node_modules/docx/dist/index.mjs"
+  - "!node_modules/docx/dist/index.umd.cjs"
   - "!node_modules/pptxgenjs/dist/pptxgen.bundle.js"
   - "!node_modules/pptxgenjs/dist/pptxgen.es.js"
   - "!node_modules/pptxgenjs/dist/pptxgen.min.js"
+  - "!node_modules/katex/src/**"
+  - "!node_modules/katex/dist/contrib/**"
+  - "!node_modules/katex/dist/fonts/*.ttf"
+  - "!node_modules/katex/dist/fonts/*.woff"
 win:
   icon: assets/app/icon.ico
   target:
