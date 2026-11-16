@@ -103,6 +103,7 @@ export interface StreamRequest {
   userContent?: Json[];
   signal?: AbortSignal;
   sessionId?: string;
+  forkMessageCount?: number;
   maxTokens?: number;
   timeoutMs?: number;
   fetch?: typeof fetch;
@@ -533,7 +534,10 @@ function modelToolNames(
 
 export function modelPayload(
   config: ModelConfig,
-  request: Pick<StreamRequest, 'system' | 'messages' | 'tools' | 'maxTokens'>,
+  request: Pick<
+    StreamRequest,
+    'system' | 'messages' | 'tools' | 'maxTokens' | 'forkMessageCount'
+  >,
 ): Json {
   const mode = modelMode(config);
   const names = modelToolNames(request);
@@ -604,7 +608,15 @@ export function modelPayload(
     }
     pendingImages = [];
   };
-  for (const message of request.messages) {
+  const forkTargetRawIndex =
+    typeof request.forkMessageCount === 'number' &&
+    Number.isInteger(request.forkMessageCount) &&
+    request.forkMessageCount > 0 &&
+    request.forkMessageCount <= request.messages.length
+      ? request.forkMessageCount - 1
+      : -1;
+  let forkCacheBlock: Json | null = null;
+  for (const [rawIndex, message] of request.messages.entries()) {
     let content = message.content || '';
     const attach =
       message.role === 'tool' && liveImages.has(message)
@@ -683,6 +695,19 @@ export function modelPayload(
       } else {
         messages.push({role, content: blocks});
       }
+      if (rawIndex === forkTargetRawIndex) {
+        const wireBlocks = messages.at(-1)?.content || [];
+        for (let b = wireBlocks.length - 1; b >= 0; b--) {
+          const candidate = wireBlocks[b];
+          if (
+            candidate &&
+            !['thinking', 'redacted_thinking'].includes(candidate.type)
+          ) {
+            forkCacheBlock = candidate;
+            break;
+          }
+        }
+      }
     } else {
       const entry: Json = {role: message.role, content};
       if (message.role === 'tool') {
@@ -742,12 +767,26 @@ export function modelPayload(
       if (tools.length) {
         (tools.at(-1)! as Json).cache_control = cache;
       }
+      if (forkCacheBlock) {
+        forkCacheBlock.cache_control = cache;
+      }
       let lastUser = messages.length - 1;
       while (lastUser >= 0 && messages[lastUser].role !== 'user') {
         lastUser--;
       }
-      const prior = messages[lastUser - 1]?.content?.at(-1);
-      if (prior) {
+      const priorBlocks = messages[lastUser - 1]?.content || [];
+      let prior: Json | null = null;
+      for (let b = priorBlocks.length - 1; b >= 0; b--) {
+        const candidate = priorBlocks[b];
+        if (
+          candidate &&
+          !['thinking', 'redacted_thinking'].includes(candidate.type)
+        ) {
+          prior = candidate;
+          break;
+        }
+      }
+      if (prior && prior !== forkCacheBlock) {
         prior.cache_control = cache;
       }
     }

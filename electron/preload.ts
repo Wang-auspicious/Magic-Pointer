@@ -580,7 +580,12 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         ...(typeof payload?.resume === 'boolean'
           ? {resume: payload.resume}
           : {}),
-        workMode: payload.workMode === 'work' ? 'work' : 'code',
+        workMode:
+          payload.workMode === 'learn'
+            ? 'learn'
+            : payload.workMode === 'work'
+              ? 'work'
+              : 'code',
         conversationId: String(payload?.conversationId || '').slice(0, 120),
         ...(typeof payload?.projectId === 'string'
           ? {projectId: payload.projectId}
@@ -729,6 +734,42 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       onPayload('conversations:turn', callback),
     onProgress: (callback: PayloadCallback) =>
       onPayload('conversations:progress', callback),
+    learnSend: (payload: UnknownRecord = {}) =>
+      ipcRenderer.invoke('conversations:learn-send', {
+        conversationId: String(payload.conversationId || '').slice(0, 120),
+        ...(payload.branchId
+          ? {branchId: String(payload.branchId).slice(0, 120)}
+          : {}),
+        parentBranchId: payload.parentBranchId
+          ? String(payload.parentBranchId).slice(0, 120)
+          : null,
+        parentTurnIndex: Math.max(
+          0,
+          Math.floor(Number(payload.parentTurnIndex) || 0),
+        ),
+        anchor:
+          payload.anchor && typeof payload.anchor === 'object'
+            ? payload.anchor
+            : undefined,
+        question: String(payload.question || '').slice(0, 12000),
+        lemmaRefs: Array.isArray(payload.lemmaRefs)
+          ? payload.lemmaRefs.slice(0, 8)
+          : [],
+        requestId: String(payload.requestId || '').slice(0, 120),
+        effort:
+          payload.effort !== undefined
+            ? normalizeEffort(payload.effort)
+            : undefined,
+      }),
+    learnStop: (payload: {branchId?: unknown; requestId?: unknown} = {}) =>
+      ipcRenderer.invoke('conversations:learn-stop', {
+        branchId: String(payload.branchId || '').slice(0, 120),
+        requestId: String(payload.requestId || '').slice(0, 120),
+      }),
+    learnPatch: (payload: UnknownRecord = {}) =>
+      ipcRenderer.invoke('conversations:learn-patch', payload),
+    onLearnProgress: (callback: PayloadCallback) =>
+      onPayload('conversations:learn-progress', callback),
   },
   contextTrackers: {
     list: () => ipcRenderer.invoke('context-trackers:list'),

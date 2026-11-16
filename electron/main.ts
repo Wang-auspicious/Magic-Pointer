@@ -3917,6 +3917,479 @@ ipcMain.handle(
   },
 );
 
+const activeLearnBranchRuns = new Map<
+  string,
+  {
+    child: any;
+    agentSessionId: string;
+    conversationId: string;
+    branchId: string;
+    requestId: string;
+  }
+>();
+
+ipcMain.handle(
+  'conversations:learn-patch',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    const conversationId = String(raw?.conversationId || '').slice(0, 120);
+    const action = String(raw?.action || '');
+    try {
+      if (action === 'update-branch') {
+        const branchId = String(raw?.branchId || '').slice(0, 120);
+        const updated = conversations().updateBranchMeta(
+          conversationId,
+          branchId,
+          {
+            ...(typeof raw?.collapsed === 'boolean'
+              ? {collapsed: raw.collapsed}
+              : {}),
+            ...(typeof raw?.docked === 'boolean' ? {docked: raw.docked} : {}),
+            ...(typeof raw?.title === 'string' ? {title: raw.title} : {}),
+            ...(typeof raw?.insightSummary === 'string'
+              ? {insightSummary: raw.insightSummary}
+              : {}),
+          },
+        );
+        if (!updated.ok) {
+          return {ok: false, error: 'branch_not_found'};
+        }
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+        return {
+          ok: true,
+          conversation: updated.conversation,
+          branch: updated.branch,
+        };
+      }
+      if (action === 'toggle-highlight') {
+        const toggled = conversations().toggleUserHighlight(conversationId, {
+          highlightId: raw?.highlightId ? String(raw.highlightId) : undefined,
+          branchId: raw?.branchId ? String(raw.branchId) : null,
+          turnIndex: Number(raw?.turnIndex) || 0,
+          quote: String(raw?.quote || ''),
+        });
+        if (!toggled.ok) {
+          return {ok: false, error: 'invalid_highlight'};
+        }
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+        return {
+          ok: true,
+          added: toggled.added,
+          conversation: toggled.conversation,
+        };
+      }
+      if (action === 'promote-branch') {
+        const branchId = String(raw?.branchId || '').slice(0, 120);
+        const source = conversations().get(conversationId);
+        const branch = source?.branches?.find(
+          (item: any) => item.id === branchId,
+        );
+        if (!source || !branch) {
+          return {ok: false, error: 'branch_not_found'};
+        }
+        let forkedSessionId = `agent-${crypto.randomUUID()}`;
+        if (branch.agentSessionId) {
+          const forked = await new Promise<any>(resolve =>
+            runRuntimeBridge(
+              {
+                action: 'fork',
+                sessionId: branch.agentSessionId,
+                childSessionId: forkedSessionId,
+              },
+              'agent_session',
+              'dashboard',
+              {onComplete: resolve},
+            ),
+          );
+          if (forked?.ok === true && forked.sessionId) {
+            forkedSessionId = forked.sessionId;
+          } else {
+            forkedSessionId = branch.agentSessionId;
+          }
+        }
+        const promoted = conversations().promoteBranch(
+          conversationId,
+          branchId,
+          {agentSessionId: forkedSessionId, taskContext: source.taskContext},
+        );
+        if (!promoted) {
+          return {ok: false, error: 'promote_failed'};
+        }
+        notifyConversationChanged(promoted.id);
+        return {ok: true, conversation: promoted};
+      }
+      return {ok: false, error: 'unknown_action'};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'conversations:learn-stop',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    const branchId = String(raw?.branchId || '').slice(0, 120);
+    const requestId = String(raw?.requestId || '').slice(0, 120);
+    const active =
+      (branchId ? activeLearnBranchRuns.get(branchId) : undefined) ||
+      [...activeLearnBranchRuns.values()].find(
+        item => item.requestId === requestId,
+      );
+    if (!active) {
+      return {ok: false, error: 'not_running'};
+    }
+    if (active.agentSessionId) {
+      requestGracefulAgentCancel(active.agentSessionId);
+    }
+    try {
+      active.child?.kill?.();
+    } catch {}
+    return {ok: true, branchId: active.branchId};
+  },
+);
+
+ipcMain.handle(
+  'conversations:learn-send',
+  async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    const sender = event.sender;
+    const conversationId = String(raw?.conversationId || '').slice(0, 120);
+    const question = String(raw?.question || '').trim();
+    if (!conversationId || !question) {
+      return {ok: false, error: '请输入要深入追问的问题。'};
+    }
+    const source = conversations().get(conversationId);
+    if (!source) {
+      return {ok: false, error: '找不到当前会话。'};
+    }
+    const existingBranchId = String(raw?.branchId || '').trim();
+    if (existingBranchId && activeLearnBranchRuns.has(existingBranchId)) {
+      return {
+        ok: false,
+        active: true,
+        error: '该分支正在思考中，请先等待或停止后再发送。',
+      };
+    }
+    const parentBranchId = raw?.parentBranchId
+      ? String(raw.parentBranchId).trim()
+      : null;
+    const parentTurnIndex = Math.max(
+      0,
+      Math.floor(Number(raw?.parentTurnIndex) || 0),
+    );
+    const existingBranch = existingBranchId
+      ? source.branches?.find((item: any) => item.id === existingBranchId)
+      : undefined;
+
+    let modelRuntime: ModelConfig;
+    try {
+      const runtime = activeModelRuntimeConfig(source.modelSelection);
+      modelRuntime = resolveModelConfig(runtime, ROOT, FABRIC_DATA_DIR);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    let branchSessionId = String(existingBranch?.agentSessionId || '').trim();
+    const forkMessageCount: number | undefined = existingBranch?.forkMessageCount;
+    let fallbackAncestorTurns: any[] | undefined;
+
+    if (!existingBranch) {
+      const parentBranch = parentBranchId
+        ? source.branches?.find((item: any) => item.id === parentBranchId)
+        : null;
+      const parentTurns = parentBranch
+        ? parentBranch.turns || []
+        : source.turns || [];
+      const parentTurn = parentTurns[parentTurnIndex];
+      const parentSessionId = parentBranch
+        ? String(parentBranch.agentSessionId || '').trim()
+        : String(source.agentSessionId || '').trim();
+      const throughTurn = Number(parentTurn?.runtimeTurn);
+      const childSessionId = `agent-${crypto.randomUUID()}`;
+      let forkedOk = false;
+      if (parentSessionId && Number.isInteger(throughTurn) && throughTurn > 0) {
+        const forked = await new Promise<any>(resolve =>
+          runRuntimeBridge(
+            {
+              action: 'fork',
+              sessionId: parentSessionId,
+              childSessionId,
+              throughTurn,
+            },
+            'agent_session',
+            'dashboard',
+            {onComplete: resolve},
+          ),
+        );
+        if (forked?.ok === true && forked.sessionId) {
+          branchSessionId = forked.sessionId;
+          forkedOk = true;
+        }
+      }
+      if (!forkedOk) {
+        branchSessionId = childSessionId;
+        const syntheticBranch = {
+          id: '__pending__',
+          parentBranchId,
+          parentTurnIndex,
+          anchor: {kind: 'selection' as const, label: '', snippet: ''},
+          title: '',
+          agentSessionId: childSessionId,
+          turns: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        fallbackAncestorTurns = bridgeHistoryTurns(
+          conversations().ancestorTurnsForBranch(source, syntheticBranch),
+        );
+      }
+    }
+
+    const lemmaRefs = Array.isArray(raw?.lemmaRefs)
+      ? raw.lemmaRefs
+          .map((item: any) => ({
+            branchId: String(item?.branchId || '').slice(0, 120),
+            title: String(item?.title || '').trim().slice(0, 120),
+            summary: String(item?.summary || '').trim().slice(0, 1500),
+          }))
+          .filter((item: any) => item.title && item.summary)
+      : [];
+    const lemmaTail = lemmaRefs.length
+      ? `\n\n---\n${lemmaRefs
+          .map(
+            (ref: any) =>
+              `[引用并行支线「${ref.title}」的结论]\n${ref.summary}`,
+          )
+          .join('\n\n')}`
+      : '';
+
+    const anchorRaw =
+      raw?.anchor && typeof raw.anchor === 'object' ? raw.anchor : {};
+    const anchorLabel = String(anchorRaw.label || '').trim().slice(0, 200);
+    const anchorSnippet = String(anchorRaw.snippet || '').trim().slice(0, 1000);
+    const anchorKind = String(anchorRaw.kind || 'selection');
+    const kindTag =
+      anchorKind === 'term'
+        ? '概念/跳步锚点'
+        : anchorKind === 'math'
+          ? '数学公式锚点'
+          : anchorKind === 'card'
+            ? '卡片分块锚点'
+            : '局部划选锚点';
+    const isFirstBranchTurn = !existingBranch;
+    const effectivePrompt =
+      isFirstBranchTurn && anchorLabel
+        ? `[局部深入 · ${kindTag}：「${anchorLabel}」${
+            anchorSnippet && anchorSnippet !== anchorLabel
+              ? `\n上下文摘录：${anchorSnippet}`
+              : ''
+          }]\n\n${question}${lemmaTail}`
+        : `${question}${lemmaTail}`;
+
+    const requestId =
+      String(raw?.requestId || '').trim() || `learn-${crypto.randomUUID()}`;
+    const appended = conversations().appendBranchTurn({
+      conversationId,
+      branchId: existingBranch?.id,
+      parentBranchId,
+      parentTurnIndex,
+      anchor: raw?.anchor,
+      agentSessionId: branchSessionId,
+      forkMessageCount,
+      question,
+      request: lemmaRefs.length ? {lemmaRefs} : undefined,
+      modelId: String(modelRuntime.model || '').trim() || undefined,
+    });
+    if (!appended) {
+      return {ok: false, error: '无法创建学习分支节点。'};
+    }
+    const {branch, turnIndex} = appended;
+    conversations().flush();
+    notifyConversationChanged(conversationId);
+
+    const permissionPreset =
+      normalizePermissionPreset(
+        source.taskContext?.permissionMode as string | undefined,
+      ) || 'workspace-write';
+    const rawEffort = String(raw?.effort || '').toLowerCase();
+    const effort = ['low', 'medium', 'high', 'max'].includes(rawEffort)
+      ? rawEffort
+      : 'high';
+    const bridgePayload = {
+      question: effectivePrompt,
+      workMode:
+        source.workMode === 'code' ? 'code' : source.workMode || 'learn',
+      knowledgeIndexPath: path.join(stashBaseDir(), 'index.json'),
+      ...(fallbackAncestorTurns ? {turns: fallbackAncestorTurns} : {}),
+      object: source.object || {},
+      modelRuntime,
+      permissionPreset,
+      effort,
+      requestId,
+      attachments: [],
+      projectContext: source.projectId
+        ? (conversations().getProject(source.projectId) ?? null)
+        : null,
+      additionalFolders: source.additionalFolders || [],
+      conversationId,
+      agentSessionId: branchSessionId,
+      workspaceRoot: source.workspaceRoot || '',
+      ...(source.permissionGrants?.length
+        ? {permissionGrants: source.permissionGrants}
+        : {}),
+      ...(source.permissionDenials?.length
+        ? {permissionDenials: source.permissionDenials}
+        : {}),
+    };
+
+    const progress: SelectionLiveProgress = {
+      answer: '',
+      thinking: '',
+      trajectory: [],
+      records: [],
+      requestId,
+      agentSessionId: branchSessionId,
+    };
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    const emitBranchProgress = (record?: any) => {
+      if (progressTimer !== null) {
+        clearTimeout(progressTimer);
+        progressTimer = null;
+      }
+      conversations().updateBranchTurn({
+        conversationId,
+        branchId: branch.id,
+        turnIndex,
+        answer: progress.answer,
+        thinking: progress.thinking,
+        trajectory: progress.trajectory,
+      });
+      if (sender && !sender.isDestroyed()) {
+        sender.send('conversations:learn-progress', {
+          requestId,
+          conversationId,
+          branchId: branch.id,
+          turnIndex,
+          answer: progress.answer,
+          thinking: progress.thinking,
+          ...(record ? {record} : {}),
+        });
+      }
+    };
+
+    return await new Promise<any>(resolve => {
+      let finished = false;
+      const finish = (parsed: any) => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        if (progressTimer !== null) {
+          clearTimeout(progressTimer);
+          progressTimer = null;
+        }
+        activeLearnBranchRuns.delete(branch.id);
+        const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
+        const failed =
+          parsed?.ok !== true ||
+          !String(parsed?.answer || progress.answer || '').trim();
+        const error = failed ? conversationFailureMessage(parsed) : '';
+        const finalAnswer = String(parsed?.answer || progress.answer || '');
+        const finalThinking = String(
+          parsed?.thinking || progress.thinking || '',
+        );
+        const updatedConversation = conversations().updateBranchTurn({
+          conversationId,
+          branchId: branch.id,
+          turnIndex,
+          answer: finalAnswer,
+          thinking: finalThinking,
+          outcome: stopped ? '已停止' : failed ? '失败' : '已完成',
+          failed,
+          error,
+          runtimeTurn: parsed?.runtimeTurn,
+          timingMs: parsed?.timingMs,
+          usedBackend: parsed?.usedBackend,
+          modelUsage: parsed?.modelUsage,
+          trajectory: Array.isArray(parsed?.trajectory)
+            ? parsed.trajectory
+            : progress.trajectory,
+          activities: parsed?.activities,
+          events: parsed?.events,
+          receipts: parsed?.receipts,
+        });
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+        resolve({
+          ok: !failed,
+          conversationId,
+          branchId: branch.id,
+          turnIndex,
+          answer: finalAnswer,
+          error: failed ? error : undefined,
+          usedBackend: parsed?.usedBackend,
+          modelUsage: parsed?.modelUsage,
+          conversation: updatedConversation,
+        });
+      };
+
+      const child = runRuntimeBridge(
+        bridgePayload,
+        'conversation',
+        'dashboard',
+        {
+          allowWithoutSurface: true,
+          timeoutMs: 120_000,
+          onProgress: (record: any) => {
+            appendTranscript(progress, record);
+            if (sender && !sender.isDestroyed()) {
+              sender.send('conversations:learn-progress', {
+                requestId,
+                conversationId,
+                branchId: branch.id,
+                turnIndex,
+                answer: progress.answer,
+                thinking: progress.thinking,
+                record,
+              });
+            }
+            if (progressTimer === null) {
+              progressTimer = setTimeout(() => emitBranchProgress(), 250);
+            }
+          },
+          onComplete: finish,
+        },
+      );
+      if (!child) {
+        finish({ok: false, error: '对话服务没有启动。'});
+      } else if (!finished) {
+        activeLearnBranchRuns.set(branch.id, {
+          child,
+          agentSessionId: branchSessionId,
+          conversationId,
+          branchId: branch.id,
+          requestId,
+        });
+      }
+    });
+  },
+);
+
 function setConversationModel(
   id: string,
   raw: unknown,
@@ -4700,9 +5173,15 @@ async function sendConversation(
     };
   }
   const hadPendingWork = existing?.hasPendingWork === true;
+  const normalizedRawWorkMode =
+    raw.workMode === 'learn'
+      ? 'learn'
+      : raw.workMode === 'work'
+        ? 'work'
+        : 'code';
   const payload = {
     question,
-    workMode: existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
+    workMode: existing?.workMode || normalizedRawWorkMode,
     knowledgeIndexPath: path.join(stashBaseDir(), 'index.json'),
     turns: bridgeHistoryTurns(existing?.turns),
     object: existing?.object || {},
@@ -4757,8 +5236,7 @@ async function sendConversation(
         request: {
           taskInput,
           projectHandoffs: projectContext?.resourceInbox || [],
-          workMode:
-            existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
+          workMode: existing?.workMode || normalizedRawWorkMode,
           attachments: taskAttachments,
           executionWorkspaceRoot: effectiveExecutionWorkspaceRoot,
           executionBranch,
@@ -4774,7 +5252,7 @@ async function sendConversation(
         },
         answer: '',
         outcome: '进行中',
-        workMode: existing?.workMode || (raw.workMode === 'work' ? 'work' : 'code'),
+        workMode: existing?.workMode || normalizedRawWorkMode,
         agentSessionId: effectiveAgentSessionId,
         hasPendingWork: true,
         modelId: String(modelRuntime?.model || '').trim() || undefined,

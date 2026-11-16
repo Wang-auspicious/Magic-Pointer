@@ -545,7 +545,12 @@ export async function runRuntime(
       });
     }
     const common: AgentOptions = {
-      workMode: payload.workMode === 'work' ? 'work' : 'code',
+      workMode:
+        payload.workMode === 'learn'
+          ? 'learn'
+          : payload.workMode === 'work'
+            ? 'work'
+            : 'code',
       root,
       userDataDir,
       session,

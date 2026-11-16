@@ -108,7 +108,7 @@ function fixture() {
 
 test('session rows carry a leading mode dot colored by workMode', () => {
   const context = fixture();
-  for (const workMode of ['work', 'code'] as const) {
+  for (const workMode of ['learn', 'work', 'code'] as const) {
     const row = context.conversationNode({
       id: `chat-${workMode}`,
       title: 'Task',
@@ -132,13 +132,9 @@ test('sessions without a stored mode default to code', () => {
 });
 
 test('renderSidebar passes workMode through to conversationNode', () => {
-  // Source-level assertion: the summary type feeding conversationNode in
-  // renderSidebar carries workMode (MagicPointerConversationSummary extends
-  // MagicPointerConversationInfo which declares it), so the inline parameter
-  // type must not drop the field.
   assert.match(
     source,
-    /function conversationNode\(\s*c:\s*\{[^}]*workMode\?:\s*'work'\s*\|\s*'code'/,
+    /function conversationNode\(\s*c:\s*\{[^}]*workMode\?:\s*'learn'\s*\|\s*'work'\s*\|\s*'code'/,
   );
 });
 

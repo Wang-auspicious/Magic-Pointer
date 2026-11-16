@@ -1456,7 +1456,7 @@ function conversationNode(
     id?: string;
     title?: string;
     updatedAt?: number;
-    workMode?: 'work' | 'code';
+    workMode?: 'learn' | 'work' | 'code';
     hasPendingWork?: boolean;
     failed?: boolean;
     lastOutcome?: string;
@@ -1484,7 +1484,12 @@ function conversationNode(
           ? ''
           : activity;
   const statusLabel = status ? ConversationState.label(activity) : '';
-  row.dataset.workMode = c.workMode === 'work' ? 'work' : 'code';
+  row.dataset.workMode =
+    c.workMode === 'learn'
+      ? 'learn'
+      : c.workMode === 'work'
+        ? 'work'
+        : 'code';
   row.title = String(c.title || studioT('convo.untitled'));
   if (status) {
     row.title = `${String(c.title || studioT('convo.untitled'))}\n${statusLabel}`;
@@ -4621,7 +4626,10 @@ async function openConversation(id: string) {
     repositoryContextDismissedFor = '';
   }
   activeConversationId = c.id;
-  setProductMode(c.workMode === 'work' ? 'design' : 'walker', false);
+  setProductMode(
+    c.workMode === 'learn' || c.workMode === 'work' ? 'design' : 'walker',
+    false,
+  );
   seedSessionPane(c.id);
   restoreWorkspaceResourceSnapshot();
   void refreshBackgroundAgentTasks(c.id);
@@ -4753,6 +4761,12 @@ async function openConversation(id: string) {
   syncConversationPendingInput(turns);
   scrollChatToBottom();
   ChatView.bindDelegation(stream);
+  if (typeof LearnTree !== 'undefined') {
+    LearnTree.mountConversation(stream, c);
+    if (inspectorState.open && activeInspectorTab === 'learn') {
+      LearnTree.renderDeck(document.getElementById('learn-deck-host'), c);
+    }
+  }
   syncExternalConversationRun(c);
   scheduleStreamRail();
   renderUsageMeter(turns);
@@ -4910,8 +4924,21 @@ async function refreshOpenConversation(
   }
   const stream = document.getElementById('stream');
   if (stream) {
-    followIfNearBottom(stream, () =>
-      activeConversationView?.update(conversation!),
+    followIfNearBottom(stream, () => {
+      activeConversationView?.update(conversation!);
+      if (typeof LearnTree !== 'undefined') {
+        LearnTree.mountConversation(stream, conversation!);
+      }
+    });
+  }
+  if (
+    inspectorState.open &&
+    activeInspectorTab === 'learn' &&
+    typeof LearnTree !== 'undefined'
+  ) {
+    LearnTree.renderDeck(
+      document.getElementById('learn-deck-host'),
+      conversation,
     );
   }
   syncExternalConversationRun(conversation);
@@ -7033,6 +7060,10 @@ function setProductMode(mode: ProductMode, navigate = true) {
   const changed = productMode !== mode;
   productMode = mode;
   shell.dataset.productMode = mode;
+  const eyebrow = document.getElementById('workspace-eyebrow');
+  if (eyebrow) {
+    eyebrow.textContent = mode === 'design' ? 'ACTIVE LEARN' : 'ACTIVE WORK';
+  }
   const designNav = document.querySelector<HTMLElement>('.mp-design-nav');
   const workNav = document.querySelector<HTMLElement>('.mp-main-navigation');
   if (designNav) {
@@ -10409,6 +10440,7 @@ function renderInspectorTitle() {
     return;
   }
   const labels: Record<string, string> = {
+    learn: 'inspector.learn',
     activity: 'activity.log',
     materials: 'inspector.materials',
     files: 'inspector.files',
@@ -10601,6 +10633,12 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   }
   if (activeInspectorTab === 'artifact') {
     renderArtifactEditor();
+  }
+  if (activeInspectorTab === 'learn' && typeof LearnTree !== 'undefined') {
+    LearnTree.renderDeck(
+      document.getElementById('learn-deck-host'),
+      activeConversationRecord,
+    );
   }
   if (activeInspectorTab === 'browser') {
     const bounds = projectBrowserBounds();
@@ -13904,6 +13942,24 @@ function openSettingsPage(page: string) {
 
 const desktopPerceptionHost = document.getElementById('desktop-perception');
 const modulesHost = document.getElementById('modules-workspace');
+if (typeof LearnTree !== 'undefined') {
+  LearnTree.init({
+    getConversation: () => activeConversationRecord,
+    getEffort: () => composerEffort,
+    openDeckInInspector: () => setInspector(true, 'learn'),
+    openConversationById: id => {
+      void renderSidebar().then(() => openConversation(id));
+    },
+    refreshConversation: async id => {
+      await refreshOpenConversation({id});
+    },
+    onMainLemmasChanged: () => {
+      LearnTree?.renderMainComposerLemmas(
+        document.getElementById('composer-lemma-strip'),
+      );
+    },
+  });
+}
 if (modulesHost && globalThis.ModsWorkspace) {
   const unavailableModules = () => ({
     ok: false, sessionId: '', modules: [], errors: [],
@@ -15147,15 +15203,19 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
-    const question = textarea?.value.trim() || '';
-    if (question) {
-      composerSessionHistory.push(question);
+    const rawQuestion = textarea?.value.trim() || '';
+    if (rawQuestion) {
+      composerSessionHistory.push(rawQuestion);
     }
     resetComposerHistory();
-    if (!textarea || !question) {
+    if (!textarea || !rawQuestion) {
       textarea?.focus();
       return;
     }
+    const question =
+      !studioComposerBusy && typeof LearnTree !== 'undefined'
+        ? LearnTree.formatQuestionWithMainLemmas(rawQuestion)
+        : rawQuestion;
     if (studioComposerBusy) {
       await steerActiveConversation(question, textarea);
       return;
@@ -15299,7 +15359,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       }
       const response = await Data.sendConversation({
         conversationId,
-        workMode: productMode === 'design' ? 'work' : 'code',
+        workMode: productMode === 'design' ? 'learn' : 'code',
         question,
         permissionPreset,
         requestId,

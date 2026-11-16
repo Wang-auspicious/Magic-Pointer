@@ -482,6 +482,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   background: var(--cds-text-tint-blue);
 }
 
+.side-item[data-work-mode='learn'] .side-dot,
 .side-item[data-work-mode='work'] .side-dot {
   background: var(--cds-text-tint-orange);
 }

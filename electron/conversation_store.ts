@@ -84,8 +84,58 @@ export interface TurnPendingInput {
   prefix?: string;
 }
 
+export interface LearnAnchor {
+  kind: 'term' | 'card' | 'math' | 'selection';
+  label: string;
+  snippet: string;
+  gloss?: string;
+  priority?: string;
+}
+
+export interface LearnLemmaRef {
+  branchId: string;
+  title: string;
+  summary: string;
+}
+
+export interface LearnBranch {
+  id: string;
+  parentBranchId: string | null;
+  parentTurnIndex: number;
+  anchor: LearnAnchor;
+  title: string;
+  agentSessionId: string;
+  forkMessageCount?: number;
+  turns: TurnEntry[];
+  collapsed?: boolean;
+  insightSummary?: string;
+  docked?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LearnUserHighlight {
+  id: string;
+  branchId: string | null;
+  turnIndex: number;
+  quote: string;
+  createdAt: number;
+}
+
+export type WorkMode = 'learn' | 'work' | 'code';
+
+function normalizeWorkMode(value: unknown): WorkMode {
+  if (value === 'learn') {
+    return 'learn';
+  }
+  if (value === 'work') {
+    return 'work';
+  }
+  return 'code';
+}
+
 interface Conversation {
-  workMode?: 'work' | 'code';
+  workMode?: WorkMode;
   id: string;
   objectKey: string;
   title: string;
@@ -96,6 +146,8 @@ interface Conversation {
   updatedAt: number;
   closed: boolean;
   turns?: TurnEntry[];
+  branches?: LearnBranch[];
+  userHighlights?: LearnUserHighlight[];
   workspaceRoot?: string;
   additionalFolders?: string[];
   modelSelection?: ConversationModelSelection;
@@ -109,7 +161,7 @@ interface Conversation {
 }
 
 interface TurnInput {
-  workMode?: 'work' | 'code';
+  workMode?: WorkMode;
   request?: Record<string, unknown>;
   runtimeTurn?: unknown;
   capturedAt?: number;
@@ -728,7 +780,7 @@ function createConversationStore(
       updatedAt: at,
       closed: false,
       turns: [entry],
-      workMode: turn.workMode === 'work' ? 'work' : 'code',
+      workMode: normalizeWorkMode(turn.workMode),
       projectId: project?.id || (hasProjectSelection ? '' : undefined),
       modelSelection,
       workspaceRoot:
@@ -1057,6 +1109,17 @@ function createConversationStore(
           }
         }
         recovered = true;
+      }
+      for (const branch of conversation.branches || []) {
+        for (const turn of branch.turns || []) {
+          if (turn.outcome !== '进行中') {
+            continue;
+          }
+          turn.outcome = '已中断';
+          turn.failed = true;
+          turn.error = '上次会话已中断，可在此分支继续追问。';
+          recovered = true;
+        }
       }
       if (recovered) {
         markDirty(conversation);
@@ -1526,9 +1589,426 @@ function createConversationStore(
     }
   }
 
+  function sanitizeLearnAnchor(raw: unknown): LearnAnchor {
+    const src =
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : {};
+    const kindRaw = String(src.kind || 'selection');
+    const kind: LearnAnchor['kind'] = ['term', 'card', 'math', 'selection'].includes(
+      kindRaw,
+    )
+      ? (kindRaw as LearnAnchor['kind'])
+      : 'selection';
+    const label = String(src.label || '').trim().slice(0, 200) || '卡点追问';
+    const snippet = String(src.snippet || label).trim().slice(0, 1200);
+    const gloss = String(src.gloss || '').trim().slice(0, 300) || undefined;
+    const priority = String(src.priority || '').trim().slice(0, 24) || undefined;
+    return {
+      kind,
+      label,
+      snippet,
+      ...(gloss ? {gloss} : {}),
+      ...(priority ? {priority} : {}),
+    };
+  }
+
+  function deriveInsightSummary(answer: string): string {
+    const cleaned = String(answer || '')
+      .replace(/:::card[^\n]*\n?/g, '')
+      .replace(/:::\s*$/gm, '')
+      .replace(/\[\[([^\]|\n]+)(?:\|[^\]\n]+)?\]\]/g, '$1')
+      .replace(/==([^=\n]+)==/g, '$1')
+      .replace(/\$\$[\s\S]*?\$\$/g, '[公式]')
+      .replace(/^[#>*\-\d.)\s]+/gm, '')
+      .trim();
+    const firstLine = cleaned.split(/\r?\n/).find(line => line.trim()) || '';
+    return firstLine.trim().slice(0, 96);
+  }
+
+  function appendBranchTurn(input: {
+    conversationId: string;
+    branchId?: string;
+    parentBranchId?: string | null;
+    parentTurnIndex?: number;
+    anchor?: unknown;
+    title?: string;
+    agentSessionId: string;
+    forkMessageCount?: number;
+    question: string;
+    answer?: string;
+    outcome?: string;
+    capturedAt?: number;
+    request?: Record<string, unknown>;
+    modelId?: string;
+  }): {
+    conversation: Conversation;
+    branch: LearnBranch;
+    turnIndex: number;
+  } | null {
+    const target = get(input.conversationId);
+    if (!target) {
+      return null;
+    }
+    const at = Number.isFinite(Number(input.capturedAt))
+      ? Number(input.capturedAt)
+      : now();
+    if (!Array.isArray(target.branches)) {
+      target.branches = [];
+    }
+    let branch = input.branchId
+      ? target.branches.find(item => item.id === input.branchId)
+      : undefined;
+    if (!branch) {
+      const anchor = sanitizeLearnAnchor(input.anchor);
+      const id =
+        String(input.branchId || '').trim() ||
+        `br-${at}-${Math.random().toString(36).slice(2, 8)}`;
+      branch = {
+        id,
+        parentBranchId: input.parentBranchId ? String(input.parentBranchId) : null,
+        parentTurnIndex: Math.max(0, Math.floor(Number(input.parentTurnIndex) || 0)),
+        anchor,
+        title: String(input.title || anchor.label).trim().slice(0, 120) || anchor.label,
+        agentSessionId: String(input.agentSessionId || '').trim(),
+        ...(Number.isInteger(input.forkMessageCount) &&
+        Number(input.forkMessageCount) > 0
+          ? {forkMessageCount: Number(input.forkMessageCount)}
+          : {}),
+        turns: [],
+        collapsed: false,
+        docked: false,
+        createdAt: at,
+        updatedAt: at,
+      };
+      target.branches.push(branch);
+    } else if (input.agentSessionId) {
+      branch.agentSessionId = String(input.agentSessionId);
+    }
+    const entry: TurnEntry = {
+      id: `t-${at}-${Math.random().toString(36).slice(2, 6)}`,
+      at,
+      startedAt: at,
+      question: String(input.question || ''),
+      answer: String(input.answer || ''),
+      outcome: String(input.outcome || '进行中'),
+      failed: false,
+      error: '',
+      trace: [],
+      facts: [],
+      artifacts: [],
+      events: [],
+      activities: [],
+      trajectory: [],
+      receipts: [],
+      thinking: '',
+      modelUsage: {},
+      ...(input.request ? {request: input.request} : {}),
+      ...(input.modelId ? {modelId: String(input.modelId)} : {}),
+    };
+    branch.turns.push(entry);
+    branch.updatedAt = at;
+    target.updatedAt = at;
+    markDirty(target);
+    persist();
+    return {
+      conversation: target,
+      branch,
+      turnIndex: branch.turns.length - 1,
+    };
+  }
+
+  function updateBranchTurn(input: {
+    conversationId: string;
+    branchId: string;
+    turnIndex: number;
+    answer?: unknown;
+    thinking?: unknown;
+    outcome?: unknown;
+    failed?: unknown;
+    error?: unknown;
+    runtimeTurn?: unknown;
+    timingMs?: unknown;
+    usedBackend?: unknown;
+    modelUsage?: unknown;
+    trajectory?: unknown;
+    activities?: unknown;
+    events?: unknown;
+    receipts?: unknown;
+    forkMessageCount?: unknown;
+  }): Conversation | null {
+    const target = get(input.conversationId);
+    const branch = target?.branches?.find(item => item.id === input.branchId);
+    const turn = branch?.turns?.[input.turnIndex];
+    if (!target || !branch || !turn) {
+      return null;
+    }
+    const updatedAt = now();
+    if (input.answer !== undefined) {
+      turn.answer = String(input.answer || '').slice(0, 200000);
+      if (input.turnIndex === 0 && !branch.insightSummary && turn.answer.trim()) {
+        branch.insightSummary = deriveInsightSummary(turn.answer);
+      }
+    }
+    if (input.thinking !== undefined) {
+      turn.thinking = String(input.thinking || '');
+    }
+    if (input.outcome !== undefined) {
+      turn.outcome = String(input.outcome || '').slice(0, 40);
+      if (isTurnSettled(turn.outcome)) {
+        turn.completedAt = updatedAt;
+      }
+    }
+    if (typeof input.failed === 'boolean') {
+      turn.failed = input.failed;
+    }
+    if (input.error !== undefined) {
+      turn.error = String(input.error || '');
+    }
+    if (
+      Number.isInteger(Number(input.runtimeTurn)) &&
+      Number(input.runtimeTurn) > 0
+    ) {
+      turn.runtimeTurn = Number(input.runtimeTurn);
+    }
+    if (
+      Number.isInteger(Number(input.forkMessageCount)) &&
+      Number(input.forkMessageCount) > 0
+    ) {
+      branch.forkMessageCount = Number(input.forkMessageCount);
+    }
+    if (Number.isFinite(Number(input.timingMs))) {
+      turn.timingMs = Number(input.timingMs);
+    }
+    if (input.usedBackend !== undefined) {
+      turn.usedBackend = String(input.usedBackend || '');
+    }
+    if (
+      input.modelUsage &&
+      typeof input.modelUsage === 'object' &&
+      !Array.isArray(input.modelUsage)
+    ) {
+      turn.modelUsage = Object.fromEntries(
+        Object.entries(input.modelUsage as Record<string, unknown>)
+          .filter(([, value]) => Number.isFinite(Number(value)))
+          .map(([key, value]) => [key, Number(value)]),
+      );
+    }
+    if (Array.isArray(input.trajectory)) {
+      turn.trajectory = input.trajectory.slice();
+    }
+    if (Array.isArray(input.activities)) {
+      turn.activities = input.activities.slice(0, 96);
+    }
+    if (Array.isArray(input.events)) {
+      turn.events = input.events.slice(0, 48);
+    }
+    if (Array.isArray(input.receipts)) {
+      turn.receipts = input.receipts.slice(0, 48);
+    }
+    branch.updatedAt = updatedAt;
+    target.updatedAt = updatedAt;
+    markDirty(target);
+    persist();
+    return target;
+  }
+
+  function updateBranchMeta(
+    id: string,
+    branchId: string,
+    patch: {
+      collapsed?: boolean;
+      docked?: boolean;
+      title?: string;
+      insightSummary?: string;
+    },
+  ): {ok: boolean; conversation?: Conversation; branch?: LearnBranch} {
+    const target = get(id);
+    const branch = target?.branches?.find(item => item.id === branchId);
+    if (!target || !branch) {
+      return {ok: false};
+    }
+    if (typeof patch.collapsed === 'boolean') {
+      branch.collapsed = patch.collapsed;
+    }
+    if (typeof patch.docked === 'boolean') {
+      branch.docked = patch.docked;
+    }
+    if (typeof patch.title === 'string' && patch.title.trim()) {
+      branch.title = patch.title.trim().slice(0, 120);
+    }
+    if (typeof patch.insightSummary === 'string') {
+      branch.insightSummary = patch.insightSummary.trim().slice(0, 160);
+    }
+    branch.updatedAt = now();
+    target.updatedAt = branch.updatedAt;
+    markDirty(target);
+    persist();
+    return {ok: true, conversation: target, branch};
+  }
+
+  function toggleUserHighlight(
+    id: string,
+    input: {
+      highlightId?: string;
+      branchId?: string | null;
+      turnIndex: number;
+      quote: string;
+    },
+  ): {ok: boolean; added?: boolean; conversation?: Conversation} {
+    const target = get(id);
+    const quote = String(input.quote || '').trim().slice(0, 600);
+    if (!target || (!quote && !input.highlightId)) {
+      return {ok: false};
+    }
+    if (!Array.isArray(target.userHighlights)) {
+      target.userHighlights = [];
+    }
+    const branchId = input.branchId ? String(input.branchId) : null;
+    const turnIndex = Math.max(0, Math.floor(Number(input.turnIndex) || 0));
+    const existingIdx = target.userHighlights.findIndex(item =>
+      input.highlightId
+        ? item.id === input.highlightId
+        : item.branchId === branchId &&
+          item.turnIndex === turnIndex &&
+          item.quote === quote,
+    );
+    let added = false;
+    if (existingIdx >= 0) {
+      target.userHighlights.splice(existingIdx, 1);
+    } else if (quote) {
+      target.userHighlights.push({
+        id: `hl-${now()}-${Math.random().toString(36).slice(2, 7)}`,
+        branchId,
+        turnIndex,
+        quote,
+        createdAt: now(),
+      });
+      added = true;
+    }
+    target.updatedAt = now();
+    markDirty(target);
+    persist();
+    return {ok: true, added, conversation: target};
+  }
+
+  function ancestorTurnsForBranch(
+    conversation: Conversation,
+    branch: LearnBranch,
+  ): TurnEntry[] {
+    const chain: LearnBranch[] = [];
+    const byId = new Map(
+      (conversation.branches || []).map(item => [item.id, item] as const),
+    );
+    let cursor: LearnBranch | undefined = branch;
+    const visited = new Set<string>();
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id);
+      chain.unshift(cursor);
+      cursor = cursor.parentBranchId
+        ? byId.get(cursor.parentBranchId)
+        : undefined;
+    }
+    const rootBoundary = chain[0]?.parentTurnIndex ?? 0;
+    const out: TurnEntry[] = structuredClone(
+      (conversation.turns || []).slice(0, rootBoundary + 1),
+    );
+    for (let i = 0; i < chain.length - 1; i++) {
+      const ancestor = chain[i]!;
+      const nextChild = chain[i + 1]!;
+      out.push(
+        ...structuredClone(
+          ancestor.turns.slice(0, nextChild.parentTurnIndex + 1),
+        ),
+      );
+    }
+    return out;
+  }
+
+  function promoteBranch(
+    id: string,
+    branchId: string,
+    runtime?: {agentSessionId?: string; taskContext?: unknown},
+  ): Conversation | null {
+    const conversations = load();
+    const source = conversations.find(item => item.id === id);
+    const branch = source?.branches?.find(item => item.id === branchId);
+    if (!source || !branch) {
+      return null;
+    }
+    const at = now();
+    const ancestorTurns = ancestorTurnsForBranch(source, branch);
+    const mergedTurns = [
+      ...ancestorTurns,
+      ...structuredClone(branch.turns || []),
+    ];
+    // Re-parent any child sub-branches that lived under this branch so its subtree stays intact!
+    const descendants = new Set<string>();
+    const collect = (parentId: string) => {
+      for (const candidate of source.branches || []) {
+        if (candidate.parentBranchId === parentId && !descendants.has(candidate.id)) {
+          descendants.add(candidate.id);
+          collect(candidate.id);
+        }
+      }
+    };
+    collect(branch.id);
+    const turnOffset = ancestorTurns.length;
+    const carriedBranches = (source.branches || [])
+      .filter(candidate => descendants.has(candidate.id))
+      .map(candidate => {
+        const cloned = structuredClone(candidate);
+        if (cloned.parentBranchId === branch.id) {
+          cloned.parentBranchId = null;
+          cloned.parentTurnIndex += turnOffset;
+        }
+        return cloned;
+      });
+    const created: Conversation = {
+      id: `c${at}`,
+      objectKey: source.objectKey,
+      title: `${branch.title}`.slice(0, CUSTOM_TITLE_MAX),
+      titleCustom: true,
+      subtitle: source.subtitle,
+      object: structuredClone(source.object || {}),
+      createdAt: at,
+      updatedAt: at,
+      closed: false,
+      turns: mergedTurns,
+      ...(carriedBranches.length ? {branches: carriedBranches} : {}),
+      workMode: source.workMode || 'learn',
+      workspaceRoot: source.workspaceRoot,
+      additionalFolders: [...(source.additionalFolders || [])],
+      modelSelection: source.modelSelection
+        ? {...source.modelSelection}
+        : undefined,
+      projectId: source.projectId ?? getProject(source.workspaceRoot || '')?.id,
+      agentSessionId: runtime?.agentSessionId || branch.agentSessionId,
+      ...(runtime?.taskContext
+        ? {taskContext: sanitizeTaskContext(runtime.taskContext)}
+        : source.taskContext
+          ? {taskContext: sanitizeTaskContext(source.taskContext)}
+          : {}),
+      hasPendingWork: false,
+      permissionGrants: structuredClone(source.permissionGrants || []),
+      permissionDenials: structuredClone(source.permissionDenials || []),
+    };
+    conversations.unshift(created);
+    markDirty(created);
+    writeNow();
+    dirty = false;
+    return created;
+  }
+
   return {
     appendTurn,
     updateTurn,
+    appendBranchTurn,
+    updateBranchTurn,
+    updateBranchMeta,
+    toggleUserHighlight,
+    promoteBranch,
+    ancestorTurnsForBranch,
     recordPermissionDecision,
     recoverInterruptedTurns,
     pendingResumeIds,

@@ -98,6 +98,7 @@ export interface ModelRequest {
   tools: Data[];
   signal?: AbortSignal;
   sessionId?: string;
+  forkMessageCount?: number;
   maxTokens?: number;
   timeoutMs?: number;
   onEvent?: (event: ModelEvent) => void;
@@ -125,7 +126,7 @@ export interface AgentResult {
   receipt: Data;
 }
 export interface AgentOptions {
-  workMode?: 'work' | 'code';
+  workMode?: 'learn' | 'work' | 'code';
   root: string;
   userDataDir: string;
   session: EventSession;
@@ -508,6 +509,19 @@ function recoveryRetryBlocked(
   return previous.targets.some(target => current.targets.includes(target));
 }
 
+export function isLearnWorkMode(mode?: string): boolean {
+  return mode === 'learn' || mode === 'work';
+}
+
+const LEARN_HARNESS_PROMPT = [
+  '工作模式：Learn（深度科研与学习交互模式）。围绕概念穿透、数学/逻辑推导、文献拆解与认知减负组织回答；无需代码仓库也可独立工作，需要时仍可调用全部科研、文档与代码工具。',
+  '先完整、连贯地输出本轮解答（不要留半截空壳让用户点开才生成），但在同一轮正文中主动做认知降噪排版：',
+  '1) 平级分块卡片：当解答包含不同优先级的事项（P0 核心卡点 / P1 关键机制 / P2 延伸细节）或多个相对独立的证明/解题步骤时，用平级块包裹（同层不嵌套）：\n:::card [P0] 简明小标题\n卡片正文内容\n:::',
+  '2) 荧光笔重点：对最关键的判据、不变量或核心结论，用 ==关键结论== 扫出荧光笔高亮（每大段 1~2 处，克制使用，勿整段涂满）。',
+  '3) 虚线概念/跳步锚点：对容易卡壳的专业术语、隐含假设或非平凡推导跳步，用 [[显示词|20字内直觉微释义]] 标注（供用户悬停秒看微释义，或点击展开下一层子分支追问；微释义内勿含换行或方括号）。',
+  '4) 数学公式：行内公式统一用 $...$，独立公式块统一用 $$...$$，保证符号与上下标严谨可渲染。',
+].join('\n');
+
 export async function buildSystemPrompt(
   options: Pick<
     AgentOptions,
@@ -516,9 +530,9 @@ export async function buildSystemPrompt(
 ): Promise<string> {
   const memory = await memoryPrompt(options);
   return [
-    '你是 Magic Pointer 的桌面助手，负责独立完成用户的编程、办公与桌面任务。短任务与跨会话长任务都由你执行。',
-    options.workMode === 'work'
-      ? '工作模式：Work。围绕用户的实际交付组织研究、资料、文档和桌面工作。先说明结果和来源，把工具细节留在运行记录。无需代码仓库也可工作；只有任务需要时使用代码工具。'
+    '你是 Magic Pointer 的桌面助手，负责独立完成用户的科研学习、编程、办公与桌面任务。短任务与跨会话长任务都由你执行。',
+    isLearnWorkMode(options.workMode)
+      ? LEARN_HARNESS_PROMPT
       : '工作模式：Code。围绕项目源码、实现、调试和验证组织工作；交付说明具体改动及验证结果。仍可调用所有已授权的办公和桌面能力。',
     options.hasSelection
       ? '用户圈选了对象。Look/Around/Tree 是历史冻结证据；Observe 是当前状态。历史坐标不能用于现在的点击。判断应用身份依据窗口事实。'
@@ -881,6 +895,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             tools: schemas,
             signal,
             sessionId: session.id,
+            forkMessageCount: session.forkMessageCount() || undefined,
             maxTokens: outputTokens,
             timeoutMs: timeout,
             onEvent: event => {

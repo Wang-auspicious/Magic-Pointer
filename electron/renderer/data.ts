@@ -166,8 +166,56 @@ declare global {
     [key: string]: unknown;
   }
 
+  interface MagicPointerLearnAnchor {
+    kind: 'term' | 'card' | 'math' | 'selection';
+    label: string;
+    snippet: string;
+    gloss?: string;
+    priority?: string;
+  }
+
+  interface MagicPointerLearnLemmaRef {
+    branchId: string;
+    title: string;
+    summary: string;
+  }
+
+  interface MagicPointerLearnBranch {
+    id: string;
+    parentBranchId: string | null;
+    parentTurnIndex: number;
+    anchor: MagicPointerLearnAnchor;
+    title: string;
+    agentSessionId: string;
+    forkMessageCount?: number;
+    turns: MagicPointerTurn[];
+    collapsed?: boolean;
+    insightSummary?: string;
+    docked?: boolean;
+    createdAt: number;
+    updatedAt: number;
+  }
+
+  interface MagicPointerLearnUserHighlight {
+    id: string;
+    branchId: string | null;
+    turnIndex: number;
+    quote: string;
+    createdAt: number;
+  }
+
+  interface MagicPointerLearnProgress {
+    requestId?: string;
+    conversationId?: string;
+    branchId?: string;
+    turnIndex?: number;
+    answer?: string;
+    thinking?: string;
+    record?: Record<string, unknown>;
+  }
+
   interface MagicPointerConversationInfo {
-    workMode?: 'work' | 'code';
+    workMode?: 'learn' | 'work' | 'code';
     id: string;
     projectId?: string;
     title?: string;
@@ -189,6 +237,8 @@ declare global {
 
   interface MagicPointerConversation extends MagicPointerConversationInfo {
     turns?: MagicPointerTurn[];
+    branches?: MagicPointerLearnBranch[];
+    userHighlights?: MagicPointerLearnUserHighlight[];
   }
 
   interface MagicPointerConversationSummary
@@ -207,7 +257,7 @@ declare global {
   interface MagicPointerConversationSend {
     branch?: string;
     worktree?: boolean;
-    workMode?: 'work' | 'code';
+    workMode?: 'learn' | 'work' | 'code';
     conversationId?: string | null;
     projectId?: string;
     modelSelection?: MagicPointerModelSelection;
@@ -1097,6 +1147,15 @@ declare global {
       onProgress?(
         cb: (payload: MagicPointerConversationProgress) => void,
       ): void;
+      learnSend?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      learnStop?(payload: {
+        branchId?: string;
+        requestId?: string;
+      }): Promise<Record<string, any>>;
+      learnPatch?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      onLearnProgress?(
+        cb: (payload: MagicPointerLearnProgress) => void,
+      ): void;
     };
     contextTrackers?: {
       list(): Promise<Record<string, any>>;
@@ -1460,6 +1519,23 @@ declare global {
       conversation?: MagicPointerConversation;
       error?: string;
     }>;
+    learnSend(payload: {
+      conversationId: string;
+      branchId?: string;
+      parentBranchId?: string | null;
+      parentTurnIndex?: number;
+      anchor?: MagicPointerLearnAnchor;
+      question: string;
+      lemmaRefs?: MagicPointerLearnLemmaRef[];
+      requestId?: string;
+      effort?: string;
+    }): Promise<Record<string, any>>;
+    learnStop(payload: {
+      branchId?: string;
+      requestId?: string;
+    }): Promise<Record<string, any>>;
+    learnPatch(payload: Record<string, unknown>): Promise<Record<string, any>>;
+    onLearnProgress(cb: (payload: MagicPointerLearnProgress) => void): void;
     sendConversation(
       request: MagicPointerConversationSend,
     ): Promise<Record<string, any>>;
@@ -2205,6 +2281,49 @@ const Data: MagicPointerDataApi = {
       return {ok: false, error: '分支通道不可用。'};
     }
     return bridge()!.conversations.branch!({id, turnIndex});
+  },
+
+  async learnSend(payload: {
+    conversationId: string;
+    branchId?: string;
+    parentBranchId?: string | null;
+    parentTurnIndex?: number;
+    anchor?: MagicPointerLearnAnchor;
+    question: string;
+    lemmaRefs?: MagicPointerLearnLemmaRef[];
+    requestId?: string;
+    effort?: string;
+  }): Promise<Record<string, any>> {
+    if (!hasBridge() || !bridge()!.conversations.learnSend) {
+      return {ok: false, error: '分支追问通道不可用。'};
+    }
+    return bridge()!.conversations.learnSend!({
+      ...payload,
+      effort: payload.effort || 'high',
+    });
+  },
+
+  async learnStop(payload: {
+    branchId?: string;
+    requestId?: string;
+  }): Promise<Record<string, any>> {
+    if (!hasBridge() || !bridge()!.conversations.learnStop) {
+      return {ok: false, error: '分支停止通道不可用。'};
+    }
+    return bridge()!.conversations.learnStop!(payload);
+  },
+
+  async learnPatch(
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, any>> {
+    if (!hasBridge() || !bridge()!.conversations.learnPatch) {
+      return {ok: false, error: '分支保存通道不可用。'};
+    }
+    return bridge()!.conversations.learnPatch!(payload);
+  },
+
+  onLearnProgress(cb: (payload: MagicPointerLearnProgress) => void) {
+    bridge()?.conversations?.onLearnProgress?.(cb);
   },
 
   async sendConversation(

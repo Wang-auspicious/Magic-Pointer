@@ -1817,7 +1817,21 @@ export class EventSession {
       }
       await child.append(event.type, data, event.surfaceOp);
     }
+    await child.append('session/fork_point', {
+      parentSessionId: this.id,
+      forkMessageCount: child.deriveMessages().length,
+    });
     return child;
+  }
+  forkMessageCount(): number {
+    for (let index = this.events.length - 1; index >= 0; index--) {
+      const event = this.events[index]!;
+      if (event.type === 'session/fork_point') {
+        const count = Number(event.data.forkMessageCount);
+        return Number.isInteger(count) && count > 0 ? count : 0;
+      }
+    }
+    return 0;
   }
   async claimInbox(target: string): Promise<Data[]> {
     return this.serialized(() =>

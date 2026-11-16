@@ -29,6 +29,8 @@
   <link rel="stylesheet" href="model_connections.css?v=1" />
   <link rel="stylesheet" href="desktop_perception.css" />
   <link rel="stylesheet" href="mods_workspace.css" />
+  <link rel="stylesheet" href="vendor/katex/katex.css" />
+  <link rel="stylesheet" href="learn_tree.css" />
 </head>
 <body class="studio">
   <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -59,7 +61,7 @@
         <div class="mpw-logo-row">
           <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="Mode">
             <button type="button" id="mode-design" data-product-mode="design" role="tab" aria-selected="false">
-              <span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE0B8;" aria-hidden="true"></span><span>Work</span>
+              <span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span><span>Learn</span>
             </button>
             <button type="button" id="mode-work" data-product-mode="walker" role="tab" aria-selected="true">
               <span class="cds-icon" data-size="small" data-cds-anim="ANIM ANM2" data-glyph="&#xE048;" aria-hidden="true"></span><span>Code</span>
@@ -314,6 +316,7 @@
                         <span class="cds-icon" data-size="large" data-glyph="&#xE00F;" aria-hidden="true"></span>
                       </button>
                     </div>
+                    <div class="mp-learn-lemma-strip" id="composer-lemma-strip"></div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="Attachments"></div>
                     <div class="mp-composer-attachments mp-composer-materials" id="composer-materials" hidden aria-label="Task materials for the next step"></div>
                     <div class="mpw-row">
@@ -518,6 +521,7 @@
         </div>
       </header>
       <nav class="mp-inspector-tabs" aria-label="Task and project tools">
+        <button type="button" data-inspector-tab="learn" aria-selected="false">对照台</button>
         <button type="button" data-inspector-tab="activity" aria-selected="false">Activity</button>
         <button type="button" data-inspector-tab="materials" aria-selected="false">Materials</button>
         <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">Files</button>
@@ -527,6 +531,9 @@
         <button type="button" data-inspector-tab="tasks" aria-selected="false">Background tasks</button>
         <button type="button" data-inspector-tab="modules" aria-selected="false">Mods</button>
       </nav>
+      <section class="mp-inspector-panel" id="inspector-learn" data-inspector-panel="learn" hidden>
+        <div id="learn-deck-host"></div>
+      </section>
       <section class="mp-inspector-panel" id="inspector-activity" data-inspector-panel="activity" hidden>
         <div id="conversation-recovery" class="mp-execution-recovery" hidden></div>
         <div id="conversation-activity" class="mp-execution-activity"></div>
@@ -699,7 +706,8 @@
   <script defer src="../studio_shell.js?v=23"></script>
   <script defer src="card_render.js?v=23"></script>
   <script defer src="live_cards.js?v=23"></script>
-  <script defer src="chat_markdown.js?v=24"></script>
+  <script defer src="vendor/katex/katex.js"></script>
+  <script defer src="chat_markdown.js?v=25"></script>
   <script defer src="openui_graphics.js"></script>
   <script defer src="openui_host.js"></script>
   <script defer src="chat_icons.js?v=25"></script>
@@ -755,6 +763,7 @@
   <script defer src="desktop_perception.js"></script>
   <script defer src="mods_workspace.js"></script>
   <script defer src="studio_workflow_panel.js?v=1"></script>
-  <script defer src="studio.js?v=27"></script>
+  <script defer src="learn_tree.js?v=1"></script>
+  <script defer src="studio.js?v=28"></script>
 </body>
 </html>

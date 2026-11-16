@@ -5,9 +5,42 @@ const ChatMarkdown = (() => {
     tagName: string;
     attrs: Record<string, string>;
     children: Array<string | ShimNode>;
+    rawHtml?: string;
     setAttribute(key: string, value: string): void;
     appendChild(child: string | ShimNode): unknown;
     readonly outerHTML: string;
+  }
+
+  interface KatexLike {
+    renderToString(
+      tex: string,
+      options?: {
+        displayMode?: boolean;
+        throwOnError?: boolean;
+        strict?: boolean | string;
+        output?: 'html' | 'mathml' | 'htmlAndMathml';
+      },
+    ): string;
+  }
+
+  function resolveKatex(): KatexLike | null {
+    const globalKatex = (
+      globalThis as typeof globalThis & {katex?: KatexLike}
+    ).katex;
+    if (globalKatex && typeof globalKatex.renderToString === 'function') {
+      return globalKatex;
+    }
+    if (typeof require === 'function') {
+      try {
+        const loaded = require('katex') as KatexLike;
+        if (loaded && typeof loaded.renderToString === 'function') {
+          return loaded;
+        }
+      } catch {
+        /* katex optional in isolated sandboxes */
+      }
+    }
+    return null;
   }
 
   type MdNode = Element | ShimNode;
@@ -45,6 +78,9 @@ const ChatMarkdown = (() => {
         if (VOID_TAGS.has(tag)) {
           return `<${tag}${attr}>`;
         }
+        if (typeof node.rawHtml === 'string') {
+          return `<${tag}${attr}>${node.rawHtml}</${tag}>`;
+        }
         const body = node.children
           .map(child =>
             typeof child === 'string'
@@ -56,6 +92,63 @@ const ChatMarkdown = (() => {
       },
     };
     return node;
+  }
+
+  function hRaw(
+    tag: string,
+    attrs: Record<string, string>,
+    rawHtml: string,
+  ): MdNode {
+    const node = DOC ? DOC.createElement(tag) : shimNode(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      node.setAttribute(key, value);
+    }
+    if (DOC) {
+      (node as Element).innerHTML = rawHtml;
+    } else {
+      (node as ShimNode).rawHtml = rawHtml;
+    }
+    return node;
+  }
+
+  function renderMathNode(tex: string, displayMode: boolean): MdNode {
+    const cleaned = String(tex || '').trim();
+    const katexApi = resolveKatex();
+    const baseAttrs: Record<string, string> = {
+      class: displayMode ? 'mp-learn-math-block' : 'mp-learn-math-inline',
+      'data-mp-learn-anchor': 'math',
+      'data-mp-learn-tex': cleaned,
+      role: 'button',
+      tabindex: '0',
+      title: '点击就此公式深入追问',
+    };
+    if (katexApi) {
+      try {
+        const rendered = katexApi.renderToString(cleaned, {
+          displayMode,
+          throwOnError: false,
+          strict: false,
+          output: 'htmlAndMathml',
+        });
+        if (displayMode) {
+          const wrap = h('div', baseAttrs);
+          append(wrap, hRaw('div', {class: 'mp-learn-math-body'}, rendered));
+          append(
+            wrap,
+            h('span', {class: 'mp-learn-math-ask-pill'}, '↘ 追问公式'),
+          );
+          return wrap;
+        }
+        return hRaw('span', baseAttrs, rendered);
+      } catch {
+        /* fallback to code span below */
+      }
+    }
+    return h(
+      displayMode ? 'div' : 'code',
+      baseAttrs,
+      displayMode ? `$$${cleaned}$$` : `$${cleaned}$`,
+    );
   }
 
   function append(parent: MdNode, child: MdChild): void {
@@ -144,6 +237,51 @@ const ChatMarkdown = (() => {
 
     let match = /`([^`\n]+)`/.exec(text);
     add(match, match ? [h('code', {}, match[1])] : []);
+
+    // Escaped literal \$ -> '$'
+    match = /\\\$/.exec(text);
+    add(match, match ? ['$'] : []);
+
+    // Inline display math $$...$$ inside a single line
+    match = /\$\$([^\n$]+?)\$\$/.exec(text);
+    if (match && match[1].trim()) {
+      add(match, [renderMathNode(match[1], false)]);
+    }
+
+    // Inline \( ... \) math
+    match = /\\\(([^\n]+?)\\\)/.exec(text);
+    if (match && match[1].trim()) {
+      add(match, [renderMathNode(match[1], false)]);
+    }
+
+    // Inline $...$ math (evaluated BEFORE *...* / _..._ so subscripts like $x_1 + x_2$ never get eaten)
+    match = /(?<!\\)\$(?!\s|\$)((?:\\.|[^$\\\n])+?)(?<!\s)\$/.exec(text);
+    if (match && !/^\d+(?:[.,]\d+)?$/.test(match[1].trim())) {
+      add(match, [renderMathNode(match[1], false)]);
+    }
+
+    // Dotted-underline concept / leap anchor: [[term|gloss]] or [[term]]
+    match = /\[\[([^\]|\n]+?)(?:\|([^\]\n]*?))?\]\]/.exec(text);
+    if (match) {
+      const term = match[1].trim();
+      const gloss = (match[2] || '').trim();
+      const attrs: Record<string, string> = {
+        type: 'button',
+        class: 'mp-learn-term',
+        'data-mp-learn-anchor': 'term',
+        'data-mp-learn-term': term,
+      };
+      if (gloss) {
+        attrs['data-mp-learn-gloss'] = gloss;
+      }
+      add(match, [h('button', attrs, ...inlineNodes(term))]);
+    }
+
+    // Highlighter sweep: ==important conclusion== (allow single '=' like $i=1$ inside!)
+    match = /==((?:(?!==)[^\n])+?)==/.exec(text);
+    if (match && match[1].trim()) {
+      add(match, [h('mark', {class: 'mp-learn-mark'}, ...inlineNodes(match[1]))]);
+    }
 
     match =
       /!\[([^\]\n]*)\]\((?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+"([^"\n]*)")?\)/.exec(
@@ -267,11 +405,28 @@ const ChatMarkdown = (() => {
     return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
   }
 
+  function normalizeCardPriority(badge: string): string {
+    const lower = badge.trim().toLowerCase();
+    if (lower.startsWith('p0')) {
+      return 'p0';
+    }
+    if (lower.startsWith('p1')) {
+      return 'p1';
+    }
+    if (lower.startsWith('p2')) {
+      return 'p2';
+    }
+    return 'step';
+  }
+
   function isBlockStart(lines: string[], index: number): boolean {
     const line = lines[index] || '';
     return (
       /^\s*$/.test(line) ||
       /^\s*```/.test(line) ||
+      /^\s*:::card\b/i.test(line) ||
+      /^\s*\$\$/.test(line) ||
+      /^\s*\\\[/.test(line) ||
       /^\s{0,3}#{1,6}\s+/.test(line) ||
       /^\s{0,3}>\s?/.test(line) ||
       /^\s{0,3}(?:[-+*]|\d+[.)])\s+/.test(line) ||
@@ -287,6 +442,94 @@ const ChatMarkdown = (() => {
       const line = lines[index];
       if (!line.trim()) {
         index += 1;
+        continue;
+      }
+
+      // Same-layer Learn Card block: :::card [P0|P1|P2|Step N] Title ... :::
+      const cardMatch = /^\s*:::card(?:\s+\[([^\]]+)\])?\s*(.*?)\s*$/i.exec(line);
+      if (cardMatch) {
+        const badge = (cardMatch[1] || '').trim();
+        const title = (cardMatch[2] || '').trim() || badge || '要点分解';
+        const priority = badge ? normalizeCardPriority(badge) : 'step';
+        const cardLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          cardLines.push(lines[index++]);
+        }
+        if (index < lines.length && /^\s*:::\s*$/.test(lines[index])) {
+          index += 1;
+        }
+        const snippet = cardLines.join('\n').trim().slice(0, 900);
+        const head = h('header', {class: 'mp-learn-card-head'});
+        const titleCluster = h('div', {class: 'mp-learn-card-title-cluster'});
+        if (badge) {
+          append(
+            titleCluster,
+            h(
+              'span',
+              {class: 'mp-learn-card-badge', 'data-priority': priority},
+              badge,
+            ),
+          );
+        }
+        append(
+          titleCluster,
+          h('strong', {class: 'mp-learn-card-title'}, ...inlineNodes(title)),
+        );
+        append(head, titleCluster);
+        append(
+          head,
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'mp-learn-card-ask',
+              'data-mp-learn-anchor': 'card',
+              'data-mp-learn-label': badge ? `[${badge}] ${title}` : title,
+              'data-mp-learn-snippet': snippet || title,
+              ...(badge ? {'data-mp-learn-priority': badge} : {}),
+            },
+            '↘ 深入此卡',
+          ),
+        );
+        const bodyNode = h(
+          'div',
+          {class: 'mp-learn-card-body'},
+          ...renderBlocks(cardLines),
+        );
+        blocks.push(
+          h(
+            'section',
+            {
+              class: 'mp-learn-card',
+              'data-priority': priority,
+              'data-card-title': title,
+            },
+            head,
+            bodyNode,
+          ),
+        );
+        continue;
+      }
+
+      // Display Math block: $$ ... $$ or \[ ... \]
+      const singleLineDollarMath = /^\s*\$\$(.+?)\$\$\s*$/.exec(line);
+      if (singleLineDollarMath && singleLineDollarMath[1].trim()) {
+        blocks.push(renderMathNode(singleLineDollarMath[1], true));
+        index += 1;
+        continue;
+      }
+      if (/^\s*\$\$\s*$/.test(line) || /^\s*\\\[\s*$/.test(line)) {
+        const closing = /^\s*\$\$/.test(line) ? /^\s*\$\$\s*$/ : /^\s*\\\]\s*$/;
+        const mathLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !closing.test(lines[index])) {
+          mathLines.push(lines[index++]);
+        }
+        if (index < lines.length) {
+          index += 1;
+        }
+        blocks.push(renderMathNode(mathLines.join('\n'), true));
         continue;
       }
 
