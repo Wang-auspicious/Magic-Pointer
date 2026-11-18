@@ -133,3 +133,58 @@ test('failed assistant turn and failed Learn branch expose inline retry action',
   assert.match(serialized, /data-mp-chat-act":"retry/);
   assert.match(serialized, /data-mp-chat-retry":"Why did bayes threshold fail\?/);
 });
+
+test('streamModel renews idle timeout on active SSE chunks instead of aborting healthy long streams', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-idle-test-'));
+  const healthFile = path.join(tmpDir, 'health.json');
+  try {
+    const encoder = new TextEncoder();
+    const reply = await streamModel({
+      root: ROOT,
+      healthFile,
+      timeoutMs: 90,
+      config: {
+        model: 'fixture',
+        baseUrl: 'https://idle.example.test/v1',
+        apiMode: 'chat-completions',
+        credential: 'fixture',
+      },
+      system: '',
+      messages: [],
+      tools: [],
+      fetch: async (_url, init) => {
+        const body = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const chunks = [
+              'data: {"choices":[{"delta":{"reasoning_content":"step 1"}}]}\n\n',
+              'data: {"choices":[{"delta":{"reasoning_content":"step 2"}}]}\n\n',
+              'data: {"choices":[{"delta":{"content":"final "}}]}\n\n',
+              'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}\n\n',
+              'data: [DONE]\n\n',
+            ];
+            for (const c of chunks) {
+              if (init?.signal?.aborted) {
+                controller.error(init.signal.reason || new Error('aborted'));
+                return;
+              }
+              await new Promise(r => setTimeout(r, 40));
+              if (init?.signal?.aborted) {
+                controller.error(init.signal.reason || new Error('aborted'));
+                return;
+              }
+              controller.enqueue(encoder.encode(c));
+            }
+            controller.close();
+          },
+        });
+        return new Response(body, {
+          headers: {'content-type': 'text/event-stream'},
+        });
+      },
+    });
+    assert.equal(reply.text, 'final answer');
+    assert.equal(reply.stop_reason, 'completed');
+  } finally {
+    fs.rmSync(tmpDir, {recursive: true, force: true});
+  }
+});

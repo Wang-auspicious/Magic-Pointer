@@ -1254,12 +1254,28 @@ export async function streamModel(
   ) {
     return fail(`circuit_open:${blocked.state}`);
   }
-  const timeout = AbortSignal.timeout(
-    Math.max(1, request.timeoutMs || 180_000),
-  );
+  const idleTimeoutMs = Math.max(1, request.timeoutMs || 180_000);
+  const timeoutController = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const resetIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+      timeoutController.abort(
+        new DOMException('model_request_timeout', 'TimeoutError'),
+      );
+    }, idleTimeoutMs);
+  };
+  const clearIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
   const signal = request.signal
-    ? AbortSignal.any([timeout, request.signal])
-    : timeout;
+    ? AbortSignal.any([timeoutController.signal, request.signal])
+    : timeoutController.signal;
   let body = {
     ...modelPayload(config, request),
     stream: process.env.MAGIC_POINTER_STREAMING !== '0',
@@ -1279,6 +1295,7 @@ export async function streamModel(
   let attempts = 0;
   let committed = false;
   const emit: StreamRequest['onEvent'] = event => {
+    resetIdleTimer();
     if (
       (event.type === 'text_delta' || event.type === 'tool_delta') &&
       Boolean(event.text)
@@ -1287,109 +1304,116 @@ export async function streamModel(
     }
     request.onEvent?.(event);
   };
-  while (true) {
-    try {
-      signal.throwIfAborted();
-      const response = await (request.fetch || fetch)(endpoint(config), {
-        method: 'POST',
-        headers: modelHeaders(
-          config,
-          mode,
-          config.baseUrl || 'https://api.openai.com/v1',
-        ),
-        body: JSON.stringify(body),
-        signal,
-        redirect: 'manual',
-      });
-      if (!response.ok) {
-        const detail = (await response.text())
-          .split(config.credential || '\0')
-          .join('[redacted]')
-          .replace(/<[^>]*>/g, ' ')
-          .slice(0, 500);
-        if (
-          /context.{0,35}(length|limit|window|exceed)|too many tokens|maximum.{0,20}tokens/i.test(
-            detail,
-          )
-        ) {
-          return finish({
-            text: '',
-            tool_calls: [],
-            provider_items: [],
-            usage: {},
-            stop_reason: 'context_overflow',
-          });
-        }
-        if (optionalRetry && response.status >= 400 && response.status < 500) {
-          optionalRetry = false;
-          const stripped = stripOptional(body);
-          if (JSON.stringify(stripped) !== JSON.stringify(body)) {
-            body = stripped;
-            continue;
-          }
-        }
-        recordHealth(request.healthFile, config, response.status, detail);
-        if (
-          (response.status >= 500 || response.status === 429) &&
-          attempts++ < 2
-        ) {
-          await delay(250 * 2 ** attempts, undefined, {signal});
-          continue;
-        }
-        return fail(`http_${response.status}:${detail}`);
-      }
-      const streaming = /text\/event-stream/i.test(
-        response.headers.get('content-type') || '',
-      );
-      const reply = streaming
-        ? await parseStream(response, mode, {...request, signal, onEvent: emit})
-        : parseResponse((await response.json()) as Json, mode);
-      if (!streaming) {
-        for (const item of reply.provider_items) {
-          if (item.thinking || item.reasoning_content) {
-            emit({
-              type: 'thinking_delta',
-              text: item.thinking || item.reasoning_content,
+  resetIdleTimer();
+  try {
+    while (true) {
+      try {
+        signal.throwIfAborted();
+        resetIdleTimer();
+        const response = await (request.fetch || fetch)(endpoint(config), {
+          method: 'POST',
+          headers: modelHeaders(
+            config,
+            mode,
+            config.baseUrl || 'https://api.openai.com/v1',
+          ),
+          body: JSON.stringify(body),
+          signal,
+          redirect: 'manual',
+        });
+        resetIdleTimer();
+        if (!response.ok) {
+          const detail = (await response.text())
+            .split(config.credential || '\0')
+            .join('[redacted]')
+            .replace(/<[^>]*>/g, ' ')
+            .slice(0, 500);
+          if (
+            /context.{0,35}(length|limit|window|exceed)|too many tokens|maximum.{0,20}tokens/i.test(
+              detail,
+            )
+          ) {
+            return finish({
+              text: '',
+              tool_calls: [],
+              provider_items: [],
+              usage: {},
+              stop_reason: 'context_overflow',
             });
           }
+          if (optionalRetry && response.status >= 400 && response.status < 500) {
+            optionalRetry = false;
+            const stripped = stripOptional(body);
+            if (JSON.stringify(stripped) !== JSON.stringify(body)) {
+              body = stripped;
+              continue;
+            }
+          }
+          recordHealth(request.healthFile, config, response.status, detail);
+          if (
+            (response.status >= 500 || response.status === 429) &&
+            attempts++ < 2
+          ) {
+            await delay(250 * 2 ** attempts, undefined, {signal});
+            continue;
+          }
+          return fail(`http_${response.status}:${detail}`);
         }
-        if (reply.text) {
-          emit({type: 'text_delta', text: reply.text});
+        const streaming = /text\/event-stream/i.test(
+          response.headers.get('content-type') || '',
+        );
+        const reply = streaming
+          ? await parseStream(response, mode, {...request, signal, onEvent: emit})
+          : parseResponse((await response.json()) as Json, mode);
+        if (!streaming) {
+          for (const item of reply.provider_items) {
+            if (item.thinking || item.reasoning_content) {
+              emit({
+                type: 'thinking_delta',
+                text: item.thinking || item.reasoning_content,
+              });
+            }
+          }
+          if (reply.text) {
+            emit({type: 'text_delta', text: reply.text});
+          }
         }
+        if (
+          !committed &&
+          reply.stop_reason === 'backend_error:empty_response' &&
+          body.stream
+        ) {
+          body = {...body, stream: false};
+          delete body.stream_options;
+          continue;
+        }
+        if (reply.stop_reason.startsWith('backend_error:')) {
+          recordHealth(request.healthFile, config, null, reply.stop_reason);
+        } else {
+          recordHealth(request.healthFile, config, 200);
+        }
+        request.onEvent?.({type: 'usage', usage: reply.usage});
+        return finish(reply);
+      } catch (error) {
+        request.signal?.throwIfAborted();
+        if (timeoutController.signal.aborted) {
+          return fail('model_request_timeout');
+        }
+        const message = formatTransportError(error)
+          .split(config.credential || '\0')
+          .join('[redacted]');
+        if (!committed && attempts++ < 3) {
+          await delay(Math.min(1800, 300 * 2 ** (attempts - 1)), undefined, {
+            signal,
+          });
+          continue;
+        }
+        recordHealth(request.healthFile, config, null, message);
+        return fail(message);
       }
-      if (
-        !committed &&
-        reply.stop_reason === 'backend_error:empty_response' &&
-        body.stream
-      ) {
-        body = {...body, stream: false};
-        delete body.stream_options;
-        continue;
-      }
-      if (reply.stop_reason.startsWith('backend_error:')) {
-        recordHealth(request.healthFile, config, null, reply.stop_reason);
-      } else {
-        recordHealth(request.healthFile, config, 200);
-      }
-      request.onEvent?.({type: 'usage', usage: reply.usage});
-      return finish(reply);
-    } catch (error) {
-      request.signal?.throwIfAborted();
-      if (timeout.aborted) {
-        return fail('model_request_timeout');
-      }
-      const message = formatTransportError(error)
-        .split(config.credential || '\0')
-        .join('[redacted]');
-      if (!committed && attempts++ < 3) {
-        await delay(Math.min(1800, 300 * 2 ** (attempts - 1)), undefined, {
-          signal,
-        });
-        continue;
-      }
-      recordHealth(request.healthFile, config, null, message);
-      return fail(message);
     }
+  } finally {
+    clearIdleTimer();
   }
 }
 

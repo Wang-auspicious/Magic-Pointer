@@ -1271,11 +1271,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px 12px;
-  padding: 6px 24px;
+  padding: 7px 24px;
   border-bottom: 1px solid var(--mp-line-soft);
   background: var(--mp-learn-surface, #ffffff);
   font-size: 12px;
   flex: none;
+}
+
+#learn-hud:not([hidden]) ~ .mpw-rail {
+  top: 52px;
 }
 
 .mp-learn-hud-left,

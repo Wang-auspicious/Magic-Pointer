@@ -269,9 +269,14 @@ const ChatMarkdown = (() => {
     }
 
     // Inline $...$ math (evaluated BEFORE *...* / _..._ so subscripts like $x_1 + x_2$ never get eaten)
-    match = /(?<!\\)\$(?!\s|\$)((?:\\.|[^$\\\n])+?)(?<!\s)\$/.exec(text);
-    if (match && !/^\d+(?:[.,]\d+)?$/.test(match[1].trim())) {
-      add(match, [renderMathNode(match[1], false)]);
+    const inlineDollarRe =
+      /(?<!\\)\$(?!\s|\$)((?:\\.|[^$\\\n])+?)(?<!\s)\$/g;
+    while ((match = inlineDollarRe.exec(text))) {
+      const inner = match[1].trim();
+      if (!/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(inner)) {
+        add(match, [renderMathNode(match[1], false)]);
+        break;
+      }
     }
 
     // Dotted-underline concept / leap anchor: [[term|gloss]] or [[term]]
