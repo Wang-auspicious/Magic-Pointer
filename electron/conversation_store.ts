@@ -133,11 +133,28 @@ export interface LearnLemmaRef {
   summary: string;
 }
 
+export type LearnMasteryStatus =
+  | 'unseen'
+  | 'explored'
+  | 'questioned'
+  | 'verified'
+  | 'gap';
+
+export interface LearnMasteryEntry {
+  nodeId: string;
+  title?: string;
+  status: LearnMasteryStatus;
+  updatedAt: number;
+  note?: string;
+  attempts?: number;
+}
+
 export interface LearnBranch {
   id: string;
   parentBranchId: string | null;
   parentTurnIndex: number;
   anchor: LearnAnchor;
+  kind?: 'inquiry' | 'socratic' | 'feynman';
   title: string;
   agentSessionId: string;
   forkMessageCount?: number;
@@ -183,6 +200,7 @@ interface Conversation {
   turns?: TurnEntry[];
   branches?: LearnBranch[];
   userHighlights?: LearnUserHighlight[];
+  learnMastery?: Record<string, LearnMasteryEntry>;
   workspaceRoot?: string;
   additionalFolders?: string[];
   modelSelection?: ConversationModelSelection;
@@ -1912,6 +1930,57 @@ function createConversationStore(
     return {ok: true, added, conversation: target};
   }
 
+  function setLearnMastery(
+    id: string,
+    input: {
+      nodeId: string;
+      title?: string;
+      status: LearnMasteryStatus;
+      note?: string;
+    },
+  ): {ok: boolean; entry?: LearnMasteryEntry; conversation?: Conversation} {
+    const target = get(id);
+    const nodeId = String(input.nodeId || '').trim().slice(0, 120);
+    if (!target || !nodeId) {
+      return {ok: false};
+    }
+    const statusRaw = String(input.status || '').trim();
+    const validStatuses: ReadonlySet<LearnMasteryStatus> = new Set([
+      'unseen',
+      'explored',
+      'questioned',
+      'verified',
+      'gap',
+    ]);
+    if (!validStatuses.has(statusRaw as LearnMasteryStatus)) {
+      return {ok: false};
+    }
+    if (!target.learnMastery || typeof target.learnMastery !== 'object') {
+      target.learnMastery = {};
+    }
+    const prev = target.learnMastery[nodeId];
+    const at = now();
+    const entry: LearnMasteryEntry = {
+      nodeId,
+      ...(input.title
+        ? {title: String(input.title).trim().slice(0, 140)}
+        : prev?.title
+          ? {title: prev.title}
+          : {}),
+      status: statusRaw as LearnMasteryStatus,
+      updatedAt: at,
+      ...(typeof input.note === 'string' && input.note.trim()
+        ? {note: input.note.trim().slice(0, 600)}
+        : {}),
+      attempts: Number(prev?.attempts || 0) + 1,
+    };
+    target.learnMastery[nodeId] = entry;
+    target.updatedAt = at;
+    markDirty(target);
+    persist();
+    return {ok: true, entry, conversation: target};
+  }
+
   function ancestorTurnsForBranch(
     conversation: Conversation,
     branch: LearnBranch,
@@ -2027,6 +2096,7 @@ function createConversationStore(
     updateBranchTurn,
     updateBranchMeta,
     toggleUserHighlight,
+    setLearnMastery,
     promoteBranch,
     ancestorTurnsForBranch,
     recordPermissionDecision,

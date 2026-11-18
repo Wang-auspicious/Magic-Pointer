@@ -181,11 +181,28 @@ declare global {
     summary: string;
   }
 
+  type MagicPointerLearnMasteryStatus =
+    | 'unseen'
+    | 'explored'
+    | 'questioned'
+    | 'verified'
+    | 'gap';
+
+  interface MagicPointerLearnMasteryEntry {
+    nodeId: string;
+    title?: string;
+    status: MagicPointerLearnMasteryStatus;
+    updatedAt: number;
+    note?: string;
+    attempts?: number;
+  }
+
   interface MagicPointerLearnBranch {
     id: string;
     parentBranchId: string | null;
     parentTurnIndex: number;
     anchor: MagicPointerLearnAnchor;
+    kind?: 'inquiry' | 'socratic' | 'feynman';
     title: string;
     agentSessionId: string;
     forkMessageCount?: number;
@@ -240,6 +257,7 @@ declare global {
     turns?: MagicPointerTurn[];
     branches?: MagicPointerLearnBranch[];
     userHighlights?: MagicPointerLearnUserHighlight[];
+    learnMastery?: Record<string, MagicPointerLearnMasteryEntry>;
   }
 
   interface MagicPointerConversationSummary

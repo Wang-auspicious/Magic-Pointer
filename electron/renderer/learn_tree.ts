@@ -654,9 +654,15 @@ declare global {
       .map(item => item.branch);
   }
 
-  function extractSelectionTextClean(range: Range): string {
+  function extractSelectionTextClean(
+    range: Range,
+    fallbackText = '',
+  ): string {
+    const cleanFallback = String(fallbackText || '').trim();
     if (typeof range.cloneContents !== 'function') {
-      return range.toString().trim();
+      const direct =
+        typeof range.toString === 'function' ? String(range.toString()).trim() : '';
+      return direct && direct !== '[object Object]' ? direct : cleanFallback;
     }
     const frag = range.cloneContents();
     if (frag && typeof frag.querySelectorAll === 'function') {
@@ -664,10 +670,12 @@ declare global {
         .querySelectorAll('.katex-mathml, .mp-learn-math-ask-pill')
         .forEach(node => node.remove());
     }
-    return String(frag.textContent || '')
-      .replace(/\s*\n\s*/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+    return (
+      String(frag?.textContent || '')
+        .replace(/\s*\n\s*/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim() || cleanFallback
+    );
   }
 
   function cleanFormulaLabel(tex: string): string {
@@ -1984,6 +1992,13 @@ declare global {
       );
     }
 
+    const toggleClass = (node: Element, cls: string, on: boolean) => {
+      if (on) {
+        node.classList.add(cls);
+      } else {
+        node.classList.remove(cls);
+      }
+    };
     const priorityRow = el('div', 'mp-learn-popover-priority');
     priorityRow.appendChild(el('span', 'mp-learn-popover-priority-label', '先处理？'));
     let selectedPriority = normalizePriority(nextState.anchor.priority);
@@ -1993,7 +2008,7 @@ declare global {
       pBtn.type = 'button';
       pBtn.title = opt.title;
       pBtn.setAttribute('aria-pressed', String(selectedPriority === opt.value));
-      pBtn.classList.toggle('is-on', selectedPriority === opt.value);
+      toggleClass(pBtn, 'is-on', selectedPriority === opt.value);
       pBtn.addEventListener('mousedown', ev => {
         ev.preventDefault();
         ev.stopPropagation();
@@ -2003,7 +2018,7 @@ declare global {
         nextState.anchor.priority = selectedPriority || undefined;
         for (const candidate of priButtons) {
           const active = candidate.textContent === selectedPriority;
-          candidate.classList.toggle('is-on', active);
+          toggleClass(candidate, 'is-on', active);
           candidate.setAttribute('aria-pressed', String(active));
         }
       });
@@ -2438,7 +2453,7 @@ declare global {
           return;
         }
         const range = sel.getRangeAt(0);
-        const quote = extractSelectionTextClean(range) || sel.toString().trim();
+        const quote = extractSelectionTextClean(range, sel.toString());
         if (quote.length < 2 || quote.length > 600) {
           return;
         }

@@ -4066,6 +4066,24 @@ ipcMain.handle(
           conversation: toggled.conversation,
         };
       }
+      if (action === 'set-mastery') {
+        const res = conversations().setLearnMastery(conversationId, {
+          nodeId: String(raw?.nodeId || ''),
+          ...(typeof raw?.title === 'string' ? {title: raw.title} : {}),
+          status: raw?.status,
+          ...(typeof raw?.note === 'string' ? {note: raw.note} : {}),
+        });
+        if (!res.ok) {
+          return {ok: false, error: 'invalid_mastery'};
+        }
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+        return {
+          ok: true,
+          entry: res.entry,
+          conversation: res.conversation,
+        };
+      }
       if (action === 'promote-branch') {
         const branchId = String(raw?.branchId || '').slice(0, 120);
         const source = conversations().get(conversationId);
