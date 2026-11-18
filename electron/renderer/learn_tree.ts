@@ -432,6 +432,14 @@ declare global {
     return typeof ChatMarkdown !== 'undefined' ? ChatMarkdown : undefined;
   }
 
+  function getLearnLabApi(): LearnLabController | null {
+    if (typeof LearnLab !== 'undefined' && LearnLab) {
+      return LearnLab;
+    }
+    const g = globalThis as unknown as {LearnLab?: LearnLabController};
+    return g?.LearnLab || null;
+  }
+
   function escapeCssSelectorValue(raw: string): string {
     if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
       return CSS.escape(raw);
@@ -1541,6 +1549,7 @@ declare global {
           branchHighlights.filter(item => item.turnIndex === turnIdx),
         );
         aWrap.appendChild(renderedMd);
+        getLearnLabApi()?.hydrate(renderedMd);
         lastBranchStreamText.set(aWrap, effectiveAnswer);
       } else if (isStreamingThisTurn) {
         aWrap.appendChild(streamingStatusNode());
@@ -1731,6 +1740,7 @@ declare global {
       );
       for (const rootMd of rootMarkdowns) {
         applyUserHighlightsToContainer(rootMd, turnHighlights);
+        getLearnLabApi()?.hydrate(rootMd);
       }
 
       const directChildren = allBranches.filter(

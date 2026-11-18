@@ -294,7 +294,13 @@ const ChatMarkdown = (() => {
     // Highlighter sweep: ==important conclusion== (allow single '=' like $i=1$ inside!)
     match = /==((?:(?!==)[^\n])+?)==/.exec(text);
     if (match && match[1].trim()) {
-      add(match, [h('mark', {class: 'mp-learn-mark'}, ...inlineNodes(match[1]))]);
+      add(match, [
+        h(
+          'mark',
+          {class: 'mp-learn-mark', 'data-fade-target': 'true'},
+          ...inlineNodes(match[1]),
+        ),
+      ]);
     }
 
     match =
@@ -458,6 +464,8 @@ const ChatMarkdown = (() => {
       /^\s*$/.test(line) ||
       /^\s*```/.test(line) ||
       /^\s*:::card\b/i.test(line) ||
+      /^\s*:::prereq\b/i.test(line) ||
+      /^\s*:::lab\b/i.test(line) ||
       /^\s*\$\$/.test(line) ||
       /^\s*\\\[/.test(line) ||
       /^\s{0,3}#{1,6}\s+/.test(line) ||
@@ -475,6 +483,86 @@ const ChatMarkdown = (() => {
       const line = lines[index];
       if (!line.trim()) {
         index += 1;
+        continue;
+      }
+
+      // Prerequisite dependency chain strip: :::prereq\nA -> B -> C\n:::
+      if (/^\s*:::prereq\b/i.test(line)) {
+        const prereqLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          prereqLines.push(lines[index++]);
+        }
+        if (index < lines.length && /^\s*:::\s*$/.test(lines[index])) {
+          index += 1;
+        }
+        const strip = h('section', {
+          class: 'mp-learn-prereq-strip',
+          'data-learn-prereq': 'true',
+        });
+        append(strip, h('span', {class: 'mp-learn-prereq-label'}, '先修脉络'));
+        const items: string[] = [];
+        for (const pLine of prereqLines) {
+          for (const part of pLine.split(/\s*(?:->|→|=>)\s*/)) {
+            const clean = part.trim();
+            if (clean && !items.includes(clean)) {
+              items.push(clean);
+            }
+          }
+        }
+        items.forEach((item, itemIdx) => {
+          if (itemIdx > 0) {
+            append(
+              strip,
+              h(
+                'span',
+                {class: 'mp-learn-prereq-arrow', 'aria-hidden': 'true'},
+                '→',
+              ),
+            );
+          }
+          append(
+            strip,
+            h(
+              'button',
+              {
+                type: 'button',
+                class: 'mp-learn-prereq-chip',
+                'data-mp-learn-anchor': 'term',
+                'data-mp-learn-term': item,
+                'data-mp-learn-gloss': '前置依赖概念：点击快速回溯或提问',
+              },
+              item,
+            ),
+          );
+        });
+        blocks.push(strip);
+        continue;
+      }
+
+      // Interactive Explorable Lab block: :::lab\n{...}\n:::
+      if (/^\s*:::lab\b/i.test(line)) {
+        const labLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          labLines.push(lines[index++]);
+        }
+        const complete = index < lines.length && /^\s*:::\s*$/.test(lines[index]);
+        if (complete) {
+          index += 1;
+        }
+        const rawSpec = labLines.join('\n').trim();
+        blocks.push(
+          h(
+            'section',
+            {
+              class: 'mp-learn-lab-host',
+              'data-learn-lab-complete': complete ? 'true' : 'false',
+              'data-learn-lab-spec': rawSpec,
+            },
+            complete ? '正在挂载交互实验…' : '正在生成交互参数…',
+          ),
+        );
         continue;
       }
 

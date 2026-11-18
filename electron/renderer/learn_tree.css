@@ -1058,3 +1058,206 @@
   border-radius: 4px;
   transition: background-color 600ms ease;
 }
+
+/* 8. Prerequisite Strip, Explorable Micro-Lab & Worked-Example Fading */
+.mp-learn-prereq-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 14px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--mp-line-soft);
+  border-bottom: 1px solid var(--mp-line-soft);
+  font-size: 12px;
+}
+
+.mp-learn-prereq-label {
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mp-text-muted, #767578);
+  margin-right: 4px;
+}
+
+.mp-learn-prereq-chip {
+  appearance: none;
+  padding: 2px 8px;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mp-text, inherit);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.mp-learn-prereq-chip:hover {
+  border-color: var(--mp-line-hover);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.04));
+}
+
+.mp-learn-prereq-arrow {
+  color: var(--mp-text-muted, #767578);
+  font-size: 11px;
+}
+
+.mp-learn-lab-host {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 8px;
+  background: var(--mp-learn-surface, #ffffff);
+}
+
+.mp-learn-lab-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mp-learn-lab-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mp-learn-lab-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.mp-learn-lab-reset {
+  appearance: none;
+  padding: 2px 8px;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mp-text-muted, #767578);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-lab-reset:hover {
+  border-color: var(--mp-line-hover);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-lab-caption {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-lab-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 210px;
+}
+
+.mp-learn-lab-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--mp-text-secondary, #52514e);
+}
+
+.mp-learn-lab-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mp-learn-lab-legend-item i {
+  display: inline-block;
+  width: 10px;
+  height: 2.5px;
+  border-radius: 2px;
+}
+
+.mp-learn-lab-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--mp-line-soft);
+}
+
+.mp-learn-lab-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.mp-learn-lab-param-label {
+  flex: none;
+  color: var(--mp-text-secondary, #52514e);
+}
+
+.mp-learn-lab-slider-row input[type="range"] {
+  flex: 1;
+  min-width: 72px;
+  accent-color: #d97757;
+}
+
+.mp-learn-lab-param-val {
+  flex: none;
+  min-width: 36px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--mp-text, inherit);
+}
+
+/* Worked-example fading active recall masks */
+.is-learn-faded:not(.is-fade-revealed) {
+  color: transparent !important;
+  text-shadow: 0 0 8px rgba(120, 118, 112, 0.55);
+  background: rgba(120, 118, 112, 0.14);
+  border-bottom: 1px dashed var(--mp-line-hover);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mp-learn-fade-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+.mp-learn-fade-grade {
+  appearance: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--mp-line-hover);
+  background: var(--mp-learn-surface, #ffffff);
+  color: var(--mp-text, inherit);
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-fade-grade.is-ok:hover {
+  border-color: #3b8264;
+  color: #3b8264;
+}
+
+.mp-learn-fade-grade.is-gap:hover {
+  border-color: #d97757;
+  color: #d97757;
+}
