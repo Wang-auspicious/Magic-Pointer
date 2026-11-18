@@ -157,6 +157,53 @@ const contextWindows: Array<[number, string]> = [
   ],
 ];
 
+/** Format a network/transport error including its nested Node/undici cause code. */
+export function formatTransportError(error: unknown): string {
+  const base = String(
+    error instanceof Error ? error.message : error || 'unknown transport error',
+  ).trim();
+  const cause =
+    error && typeof error === 'object'
+      ? (error as {cause?: unknown}).cause
+      : undefined;
+  if (!cause || typeof cause !== 'object') {
+    return base || 'unknown transport error';
+  }
+  const code = String((cause as {code?: unknown}).code || '').trim();
+  const causeMsg = String((cause as {message?: unknown}).message || '').trim();
+  const tag = code || causeMsg;
+  if (!tag || base.includes(tag)) {
+    return base || tag || 'unknown transport error';
+  }
+  return `${base} (${tag})`;
+}
+
+/** Parse Chromium resolveProxy rules (e.g. "PROXY 127.0.0.1:7890; DIRECT") into a Node proxy URL. */
+export function resolveSystemProxyUrl(ruleString: string): string {
+  for (const part of String(ruleString || '').split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed || /^DIRECT$/i.test(trimmed)) {
+      continue;
+    }
+    const match = /^(PROXY|HTTP|HTTPS|SOCKS5|SOCKS4|SOCKS)\s+([^\s]+)$/i.exec(
+      trimmed,
+    );
+    if (!match) {
+      continue;
+    }
+    const scheme = match[1].toUpperCase();
+    const target = match[2];
+    if (scheme === 'HTTPS') {
+      return `https://${target}`;
+    }
+    if (scheme === 'SOCKS5' || scheme === 'SOCKS4' || scheme === 'SOCKS') {
+      return `socks5://${target}`;
+    }
+    return `http://${target}`;
+  }
+  return '';
+}
+
 function modelHeaders(
   config: ModelConfig,
   mode: string,
@@ -404,7 +451,7 @@ function recordHealth(
     detail: detail.slice(0, 300),
     checked_at: now,
     open_until:
-      state === 'ok' || (transient && streak < 2) ? 0 : now + cooldown[state],
+      state === 'ok' || (transient && streak < 3) ? 0 : now + cooldown[state],
     model: config.model,
     base_url: base,
     transient_streak: streak,
@@ -1232,7 +1279,10 @@ export async function streamModel(
   let attempts = 0;
   let committed = false;
   const emit: StreamRequest['onEvent'] = event => {
-    if (event.type !== 'usage') {
+    if (
+      (event.type === 'text_delta' || event.type === 'tool_delta') &&
+      Boolean(event.text)
+    ) {
       committed = true;
     }
     request.onEvent?.(event);
@@ -1328,11 +1378,13 @@ export async function streamModel(
       if (timeout.aborted) {
         return fail('model_request_timeout');
       }
-      const message = String(error instanceof Error ? error.message : error)
+      const message = formatTransportError(error)
         .split(config.credential || '\0')
         .join('[redacted]');
-      if (!committed && attempts++ < 2) {
-        await delay(250 * 2 ** attempts, undefined, {signal});
+      if (!committed && attempts++ < 3) {
+        await delay(Math.min(1800, 300 * 2 ** (attempts - 1)), undefined, {
+          signal,
+        });
         continue;
       }
       recordHealth(request.healthFile, config, null, message);
@@ -1496,7 +1548,7 @@ export async function requestText(config: ModelConfig, request: TextRequest) {
       if (signal.aborted) {
         throw signal.reason;
       }
-      const message = String(error instanceof Error ? error.message : error)
+      const message = formatTransportError(error)
         .split(config.credential || '\0')
         .join('[redacted]');
       recordHealth(request.healthFile, config, null, message);

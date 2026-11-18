@@ -2295,6 +2295,26 @@ span.mp-chat-diff-path {
   font-size: 10px;
 }
 
+.mp-chat-turn-error-retry {
+  appearance: none;
+  flex: none;
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--mp-danger) 28%, transparent);
+  background: transparent;
+  color: var(--mp-danger);
+  font-size: 12px;
+  font-weight: var(--mp-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.mp-chat-turn-error-retry:hover {
+  background: color-mix(in srgb, var(--mp-danger) 10%, transparent);
+}
+
 .mp-chat-vh {
   position: absolute;
   width: 1px;

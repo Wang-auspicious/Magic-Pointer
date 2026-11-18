@@ -5243,6 +5243,7 @@ const ChatView = (() => {
     message: string,
     code?: string,
     tone: 'error' | 'warning' = 'error',
+    retryQuestion?: string,
   ): ChatNode {
     const root = h('div', {class: 'mp-chat-turn-error', role: 'status'});
     attach(root, stateDot(tone === 'error' ? 'error' : 'warning'));
@@ -5265,11 +5266,24 @@ const ChatView = (() => {
       attach(c, code);
       attach(root, c);
     }
+    const cleanRetry = String(retryQuestion || '').trim();
+    if (cleanRetry && tone === 'error') {
+      const retryBtn = h('button', {
+        type: 'button',
+        class: 'mp-chat-turn-error-retry',
+        'data-mp-chat-act': 'retry',
+        'data-mp-chat-retry': cleanRetry,
+        'aria-label': lt('chat.resend'),
+      });
+      attach(retryBtn, lt('chat.resend'));
+      attach(root, retryBtn);
+    }
     return root;
   }
 
   interface AssistantTurnInput {
     request?: Record<string, unknown>;
+    question?: string;
     answer?: string;
     thinking?: string;
     trace?: Array<
@@ -6467,7 +6481,15 @@ const ChatView = (() => {
     }
 
     if (turn.failed) {
-      attach(bodyHost, turnErrorNode(turn.error || lt('chat.turn_failed')));
+      attach(
+        bodyHost,
+        turnErrorNode(
+          turn.error || lt('chat.turn_failed'),
+          undefined,
+          'error',
+          turn.question,
+        ),
+      );
     }
 
     if (turn.running && !turn.answer && !turn.thinking) {

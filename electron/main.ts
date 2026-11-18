@@ -10802,6 +10802,54 @@ function sendBridgeResult(target: string | null, parsed: any) {
   safeSurfaceSend(target, channel, parsed);
 }
 
+const {resolveSystemProxyUrl} = require('./runtime/model');
+
+let cachedSystemProxyEnv: string | null = null;
+function ensureSystemProxyEnvAsync(): void {
+  if (
+    cachedSystemProxyEnv !== null ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy
+  ) {
+    return;
+  }
+  const ses = session?.defaultSession;
+  if (!ses || typeof ses.resolveProxy !== 'function') {
+    cachedSystemProxyEnv = '';
+    return;
+  }
+  cachedSystemProxyEnv = '';
+  Promise.resolve(ses.resolveProxy('https://api.openai.com'))
+    .then((rule: string) => {
+      const resolved = resolveSystemProxyUrl(rule);
+      if (resolved) {
+        cachedSystemProxyEnv = resolved;
+      }
+    })
+    .catch(() => {});
+}
+
+function runtimeBridgeProxyEnv(): Record<string, string> {
+  if (
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy
+  ) {
+    return {};
+  }
+  ensureSystemProxyEnvAsync();
+  if (!cachedSystemProxyEnv) {
+    return {};
+  }
+  return {
+    HTTPS_PROXY: cachedSystemProxyEnv,
+    HTTP_PROXY: cachedSystemProxyEnv,
+  };
+}
+
 function runRuntimeBridge(
   payload: any,
   scriptPath = 'electron',
@@ -10861,6 +10909,7 @@ function runRuntimeBridge(
       windowsHide: true,
       env: {
         ...process.env,
+        ...runtimeBridgeProxyEnv(),
         ELECTRON_RUN_AS_NODE: '1',
         MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR,
       },

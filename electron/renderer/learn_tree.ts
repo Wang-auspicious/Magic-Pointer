@@ -1537,9 +1537,28 @@ declare global {
       } else if (isStreamingThisTurn) {
         aWrap.appendChild(streamingStatusNode());
       } else if (turn.failed && turn.error) {
-        const errRow = el('div', 'mp-learn-streaming-status');
+        const errRow = el('div', 'mp-learn-streaming-status is-error');
         errRow.appendChild(cdsIcon('warning', 13));
-        errRow.appendChild(el('span', '', String(turn.error)));
+        errRow.appendChild(el('span', 'mp-learn-error-text', String(turn.error)));
+        if (turn.question && turn.question.trim()) {
+          const retryBtn = el('button', 'mp-learn-branch-retry', '重试');
+          retryBtn.type = 'button';
+          retryBtn.addEventListener('click', () => {
+            retryBtn.disabled = true;
+            void submitBranchPrompt({
+              conversationId: conversation.id,
+              branchId: branch.id,
+              parentBranchId: branch.parentBranchId,
+              parentTurnIndex: branch.parentTurnIndex,
+              anchor: branch.anchor,
+              question: String(turn.question || '').trim(),
+              lemmaKey: `branch:${branch.id}`,
+            }).finally(() => {
+              retryBtn.disabled = false;
+            });
+          });
+          errRow.appendChild(retryBtn);
+        }
         aWrap.appendChild(errRow);
       }
       turnWrap.appendChild(aWrap);

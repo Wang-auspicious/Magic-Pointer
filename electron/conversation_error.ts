@@ -3,6 +3,7 @@
 interface ConversationBridgeResult {
   answer?: unknown;
   code?: unknown;
+  detail?: unknown;
   error?: unknown;
   ok?: unknown;
 }
@@ -19,6 +20,12 @@ function conversationFailureMessage(
     return `Agent 桥接进程已退出，但没有写出结果（bridge_no_output，exit ${code}）。`;
   }
   if (error === 'provider_unavailable') {
+    const rawDetail = String(result?.detail || result?.answer || '')
+      .replace(/^backend_error:\s*/i, '')
+      .trim();
+    if (rawDetail && rawDetail !== 'provider_unavailable') {
+      return `模型服务当前不可用（provider_unavailable：${rawDetail.slice(0, 160)}），可直接点击重试。`;
+    }
     return '模型服务当前不可用（provider_unavailable）。';
   }
   if (error === 'bridge_timeout') {
