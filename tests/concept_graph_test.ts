@@ -22,6 +22,10 @@ test('ConceptGraph extracts DAG topology from structured and plain Learn answers
     ConceptGraph.cleanFormulaText('后验门槛 $\\tau$ 与 \\rho = \\arg\\min_a R^*'),
     '后验门槛 τ 与 ρ = argminₐ R⁎',
   );
+  assert.equal(
+    ConceptGraph.cleanFormulaText('\\dfrac{\\lambda_{12}}{2}(1-\\theta)^2'),
+    '(λ₁₂)/(2)(1-θ)²',
+  );
 
   const structuredConv = {
     id: 'conv-m2-1',

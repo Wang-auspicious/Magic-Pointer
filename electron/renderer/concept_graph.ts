@@ -100,7 +100,11 @@ declare global {
   }
 
   const GREEK_AND_MATH_MAP: ReadonlyArray<[RegExp, string]> = [
-    [/\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1)/($2)'],
+    [
+      /\\(?:d|t)?frac\s*\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})+)\}\s*\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})+)\}/g,
+      '($1)/($2)',
+    ],
+    [/\\(?:d|t)?frac\s+([^\s{}]+)\s+([^\s{}]+)/g, '($1)/($2)'],
     [/\\alpha(?![A-Za-z])/g, 'α'],
     [/\\beta(?![A-Za-z])/g, 'β'],
     [/\\gamma(?![A-Za-z])/g, 'γ'],
@@ -215,6 +219,8 @@ declare global {
       SUPERSCRIPTS[ch] ?? `^${ch}`,
     );
     return text
+      .replace(/\\(?:d|t)?frac(?![A-Za-z])/g, '')
+      .replace(/\\([A-Za-z]+)(?![A-Za-z])/g, '')
       .replace(/[{}]/g, '')
       .replace(/\s*\|\s*/g, ' | ')
       .replace(/\s{2,}/g, ' ')
@@ -225,6 +231,10 @@ declare global {
     return String(raw || '')
       .replace(/\[\[([^\]|\n]+)(?:\|[^\]\n]+)?\]\]/g, '$1')
       .replace(/==([^=\n]+)==/g, '$1')
+      .replace(/==/g, '')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*\*/g, '')
+      .replace(/`([^`\n]+)`/g, '$1')
       .replace(/\$\$([^$]+)\$\$/g, (_m, tex: string) => cleanFormulaText(tex))
       .replace(/\$([^$\n]+)\$/g, (_m, tex: string) => cleanFormulaText(tex))
       .replace(/\s+/g, ' ')
@@ -355,7 +365,6 @@ declare global {
           rawBody: codeBody.slice(0, 240),
         });
         pendingHeading = '';
-        blockIndex++;
         if (i < lines.length) {
           i++;
         }
@@ -415,7 +424,6 @@ declare global {
           rawBody: rawJson.slice(0, 200),
         });
         pendingHeading = '';
-        blockIndex++;
         if (i < lines.length) {
           i++;
         }
@@ -441,7 +449,6 @@ declare global {
           rawBody: body,
         });
         pendingHeading = '';
-        blockIndex++;
         if (i < lines.length) {
           i++;
         }
@@ -507,9 +514,15 @@ declare global {
               : pendingHeading
                 ? 'concept'
                 : 'mechanism';
+        const titleCandidate = cleaned
+          .replace(/^\s*(?:\d+[.)、]\s*|[-*•]\s+)/, '')
+          .split(/[：:。；!?]/)[0]
+          .replace(/^[（(]+/, '')
+          .trim()
+          .slice(0, 28);
         const autoTitle =
           pendingHeading ||
-          cleaned.split(/[：:。；.!?]/)[0].trim().slice(0, 28) ||
+          (titleCandidate.length >= 3 ? titleCandidate : '') ||
           `要点 ${blockIndex + 1}`;
         units.push({
           blockIndex,
