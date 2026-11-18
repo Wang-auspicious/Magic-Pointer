@@ -1966,6 +1966,87 @@ function deliveredArtifacts(
   return [...byId.values()].slice(0, 24);
 }
 
+function progressUsageFromRecord(
+  record: Record<string, unknown>,
+  progress?: SelectionLiveProgress,
+): {
+  tokens?: number;
+  outputTokens?: number;
+  usageTokens?: number;
+} | null {
+  const fields =
+    record.fields && typeof record.fields === 'object'
+      ? (record.fields as Record<string, unknown>)
+      : {};
+  let parsed: Record<string, unknown> = fields;
+  if (
+    String(record.phase || '') === 'model_usage' &&
+    typeof fields.b64 === 'string'
+  ) {
+    try {
+      const decoded = JSON.parse(
+        Buffer.from(fields.b64, 'base64').toString('utf8'),
+      );
+      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+        parsed = decoded as Record<string, unknown>;
+      }
+    } catch {
+      parsed = fields;
+    }
+  }
+  const latestMessage = progress?.trajectory
+    ? [...progress.trajectory]
+        .reverse()
+        .find(
+          item =>
+            item.kind === 'message' &&
+            item.modelUsage &&
+            typeof item.modelUsage === 'object',
+        )
+    : undefined;
+  const fallbackUsage =
+    latestMessage?.modelUsage && typeof latestMessage.modelUsage === 'object'
+      ? (latestMessage.modelUsage as Record<string, unknown>)
+      : undefined;
+  const outputRaw = Number(
+    parsed.output_tokens ??
+      parsed.outputTokens ??
+      fallbackUsage?.output_tokens ??
+      fallbackUsage?.outputTokens,
+  );
+  const totalRaw = Number(
+    parsed.total_tokens ??
+      parsed.totalTokens ??
+      parsed.tokens ??
+      fallbackUsage?.total_tokens ??
+      fallbackUsage?.totalTokens,
+  );
+  const inputRaw = Number(
+    parsed.input_tokens ??
+      parsed.inputTokens ??
+      fallbackUsage?.input_tokens ??
+      fallbackUsage?.inputTokens ??
+      0,
+  );
+  const outputTokens =
+    Number.isFinite(outputRaw) && outputRaw > 0 ? outputRaw : undefined;
+  const computedTotal =
+    Number.isFinite(totalRaw) && totalRaw > 0
+      ? totalRaw
+      : outputTokens !== undefined && Number.isFinite(inputRaw) && inputRaw >= 0
+        ? inputRaw + outputTokens
+        : undefined;
+  const tokens = outputTokens ?? computedTotal;
+  if (tokens === undefined && computedTotal === undefined) {
+    return null;
+  }
+  return {
+    ...(tokens !== undefined ? {tokens} : {}),
+    ...(outputTokens !== undefined ? {outputTokens} : {}),
+    ...(computedTotal !== undefined ? {usageTokens: computedTotal} : {}),
+  };
+}
+
 type SelectionLiveProgress = {
   answer: string;
   thinking: string;
@@ -3951,6 +4032,9 @@ ipcMain.handle(
             ...(typeof raw?.insightSummary === 'string'
               ? {insightSummary: raw.insightSummary}
               : {}),
+            ...(typeof raw?.priority === 'string'
+              ? {priority: raw.priority}
+              : {}),
           },
         );
         if (!updated.ok) {
@@ -4201,6 +4285,19 @@ ipcMain.handle(
           }]\n\n${question}${lemmaTail}`
         : `${question}${lemmaTail}`;
 
+    let permissionPreset: PermissionPreset;
+    try {
+      permissionPreset =
+        normalizePermissionPreset(raw?.permissionPreset) ??
+        presetForPermissionMode(source.taskContext?.permissionMode) ??
+        'workspace-write';
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
     const requestId =
       String(raw?.requestId || '').trim() || `learn-${crypto.randomUUID()}`;
     const appended = conversations().appendBranchTurn({
@@ -4222,10 +4319,6 @@ ipcMain.handle(
     conversations().flush();
     notifyConversationChanged(conversationId);
 
-    const permissionPreset =
-      normalizePermissionPreset(
-        source.taskContext?.permissionMode as string | undefined,
-      ) || 'workspace-write';
     const rawEffort = String(raw?.effort || '').toLowerCase();
     const effort = ['low', 'medium', 'high', 'max'].includes(rawEffort)
       ? rawEffort
@@ -5575,11 +5668,13 @@ async function sendConversation(
           progressTimer = setTimeout(flushProgress, 300);
         }
         if (sender && !sender.isDestroyed()) {
+          const liveUsage = progressUsageFromRecord(record, progress);
           sender.send('conversations:progress', {
             requestId,
             conversationId: conversation.id,
             turnIndex,
             record,
+            ...(liveUsage || {}),
           });
         }
       },

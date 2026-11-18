@@ -376,4 +376,295 @@ const liveSlow = html(ChatView.liveActivityNode({
 }));
 assert(liveSlow.includes('5237ms'), `a real latency rounds to whole milliseconds, got ${liveSlow}`);
 
+const ActivityMarks = require('../electron/renderer/activity_marks');
+const StreamSmoother = require('../electron/renderer/stream_smoother');
+
+assert(!css.includes('.mp-chat-turn-status-label[data-quiet="true"]'),
+  'turn status label must not carry the 1px data-quiet clipping rule');
+assert(!ChatView.turnStatusNode('Thinking').outerHTML.includes('data-quiet="true"'),
+  'running turn status label must remain visible without data-quiet="true"');
+assert.match(css, /\.mp-chat-turn-status\s*\{[^}]*gap:\s*16px/s,
+  'streaming status footer matches Claude Desktop PSt gap: 16px');
+assert.match(css, /\.mp-chat-turn-status\s*\{[^}]*min-height:\s*20px/s,
+  'streaming status footer matches Claude Desktop PSt h-5 (20px)');
+assert.match(css, /\.mp-chat-turn-status[\s\S]*tabular-nums/s,
+  'streaming status footer enforces tabular-nums');
+
+assert(css.includes('@keyframes epitaxy-thinking-shimmer'),
+  'thinking opacity shimmer keyframes must be defined');
+assert(css.includes('@keyframes cds-shimmer-text-shine'),
+  'CDS ShimmerText keyframes must be defined');
+assert(css.includes('@keyframes _fadeInText_4za3l_1') && css.includes('.mp-stream-word-in'),
+  '100ms streaming word fade-in animation must be defined');
+
+assert.match(css, /\.mp-chat-stream-live\s*\{[^}]*(?:15px|0\.9375rem)/s,
+  'live stream body matches settled 15px (0.9375rem) typography');
+assert.match(css, /\.mp-chat-stream-live\s*\{[^}]*line-height:\s*1\.4\b/s,
+  'live stream body matches settled line-height: 1.4');
+assert.match(css, /\.mp-chat-markdown\s*\{[^}]*(?:15px|0\.9375rem)/s,
+  'settled markdown uses 15px (0.9375rem) typography');
+assert.match(css, /\.mp-chat-markdown\s*\{[^}]*line-height:\s*1\.4\b/s,
+  'settled markdown uses line-height: 1.4');
+assert.match(css, /\.mp-chat-narration\s*\{[^}]*line-height:\s*1\.4\b/s,
+  'mid-turn narration unifies line-height: 1.4 to prevent settle jump');
+
+assert.match(css, /\.mp-chat-think[^{]*> \.mp-chat-body-wrap\s*\{[^}]*transition:\s*none/s,
+  'Thought process toggle panel must open/collapse instantaneously');
+
+assert(ActivityMarks.MARKS.spark.includes('viewBox="0 0 100 100"'),
+  'static Spark must keep 100x100 viewBox');
+assert(ActivityMarks.MARKS.spark.includes('#d97757') || ActivityMarks.MARKS.spark.includes('--cds-clay'),
+  'static Spark must use clay #d97757 token');
+const expectedSparkStates = {
+  thinking: [9, 90],
+  writing: [8, 90],
+  waiting: [16, 600],
+  shimmer: [15, 100],
+  entrance: [6, 70],
+  exit: [6, 70],
+  orbiting: [18, 100],
+  tickle: [7, 40],
+};
+assert.ok(ActivityMarks.SPARK_STATES, 'ActivityMarks.SPARK_STATES must expose the 8 sprite states');
+for (const [state, [frames, speed]] of Object.entries(expectedSparkStates)) {
+  const spec = ActivityMarks.SPARK_STATES[state];
+  assert.ok(spec, `missing SPARK_STATES.${state}`);
+  assert.strictEqual(spec.frameCount, frames, `${state} frameCount`);
+  assert.strictEqual(spec.speed, speed, `${state} speed`);
+}
+const animatedSparkHtml = ActivityMarks.spark('thinking');
+assert(animatedSparkHtml.includes('data-cds="Spark"') && animatedSparkHtml.includes('data-cds-spark-strip'),
+  'animated Spark must emit data-cds="Spark" sprite strip markup');
+
+assert.match(css, /\.mpw-primary\s*\{[^}]*width:\s*32px[^}]*height:\s*32px/s,
+  'composer primary button uses 32px sizing per REA §1.4');
+assert.match(css, /\.mpw-primary\.is-stop[\s\S]*?(?:#d97757|--cds-clay)/s,
+  'composer stop button uses clay #d97757 fill');
+
+assert.strictEqual(typeof StreamSmoother.formatElapsedTime, 'function');
+assert.strictEqual(typeof ChatView.formatElapsedTime, 'function');
+assert.strictEqual(typeof ChatView.formatThinkingLabel, 'function');
+assert.strictEqual(typeof ChatView.updateTurnStatus, 'function');
+assert.strictEqual(typeof ChatView.applySaliency, 'function');
+
+{
+  class MockNode {
+    constructor(tag = '', text = '') {
+      this.tagName = tag.toUpperCase();
+      this.nodeType = tag ? 1 : 3;
+      this.childNodes = [];
+      this.attrs = {};
+      this.dataset = {};
+      this.nodeValue = text;
+      this.parentNode = null;
+    }
+    get children() { return this.childNodes.filter(n => n.nodeType === 1); }
+    get firstChild() { return this.childNodes[0] || null; }
+    get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
+    get lastElementChild() {
+      const kids = this.children;
+      return kids[kids.length - 1] || null;
+    }
+    get textContent() {
+      return this.nodeType === 3 ? this.nodeValue : this.childNodes.map(n => n.textContent).join('');
+    }
+    set textContent(val) {
+      this.replaceChildren(new MockNode('', String(val)));
+    }
+    get className() { return this.attrs.class || ''; }
+    set className(val) { this.setAttribute('class', val); }
+    setAttribute(k, v) { this.attrs[k] = String(v); }
+    getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; }
+    removeAttribute(k) { delete this.attrs[k]; }
+    hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k); }
+    appendChild(node) { return this.insertBefore(node, null); }
+    insertBefore(node, before) {
+      if (node && node.nodeType === 11 && Array.isArray(node.childNodes)) {
+        const items = node.childNodes.slice();
+        for (const item of items) {
+          this.insertBefore(item, before);
+        }
+        return node;
+      }
+      const child = typeof node === 'string' ? new MockNode('', node) : node;
+      if (child.parentNode && typeof child.remove === 'function') child.remove();
+      const idx = before ? this.childNodes.indexOf(before) : this.childNodes.length;
+      this.childNodes.splice(idx < 0 ? this.childNodes.length : idx, 0, child);
+      child.parentNode = this;
+      return child;
+    }
+    replaceChild(nextNode, oldNode) {
+      this.insertBefore(nextNode, oldNode);
+      if (oldNode && typeof oldNode.remove === 'function') oldNode.remove();
+      return oldNode;
+    }
+    remove() {
+      if (!this.parentNode) return;
+      const arr = this.parentNode.childNodes;
+      const idx = arr.indexOf(this);
+      if (idx >= 0) arr.splice(idx, 1);
+      this.parentNode = null;
+    }
+    replaceChildren(...nodes) {
+      this.childNodes.slice().forEach(n => {
+        if (typeof n.remove === 'function') n.remove();
+        else n.parentNode = null;
+      });
+      this.childNodes.length = 0;
+      for (const n of nodes) this.appendChild(n);
+    }
+    contains(target) {
+      if (target === this) return true;
+      return this.childNodes.some(n => (typeof n.contains === 'function' ? n.contains(target) : n === target));
+    }
+    querySelectorAll(selector) {
+      const selectors = selector.split(',').map(s => s.trim()).filter(Boolean);
+      const matchSingle = (node, sel) => {
+        if (sel.startsWith('.')) return node.className.split(/\s+/).includes(sel.slice(1));
+        if (sel.startsWith('[')) {
+          const inner = sel.slice(1, -1);
+          const eq = inner.indexOf('=');
+          if (eq === -1) return node.hasAttribute(inner);
+          const key = inner.slice(0, eq);
+          const expected = inner.slice(eq + 1).replace(/^['"]|['"]$/g, '');
+          return node.getAttribute(key) === expected;
+        }
+        return node.tagName.toLowerCase() === sel.toLowerCase();
+      };
+      const out = [];
+      for (const child of this.children) {
+        if (selectors.some(sel => matchSingle(child, sel))) out.push(child);
+        out.push(...child.querySelectorAll(selector));
+      }
+      return out;
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  }
+
+  const prevDoc = global.document;
+  const prevHtmlEl = global.HTMLElement;
+  const prevSaliency = global.TextSaliency;
+  const resolvedChatView = require.resolve('../electron/renderer/chat_view');
+  const resolvedChatMarkdown = require.resolve('../electron/renderer/chat_markdown');
+  const prevChatCache = require.cache[resolvedChatView];
+  const prevMarkdownCache = require.cache[resolvedChatMarkdown];
+  global.HTMLElement = MockNode;
+  global.document = {
+    documentElement: { lang: 'en', dataset: {}, getAttribute: () => null },
+    createElement: (tag) => new MockNode(tag),
+    createElementNS: (_ns, tag) => new MockNode(tag),
+    createTextNode: (text) => new MockNode('', text),
+    createDocumentFragment: () => ({ nodeType: 11, childNodes: [], appendChild(n) { this.childNodes.push(n); return n; } }),
+  };
+  delete require.cache[resolvedChatMarkdown];
+  delete require.cache[resolvedChatView];
+  const LiveChatView = require('../electron/renderer/chat_view');
+
+  try {
+    // 1. Auto-collapse when prose begins streaming unless user opened/pinned.
+    LiveChatView.expansion.clear();
+    const autoHost = new MockNode('div');
+    const autoLive = LiveChatView.createLiveTurn(autoHost, 'auto-collapse#0');
+    autoLive.update({ thinking: 'Inspecting files', nowMs: 100 });
+    assert.strictEqual(
+      autoHost.querySelector('.mp-chat-think').getAttribute('data-open'),
+      'true',
+      'Thought process starts open while thinking',
+    );
+    autoLive.update({ thinking: 'Inspecting files', answer: 'First prose chunk.', nowMs: 200 });
+    assert.strictEqual(
+      autoHost.querySelector('.mp-chat-think').getAttribute('data-open'),
+      'false',
+      'Thought process auto-collapses when prose begins streaming',
+    );
+
+    const pinnedHost = new MockNode('div');
+    const pinnedLive = LiveChatView.createLiveTurn(pinnedHost, 'pinned-collapse#0');
+    pinnedLive.update({ thinking: 'Checking contract', nowMs: 100 });
+    const pinnedRow = pinnedHost.querySelector('.mp-chat-think');
+    LiveChatView.expansion.setRow(pinnedRow.getAttribute('data-row-id'), true);
+    pinnedLive.update({ thinking: 'Checking contract', answer: 'Streaming answer.', nowMs: 200 });
+    assert.strictEqual(
+      pinnedRow.getAttribute('data-open'),
+      'true',
+      'User-opened/pinned Thought process remains open during streaming',
+    );
+    LiveChatView.expansion.clear();
+
+    // 2. Live status PSt ticks, oSt=5000ms token gate, Spark state transitions, selection pause, and finish TextSaliency hook.
+    let saliencyAppliedHost = null;
+    global.TextSaliency = { apply: (target) => { saliencyAppliedHost = target; } };
+
+    const host = new MockNode('div');
+    const live = LiveChatView.createLiveTurn(host, 'live-footer#0', { smooth: true });
+    live.update({
+      startedAt: 1000,
+      nowMs: 1000,
+      tokens: 1500,
+      trajectory: [{ kind: 'message', turn: 0, reasoning: 'Tracing flow', state: 'running' }],
+    });
+    let status = host.querySelector('.mp-chat-turn-status');
+    assert.strictEqual(status.querySelector('.mp-chat-turn-status-label').textContent, 'Thinking…');
+    assert.strictEqual(status.querySelector('[data-turn-meta]').textContent, '', 'elapsed < 2s stays hidden');
+    assert.strictEqual(status.querySelector('.mp-chat-thinking-mark').getAttribute('data-spark-state'), 'thinking');
+
+    live.tickStatus(3500); // elapsed 2.5s -> shows 2s, tokens still gated (<5000ms)
+    assert.strictEqual(status.querySelector('[data-turn-meta]').textContent, '2s');
+
+    live.tickStatus(17500); // elapsed 16.5s -> Still thinking… + smoothed tokens > 5000ms gate
+    assert.strictEqual(status.querySelector('.mp-chat-turn-status-label').textContent, 'Still thinking…');
+    assert(status.querySelector('[data-turn-meta]').textContent.includes('1.5k tokens'),
+      'token count reveals after 5000ms oSt gate');
+
+    live.tickStatus(62000); // elapsed 61s -> Almost done thinking… + 1m 01s
+    assert.strictEqual(status.querySelector('.mp-chat-turn-status-label').textContent, 'Almost done thinking…');
+    assert(status.querySelector('[data-turn-meta]').textContent.startsWith('1m 01s · '),
+      'elapsed >= 60s formats as m ss');
+
+    live.update({
+      startedAt: 1000,
+      nowMs: 62050,
+      answer: 'Alpha beta ',
+      records: [],
+    });
+    live.tickStatus(62080);
+    const ansNode = host.querySelector('.mp-chat-stream-live');
+    assert.ok(ansNode && ansNode.textContent.length > 0, 'smooth RAF tick releases initial chunk');
+    const heldText = ansNode.textContent;
+    live.setSelectionPaused(true, 62100);
+    live.update({
+      startedAt: 1000,
+      nowMs: 62150,
+      answer: 'Alpha beta gamma delta',
+      records: [],
+    });
+    assert.strictEqual(ansNode.textContent, heldText, 'selection pause freezes live DOM emission');
+    live.setSelectionPaused(false, 62200);
+    live.tickStatus(62250);
+    assert.ok(ansNode.textContent.length > heldText.length, 'resuming advances stream');
+    assert.ok(ansNode.querySelector('.mp-stream-word-in'), 'incremental words receive 100ms fade-in class');
+    live.flush(62300);
+    assert.strictEqual(ansNode.textContent, 'Alpha beta gamma delta', 'flush catches up cleanly after pause');
+    status = host.querySelector('.mp-chat-turn-status');
+    assert.strictEqual(status.querySelector('.mp-chat-thinking-mark').getAttribute('data-spark-state'), 'writing');
+
+    live.finish({ answer: 'Alpha beta gamma delta', trajectory: [] });
+    assert.strictEqual(saliencyAppliedHost, host, 'finish() triggers post-settle TextSaliency application');
+  } finally {
+    global.document = prevDoc;
+    global.HTMLElement = prevHtmlEl;
+    global.TextSaliency = prevSaliency;
+    if (prevMarkdownCache) {
+      require.cache[resolvedChatMarkdown] = prevMarkdownCache;
+    } else {
+      delete require.cache[resolvedChatMarkdown];
+    }
+    if (prevChatCache) {
+      require.cache[resolvedChatView] = prevChatCache;
+    } else {
+      delete require.cache[resolvedChatView];
+    }
+  }
+}
+
 console.log('studio chat contract test ok');

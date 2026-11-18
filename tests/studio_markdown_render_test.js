@@ -26,15 +26,15 @@ const rendered = html(ChatMarkdown.render([
   '[OpenAI](https://openai.com)',
 ].join('\n')));
 
-assert(rendered.includes('<h1>标题</h1>'), 'ATX headings must become structural headings');
+assert(/<h1\b[^>]*>标题<\/h1>/.test(rendered), 'ATX headings must become structural headings');
 assert(rendered.includes('<strong>加粗</strong>'), 'strong emphasis must render');
 assert(rendered.includes('<em>斜体</em>'), 'emphasis must render');
 assert(rendered.includes('<del>删除</del>'), 'strikethrough must render');
 assert(rendered.includes('<code>inline()</code>'), 'inline code must render');
-assert(rendered.includes('<ul>'), 'unordered lists must render');
+assert(/<ul\b/.test(rendered), 'unordered lists must render');
 assert(rendered.includes('type="checkbox"'), 'task items must render as disabled checkboxes');
-assert(rendered.includes('<blockquote>'), 'block quotes must render');
-assert(rendered.includes('<table>'), 'GFM tables must render');
+assert(/<blockquote\b/.test(rendered), 'block quotes must render');
+assert(/<table\b/.test(rendered), 'GFM tables must render');
 assert(rendered.includes('data-lang="pwsh"'), 'fenced code must expose its language on the card');
 assert(rendered.includes('mp-chat-code-lang">pwsh</span>'), 'language label must be visible text');
 assert(/mp-chat-code-copy[^>]*data-mp-chat-act="copy"/.test(rendered), 'code card must carry the shared copy action');

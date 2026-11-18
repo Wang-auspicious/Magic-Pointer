@@ -99,6 +99,7 @@ const ConversationControl = (() => {
     const at = Number(fields.atMs ?? (record as {ms?: number})?.ms) || 0;
     const origin = Number(fields.timeOriginMs);
     const timeOrigin = Number.isFinite(origin) ? {timeOriginMs: origin} : {};
+    const lastRecord = transcript.trajectory.at(-1);
     let message = [...transcript.trajectory]
       .reverse()
       .find(item => item.kind === 'message');
@@ -140,10 +141,21 @@ const ConversationControl = (() => {
       if (!text) {
         return false;
       }
-      if (!message) {
+      const hasPostMessageRecord = Boolean(
+        message &&
+          lastRecord &&
+          lastRecord !== message &&
+          transcript.trajectory.lastIndexOf(message) <
+            transcript.trajectory.length - 1,
+      );
+      if (!message || hasPostMessageRecord) {
+        const nextTurn = message ? (message.turn ?? 1) : 1;
+        if (message) {
+          message.state = 'done';
+        }
         message = {
           kind: 'message',
-          turn: 1,
+          turn: nextTurn,
           text: '',
           reasoning: '',
           state: 'running',

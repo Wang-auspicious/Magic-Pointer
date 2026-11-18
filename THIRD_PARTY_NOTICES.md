@@ -278,3 +278,17 @@ Magic Pointer artwork. Renaming their paths does not change their provenance
 or establish redistribution rights; the project's MIT license does not grant
 rights to these assets. The original local note recorded that the branding
 was intended to be replaced before publication.
+
+## Grammar-Preserving Text Saliency Modulation (GP-TSM) algorithmic attribution
+
+Magic Pointer's skim-reading saliency modulation (`electron/renderer/text_saliency.ts`
+and `electron/renderer/text_saliency.css`) is an independent, clean-room TypeScript
+implementation inspired by the published CHI 2024 paper *Grammar-Preserving Text
+Saliency Modulation* by Ziwei Gu et al. (CHI '24; upstream reference repository
+`ZiweiGu/GP-TSM` carries an Academic & Non-Commercial license).
+
+No source code, model weights, stylesheets, or datasets from `ZiweiGu/GP-TSM`
+are copied or distributed in Magic Pointer. Both the bilingual (`en` / `zh-Hans`)
+`Intl.Segmenter` clause-skeleton saliency scorer and the word-level LCS
+multi-level compression aligner are authored independently from first principles
+under Magic Pointer's own codebase.

@@ -111,6 +111,16 @@ const ChatMarkdown = (() => {
     return node;
   }
 
+  function learnAskSvgMarkup(): string {
+    return (
+      '<svg class="mp-learn-icon" width="14" height="14" viewBox="0 0 20 20" ' +
+      'fill="none" stroke="currentColor" stroke-width="1.35" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M4.625 15.375L15.375 4.625M15.375 11.696L15.375 4.625L8.304 4.625" vector-effect="non-scaling-stroke"/>' +
+      '</svg>'
+    );
+  }
+
   function renderMathNode(tex: string, displayMode: boolean): MdNode {
     const cleaned = String(tex || '').trim();
     const katexApi = resolveKatex();
@@ -135,7 +145,11 @@ const ChatMarkdown = (() => {
           append(wrap, hRaw('div', {class: 'mp-learn-math-body'}, rendered));
           append(
             wrap,
-            h('span', {class: 'mp-learn-math-ask-pill'}, '↘ 追问公式'),
+            hRaw(
+              'span',
+              {class: 'mp-learn-math-ask-pill', 'aria-hidden': 'true'},
+              learnAskSvgMarkup(),
+            ),
           );
           return wrap;
         }
@@ -405,18 +419,37 @@ const ChatMarkdown = (() => {
     return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
   }
 
-  function normalizeCardPriority(badge: string): string {
-    const lower = badge.trim().toLowerCase();
-    if (lower.startsWith('p0')) {
-      return 'p0';
+  type CardCategory = 'concept' | 'mechanism' | 'compare' | 'trap' | 'formula';
+
+  function normalizeCardCategory(rawTag: string): {
+    category: CardCategory;
+    tagLabel: string;
+  } {
+    const lower = rawTag.trim().toLowerCase();
+    if (!lower) {
+      return {category: 'concept', tagLabel: ''};
     }
-    if (lower.startsWith('p1')) {
-      return 'p1';
+    if (lower === 'concept' || lower === '概念' || lower === 'p0') {
+      return {category: 'concept', tagLabel: 'concept'};
     }
-    if (lower.startsWith('p2')) {
-      return 'p2';
+    if (
+      lower === 'mechanism' ||
+      lower === '机制' ||
+      lower === 'p1' ||
+      lower.startsWith('step')
+    ) {
+      return {category: 'mechanism', tagLabel: 'mechanism'};
     }
-    return 'step';
+    if (lower === 'compare' || lower === '对比' || lower === 'p2') {
+      return {category: 'compare', tagLabel: 'compare'};
+    }
+    if (lower === 'trap' || lower === '误区' || lower === 'pitfall') {
+      return {category: 'trap', tagLabel: 'trap'};
+    }
+    if (lower === 'formula' || lower === '公式') {
+      return {category: 'formula', tagLabel: 'formula'};
+    }
+    return {category: 'concept', tagLabel: lower};
   }
 
   function isBlockStart(lines: string[], index: number): boolean {
@@ -445,12 +478,12 @@ const ChatMarkdown = (() => {
         continue;
       }
 
-      // Same-layer Learn Card block: :::card [P0|P1|P2|Step N] Title ... :::
+      // Same-layer Learn editorial divider: :::card [concept|mechanism|compare|trap|formula] Title ... :::
       const cardMatch = /^\s*:::card(?:\s+\[([^\]]+)\])?\s*(.*?)\s*$/i.exec(line);
       if (cardMatch) {
-        const badge = (cardMatch[1] || '').trim();
-        const title = (cardMatch[2] || '').trim() || badge || '要点分解';
-        const priority = badge ? normalizeCardPriority(badge) : 'step';
+        const rawTag = (cardMatch[1] || '').trim();
+        const {category, tagLabel} = normalizeCardCategory(rawTag);
+        const title = (cardMatch[2] || '').trim() || tagLabel || '要点分解';
         const cardLines: string[] = [];
         index += 1;
         while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
@@ -462,14 +495,10 @@ const ChatMarkdown = (() => {
         const snippet = cardLines.join('\n').trim().slice(0, 900);
         const head = h('header', {class: 'mp-learn-card-head'});
         const titleCluster = h('div', {class: 'mp-learn-card-title-cluster'});
-        if (badge) {
+        if (tagLabel) {
           append(
             titleCluster,
-            h(
-              'span',
-              {class: 'mp-learn-card-badge', 'data-priority': priority},
-              badge,
-            ),
+            h('span', {class: 'mp-learn-card-tag'}, tagLabel),
           );
         }
         append(
@@ -479,17 +508,19 @@ const ChatMarkdown = (() => {
         append(head, titleCluster);
         append(
           head,
-          h(
+          hRaw(
             'button',
             {
               type: 'button',
               class: 'mp-learn-card-ask',
+              'aria-label': `深入追问：${title}`,
+              title: '深入追问',
               'data-mp-learn-anchor': 'card',
-              'data-mp-learn-label': badge ? `[${badge}] ${title}` : title,
+              'data-mp-learn-label': title,
               'data-mp-learn-snippet': snippet || title,
-              ...(badge ? {'data-mp-learn-priority': badge} : {}),
+              ...(tagLabel ? {'data-mp-learn-category': category} : {}),
             },
-            '↘ 深入此卡',
+            learnAskSvgMarkup(),
           ),
         );
         const bodyNode = h(
@@ -502,7 +533,7 @@ const ChatMarkdown = (() => {
             'section',
             {
               class: 'mp-learn-card',
-              'data-priority': priority,
+              'data-category': category,
               'data-card-title': title,
             },
             head,
@@ -718,9 +749,11 @@ const ChatMarkdown = (() => {
     const lines = String(markdown || '')
       .replace(/\r\n?/g, '\n')
       .split('\n');
-    for (const block of renderBlocks(lines)) {
+    const blocks = renderBlocks(lines);
+    blocks.forEach((block, blockIndex) => {
+      block.setAttribute('data-block-index', String(blockIndex));
       append(root, block);
-    }
+    });
     return root;
   }
 

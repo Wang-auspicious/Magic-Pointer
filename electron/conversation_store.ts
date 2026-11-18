@@ -90,6 +90,41 @@ export interface LearnAnchor {
   snippet: string;
   gloss?: string;
   priority?: string;
+  blockIndex?: number;
+}
+
+function sanitizeLearnAnchor(raw: unknown): LearnAnchor {
+  const src =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const kindRaw = String(src.kind || 'selection');
+  const kind: LearnAnchor['kind'] = ['term', 'card', 'math', 'selection'].includes(
+    kindRaw,
+  )
+    ? (kindRaw as LearnAnchor['kind'])
+    : 'selection';
+  const label = String(src.label || '').trim().slice(0, 200) || '卡点追问';
+  const snippet = String(src.snippet || label).trim().slice(0, 1200);
+  const gloss = String(src.gloss || '').trim().slice(0, 300) || undefined;
+  const priority = String(src.priority || '').trim().slice(0, 24) || undefined;
+  const rawBlockIndex = src.blockIndex;
+  const blockIndex =
+    typeof rawBlockIndex === 'number' &&
+    Number.isSafeInteger(rawBlockIndex) &&
+    rawBlockIndex >= 0
+      ? rawBlockIndex === 0
+        ? 0
+        : rawBlockIndex
+      : undefined;
+  return {
+    kind,
+    label,
+    snippet,
+    ...(gloss ? {gloss} : {}),
+    ...(priority ? {priority} : {}),
+    ...(blockIndex !== undefined ? {blockIndex} : {}),
+  };
 }
 
 export interface LearnLemmaRef {
@@ -1589,30 +1624,6 @@ function createConversationStore(
     }
   }
 
-  function sanitizeLearnAnchor(raw: unknown): LearnAnchor {
-    const src =
-      raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? (raw as Record<string, unknown>)
-        : {};
-    const kindRaw = String(src.kind || 'selection');
-    const kind: LearnAnchor['kind'] = ['term', 'card', 'math', 'selection'].includes(
-      kindRaw,
-    )
-      ? (kindRaw as LearnAnchor['kind'])
-      : 'selection';
-    const label = String(src.label || '').trim().slice(0, 200) || '卡点追问';
-    const snippet = String(src.snippet || label).trim().slice(0, 1200);
-    const gloss = String(src.gloss || '').trim().slice(0, 300) || undefined;
-    const priority = String(src.priority || '').trim().slice(0, 24) || undefined;
-    return {
-      kind,
-      label,
-      snippet,
-      ...(gloss ? {gloss} : {}),
-      ...(priority ? {priority} : {}),
-    };
-  }
-
   function deriveInsightSummary(answer: string): string {
     const cleaned = String(answer || '')
       .replace(/:::card[^\n]*\n?/g, '')
@@ -1821,6 +1832,7 @@ function createConversationStore(
       docked?: boolean;
       title?: string;
       insightSummary?: string;
+      priority?: string;
     },
   ): {ok: boolean; conversation?: Conversation; branch?: LearnBranch} {
     const target = get(id);
@@ -1839,6 +1851,14 @@ function createConversationStore(
     }
     if (typeof patch.insightSummary === 'string') {
       branch.insightSummary = patch.insightSummary.trim().slice(0, 160);
+    }
+    if (typeof patch.priority === 'string') {
+      const cleanPriority = patch.priority.trim().slice(0, 24);
+      if (cleanPriority) {
+        branch.anchor.priority = cleanPriority;
+      } else {
+        delete branch.anchor.priority;
+      }
     }
     branch.updatedAt = now();
     target.updatedAt = branch.updatedAt;
@@ -2046,6 +2066,7 @@ export {
   createConversationStore,
   isSubstantiveQuestion,
   objectKey,
+  sanitizeLearnAnchor,
   subtitleFrom,
   titleFrom,
 };

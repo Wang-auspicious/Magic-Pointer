@@ -101,6 +101,28 @@
   .side-session-submenu button,
   .mp-project-assignment button,
   .is-group-sort button
+) > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+:is(
+  .side-session-menu-item,
+  .mp-workspace-menu-row,
+  .side-session-submenu button,
+  .mp-project-assignment button,
+  .is-group-sort button
+) > .cds-icon {
+  font-size: 16px;
+  --cds-wght: 533.3;
+  --cds-opsz: 16;
+}
+:is(
+  .side-session-menu-item,
+  .mp-workspace-menu-row,
+  .side-session-submenu button,
+  .mp-project-assignment button,
+  .is-group-sort button
 ):is(:hover, :focus-visible) {
   color: var(--cds-text-primary);
   background: var(--cds-fill-ghost-hover);

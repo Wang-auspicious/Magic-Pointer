@@ -4,6 +4,53 @@
   document.body.toggleAttribute('data-ds-dark-theme', dark);
 })();
 
+declare global {
+  interface MagicPointerLiveTurn {
+    tickStatus?(nowMs?: number): void;
+    setSelectionPaused?(paused: boolean | null, nowMs?: number): void;
+    flush?(nowMs?: number): void;
+  }
+
+  interface MagicPointerLiveProgress {
+    startedAt?: number;
+    elapsedMs?: number;
+    tokens?: number;
+    outputTokens?: number;
+    usageTokens?: number;
+    stageLabel?: string;
+    waiting?: boolean;
+    nowMs?: number;
+  }
+
+  interface MagicPointerConversationProgress {
+    tokens?: number;
+    outputTokens?: number;
+    usageTokens?: number;
+  }
+
+  interface MagicPointerChatViewApi {
+    createLiveTurn(
+      body: HTMLElement,
+      scope?: string,
+      options?: {taskPanel?: boolean; smooth?: boolean},
+    ): MagicPointerLiveTurn;
+  }
+
+  const TextSaliency:
+    | {
+        apply<T extends Element>(
+          rootEl: T,
+          options?: {
+            reveal?: boolean;
+            highThreshold?: number;
+            midThreshold?: number;
+          },
+        ): T;
+        clear(rootEl: Element): Element;
+      }
+    | undefined;
+}
+
 function hash(str: string) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
@@ -1528,12 +1575,30 @@ function conversationNode(
     updatedAt: c.updatedAt,
   });
   row.dataset.unread = String(unread);
-  if (unread) {
-    const mark = document.createElement('span');
-    mark.className = 'side-unread';
-    mark.setAttribute('role', 'status');
-    mark.setAttribute('aria-label', studioT('convo.unread'));
-    actions.append(mark);
+  const rowStatus =
+    activity === 'running'
+      ? 'running'
+      : activity === 'awaiting'
+        ? 'awaiting'
+        : activity === 'failed'
+          ? 'error'
+          : unread
+            ? 'ready'
+            : '';
+  if (rowStatus) {
+    row.dataset.status = rowStatus;
+  }
+  if (rowStatus) {
+    const dot = document.createElement('span');
+    dot.className =
+      rowStatus === 'ready' ? 'status-dot side-unread' : 'status-dot';
+    dot.dataset.status = rowStatus;
+    dot.setAttribute('role', 'status');
+    dot.setAttribute(
+      'aria-label',
+      rowStatus === 'ready' ? studioT('convo.unread') : statusLabel,
+    );
+    actions.append(dot);
   }
   const ellipsis = document.createElement('span');
   ellipsis.className = 'side-ellipsis';
@@ -1541,13 +1606,10 @@ function conversationNode(
   ellipsis.setAttribute('tabindex', '0');
   ellipsis.setAttribute('aria-label', studioT('convo.row_actions'));
   ellipsis.dataset.sessionMenu = String(c.id || '');
-  ellipsis.innerHTML = icon('ic-ellipsis');
+  ellipsis.innerHTML = icon('ic-mp-chat-ellipsis');
   actions.appendChild(ellipsis);
   actions.appendChild(buildSessionMenu(c, pinnedIds));
-  const modeDot = document.createElement('span');
-  modeDot.className = 'side-dot';
-  modeDot.setAttribute('aria-hidden', 'true');
-  row.append(modeDot, title, actions);
+  row.append(title, actions);
   return row;
 }
 
@@ -4070,6 +4132,135 @@ let activeConversationView: ReturnType<
   typeof ChatView.createConversationView
 > | null = null;
 let activeConversationRecord: MagicPointerConversation | null = null;
+const CHAT_SKIM_STORAGE_KEY = 'mp:chat-skim-enabled:v1';
+let skimAltRevealing = false;
+
+function readSkimPreference(): boolean | null {
+  try {
+    const stored = localStorage.getItem(CHAT_SKIM_STORAGE_KEY);
+    if (stored === 'true') {
+      return true;
+    }
+    if (stored === 'false') {
+      return false;
+    }
+  } catch {
+    /* renderer storage unavailable */
+  }
+  return null;
+}
+
+function writeSkimPreference(enabled: boolean): void {
+  try {
+    localStorage.setItem(CHAT_SKIM_STORAGE_KEY, String(enabled));
+  } catch {
+    /* renderer storage unavailable */
+  }
+}
+
+function isSkimEnabled(conversation?: {workMode?: string} | null): boolean {
+  const stored = readSkimPreference();
+  if (stored !== null) {
+    return stored;
+  }
+  if (conversation?.workMode === 'learn') {
+    return true;
+  }
+  return productMode === 'design';
+}
+
+function syncSkimToggleUi(
+  conversation: {workMode?: string} | null = activeConversationRecord,
+): boolean {
+  const active = isSkimEnabled(conversation);
+  const button = document.getElementById('chat-skim-toggle');
+  if (button) {
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('is-on', active);
+    const label = studioT(active ? 'chat.skim_on' : 'chat.skim_off');
+    button.setAttribute('aria-label', studioT('chat.skim_aria'));
+    button.setAttribute('title', label);
+    const iconEl = button.querySelector<HTMLElement>('.cds-icon');
+    if (iconEl) {
+      iconEl.dataset.glyph = active ? '\uE069' : '\uE06A';
+    }
+  }
+  return active;
+}
+
+function syncStreamAltReveal(stream: HTMLElement | null): void {
+  if (!stream) {
+    return;
+  }
+  if (skimAltRevealing && isSkimEnabled(activeConversationRecord)) {
+    stream.setAttribute('data-tsm-reveal', 'true');
+  } else {
+    stream.removeAttribute('data-tsm-reveal');
+  }
+}
+
+function applySkimSaliency(
+  stream: HTMLElement | null,
+  conversation: {workMode?: string} | null = activeConversationRecord,
+): void {
+  const enabled = syncSkimToggleUi(conversation);
+  if (!stream) {
+    return;
+  }
+  if (typeof TextSaliency === 'undefined') {
+    syncStreamAltReveal(stream);
+    return;
+  }
+  if (!enabled) {
+    TextSaliency.clear(stream);
+    stream.removeAttribute('data-tsm-reveal');
+    return;
+  }
+  const markdownBlocks = stream.querySelectorAll<HTMLElement>('.mp-chat-markdown');
+  for (const block of markdownBlocks) {
+    if (
+      block.closest('.mp-chat-live-turn') ||
+      pendingConversation?.body.contains(block) ||
+      externalConversationRun?.body.contains(block)
+    ) {
+      continue;
+    }
+    TextSaliency.apply(block);
+  }
+  syncStreamAltReveal(stream);
+}
+
+(function bindSkimControls() {
+  document
+    .getElementById('chat-skim-toggle')
+    ?.addEventListener('click', () => {
+      const next = !isSkimEnabled(activeConversationRecord);
+      writeSkimPreference(next);
+      applySkimSaliency(
+        document.getElementById('stream'),
+        activeConversationRecord,
+      );
+    });
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Alt' && !skimAltRevealing) {
+      skimAltRevealing = true;
+      syncStreamAltReveal(document.getElementById('stream'));
+    }
+  });
+  window.addEventListener('keyup', event => {
+    if (event.key === 'Alt' && skimAltRevealing) {
+      skimAltRevealing = false;
+      syncStreamAltReveal(document.getElementById('stream'));
+    }
+  });
+  window.addEventListener('blur', () => {
+    if (skimAltRevealing) {
+      skimAltRevealing = false;
+      syncStreamAltReveal(document.getElementById('stream'));
+    }
+  });
+})();
+
 let conversationOpenGeneration = 0;
 let conversationRefreshSequence = 0;
 let conversationNotificationSequence = 0;
@@ -4599,6 +4790,9 @@ async function openConversation(id: string) {
       if (row.dataset.open === c.id) {
         row.dataset.unread = 'false';
         row.querySelector('.side-unread')?.remove();
+        if (row.dataset.status === 'ready') {
+          delete row.dataset.status;
+        }
       }
     });
   const switchedTask = activeConversationId !== c.id;
@@ -4727,6 +4921,7 @@ async function openConversation(id: string) {
       studioT('chat.empty_title'),
       studioT('chat.empty_body'),
     );
+    ChatView.bindDelegation(stream);
     syncConversationPendingInput(turns);
     renderUsageMeter([]);
     renderConversationActivity();
@@ -4761,12 +4956,16 @@ async function openConversation(id: string) {
   syncConversationPendingInput(turns);
   scrollChatToBottom();
   ChatView.bindDelegation(stream);
+  if (typeof TextSaliency !== 'undefined') {
+    TextSaliency.clear(stream);
+  }
   if (typeof LearnTree !== 'undefined') {
     LearnTree.mountConversation(stream, c);
     if (inspectorState.open && activeInspectorTab === 'learn') {
       LearnTree.renderDeck(document.getElementById('learn-deck-host'), c);
     }
   }
+  applySkimSaliency(stream, c);
   syncExternalConversationRun(c);
   scheduleStreamRail();
   renderUsageMeter(turns);
@@ -4926,9 +5125,13 @@ async function refreshOpenConversation(
   if (stream) {
     followIfNearBottom(stream, () => {
       activeConversationView?.update(conversation!);
+      if (typeof TextSaliency !== 'undefined') {
+        TextSaliency.clear(stream);
+      }
       if (typeof LearnTree !== 'undefined') {
         LearnTree.mountConversation(stream, conversation!);
       }
+      applySkimSaliency(stream, conversation!);
     });
   }
   if (
@@ -7085,6 +7288,7 @@ function setProductMode(mode: ProductMode, navigate = true) {
   } catch {
     /* renderer storage unavailable */
   }
+  syncSkimToggleUi(activeConversationRecord);
   if (navigate) {
     if (changed && activeConversationId) {
       startNewChat();
@@ -13161,10 +13365,14 @@ async function respondToPendingInput(
   }));
   const submitted: PendingConversation = {
     requestId: requestToken,
+    startedAt: Date.now(),
     scope,
     body,
     records: new Map(),
-    renderer: ChatView.createLiveTurn(body, scope, {taskPanel: true}),
+    renderer: ChatView.createLiveTurn(body, scope, {
+      taskPanel: true,
+      smooth: true,
+    }),
     agentSessionId: activeConversationRecord?.agentSessionId || null,
     streamText: '',
     reasoningText: '',
@@ -14227,6 +14435,9 @@ interface PendingConversation {
   reasoningText: string;
   transcript: ReturnType<typeof ConversationControl.createTranscript>;
   liveTokens: number | null;
+  liveOutputTokens?: number | null;
+  liveUsageTokens?: number | null;
+  stageLabel?: string;
 }
 let pendingConversation: PendingConversation | null = null;
 let studioTaskInputSequence = 0;
@@ -14243,6 +14454,38 @@ function progressKey(record: Record<string, unknown>): string {
   return 'status';
 }
 
+function applyLiveTokenValues(
+  pending: PendingConversation,
+  source: Record<string, unknown>,
+): boolean {
+  let updated = false;
+  const outputRaw = Number(source.output_tokens ?? source.outputTokens);
+  if (Number.isFinite(outputRaw) && outputRaw > 0) {
+    if (pending.liveOutputTokens !== outputRaw) {
+      pending.liveOutputTokens = outputRaw;
+      updated = true;
+    }
+    if (pending.liveTokens !== outputRaw) {
+      pending.liveTokens = outputRaw;
+      updated = true;
+    }
+  }
+  const totalRaw = Number(
+    source.total_tokens ?? source.totalTokens ?? source.tokens,
+  );
+  if (Number.isFinite(totalRaw) && totalRaw > 0) {
+    if (pending.liveUsageTokens !== totalRaw) {
+      pending.liveUsageTokens = totalRaw;
+      updated = true;
+    }
+    if (!(Number.isFinite(outputRaw) && outputRaw > 0) && pending.liveTokens !== totalRaw) {
+      pending.liveTokens = totalRaw;
+      updated = true;
+    }
+  }
+  return updated;
+}
+
 function renderConversationProgress(record: Record<string, unknown>) {
   if (!pendingConversation) {
     return;
@@ -14257,18 +14500,53 @@ function renderConversationProgress(record: Record<string, unknown>) {
     record.fields && typeof record.fields === 'object'
       ? (record.fields as Record<string, unknown>)
       : {};
-  const reportedTokens = Number(
-    tokenFields.total_tokens ?? tokenFields.tokens ?? tokenFields.output_tokens,
-  );
-  if (Number.isFinite(reportedTokens) && reportedTokens > 0) {
-    pendingConversation.liveTokens = reportedTokens;
+  const phase = String(record.phase || '');
+  let tokensChanged = applyLiveTokenValues(pendingConversation, tokenFields);
+  if (typeof tokenFields.stageLabel === 'string' && tokenFields.stageLabel.trim()) {
+    pendingConversation.stageLabel = tokenFields.stageLabel.trim();
+  } else if (
+    phase === 'model_request' ||
+    phase === 'answer_chunk' ||
+    phase === 'reasoning_chunk' ||
+    phase === 'tool_call' ||
+    phase === 'tool_result'
+  ) {
+    pendingConversation.stageLabel = undefined;
   }
-  if (String(record.phase || '') === 'model_usage') {
+  if (phase === 'model_usage') {
+    if (typeof tokenFields.b64 === 'string') {
+      try {
+        const decoded = JSON.parse(
+          ConversationControl.decodeChunkBlob(
+            tokenFields as Record<string, string>,
+          ),
+        );
+        if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+          tokensChanged =
+            applyLiveTokenValues(
+              pendingConversation,
+              decoded as Record<string, unknown>,
+            ) || tokensChanged;
+        }
+      } catch {
+        /* ignore malformed model_usage blob */
+      }
+    }
     const usage = latestContextUsage([
       {liveProgress: pendingConversation.transcript},
     ]);
-    if (usage?.totalTokens !== undefined) {
-      pendingConversation.liveTokens = usage.totalTokens;
+    if (
+      usage?.totalTokens !== undefined &&
+      pendingConversation.liveUsageTokens !== usage.totalTokens
+    ) {
+      pendingConversation.liveUsageTokens = usage.totalTokens;
+      if (pendingConversation.liveTokens === null) {
+        pendingConversation.liveTokens = usage.totalTokens;
+      }
+      tokensChanged = true;
+    }
+    if (tokensChanged) {
+      schedulePendingRender();
     }
     return;
   }
@@ -14302,7 +14580,23 @@ function renderConversationProgress(record: Record<string, unknown>) {
     appendLiveReasoningText(ConversationControl.decodeChunkBlob(fields));
     return;
   }
+  if (phase === 'runtime_boot') {
+    if (typeof pendingConversation.body?.closest === 'function') {
+      followIfNearBottom(pendingConversation.body, renderPendingBody);
+    } else {
+      renderPendingBody();
+    }
+    return;
+  }
   pendingConversation.records.set(progressKey(record), record);
+  if (!pendingConversation.body?.children?.length) {
+    if (typeof pendingConversation.body?.closest === 'function') {
+      followIfNearBottom(pendingConversation.body, renderPendingBody);
+    } else {
+      renderPendingBody();
+    }
+    return;
+  }
   schedulePendingRender();
 }
 
@@ -14338,9 +14632,39 @@ function renderPendingBody() {
   if (!pending) {
     return;
   }
+  const nowMs = Date.now();
+  const startedAt = pending.startedAt ?? nowMs;
+  pending.startedAt = startedAt;
+  const trajectory = pending.transcript.trajectory.length
+    ? pending.transcript.trajectory
+    : [
+        {
+          kind: 'message',
+          turn: 1,
+          text: '',
+          reasoning: '',
+          state: 'running',
+          startedAt,
+        },
+      ];
   pending.renderer.update({
     ...pending.transcript,
-    records: [...pending.records.values()],
+    trajectory,
+    records: [],
+    startedAt,
+    nowMs,
+    ...(pending.liveTokens !== null ? {tokens: pending.liveTokens} : {}),
+    ...(pending.liveOutputTokens != null
+      ? {outputTokens: pending.liveOutputTokens}
+      : pending.liveTokens !== null
+        ? {outputTokens: pending.liveTokens}
+        : {}),
+    ...(pending.liveUsageTokens != null
+      ? {usageTokens: pending.liveUsageTokens}
+      : pending.liveTokens !== null
+        ? {usageTokens: pending.liveTokens}
+        : {}),
+    ...(pending.stageLabel ? {stageLabel: pending.stageLabel} : {}),
   });
   const plan = PlanList.project([{liveProgress: pending.transcript}]);
   if (plan) {
@@ -14404,16 +14728,57 @@ function scrollChatToBottom() {
 
 let pendingClockTimer: number | null = null;
 let pendingClockWrite: (() => void) | null = null;
+let liveSelectionPaused = false;
+
+function reducedMotionEnabled(): boolean {
+  return Boolean(
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ||
+      document.documentElement?.getAttribute('data-reduce-motion') === 'true',
+  );
+}
+
+function syncStreamSelectionPause(): void {
+  const renderer = pendingConversation?.renderer;
+  const stream = document.getElementById('stream');
+  const sel = document.getSelection();
+  const paused = Boolean(
+    renderer &&
+      stream &&
+      sel &&
+      !sel.isCollapsed &&
+      sel.rangeCount > 0 &&
+      sel.anchorNode &&
+      stream.contains(sel.anchorNode),
+  );
+  if (paused !== liveSelectionPaused) {
+    liveSelectionPaused = paused;
+    renderer?.setSelectionPaused?.(paused ? true : null, Date.now());
+  }
+}
+
+document.addEventListener('selectionchange', syncStreamSelectionPause);
 
 function startPendingClock(body: HTMLElement) {
   stopPendingClock();
-  const startedAt = Date.now();
+  const startedAt = pendingConversation?.startedAt ?? Date.now();
+  if (pendingConversation && pendingConversation.startedAt === undefined) {
+    pendingConversation.startedAt = startedAt;
+  }
   const tick = () => {
+    const nowMs = Date.now();
+    const renderer = pendingConversation?.renderer;
+    if (renderer && typeof renderer.tickStatus === 'function') {
+      renderer.tickStatus(nowMs);
+      return;
+    }
     const slot = body.querySelector<HTMLElement>('[data-turn-meta]');
     if (!slot) {
       return;
     }
-    const elapsed = Date.now() - startedAt;
+    const elapsed = Math.max(
+      0,
+      nowMs - (pendingConversation?.startedAt ?? startedAt),
+    );
     const text = ChatView.formatRunMeta(
       elapsed,
       pendingConversation?.liveTokens ?? null,
@@ -14424,7 +14789,10 @@ function startPendingClock(body: HTMLElement) {
   };
   pendingClockWrite = tick;
   tick();
-  pendingClockTimer = window.setInterval(tick, 1000);
+  pendingClockTimer = window.setInterval(
+    tick,
+    reducedMotionEnabled() ? 1000 : 100,
+  );
 }
 
 function stopPendingClock() {
@@ -14433,6 +14801,7 @@ function stopPendingClock() {
     pendingClockTimer = null;
   }
   pendingClockWrite = null;
+  liveSelectionPaused = false;
 }
 
 function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
@@ -14661,13 +15030,35 @@ Data.onConversationProgress(payload => {
   }
   if (
     !pendingConversation ||
-    payload.requestId !== pendingConversation.requestId ||
-    !payload.record
+    payload.requestId !== pendingConversation.requestId
   ) {
     return;
   }
   if (payload.conversationId) {
     pendingConversation.conversationId = payload.conversationId;
+  }
+  let tokenUpdated = false;
+  if (typeof payload.outputTokens === 'number' && payload.outputTokens > 0) {
+    pendingConversation.liveOutputTokens = payload.outputTokens;
+    pendingConversation.liveTokens = payload.outputTokens;
+    tokenUpdated = true;
+  }
+  if (typeof payload.tokens === 'number' && payload.tokens > 0) {
+    pendingConversation.liveTokens = payload.tokens;
+    tokenUpdated = true;
+  }
+  if (typeof payload.usageTokens === 'number' && payload.usageTokens > 0) {
+    pendingConversation.liveUsageTokens = payload.usageTokens;
+    if (pendingConversation.liveTokens === null) {
+      pendingConversation.liveTokens = payload.usageTokens;
+    }
+    tokenUpdated = true;
+  }
+  if (!payload.record) {
+    if (tokenUpdated) {
+      schedulePendingRender();
+    }
+    return;
   }
   if (payload.record.phase === 'user_input_accepted') {
     pendingConversation.inputAccepted = true;
@@ -14688,7 +15079,7 @@ Data.onConversationProgress(payload => {
     pendingConversation.renderer = ChatView.createLiveTurn(
       pendingConversation.body,
       pendingConversation.scope,
-      {taskPanel: true},
+      {taskPanel: true, smooth: true},
     );
   }
   renderConversationProgress(payload.record);
@@ -14938,7 +15329,10 @@ async function submitConversationFollowup(request: {
     startedAt: Date.now(),
     body,
     records: new Map(),
-    renderer: ChatView.createLiveTurn(body, undefined, {taskPanel: true}),
+    renderer: ChatView.createLiveTurn(body, undefined, {
+      taskPanel: true,
+      smooth: true,
+    }),
     agentSessionId: conversation.agentSessionId,
     streamText: '',
     reasoningText: '',
@@ -15290,11 +15684,9 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     pending.className = 'mp-chat-assistant';
     const pendingBody = document.createElement('div');
     pendingBody.className = 'mp-chat-assistant-body';
-    pendingBody.appendChild(
-      ChatView.liveActivityNode({phase: 'runtime_boot', fields: {}}),
-    );
     pending.appendChild(pendingBody);
     flow.appendChild(pending);
+    ChatView.bindDelegation(stream);
     scrollChatToBottom();
     scheduleStreamRail();
 
@@ -15304,7 +15696,6 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
     setComposerRunningState(true);
-    startPendingClock(pendingBody);
     const requestId =
       globalThis.crypto?.randomUUID?.() ||
       `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -15314,14 +15705,18 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       activeTaskContext?.taskId || 'studio-pending',
       attachmentPaths,
     );
+    const liveTurnPrefix = activeConversationId
+      ? `${activeConversationId}#${activeConversationTurnCount}`
+      : undefined;
     pendingConversation = {
       requestId,
       question,
       startedAt: Date.now(),
       body: pendingBody,
       records: new Map(),
-      renderer: ChatView.createLiveTurn(pendingBody, undefined, {
+      renderer: ChatView.createLiveTurn(pendingBody, liveTurnPrefix, {
         taskPanel: true,
+        smooth: true,
       }),
       agentSessionId: activeTaskContext?.taskId || null,
       streamText: '',
@@ -15329,6 +15724,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       transcript: ConversationControl.createTranscript(),
       liveTokens: null,
     };
+    startPendingClock(pendingBody);
     const submittedConversation = pendingConversation;
     const submission: NavigationSubmission = {
       location: navigationLocation,

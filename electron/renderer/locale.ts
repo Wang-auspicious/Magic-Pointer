@@ -1085,6 +1085,15 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '我已了解风险，并愿意继续',
   },
   'risk.enable_full': {en: 'Enable Full access', zh: '启用 Full access'},
+  'chat.skim_aria': {en: 'Toggle skim highlights', zh: '切换跳读高光'},
+  'chat.skim_on': {
+    en: 'Skim highlights on (Hold Alt to reveal full ink)',
+    zh: '重点跳读高光已开启（按住 Alt 显示全文墨色）',
+  },
+  'chat.skim_off': {
+    en: 'Skim highlights off (Click to enable, Alt reveals full ink)',
+    zh: '重点跳读高光已关闭（点击开启，按住 Alt 显示全文墨色）',
+  },
 };
 
 const STUDIO_COUNT_STRINGS: Record<string, StudioCountEntry> = {

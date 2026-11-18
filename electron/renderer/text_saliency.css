@@ -1,0 +1,201 @@
+/* Clean-room Grammar-Preserving Text Saliency Modulation (GP-TSM) styles.
+   Varies grayscale ink opacity ONLY — never font-weight, font-size, or layout. */
+
+.mp-tsm-word {
+  font-weight: inherit;
+  font-size: inherit;
+  transition: color 120ms ease;
+}
+
+.mp-tsm-l0 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #0b0b0b)) 32%,
+    transparent
+  );
+}
+
+.mp-tsm-l1 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #0b0b0b)) 54%,
+    transparent
+  );
+}
+
+.mp-tsm-l2 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #0b0b0b)) 76%,
+    transparent
+  );
+}
+
+.mp-tsm-l3 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #0b0b0b)) 100%,
+    transparent
+  );
+}
+
+:where(
+    :root[data-theme='dark'],
+    :root[data-mode='dark'],
+    .cds-root[data-theme='dark'],
+    .cds-root[data-mode='dark'],
+    body[data-ds-dark-theme]
+  )
+  .mp-tsm-l0 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #f0efec)) 44%,
+    transparent
+  );
+}
+
+:where(
+    :root[data-theme='dark'],
+    :root[data-mode='dark'],
+    .cds-root[data-theme='dark'],
+    .cds-root[data-mode='dark'],
+    body[data-ds-dark-theme]
+  )
+  .mp-tsm-l1 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #f0efec)) 64%,
+    transparent
+  );
+}
+
+:where(
+    :root[data-theme='dark'],
+    :root[data-mode='dark'],
+    .cds-root[data-theme='dark'],
+    .cds-root[data-mode='dark'],
+    body[data-ds-dark-theme]
+  )
+  .mp-tsm-l2 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #f0efec)) 82%,
+    transparent
+  );
+}
+
+:where(
+    :root[data-theme='dark'],
+    :root[data-mode='dark'],
+    .cds-root[data-theme='dark'],
+    .cds-root[data-mode='dark'],
+    body[data-ds-dark-theme]
+  )
+  .mp-tsm-l3 {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #f0efec)) 100%,
+    transparent
+  );
+}
+
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme='light']):not([data-mode='light'])) .mp-tsm-l0 {
+    color: color-mix(
+      in lab,
+      var(--mp-ink, var(--mp-text, #f0efec)) 44%,
+      transparent
+    );
+  }
+
+  :where(:root:not([data-theme='light']):not([data-mode='light'])) .mp-tsm-l1 {
+    color: color-mix(
+      in lab,
+      var(--mp-ink, var(--mp-text, #f0efec)) 64%,
+      transparent
+    );
+  }
+
+  :where(:root:not([data-theme='light']):not([data-mode='light'])) .mp-tsm-l2 {
+    color: color-mix(
+      in lab,
+      var(--mp-ink, var(--mp-text, #f0efec)) 82%,
+      transparent
+    );
+  }
+
+  :where(:root:not([data-theme='light']):not([data-mode='light'])) .mp-tsm-l3 {
+    color: color-mix(
+      in lab,
+      var(--mp-ink, var(--mp-text, #f0efec)) 100%,
+      transparent
+    );
+  }
+}
+
+/* Full-ink recovery on paragraph hover, Alt-key/toggle reveal, and active selection */
+.mp-tsm-block:hover .mp-tsm-word,
+p:hover .mp-tsm-word,
+li:hover .mp-tsm-word,
+[data-tsm-reveal='true'] .mp-tsm-word,
+.mp-tsm-word[data-tsm-reveal='true'] {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #0b0b0b)) 100%,
+    transparent
+  );
+}
+
+:where(
+    :root[data-theme='dark'],
+    :root[data-mode='dark'],
+    .cds-root[data-theme='dark'],
+    .cds-root[data-mode='dark'],
+    body[data-ds-dark-theme]
+  )
+  :is(
+    .mp-tsm-block:hover .mp-tsm-word,
+    p:hover .mp-tsm-word,
+    li:hover .mp-tsm-word,
+    [data-tsm-reveal='true'] .mp-tsm-word,
+    .mp-tsm-word[data-tsm-reveal='true']
+  ) {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #f0efec)) 100%,
+    transparent
+  );
+}
+
+.mp-tsm-word::selection {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #0b0b0b)) 100%,
+    transparent
+  );
+}
+
+:where(
+    :root[data-theme='dark'],
+    :root[data-mode='dark'],
+    .cds-root[data-theme='dark'],
+    .cds-root[data-mode='dark'],
+    body[data-ds-dark-theme]
+  )
+  .mp-tsm-word::selection {
+  color: color-mix(
+    in lab,
+    var(--mp-ink, var(--mp-text, #f0efec)) 100%,
+    transparent
+  );
+}
+
+@media print {
+  .mp-tsm-word {
+    color: color-mix(
+      in lab,
+      var(--mp-ink, var(--mp-text, #000000)) 100%,
+      transparent
+    ) !important;
+  }
+}

@@ -172,6 +172,7 @@ declare global {
     snippet: string;
     gloss?: string;
     priority?: string;
+    blockIndex?: number;
   }
 
   interface MagicPointerLearnLemmaRef {

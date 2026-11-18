@@ -98,7 +98,21 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   border-right: 1px solid var(--mp-rule);
 }
 
-.mpw-sidebar {
+.mpw-sidebar,
+.dframe-sidebar {
+  --df-row-h: 26px;
+  --df-row-font: 13px;
+  --df-radius-pill: 6px;
+  --df-row-stack-gap: 2px;
+  --df-iconless-pad: 8px;
+  --df-row-ctl: 20px;
+  --df-hover: var(--cds-fill-ghost-hover, var(--mp-hover));
+  --df-selected: var(--cds-fill-ghost-selected, var(--mp-selected));
+  --df-dot-ready: #2a78d6;
+  --df-dot-awaiting: #fab219;
+  --df-dot-running: #898781;
+  --df-dot-clay: #d97757;
+  --df-dot-error: #d03b3b;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -107,6 +121,12 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   padding: 12px 8px 8px;
   background: var(--mp-sidebar);
   font-family: var(--cds-font-sans);
+}
+
+:root[data-theme="dark"] :is(.mpw-sidebar, .dframe-sidebar),
+body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
+  --df-dot-ready: #257de0;
+  --df-dot-awaiting: #fbb315;
 }
 
 .mpw-logo-row {
@@ -328,10 +348,11 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   padding: 2px 0 10px;
 }
 
-#side-convos {
+#side-convos,
+.df-session-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--df-row-stack-gap, 2px);
 }
 
 .mpw-project {
@@ -341,16 +362,17 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mpw-project-row,
-.side-item {
+.side-item,
+.df-session-list > button {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 26px;
+  height: var(--df-row-h, 26px);
   min-width: 0;
-  padding: 0 6px;
-  border-radius: 8px;
-  color: var(--mp-text-secondary);
-  font-size: 13px;
+  padding: 0 28px 0 var(--df-iconless-pad, 8px);
+  border-radius: var(--df-radius-pill, 6px);
+  color: var(--cds-text-secondary, var(--mp-text-secondary));
+  font-size: var(--df-row-font, 13px);
   line-height: var(--cds-leading-body);
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
@@ -410,14 +432,18 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 }
 
 .mpw-project-row:hover,
-.side-item:hover {
-  color: var(--mp-text);
-  background: var(--mp-hover);
+.side-item:hover,
+.df-session-list > button:hover {
+  color: var(--cds-text-primary, var(--mp-text));
+  background: var(--df-hover, var(--cds-fill-ghost-hover, var(--mp-hover)));
 }
 
-.side-item.is-on {
-  color: var(--mp-text);
-  background: var(--mp-selected);
+.side-item.is-on,
+.side-item[data-selected="focused"],
+.df-session-list > button.is-on,
+.df-session-list > button[data-selected="focused"] {
+  color: var(--cds-text-primary, var(--mp-text));
+  background: var(--df-selected, var(--cds-fill-ghost-selected, var(--mp-selected)));
 }
 
 .mpw-project.is-active > .mpw-project-row {
@@ -472,21 +498,6 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   white-space: nowrap;
 }
 
-/* Leading mode dot on session rows (6x6 like the reference skeleton):
- * blue = code, orange = work. */
-.side-dot {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--cds-text-tint-blue);
-}
-
-.side-item[data-work-mode='learn'] .side-dot,
-.side-item[data-work-mode='work'] .side-dot {
-  background: var(--cds-text-tint-orange);
-}
-
 .mpw-project-name {
   flex: 0 1 auto;
   font-size: 12px;
@@ -500,6 +511,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
 .mpw-project-sessions {
   display: flex;
   flex-direction: column;
+  gap: var(--df-row-stack-gap, 2px);
   min-width: 0;
   padding-left: 0;
   padding-top: 0;
@@ -509,42 +521,114 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   display: none;
 }
 
-.side-item {
+.side-item,
+.df-session-list > button {
   position: relative;
-  gap: 4px;
-  padding-left: 8px;
-  margin-bottom: .5px;
 }
 
+/* Single trailing 20x20px slot swapping one 6px status dot <-> hover-only menu button. */
 .side-actions {
-  display: flex;
-  align-items: center;
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  width: var(--df-row-ctl, 20px);
+  height: var(--df-row-ctl, 20px);
+  place-items: center;
   flex: 0 0 auto;
 }
 
-.side-unread {
+.side-actions > .side-unread,
+.side-actions > .status-dot,
+.side-actions > .side-ellipsis {
+  grid-area: 1 / 1;
+}
+
+.side-unread,
+.status-dot {
   width: 6px;
   height: 6px;
-  margin: 0 6px;
+  margin: 0;
   border-radius: 50%;
-  background: var(--cds-text-tint-blue);
+  background: var(--df-dot-ready, #2a78d6);
+  pointer-events: none;
+  transition: opacity var(--mp-dur-fast);
+}
+
+.side-item[data-status="ready"] :is(.side-unread, .status-dot),
+.status-dot[data-status="ready"] {
+  background: var(--df-dot-ready, #2a78d6);
+}
+
+.side-item:is([data-status="awaiting"], [data-task-state="waiting"]) :is(.side-unread, .status-dot),
+.status-dot[data-status="awaiting"] {
+  background: var(--df-dot-awaiting, #fab219);
+}
+
+.side-item:is([data-status="running"], [data-task-state="running"]) :is(.side-unread, .status-dot),
+.status-dot[data-status="running"] {
+  background: var(--df-dot-running, #898781);
+  animation: df-dot-blink 1.2s ease-in-out infinite;
+}
+
+.side-item[data-kind="clay"] :is(.side-unread, .status-dot),
+.status-dot[data-kind="clay"] {
+  background: var(--df-dot-clay, #d97757);
+  animation: df-dot-breathe 3s ease-in-out infinite;
+}
+
+.side-item:is([data-status="error"], [data-task-state="error"]) :is(.side-unread, .status-dot),
+.status-dot[data-status="error"] {
+  background: var(--df-dot-error, #d03b3b);
+  animation: none;
+}
+
+@keyframes df-dot-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .28; }
+}
+
+@keyframes df-dot-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .55; transform: scale(.86); }
 }
 
 .side-ellipsis {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: var(--df-row-ctl, 20px);
+  height: var(--df-row-ctl, 20px);
   place-items: center;
-  border-radius: var(--mp-r4);
-  color: var(--mp-text-muted);
+  border-radius: 5px;
+  color: var(--cds-text-muted, var(--mp-text-muted));
   opacity: 0;
+  transition: opacity var(--mp-dur-fast), color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
-.side-item:hover .side-ellipsis,
-.side-item.is-on .side-ellipsis,
-.side-ellipsis:focus-visible,
-.side-item[data-menu-open] .side-ellipsis {
+.side-ellipsis .cds-icon {
+  font-size: 16px;
+  --cds-wght: 533.3;
+  --cds-opsz: 16;
+}
+
+.side-ellipsis svg {
+  width: 16px;
+  height: 16px;
+}
+
+.side-ellipsis:hover {
+  color: var(--cds-text-primary, var(--mp-text));
+  background: var(--df-hover, var(--cds-fill-ghost-hover, var(--mp-hover)));
+}
+
+:is(.side-item, .df-session-list > button):is(:hover, :focus-within, [data-menu-open]) .side-ellipsis,
+.side-ellipsis:focus-visible {
   opacity: 1;
+}
+
+:is(.side-item, .df-session-list > button):is(:hover, :focus-within, [data-menu-open]) :is(.side-unread, .status-dot, [data-row-decoration]) {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .side-session-menu {
@@ -3817,9 +3901,18 @@ dialog.mpw-perm-confirm::backdrop {
 
 @media (prefers-reduced-motion: reduce) {
   .mpw-sidebar-col,
-  .mpw-project-chevron svg {
+  .mpw-project-chevron svg,
+  .side-unread,
+  .status-dot,
+  .side-ellipsis {
     transition: none !important;
+    animation: none !important;
   }
+}
+
+[data-reduce-motion="true"] :is(.side-unread, .status-dot) {
+  animation: none !important;
+  transition: none !important;
 }
 
 @media (max-width: 1020px) {

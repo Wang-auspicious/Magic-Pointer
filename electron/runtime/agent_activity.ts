@@ -219,18 +219,21 @@ export class RuntimeActivitySink {
     if (kind === 'tool_call_finished') {
       const result = asObject(event.result);
       const state = result.is_error ? 'error' : 'done';
+      const callId = text(result.tool_call_id);
+      const existingRecord = this.tools.get(callId);
+      const resolvedArgs = text(result.arguments) || text(existingRecord?.text);
       const at = this.blob('tool_result', {
         id: result.tool_call_id,
         name: result.tool_name,
         state,
         backend: result.used_backend ?? '-',
         latency_ms: result.latency_ms,
-        args: text(result.arguments),
+        args: resolvedArgs,
         result: text(result.value),
         presentation: result.presentation,
       });
       const record =
-        this.tools.get(text(result.tool_call_id)) ??
+        existingRecord ??
         this.add({
           kind: 'tool',
           callId: result.tool_call_id,
@@ -242,7 +245,7 @@ export class RuntimeActivitySink {
         completedAt: at,
         latencyMs: result.latency_ms,
         usedBackend: result.used_backend,
-        text: text(result.arguments),
+        ...(resolvedArgs ? {text: resolvedArgs} : {}),
         result: text(result.value),
         isError: result.is_error,
         presentation: result.presentation,

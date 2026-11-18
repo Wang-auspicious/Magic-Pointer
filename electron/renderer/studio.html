@@ -31,6 +31,7 @@
   <link rel="stylesheet" href="mods_workspace.css" />
   <link rel="stylesheet" href="vendor/katex/katex.css" />
   <link rel="stylesheet" href="learn_tree.css" />
+  <link rel="stylesheet" href="text_saliency.css?v=1" />
 </head>
 <body class="studio">
   <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -177,6 +178,7 @@
                   <img id="peek-image" class="peek-img" alt="Selected region preview" />
                 </span>
               </div>
+              <button type="button" class="mp-thread-action" id="chat-skim-toggle" aria-label="Skim highlights" title="Skim highlights (Hold Alt to reveal full ink)" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE069;" aria-hidden="true"></span></button>
               <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="Activity" title="Activity"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
@@ -722,6 +724,8 @@
   <script defer src="chat_file_icons.js"></script>
   <script defer src="chat_tool_summary.js"></script>
   <script defer src="workflow_card.js?v=1"></script>
+  <script defer src="stream_smoother.js?v=1"></script>
+  <script defer src="text_saliency.js?v=1"></script>
   <script defer src="chat_view.js?v=29"></script>
   <script defer src="tool_verbs.js?v=1"></script>
   <script defer src="execution_view.js"></script>

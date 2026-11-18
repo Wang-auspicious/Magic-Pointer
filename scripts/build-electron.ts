@@ -180,14 +180,21 @@ buildSync({
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();
+  const stylesheets = new Set<string>();
   for (const entry of readdirSync(htmlRoot, {withFileTypes: true})) {
     if (!entry.isFile() || !entry.name.endsWith('.html')) {
       continue;
     }
     const html = readFileSync(path.join(htmlRoot, entry.name), 'utf8');
-    for (const match of html.matchAll(/<script\s+src="([^"]+)"/g)) {
+    for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)) {
       const source = match[1].split('?')[0];
       referenced.add(path.normalize(path.join('renderer', source)));
+    }
+    for (const match of html.matchAll(
+      /<link\b[^>]*rel="stylesheet"[^>]*\bhref="([^"]+)"/g,
+    )) {
+      const href = match[1].split('?')[0];
+      stylesheets.add(path.normalize(path.join('renderer', href)));
     }
   }
   const offenders: string[] = [];
@@ -205,6 +212,30 @@ function verifyBrowserGlobalScripts(): void {
       /^\s*exports\.\w/m.test(contents)
     ) {
       offenders.push(`${relative} (CommonJS wrapper in a classic script)`);
+    }
+  }
+  for (const relative of stylesheets) {
+    const output = path.join(outputRoot, relative);
+    try {
+      readFileSync(output, 'utf8');
+    } catch {
+      offenders.push(`${relative} (stylesheet missing from build output)`);
+    }
+  }
+  const requiredFonts = [
+    'AnthropicSansMicro-Text.woff2',
+    'AnthropicSansMicro-Display.woff2',
+    'AnthropicMono-Regular.woff2',
+    'AnthropicMono-Italic.woff2',
+  ];
+  for (const fontName of requiredFonts) {
+    const fontPath = path.join(outputRoot, 'renderer', 'assets', 'fonts', fontName);
+    try {
+      readFileSync(fontPath);
+    } catch {
+      offenders.push(
+        `${path.join('renderer', 'assets', 'fonts', fontName)} (font missing from build output)`,
+      );
     }
   }
   if (offenders.length > 0) {

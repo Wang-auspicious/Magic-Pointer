@@ -31,6 +31,85 @@ const ChatView = (() => {
     typeof CompactionStatus !== 'undefined'
       ? CompactionStatus
       : require('../compaction_status');
+
+  type SparkAnimState =
+    | 'idle'
+    | 'thinking'
+    | 'writing'
+    | 'waiting'
+    | 'shimmer'
+    | 'entrance'
+    | 'exit'
+    | 'orbiting'
+    | 'tickle';
+
+  interface StreamSmootherStep {
+    delta: string;
+    emitted: string;
+    pending: number;
+    done: boolean;
+    paused: boolean;
+    dontSmooth: boolean;
+  }
+
+  interface StreamTextSmootherHandle {
+    push(fullText: string, nowMs?: number): void;
+    append(delta: string, nowMs?: number): void;
+    setPaused(paused: boolean, nowMs?: number): void;
+    isPaused(): boolean;
+    step(nowMs?: number): StreamSmootherStep;
+    flush(): StreamSmootherStep;
+    reset(): void;
+    getTarget(): string;
+    getEmitted(): string;
+  }
+
+  interface StreamTokenSmootherHandle {
+    setTarget(targetTokens: number, nowMs?: number): void;
+    step(nowMs?: number): number;
+    flush(): number;
+    reset(): void;
+    getTarget(): number;
+    getDisplayed(): number;
+    getVisible(elapsedMs: number, isRunning: boolean, nowMs?: number): number | null;
+  }
+
+  interface StreamStageDebouncerHandle {
+    update(candidateLabel: string, nowMs?: number): string;
+    step(nowMs?: number): string;
+    current(): string;
+    reset(): void;
+  }
+
+  interface StreamSmootherModule {
+    createTextSmoother(): StreamTextSmootherHandle;
+    createTokenSmoother(): StreamTokenSmootherHandle;
+    createStageDebouncer(options?: {
+      debounceMs?: number;
+      minHoldMs?: number;
+    }): StreamStageDebouncerHandle;
+    tokenizeWordsForFade(delta: string): string[];
+    formatElapsedTime(elapsedMs: number): string;
+    formatThinkingLabel(elapsedMs: number): string;
+  }
+
+  const smootherApi: StreamSmootherModule | null = (() => {
+    const globalRef =
+      typeof globalThis !== 'undefined'
+        ? (
+            globalThis as unknown as {
+              StreamSmoother?: StreamSmootherModule;
+            }
+          ).StreamSmoother
+        : undefined;
+    if (globalRef) {
+      return globalRef;
+    }
+    return typeof require === 'function'
+      ? (require('./stream_smoother') as StreamSmootherModule)
+      : null;
+  })();
+
   function lt(id: string, params?: Record<string, string | number>): string {
     if (typeof studioT === 'function') {
       return studioT(id, params);
@@ -59,6 +138,181 @@ const ChatView = (() => {
   const DOC = typeof document !== 'undefined' ? document : null;
   const COPY_RESET_TIMERS = new WeakMap<HTMLElement, {timer?: number}>();
   const THINKING_TEXT = new WeakMap<ChatNode, {source: string; display: string}>();
+  const USER_PINNED_THINKS = new WeakMap<ChatNode, boolean>();
+  const AUTO_OPENED_THINKS = new WeakSet<ChatNode>();
+  const RAW_SET_ATTRIBUTE = new WeakMap<
+    ChatNode,
+    (k: string, v: string) => void
+  >();
+
+  function setDisclosureOpenRaw(node: ChatNode, open: boolean): void {
+    const raw = RAW_SET_ATTRIBUTE.get(node);
+    if (raw) {
+      raw.call(node, 'data-open', open ? 'true' : 'false');
+    } else {
+      node.setAttribute('data-open', open ? 'true' : 'false');
+    }
+    findByClass(node, 'mp-chat-think-toggle')?.setAttribute(
+      'aria-expanded',
+      open ? 'true' : 'false',
+    );
+  }
+
+  function trackAutoOpenedThink(thinkEl: ChatNode | null): void {
+    if (!thinkEl || RAW_SET_ATTRIBUTE.has(thinkEl)) {
+      return;
+    }
+    const rowId = thinkEl.getAttribute('data-row-id') || '';
+    const hasExplicitExpansion = Boolean(rowId && ROW_EXPANSION.has(rowId));
+    if (
+      !hasExplicitExpansion &&
+      USER_PINNED_THINKS.get(thinkEl) === undefined &&
+      thinkEl.getAttribute('data-open') === 'true'
+    ) {
+      AUTO_OPENED_THINKS.add(thinkEl);
+    }
+    const origSetAttr = thinkEl.setAttribute;
+    RAW_SET_ATTRIBUTE.set(thinkEl, origSetAttr);
+    thinkEl.setAttribute = function wrappedThinkSetAttribute(
+      k: string,
+      v: string,
+    ): void {
+      origSetAttr.call(this, k, v);
+      if (k === 'data-open') {
+        AUTO_OPENED_THINKS.delete(thinkEl);
+        USER_PINNED_THINKS.set(thinkEl, String(v) === 'true');
+      }
+    };
+  }
+
+  function findByClass(node: ChatNode, cls: string): ChatNode | null {
+    if ('querySelector' in node && typeof node.querySelector === 'function') {
+      return node.querySelector(`.${cls}`) as ChatNode | null;
+    }
+    const classes = (node.getAttribute('class') || '').split(/\s+/);
+    if (classes.includes(cls)) {
+      return node;
+    }
+    const children = (node as ShimNode).children || [];
+    for (const child of children) {
+      if (typeof child !== 'string') {
+        const match = findByClass(child, cls);
+        if (match) {
+          return match;
+        }
+      }
+    }
+    return null;
+  }
+
+  function addClass(node: ChatNode | null, cls: string): void {
+    if (!node) {
+      return;
+    }
+    const current = (node.getAttribute('class') || '').split(/\s+/).filter(Boolean);
+    if (!current.includes(cls)) {
+      current.push(cls);
+      node.setAttribute('class', current.join(' '));
+    }
+  }
+
+  function removeClass(node: ChatNode | null, cls: string): void {
+    if (!node) {
+      return;
+    }
+    const current = (node.getAttribute('class') || '')
+      .split(/\s+/)
+      .filter(name => name && name !== cls);
+    node.setAttribute('class', current.join(' '));
+  }
+
+  function prefersReducedMotion(): boolean {
+    if (typeof document !== 'undefined') {
+      if (document.documentElement?.getAttribute?.('data-reduce-motion') === 'true') {
+        return true;
+      }
+    }
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function'
+    ) {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    return false;
+  }
+
+  function hasActiveSelectionIn(host: HTMLElement): boolean {
+    if (typeof document === 'undefined' || typeof document.getSelection !== 'function') {
+      return false;
+    }
+    const sel = document.getSelection();
+    if (!sel || sel.isCollapsed) {
+      return false;
+    }
+    const rangeCount = typeof sel.rangeCount === 'number' ? sel.rangeCount : 0;
+    if (rangeCount <= 0 && !sel.anchorNode && !sel.focusNode) {
+      return false;
+    }
+    if (typeof (host as {contains?: unknown}).contains !== 'function') {
+      return true;
+    }
+    const anchor = sel.anchorNode;
+    const focus = sel.focusNode;
+    if (!anchor && !focus) {
+      return true;
+    }
+    return Boolean((anchor && host.contains(anchor)) || (focus && host.contains(focus)));
+  }
+
+  function formatElapsedTime(elapsedMs: number): string {
+    if (smootherApi && typeof smootherApi.formatElapsedTime === 'function') {
+      return smootherApi.formatElapsedTime(elapsedMs);
+    }
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 2000) {
+      return '';
+    }
+    const totalSeconds = Math.floor(elapsedMs / 1000);
+    if (totalSeconds < 60) {
+      return `${totalSeconds}s`;
+    }
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  }
+
+  function formatThinkingLabel(elapsedMs: number): string {
+    if (smootherApi && typeof smootherApi.formatThinkingLabel === 'function') {
+      return smootherApi.formatThinkingLabel(elapsedMs);
+    }
+    const ms = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
+    if (ms < 15000) {
+      return 'Thinking\u2026';
+    }
+    if (ms < 30000) {
+      return 'Still thinking\u2026';
+    }
+    if (ms < 45000) {
+      return 'Thinking more\u2026';
+    }
+    if (ms < 60000) {
+      return 'Thinking some more\u2026';
+    }
+    return 'Almost done thinking\u2026';
+  }
+
+  function applySaliency(host: HTMLElement | null): void {
+    if (!host || typeof globalThis === 'undefined') {
+      return;
+    }
+    const saliency = (
+      globalThis as unknown as {
+        TextSaliency?: {apply?: (target: Element) => void};
+      }
+    ).TextSaliency;
+    if (saliency && typeof saliency.apply === 'function') {
+      saliency.apply(host);
+    }
+  }
   const ESCAPES: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
@@ -207,11 +461,51 @@ const ChatView = (() => {
   const ROW_EXPANSION = new Map<string, boolean>();
   const GROUP_EXPANSION = new Map<
     string,
-    {open: boolean; members: string[]; single?: boolean}
+    {open: boolean; members: string[]; single?: boolean; autoOpened?: boolean}
   >();
   let liveTurnSequence = 0;
   let thinkingSequence = 0;
   let disclosureSequence = 0;
+
+  function unscopedExpansionKey(id: string): string | null {
+    if (!id) {
+      return null;
+    }
+    const first = id.indexOf(':');
+    if (first === -1) {
+      return null;
+    }
+    const second = id.indexOf(':', first + 1);
+    if (second === -1) {
+      return null;
+    }
+    return `${id.slice(0, first + 1)}${id.slice(second + 1)}`;
+  }
+
+  function readRowExpansion(rowId?: string): boolean | undefined {
+    if (!rowId) {
+      return undefined;
+    }
+    if (ROW_EXPANSION.has(rowId)) {
+      return ROW_EXPANSION.get(rowId);
+    }
+    const unscoped = unscopedExpansionKey(rowId);
+    if (unscoped && ROW_EXPANSION.has(unscoped)) {
+      return ROW_EXPANSION.get(unscoped);
+    }
+    return undefined;
+  }
+
+  function readGroupExpansion(groupId: string) {
+    if (GROUP_EXPANSION.has(groupId)) {
+      return GROUP_EXPANSION.get(groupId);
+    }
+    const unscoped = unscopedExpansionKey(groupId);
+    if (unscoped && GROUP_EXPANSION.has(unscoped)) {
+      return GROUP_EXPANSION.get(unscoped);
+    }
+    return undefined;
+  }
 
   function rememberExpansion(
     store: Map<string, boolean>,
@@ -232,6 +526,7 @@ const ChatView = (() => {
       open,
       members: GROUP_EXPANSION.get(id)?.members || [],
       single: GROUP_EXPANSION.get(id)?.single,
+      autoOpened: false,
     });
   }
 
@@ -266,7 +561,7 @@ const ChatView = (() => {
     row: ChatNode;
     toggle: ChatNode | null;
   } {
-    const remembered = opts.rowId ? ROW_EXPANSION.get(opts.rowId) : undefined;
+    const remembered = readRowExpansion(opts.rowId);
     const open = remembered !== undefined ? remembered : Boolean(opts.open);
     const expandable =
       opts.expandable !== false &&
@@ -686,6 +981,8 @@ const ChatView = (() => {
     project_knowledge_search: 'project_knowledge',
     drive_search: 'drive_search',
     web_fetch: 'web_fetch',
+    fetch: 'web_fetch',
+    'browser.navigate': 'web_fetch',
     web_search: 'web',
     web_search_fast: 'web',
     bash: 'bash',
@@ -694,6 +991,9 @@ const ChatView = (() => {
     // `kR` spells PowerShell's normalised name `powershell`; `NR` spells it
     // `power_shell`. Both spellings are the same category.
     powershell: 'bash',
+    pwsh: 'bash',
+    run_command: 'bash',
+    shell: 'bash',
     task: 'task',
     agent: 'task',
     skill: 'skill',
@@ -2025,6 +2325,7 @@ const ChatView = (() => {
     callId: string;
     diffStat: DiffStat | null;
     fileChange: 'preview' | 'too_large' | undefined;
+    defaultOpen?: boolean;
   }
 
   function toolRowModel(
@@ -2056,10 +2357,16 @@ const ChatView = (() => {
           ? 'cancelled'
           : 'done';
     const errorUrl =
-      state === 'error' && name === 'Browser.navigate'
+      state === 'error' &&
+      !isBlockedResult(result) &&
+      (name === 'Browser.navigate' || toolCategory(name) === 'web_fetch')
         ? (() => {
-            const url = input.url;
-            return typeof url === 'string' ? url : '';
+            const url = input.url ?? input.uri ?? input.href;
+            if (typeof url === 'string' && url.trim()) {
+              return url.trim();
+            }
+            const derived = summaryText(name, variant, argsRaw);
+            return derived && derived !== name ? derived : '';
           })()
         : '';
 
@@ -2252,6 +2559,7 @@ const ChatView = (() => {
             : deriveDiffStat(name, argsRaw)
           : actualStat,
       fileChange: fileChangeMode(name, input),
+      defaultOpen: defaultOpenForTool({name, state}),
     };
   }
 
@@ -2566,8 +2874,13 @@ const ChatView = (() => {
     };
   }
 
+  function isPowerShellTool(name: string): boolean {
+    const normalized = name.toLowerCase();
+    return normalized === 'pwsh' || normalized === 'powershell';
+  }
+
   function commandPrompt(model: ToolRowModel): string {
-    return model.name === 'pwsh' ? '>' : '$';
+    return isPowerShellTool(model.name) ? '>' : '$';
   }
 
   interface HighlightSpan {
@@ -2677,14 +2990,13 @@ const ChatView = (() => {
     const lang =
       options.lang ||
       highlightLang(String(options.toolName || ''), command.full);
-    const card = h('div', {class: 'mp-chat-code'});
-    // The panel header names the tool, so the row above it reads as an explanation.
-    const head = h('div', {class: 'mp-chat-code-head'});
+    const stack = h('div', {class: 'mp-chat-cmd-stack'});
     if (options.label) {
-      const label = h('span', {class: 'mp-chat-code-label'});
-      attach(label, options.label);
-      attach(head, label);
+      const kind = h('div', {class: 'mp-chat-cmd-kind'});
+      attach(kind, options.label);
+      attach(stack, kind);
     }
+    const card = h('div', {class: 'mp-chat-code mp-chat-cmd-box'});
     const copy = h('button', {
       type: 'button',
       class: 'mp-chat-action mp-chat-code-copy',
@@ -2693,8 +3005,7 @@ const ChatView = (() => {
       'data-mp-chat-copy': String(copyText || ''),
     });
     attach(copy, icon('copy', 14));
-    attach(head, copy);
-    attach(card, head);
+    attach(card, copy);
     if (command.first) {
       const line = h('div', {class: 'mp-chat-code-first'});
       if (prompt) {
@@ -2716,15 +3027,16 @@ const ChatView = (() => {
       attach(pre, codeBodyNode(command.rest, lang));
       attach(card, pre);
     }
+    attach(stack, card);
     if (options.output) {
-      const body = h('div', {class: 'mp-chat-code-body'});
+      const body = h('div', {class: 'mp-chat-code-body mp-chat-cmd-output'});
       if (options.error) {
         body.setAttribute('data-error', 'true');
       }
       attach(body, codeBodyNode(String(options.output), 'plain'));
-      attach(card, body);
+      attach(stack, body);
     }
-    return card;
+    return stack;
   }
 
   function todoChecklist(model: ToolRowModel): ChatNode | null {
@@ -2834,8 +3146,13 @@ const ChatView = (() => {
     const messageLines = lines.filter(
       line => !/^(?:url|prompt):\s*/iu.test(line.trim()),
     );
+    const fallbackText = messageLines.join('\n').trim();
+    const cleanText =
+      raw.startsWith('{') && model.errorSummary
+        ? model.errorSummary
+        : fallbackText || model.errorSummary || raw;
     const message = h('div', {class: 'mp-chat-browser-error-message'});
-    attach(message, messageLines.join('\n').trim());
+    attach(message, cleanText);
     attach(root, message);
 
     let args: Record<string, unknown> = {};
@@ -3929,7 +4246,7 @@ const ChatView = (() => {
         commandCardNode(command, commandPrompt(model), command.full, {
           label:
             model.variant === 'bash'
-              ? model.name === 'pwsh'
+              ? isPowerShellTool(model.name)
                 ? 'PowerShell'
                 : 'Bash'
               : singleLine
@@ -4004,7 +4321,50 @@ const ChatView = (() => {
       .replace(/(?:\n[^\S\n]*)+$/, '');
   }
 
-  function thinkNode(reasoning: string, running = false, thinkId = ''): ChatNode {
+  function isThinkNode(node: ChatNode | null | undefined): boolean {
+    if (!node) {
+      return false;
+    }
+    const html = node as HTMLElement & {attrs?: Record<string, string>};
+    if (typeof html.classList?.contains === 'function') {
+      return html.classList.contains('mp-chat-think');
+    }
+    const cls =
+      typeof html.className === 'string'
+        ? html.className
+        : html.attrs?.class || '';
+    return cls.split(/\s+/).includes('mp-chat-think');
+  }
+
+  function resolveReasoningId(
+    scope: string,
+    baseId = '0',
+    seenIds?: Set<string>,
+  ): string {
+    const cleanId = String(baseId ?? '0');
+    const raw = cleanId === 'head' ? `${scope}:head` : `${scope}:r${cleanId}`;
+    if (!seenIds) {
+      return raw;
+    }
+    if (!seenIds.has(raw)) {
+      seenIds.add(raw);
+      return raw;
+    }
+    let suffix = 2;
+    while (seenIds.has(`${raw}:${suffix}`)) {
+      suffix++;
+    }
+    const unique = `${raw}:${suffix}`;
+    seenIds.add(unique);
+    return unique;
+  }
+
+  function thinkNode(
+    reasoning: string,
+    running = false,
+    thinkId = '',
+    autoCollapsed = false,
+  ): ChatNode {
     const label = lt('chat.thought_process');
     const panelId = `mp-chat-thinking:${thinkId || ++thinkingSequence}`;
     const body = h('div', {class: 'mp-chat-think-body'});
@@ -4044,12 +4404,15 @@ const ChatView = (() => {
     attach(viewport, actions);
     const expandedBody: ChatNode[] = [viewport];
 
+    const rowId = thinkId ? `think:${thinkId}` : undefined;
+    const stored = readRowExpansion(rowId);
+    const open = stored ?? !autoCollapsed;
     const {root, row, toggle} = disclosureRow({
       title: label,
       body: expandedBody,
       expandable: true,
-      open: true,
-      rowId: thinkId ? `think:${thinkId}` : undefined,
+      open,
+      rowId,
     });
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'mp-chat-disclosure mp-chat-think');
@@ -4058,6 +4421,9 @@ const ChatView = (() => {
       root.setAttribute('hidden', 'true');
     }
     row.setAttribute('data-thought-row', '');
+    if (running) {
+      addClass(findByClass(row, 'mp-chat-title'), 'epitaxy-thinking-shimmer');
+    }
     toggle!.setAttribute('class', 'mp-chat-row-toggle mp-chat-think-toggle');
     toggle!.setAttribute('aria-label', label);
     toggle!.removeAttribute('aria-labelledby');
@@ -4075,6 +4441,12 @@ const ChatView = (() => {
     running: boolean,
   ): void {
     node.setAttribute('data-state', running ? 'running' : 'ok');
+    const titleNode = findByClass(node, 'mp-chat-title');
+    if (running) {
+      addClass(titleNode, 'epitaxy-thinking-shimmer');
+    } else {
+      removeClass(titleNode, 'epitaxy-thinking-shimmer');
+    }
     const body = node.querySelector<HTMLElement>('.mp-chat-think-body')!;
     const previous = THINKING_TEXT.get(body);
     if (previous?.source !== text) {
@@ -4704,49 +5076,167 @@ const ChatView = (() => {
     return fileResultsNode([], [artifact], conversationId);
   }
 
-  function sparkMark(running = true): ChatNode {
-    const root = h('span', {
-      class: running ? 'mp-chat-thinking-mark' : 'mp-chat-run-meta-mark',
-      'aria-hidden': 'true',
-    });
-    const api =
+  function resolveActivityMarks(): {
+    spark?: (state: SparkAnimState) => string;
+    animateSpark?: (container: Element | null, state?: SparkAnimState) => (() => void) | null;
+  } | null {
+    const globalMarks =
       typeof globalThis !== 'undefined'
         ? (
             globalThis as unknown as {
-              ActivityMarks?: {spark?: (state: 'thinking' | 'idle') => string};
+              ActivityMarks?: {
+                spark?: (state: SparkAnimState) => string;
+                animateSpark?: (
+                  container: Element | null,
+                  state?: SparkAnimState,
+                ) => (() => void) | null;
+              };
             }
           ).ActivityMarks
         : undefined;
+    if (globalMarks) {
+      return globalMarks;
+    }
+    return typeof require === 'function' ? require('./activity_marks') : null;
+  }
+
+  function setSparkState(
+    mark: HTMLElement | null,
+    state: SparkAnimState,
+  ): void {
+    if (!mark || mark.getAttribute('data-spark-state') === state) {
+      return;
+    }
+    mark.setAttribute('data-spark-state', state);
+    const api = resolveActivityMarks();
     const markup =
-      api && typeof api.spark === 'function'
-        ? api.spark(running ? 'thinking' : 'idle')
-        : '';
+      api && typeof api.spark === 'function' ? api.spark(state) : '';
+    if (markup && 'innerHTML' in mark) {
+      mark.innerHTML = markup;
+      if (typeof document !== 'undefined') {
+        api?.animateSpark?.(mark, state);
+      }
+    }
+  }
+
+  function sparkMark(
+    running = true,
+    state?: SparkAnimState,
+  ): ChatNode {
+    const nextState: SparkAnimState = state ?? (running ? 'thinking' : 'idle');
+    const root = h('span', {
+      class: running ? 'mp-chat-thinking-mark' : 'mp-chat-run-meta-mark',
+      'data-spark-state': nextState,
+      'aria-hidden': 'true',
+    });
+    const api = resolveActivityMarks();
+    const markup =
+      api && typeof api.spark === 'function' ? api.spark(nextState) : '';
     if (markup && 'innerHTML' in root) {
       (root as unknown as HTMLElement).innerHTML = markup;
     }
     return root;
   }
 
-  function turnStatusNode(label: string): ChatNode {
+  interface TurnStatusOptions {
+    meta?: string;
+    tasksText?: string;
+    sparkState?: SparkAnimState;
+    thinking?: boolean;
+  }
+
+  function turnStatusNode(
+    label: string,
+    opts: TurnStatusOptions = {},
+  ): ChatNode {
+    const isThinking =
+      opts.thinking ?? (label === 'Thinking' || label.startsWith('Thinking'));
     const root = h('div', {
       class: 'mp-chat-turn-status',
       role: 'status',
       'aria-label': label,
+      ...(isThinking ? {'data-thinking': 'true'} : {}),
+      ...(opts.tasksText ? {'data-has-tasks': 'true'} : {}),
     });
-    attach(root, sparkMark());
+    attach(root, sparkMark(true, opts.sparkState ?? 'thinking'));
     const copy = h('span', {class: 'mp-chat-turn-status-copy'});
-    attach(
-      copy,
-      h('span', {class: 'mp-chat-turn-status-meta', 'data-turn-meta': 'true'}),
-    );
-    const labelNode = h('span', {class: 'mp-chat-turn-status-label'});
-    if (label === 'Thinking') {
-      labelNode.setAttribute('data-quiet', 'true');
+    const metaNode = h('span', {
+      class: 'mp-chat-turn-status-meta',
+      'data-turn-meta': 'true',
+    });
+    if (opts.meta) {
+      attach(metaNode, opts.meta);
     }
+    attach(copy, metaNode);
+    const tasksNode = h('span', {
+      class: 'mp-chat-turn-status-tasks',
+      ...(!opts.tasksText ? {hidden: 'true'} : {}),
+    });
+    if (opts.tasksText) {
+      attach(tasksNode, opts.tasksText);
+    }
+    attach(copy, tasksNode);
+    const labelNode = h('span', {class: 'mp-chat-turn-status-label'});
     attach(labelNode, label);
     attach(copy, labelNode);
     attach(root, copy);
     return root;
+  }
+
+  function updateTurnStatus(
+    statusRoot: HTMLElement | null,
+    opts: TurnStatusOptions & {label?: string; live?: string},
+  ): void {
+    if (!statusRoot) {
+      return;
+    }
+    if (opts.label !== undefined) {
+      const labelEl = statusRoot.querySelector('.mp-chat-turn-status-label');
+      if (labelEl && labelEl.textContent !== opts.label) {
+        labelEl.textContent = opts.label;
+      }
+      labelEl?.removeAttribute('data-quiet');
+      statusRoot.setAttribute('aria-label', opts.label);
+    }
+    if (opts.meta !== undefined) {
+      const metaEl = statusRoot.querySelector(
+        '[data-turn-meta], .mp-chat-turn-status-meta',
+      );
+      if (metaEl && metaEl.textContent !== opts.meta) {
+        metaEl.textContent = opts.meta;
+      }
+    }
+    if (opts.tasksText !== undefined) {
+      const tasksEl = statusRoot.querySelector('.mp-chat-turn-status-tasks');
+      if (tasksEl) {
+        if (tasksEl.textContent !== opts.tasksText) {
+          tasksEl.textContent = opts.tasksText;
+        }
+        if (opts.tasksText) {
+          tasksEl.removeAttribute('hidden');
+          statusRoot.setAttribute('data-has-tasks', 'true');
+        } else {
+          tasksEl.setAttribute('hidden', 'true');
+          statusRoot.removeAttribute('data-has-tasks');
+        }
+      }
+    }
+    if (opts.thinking !== undefined) {
+      if (opts.thinking) {
+        statusRoot.setAttribute('data-thinking', 'true');
+      } else {
+        statusRoot.removeAttribute('data-thinking');
+      }
+    }
+    if (opts.live !== undefined) {
+      statusRoot.setAttribute('aria-live', opts.live);
+    }
+    if (opts.sparkState !== undefined) {
+      setSparkState(
+        statusRoot.querySelector<HTMLElement>('.mp-chat-thinking-mark'),
+        opts.sparkState,
+      );
+    }
   }
 
   function turnErrorNode(
@@ -4825,6 +5315,9 @@ const ChatView = (() => {
   interface TurnPresentation {
     taskPanel?: boolean;
     undoFileChanges?: boolean;
+    smooth?: boolean;
+    animateWords?: boolean;
+    onSaliency?: (host: HTMLElement) => void;
   }
 
   type FlowItem =
@@ -5171,7 +5664,7 @@ const ChatView = (() => {
     if (model) {
       root.setAttribute('data-state', model.state);
     }
-    if (model?.errorTitle || model?.state === 'error') {
+    if (model?.errorTitle) {
       root.setAttribute('data-error-title', 'true');
     }
     if (!thoughtOnly) {
@@ -5240,6 +5733,16 @@ const ChatView = (() => {
       );
     }
     attach(summary, label);
+    if (!thoughtOnly) {
+      attach(
+        summary,
+        h(
+          'span',
+          {class: 'mp-chat-row-caret', 'aria-hidden': 'true'},
+          '\ue02a',
+        ),
+      );
+    }
     const body = h('div', {class: 'mp-chat-tool-group-body'});
     const entries: FlowItem[] =
       work || chips.map(chip => ({type: 'chip', chip}));
@@ -5253,7 +5756,7 @@ const ChatView = (() => {
       ? `thought:${firstReasoning.id ?? '0'}`
       : 'thought';
     const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || fallbackId}`;
-    const previous = GROUP_EXPANSION.get(groupId);
+    const previous = readGroupExpansion(groupId);
     const members = entries.flatMap(entry =>
       entry.type === 'chip'
         ? [`group:${scope ? `${scope}:` : ''}${entry.chip.callId || ''}`]
@@ -5262,20 +5765,38 @@ const ChatView = (() => {
           : [],
     );
     const previousMembers = new Set(previous?.members || []);
+    const chipRowId = chips[0]?.callId
+      ? `tool:${scope ? `${scope}:` : ''}${chips[0].callId}`
+      : '';
+    const chipExpansion = readRowExpansion(chipRowId);
+    const defaultOpen = Boolean(
+      single &&
+        model?.defaultOpen &&
+        chipExpansion !== false &&
+        !(previous && previous.autoOpened === false && previous.open === false),
+    );
+    const explicitPrevOpen = Boolean(
+      previous && !previous.autoOpened && previous.open === true,
+    );
     const open =
       thoughtOnly ||
-      previous?.open === true ||
-      (single &&
-        previous?.single !== true &&
-        ROW_EXPANSION.get(
-          `tool:${scope ? `${scope}:` : ''}${chips[0]?.callId}`,
-        ) === true) ||
-      members.some(
-        id =>
+      explicitPrevOpen ||
+      defaultOpen ||
+      (single && previous?.single !== true && chipExpansion === true) ||
+      members.some(id => {
+        const source = readGroupExpansion(id);
+        return (
           !previousMembers.has(id) &&
-          (GROUP_EXPANSION.get(id)?.open === true ||
-            ROW_EXPANSION.get(id) === true),
-      );
+          ((source?.open === true && !source?.autoOpened) ||
+            readRowExpansion(id) === true)
+        );
+      });
+    const autoOpened = Boolean(
+      defaultOpen &&
+        !thoughtOnly &&
+        !explicitPrevOpen &&
+        chipExpansion !== true,
+    );
     if (!single) {
       for (const id of members) {
         const source = GROUP_EXPANSION.get(id);
@@ -5284,6 +5805,7 @@ const ChatView = (() => {
         );
         if (
           source?.open &&
+          !source.autoOpened &&
           childToolIds?.length &&
           (source.single ||
             (childToolIds.length === 1 &&
@@ -5297,7 +5819,7 @@ const ChatView = (() => {
         }
       }
     }
-    GROUP_EXPANSION.set(groupId, {open, members, single});
+    GROUP_EXPANSION.set(groupId, {open, members, single, autoOpened});
     if (open) {
       root.setAttribute('open', '');
     }
@@ -5722,6 +6244,71 @@ const ChatView = (() => {
     return items;
   }
 
+  function hasFlowFollower(
+    items: FlowItem[],
+    afterIndex: number,
+    hasAnswer: boolean,
+    taskPanel: boolean,
+  ): boolean {
+    if (hasAnswer) {
+      return true;
+    }
+    for (let i = afterIndex + 1; i < items.length; i++) {
+      const next = items[i];
+      if (next.type === 'reasoning') {
+        continue;
+      }
+      if (
+        next.type === 'chip' &&
+        taskPanel &&
+        PLAN_TOOLS.has(next.chip.name) &&
+        !next.chip.result?.isError
+      ) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function hasTrajectoryFollower(
+    records: Array<Record<string, unknown>>,
+    fromIndex: number,
+    hasTrailingAnswer: boolean,
+    taskPanel: boolean,
+  ): boolean {
+    const current = records[fromIndex];
+    if (
+      current &&
+      current.kind === 'message' &&
+      Boolean(String(current.text || '').trim())
+    ) {
+      return true;
+    }
+    if (hasTrailingAnswer) {
+      return true;
+    }
+    for (let i = fromIndex + 1; i < records.length; i++) {
+      const next = records[i];
+      if (!next || typeof next !== 'object') {
+        continue;
+      }
+      if (next.kind === 'tool') {
+        if (taskPanel && PLAN_TOOLS.has(String(next.name)) && !next.isError) {
+          continue;
+        }
+        return true;
+      }
+      if (next.kind === 'message' && Boolean(String(next.text || '').trim())) {
+        return true;
+      }
+      if (next.kind === 'notice') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function assistantTurnNode(
     turn: AssistantTurnInput,
     turnScope = `${turn.conversationId || ''}#${Number.isInteger(turn.turnIndex) ? turn.turnIndex : -1}`,
@@ -5730,32 +6317,8 @@ const ChatView = (() => {
     const items: ChatNode[] = [];
     const root = h('div', {class: 'mp-chat-assistant'});
     const bodyHost = h('div', {class: 'mp-chat-assistant-body'});
-
-    if (
-      turn.thinking &&
-      !turn.trajectory?.some(
-        record => record.reasoning || record.kind === 'think',
-      )
-    ) {
-      attach(
-        bodyHost,
-        toolGroupNode(
-          [],
-          turn.running === true,
-          [
-            {
-              type: 'reasoning',
-              text: turn.thinking,
-              id: 'head',
-              running: turn.running === true,
-            },
-          ],
-          turnScope,
-          true,
-        ),
-      );
-    }
-
+    const deliveryText = cleanDeliveryText(String(turn.answer || ''));
+    const seenReasoningIds = new Set<string>();
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
     for (const item of flow) {
       if (item.type === 'chip') {
@@ -5764,23 +6327,46 @@ const ChatView = (() => {
         );
       }
     }
+
+    if (
+      turn.thinking &&
+      !turn.trajectory?.some(
+        record => record.reasoning || record.kind === 'think',
+      )
+    ) {
+      const hasHeadFollower = hasFlowFollower(
+        flow,
+        -1,
+        Boolean(deliveryText),
+        options.taskPanel === true,
+      );
+      const headThinkId = resolveReasoningId(
+        turnScope,
+        'head',
+        seenReasoningIds,
+      );
+      attach(
+        bodyHost,
+        thinkNode(
+          turn.thinking,
+          turn.running === true && !hasHeadFollower,
+          headThinkId,
+          hasHeadFollower,
+        ),
+      );
+    }
+
     let chipRun: TurnChip[] = [];
     let workRun: FlowItem[] = [];
     const fileRuns: Array<{callIds: string[]; bareEdit: boolean}> = [];
     const flushChips = () => {
       if (!chipRun.length) {
-        const hasReasoning = workRun.some(entry => entry.type === 'reasoning');
-        if (hasReasoning) {
-          // A reasoning-only run still renders as a card, never as loose text.
-          attach(bodyHost, toolGroupNode([], false, workRun, turnScope, true));
-        } else {
-          workRun
-            .filter(
-              (entry): entry is Extract<FlowItem, {type: 'narration'}> =>
-                entry.type === 'narration',
-            )
-            .forEach(entry => attach(bodyHost, narrationNode(entry.text)));
-        }
+        workRun
+          .filter(
+            (entry): entry is Extract<FlowItem, {type: 'narration'}> =>
+              entry.type === 'narration',
+          )
+          .forEach(entry => attach(bodyHost, narrationNode(entry.text)));
         workRun = [];
         return;
       }
@@ -5796,7 +6382,8 @@ const ChatView = (() => {
       chipRun = [];
       workRun = [];
     };
-    for (const item of flow) {
+    for (let flowIndex = 0; flowIndex < flow.length; flowIndex++) {
+      const item = flow[flowIndex];
       if (options.taskPanel && item.type === 'chip') {
         if (PLAN_TOOLS.has(item.chip.name)) {
           if (item.chip.result?.isError) {
@@ -5812,8 +6399,27 @@ const ChatView = (() => {
         }
       }
       if (item.type === 'reasoning') {
-        // A thought is a row in the same card as the tools around it.
-        workRun.push(item);
+        flushChips();
+        const hasFollowing = hasFlowFollower(
+          flow,
+          flowIndex,
+          Boolean(deliveryText),
+          options.taskPanel === true,
+        );
+        const thinkId = resolveReasoningId(
+          turnScope,
+          item.id ?? String(flowIndex),
+          seenReasoningIds,
+        );
+        attach(
+          bodyHost,
+          thinkNode(
+            item.text,
+            item.running === true && !hasFollowing,
+            thinkId,
+            hasFollowing,
+          ),
+        );
       } else if (item.type === 'narration') {
         flushChips();
         attach(bodyHost, narrationNode(item.text));
@@ -5840,7 +6446,6 @@ const ChatView = (() => {
       .map(record => Number(record.completedAt) || 0)
       .filter(value => value > 0);
     const totalTokens = Number(turn.modelUsage?.totalTokens) || 0;
-    const deliveryText = cleanDeliveryText(String(turn.answer || ''));
     if (deliveryText) {
       attach(bodyHost, deliveryNode(deliveryText));
     }
@@ -6010,6 +6615,18 @@ const ChatView = (() => {
     requestId?: string;
     agentSessionId?: string;
     trajectory?: Array<Record<string, unknown>>;
+    startedAt?: number;
+    elapsedMs?: number;
+    tokens?: number | null;
+    outputTokens?: number | null;
+    usageTokens?: number | null;
+    stageLabel?: string;
+    waiting?: boolean;
+    nowMs?: number;
+  }
+
+  function formatCompactTokenCount(tokens: number): string {
+    return `${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`;
   }
 
   function createLiveTurn(
@@ -6024,12 +6641,127 @@ const ChatView = (() => {
       string,
       {node: HTMLElement; signature: string}
     >();
+    const lastMarkdownText = new WeakMap<HTMLElement, string>();
+    const autoCollapsedThinkKeys = new Set<string>();
+    const textSmoother = smootherApi?.createTextSmoother() ?? null;
+    const tokenSmoother = smootherApi?.createTokenSmoother() ?? null;
+    const stageDebouncer =
+      smootherApi?.createStageDebouncer({debounceMs: 150, minHoldMs: 650}) ??
+      null;
     let traceStatus: HTMLElement | null = null;
-    const updateLiveMarkdown = (node: HTMLElement, text: string) => {
+    let startedAt: number | null = null;
+    let hasExplicitStartedAt = false;
+    let snapshotUpdatedAt: number | null = null;
+    let snapshotBaseElapsed: number | null = null;
+    let settled = false;
+    let selectionPausedOverride: boolean | null = null;
+    let latestSnapshot: LiveTurnSnapshot = {};
+    let activeAnswerTarget = '';
+
+    const isSelectionPaused = (): boolean => {
+      if (selectionPausedOverride !== null) {
+        return selectionPausedOverride;
+      }
+      return hasActiveSelectionIn(host);
+    };
+
+    const collapseThinkIfUnpinned = (
+      thinkEl: HTMLElement | null,
+      key: string,
+    ): void => {
+      if (!thinkEl || autoCollapsedThinkKeys.has(key)) {
+        return;
+      }
+      trackAutoOpenedThink(thinkEl);
+      autoCollapsedThinkKeys.add(key);
+      const rowId = thinkEl.getAttribute('data-row-id') || '';
+      if (
+        !AUTO_OPENED_THINKS.has(thinkEl) ||
+        USER_PINNED_THINKS.get(thinkEl) === true ||
+        (rowId && ROW_EXPANSION.get(rowId) === true)
+      ) {
+        return;
+      }
+      if (thinkEl.getAttribute('data-open') === 'true') {
+        AUTO_OPENED_THINKS.delete(thinkEl);
+        setDisclosureOpenRaw(thinkEl, false);
+      }
+    };
+
+    const applyWordFadeToTrailingBlock = (
+      markdownRoot: HTMLElement,
+      prevText: string,
+      nextText: string,
+    ): void => {
+      if (
+        prefersReducedMotion() ||
+        typeof document === 'undefined' ||
+        typeof document.createElement !== 'function' ||
+        typeof document.createDocumentFragment !== 'function' ||
+        !prevText ||
+        !nextText.startsWith(prevText) ||
+        nextText.length <= prevText.length ||
+        nextText.length - prevText.length > 240
+      ) {
+        return;
+      }
+      const delta = nextText.slice(prevText.length);
+      let cursor: Node | null = markdownRoot.lastElementChild || markdownRoot;
+      while (cursor && cursor.lastChild) {
+        if (
+          typeof HTMLElement !== 'undefined' &&
+          cursor instanceof HTMLElement &&
+          (cursor.tagName === 'PRE' || cursor.tagName === 'CODE')
+        ) {
+          return;
+        }
+        cursor = cursor.lastChild;
+      }
+      if (!cursor || cursor.nodeType !== 3) {
+        return;
+      }
+      const value = cursor.nodeValue || '';
+      const trimmedDelta = delta.trimEnd();
+      const matchedDelta = value.endsWith(delta)
+        ? delta
+        : trimmedDelta && value.endsWith(trimmedDelta)
+          ? trimmedDelta
+          : '';
+      if (
+        !matchedDelta ||
+        !cursor.parentNode ||
+        typeof cursor.parentNode.replaceChild !== 'function'
+      ) {
+        return;
+      }
+      const head = value.slice(0, value.length - matchedDelta.length);
+      const words = smootherApi
+        ? smootherApi.tokenizeWordsForFade(matchedDelta)
+        : (matchedDelta.match(/\S+\s*|\s+/g) ?? [matchedDelta]);
+      const frag = document.createDocumentFragment();
+      if (head) {
+        frag.appendChild(document.createTextNode(head));
+      }
+      for (const word of words) {
+        const span = document.createElement('span');
+        span.className = 'mp-stream-word-in';
+        span.textContent = word;
+        frag.appendChild(span);
+      }
+      cursor.parentNode.replaceChild(frag, cursor);
+    };
+
+    const updateLiveMarkdown = (
+      node: HTMLElement,
+      text: string,
+      animateWords = false,
+    ) => {
+      const prevText = lastMarkdownText.get(node) || '';
       const next = markdownRenderer.render(text) as HTMLElement;
       const current = node.querySelector<HTMLElement>('.mp-chat-markdown');
       if (!current) {
         node.replaceChildren(next);
+        lastMarkdownText.set(node, text);
         globalThis.OpenUIHost?.sync(node, scope, true);
         return;
       }
@@ -6069,25 +6801,206 @@ const ChatView = (() => {
         }
         last?.remove();
       }
+      if (animateWords && options.animateWords !== false) {
+        applyWordFadeToTrailingBlock(current, prevText, text);
+      }
+      lastMarkdownText.set(node, text);
       globalThis.OpenUIHost?.sync(node, scope, true);
     };
+
     const liveMarkdownNode = (text: string) => {
       const node = document.createElement('div');
       node.className = 'mp-chat-stream-live';
       updateLiveMarkdown(node, text);
       return node;
     };
+
+    const resolveSnapshotTokens = (snap: LiveTurnSnapshot): number | null => {
+      const raw = snap.tokens ?? snap.outputTokens ?? snap.usageTokens;
+      if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+        return raw;
+      }
+      return null;
+    };
+
+    const refreshStatusElement = (
+      statusEl: HTMLElement | null,
+      snap: LiveTurnSnapshot,
+      nowMs: number,
+      context: {
+        activeCompaction?: Record<string, unknown>;
+        activeReview?: Record<string, unknown>;
+        activeChildren?: number;
+        activeTools?: number;
+        writing?: boolean;
+        fallbackLabel?: string;
+      } = {},
+    ): void => {
+      if (!statusEl) {
+        return;
+      }
+      let elapsedMs = 0;
+      if (
+        settled &&
+        typeof snap.elapsedMs === 'number' &&
+        Number.isFinite(snap.elapsedMs)
+      ) {
+        elapsedMs = Math.max(0, snap.elapsedMs);
+      } else if (hasExplicitStartedAt && startedAt !== null) {
+        elapsedMs = Math.max(0, nowMs - startedAt);
+      } else if (snapshotBaseElapsed !== null && snapshotUpdatedAt !== null) {
+        elapsedMs = Math.max(
+          0,
+          snapshotBaseElapsed + Math.max(0, nowMs - snapshotUpdatedAt),
+        );
+      } else if (startedAt !== null) {
+        elapsedMs = Math.max(0, nowMs - startedAt);
+      } else if (
+        typeof snap.elapsedMs === 'number' &&
+        Number.isFinite(snap.elapsedMs)
+      ) {
+        elapsedMs = Math.max(0, snap.elapsedMs);
+      }
+      const incomingTokens = resolveSnapshotTokens(snap);
+      if (incomingTokens !== null && tokenSmoother) {
+        tokenSmoother.setTarget(incomingTokens, nowMs);
+      }
+      const visibleTokens =
+        tokenSmoother?.getVisible(elapsedMs, true, nowMs) ?? null;
+      const elapsedText = formatElapsedTime(elapsedMs);
+      const tokenText =
+        visibleTokens !== null && visibleTokens > 0
+          ? formatCompactTokenCount(visibleTokens)
+          : '';
+      const metaText = [elapsedText, tokenText].filter(Boolean).join(' · ');
+
+      let rawLabel = context.fallbackLabel || '';
+      let sparkState: SparkAnimState = 'thinking';
+      let isThinkingPhase = false;
+      let bypassDebounce = false;
+
+      if (context.activeCompaction) {
+        rawLabel = compaction.compactionLabel(
+          context.activeCompaction,
+          (typeof document !== 'undefined' ? document.documentElement?.lang : '') ||
+            'en',
+        );
+        sparkState = 'thinking';
+        bypassDebounce = true;
+      } else if (context.activeReview) {
+        rawLabel = liveStatusLabel('permission_review_started', {
+          name: context.activeReview.name,
+        });
+        sparkState = 'waiting';
+      } else if (snap.waiting) {
+        rawLabel = snap.stageLabel || 'Waiting\u2026';
+        sparkState = 'waiting';
+      } else if (context.activeTools || context.activeChildren) {
+        rawLabel = snap.stageLabel || 'Running tools\u2026';
+        sparkState = 'thinking';
+      } else if (context.writing || Boolean(snap.answer)) {
+        rawLabel = snap.stageLabel || 'Writing';
+        sparkState = 'writing';
+      } else {
+        rawLabel = snap.stageLabel || formatThinkingLabel(elapsedMs);
+        sparkState = 'thinking';
+        isThinkingPhase = !snap.stageLabel;
+        bypassDebounce = true;
+      }
+
+      const shownLabel =
+        bypassDebounce || !stageDebouncer
+          ? rawLabel
+          : stageDebouncer.update(rawLabel, nowMs);
+      const tasksText =
+        context.activeChildren && context.activeChildren > 0
+          ? `${context.activeChildren} running task${context.activeChildren === 1 ? '' : 's'}`
+          : '';
+
+      updateTurnStatus(statusEl, {
+        label: shownLabel,
+        meta: metaText,
+        tasksText,
+        sparkState,
+        thinking: isThinkingPhase,
+        live: context.activeCompaction ? 'off' : 'polite',
+      });
+    };
+
+    const renderAnswerStream = (
+      rawAnswer: string,
+      nowMs: number,
+      forceFlush = false,
+    ): string => {
+      activeAnswerTarget = rawAnswer;
+      if (!textSmoother) {
+        return rawAnswer;
+      }
+      const paused = forceFlush ? false : isSelectionPaused();
+      textSmoother.setPaused(paused, nowMs);
+      if (rawAnswer !== textSmoother.getTarget()) {
+        textSmoother.push(rawAnswer, nowMs);
+      }
+      if (paused) {
+        return textSmoother.getEmitted();
+      }
+      if (forceFlush || !options.smooth) {
+        return textSmoother.flush().emitted;
+      }
+      return textSmoother.step(nowMs).emitted;
+    };
+
     return {
       update(snapshot: LiveTurnSnapshot) {
+        const snapshotElapsed =
+          typeof snapshot.elapsedMs === 'number' &&
+          Number.isFinite(snapshot.elapsedMs)
+            ? Math.max(0, snapshot.elapsedMs)
+            : null;
+        const nowMs =
+          snapshot.nowMs ??
+          (typeof snapshot.startedAt === 'number' &&
+          Number.isFinite(snapshot.startedAt) &&
+          Math.abs(Date.now() - snapshot.startedAt) > 86_400_000
+            ? snapshot.startedAt + (snapshotElapsed ?? 0)
+            : Date.now());
+        settled = false;
+        snapshotUpdatedAt = nowMs;
+        snapshotBaseElapsed = snapshotElapsed;
+        if (
+          typeof snapshot.startedAt === 'number' &&
+          Number.isFinite(snapshot.startedAt)
+        ) {
+          startedAt = snapshot.startedAt;
+          hasExplicitStartedAt = true;
+        } else if (startedAt === null) {
+          startedAt =
+            snapshotElapsed !== null ? nowMs - snapshotElapsed : nowMs;
+        }
+        latestSnapshot = snapshot;
         if (!host.className.split(' ').includes('mp-chat-live-turn')) {
           host.className += ' mp-chat-live-turn';
         }
         if (snapshot.trajectory?.length) {
           const desired: HTMLElement[] = [];
+          const records = snapshot.trajectory;
+          const rawAnswer = String(snapshot.answer || '');
+          const cleanedAnswer = cleanDeliveryText(rawAnswer);
+          const answerAlreadyInMessage =
+            Boolean(cleanedAnswer) &&
+            records.some(
+              r =>
+                r.kind === 'message' &&
+                cleanDeliveryText(String(r.text || '')) === cleanedAnswer,
+            );
+          const hasTrailingAnswer =
+            Boolean(cleanedAnswer) && !answerAlreadyInMessage;
+          const seenReasoningIds = new Set<string>();
           const render = (
             key: string,
             value: unknown,
             make: () => ChatNode,
+            autoCollapseThought = false,
           ) => {
             const signature = JSON.stringify(value);
             let entry = traceNodes.get(key);
@@ -6096,19 +7009,24 @@ const ChatView = (() => {
               traceNodes.set(key, entry);
             } else if (entry.signature !== signature) {
               if (key.startsWith('message:')) {
-                updateLiveMarkdown(entry.node, String(value));
-              } else if (key.startsWith('thought:')) {
-                const currentThought =
-                  entry.node.querySelector<HTMLElement>('.mp-chat-think');
-                const nextWork = (value as {work?: FlowItem[]}).work?.find(
-                  (item): item is Extract<FlowItem, {type: 'reasoning'}> =>
-                    item.type === 'reasoning',
+                updateLiveMarkdown(
+                  entry.node,
+                  String(value),
+                  options.animateWords !== false,
                 );
-                if (currentThought && nextWork) {
+              } else if (key.startsWith('thought:')) {
+                const currentThought = isThinkNode(entry.node)
+                  ? entry.node
+                  : entry.node.querySelector<HTMLElement>('.mp-chat-think');
+                const nextThought = value as {
+                  text?: string;
+                  running?: boolean;
+                };
+                if (currentThought && typeof nextThought.text === 'string') {
                   updateThinkingState(
                     currentThought,
-                    nextWork.text,
-                    nextWork.running === true,
+                    nextThought.text,
+                    Boolean(nextThought.running),
                   );
                 } else {
                   const replacement = make() as HTMLElement;
@@ -6122,21 +7040,31 @@ const ChatView = (() => {
                   ...Array.from(replacement.childNodes),
                 );
                 for (const attribute of [
+                  'open',
                   'data-state',
                   'data-single',
                   'data-thought-only',
                   'data-error-title',
                   'aria-live',
                 ]) {
-                  const value = replacement.getAttribute(attribute);
-                  if (value === null) {
+                  const attrVal = replacement.getAttribute(attribute);
+                  if (attrVal === null) {
                     entry.node.removeAttribute(attribute);
                   } else {
-                    entry.node.setAttribute(attribute, value);
+                    entry.node.setAttribute(attribute, attrVal);
                   }
                 }
               }
               entry.signature = signature;
+            }
+            if (key.startsWith('thought:')) {
+              const thinkEl = isThinkNode(entry.node)
+                ? entry.node
+                : entry.node.querySelector<HTMLElement>('.mp-chat-think');
+              trackAutoOpenedThink(thinkEl);
+              if (autoCollapseThought) {
+                collapseThinkIfUnpinned(thinkEl, key);
+              }
             }
             desired.push(entry.node);
           };
@@ -6145,46 +7073,22 @@ const ChatView = (() => {
           let workTurn: string | undefined;
           let runSequence = 0;
           const flush = () => {
-            if (!chips.length && !work.length) {
+            if (!chips.length) {
+              work = [];
+              workTurn = undefined;
               return;
             }
             const current = chips;
             const currentWork = work;
-            const key = current.length
-              ? `tools:${current[0].callId || workTurn || ++runSequence}`
-              : `thought:${workTurn || ++runSequence}`;
-            const hasReasoning = currentWork.some(
-              item => item.type === 'reasoning',
+            const key = `tools:${current[0].callId || workTurn || ++runSequence}`;
+            render(key, {chips: current, work: currentWork}, () =>
+              toolGroupNode(current, true, currentWork, scope),
             );
-            if (current.length || hasReasoning) {
-              render(key, {chips: current, work: currentWork}, () =>
-                toolGroupNode(
-                  current,
-                  true,
-                  currentWork,
-                  scope,
-                  !current.length,
-                ),
-              );
-            } else {
-              currentWork
-                .filter(
-                  (item): item is Extract<FlowItem, {type: 'narration'}> =>
-                    item.type === 'narration',
-                )
-                .forEach((item, index) =>
-                  render(
-                    `message:${workTurn || runSequence}:${index}`,
-                    item.text,
-                    () => liveMarkdownNode(item.text),
-                  ),
-                );
-            }
             chips = [];
             work = [];
             workTurn = undefined;
           };
-          snapshot.trajectory.forEach((record, index) => {
+          records.forEach((record, index) => {
             const turn =
               record.turn === undefined || record.turn === null
                 ? undefined
@@ -6240,7 +7144,25 @@ const ChatView = (() => {
               }
               const reasoning = trajectoryReasoning(record, index);
               if (reasoning) {
-                work.push(reasoning);
+                flush();
+                const hasFollowing = hasTrajectoryFollower(
+                  records,
+                  index,
+                  hasTrailingAnswer,
+                  options.taskPanel === true,
+                );
+                const thinkId = resolveReasoningId(
+                  scope,
+                  reasoning.id ?? String(index),
+                  seenReasoningIds,
+                );
+                const running = reasoning.running === true && !hasFollowing;
+                render(
+                  `thought:${thinkId}`,
+                  {text: reasoning.text, running},
+                  () => thinkNode(reasoning.text, running, thinkId, hasFollowing),
+                  hasFollowing,
+                );
               }
               if (record.kind === 'message' && record.text) {
                 flush();
@@ -6259,7 +7181,10 @@ const ChatView = (() => {
                   error: record.error,
                   beforeTokens: record.beforeTokens,
                   afterTokens: record.afterTokens,
-                  language: document.documentElement.lang,
+                  language:
+                    typeof document !== 'undefined'
+                      ? document.documentElement?.lang
+                      : undefined,
                 };
                 render(`compaction:${record.compactionId}`, signature, () =>
                   compactionNode(record, true),
@@ -6272,8 +7197,17 @@ const ChatView = (() => {
             }
           });
           flush();
+          if (hasTrailingAnswer) {
+            render('message:live-answer', rawAnswer, () =>
+              liveMarkdownNode(rawAnswer),
+            );
+          } else {
+            traceNodes.delete('message:live-answer');
+          }
           if (!traceStatus) {
-            traceStatus = turnStatusNode('Thinking') as HTMLElement;
+            traceStatus = turnStatusNode(
+              formatThinkingLabel(0),
+            ) as HTMLElement;
           }
           const activeChildren = snapshot.trajectory.filter(
             r =>
@@ -6304,37 +7238,21 @@ const ChatView = (() => {
             !snapshot.trajectory.some(
               row => row.kind === 'message' && row.state === 'running',
             );
-          const statusText = activeCompaction
-            ? compaction.compactionLabel(
-                activeCompaction,
-                document.documentElement.lang || 'en',
-              )
-            : activeReview
-              ? liveStatusLabel('permission_review_started', {
-                  name: activeReview.name,
-                })
-              : activeChildren
-                ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
-                : activeTools
-                  ? 'Running tools'
-                  : snapshot.answer
-                    ? 'Writing'
-                    : 'Thinking';
-          const statusLabel = traceStatus.querySelector(
-            '.mp-chat-turn-status-label',
-          );
-          if (statusLabel && statusLabel.textContent !== statusText) {
-            statusLabel.textContent = statusText;
-          }
-          statusLabel?.setAttribute(
-            'data-quiet',
-            String(statusText === 'Thinking'),
-          );
-          traceStatus.setAttribute('aria-label', statusText);
-          traceStatus.setAttribute(
-            'aria-live',
-            activeCompaction ? 'off' : 'polite',
-          );
+          const writingNow =
+            Boolean(snapshot.answer) ||
+            snapshot.trajectory.some(
+              row =>
+                row.kind === 'message' &&
+                row.state === 'running' &&
+                Boolean(String(row.text || '').trim()),
+            );
+          refreshStatusElement(traceStatus, snapshot, nowMs, {
+            activeCompaction,
+            activeReview,
+            activeChildren,
+            activeTools,
+            writing: writingNow,
+          });
           if (!activeCompaction && !compactionSettled) {
             desired.push(traceStatus);
           }
@@ -6425,12 +7343,7 @@ const ChatView = (() => {
                 String(record.phase || ''),
                 (record.fields || {}) as Record<string, unknown>,
               );
-              const copy = row.node.querySelector('.mp-chat-turn-status-label');
-              if (copy && copy.textContent !== label) {
-                copy.textContent = label;
-              }
-              copy?.setAttribute('data-quiet', String(label === 'Thinking'));
-              row.node.setAttribute('aria-label', label);
+              updateTurnStatus(row.node, {label});
             } else {
               const replacement = liveActivityNode(
                 record,
@@ -6447,26 +7360,53 @@ const ChatView = (() => {
           }
           desired.push(row.node);
         }
+        const rawAnswer = String(snapshot.answer || '');
+        const hasToolRecord = Array.from(latest.keys()).some(k =>
+          k.startsWith('tool:'),
+        );
         const nextThinking = String(snapshot.thinking || '');
         if (nextThinking) {
           if (!thinking) {
             thinking = thinkNode('', true, `${scope}:head`) as HTMLElement;
+            trackAutoOpenedThink(thinking);
           }
-          updateThinkingState(
-            thinking,
-            nextThinking,
-            !snapshot.answer,
-          );
+          updateThinkingState(thinking, nextThinking, !rawAnswer);
+          if (rawAnswer.trim() || hasToolRecord) {
+            collapseThinkIfUnpinned(thinking, 'head');
+          }
           desired.push(thinking);
         }
-        const nextAnswer = String(snapshot.answer || '');
-        if (nextAnswer) {
+        if (rawAnswer) {
+          const visibleAnswer = renderAnswerStream(rawAnswer, nowMs);
           if (!answer) {
             answer = liveMarkdownNode('');
             answer.setAttribute('aria-live', 'polite');
           }
-          updateLiveMarkdown(answer, nextAnswer);
+          if (visibleAnswer) {
+            updateLiveMarkdown(
+              answer,
+              visibleAnswer,
+              options.animateWords !== false,
+            );
+          }
           desired.push(answer);
+        } else {
+          activeAnswerTarget = '';
+        }
+        const statusRow = rows.get('status')?.node ?? null;
+        if (statusRow) {
+          const statusRec = latest.get('status');
+          const statusPhase = String(statusRec?.phase || '');
+          const statusFields = (statusRec?.fields || {}) as Record<
+            string,
+            unknown
+          >;
+          const fallbackLabel = liveStatusLabel(statusPhase, statusFields);
+          refreshStatusElement(statusRow, snapshot, nowMs, {
+            activeTools: hasToolRecord ? 1 : 0,
+            writing: Boolean(rawAnswer),
+            fallbackLabel,
+          });
         }
         for (const child of Array.from(host.children)) {
           if (!desired.includes(child as HTMLElement)) {
@@ -6479,7 +7419,62 @@ const ChatView = (() => {
           }
         });
       },
+      tickStatus(nowMs = Date.now()) {
+        if (startedAt === null) {
+          startedAt = nowMs;
+        }
+        if (answer && activeAnswerTarget) {
+          const emitted = renderAnswerStream(activeAnswerTarget, nowMs);
+          if (emitted && emitted !== lastMarkdownText.get(answer)) {
+            updateLiveMarkdown(
+              answer,
+              emitted,
+              options.animateWords !== false,
+            );
+          }
+        }
+        const statusEl = traceStatus || rows.get('status')?.node || null;
+        if (statusEl) {
+          const traj = latestSnapshot.trajectory || [];
+          const activeTools = traj.filter(
+            r => r.kind === 'tool' && r.state === 'running',
+          ).length;
+          const activeChildren = traj.filter(
+            r =>
+              r.kind === 'tool' &&
+              SUBAGENT_TOOLS.has(String(r.name)) &&
+              r.state === 'running',
+          ).length;
+          refreshStatusElement(statusEl, latestSnapshot, nowMs, {
+            activeChildren,
+            activeTools,
+            writing: Boolean(activeAnswerTarget),
+          });
+        }
+      },
+      setSelectionPaused(paused: boolean | null, nowMs = Date.now()) {
+        selectionPausedOverride = paused;
+        textSmoother?.setPaused(paused === true, nowMs);
+        if (paused === false && answer && activeAnswerTarget) {
+          const emitted = renderAnswerStream(activeAnswerTarget, nowMs, false);
+          if (emitted) {
+            updateLiveMarkdown(answer, emitted, false);
+          }
+        }
+      },
+      flush(nowMs = Date.now()) {
+        if (answer && activeAnswerTarget) {
+          const full = renderAnswerStream(activeAnswerTarget, nowMs, true);
+          updateLiveMarkdown(answer, full, false);
+        }
+        tokenSmoother?.flush();
+      },
       finish(turn: AssistantTurnInput) {
+        settled = true;
+        if (textSmoother && activeAnswerTarget) {
+          textSmoother.flush();
+        }
+        tokenSmoother?.flush();
         host.className = host.className
           .split(' ')
           .filter(name => name !== 'mp-chat-live-turn')
@@ -6489,6 +7484,11 @@ const ChatView = (() => {
           ...(assistantTurnNode(turn, scope, options) as HTMLElement[]),
         );
         globalThis.OpenUIHost?.sync(host, scope, false);
+        if (typeof options.onSaliency === 'function') {
+          options.onSaliency(host);
+        } else {
+          applySaliency(host);
+        }
       },
     };
   }
@@ -6626,6 +7626,11 @@ const ChatView = (() => {
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
     (toggle || row).setAttribute('aria-expanded', open ? 'false' : 'true');
+    if (disclosure.classList?.contains?.('mp-chat-think') ||
+        (disclosure.getAttribute('class') || '').split(/\s+/).includes('mp-chat-think')) {
+      AUTO_OPENED_THINKS.delete(disclosure);
+      USER_PINNED_THINKS.set(disclosure, !open);
+    }
     if (!open) {
       disclosure.querySelectorAll<HTMLElement>('[data-mp-chat-act="load-file-diff"]')
         .forEach(button => { void loadFileDiff(button); });
@@ -7006,6 +8011,7 @@ const ChatView = (() => {
     fileUndoQuestion,
     deletedFileNode,
     turnStatusNode,
+    updateTurnStatus,
     turnErrorNode,
     thinkNode,
     toolRowModel,
@@ -7015,6 +8021,9 @@ const ChatView = (() => {
     createConversationView,
     permissionAnswerNode,
     formatRunMeta,
+    formatElapsedTime,
+    formatThinkingLabel,
+    applySaliency,
     stateDot,
     bindDelegation,
     expansion: {
@@ -7052,6 +8061,8 @@ const ChatView = (() => {
       webResults,
       outputRecord,
       webCountLabel,
+      commandCardNode,
+      resolveReasoningId,
     },
   };
 })();

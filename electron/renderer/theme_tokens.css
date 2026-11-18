@@ -1,5 +1,57 @@
 
 @font-face {
+  font-family: "anthropic-sans";
+  src: url("./assets/fonts/AnthropicSansMicro-Text.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;
+  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-DFFF, U+E140-10FFFF;
+}
+
+@font-face {
+  font-family: "anthropic-sans";
+  src: url("./assets/fonts/AnthropicSans-Roman-Variable-DDVos-BJ.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;
+}
+
+@font-face {
+  font-family: "anthropic-sans";
+  src: url("./assets/fonts/AnthropicSans-Italic-Variable-CJtkx3-S.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "anthropic-sans-display";
+  src: url("./assets/fonts/AnthropicSansMicro-Display.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;
+}
+
+@font-face {
+  font-family: "anthropic-mono";
+  src: url("./assets/fonts/AnthropicMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "anthropic-mono";
+  src: url("./assets/fonts/AnthropicMono-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "Anthropic Sans";
   src: url("./assets/fonts/AnthropicSans-Roman-Variable-DDVos-BJ.woff2") format("woff2");
   font-weight: 300 800;
@@ -29,6 +81,17 @@
   font-weight: 300 800;
   font-style: italic;
   font-display: swap;
+}
+
+:root,
+:root[data-theme="light"],
+:root[data-theme="dark"],
+:root[data-mode="light"],
+:root[data-mode="dark"] {
+  --cds-font-sans: "anthropic-sans", "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+  --cds-font-sans-display: "anthropic-sans-display", "anthropic-sans", "Anthropic Sans", var(--cds-font-sans);
+  --cds-font-mono: "anthropic-mono", "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  --mp-font-mono: var(--cds-font-mono);
 }
 
 :root {
@@ -107,7 +170,7 @@
 
   --mp-font-ui: var(--cds-font-sans);
   --mp-font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
-  --mp-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --mp-font-mono: var(--cds-font-mono);
   --mp-text-body: 13px;
   --mp-leading-body: var(--cds-leading-body);
   --mp-text-footnote: 12px;

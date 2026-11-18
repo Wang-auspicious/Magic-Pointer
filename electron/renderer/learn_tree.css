@@ -1,44 +1,46 @@
-/* Learn Harness: Same-Turn De-Overloading, Right-Leaning Tree, Focus Shift & Split Deck */
+/* Learn Mode: Calm Editorial Typography, Contextual Popover & Borderless Margin Spine */
 
 :root {
-  --mp-learn-accent: #d97757;
-  --mp-learn-accent-soft: rgba(217, 119, 87, 0.12);
-  --mp-learn-accent-border: rgba(217, 119, 87, 0.36);
-  --mp-learn-mark-bg: rgba(245, 184, 61, 0.28);
-  --mp-learn-user-mark-bg: rgba(52, 199, 142, 0.25);
-  --mp-learn-p0: #d64545;
-  --mp-learn-p0-bg: rgba(214, 69, 69, 0.1);
-  --mp-learn-p1: #d4822a;
-  --mp-learn-p1-bg: rgba(212, 130, 42, 0.11);
-  --mp-learn-p2: #2f7da8;
-  --mp-learn-p2-bg: rgba(47, 125, 168, 0.11);
-  --mp-learn-spine: rgba(217, 119, 87, 0.34);
-  --mp-learn-spine-hover: #d97757;
-  --mp-learn-card-bg: color-mix(in srgb, var(--mp-page, #ffffff) 92%, #f5efe8 8%);
+  --mp-line-soft: var(--mp-rule, rgba(11, 11, 11, 0.10));
+  --mp-line-hover: var(--mp-rule-strong, rgba(11, 11, 11, 0.24));
+  --mp-learn-ink-accent: var(--mp-text-secondary, #52514e);
+  --mp-learn-mark-bg: rgba(232, 185, 72, 0.19);
+  --mp-learn-user-mark-bg: rgba(74, 174, 130, 0.18);
+  --mp-learn-surface: var(--mp-panel, #ffffff);
 }
 
 [data-theme="dark"] {
-  --mp-learn-accent: #e68a6b;
-  --mp-learn-accent-soft: rgba(230, 138, 107, 0.15);
-  --mp-learn-accent-border: rgba(230, 138, 107, 0.42);
-  --mp-learn-mark-bg: rgba(245, 184, 61, 0.22);
-  --mp-learn-user-mark-bg: rgba(52, 199, 142, 0.22);
-  --mp-learn-p0: #f06a6a;
-  --mp-learn-p0-bg: rgba(240, 106, 106, 0.15);
-  --mp-learn-p1: #f0a04b;
-  --mp-learn-p1-bg: rgba(240, 160, 75, 0.15);
-  --mp-learn-p2: #58a9d6;
-  --mp-learn-p2-bg: rgba(88, 169, 214, 0.15);
-  --mp-learn-spine: rgba(230, 138, 107, 0.32);
-  --mp-learn-spine-hover: #e68a6b;
-  --mp-learn-card-bg: color-mix(in srgb, var(--mp-page, #1b1b1d) 88%, #ffffff 6%);
+  --mp-line-soft: var(--mp-rule, rgba(255, 255, 255, 0.11));
+  --mp-line-hover: var(--mp-rule-strong, rgba(255, 255, 255, 0.24));
+  --mp-learn-ink-accent: var(--mp-text-secondary, #b9b8b2);
+  --mp-learn-mark-bg: rgba(232, 185, 72, 0.16);
+  --mp-learn-user-mark-bg: rgba(74, 174, 130, 0.18);
+  --mp-learn-surface: var(--mp-panel, #1a1a19);
 }
 
-/* Ensure assistant markdown text remains selectable for user highlighting & branching */
+/* Keep assistant markdown selectable for text inquiry & highlighting */
 .mp-chat-markdown,
 .mp-chat-markdown * {
   user-select: text;
   -webkit-user-select: text;
+}
+
+.mp-learn-icon {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+}
+
+.mp-learn-icon.is-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+.mp-learn-icon.is-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* 1. Dotted-underline concept / proof-leap anchor */
@@ -46,10 +48,10 @@
   appearance: none;
   display: inline;
   margin: 0;
-  padding: 0 2px;
+  padding: 0 1px;
   border: 0;
-  border-bottom: 1.5px dotted var(--mp-learn-accent);
-  border-radius: 3px;
+  border-bottom: 1px dotted var(--mp-line-hover);
+  border-radius: 2px;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -60,24 +62,31 @@
 
 .mp-learn-term:hover,
 .mp-learn-term:focus-visible {
-  background: var(--mp-learn-accent-soft);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
   border-bottom-style: solid;
+  border-bottom-color: var(--mp-text-secondary, #52514e);
   outline: none;
 }
 
-/* 2. Highlighter sweeps (LLM ==...== and user persistent highlights) */
+/* 2. Highlighter sweeps (LLM ==...== clickable mark & user highlights) */
 .mp-learn-mark {
-  padding: 1px 4px;
-  border-radius: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
   background: var(--mp-learn-mark-bg);
   color: inherit;
+  cursor: pointer;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  transition: filter 120ms ease;
+}
+
+.mp-learn-mark:hover {
+  filter: brightness(0.96);
 }
 
 .mp-learn-user-mark {
-  padding: 1px 3px;
-  border-radius: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
   background: var(--mp-learn-user-mark-bg);
   color: inherit;
   cursor: pointer;
@@ -90,26 +99,14 @@
   filter: brightness(0.94);
 }
 
-/* 3. Same-turn Priority / Step Cards (:::card [P0|P1|P2|Step] Title) */
+/* 3. Calm Editorial Section Divider (:::card [concept|mechanism|compare|trap|formula] Title) */
 .mp-learn-card {
-  margin: 10px 0;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.2));
-  border-left: 3.5px solid var(--mp-rule, rgba(128, 128, 128, 0.45));
-  background: var(--mp-learn-card-bg);
-}
-
-.mp-learn-card[data-priority="p0"] {
-  border-left-color: var(--mp-learn-p0);
-}
-
-.mp-learn-card[data-priority="p1"] {
-  border-left-color: var(--mp-learn-p1);
-}
-
-.mp-learn-card[data-priority="p2"] {
-  border-left-color: var(--mp-learn-p2);
+  margin: 18px 0 12px;
+  padding: 12px 0 2px;
+  border: 0;
+  border-top: 1px solid var(--mp-line-soft);
+  border-radius: 0;
+  background: transparent;
 }
 
 .mp-learn-card-head {
@@ -117,44 +114,29 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .mp-learn-card-title-cluster {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
 
-.mp-learn-card-badge {
+.mp-learn-card-tag {
   flex: none;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  background: rgba(128, 128, 128, 0.14);
-  color: var(--mp-text, inherit);
-}
-
-.mp-learn-card-badge[data-priority="p0"] {
-  background: var(--mp-learn-p0-bg);
-  color: var(--mp-learn-p0);
-}
-
-.mp-learn-card-badge[data-priority="p1"] {
-  background: var(--mp-learn-p1-bg);
-  color: var(--mp-learn-p1);
-}
-
-.mp-learn-card-badge[data-priority="p2"] {
-  background: var(--mp-learn-p2-bg);
-  color: var(--mp-learn-p2);
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mp-text-muted, #767578);
+  user-select: none;
 }
 
 .mp-learn-card-title {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--mp-text, inherit);
 }
@@ -162,21 +144,32 @@
 .mp-learn-card-ask {
   flex: none;
   appearance: none;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.24));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
   background: transparent;
-  color: var(--mp-muted, #6e6d70);
-  font-size: 11.5px;
+  color: var(--mp-text-muted, #767578);
   cursor: pointer;
+  opacity: 0;
   user-select: none;
-  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
 }
 
-.mp-learn-card-ask:hover {
-  color: var(--mp-learn-accent);
-  border-color: var(--mp-learn-accent-border);
-  background: var(--mp-learn-accent-soft);
+.mp-learn-card:hover .mp-learn-card-ask,
+.mp-learn-card:focus-within .mp-learn-card-ask,
+.mp-learn-card-ask:focus-visible {
+  opacity: 1;
+}
+
+.mp-learn-card-ask:hover,
+.mp-learn-card-ask:focus-visible {
+  color: var(--mp-text, inherit);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
 }
 
 .mp-learn-card-body > :first-child {
@@ -191,42 +184,40 @@
 .mp-learn-math-inline {
   display: inline-block;
   padding: 0 2px;
-  border-radius: 4px;
+  border-radius: 3px;
   cursor: pointer;
   transition: background-color 120ms ease;
 }
 
 .mp-learn-math-inline:hover {
-  background: var(--mp-learn-accent-soft);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
 }
 
 .mp-learn-math-block {
   position: relative;
-  margin: 10px 0;
-  padding: 12px 16px;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
   overflow-x: auto;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease;
 }
 
 .mp-learn-math-block:hover {
-  background: var(--mp-learn-accent-soft);
-  border-color: var(--mp-learn-accent-border);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.04));
 }
 
 .mp-learn-math-ask-pill {
   position: absolute;
-  top: 6px;
+  top: 8px;
   right: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--mp-page, #ffffff);
-  border: 1px solid var(--mp-learn-accent-border);
-  color: var(--mp-learn-accent);
-  font-size: 11px;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--mp-text-muted, #767578);
   opacity: 0;
   pointer-events: none;
   user-select: none;
@@ -238,18 +229,18 @@
   opacity: 1;
 }
 
-/* 5. Hover Micro-Gloss Tooltip & Floating Selection Toolbar */
+/* 5. Hover Micro-Gloss Tooltip & Contextual Inquiry Popover */
 .mp-learn-gloss-popover {
   position: fixed;
-  z-index: 9600;
-  max-width: 320px;
-  padding: 8px 11px;
+  z-index: 9640;
+  max-width: 300px;
+  padding: 7px 10px;
   border-radius: 8px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.25));
-  background: var(--mp-page, #ffffff);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  border: 1px solid var(--mp-line-soft);
+  background: var(--mp-learn-surface);
+  box-shadow: var(--mp-shadow-menu, 0 8px 24px rgba(0, 0, 0, 0.10));
   color: var(--mp-text, #1f1f21);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.45;
   pointer-events: none;
 }
@@ -258,57 +249,179 @@
   display: block;
   margin-bottom: 2px;
   font-size: 12px;
-  color: var(--mp-learn-accent);
+  font-weight: 600;
+  color: var(--mp-text, inherit);
 }
 
 .mp-learn-gloss-popover small {
   display: block;
-  margin-top: 4px;
+  margin-top: 3px;
   font-size: 11px;
-  color: var(--mp-muted, #767578);
+  color: var(--mp-text-muted, #767578);
 }
 
-.mp-learn-selection-bar {
+.mp-learn-popover {
   position: fixed;
-  z-index: 9650;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 999px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.28));
-  background: var(--mp-page, #ffffff);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-  user-select: none;
+  z-index: 9680;
+  width: min(360px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--mp-line-soft);
+  background: var(--mp-learn-surface);
+  box-shadow: var(--mp-shadow-menu, 0 8px 24px rgba(0, 0, 0, 0.12));
+  color: var(--mp-text, #1f1f21);
 }
 
-.mp-learn-selection-bar button {
-  appearance: none;
-  padding: 4px 10px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--mp-text, #1f1f21);
-  font-size: 12px;
+.mp-learn-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mp-learn-popover-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mp-learn-popover-kind {
+  flex: none;
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
   font-weight: 500;
-  cursor: pointer;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-popover-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mp-text, inherit);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mp-learn-selection-bar button:hover {
-  background: var(--mp-learn-accent-soft);
-  color: var(--mp-learn-accent);
+.mp-learn-popover-close {
+  flex: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mp-text-muted, #767578);
+  cursor: pointer;
 }
 
-/* 6. Right-Leaning Hierarchical Conversation Tree */
+.mp-learn-popover-close:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-popover-snippet {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mp-text-secondary, #52514e);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-learn-popover-gloss {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--mp-line-soft);
+}
+
+.mp-learn-popover-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mp-text, inherit);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.mp-learn-popover-input:focus {
+  outline: none;
+  background: var(--mp-hover, rgba(11, 11, 11, 0.04));
+}
+
+.mp-learn-popover-highlight,
+.mp-learn-popover-submit {
+  flex: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mp-learn-popover-highlight:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-popover-submit {
+  border-color: var(--mp-line-hover);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-popover-submit:hover:not(:disabled) {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.06));
+}
+
+.mp-learn-popover-submit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 6. Inline Borderless Margin-Spine Subtrees */
 .mp-learn-tree-host {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 10px;
+  margin: 8px 0 4px;
 }
 
-/* Alternative Option 2 (recorded in SDD Spec): fixed-width horizontal track scroll */
+.mp-learn-tree-host.mp-learn-inline-subtree {
+  margin: 6px 0 14px;
+}
+
 .mp-learn-tree-host[data-tree-overflow-mode="horizontal-scroll"] {
   overflow-x: auto;
   padding-bottom: 8px;
@@ -324,10 +437,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--mp-learn-accent-border);
-  background: var(--mp-learn-accent-soft);
+  padding: 5px 0;
+  border-top: 1px solid var(--mp-line-soft);
+  border-bottom: 1px solid var(--mp-line-soft);
   font-size: 12px;
   user-select: none;
 }
@@ -342,22 +454,26 @@
 
 .mp-learn-focus-crumb {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 6px;
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--mp-text, inherit);
+  color: var(--mp-text-secondary, #52514e);
   font-size: 12px;
   cursor: pointer;
 }
 
 .mp-learn-focus-crumb:hover {
-  background: rgba(128, 128, 128, 0.14);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
 }
 
 .mp-learn-focus-crumb.is-current {
   font-weight: 600;
-  color: var(--mp-learn-accent);
+  color: var(--mp-text, inherit);
 }
 
 .mp-learn-focus-actions {
@@ -369,26 +485,34 @@
 
 .mp-learn-focus-actions button {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 8px;
   border-radius: 5px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.26));
-  background: var(--mp-page, #ffffff);
-  color: var(--mp-text, inherit);
+  border: 1px solid var(--mp-line-soft);
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
   font-size: 11.5px;
   cursor: pointer;
 }
 
-/* Tree Node Row: Spine Rail + Right-Leaning Card */
+.mp-learn-focus-actions button:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+/* Tree Node Row: Quiet 2px Margin Spine + 16px Clean Indent */
 .mp-learn-node-row {
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  margin-left: calc(var(--mp-learn-indent, 0) * 20px);
+  gap: 10px;
+  margin-left: calc(var(--mp-learn-indent, 1) * 16px);
   min-width: 0;
 }
 
 .mp-learn-spine {
-  flex: 0 0 16px;
+  flex: 0 0 12px;
   appearance: none;
   position: relative;
   padding: 0;
@@ -401,31 +525,20 @@
 .mp-learn-spine::before {
   content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 7px;
+  top: 4px;
+  bottom: 4px;
+  left: 5px;
   width: 2px;
-  border-radius: 2px;
-  background: var(--mp-learn-spine);
-  transition: background-color 120ms ease, width 120ms ease;
+  border-radius: 1px;
+  background: var(--mp-line-soft);
+  transition: background-color 120ms ease;
 }
 
-.mp-learn-spine::after {
-  content: "";
-  position: absolute;
-  top: 16px;
-  left: 7px;
-  width: 8px;
-  height: 2px;
-  background: var(--mp-learn-spine);
+.mp-learn-spine:hover::before {
+  background: var(--mp-line-hover);
 }
 
-.mp-learn-spine:hover::before,
-.mp-learn-spine:hover::after {
-  background: var(--mp-learn-spine-hover);
-}
-
-/* Collapsed 1-Line Insight Capsule & Docked Portal Pill */
+/* Collapsed 1-Line Summary & Docked Portal Line (Borderless Editorial) */
 .mp-learn-capsule,
 .mp-learn-portal-pill {
   flex: 1 1 auto;
@@ -434,37 +547,30 @@
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px dashed var(--mp-rule, rgba(128, 128, 128, 0.3));
-  background: var(--mp-learn-card-bg);
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
   font-size: 12.5px;
-}
-
-.mp-learn-portal-pill {
-  border-style: solid;
-  border-color: var(--mp-learn-accent-border);
-  background: var(--mp-learn-accent-soft);
 }
 
 .mp-learn-capsule-main,
 .mp-learn-portal-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   cursor: pointer;
 }
 
 .mp-learn-capsule-title {
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   color: var(--mp-text, inherit);
 }
 
 .mp-learn-capsule-summary {
-  color: var(--mp-muted, #6f6e72);
+  color: var(--mp-text-muted, #767578);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -473,35 +579,51 @@
 .mp-learn-pill-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: none;
+  opacity: 0.72;
+  transition: opacity 120ms ease;
+}
+
+.mp-learn-capsule:hover .mp-learn-pill-actions,
+.mp-learn-portal-pill:hover .mp-learn-pill-actions,
+.mp-learn-pill-actions:focus-within {
+  opacity: 1;
 }
 
 .mp-learn-pill-actions button {
   appearance: none;
-  padding: 2px 8px;
-  border-radius: 5px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.25));
-  background: var(--mp-page, #ffffff);
-  color: var(--mp-text, inherit);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-text-muted, #767578);
   font-size: 11px;
   cursor: pointer;
 }
 
-/* Expanded Branch Card */
+.mp-learn-pill-actions button:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+/* Expanded Subtree (Borderless Academic Margin Note) */
 .mp-learn-branch-card {
   flex: 1 1 auto;
   min-width: 0;
-  border-radius: 11px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.24));
-  background: var(--mp-learn-card-bg);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
-  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 0 4px;
 }
 
 .mp-learn-branch-card.is-highlighted {
-  border-color: var(--mp-learn-accent);
-  box-shadow: 0 0 0 2px var(--mp-learn-accent-soft);
+  outline: 1px solid var(--mp-line-hover);
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 
 .mp-learn-branch-head {
@@ -509,9 +631,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 11px;
-  border-bottom: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.16));
-  background: rgba(128, 128, 128, 0.04);
+  padding: 2px 0 4px;
   cursor: grab;
   user-select: none;
 }
@@ -523,29 +643,45 @@
 .mp-learn-branch-title-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 
-.mp-learn-drag-grip {
-  color: var(--mp-muted, #888);
-  font-size: 12px;
-  letter-spacing: -1px;
+.mp-learn-collapse-btn {
+  flex: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mp-text-muted, #767578);
+  cursor: pointer;
 }
 
-.mp-learn-kind-chip {
+.mp-learn-collapse-btn:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-kind-tag {
   flex: none;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--mp-learn-accent-soft);
-  color: var(--mp-learn-accent);
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mp-text-muted, #767578);
 }
 
 .mp-learn-branch-title {
   font-size: 12.5px;
   font-weight: 600;
+  color: var(--mp-text-secondary, #52514e);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -554,87 +690,137 @@
 .mp-learn-branch-tools {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mp-learn-branch-card:hover > .mp-learn-branch-head .mp-learn-branch-tools,
+.mp-learn-branch-card:focus-within > .mp-learn-branch-head .mp-learn-branch-tools {
+  opacity: 1;
 }
 
 .mp-learn-branch-tools button {
   appearance: none;
-  padding: 2px 7px;
-  border-radius: 5px;
-  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 0;
   background: transparent;
-  color: var(--mp-muted, #6f6e72);
+  color: var(--mp-text-muted, #767578);
   font-size: 11px;
   cursor: pointer;
 }
 
 .mp-learn-branch-tools button:hover {
-  border-color: var(--mp-rule, rgba(128, 128, 128, 0.25));
-  background: var(--mp-page, #ffffff);
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
   color: var(--mp-text, inherit);
 }
 
-/* Turns inside a Branch */
+/* Turns inside a Subtree */
 .mp-learn-branch-turns {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 13px;
+  gap: 8px;
+  padding: 2px 0 6px;
 }
 
 .mp-learn-branch-turn {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .mp-learn-branch-q {
-  align-self: flex-end;
-  max-width: 88%;
-  padding: 6px 11px;
-  border-radius: 10px;
-  background: rgba(128, 128, 128, 0.11);
-  color: var(--mp-text, inherit);
   font-size: 13px;
-  line-height: 1.45;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--mp-text-secondary, #52514e);
+  padding: 1px 0;
 }
 
 .mp-learn-branch-a {
-  font-size: 13.5px;
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--mp-text, inherit);
 }
 
 .mp-learn-streaming-status {
-  display: inline-flex;
+  display: flex;
+  min-height: 20px;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--mp-learn-accent);
+  gap: 10px;
+  font-size: var(--cds-font-size-footnote, 12px);
+  line-height: var(--cds-leading-footnote, 15px);
+  color: var(--cds-text-secondary, var(--mp-text-secondary, #52514e));
   user-select: none;
 }
 
-/* Inline Child Branch Composer & Follow-up Footer */
+.mp-learn-streaming-spark {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--mp-clay, #d97757);
+}
+
+.mp-learn-streaming-spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.mp-learn-streaming-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: mp-learn-thinking-shimmer 2s ease-in-out 1.5s infinite;
+  will-change: opacity;
+}
+
+@keyframes mp-learn-thinking-shimmer {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-learn-streaming-label {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+[data-reduce-motion="true"] .mp-learn-streaming-label {
+  animation: none;
+  will-change: auto;
+}
+
+/* Inline Subtree Follow-up Input (Quiet Hairline Footer) */
 .mp-learn-composer {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 9px 12px;
-  border-top: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.15));
-  background: rgba(128, 128, 128, 0.025);
-}
-
-.mp-learn-composer.is-draft-spawn {
-  margin-top: 6px;
-  border: 1px solid var(--mp-learn-accent-border);
-  border-radius: 10px;
-  background: var(--mp-learn-card-bg);
+  gap: 4px;
+  padding: 4px 0 2px;
+  border-bottom: 1px solid var(--mp-line-soft);
+  background: transparent;
 }
 
 .mp-learn-composer.is-lemma-drop-target,
 #composer-form.is-lemma-drop-target,
 #composer.is-lemma-drop-target {
-  outline: 2px dashed var(--mp-learn-accent);
+  outline: 1.5px dashed var(--mp-line-hover);
   outline-offset: 2px;
 }
 
@@ -645,39 +831,6 @@
 #composer-lemma-strip:empty {
   display: none;
   padding: 0;
-}
-
-.mp-learn-composer-anchor {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11.5px;
-  color: var(--mp-learn-accent);
-  user-select: none;
-}
-
-.mp-learn-quick-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  user-select: none;
-}
-
-.mp-learn-quick-chip {
-  appearance: none;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--mp-learn-accent-border);
-  background: var(--mp-learn-accent-soft);
-  color: var(--mp-learn-accent);
-  font-size: 11.5px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.mp-learn-quick-chip:hover {
-  filter: brightness(0.95);
 }
 
 .mp-learn-lemma-strip {
@@ -695,16 +848,18 @@
   align-items: center;
   gap: 5px;
   padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--mp-learn-accent-border);
-  background: var(--mp-learn-accent-soft);
-  color: var(--mp-learn-accent);
+  border-radius: 5px;
+  border: 1px solid var(--mp-line-soft);
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
   font-size: 11px;
   user-select: none;
 }
 
 .mp-learn-lemma-chip button {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
   padding: 0 2px;
   border: 0;
   background: transparent;
@@ -714,65 +869,57 @@
 
 .mp-learn-composer-row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 6px;
 }
 
 .mp-learn-composer-input {
   flex: 1 1 auto;
-  min-height: 32px;
-  max-height: 120px;
-  padding: 6px 9px;
-  border-radius: 7px;
-  border: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.28));
-  background: var(--mp-page, #ffffff);
+  min-height: 26px;
+  max-height: 96px;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
   color: var(--mp-text, inherit);
   font: inherit;
   font-size: 12.5px;
   line-height: 1.45;
-  resize: vertical;
+  resize: none;
 }
 
 .mp-learn-composer-input:focus {
   outline: none;
-  border-color: var(--mp-learn-accent);
 }
 
 .mp-learn-composer-send,
-.mp-learn-composer-stop,
-.mp-learn-composer-cancel {
+.mp-learn-composer-stop {
   flex: none;
   appearance: none;
-  height: 32px;
-  padding: 0 11px;
-  border-radius: 7px;
-  border: 1px solid transparent;
-  font-size: 12px;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11.5px;
+  font-weight: 500;
   cursor: pointer;
   user-select: none;
 }
 
-.mp-learn-composer-send {
-  background: var(--mp-learn-accent);
-  color: #ffffff;
+.mp-learn-composer-send:hover:not(:disabled),
+.mp-learn-composer-stop:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
 }
 
 .mp-learn-composer-send:disabled {
-  opacity: 0.45;
+  opacity: 0.35;
   cursor: default;
-}
-
-.mp-learn-composer-stop {
-  border-color: var(--mp-learn-p0);
-  background: var(--mp-learn-p0-bg);
-  color: var(--mp-learn-p0);
-}
-
-.mp-learn-composer-cancel {
-  border-color: var(--mp-rule, rgba(128, 128, 128, 0.25));
-  background: transparent;
-  color: var(--mp-muted, #777);
 }
 
 /* 7. Right-Pane Split Workbench (Learn Deck) & Tear-off Drop Zone */
@@ -789,14 +936,14 @@
   justify-content: center;
   gap: 8px;
   padding: 20px;
-  border-radius: 14px;
-  border: 2px dashed var(--mp-learn-accent);
-  background: color-mix(in srgb, var(--mp-page, #ffffff) 86%, var(--mp-learn-accent) 14%);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16);
-  color: var(--mp-learn-accent);
+  border-radius: 12px;
+  border: 1.5px dashed var(--mp-line-hover);
+  background: var(--mp-learn-surface);
+  box-shadow: var(--mp-shadow-menu, 0 12px 36px rgba(0, 0, 0, 0.14));
+  color: var(--mp-text, inherit);
   text-align: center;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease, transform 140ms ease;
@@ -810,13 +957,13 @@
 }
 
 .mp-learn-dock-dropzone.is-over {
-  transform: scale(1.02);
+  transform: scale(1.01);
 }
 
 .mp-learn-deck {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   padding: 12px;
   height: 100%;
   overflow-y: auto;
@@ -828,21 +975,86 @@
   justify-content: space-between;
   gap: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--mp-rule, rgba(128, 128, 128, 0.18));
+  border-bottom: 1px solid var(--mp-line-soft);
 }
 
 .mp-learn-deck-header p {
   margin: 2px 0 0;
   font-size: 11.5px;
-  color: var(--mp-muted, #767578);
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-deck .mp-learn-branch-card + .mp-learn-branch-card {
+  padding-top: 12px;
+  border-top: 1px solid var(--mp-line-soft);
 }
 
 .mp-learn-deck-empty {
-  padding: 28px 16px;
-  border-radius: 10px;
-  border: 1px dashed var(--mp-rule, rgba(128, 128, 128, 0.25));
+  padding: 24px 14px;
   text-align: center;
-  color: var(--mp-muted, #767578);
+  color: var(--mp-text-muted, #767578);
   font-size: 12.5px;
   line-height: 1.6;
+}
+
+.mp-learn-popover-priority {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-popover-priority-label {
+  flex: none;
+}
+
+.mp-learn-priority-opt,
+.mp-learn-priority {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--mp-text-muted, #767578);
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mp-learn-priority-opt:hover,
+.mp-learn-priority:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-priority-opt.is-on,
+.mp-learn-priority.is-set {
+  border-color: var(--mp-line-hover);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-priority.is-p1 {
+  font-weight: 600;
+}
+
+.mp-learn-priority:not(.is-set) {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mp-learn-branch-card:hover > .mp-learn-branch-head .mp-learn-priority,
+.mp-learn-branch-card:focus-within > .mp-learn-branch-head .mp-learn-priority {
+  opacity: 1;
+}
+
+.is-learn-return-flash {
+  background: var(--mp-learn-mark-bg, rgba(232, 185, 72, 0.16));
+  border-radius: 4px;
+  transition: background-color 600ms ease;
 }
