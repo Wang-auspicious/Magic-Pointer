@@ -122,7 +122,10 @@ const ChatMarkdown = (() => {
   }
 
   function renderMathNode(tex: string, displayMode: boolean): MdNode {
-    const cleaned = String(tex || '').trim();
+    const cleaned = String(tex || '')
+      .trim()
+      .replace(/\^\s*\\\*/g, '^*')
+      .replace(/\{\s*\\\*\s*\}/g, '{*}');
     const katexApi = resolveKatex();
     const baseAttrs: Record<string, string> = {
       class: displayMode ? 'mp-learn-math-block' : 'mp-learn-math-inline',

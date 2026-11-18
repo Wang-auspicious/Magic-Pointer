@@ -162,9 +162,10 @@ test('LearnTree converts raw LaTeX branch labels to Unicode, builds Tufte sideno
 test('ChatMarkdown renders $0$, $1$, and later $\\infty$ on the same line, and learn_tree.css clears .mpw-rail below #learn-hud', () => {
   const ChatMarkdown = require('../electron/renderer/chat_markdown');
   const rendered = ChatMarkdown.render(
-    '把 $\\rho$ 从 $0$ 拉到 $\\infty$ 就把阈值从 $0$ 拉到 $1$。',
+    '把 $\\rho$ 从 $0$ 拉到 $\\infty$ 就把阈值从 $0$ 拉到 $1$，并检验 $\\theta^\\*$ 与 $\\eta^{\\*}$。',
   ).outerHTML;
   assert.doesNotMatch(rendered, /\$0\$|\$1\$|\$\\infty\$/);
+  assert.doesNotMatch(rendered, /#cc0000|katex-error/);
   const css = fs.readFileSync(
     path.join(ROOT, 'electron', 'renderer', 'learn_tree.css'),
     'utf8',

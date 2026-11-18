@@ -6785,6 +6785,9 @@ const ChatView = (() => {
         node.replaceChildren(next);
         lastMarkdownText.set(node, text);
         globalThis.OpenUIHost?.sync(node, scope, true);
+        (
+          globalThis as unknown as {LearnLab?: {hydrate?(el: HTMLElement): void}}
+        ).LearnLab?.hydrate?.(node);
         return;
       }
       const blocks = Array.from(next.childNodes);
@@ -6792,6 +6795,14 @@ const ChatView = (() => {
         const existing = current.childNodes[index];
         if (!existing) {
           current.appendChild(block);
+        } else if (
+          existing instanceof HTMLElement &&
+          block instanceof HTMLElement &&
+          existing.hasAttribute('data-learn-lab-spec') &&
+          block.hasAttribute('data-learn-lab-spec')
+        ) {
+          existing.dataset.learnLabSpec = block.dataset.learnLabSpec;
+          existing.dataset.learnLabComplete = block.dataset.learnLabComplete;
         } else if (
           existing instanceof HTMLElement &&
           block instanceof HTMLElement &&
@@ -6828,6 +6839,9 @@ const ChatView = (() => {
       }
       lastMarkdownText.set(node, text);
       globalThis.OpenUIHost?.sync(node, scope, true);
+      (
+        globalThis as unknown as {LearnLab?: {hydrate?(el: HTMLElement): void}}
+      ).LearnLab?.hydrate?.(node);
     };
 
     const liveMarkdownNode = (text: string) => {
