@@ -1499,6 +1499,7 @@
 
 .mp-learn-map-stage {
   position: relative;
+  max-height: min(46vh, 410px);
   overflow: auto;
   border: 1px solid var(--mp-line-soft);
   border-radius: 8px;

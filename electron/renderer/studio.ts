@@ -7298,6 +7298,13 @@ function setProductMode(mode: ProductMode, navigate = true) {
     /* renderer storage unavailable */
   }
   syncSkimToggleUi(activeConversationRecord);
+  if (typeof LearnTree !== 'undefined') {
+    LearnTree.renderHud(
+      document.getElementById('learn-hud'),
+      activeConversationRecord,
+      document.getElementById('stream'),
+    );
+  }
   if (navigate) {
     if (changed && activeConversationId) {
       startNewChat();
@@ -16014,6 +16021,13 @@ function startNewChat(draftId?: string) {
   activeConversationRecord = null;
   activeConversationTurns = [];
   activeConversationObject = {};
+  if (typeof LearnTree !== 'undefined') {
+    LearnTree.renderHud(
+      document.getElementById('learn-hud'),
+      null,
+      document.getElementById('stream'),
+    );
+  }
   conversationRefreshSequence += 1;
   recoveryRenderGeneration += 1;
   const recovery = document.getElementById('conversation-recovery');
