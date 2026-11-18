@@ -1015,8 +1015,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
+  white-space: nowrap;
   height: 19px;
-  padding: 0 5px;
+  padding: 0 6px;
   border-radius: 4px;
   border: 1px solid transparent;
   background: transparent;
@@ -1260,4 +1262,164 @@
 .mp-learn-fade-grade.is-gap:hover {
   border-color: #d97757;
   color: #d97757;
+}
+
+/* 9. Learn Workbench HUD, Multi-Resolution StretchText & Tufte Margin Sidenotes */
+.mp-learn-hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--mp-line-soft);
+  background: var(--mp-learn-surface, #ffffff);
+  font-size: 12px;
+  flex: none;
+}
+
+.mp-learn-hud-left,
+.mp-learn-hud-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mp-learn-hud-mastery {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--mp-text-secondary, #52514e);
+  white-space: nowrap;
+}
+
+.mp-learn-hud-bar {
+  width: 56px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--mp-line-soft);
+  overflow: hidden;
+}
+
+.mp-learn-hud-bar-fill {
+  display: block;
+  height: 100%;
+  background: #3b8264;
+  border-radius: 99px;
+  transition: width 220ms ease;
+}
+
+.mp-learn-hud-segment {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 6px;
+  gap: 2px;
+}
+
+.mp-learn-hud-btn {
+  appearance: none;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.mp-learn-hud-btn:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.05));
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-hud-btn.is-on,
+.mp-learn-hud-btn[aria-pressed="true"] {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.07));
+  border-color: var(--mp-line-hover);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-hud-pill {
+  appearance: none;
+  padding: 3px 9px;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-hud-pill:hover {
+  border-color: var(--mp-line-hover);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-hud-pill[aria-pressed="true"] {
+  border-color: #d97757;
+  color: #d97757;
+}
+
+/* Multi-resolution StretchText overview mode: distill long answers to skeleton + lead + math/labs */
+#stream[data-learn-resolution="overview"] .mp-learn-card-body > p:not(:first-of-type),
+#stream[data-learn-resolution="overview"] .mp-learn-card-body > ul,
+#stream[data-learn-resolution="overview"] .mp-learn-card-body > ol {
+  display: none;
+}
+
+#stream[data-learn-resolution="overview"] .mp-learn-branch-card {
+  padding-block: 4px;
+}
+
+/* Tufte wide-viewport margin sidenote gutter (gracefully hidden on narrow/inspector views) */
+.mp-learn-sidenote-gutter {
+  display: none;
+}
+
+@media (min-width: 1220px) {
+  .mp-shell[data-product-mode="design"]:not([data-inspector="open"]) #stream .mp-chat-markdown > [data-block-index] {
+    position: relative;
+  }
+
+  .mp-shell[data-product-mode="design"]:not([data-inspector="open"]) #stream .mp-learn-sidenote-gutter {
+    position: absolute;
+    left: calc(100% + 22px);
+    top: 2px;
+    width: 210px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 10px;
+    box-shadow: inset 1px 0 0 var(--mp-line-soft);
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--mp-text-muted, #767578);
+  }
+}
+
+.mp-learn-sidenote-item strong {
+  display: block;
+  color: var(--mp-text-secondary, #52514e);
+  font-weight: 500;
+}
+
+.mp-learn-branch-retry {
+  appearance: none;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--mp-line-hover);
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
 }

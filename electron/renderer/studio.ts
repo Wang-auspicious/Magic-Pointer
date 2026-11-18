@@ -4922,6 +4922,9 @@ async function openConversation(id: string) {
       studioT('chat.empty_body'),
     );
     ChatView.bindDelegation(stream);
+    if (typeof LearnTree !== 'undefined') {
+      LearnTree.renderHud(document.getElementById('learn-hud'), c, stream);
+    }
     syncConversationPendingInput(turns);
     renderUsageMeter([]);
     renderConversationActivity();
@@ -4961,6 +4964,7 @@ async function openConversation(id: string) {
   }
   if (typeof LearnTree !== 'undefined') {
     LearnTree.mountConversation(stream, c);
+    LearnTree.renderHud(document.getElementById('learn-hud'), c, stream);
     if (inspectorState.open && activeInspectorTab === 'learn') {
       LearnTree.renderDeck(document.getElementById('learn-deck-host'), c);
     }
@@ -5130,6 +5134,11 @@ async function refreshOpenConversation(
       }
       if (typeof LearnTree !== 'undefined') {
         LearnTree.mountConversation(stream, conversation!);
+        LearnTree.renderHud(
+          document.getElementById('learn-hud'),
+          conversation!,
+          stream,
+        );
       }
       applySkimSaliency(stream, conversation!);
     });

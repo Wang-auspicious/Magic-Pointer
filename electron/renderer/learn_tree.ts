@@ -16,6 +16,11 @@ declare global {
       streamEl: HTMLElement,
       conversation: MagicPointerConversation | null | undefined,
     ): void;
+    renderHud(
+      hudEl: HTMLElement | null,
+      conversation: MagicPointerConversation | null | undefined,
+      streamEl: HTMLElement | null,
+    ): void;
     renderDeck(
       hostEl: HTMLElement | null,
       conversation: MagicPointerConversation | null | undefined,
@@ -686,12 +691,44 @@ declare global {
     );
   }
 
+  function getConceptGraphApi(): ConceptGraphController | null {
+    if (typeof ConceptGraph !== 'undefined' && ConceptGraph) {
+      return ConceptGraph;
+    }
+    const g =
+      typeof globalThis !== 'undefined'
+        ? (globalThis as unknown as {ConceptGraph?: ConceptGraphController})
+        : null;
+    return g?.ConceptGraph || null;
+  }
+
   function cleanFormulaLabel(tex: string): string {
-    const clean = tex.replace(/\s+/g, ' ').trim();
-    if (!clean) {
+    const graphApi = getConceptGraphApi();
+    const normalized = graphApi
+      ? graphApi.cleanFormulaText(tex)
+      : String(tex || '')
+          .replace(/\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, '($1)/($2)')
+          .replace(/\\omega(?![A-Za-z])/g, 'ω')
+          .replace(/\\alpha(?![A-Za-z])/g, 'α')
+          .replace(/\\lambda(?![A-Za-z])/g, 'λ')
+          .replace(/\\theta(?![A-Za-z])/g, 'θ')
+          .replace(/\\sigma(?![A-Za-z])/g, 'σ')
+          .replace(/\\ge|\\geq(?![A-Za-z])/g, '≥')
+          .replace(/\\le|\\leq(?![A-Za-z])/g, '≤')
+          .replace(/\\mid(?![A-Za-z])/g, '|')
+          .replace(/_\{?1\}?/g, '₁')
+          .replace(/_\{?2\}?/g, '₂')
+          .replace(/_\{?21\}?/g, '₂₁')
+          .replace(/_\{?11\}?/g, '₁₁')
+          .replace(/_\{?12\}?/g, '₁₂')
+          .replace(/_\{?22\}?/g, '₂₂')
+          .replace(/[{}]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+    if (!normalized) {
       return '公式';
     }
-    return clean.length > 42 ? `${clean.slice(0, 42)}…` : clean;
+    return normalized.length > 42 ? `${normalized.slice(0, 42)}…` : normalized;
   }
 
   let returnFlashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1705,6 +1742,174 @@ declare global {
     ).filter(md => !md.closest('.mp-learn-tree-host'));
   }
 
+  const resolutionByConvo = new Map<string, 'overview' | 'standard' | 'deep'>();
+  const fadingByConvo = new Map<string, boolean>();
+
+  function projectSidenotesForMarkdown(rootMd: Element): void {
+    if (typeof rootMd.querySelectorAll !== 'function') {
+      return;
+    }
+    rootMd.querySelectorAll('.mp-learn-sidenote-gutter').forEach(elNode => {
+      elNode.remove();
+    });
+    rootMd.querySelectorAll<HTMLElement>('[data-block-index]').forEach(blockEl => {
+      const terms = Array.from(
+        blockEl.querySelectorAll<HTMLElement>('.mp-learn-term[data-mp-learn-gloss]'),
+      ).slice(0, 2);
+      if (!terms.length) {
+        return;
+      }
+      const gutter = el('aside', 'mp-learn-sidenote-gutter');
+      gutter.setAttribute('aria-label', '边注');
+      for (const termEl of terms) {
+        const title = termEl.dataset.mpLearnTerm || termEl.textContent || '';
+        const gloss = termEl.dataset.mpLearnGloss || '';
+        if (!gloss.trim()) {
+          continue;
+        }
+        const item = el('div', 'mp-learn-sidenote-item');
+        item.appendChild(el('strong', '', cleanFormulaLabel(title)));
+        item.appendChild(el('span', '', gloss.trim()));
+        gutter.appendChild(item);
+      }
+      if (gutter.children.length > 0) {
+        blockEl.appendChild(gutter);
+      }
+    });
+  }
+
+  function applyFadeGrade(
+    conversationId: string,
+    info: {blockIndex?: number; label: string; status: 'verified' | 'gap'},
+    hudEl: HTMLElement | null,
+    streamEl: HTMLElement | null,
+  ): void {
+    const conv = hooks?.getConversation();
+    if (!conv || conv.id !== conversationId) {
+      return;
+    }
+    const turnIdx = Math.max(0, (conv.turns?.length || 1) - 1);
+    const nodeId =
+      typeof info.blockIndex === 'number' && Number.isInteger(info.blockIndex)
+        ? `t${turnIdx}:b${info.blockIndex}`
+        : `fade:${info.label.slice(0, 32)}`;
+    const dataApi = getDataApi();
+    if (dataApi) {
+      void dataApi
+        .learnPatch({
+          conversationId,
+          action: 'set-mastery',
+          nodeId,
+          title: info.label,
+          status: info.status,
+          note: info.status === 'verified' ? '挖空自测通过' : '挖空自测需重看',
+        })
+        .then(res => {
+          const nextConv = (res?.conversation as MagicPointerConversation | undefined) || conv;
+          renderHud(hudEl, nextConv, streamEl);
+          return hooks?.refreshConversation(conversationId);
+        });
+    }
+  }
+
+  function renderHud(
+    hudEl: HTMLElement | null,
+    conversation: MagicPointerConversation | null | undefined,
+    streamEl: HTMLElement | null,
+  ): void {
+    if (!hudEl) {
+      return;
+    }
+    const hasAssistantAnswer = Boolean(
+      conversation?.turns?.some(t => String(t.answer || '').trim()),
+    );
+    if (!conversation || conversation.workMode !== 'learn' || !hasAssistantAnswer) {
+      hudEl.hidden = true;
+      if (streamEl?.dataset) {
+        delete streamEl.dataset.learnResolution;
+      }
+      return;
+    }
+    hudEl.hidden = false;
+    hudEl.innerHTML = '';
+
+    const convId = conversation.id;
+    const resolution = resolutionByConvo.get(convId) || 'standard';
+    const fadingOn = fadingByConvo.get(convId) === true;
+    if (streamEl?.dataset) {
+      streamEl.dataset.learnResolution = resolution;
+    }
+
+    const graphApi = getConceptGraphApi();
+    const topology = graphApi ? graphApi.extractTopology(conversation) : null;
+    const total = topology?.summary.total ?? 0;
+    const verified = topology?.summary.verified ?? 0;
+    const pct = total > 0 ? Math.round((verified / total) * 100) : 0;
+
+    const left = el('div', 'mp-learn-hud-left');
+    const mastery = el('div', 'mp-learn-hud-mastery');
+    mastery.appendChild(el('span', '', `掌握 ${verified}/${total}`));
+    const bar = el('span', 'mp-learn-hud-bar');
+    const fill = el('span', 'mp-learn-hud-bar-fill');
+    if (fill.style) {
+      fill.style.width = `${pct}%`;
+    }
+    bar.appendChild(fill);
+    mastery.appendChild(bar);
+    left.appendChild(mastery);
+
+    const resGroup = el('div', 'mp-learn-hud-segment');
+    const resOptions: ReadonlyArray<{id: 'overview' | 'standard' | 'deep'; label: string}> = [
+      {id: 'overview', label: '概览'},
+      {id: 'standard', label: '精读'},
+      {id: 'deep', label: '深挖'},
+    ];
+    for (const opt of resOptions) {
+      const btn = el('button', 'mp-learn-hud-btn', opt.label);
+      btn.type = 'button';
+      if (resolution === opt.id) {
+        btn.classList.add('is-on');
+      }
+      btn.setAttribute('aria-pressed', String(resolution === opt.id));
+      btn.addEventListener('click', () => {
+        resolutionByConvo.set(convId, opt.id);
+        if (streamEl?.dataset) {
+          streamEl.dataset.learnResolution = opt.id;
+        }
+        renderHud(hudEl, hooks?.getConversation() || conversation, streamEl);
+      });
+      resGroup.appendChild(btn);
+    }
+    left.appendChild(resGroup);
+
+    const right = el('div', 'mp-learn-hud-right');
+    const fadeBtn = el('button', 'mp-learn-hud-pill', '挖空自测');
+    fadeBtn.type = 'button';
+    fadeBtn.setAttribute('aria-pressed', String(fadingOn));
+    fadeBtn.title = '切换主动回忆挖空遮罩';
+    fadeBtn.addEventListener('click', () => {
+      const next = !(fadingByConvo.get(convId) === true);
+      fadingByConvo.set(convId, next);
+      if (streamEl) {
+        getLearnLabApi()?.applyFadeMode(streamEl, next, info =>
+          applyFadeGrade(convId, info, hudEl, streamEl),
+        );
+      }
+      renderHud(hudEl, hooks?.getConversation() || conversation, streamEl);
+    });
+    right.appendChild(fadeBtn);
+
+    const deckBtn = el('button', 'mp-learn-hud-pill', '图谱 · 学习台');
+    deckBtn.type = 'button';
+    deckBtn.addEventListener('click', () => {
+      hooks?.openDeckInInspector();
+    });
+    right.appendChild(deckBtn);
+
+    hudEl.appendChild(left);
+    hudEl.appendChild(right);
+  }
+
   function mountConversation(
     streamEl: HTMLElement,
     conversation: MagicPointerConversation | null | undefined,
@@ -1741,6 +1946,7 @@ declare global {
       for (const rootMd of rootMarkdowns) {
         applyUserHighlightsToContainer(rootMd, turnHighlights);
         getLearnLabApi()?.hydrate(rootMd);
+        projectSidenotesForMarkdown(rootMd);
       }
 
       const directChildren = allBranches.filter(
@@ -1788,6 +1994,22 @@ declare global {
         inDeck: false,
       });
     });
+    const resMode = resolutionByConvo.get(conversation.id);
+    if (resMode && streamEl.dataset) {
+      streamEl.dataset.learnResolution = resMode;
+    }
+    if (fadingByConvo.get(conversation.id) === true) {
+      getLearnLabApi()?.applyFadeMode(streamEl, true, info =>
+        applyFadeGrade(
+          conversation.id,
+          info,
+          typeof document !== 'undefined'
+            ? document.getElementById('learn-hud')
+            : null,
+          streamEl,
+        ),
+      );
+    }
   }
 
   function renderDeck(
@@ -2249,7 +2471,7 @@ declare global {
         triggerEl: katexEl,
         anchor: {
           kind: 'math',
-          label: tex.length > 42 ? `${tex.slice(0, 42)}…` : tex,
+          label: cleanFormulaLabel(tex),
           snippet: tex,
           ...(blockIndex !== undefined ? {blockIndex} : {}),
         },
@@ -2564,6 +2786,7 @@ declare global {
   const LearnTreeApi = {
     init,
     mountConversation,
+    renderHud,
     renderDeck,
     renderMainComposerLemmas,
     formatQuestionWithMainLemmas,
@@ -2575,6 +2798,7 @@ declare global {
     __test: {
       placeLearnPopover,
       hideInquiryPopover,
+      cleanFormulaLabel,
     },
   };
 
