@@ -766,7 +766,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'subagent.thinking': {en: 'Thinking', zh: '思考中'},
   'subagent.thinking_live': {en: 'Thinking…', zh: '正在思考…'},
   'subagent.thought': {en: 'Thought', zh: '思考记录'},
-  'inspector.learn': {en: 'Learn deck', zh: '并排对照台'},
+  'inspector.learn': {en: 'Learning workbench', zh: '学习台'},
   'inspector.materials': {en: 'Materials', zh: '资料'},
   'inspector.files': {en: 'Files', zh: '文件'},
   'inspector.browser': {en: 'Browser', zh: '浏览器'},

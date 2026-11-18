@@ -118,6 +118,10 @@ declare global {
     [/\\prod(?![A-Za-z])/g, '∏'],
     [/\\int(?![A-Za-z])/g, '∫'],
     [/\\pi(?![A-Za-z])/g, 'π'],
+    [/\\rho(?![A-Za-z])/g, 'ρ'],
+    [/\\tau(?![A-Za-z])/g, 'τ'],
+    [/\\nu(?![A-Za-z])/g, 'ν'],
+    [/\\kappa(?![A-Za-z])/g, 'κ'],
     [/\\(?:phi|varphi)(?![A-Za-z])/g, 'φ'],
     [/\\psi(?![A-Za-z])/g, 'ψ'],
     [/\\omega(?![A-Za-z])/g, 'ω'],
@@ -133,6 +137,7 @@ declare global {
     [/\\approx(?![A-Za-z])/g, '≈'],
     [/\\cdot(?![A-Za-z])/g, '·'],
     [/\\times(?![A-Za-z])/g, '×'],
+    [/\\(argmin|argmax|arg|min|max|exp|log|ln)(?![A-Za-z])/g, '$1'],
     [/\\(?:to|rightarrow)(?![A-Za-z])/g, '→'],
     [/\\Rightarrow(?![A-Za-z])/g, '⇒'],
     [/\\in(?![A-Za-z])/g, '∈'],
@@ -140,7 +145,11 @@ declare global {
     [/\\sqrt(?![A-Za-z])/g, '√'],
     [/\\mathbb\{R\}/g, 'ℝ'],
     [/\\mathbb\{E\}/g, '𝔼'],
-    [/\\(?:left|right|text|mathrm|mathbf|boldsymbol)(?![A-Za-z])/g, ''],
+    [/\\mathbb\{([^}]+)\}/g, '$1'],
+    [/\\(?:left|right|text|mathrm|mathbf|boldsymbol|quad|qquad)(?![A-Za-z])/g, ''],
+    [/\\[,;!]/g, ''],
+    [/\^\s*\\\*/g, '^*'],
+    [/\{\s*\\\*\s*\}/g, '{*}'],
   ];
 
   const SUBSCRIPTS: Readonly<Record<string, string>> = {
@@ -154,11 +163,14 @@ declare global {
     '7': '₇',
     '8': '₈',
     '9': '₉',
+    a: 'ₐ',
     i: 'ᵢ',
     j: 'ⱼ',
     k: 'ₖ',
+    m: 'ₘ',
     n: 'ₙ',
     t: 'ₜ',
+    x: 'ₓ',
   };
 
   const SUPERSCRIPTS: Readonly<Record<string, string>> = {
@@ -579,7 +591,7 @@ declare global {
               turnIndex,
               blockIndex: -1,
               role: 'prerequisite',
-              title: label,
+              title: cleanFormulaText(label) || label,
               summary: '前置依赖概念',
               terms: [],
               highlights: [],
@@ -645,17 +657,18 @@ declare global {
         }
 
         const plainSummary = stripMarkupForSummary(unit.rawBody);
+        const rawSummary =
+          signals.highlights[0] ||
+          (plainSummary.length > 110
+            ? `${plainSummary.slice(0, 110)}…`
+            : plainSummary);
         nodes.push({
           id: nodeId,
           turnIndex,
           blockIndex: unit.blockIndex,
           role: unit.role,
-          title: unit.title,
-          summary:
-            signals.highlights[0] ||
-            (plainSummary.length > 110
-              ? `${plainSummary.slice(0, 110)}…`
-              : plainSummary),
+          title: cleanFormulaText(unit.title) || unit.title,
+          summary: cleanFormulaText(rawSummary) || rawSummary,
           formula: signals.formula,
           terms: signals.terms,
           highlights: signals.highlights,

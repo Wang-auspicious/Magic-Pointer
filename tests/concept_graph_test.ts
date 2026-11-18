@@ -18,6 +18,10 @@ test('ConceptGraph extracts DAG topology from structured and plain Learn answers
     ConceptGraph.cleanFormulaText('\\lambda_{21} - \\lambda_{11} \\ge \\omega_1'),
     'λ₂₁ - λ₁₁ ≥ ω₁',
   );
+  assert.equal(
+    ConceptGraph.cleanFormulaText('后验门槛 $\\tau$ 与 \\rho = \\arg\\min_a R^*'),
+    '后验门槛 τ 与 ρ = argminₐ R⁎',
+  );
 
   const structuredConv = {
     id: 'conv-m2-1',

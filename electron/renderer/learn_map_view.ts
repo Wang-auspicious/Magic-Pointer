@@ -220,8 +220,8 @@ declare global {
       byLayer.get(l)!.push(n);
     }
     const sortedLayers = [...byLayer.keys()].sort((a, b) => a - b);
-    const nodeW = 148;
-    const nodeH = 44;
+    const nodeW = 156;
+    const nodeH = 50;
     const colGap = 28;
     const rowGap = 24;
     const padX = 16;
