@@ -4066,6 +4066,39 @@ ipcMain.handle(
           conversation: toggled.conversation,
         };
       }
+      if (action === 'save-digest') {
+        const markdown = String(raw?.markdown || '').trim();
+        if (!markdown) {
+          return {ok: false, error: 'empty_digest'};
+        }
+        const safeId =
+          conversationId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) ||
+          'learn-digest';
+        const digestDir = path.join(FABRIC_DATA_DIR, 'learn-digests');
+        let filePath: string | undefined;
+        try {
+          fs.mkdirSync(digestDir, {recursive: true});
+          filePath = path.join(digestDir, `${safeId}.md`);
+          fs.writeFileSync(filePath, markdown, 'utf8');
+        } catch {
+          filePath = undefined;
+        }
+        const saved = conversations().saveLearnDigest(conversationId, {
+          markdown,
+          filePath,
+        });
+        if (!saved.ok) {
+          return {ok: false, error: 'save_digest_failed'};
+        }
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+        return {
+          ok: true,
+          digest: saved.digest,
+          filePath: saved.digest?.filePath,
+          conversation: saved.conversation,
+        };
+      }
       if (action === 'set-mastery') {
         const res = conversations().setLearnMastery(conversationId, {
           nodeId: String(raw?.nodeId || ''),
@@ -4318,12 +4351,22 @@ ipcMain.handle(
 
     const requestId =
       String(raw?.requestId || '').trim() || `learn-${crypto.randomUUID()}`;
+    const kindRaw = String(raw?.kind || '').trim();
+    const branchKind =
+      kindRaw === 'quiz' ||
+      kindRaw === 'feynman' ||
+      kindRaw === 'ask' ||
+      kindRaw === 'inquiry' ||
+      kindRaw === 'socratic'
+        ? (kindRaw as 'ask' | 'quiz' | 'feynman' | 'inquiry' | 'socratic')
+        : undefined;
     const appended = conversations().appendBranchTurn({
       conversationId,
       branchId: existingBranch?.id,
       parentBranchId,
       parentTurnIndex,
       anchor: raw?.anchor,
+      ...(branchKind ? {kind: branchKind} : {}),
       agentSessionId: branchSessionId,
       forkMessageCount,
       question,

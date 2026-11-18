@@ -154,7 +154,7 @@ export interface LearnBranch {
   parentBranchId: string | null;
   parentTurnIndex: number;
   anchor: LearnAnchor;
-  kind?: 'inquiry' | 'socratic' | 'feynman';
+  kind?: 'ask' | 'quiz' | 'feynman' | 'inquiry' | 'socratic';
   title: string;
   agentSessionId: string;
   forkMessageCount?: number;
@@ -201,6 +201,7 @@ interface Conversation {
   branches?: LearnBranch[];
   userHighlights?: LearnUserHighlight[];
   learnMastery?: Record<string, LearnMasteryEntry>;
+  learnDigest?: {markdown: string; updatedAt: number; filePath?: string};
   workspaceRoot?: string;
   additionalFolders?: string[];
   modelSelection?: ConversationModelSelection;
@@ -1661,6 +1662,7 @@ function createConversationStore(
     parentBranchId?: string | null;
     parentTurnIndex?: number;
     anchor?: unknown;
+    kind?: LearnBranch['kind'];
     title?: string;
     agentSessionId: string;
     forkMessageCount?: number;
@@ -1698,6 +1700,7 @@ function createConversationStore(
         parentBranchId: input.parentBranchId ? String(input.parentBranchId) : null,
         parentTurnIndex: Math.max(0, Math.floor(Number(input.parentTurnIndex) || 0)),
         anchor,
+        ...(input.kind ? {kind: input.kind} : {}),
         title: String(input.title || anchor.label).trim().slice(0, 120) || anchor.label,
         agentSessionId: String(input.agentSessionId || '').trim(),
         ...(Number.isInteger(input.forkMessageCount) &&
@@ -1981,6 +1984,32 @@ function createConversationStore(
     return {ok: true, entry, conversation: target};
   }
 
+  function saveLearnDigest(
+    id: string,
+    input: {markdown: string; filePath?: string},
+  ): {
+    ok: boolean;
+    digest?: {markdown: string; updatedAt: number; filePath?: string};
+    conversation?: Conversation;
+  } {
+    const target = get(id);
+    const markdown = String(input.markdown || '').trim().slice(0, 120_000);
+    if (!target || !markdown) {
+      return {ok: false};
+    }
+    const at = now();
+    const digest = {
+      markdown,
+      updatedAt: at,
+      ...(input.filePath ? {filePath: String(input.filePath).trim()} : {}),
+    };
+    target.learnDigest = digest;
+    target.updatedAt = at;
+    markDirty(target);
+    persist();
+    return {ok: true, digest, conversation: target};
+  }
+
   function ancestorTurnsForBranch(
     conversation: Conversation,
     branch: LearnBranch,
@@ -2097,6 +2126,7 @@ function createConversationStore(
     updateBranchMeta,
     toggleUserHighlight,
     setLearnMastery,
+    saveLearnDigest,
     promoteBranch,
     ancestorTurnsForBranch,
     recordPermissionDecision,

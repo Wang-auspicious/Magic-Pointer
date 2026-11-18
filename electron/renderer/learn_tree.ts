@@ -250,6 +250,43 @@ declare global {
     return null;
   }
 
+  function getLearnMapApi(): {
+    layoutTopology?: (
+      topology: unknown,
+      filter?: 'all' | 'unmastered' | 'p1',
+    ) => unknown;
+    renderMap?: (
+      hostEl: HTMLElement | null,
+      topology: unknown,
+      options?: Record<string, unknown>,
+    ) => void;
+  } | null {
+    const g = globalThis as unknown as {
+      LearnMapView?: {
+        layoutTopology?: (
+          topology: unknown,
+          filter?: 'all' | 'unmastered' | 'p1',
+        ) => unknown;
+        renderMap?: (
+          hostEl: HTMLElement | null,
+          topology: unknown,
+          options?: Record<string, unknown>,
+        ) => void;
+      };
+    };
+    if (g.LearnMapView) {
+      return g.LearnMapView;
+    }
+    if (typeof require === 'function') {
+      try {
+        return require('./learn_map_view');
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   function prefersReducedMotion(): boolean {
     if (
       typeof document !== 'undefined' &&
@@ -961,6 +998,7 @@ declare global {
     parentBranchId: string | null;
     parentTurnIndex: number;
     anchor?: MagicPointerLearnAnchor;
+    kind?: MagicPointerLearnBranch['kind'];
     question: string;
     lemmaKey: string;
   }): Promise<void> {
@@ -983,6 +1021,7 @@ declare global {
       parentBranchId: params.parentBranchId,
       parentTurnIndex: params.parentTurnIndex,
       anchor: params.anchor,
+      ...(params.kind ? {kind: params.kind} : {}),
       question: trimmed,
       lemmaRefs,
       requestId,
@@ -1431,6 +1470,11 @@ declare global {
     titleRow.appendChild(
       el('span', 'mp-learn-kind-tag', kindBadgeText(branch.anchor.kind)),
     );
+    if (branch.kind === 'quiz' || branch.kind === 'socratic') {
+      titleRow.appendChild(el('span', 'mp-learn-mode-tag is-quiz', '防错测验'));
+    } else if (branch.kind === 'feynman') {
+      titleRow.appendChild(el('span', 'mp-learn-mode-tag is-feynman', '费曼诊断'));
+    }
     const branchPriority = normalizePriority(branch.anchor?.priority);
     const priorityBtn = el(
       'button',
@@ -1506,6 +1550,7 @@ declare global {
       });
       dockBtn.addEventListener('click', async () => {
         highlightedBranchId = branch.id;
+        workbenchTabByConvo.set(conversation.id, 'deck');
         await getDataApi()?.learnPatch({
           conversationId: conversation.id,
           action: 'update-branch',
@@ -1616,6 +1661,54 @@ declare global {
         aWrap.appendChild(errRow);
       }
       turnWrap.appendChild(aWrap);
+
+      if (
+        (branch.kind === 'quiz' ||
+          branch.kind === 'feynman' ||
+          branch.kind === 'socratic') &&
+        effectiveAnswer.trim() &&
+        !isStreamingThisTurn
+      ) {
+        const masteryRow = el('div', 'mp-learn-branch-mastery');
+        masteryRow.appendChild(
+          el('span', 'mp-learn-branch-mastery-label', '检验结论：'),
+        );
+        const nodeId =
+          typeof branch.anchor?.blockIndex === 'number' &&
+          Number.isInteger(branch.anchor.blockIndex)
+            ? `t${rootTurnOfBranch(branch, byId)}:b${branch.anchor.blockIndex}`
+            : `branch:${branch.id}`;
+        const markVerified = el('button', 'mp-learn-fade-grade is-ok', '已理解 · verified');
+        markVerified.type = 'button';
+        markVerified.addEventListener('click', () => {
+          void getDataApi()
+            ?.learnPatch({
+              conversationId: conversation.id,
+              action: 'set-mastery',
+              nodeId,
+              title: cleanFormulaLabel(branch.anchor.label || branch.title),
+              status: 'verified',
+              note: `${branch.kind === 'feynman' ? '费曼复述' : '防错测验'}通过`,
+            })
+            .then(() => hooks?.refreshConversation(conversation.id));
+        });
+        const markGap = el('button', 'mp-learn-fade-grade is-gap', '暴露盲区 · gap');
+        markGap.type = 'button';
+        markGap.addEventListener('click', () => {
+          void getDataApi()
+            ?.learnPatch({
+              conversationId: conversation.id,
+              action: 'set-mastery',
+              nodeId,
+              title: cleanFormulaLabel(branch.anchor.label || branch.title),
+              status: 'gap',
+              note: `${branch.kind === 'feynman' ? '费曼复述' : '防错测验'}暴露盲区`,
+            })
+            .then(() => hooks?.refreshConversation(conversation.id));
+        });
+        masteryRow.append(markVerified, markGap);
+        turnWrap.appendChild(masteryRow);
+      }
 
       const childBranches = allBranches.filter(
         candidate =>
@@ -1744,6 +1837,131 @@ declare global {
 
   const resolutionByConvo = new Map<string, 'overview' | 'standard' | 'deep'>();
   const fadingByConvo = new Map<string, boolean>();
+  const workbenchTabByConvo = new Map<string, 'map' | 'queue' | 'deck' | 'digest'>();
+
+  function buildSocraticQuizPrompt(
+    anchor: MagicPointerLearnAnchor,
+    userHint?: string,
+  ): string {
+    const label = cleanFormulaLabel(anchor.label || '当前概念');
+    const snippet =
+      anchor.snippet && anchor.snippet !== anchor.label
+        ? `（原文：「${anchor.snippet.slice(0, 180)}」）`
+        : '';
+    const hint = userHint?.trim()
+      ? `\n请重点围绕此方向出题：${userHint.trim()}`
+      : '';
+    return `[防错诊断测验 · 「${label}」${snippet}]
+请先不要直接重述答案，先围绕这个节点的核心假设、边界条件或最易混淆的反例，给我出 1 道简短的诊断题或追问，等我作答后再核对我的推导漏洞。${hint}`;
+  }
+
+  function buildFeynmanEvalPrompt(
+    anchor: MagicPointerLearnAnchor,
+    explanation: string,
+  ): string {
+    const label = cleanFormulaLabel(anchor.label || '当前概念');
+    return `[费曼复述诊断 · 「${label}」]
+我的复述：「${explanation.trim()}」
+
+请像严格而耐心的导师一样对照原推导评估这段费曼复述：
+1. 我准确抓住了哪些核心因果关系？
+2. 我遗漏或隐含搞错了哪个关键前提、假设或边界条件？
+3. 用一句话给出可直接内化记忆的修正版核心直觉。`;
+  }
+
+  function buildFeynmanDigestMarkdown(
+    conversation: MagicPointerConversation,
+    topology: {
+      nodes: Array<{
+        id: string;
+        role: string;
+        title: string;
+        summary: string;
+        formula?: string;
+        highlights: string[];
+        status: string;
+        priority: string;
+        prereqLabels: string[];
+      }>;
+      summary: {
+        total: number;
+        verified: number;
+        gap?: number;
+        gaps?: number;
+        questioned?: number;
+      };
+    } | null,
+  ): string {
+    const title = cleanFormulaLabel(conversation.title || 'Learn 学习笔记');
+    const lines: string[] = [`# ${title} — 费曼学习沉淀`, ''];
+    if (topology) {
+      const gapCount = topology.summary.gap ?? topology.summary.gaps ?? 0;
+      const p1Count = (conversation.branches || []).filter(
+        b => normalizePriority(b.anchor?.priority) === 'P1',
+      ).length;
+      lines.push(
+        `- 掌握进度：${topology.summary.verified}/${topology.summary.total}（盲区 ${gapCount} · P1 重点 ${p1Count}）`,
+        '',
+      );
+      const prereqs = topology.nodes.flatMap(n => n.prereqLabels || []);
+      if (prereqs.length) {
+        lines.push(`## 前置基础`, `- ${[...new Set(prereqs)].join(' -> ')}`, '');
+      }
+      lines.push('## 核心概念与自检状态');
+      for (const node of topology.nodes) {
+        const badge =
+          node.status === 'verified'
+            ? '[已掌握]'
+            : node.status === 'gap'
+              ? '[待补盲区]'
+              : node.status === 'questioned'
+                ? '[追问中]'
+                : '[待检验]';
+        lines.push(`- ${badge} **${node.title}**${node.summary ? ` — ${node.summary}` : ''}`);
+        for (const hl of node.highlights) {
+          lines.push(`  - 要点：${hl}`);
+        }
+      }
+      lines.push('');
+    }
+    const branches = sortBranchesByPriority(conversation.branches || []);
+    if (branches.length) {
+      lines.push('## 疑问队列（按 P1 → P3 优先级）');
+      for (const br of branches) {
+        const pri = normalizePriority(br.anchor?.priority) || '常规';
+        const kindTag =
+          br.kind === 'quiz' || br.kind === 'socratic'
+            ? '[防错测验] '
+            : br.kind === 'feynman'
+              ? '[费曼复述] '
+              : '';
+        lines.push(
+          `- **[${pri}]** ${kindTag}${cleanFormulaLabel(br.title)}：${branchSummaryForLemma(br)}`,
+        );
+      }
+      lines.push('');
+    }
+    return lines.join('\n').trim();
+  }
+
+  function jumpToStreamBlock(turnIndex: number, blockIndex: number): void {
+    const stream =
+      typeof document !== 'undefined' ? document.getElementById('stream') : null;
+    if (!stream || typeof stream.querySelector !== 'function') {
+      return;
+    }
+    const target =
+      stream.querySelector<HTMLElement>(
+        `.mp-chat-flow-item[data-turn-index="${turnIndex}"] [data-block-index="${blockIndex}"]`,
+      ) ||
+      stream.querySelector<HTMLElement>(`[data-block-index="${blockIndex}"]`) ||
+      stream.querySelector<HTMLElement>(
+        `.mp-chat-flow-item[data-turn-index="${turnIndex}"]`,
+      );
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+  }
 
   function projectSidenotesForMarkdown(rootMd: Element): void {
     if (typeof rootMd.querySelectorAll !== 'function') {
@@ -2020,7 +2238,282 @@ declare global {
       return;
     }
     hostEl.replaceChildren();
-    const wrap = el('div', 'mp-learn-deck');
+    const wrap = el('div', 'mp-learn-workbench mp-learn-deck');
+    if (!conversation) {
+      wrap.appendChild(
+        el('div', 'mp-learn-deck-empty', '打开一个 Learn 会话后即可使用概念图谱、疑问队列、并排对照台与学习沉淀。'),
+      );
+      hostEl.appendChild(wrap);
+      return;
+    }
+
+    const convId = conversation.id;
+    const allBranches = conversation.branches || [];
+    const docked = allBranches.filter(b => b.docked);
+    const topology = getConceptGraphApi()?.extractTopology(conversation) || null;
+    const activeTab = workbenchTabByConvo.get(convId) || 'map';
+
+    const tabsBar = el('nav', 'mp-learn-wb-tabs');
+    tabsBar.setAttribute('aria-label', '学习台子视图');
+    const tabDefs: ReadonlyArray<{
+      id: 'map' | 'queue' | 'deck' | 'digest';
+      label: string;
+    }> = [
+      {id: 'map', label: '图谱'},
+      {id: 'queue', label: '疑问队列'},
+      {id: 'deck', label: '对照台'},
+      {id: 'digest', label: '沉淀'},
+    ];
+    for (const def of tabDefs) {
+      const btn = el('button', 'mp-learn-wb-tab', def.label);
+      btn.type = 'button';
+      if (activeTab === def.id) {
+        btn.classList.add('is-on');
+      }
+      btn.setAttribute('aria-selected', String(activeTab === def.id));
+      btn.addEventListener('click', () => {
+        workbenchTabByConvo.set(convId, def.id);
+        renderDeck(hostEl, hooks?.getConversation() || conversation);
+      });
+      tabsBar.appendChild(btn);
+    }
+    wrap.appendChild(tabsBar);
+
+    const body = el('div', 'mp-learn-wb-body');
+    if (activeTab === 'map') {
+      const mapApi = getLearnMapApi();
+      if (mapApi && typeof mapApi.renderMap === 'function') {
+        mapApi.renderMap(body, topology, {
+          onJumpToBlock: (node: {turnIndex: number; blockIndex: number}) => {
+            jumpToStreamBlock(node.turnIndex, node.blockIndex);
+          },
+          onAskNode: (node: {
+            turnIndex: number;
+            blockIndex: number;
+            role: string;
+            title: string;
+            summary: string;
+          }) => {
+            const kind: MagicPointerLearnAnchor['kind'] =
+              node.role === 'formula'
+                ? 'math'
+                : node.role === 'prereq'
+                  ? 'term'
+                  : 'card';
+            openInquiryPopover(
+              {
+                conversationId: convId,
+                parentBranchId: null,
+                parentTurnIndex: node.turnIndex,
+                anchor: {
+                  kind,
+                  label: node.title,
+                  snippet: node.summary || node.title,
+                  blockIndex: node.blockIndex,
+                },
+                rect: {left: 120, top: 120, right: 280, bottom: 150},
+                fromSelection: false,
+              },
+              {focusInput: true},
+            );
+          },
+          onQuizNode: (node: {
+            turnIndex: number;
+            blockIndex: number;
+            role: string;
+            title: string;
+            summary: string;
+          }) => {
+            const anchor: MagicPointerLearnAnchor = {
+              kind: node.role === 'formula' ? 'math' : 'card',
+              label: node.title,
+              snippet: node.summary || node.title,
+              blockIndex: node.blockIndex,
+              priority: 'P1',
+            };
+            void submitBranchPrompt({
+              conversationId: convId,
+              parentBranchId: null,
+              parentTurnIndex: node.turnIndex,
+              anchor,
+              kind: 'quiz',
+              question: buildSocraticQuizPrompt(anchor),
+              lemmaKey: '__map__',
+            });
+          },
+          onSetMastery: (
+            node: {id: string; title: string},
+            status: 'verified' | 'gap',
+          ) => {
+            void getDataApi()
+              ?.learnPatch({
+                conversationId: convId,
+                action: 'set-mastery',
+                nodeId: node.id,
+                title: node.title,
+                status,
+              })
+              .then(res => {
+                const nextConv =
+                  (res?.conversation as MagicPointerConversation | undefined) ||
+                  conversation;
+                renderHud(
+                  typeof document !== 'undefined'
+                    ? document.getElementById('learn-hud')
+                    : null,
+                  nextConv,
+                  typeof document !== 'undefined'
+                    ? document.getElementById('stream')
+                    : null,
+                );
+                renderDeck(hostEl, nextConv);
+                return hooks?.refreshConversation(convId);
+              });
+          },
+        });
+      } else {
+        body.appendChild(
+          el('div', 'mp-learn-deck-empty', '概念依赖图谱模块未加载。'),
+        );
+      }
+      wrap.appendChild(body);
+      hostEl.appendChild(wrap);
+      return;
+    }
+
+    if (activeTab === 'queue') {
+      if (!allBranches.length) {
+        body.appendChild(
+          el(
+            'div',
+            'mp-learn-deck-empty',
+            '当前还没有待处理疑问。选中正文任意句子或点击公式即可创建带优先级的支线疑问。',
+          ),
+        );
+        wrap.appendChild(body);
+        hostEl.appendChild(wrap);
+        return;
+      }
+      const list = el('div', 'mp-learn-queue');
+      for (const br of sortBranchesByPriority(allBranches)) {
+        const item = el('div', 'mp-learn-queue-item');
+        const pri = normalizePriority(br.anchor?.priority);
+        const top = el('div', 'mp-learn-queue-head');
+        const priBadge = el(
+          'button',
+          `mp-learn-priority${pri ? ` is-set is-${pri.toLowerCase()}` : ''}`,
+          pri || '标优先',
+        );
+        priBadge.type = 'button';
+        priBadge.addEventListener('click', () => {
+          void getDataApi()?.learnPatch({
+            conversationId: convId,
+            action: 'update-branch',
+            branchId: br.id,
+            priority: nextPriorityValue(br.anchor?.priority),
+          });
+        });
+        top.appendChild(priBadge);
+        if (br.kind === 'quiz' || br.kind === 'socratic') {
+          top.appendChild(el('span', 'mp-learn-mode-tag is-quiz', '防错测验'));
+        } else if (br.kind === 'feynman') {
+          top.appendChild(el('span', 'mp-learn-mode-tag is-feynman', '费曼诊断'));
+        }
+        top.appendChild(
+          el(
+            'strong',
+            'mp-learn-queue-title',
+            `${pri ? `${pri} · ` : ''}${cleanFormulaLabel(br.title)}`,
+          ),
+        );
+        item.appendChild(top);
+
+        const summary = branchSummaryForLemma(br);
+        if (summary) {
+          item.appendChild(el('p', 'mp-learn-queue-summary', summary));
+        }
+        const acts = el('div', 'mp-learn-queue-actions');
+        const backBtn = el('button', 'mp-learn-map-act', '回原文');
+        backBtn.type = 'button';
+        backBtn.addEventListener('click', () => {
+          jumpToStreamBlock(br.parentTurnIndex, br.anchor?.blockIndex ?? 0);
+        });
+        const dockActBtn = el(
+          'button',
+          'mp-learn-map-act',
+          br.docked ? '取消停靠' : '停靠对照',
+        );
+        dockActBtn.type = 'button';
+        dockActBtn.addEventListener('click', () => {
+          if (!br.docked) {
+            workbenchTabByConvo.set(convId, 'deck');
+          }
+          void getDataApi()?.learnPatch({
+            conversationId: convId,
+            action: 'update-branch',
+            branchId: br.id,
+            docked: !br.docked,
+          });
+        });
+        acts.append(backBtn, dockActBtn);
+        item.appendChild(acts);
+        list.appendChild(item);
+      }
+      body.appendChild(list);
+      wrap.appendChild(body);
+      hostEl.appendChild(wrap);
+      return;
+    }
+
+    if (activeTab === 'digest') {
+      const digestMd = buildFeynmanDigestMarkdown(conversation, topology);
+      const digestBox = el('div', 'mp-learn-digest');
+      const toolbar = el('div', 'mp-learn-digest-toolbar');
+      const statusMsg = el('span', 'mp-learn-digest-status', '');
+      const copyBtn = el('button', 'mp-learn-map-act', '复制笔记');
+      copyBtn.type = 'button';
+      copyBtn.addEventListener('click', () => {
+        if (
+          typeof navigator !== 'undefined' &&
+          navigator.clipboard &&
+          typeof navigator.clipboard.writeText === 'function'
+        ) {
+          void navigator.clipboard.writeText(digestMd).then(() => {
+            statusMsg.textContent = '已复制到剪贴板';
+          });
+        } else {
+          statusMsg.textContent = '当前环境已生成 Markdown';
+        }
+      });
+      const saveBtn = el('button', 'mp-learn-map-act is-ok', '保存摘要');
+      saveBtn.type = 'button';
+      saveBtn.addEventListener('click', () => {
+        void getDataApi()
+          ?.learnPatch({
+            conversationId: convId,
+            action: 'save-digest',
+            markdown: digestMd,
+          })
+          .then(res => {
+            if (res?.ok) {
+              statusMsg.textContent = res.filePath
+                ? `已保存：${String(res.filePath)}`
+                : '学习摘要已保存';
+            }
+          });
+      });
+      toolbar.append(copyBtn, saveBtn, statusMsg);
+      digestBox.appendChild(toolbar);
+
+      const pre = el('pre', 'mp-learn-digest-pre', digestMd);
+      digestBox.appendChild(pre);
+      body.appendChild(digestBox);
+      wrap.appendChild(body);
+      hostEl.appendChild(wrap);
+      return;
+    }
+
+    // Tab: 'deck' (并排学习对照台)
     const head = el('header', 'mp-learn-deck-header');
     const titleBox = el('div');
     titleBox.appendChild(el('strong', '', '并排学习对照台'));
@@ -2032,25 +2525,24 @@ declare global {
       ),
     );
     head.appendChild(titleBox);
-    wrap.appendChild(head);
+    body.appendChild(head);
 
-    const allBranches = conversation?.branches || [];
-    const docked = allBranches.filter(b => b.docked);
-    if (!conversation || !docked.length) {
-      wrap.appendChild(
+    if (!docked.length) {
+      body.appendChild(
         el(
           'div',
           'mp-learn-deck-empty',
           '暂无停靠支线。在支线工具栏点击「对照台」或拖拽标题栏到此区域即可并排固定。',
         ),
       );
+      wrap.appendChild(body);
       hostEl.appendChild(wrap);
       return;
     }
 
     const byId = new Map(allBranches.map(b => [b.id, b] as const));
     for (const branch of sortBranchesByPriority(docked)) {
-      wrap.appendChild(
+      body.appendChild(
         renderBranchSubtree({
           conversation,
           branch,
@@ -2061,10 +2553,11 @@ declare global {
         }),
       );
     }
+    wrap.appendChild(body);
     hostEl.appendChild(wrap);
 
     if (highlightedBranchId) {
-      const targetCard = wrap.querySelector<HTMLElement>(
+      const targetCard = body.querySelector<HTMLElement>(
         `.mp-learn-branch-card[data-branch-id="${escapeCssSelectorValue(highlightedBranchId)}"]`,
       );
       if (targetCard && typeof targetCard.scrollIntoView === 'function') {
@@ -2166,7 +2659,7 @@ declare global {
   }
 
   function ensureInquiryPopover(): HTMLElement {
-    if (inquiryPopover) {
+    if (inquiryPopover && inquiryPopover.parentNode === document.body) {
       return inquiryPopover;
     }
     inquiryPopover = el('div', 'mp-learn-popover');
@@ -2259,29 +2752,98 @@ declare global {
     }
     pop.appendChild(priorityRow);
 
+    let inquiryMode: 'ask' | 'quiz' | 'feynman' = 'ask';
+    const modeRow = el('div', 'mp-learn-popover-modes');
+    const modeDefs: ReadonlyArray<{
+      id: 'ask' | 'quiz' | 'feynman';
+      label: string;
+      placeholder: string;
+      submitLabel: string;
+    }> = [
+      {
+        id: 'ask',
+        label: '追问',
+        placeholder: '输入针对此处的具体疑问…',
+        submitLabel: '追问',
+      },
+      {
+        id: 'quiz',
+        label: '防错测验',
+        placeholder: '可选：限定出题方向（留空则自动针对边界条件出题）',
+        submitLabel: '出题自测',
+      },
+      {
+        id: 'feynman',
+        label: '费曼复述',
+        placeholder: '用 1–3 句自己的话复述此处因果/直觉…',
+        submitLabel: '诊断复述',
+      },
+    ];
+    const modeBtns: HTMLButtonElement[] = [];
+
     const row = el('div', 'mp-learn-popover-row');
     const input = el('input', 'mp-learn-popover-input');
     input.type = 'text';
-    input.placeholder = '输入针对此处的具体疑问…';
+    input.placeholder = modeDefs[0]!.placeholder;
     const submitBtn = iconLabelButton({
       icon: 'arrow-up',
       label: '追问',
       className: 'mp-learn-popover-submit',
-      title: '发送追问',
+      title: '发送',
       iconSize: 12,
     });
-    submitBtn.disabled = true;
+    const syncSubmitState = () => {
+      const def = modeDefs.find(d => d.id === inquiryMode) || modeDefs[0]!;
+      input.placeholder = def.placeholder;
+      const labelSpan = submitBtn.querySelector?.('span');
+      if (labelSpan) {
+        labelSpan.textContent = def.submitLabel;
+      }
+      submitBtn.disabled = inquiryMode !== 'quiz' && !input.value.trim();
+    };
 
-    input.addEventListener('input', () => {
-      submitBtn.disabled = !input.value.trim();
-    });
+    for (const def of modeDefs) {
+      const mBtn = el('button', 'mp-learn-popover-mode', def.label);
+      mBtn.type = 'button';
+      toggleClass(mBtn, 'is-on', def.id === inquiryMode);
+      mBtn.setAttribute('aria-pressed', String(def.id === inquiryMode));
+      mBtn.addEventListener('mousedown', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      });
+      mBtn.addEventListener('click', () => {
+        inquiryMode = def.id;
+        for (let i = 0; i < modeBtns.length; i++) {
+          const active = modeDefs[i]!.id === inquiryMode;
+          toggleClass(modeBtns[i]!, 'is-on', active);
+          modeBtns[i]!.setAttribute('aria-pressed', String(active));
+        }
+        syncSubmitState();
+      });
+      modeBtns.push(mBtn);
+      modeRow.appendChild(mBtn);
+    }
+    pop.appendChild(modeRow);
+    syncSubmitState();
+
+    input.addEventListener('input', syncSubmitState);
 
     const triggerSubmit = () => {
       const current = popoverState;
-      const question = input.value.trim();
-      if (!current || !question) {
+      if (!current) {
         return;
       }
+      const rawText = input.value.trim();
+      if (inquiryMode !== 'quiz' && !rawText) {
+        return;
+      }
+      const question =
+        inquiryMode === 'quiz'
+          ? buildSocraticQuizPrompt(current.anchor, rawText)
+          : inquiryMode === 'feynman'
+            ? buildFeynmanEvalPrompt(current.anchor, rawText)
+            : rawText;
+      const kind = inquiryMode;
       hideInquiryPopover();
       if (typeof window !== 'undefined' && typeof window.getSelection === 'function') {
         window.getSelection()?.removeAllRanges?.();
@@ -2291,6 +2853,7 @@ declare global {
         parentBranchId: current.parentBranchId,
         parentTurnIndex: current.parentTurnIndex,
         anchor: current.anchor,
+        kind,
         question,
         lemmaKey: '__popover__',
       });
@@ -2351,11 +2914,15 @@ declare global {
       {width: pop.offsetWidth || 340, height: pop.offsetHeight || 110},
       {width: viewW, height: viewH},
     );
-    pop.style.top = `${placed.top}px`;
-    pop.style.left = `${placed.left}px`;
-    pop.dataset.placement = placed.placement;
+    if (pop.style) {
+      pop.style.top = `${placed.top}px`;
+      pop.style.left = `${placed.left}px`;
+    }
+    if (pop.dataset) {
+      pop.dataset.placement = placed.placement;
+    }
 
-    if (options.focusInput) {
+    if (options.focusInput && typeof input.focus === 'function') {
       input.focus();
     }
   }
@@ -2799,6 +3366,22 @@ declare global {
       placeLearnPopover,
       hideInquiryPopover,
       cleanFormulaLabel,
+      openPopoverForTest(input: {
+        conversationId: string;
+        parentBranchId: string | null;
+        parentTurnIndex: number;
+        anchor: MagicPointerLearnAnchor;
+        rect: RectLike;
+        fromSelection?: boolean;
+      }): void {
+        openInquiryPopover(
+          {
+            ...input,
+            fromSelection: Boolean(input.fromSelection),
+          },
+          {focusInput: false},
+        );
+      },
     },
   };
 

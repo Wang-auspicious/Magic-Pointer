@@ -1423,3 +1423,329 @@
   white-space: nowrap;
   cursor: pointer;
 }
+
+/* 10. 4-Tab Learning Workbench, Interactive Concept DAG Map, Queue, Digest & Popover Modes */
+.mp-learn-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mp-learn-wb-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--mp-line-soft);
+}
+
+.mp-learn-wb-tab {
+  appearance: none;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-wb-tab:hover {
+  background: var(--mp-hover, rgba(11, 11, 11, 0.04));
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-wb-tab.is-on {
+  border-color: var(--mp-line-hover);
+  background: var(--mp-learn-surface, #ffffff);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-wb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mp-learn-map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mp-learn-map-filter {
+  appearance: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--mp-line-soft);
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-map-filter.is-on {
+  border-color: #d97757;
+  color: #d97757;
+}
+
+.mp-learn-map-stage {
+  position: relative;
+  overflow: auto;
+  border: 1px solid var(--mp-line-soft);
+  border-radius: 8px;
+  background: var(--mp-learn-surface, #ffffff);
+}
+
+.mp-learn-map-svg {
+  display: block;
+  color: var(--mp-line-hover);
+}
+
+.mp-learn-map-edge {
+  stroke: var(--mp-line-soft);
+  transition: stroke 140ms ease;
+}
+
+.mp-learn-map-edge.is-active {
+  stroke: #d97757;
+}
+
+.mp-learn-map-nodes {
+  position: absolute;
+  inset: 0;
+}
+
+.mp-learn-map-node {
+  position: absolute;
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--mp-line-soft);
+  background: var(--mp-learn-surface, #ffffff);
+  color: var(--mp-text, inherit);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.mp-learn-map-node:hover,
+.mp-learn-map-node.is-selected {
+  border-color: #d97757;
+}
+
+.mp-learn-map-node-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-map-node-dot {
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mp-line-hover);
+}
+
+.mp-learn-map-node.is-status-verified .mp-learn-map-node-dot {
+  background: #3b8264;
+}
+
+.mp-learn-map-node.is-status-gap .mp-learn-map-node-dot {
+  background: #d97757;
+}
+
+.mp-learn-map-node.is-status-questioned .mp-learn-map-node-dot {
+  background: #c58b2a;
+}
+
+.mp-learn-map-node-title {
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-learn-map-detail {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--mp-line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mp-learn-map-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mp-learn-map-detail-title {
+  font-size: 12.5px;
+}
+
+.mp-learn-map-detail-status,
+.mp-learn-mode-tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--mp-line-soft);
+  color: var(--mp-text-secondary, #52514e);
+  white-space: nowrap;
+}
+
+.mp-learn-map-detail-status.is-status-verified {
+  border-color: rgba(59, 130, 100, 0.45);
+  color: #3b8264;
+}
+
+.mp-learn-map-detail-status.is-status-gap,
+.mp-learn-mode-tag.is-quiz {
+  border-color: rgba(217, 119, 87, 0.5);
+  color: #d97757;
+}
+
+.mp-learn-map-detail-line,
+.mp-learn-map-detail-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mp-text-secondary, #52514e);
+}
+
+.mp-learn-map-detail-actions,
+.mp-learn-queue-actions,
+.mp-learn-digest-toolbar,
+.mp-learn-branch-mastery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.mp-learn-map-act {
+  appearance: none;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--mp-line-soft);
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-map-act:hover {
+  border-color: var(--mp-line-hover);
+  color: var(--mp-text, inherit);
+}
+
+.mp-learn-map-act.is-ok:hover {
+  border-color: #3b8264;
+  color: #3b8264;
+}
+
+.mp-learn-map-act.is-gap:hover {
+  border-color: #d97757;
+  color: #d97757;
+}
+
+.mp-learn-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mp-learn-queue-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--mp-line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mp-learn-queue-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mp-learn-queue-title {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.mp-learn-queue-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mp-text-secondary, #52514e);
+}
+
+.mp-learn-digest-status {
+  font-size: 11px;
+  color: var(--mp-text-muted, #767578);
+}
+
+.mp-learn-digest-pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--mp-line-soft);
+  background: var(--mp-learn-surface, #ffffff);
+  font-family: var(--mp-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.mp-learn-popover-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mp-learn-popover-mode {
+  appearance: none;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--mp-line-soft);
+  background: transparent;
+  color: var(--mp-text-secondary, #52514e);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mp-learn-popover-mode.is-on {
+  border-color: #d97757;
+  color: #d97757;
+}
+
+.mp-learn-branch-mastery {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--mp-line-soft);
+}
+
+.mp-learn-branch-mastery-label {
+  font-size: 11px;
+  color: var(--mp-text-muted, #767578);
+}

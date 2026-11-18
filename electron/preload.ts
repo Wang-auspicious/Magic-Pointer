@@ -751,6 +751,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           payload.anchor && typeof payload.anchor === 'object'
             ? payload.anchor
             : undefined,
+        ...(typeof payload.kind === 'string' && payload.kind
+          ? {kind: String(payload.kind).slice(0, 32)}
+          : {}),
         question: String(payload.question || '').slice(0, 12000),
         lemmaRefs: Array.isArray(payload.lemmaRefs)
           ? payload.lemmaRefs.slice(0, 8)

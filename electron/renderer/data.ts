@@ -202,7 +202,7 @@ declare global {
     parentBranchId: string | null;
     parentTurnIndex: number;
     anchor: MagicPointerLearnAnchor;
-    kind?: 'inquiry' | 'socratic' | 'feynman';
+    kind?: 'ask' | 'quiz' | 'feynman' | 'inquiry' | 'socratic';
     title: string;
     agentSessionId: string;
     forkMessageCount?: number;
@@ -258,6 +258,7 @@ declare global {
     branches?: MagicPointerLearnBranch[];
     userHighlights?: MagicPointerLearnUserHighlight[];
     learnMastery?: Record<string, MagicPointerLearnMasteryEntry>;
+    learnDigest?: {markdown: string; updatedAt: number; filePath?: string};
   }
 
   interface MagicPointerConversationSummary
@@ -1544,6 +1545,7 @@ declare global {
       parentBranchId?: string | null;
       parentTurnIndex?: number;
       anchor?: MagicPointerLearnAnchor;
+      kind?: MagicPointerLearnBranch['kind'];
       question: string;
       lemmaRefs?: MagicPointerLearnLemmaRef[];
       requestId?: string;
@@ -2308,6 +2310,7 @@ const Data: MagicPointerDataApi = {
     parentBranchId?: string | null;
     parentTurnIndex?: number;
     anchor?: MagicPointerLearnAnchor;
+    kind?: MagicPointerLearnBranch['kind'];
     question: string;
     lemmaRefs?: MagicPointerLearnLemmaRef[];
     requestId?: string;
