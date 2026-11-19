@@ -513,6 +513,11 @@ export function isLearnWorkMode(mode?: string): boolean {
   return mode === 'learn' || mode === 'work';
 }
 
+const CODE_HARNESS_PROMPT = [
+  '工作模式：Code（工程构建与自动化执行）。围绕项目源码定位、最小精确修改、调试排错与可复现验证组织工作；交付必须写明改动文件、关键符号与实际验证命令结果。',
+  '操作桌面或浏览器任务时默认以高效 Autopilot 闭环交付（先 Observe 再精确执行并核验结果），无需套用 Learn 的 :::card / :::prereq / :::lab 教学块格式。',
+].join('\n');
+
 const LEARN_HARNESS_PROMPT = [
   '工作模式：Learn（非顺序认知学习系统）。围绕概念依赖图谱、第一性原理直觉、严密推导与可探索交互组织回答；无需代码仓库也可独立工作，必要时可调用全部科研、文档与代码工具。',
   '先给出完整、连贯且高信噪比的解答（禁止用空壳占位），并遵循以下克制的学术排版与非顺序结构规范（严禁使用 emoji 图标）：',
@@ -535,7 +540,7 @@ export async function buildSystemPrompt(
     '你是 Magic Pointer 的桌面助手，负责独立完成用户的科研学习、编程、办公与桌面任务。短任务与跨会话长任务都由你执行。',
     isLearnWorkMode(options.workMode)
       ? LEARN_HARNESS_PROMPT
-      : '工作模式：Code。围绕项目源码、实现、调试和验证组织工作；交付说明具体改动及验证结果。仍可调用所有已授权的办公和桌面能力。',
+      : CODE_HARNESS_PROMPT,
     options.hasSelection
       ? '用户圈选了对象。Look/Around/Tree 是历史冻结证据；Observe 是当前状态。历史坐标不能用于现在的点击。判断应用身份依据窗口事实。'
       : '根据本任务实际加入的材料工作，不要寻找不存在的屏幕对象。后续加入的指向以新的任务材料为准。',

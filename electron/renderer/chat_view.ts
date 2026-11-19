@@ -4284,6 +4284,10 @@ const ChatView = (() => {
       );
     }
     if (model.output !== null && !outputInCard) {
+      const cuReceipt = renderCuReceiptStrip(model.output);
+      if (cuReceipt) {
+        body.push(cuReceipt);
+      }
       const output = h('div', {class: 'mp-chat-tool-output'});
       if (model.state === 'error') {
         output.setAttribute('data-error', 'true');
@@ -4297,6 +4301,77 @@ const ChatView = (() => {
       hasResults: results !== null || workflow !== null,
       webCount,
     };
+  }
+
+  function renderCuReceiptStrip(output: string): ChatNode | null {
+    const trimmed = String(output || '').trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+      return null;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    const visualDelta =
+      parsed.visualDelta && typeof parsed.visualDelta === 'object'
+        ? (parsed.visualDelta as Record<string, unknown>)
+        : null;
+    const snapped =
+      parsed.snappedControl && typeof parsed.snappedControl === 'object'
+        ? (parsed.snappedControl as Record<string, unknown>)
+        : null;
+    const pt =
+      parsed.point && typeof parsed.point === 'object'
+        ? (parsed.point as Record<string, unknown>)
+        : parsed.actionTarget && typeof parsed.actionTarget === 'object'
+          ? (parsed.actionTarget as Record<string, unknown>)
+          : null;
+    if (!visualDelta && !snapped && !(pt && Number.isFinite(Number(pt.x)))) {
+      return null;
+    }
+    const strip = h('div', {class: 'mp-cu-receipt'});
+    let chips = 0;
+    if (pt && Number.isFinite(Number(pt.x)) && Number.isFinite(Number(pt.y))) {
+      attach(
+        strip,
+        h(
+          'span',
+          {class: 'mp-cu-receipt-chip'},
+          `坐标 (${Math.round(Number(pt.x))}, ${Math.round(Number(pt.y))})`,
+        ),
+      );
+      chips += 1;
+    }
+    if (snapped && snapped.name) {
+      const dist = Number.isFinite(Number(snapped.distancePx))
+        ? ` ±${Number(snapped.distancePx)}px`
+        : '';
+      attach(
+        strip,
+        h(
+          'span',
+          {class: 'mp-cu-receipt-chip'},
+          `磁吸控件「${String(snapped.name)}」${dist}`,
+        ),
+      );
+      chips += 1;
+    }
+    if (visualDelta && typeof visualDelta.screenChanged === 'boolean') {
+      attach(
+        strip,
+        h(
+          'span',
+          {
+            class: `mp-cu-receipt-chip ${visualDelta.screenChanged ? 'is-ok' : 'is-warn'}`,
+          },
+          visualDelta.screenChanged ? '界面已变化 ✓' : '界面未变化 ⚠',
+        ),
+      );
+      chips += 1;
+    }
+    return chips > 0 ? strip : null;
   }
 
   function thinkingQuote(text: string): string {

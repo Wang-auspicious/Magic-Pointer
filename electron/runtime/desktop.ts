@@ -123,6 +123,71 @@ function actionable(element: DesktopElement, window: DesktopWindow): boolean {
     )
   );
 }
+
+export interface SnappedDesktopControl {
+  ref: string;
+  name: string;
+  role: string;
+  distancePx: number;
+}
+
+/**
+ * Clicky-inspired magnetic small-control snapping (MIT, external/clicky-windows).
+ * When a vision model supplies raw coordinates within <= 30 px of a compact
+ * actionable UIA control (rejecting large containers > 600x360), snap to that
+ * control's exact center to eliminate near-miss clicks.
+ */
+export function snapDesktopPointToElement(
+  x: number,
+  y: number,
+  elements: readonly DesktopElement[],
+  window: DesktopWindow,
+  maxDistancePx = 30,
+): {
+  x: number;
+  y: number;
+  element?: DesktopElement;
+  snappedControl?: SnappedDesktopControl;
+} {
+  let best: DesktopElement | undefined;
+  let bestDist = maxDistancePx;
+  let bestCx = x;
+  let bestCy = y;
+  for (const el of elements) {
+    if (!actionable(el, window)) {
+      continue;
+    }
+    const [l, t, r, b] = el.rect;
+    const width = r - l;
+    const height = b - t;
+    if (width <= 0 || height <= 0 || width > 600 || height > 360) {
+      continue;
+    }
+    const cx = Math.round((l + r) / 2);
+    const cy = Math.round((t + b) / 2);
+    const dist = Math.hypot(cx - x, cy - y);
+    if (dist <= bestDist) {
+      bestDist = dist;
+      best = el;
+      bestCx = cx;
+      bestCy = cy;
+    }
+  }
+  if (!best) {
+    return {x, y};
+  }
+  return {
+    x: bestCx,
+    y: bestCy,
+    element: best,
+    snappedControl: {
+      ref: `@e${best.index}`,
+      name: String(best.name || best.role || '').slice(0, 64),
+      role: best.role,
+      distancePx: Math.round(bestDist * 10) / 10,
+    },
+  };
+}
 /** Screenshot the model actually looks at: bounded size, with each actionable UIA element boxed and labelled by its ref. */
 export async function markedObservationImage(
   surface: Buffer,
@@ -980,6 +1045,17 @@ export class DesktopActionSession {
   ): {x: number; y: number} {
     const x = Number(args[keys[0]]);
     const y = Number(args[keys[1]]);
+    if (args.coordinate_space === 'normalized') {
+      const [left, top, right, bottom] = snapshot.window.bbox;
+      const width = Math.max(1, right - left);
+      const height = Math.max(1, bottom - top);
+      const nx = Math.max(0, Math.min(1000, x));
+      const ny = Math.max(0, Math.min(1000, y));
+      return {
+        x: Math.round(left + (nx / 1000) * width),
+        y: Math.round(top + (ny / 1000) * height),
+      };
+    }
     if (args.coordinate_space !== 'image') {
       return {x, y};
     }
@@ -1183,17 +1259,26 @@ export class DesktopActionSession {
     snapshot: DesktopSnapshot,
     args: DesktopRecord,
     signal?: AbortSignal,
-  ): Promise<{x: number; y: number; element?: DesktopElement}> {
+  ): Promise<{
+    x: number;
+    y: number;
+    element?: DesktopElement;
+    snappedControl?: SnappedDesktopControl;
+  }> {
     const element = this.element(snapshot, args);
     if (element && (args.x !== undefined || args.y !== undefined)) {
       throw new Error('pass exactly one of index/ref or x/y coordinates');
     }
     let x: number;
     let y: number;
-    if (element) {
-      await this.requireSnapshot(snapshot.snapshot_id, signal, [element.index]);
-      x = Math.round((element.rect[0] + element.rect[2]) / 2);
-      y = Math.round((element.rect[1] + element.rect[3]) / 2);
+    let resolvedElement = element;
+    let snappedControl: SnappedDesktopControl | undefined;
+    if (resolvedElement) {
+      await this.requireSnapshot(snapshot.snapshot_id, signal, [
+        resolvedElement.index,
+      ]);
+      x = Math.round((resolvedElement.rect[0] + resolvedElement.rect[2]) / 2);
+      y = Math.round((resolvedElement.rect[1] + resolvedElement.rect[3]) / 2);
     } else {
       ({x, y} = this.toScreen(snapshot, args));
       if (!Number.isFinite(x) || !Number.isFinite(y)) {
@@ -1205,9 +1290,21 @@ export class DesktopActionSession {
           'coordinate actions require an observation with an image (mode=full)',
         );
       }
+      const snapped = snapDesktopPointToElement(
+        x,
+        y,
+        snapshot.elements,
+        snapshot.window,
+      );
+      if (snapped.snappedControl) {
+        x = snapped.x;
+        y = snapped.y;
+        resolvedElement = snapped.element;
+        snappedControl = snapped.snappedControl;
+      }
       const [left, top, right, bottom] = snapshot.window.bbox;
       if (x < left || x >= right || y < top || y >= bottom) {
-        return {x, y};
+        return {x, y, element: resolvedElement, snappedControl};
       }
       const sharp = (await import('sharp')).default;
       const live = await captureSurface(
@@ -1240,7 +1337,7 @@ export class DesktopActionSession {
         );
       }
     }
-    return {x, y, element};
+    return {x, y, element: resolvedElement, snappedControl};
   }
   async call(
     name: string,
@@ -1797,9 +1894,59 @@ export class DesktopActionSession {
       {...args, ...coordinates, action: name, window: snapshot.window},
       signal,
     );
-    return result.waitingForDesktop
-      ? result
-      : {...result, actionTarget: this.actionTarget(snapshot, args)};
+    if (result.waitingForDesktop) {
+      return result;
+    }
+    let visualDelta: DesktopRecord | undefined;
+    if (
+      snapshot.surface &&
+      ['click', 'press_key', 'scroll', 'drag'].includes(name)
+    ) {
+      const checkStart = Date.now();
+      try {
+        await delay(110, signal);
+        const afterFrame = await captureSurface(
+          snapshot.window.bbox,
+          signal,
+          snapshot.window.hwnd,
+        );
+        const sharp = (await import('sharp')).default;
+        const [beforeRaw, afterRaw] = await Promise.all([
+          sharp(snapshot.surface)
+            .resize(320, 180, {fit: 'fill'})
+            .raw()
+            .toBuffer({resolveWithObject: true}),
+          sharp(afterFrame.bytes)
+            .resize(320, 180, {fit: 'fill'})
+            .raw()
+            .toBuffer(),
+        ]);
+        const screenChanged = patchesDiffer(
+          beforeRaw.data,
+          afterRaw,
+          beforeRaw.info.channels,
+        );
+        visualDelta = {
+          screenChanged,
+          method: 'window_pixel_diff',
+          elapsedMs: Date.now() - checkStart,
+        };
+      } catch {
+        visualDelta = {
+          screenChanged: true,
+          method: 'window_closed_or_resized',
+          elapsedMs: Date.now() - checkStart,
+        };
+      }
+    }
+    return {
+      ...result,
+      actionTarget: this.actionTarget(snapshot, args),
+      ...(coordinates.snappedControl
+        ? {snappedControl: coordinates.snappedControl}
+        : {}),
+      ...(visualDelta ? {visualDelta} : {}),
+    };
   }
 }
 
@@ -1932,9 +2079,9 @@ export function registerDesktopTools(
     x: number,
     y: number,
     coordinate_space: {
-      enum: ['screen', 'image'],
+      enum: ['screen', 'image', 'normalized'],
       description:
-        "x/y read off the returned screenshot are 'image'; default 'screen' physical pixels",
+        "x/y read off the returned screenshot are 'image'; 0-1000 window-relative coordinates are 'normalized'; default 'screen' physical pixels",
     },
   };
   if (onGuide) {

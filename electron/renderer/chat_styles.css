@@ -4613,3 +4613,475 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   margin-top: 8px;
   background: color-mix(in srgb, var(--mp-text-muted) 45%, transparent);
 }
+
+/* ============================================================================
+   Batch 1: True Split Side-by-Side Chat & Zero-Context External Mount Cards
+   ============================================================================ */
+#side-chat-pane-host {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mp-sidechat-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--mp-page);
+}
+
+.mp-sidechat-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--mp-hairline);
+  overflow-x: auto;
+  flex: none;
+}
+
+.mp-sidechat-tab {
+  font: inherit;
+  font-size: 12px;
+  color: var(--mp-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mp-sidechat-tab:hover {
+  color: var(--mp-ink);
+  background: var(--mp-hover);
+}
+
+.mp-sidechat-tab.is-on {
+  color: var(--mp-ink);
+  background: var(--mp-repository-surface);
+  border-color: var(--mp-hairline);
+  font-weight: 500;
+}
+
+.mp-sidechat-tab.is-mounted::after {
+  content: ' · 挂';
+  color: var(--mp-accent);
+  font-size: 11px;
+}
+
+.mp-sidechat-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--mp-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+
+.mp-sidechat-anchor {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--mp-ink);
+}
+
+.mp-sidechat-anchor-tag {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mp-muted);
+  background: var(--mp-repository-surface);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.mp-sidechat-anchor-text {
+  color: var(--mp-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mp-sidechat-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mp-sidechat-cache-badge {
+  font-size: 11px;
+  color: var(--mp-muted);
+  background: var(--mp-repository-surface);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.mp-sidechat-mount-btn {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mp-ink);
+  background: var(--mp-page);
+  border: 1px solid var(--mp-border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.mp-sidechat-mount-btn:hover {
+  background: var(--mp-hover);
+}
+
+.mp-sidechat-mount-btn.is-mounted {
+  color: var(--mp-accent);
+  border-color: color-mix(in srgb, var(--mp-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--mp-accent) 8%, transparent);
+}
+
+.mp-sidechat-stream {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mp-sidechat-empty {
+  color: var(--mp-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 16px 6px;
+}
+
+.mp-sidechat-msg.is-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mp-sidechat-bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: var(--mp-r-bubble);
+  background: var(--mp-user-bubble);
+  color: var(--mp-ink);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mp-sidechat-msg.is-assistant {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.mp-sidechat-thinking {
+  color: var(--mp-muted);
+  font-size: 12.5px;
+}
+
+.mp-sidechat-error {
+  color: var(--mp-danger);
+  font-size: 13px;
+}
+
+.mp-sidechat-composer {
+  flex: none;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--mp-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--mp-page);
+}
+
+.mp-sidechat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mp-sidechat-chip {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--mp-muted);
+  background: var(--mp-repository-surface);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.mp-sidechat-chip:hover {
+  color: var(--mp-ink);
+  border-color: var(--mp-border);
+}
+
+.mp-sidechat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border: 1px solid var(--mp-border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  background: var(--mp-page);
+}
+
+.mp-sidechat-input {
+  flex: 1 1 auto;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--mp-ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  min-height: 36px;
+  max-height: 120px;
+}
+
+.mp-sidechat-send {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--mp-accent);
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.mp-sidechat-send:hover {
+  opacity: 0.92;
+}
+
+/* External zero-context mounted side-chat card inside parent stream */
+.mp-mounted-sidechat {
+  margin: 10px 0 16px;
+  border: 1px solid var(--mp-hairline);
+  border-left: 2.5px solid var(--mp-accent);
+  border-radius: 8px;
+  background: var(--mp-repository-surface);
+  overflow: hidden;
+}
+
+.mp-mounted-sidechat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+}
+
+.mp-mounted-sidechat-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.mp-mounted-sidechat-kind {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mp-accent);
+  background: color-mix(in srgb, var(--mp-accent) 12%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.mp-mounted-sidechat-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mp-ink);
+}
+
+.mp-mounted-sidechat-count {
+  font-size: 11.5px;
+  color: var(--mp-muted);
+}
+
+.mp-mounted-sidechat-cache {
+  font-size: 11px;
+  color: var(--mp-muted);
+  background: var(--mp-page);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.mp-mounted-sidechat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mp-mounted-sidechat-btn {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--mp-ink);
+  background: var(--mp-page);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.mp-mounted-sidechat-btn:hover {
+  background: var(--mp-hover);
+}
+
+.mp-mounted-sidechat-btn.is-subtle {
+  color: var(--mp-muted);
+}
+
+.mp-mounted-sidechat-summary {
+  margin: 0;
+  padding: 0 12px 9px;
+  font-size: 12.5px;
+  color: var(--mp-muted);
+  line-height: 1.5;
+}
+
+.mp-mounted-sidechat-body {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--mp-hairline);
+  background: var(--mp-page);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mp-mounted-sidechat-q {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mp-muted);
+}
+
+.mp-mounted-sidechat-a {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+/* ============================================================================
+   Batch 2: Learn vs Code Deliberate Mode Differentiation
+   ============================================================================ */
+[data-product-mode="walker"] #chat-skim-toggle,
+[data-product-mode="walker"] #chat-learn-toggle,
+[data-product-mode="walker"] [data-inspector-tab="learn"],
+[data-product-mode="walker"] .mp-learn-stance-bar {
+  display: none;
+}
+
+[data-product-mode="design"] #composer-git-context,
+[data-product-mode="design"] #composer-branch,
+[data-product-mode="design"] #composer-worktree,
+[data-product-mode="design"] #composer-repository-context,
+[data-product-mode="design"] [data-inspector-tab="changes"],
+[data-product-mode="design"] [data-inspector-tab="terminal"] {
+  display: none !important;
+}
+
+.mp-learn-stance-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--mp-repository-surface);
+  border: 1px solid var(--mp-hairline);
+}
+
+.mp-learn-stance-btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--mp-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mp-learn-stance-btn:hover {
+  color: var(--mp-ink);
+}
+
+.mp-learn-stance-btn.is-on {
+  color: var(--mp-ink);
+  background: var(--mp-page);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-weight: 500;
+}
+
+/* ============================================================================
+   Batch 3: Computer Use Visual Receipt Strip (.mp-cu-receipt)
+   ============================================================================ */
+.mp-cu-receipt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border-radius: 7px;
+  border: 1px solid var(--mp-hairline);
+  background: var(--mp-repository-surface);
+  font-size: 12px;
+  color: var(--mp-muted);
+}
+
+.mp-cu-receipt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mp-page);
+  border: 1px solid var(--mp-hairline);
+  color: var(--mp-ink);
+  font-size: 11.5px;
+}
+
+.mp-cu-receipt-chip.is-ok {
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.25);
+  background: rgba(22, 101, 52, 0.07);
+}
+
+:root[data-theme="dark"] .mp-cu-receipt-chip.is-ok {
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.28);
+  background: rgba(134, 239, 172, 0.1);
+}
+
+.mp-cu-receipt-chip.is-warn {
+  color: #9a3412;
+  border-color: rgba(154, 52, 18, 0.25);
+  background: rgba(154, 52, 18, 0.08);
+}
+
+:root[data-theme="dark"] .mp-cu-receipt-chip.is-warn {
+  color: #fdba74;
+  border-color: rgba(253, 186, 116, 0.28);
+  background: rgba(253, 186, 116, 0.1);
+}

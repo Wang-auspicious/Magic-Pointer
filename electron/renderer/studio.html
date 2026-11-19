@@ -181,6 +181,7 @@
               <button type="button" class="mp-thread-action" id="chat-skim-toggle" aria-label="Skim highlights" title="Skim highlights (Hold Alt to reveal full ink)" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE069;" aria-hidden="true"></span></button>
               <button type="button" class="mp-thread-action" id="chat-learn-toggle" aria-label="Learning controls and workbench" title="Learning controls &amp; side chat" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span></button>
               <button type="button" class="mp-thread-action" id="chat-tour-toggle" aria-label="Guided screen tour" title="Guided screen tour (Clicky Coach)" aria-pressed="false"><svg class="codex-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5L15.5 9.2L10.3 10.9L8.4 16L4 3.5Z"/></svg></button>
+              <button type="button" class="mp-thread-action" id="chat-record-demo-toggle" aria-label="Record screen demo" title="Record screen demo into a replayable tour (Watch &amp; Record)" aria-pressed="false"><svg class="codex-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="2.7" fill="currentColor" stroke="none"/></svg></button>
               <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="Activity" title="Activity"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
@@ -307,6 +308,11 @@
                   <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
                 </button>
                 <span id="composer-folder-error" class="mp-composer-folder-error" role="status" hidden></span>
+                <div class="mp-learn-stance-bar" id="learn-stance-bar" role="radiogroup" aria-label="Learning mode">
+                  <button type="button" class="mp-learn-stance-btn is-on" data-learn-stance="explain" aria-checked="true">精讲推导</button>
+                  <button type="button" class="mp-learn-stance-btn" data-learn-stance="socratic" aria-checked="false">苏格拉底反问</button>
+                  <button type="button" class="mp-learn-stance-btn" data-learn-stance="coach" aria-checked="false">屏幕带练</button>
+                </div>
               </div>
               <form class="mpw-input-form mp-compact-composer" id="composer-form">
                 <div class="mpw-input-root">
@@ -530,6 +536,7 @@
         </div>
       </header>
       <nav class="mp-inspector-tabs" aria-label="Task and project tools">
+        <button type="button" data-inspector-tab="side-chat" aria-selected="false">并排探讨</button>
         <button type="button" data-inspector-tab="learn" aria-selected="false">学习台</button>
         <button type="button" data-inspector-tab="activity" aria-selected="false">Activity</button>
         <button type="button" data-inspector-tab="materials" aria-selected="false">Materials</button>
@@ -540,6 +547,9 @@
         <button type="button" data-inspector-tab="tasks" aria-selected="false">Background tasks</button>
         <button type="button" data-inspector-tab="modules" aria-selected="false">Mods</button>
       </nav>
+      <section class="mp-inspector-panel" id="inspector-side-chat" data-inspector-panel="side-chat" hidden>
+        <div id="side-chat-pane-host"></div>
+      </section>
       <section class="mp-inspector-panel" id="inspector-learn" data-inspector-panel="learn" hidden>
         <div id="learn-deck-host"></div>
       </section>
@@ -778,6 +788,7 @@
   <script defer src="learn_lab.js?v=1"></script>
   <script defer src="learn_map_view.js?v=1"></script>
   <script defer src="side_chat_bar.js?v=1"></script>
+  <script defer src="side_chat_pane.js?v=1"></script>
   <script defer src="learn_tree.js?v=1"></script>
   <script defer src="studio.js?v=28"></script>
 </body>

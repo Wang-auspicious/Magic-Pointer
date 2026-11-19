@@ -4976,6 +4976,16 @@ async function openConversation(id: string) {
       LearnTree.renderDeck(document.getElementById('learn-deck-host'), c);
     }
   }
+  if (typeof SideChatPane !== 'undefined') {
+    SideChatPane.renderMountedCards(stream, c, buildSideChatPaneHandlers());
+    if (inspectorState.open && activeInspectorTab === 'side-chat') {
+      SideChatPane.renderPane(
+        document.getElementById('side-chat-pane-host'),
+        c,
+        buildSideChatPaneHandlers(),
+      );
+    }
+  }
   applySkimSaliency(stream, c);
   syncExternalConversationRun(c);
   scheduleStreamRail();
@@ -7273,7 +7283,36 @@ document
 syncWindowNavigation();
 
 type ProductMode = 'walker' | 'design';
+type LearnStance = 'explain' | 'socratic' | 'coach';
 let productMode: ProductMode = 'walker';
+let learnStance: LearnStance = 'explain';
+
+function setLearnStance(next: LearnStance) {
+  learnStance = next;
+  document
+    .querySelectorAll<HTMLElement>('#learn-stance-bar [data-learn-stance]')
+    .forEach(button => {
+      const selected = button.dataset.learnStance === next;
+      button.classList.toggle('is-on', selected);
+      button.setAttribute('aria-checked', String(selected));
+    });
+  if (next === 'coach' && !guidedTourCoachActive) {
+    document.getElementById('chat-tour-toggle')?.click();
+  } else if (next !== 'coach' && guidedTourCoachActive) {
+    document.getElementById('chat-tour-toggle')?.click();
+  }
+}
+
+document
+  .querySelectorAll<HTMLElement>('#learn-stance-bar [data-learn-stance]')
+  .forEach(button => {
+    button.addEventListener('click', () => {
+      const raw = button.dataset.learnStance;
+      if (raw === 'explain' || raw === 'socratic' || raw === 'coach') {
+        setLearnStance(raw);
+      }
+    });
+  });
 
 function setProductMode(mode: ProductMode, navigate = true) {
   const changed = productMode !== mode;
@@ -7305,6 +7344,32 @@ function setProductMode(mode: ProductMode, navigate = true) {
     /* renderer storage unavailable */
   }
   syncSkimToggleUi(activeConversationRecord);
+  if (inspectorState.open) {
+    if (
+      mode === 'walker' &&
+      activeInspectorTab === 'learn'
+    ) {
+      setInspector(true, 'files');
+    } else if (
+      mode === 'design' &&
+      (activeInspectorTab === 'changes' || activeInspectorTab === 'terminal')
+    ) {
+      setInspector(true, 'learn');
+    }
+  }
+  const modeComposer = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea, .mpw-input',
+  );
+  if (modeComposer && !guidedTourCoachActive) {
+    modeComposer.placeholder =
+      mode === 'design'
+        ? getStudioLanguage() === 'zh-CN'
+          ? '学习一个概念、贴入论文段落，或开启屏幕带练…'
+          : 'Explore a concept, paste a paper excerpt, or start a screen tour…'
+        : getStudioLanguage() === 'zh-CN'
+          ? '描述开发任务、调试报错或重构代码…'
+          : 'Describe a coding task, paste an error, or ask about this repo…';
+  }
   if (typeof LearnTree !== 'undefined') {
     LearnTree.renderHud(
       document.getElementById('learn-hud'),
@@ -10861,6 +10926,13 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   if (activeInspectorTab === 'artifact') {
     renderArtifactEditor();
   }
+  if (activeInspectorTab === 'side-chat' && typeof SideChatPane !== 'undefined') {
+    SideChatPane.renderPane(
+      document.getElementById('side-chat-pane-host'),
+      activeConversationRecord,
+      buildSideChatPaneHandlers(),
+    );
+  }
   if (activeInspectorTab === 'learn' && typeof LearnTree !== 'undefined') {
     LearnTree.renderDeck(
       document.getElementById('learn-deck-host'),
@@ -14191,17 +14263,213 @@ if (typeof LearnTree !== 'undefined') {
     },
   });
 }
+let sideChatLiveRequestId = '';
+let sideChatLiveQuestion = '';
+
+function resolveAnchorTurnAndBlock(anchorNode: Node | null): {
+  parentTurnIndex: number;
+  blockIndex?: number;
+} {
+  const el =
+    anchorNode && anchorNode.nodeType === 1
+      ? (anchorNode as Element)
+      : anchorNode?.parentElement || null;
+  const blockEl = el?.closest<HTMLElement>('[data-block-index]');
+  const blockRaw = blockEl ? Number(blockEl.dataset.blockIndex) : NaN;
+  const assistantEl = el?.closest<HTMLElement>('.mp-chat-assistant');
+  const streamEl = document.getElementById('stream');
+  let parentTurnIndex = Math.max(
+    0,
+    (activeConversationRecord?.turns?.length || 1) - 1,
+  );
+  if (assistantEl && streamEl) {
+    const allAssistants = Array.from(
+      streamEl.querySelectorAll<HTMLElement>('.mp-chat-assistant'),
+    );
+    const idx = allAssistants.indexOf(assistantEl);
+    if (idx >= 0) {
+      parentTurnIndex = idx;
+    }
+  }
+  return {
+    parentTurnIndex,
+    ...(Number.isInteger(blockRaw) && blockRaw >= 0
+      ? {blockIndex: blockRaw}
+      : {}),
+  };
+}
+
+function buildSideChatPaneHandlers(): SideChatPaneHandlers {
+  return {
+    onSend: async payload => {
+      const requestId = `side-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      sideChatLiveRequestId = requestId;
+      sideChatLiveQuestion = payload.question;
+      SideChatPane?.setLiveState({
+        requestId,
+        branchId: payload.branchId || '',
+        question: payload.question,
+        answer: '',
+        thinking: '',
+      });
+      SideChatPane?.renderPane(
+        document.getElementById('side-chat-pane-host'),
+        activeConversationRecord,
+        buildSideChatPaneHandlers(),
+      );
+      try {
+        const res = await Data.learnSend({
+          conversationId: payload.conversationId,
+          ...(payload.branchId ? {branchId: payload.branchId} : {}),
+          parentBranchId: null,
+          parentTurnIndex: payload.parentTurnIndex,
+          anchor: {
+            kind: 'selection',
+            label: payload.anchorLabel,
+            snippet: payload.anchorSnippet,
+            ...(Number.isInteger(payload.blockIndex)
+              ? {blockIndex: payload.blockIndex}
+              : {}),
+          },
+          kind: 'ask',
+          question: payload.question,
+          requestId,
+        });
+        sideChatLiveRequestId = '';
+        SideChatPane?.setLiveState(null);
+        if (res?.conversation) {
+          activeConversationRecord = res.conversation as MagicPointerConversation;
+        }
+        if (res?.branch?.id) {
+          SideChatPane?.openBranch(String(res.branch.id));
+        }
+        if (activeConversationRecord) {
+          SideChatPane?.renderPane(
+            document.getElementById('side-chat-pane-host'),
+            activeConversationRecord,
+            buildSideChatPaneHandlers(),
+          );
+          SideChatPane?.renderMountedCards(
+            document.getElementById('stream'),
+            activeConversationRecord,
+            buildSideChatPaneHandlers(),
+          );
+        }
+      } catch {
+        sideChatLiveRequestId = '';
+        SideChatPane?.setLiveState(null);
+        SideChatPane?.renderPane(
+          document.getElementById('side-chat-pane-host'),
+          activeConversationRecord,
+          buildSideChatPaneHandlers(),
+        );
+      }
+    },
+    onStop: requestId => {
+      void Data.learnStop({requestId});
+    },
+    onToggleMount: async (conversationId, branchId, mounted, mountNote) => {
+      const res = await Data.learnPatch({
+        action: 'update-branch',
+        conversationId,
+        branchId,
+        mountedToParent: mounted,
+        ...(typeof mountNote === 'string' && mountNote.trim()
+          ? {mountNote}
+          : {}),
+      });
+      if (res?.conversation) {
+        activeConversationRecord = res.conversation as MagicPointerConversation;
+      }
+      SideChatPane?.renderPane(
+        document.getElementById('side-chat-pane-host'),
+        activeConversationRecord,
+        buildSideChatPaneHandlers(),
+      );
+      SideChatPane?.renderMountedCards(
+        document.getElementById('stream'),
+        activeConversationRecord,
+        buildSideChatPaneHandlers(),
+      );
+    },
+    onTailCite: branch => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '#composer-form textarea, .mpw-input',
+      );
+      if (!textarea) {
+        return;
+      }
+      const note =
+        branch.mountNote ||
+        branch.insightSummary ||
+        branch.turns?.at(-1)?.answer?.slice(0, 140) ||
+        branch.title;
+      const tailCite = `[引用外挂结论「${branch.title}」：${String(note).replace(/\s+/g, ' ').trim()}]\n`;
+      textarea.value = textarea.value ? `${textarea.value}\n${tailCite}` : tailCite;
+      fitComposer(textarea);
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
+      textarea.focus();
+    },
+    onOpenBranch: branchId => {
+      SideChatPane?.openBranch(branchId);
+      setInspector(true, 'side-chat');
+    },
+  };
+}
+
+Data.onLearnProgress(progress => {
+  if (
+    !sideChatLiveRequestId ||
+    progress.requestId !== sideChatLiveRequestId ||
+    typeof SideChatPane === 'undefined'
+  ) {
+    return;
+  }
+  SideChatPane.setLiveState({
+    requestId: sideChatLiveRequestId,
+    branchId: String(progress.branchId || ''),
+    question: sideChatLiveQuestion,
+    answer: String(progress.answer || ''),
+    thinking: String(progress.thinking || ''),
+  });
+  if (inspectorState.open && activeInspectorTab === 'side-chat') {
+    SideChatPane.renderPane(
+      document.getElementById('side-chat-pane-host'),
+      activeConversationRecord,
+      buildSideChatPaneHandlers(),
+    );
+  }
+});
+
 if (typeof SideChatBar !== 'undefined') {
   SideChatBar.init({
-    isSideChatOpen: () => Boolean(activeConversationRecord?.branches?.length),
+    isSideChatOpen: () =>
+      Boolean(
+        inspectorState.open &&
+          activeInspectorTab === 'side-chat' &&
+          activeConversationRecord?.branches?.length,
+      ),
     onStartSideChat: payload => {
+      if (typeof SideChatPane !== 'undefined' && activeConversationRecord) {
+        const loc = resolveAnchorTurnAndBlock(payload.anchorNode);
+        SideChatPane.openDraft({
+          conversationId: activeConversationRecord.id,
+          parentTurnIndex: loc.parentTurnIndex,
+          ...(loc.blockIndex !== undefined ? {blockIndex: loc.blockIndex} : {}),
+          quote: payload.quote,
+          snippet: payload.quote,
+        });
+        setInspector(true, 'side-chat');
+        return;
+      }
       const opened = LearnTree?.openSelectionInquiry?.(
         payload.quote,
         payload.rect,
         payload.anchorNode,
       );
       if (!opened) {
-        setInspector(true, 'learn');
+        setInspector(true, 'side-chat');
       }
     },
     onReply: payload => {
@@ -14296,8 +14564,26 @@ document.addEventListener('click', event => {
     });
     return;
   }
+  if (act === 'live-teach') {
+    const card = tourBtn.closest('.mp-tour-card');
+    const steps = Array.from(
+      card?.querySelectorAll<HTMLElement>('.mp-tour-step') || [],
+    ).map(el => ({
+      kind: 'POINT',
+      x: Number(el.dataset.tourX || 0),
+      y: Number(el.dataset.tourY || 0),
+      screen: Number(el.dataset.tourScreen || 1),
+      label: el.dataset.tourLabel || '',
+      caption: el.dataset.tourCaption || el.dataset.tourLabel || '',
+    }));
+    if (steps.length) {
+      void window.magicPointerDashboard?.cuOverlay?.teachStart?.(steps);
+    }
+    return;
+  }
   if (act === 'clear') {
     void window.magicPointerDashboard?.guidedTour?.clear?.();
+    void window.magicPointerDashboard?.cuOverlay?.stop?.();
     return;
   }
   if (act === 'autopilot') {
@@ -14321,6 +14607,93 @@ document.addEventListener('click', event => {
       syncComposerSubmitState();
       textarea.focus();
     }
+  }
+});
+
+let demoRecordingActive = false;
+const chatRecordDemoToggle = document.getElementById('chat-record-demo-toggle');
+if (chatRecordDemoToggle) {
+  chatRecordDemoToggle.addEventListener('click', () => {
+    demoRecordingActive = !demoRecordingActive;
+    chatRecordDemoToggle.setAttribute('aria-pressed', String(demoRecordingActive));
+    if (demoRecordingActive) {
+      void window.magicPointerDashboard?.cuOverlay?.recordStart?.(
+        activeConversationRecord?.title || '桌面操作示范',
+      );
+    } else {
+      void window.magicPointerDashboard?.cuOverlay?.recordFinish?.().then(res => {
+        const md = typeof res?.markdown === 'string' ? res.markdown : '';
+        if (!md) {
+          return;
+        }
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+          '#composer-form textarea, .mpw-input',
+        );
+        if (textarea) {
+          textarea.value = `请根据我刚才录制的示范操作整理成可复用的教学步骤或 Routine：\n\n${md}`;
+          fitComposer(textarea);
+          textarea.dispatchEvent(new Event('input', {bubbles: true}));
+          syncComposerSubmitState();
+          textarea.focus();
+        }
+      });
+    }
+  });
+}
+
+window.magicPointerDashboard?.cuOverlay?.onEvent?.(ev => {
+  const type = String(ev?.type || '');
+  if (type === 'takeover' || type === 'stop') {
+    if (activeConversationId) {
+      void Data.stopConversation(activeConversationId);
+    }
+    return;
+  }
+  if (type === 'switch-coach') {
+    if (!guidedTourCoachActive) {
+      document.getElementById('chat-tour-toggle')?.click();
+    }
+    return;
+  }
+  if (type === 'teach-execute') {
+    const step =
+      ev?.step && typeof ev.step === 'object'
+        ? (ev.step as Record<string, unknown>)
+        : null;
+    const label = String(step?.label || '当前带练步骤');
+    const x = Number(step?.x || 0);
+    const y = Number(step?.y || 0);
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea, .mpw-input',
+    );
+    if (textarea) {
+      textarea.value = `帮我执行带练步骤「${label}」（归一化坐标 ${x},${y}），操作前先 Observe 当前窗口并校验结果。`;
+      fitComposer(textarea);
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
+      textarea.focus();
+    }
+    return;
+  }
+  if (type === 'record-finished') {
+    demoRecordingActive = false;
+    chatRecordDemoToggle?.setAttribute('aria-pressed', 'false');
+    const md = typeof ev?.markdown === 'string' ? ev.markdown : '';
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea, .mpw-input',
+    );
+    if (md && textarea) {
+      textarea.value = `请把这段刚录制的示范操作沉淀成标准步骤卡片与可复用技能：\n\n${md}`;
+      fitComposer(textarea);
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
+      textarea.focus();
+    }
+    return;
+  }
+  if (type === 'record-discarded') {
+    demoRecordingActive = false;
+    chatRecordDemoToggle?.setAttribute('aria-pressed', 'false');
   }
 });
 if (modulesHost && globalThis.ModsWorkspace) {
@@ -15950,9 +16323,13 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       ) {
         return;
       }
+      const socraticSuffix =
+        productMode === 'design' && learnStance === 'socratic'
+          ? '\n\n[Socratic Learn Mode: 先给出 1 句核心直觉锚点，再提出 1~2 个引导性关键追问，帮用户自己推导出结论，不要一次性剧透全部答案。]'
+          : '';
       const outgoingQuestion = guidedTourCoachActive
         ? `${question}\n\n[Coach Screen Tour Mode: Reply with concise step-by-step on-screen instructions. Before each step sentence, place an inline coordinate tag [POINT:x,y:ShortLabel:screen1] using 0-1000 normalized screen coordinates so the floating pointer guides the user directly on screen without clicking for them.]`
-        : question;
+        : `${question}${socraticSuffix}`;
       const response = await Data.sendConversation({
         conversationId,
         workMode: productMode === 'design' ? 'learn' : 'code',

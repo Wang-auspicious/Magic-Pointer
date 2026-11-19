@@ -162,6 +162,9 @@ export interface LearnBranch {
   collapsed?: boolean;
   insightSummary?: string;
   docked?: boolean;
+  mountedToParent?: boolean;
+  mountNote?: string;
+  mountedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -1851,6 +1854,8 @@ function createConversationStore(
     patch: {
       collapsed?: boolean;
       docked?: boolean;
+      mountedToParent?: boolean;
+      mountNote?: string;
       title?: string;
       insightSummary?: string;
       priority?: string;
@@ -1866,6 +1871,22 @@ function createConversationStore(
     }
     if (typeof patch.docked === 'boolean') {
       branch.docked = patch.docked;
+    }
+    if (typeof patch.mountedToParent === 'boolean') {
+      branch.mountedToParent = patch.mountedToParent;
+      if (patch.mountedToParent) {
+        branch.mountedAt = now();
+      } else {
+        delete branch.mountedAt;
+      }
+    }
+    if (typeof patch.mountNote === 'string') {
+      const cleanNote = patch.mountNote.trim().slice(0, 280);
+      if (cleanNote) {
+        branch.mountNote = cleanNote;
+      } else {
+        delete branch.mountNote;
+      }
     }
     if (typeof patch.title === 'string' && patch.title.trim()) {
       branch.title = patch.title.trim().slice(0, 120);

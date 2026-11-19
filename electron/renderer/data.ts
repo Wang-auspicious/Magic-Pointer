@@ -210,6 +210,9 @@ declare global {
     collapsed?: boolean;
     insightSummary?: string;
     docked?: boolean;
+    mountedToParent?: boolean;
+    mountNote?: string;
+    mountedAt?: number;
     createdAt: number;
     updatedAt: number;
   }
@@ -882,6 +885,21 @@ declare global {
         ttlMs?: number;
       }): Promise<{ok: boolean; x?: number; y?: number; error?: string}>;
       clear(): Promise<{ok: boolean}>;
+    };
+    cuOverlay?: {
+      autopilotUpdate?(payload: {
+        windowTitle?: string;
+        actionLabel?: string;
+        stepIndex?: number;
+      }): Promise<Record<string, unknown>>;
+      teachStart?(steps: Array<Record<string, unknown>>): Promise<Record<string, unknown>>;
+      recordStart?(title?: string): Promise<Record<string, unknown>>;
+      recordStep?(payload?: {label?: string; windowTitle?: string}): Promise<Record<string, unknown>>;
+      recordFinish?(): Promise<Record<string, unknown>>;
+      stop?(): Promise<Record<string, unknown>>;
+      action?(action: string): Promise<Record<string, unknown>>;
+      onState?(cb: (state: Record<string, unknown>) => void): void;
+      onEvent?(cb: (event: Record<string, unknown>) => void): void;
     };
     personalActivity?: {
       read(date?: string): Promise<Record<string, any>>;

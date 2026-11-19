@@ -224,6 +224,11 @@ const {isSurfaceSender} = require('./ipc_surface_policy');
 const {AgentCursorSurfaces} = require('./agent_cursor_window');
 const {denormalizeTourPoint} = require('./guided_tour');
 const {
+  CuOverlayController,
+  CuLiveOverlayWindow,
+  formatRecordedTourMarkdown,
+} = require('./cu_live_overlay');
+const {
   buildGoogleMapsDirectionsUrl,
   isAllowedGoogleMapsDirectionsUrl,
 } = require('./route_policy');
@@ -4029,6 +4034,12 @@ ipcMain.handle(
               ? {collapsed: raw.collapsed}
               : {}),
             ...(typeof raw?.docked === 'boolean' ? {docked: raw.docked} : {}),
+            ...(typeof raw?.mountedToParent === 'boolean'
+              ? {mountedToParent: raw.mountedToParent}
+              : {}),
+            ...(typeof raw?.mountNote === 'string'
+              ? {mountNote: raw.mountNote}
+              : {}),
             ...(typeof raw?.title === 'string' ? {title: raw.title} : {}),
             ...(typeof raw?.insightSummary === 'string'
               ? {insightSummary: raw.insightSummary}
@@ -12539,6 +12550,257 @@ ipcMain.handle('guided-tour:clear', async (event: Electron.IpcMainInvokeEvent) =
   }
   return {ok: sendAgentCursorCommand({kind: 'clear'})};
 });
+
+const cuOverlayController = new CuOverlayController();
+const cuOverlayWindow = new CuLiveOverlayWindow(
+  path.join(__dirname, 'renderer', 'cu_live_overlay.html'),
+);
+
+function emitCuOverlayEvent(payload: Record<string, unknown>): void {
+  const win = typeof dashboardWindow !== 'undefined' ? dashboardWindow : null;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('cu-overlay:event', payload);
+  }
+}
+
+function pointAgentCursorForStep(step: {
+  x: number;
+  y: number;
+  screen?: number;
+  label?: string;
+} | null): void {
+  if (!step) {
+    sendAgentCursorCommand({kind: 'clear'});
+    return;
+  }
+  const displays = screen.getAllDisplays().map((d: Electron.Display) => ({
+    x: d.bounds.x,
+    y: d.bounds.y,
+    width: d.bounds.width,
+    height: d.bounds.height,
+  }));
+  const target = denormalizeTourPoint(
+    {x: step.x, y: step.y, screen: step.screen || 1, normalized: true},
+    displays,
+  );
+  if (!target) {
+    return;
+  }
+  syncAgentCursorSurfaces();
+  sendAgentCursorCommand({
+    kind: 'guide',
+    id: 'cu-live-teach',
+    x: target.x,
+    y: target.y,
+    caption: String(step.label || '').slice(0, 64) || undefined,
+    accent: '#D97757',
+    ttlMs: 4000,
+  });
+}
+
+ipcMain.handle(
+  'cu-overlay:autopilot-update',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {windowTitle?: unknown; actionLabel?: unknown; stepIndex?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_overlay_sender'};
+    }
+    const state = cuOverlayController.startAutopilot({
+      windowTitle: String(payload.windowTitle || ''),
+      actionLabel: String(payload.actionLabel || ''),
+      stepIndex: Number(payload.stepIndex) || 1,
+    });
+    cuOverlayWindow.sync(state);
+    return {ok: true, state};
+  },
+);
+
+ipcMain.handle(
+  'cu-overlay:teach-start',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {steps?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_overlay_sender'};
+    }
+    const steps = Array.isArray(payload.steps) ? payload.steps : [];
+    const state = cuOverlayController.startTeach(steps);
+    cuOverlayWindow.sync(state);
+    pointAgentCursorForStep(cuOverlayController.currentTeachStep());
+    return {ok: true, state};
+  },
+);
+
+ipcMain.handle(
+  'cu-overlay:record-start',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {title?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_overlay_sender'};
+    }
+    const state = cuOverlayController.startRecord(
+      String(payload.title || '桌面操作示范'),
+    );
+    cuOverlayWindow.sync(state);
+    return {ok: true, state};
+  },
+);
+
+ipcMain.handle(
+  'cu-overlay:record-step',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {label?: unknown; windowTitle?: unknown} = {},
+  ) => {
+    const cursor = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(cursor);
+    const allDisplays = screen.getAllDisplays();
+    const screenIdx = Math.max(
+      1,
+      allDisplays.findIndex((d: Electron.Display) => d.id === display.id) + 1,
+    );
+    const nx = Math.round(
+      ((cursor.x - display.bounds.x) / Math.max(1, display.bounds.width)) * 1000,
+    );
+    const ny = Math.round(
+      ((cursor.y - display.bounds.y) / Math.max(1, display.bounds.height)) * 1000,
+    );
+    const step = cuOverlayController.recordStep({
+      x: nx,
+      y: ny,
+      label: String(payload.label || ''),
+      windowTitle: String(payload.windowTitle || ''),
+      screen: screenIdx,
+    });
+    const state = cuOverlayController.getState();
+    cuOverlayWindow.sync(state);
+    if (step) {
+      pointAgentCursorForStep(step);
+    }
+    return {ok: Boolean(step), step, state};
+  },
+);
+
+ipcMain.handle(
+  'cu-overlay:record-finish',
+  async (event: Electron.IpcMainInvokeEvent) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_overlay_sender'};
+    }
+    const finished = cuOverlayController.finishRecord();
+    const markdown = formatRecordedTourMarkdown(finished.title, finished.steps);
+    cuOverlayWindow.sync(cuOverlayController.getState());
+    sendAgentCursorCommand({kind: 'clear'});
+    return {ok: true, ...finished, markdown};
+  },
+);
+
+ipcMain.handle('cu-overlay:stop', async () => {
+  const state = cuOverlayController.stop();
+  cuOverlayWindow.sync(state);
+  sendAgentCursorCommand({kind: 'clear'});
+  return {ok: true, state};
+});
+
+ipcMain.handle(
+  'cu-overlay:action',
+  async (_event: Electron.IpcMainInvokeEvent, rawAction: unknown) => {
+    const action = String(rawAction || '');
+    if (action === 'takeover') {
+      const state = cuOverlayController.pauseForTakeover();
+      cuOverlayWindow.sync(state);
+      emitCuOverlayEvent({type: 'takeover'});
+      return {ok: true, state};
+    }
+    if (action === 'resume') {
+      const state = cuOverlayController.resumeAutopilot();
+      cuOverlayWindow.sync(state);
+      emitCuOverlayEvent({type: 'resume'});
+      return {ok: true, state};
+    }
+    if (action === 'coach') {
+      const state = cuOverlayController.stop();
+      cuOverlayWindow.sync(state);
+      emitCuOverlayEvent({type: 'switch-coach'});
+      return {ok: true, state};
+    }
+    if (action === 'stop') {
+      const state = cuOverlayController.stop();
+      cuOverlayWindow.sync(state);
+      sendAgentCursorCommand({kind: 'clear'});
+      emitCuOverlayEvent({type: 'stop'});
+      return {ok: true, state};
+    }
+    if (action === 'teach-next') {
+      const step = cuOverlayController.nextTeachStep();
+      const state = cuOverlayController.getState();
+      cuOverlayWindow.sync(state);
+      pointAgentCursorForStep(step);
+      return {ok: true, step, state};
+    }
+    if (action === 'teach-prev') {
+      const step = cuOverlayController.prevTeachStep();
+      const state = cuOverlayController.getState();
+      cuOverlayWindow.sync(state);
+      pointAgentCursorForStep(step);
+      return {ok: true, step, state};
+    }
+    if (action === 'teach-execute') {
+      const step = cuOverlayController.currentTeachStep();
+      emitCuOverlayEvent({type: 'teach-execute', step});
+      return {ok: true, step};
+    }
+    if (action === 'teach-exit') {
+      const state = cuOverlayController.exitTeach();
+      cuOverlayWindow.sync(state);
+      sendAgentCursorCommand({kind: 'clear'});
+      return {ok: true, state};
+    }
+    if (action === 'record-step') {
+      const cursor = screen.getCursorScreenPoint();
+      const display = screen.getDisplayNearestPoint(cursor);
+      const allDisplays = screen.getAllDisplays();
+      const screenIdx = Math.max(
+        1,
+        allDisplays.findIndex((d: Electron.Display) => d.id === display.id) + 1,
+      );
+      const nx = Math.round(
+        ((cursor.x - display.bounds.x) / Math.max(1, display.bounds.width)) * 1000,
+      );
+      const ny = Math.round(
+        ((cursor.y - display.bounds.y) / Math.max(1, display.bounds.height)) * 1000,
+      );
+      const step = cuOverlayController.recordStep({x: nx, y: ny, screen: screenIdx});
+      const state = cuOverlayController.getState();
+      cuOverlayWindow.sync(state);
+      if (step) {
+        pointAgentCursorForStep(step);
+      }
+      return {ok: Boolean(step), step, state};
+    }
+    if (action === 'record-finish') {
+      const finished = cuOverlayController.finishRecord();
+      const markdown = formatRecordedTourMarkdown(finished.title, finished.steps);
+      cuOverlayWindow.sync(cuOverlayController.getState());
+      sendAgentCursorCommand({kind: 'clear'});
+      emitCuOverlayEvent({type: 'record-finished', ...finished, markdown});
+      return {ok: true, ...finished, markdown};
+    }
+    if (action === 'record-discard') {
+      const state = cuOverlayController.discardRecord();
+      cuOverlayWindow.sync(state);
+      sendAgentCursorCommand({kind: 'clear'});
+      emitCuOverlayEvent({type: 'record-discarded'});
+      return {ok: true, state};
+    }
+    return {ok: false, error: 'unknown_cu_overlay_action'};
+  },
+);
 ipcMain.handle('desktop-perception:set-paused', async (event: Electron.IpcMainInvokeEvent, payload: {paused?: unknown} = {}) => {
   if (!isDashboardSender(event)) {
     return {ok: false, error: 'unauthorized_desktop_perception_sender'};

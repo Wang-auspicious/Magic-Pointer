@@ -951,6 +951,19 @@ const ChatMarkdown = (() => {
         {
           type: 'button',
           class: 'mp-tour-ctrl-btn',
+          'data-tour-act': 'live-teach',
+          title: '打开始终置顶的桌面悬浮带练条（下一步 / 帮我点这步 / 退出）',
+        },
+        '悬浮带练',
+      ),
+    );
+    append(
+      controls,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-tour-ctrl-btn',
           'data-tour-act': 'autopilot',
           title: '切换由 Magic Pointer 代为执行这些步骤',
         },

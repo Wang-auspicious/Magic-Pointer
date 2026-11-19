@@ -264,6 +264,26 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       }),
     clear: () => ipcRenderer.invoke('guided-tour:clear'),
   },
+  cuOverlay: {
+    autopilotUpdate: (payload: {
+      windowTitle?: unknown;
+      actionLabel?: unknown;
+      stepIndex?: unknown;
+    }) => ipcRenderer.invoke('cu-overlay:autopilot-update', payload),
+    teachStart: (steps: unknown[]) =>
+      ipcRenderer.invoke('cu-overlay:teach-start', {steps}),
+    recordStart: (title?: string) =>
+      ipcRenderer.invoke('cu-overlay:record-start', {title}),
+    recordStep: (payload: {label?: string; windowTitle?: string} = {}) =>
+      ipcRenderer.invoke('cu-overlay:record-step', payload),
+    recordFinish: () => ipcRenderer.invoke('cu-overlay:record-finish'),
+    stop: () => ipcRenderer.invoke('cu-overlay:stop'),
+    action: (action: string) => ipcRenderer.invoke('cu-overlay:action', action),
+    onState: (cb: (state: unknown) => void) =>
+      onPayload('cu-overlay:state', cb),
+    onEvent: (cb: (event: unknown) => void) =>
+      onPayload('cu-overlay:event', cb),
+  },
   hide: () => ipcRenderer.send('dashboard:hide'),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', {theme}),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) =>
