@@ -180,14 +180,13 @@ ${rawCode}
       frame.title = title;
       frame.style.height = '260px';
       const docHtml = buildSrcdoc(widgetId, rawSrc);
-      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-        const blobUrl = URL.createObjectURL(
-          new Blob([docHtml], {type: 'text/html;charset=utf-8'}),
-        );
-        frame.src = blobUrl;
-        frame.addEventListener('load', () => {
-          window.setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-        }, {once: true});
+      if (typeof btoa === 'function' && typeof TextEncoder !== 'undefined') {
+        const bytes = new TextEncoder().encode(docHtml);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        frame.src = `data:text/html;charset=utf-8;base64,${btoa(binary)}`;
       } else {
         frame.srcdoc = docHtml;
       }
