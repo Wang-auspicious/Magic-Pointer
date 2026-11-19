@@ -6,6 +6,7 @@
 <script src="input_composition.js"></script>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:;" />
 <link rel="stylesheet" href="oreo_tokens.css?v=20">
+<link rel="stylesheet" href="cds_icons.css?v=20">
 <link rel="stylesheet" href="oreo.css?v=20">
 <link rel="stylesheet" href="cards.css?v=20">
 <link rel="stylesheet" href="beam.css?v=20">
@@ -18,25 +19,25 @@
   <span class="orb" id="cp-orb"></span>
   <b id="cp-title">这段代码在干嘛？</b>
   <div class="cp-actions">
-    <button class="icon-btn is-plain" title="历史"><svg><use href="#ic-hist"/></svg></button>
-    <button class="icon-btn is-plain" title="新的一问"><svg><use href="#ic-plus"/></svg></button>
-    <button class="icon-btn is-plain is-on" title="固定"><svg><use href="#ic-pin"/></svg></button>
-    <button class="icon-btn is-plain" title="展开到工作室"><svg><use href="#ic-open"/></svg></button>
-    <button class="icon-btn is-plain" title="关闭"><svg><use href="#ic-x"/></svg></button>
+    <button class="icon-btn is-plain" title="历史"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE089;</span></button>
+    <button class="icon-btn is-plain" title="新的一问"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE001;</span></button>
+    <button class="icon-btn is-plain is-on" title="固定"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0BD;</span></button>
+    <button class="icon-btn is-plain" title="展开到工作室"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE00E;</span></button>
+    <button class="icon-btn is-plain" title="关闭"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE10F;</span></button>
   </div>
 </header>
 
 <div class="cp-stream" id="cp-empty" hidden>
   <button class="card cp-suggest enter">
-    <span class="tile pill-indigo"><svg><use href="#ic-spark"/></svg></span>
+    <span class="tile pill-indigo"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE018;</span></span>
     <span class="side-text"><b>帮我解决这个问题</b><small>用当前窗口和选区作上下文</small></span>
   </button>
   <button class="card cp-suggest enter">
-    <span class="tile pill-teal"><svg><use href="#ic-docs"/></svg></span>
+    <span class="tile pill-teal"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE017;</span></span>
     <span class="side-text"><b>总结</b><small>把这一屏压成三句话</small></span>
   </button>
   <button class="card cp-suggest enter">
-    <span class="tile pill-amber"><svg><use href="#ic-eye"/></svg></span>
+    <span class="tile pill-amber"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE069;</span></span>
     <span class="side-text"><b>这是什么？</b><small>解释选中的内容或它的来处</small></span>
   </button>
 </div>
@@ -45,9 +46,9 @@
 
 <div class="cp-foot">
   <div class="quick-chips">
-    <button class="chip-sm"><svg><use href="#ic-spark"/></svg>解释一下</button>
-    <button class="chip-sm"><svg><use href="#ic-docs"/></svg>总结</button>
-    <button class="chip-sm"><svg><use href="#ic-search"/></svg>找出处</button>
+    <button class="chip-sm"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE018;</span>解释一下</button>
+    <button class="chip-sm"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE017;</span>总结</button>
+    <button class="chip-sm"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>找出处</button>
   </div>
   <div id="cp-composer"></div>
 </div>

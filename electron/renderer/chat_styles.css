@@ -2662,21 +2662,27 @@ span.mp-chat-diff-path {
   right: 24px;
   bottom: 118px;
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   place-items: center;
-  border: 1px solid var(--mp-rule);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: var(--mp-r-pill);
   background: var(--mp-panel);
-  color: var(--mp-text-muted);
-  box-shadow: var(--mp-shadow-menu);
+  color: var(--cds-text-secondary, var(--mp-text-muted));
+  box-shadow: var(--cds-shadow-popover, var(--mp-shadow-menu));
+  transition: color var(--mp-dur-fast), border-color var(--mp-dur-fast), transform var(--mp-dur-fast);
+}
+
+.mpw-scroll-pill:hover {
+  color: var(--mp-text);
+  border-color: var(--cds-border-strong, var(--mp-rule-strong));
 }
 
 .mpw-perm-ask {
   width: 100%;
-  max-width: calc(var(--mp-content-width) + 64px);
+  max-width: 760px;
   margin-inline: auto;
-  padding-inline: 32px;
+  padding-inline: clamp(28px, 4vw, 40px);
 }
 
 .mpw-perm-ask {
@@ -2715,9 +2721,9 @@ span.mp-chat-diff-path {
 
 .mpw-composer-stack,
 .mpw-input-form {
-  max-width: calc(var(--mp-content-width) + 64px);
+  max-width: 760px;
   margin-inline: auto;
-  padding-inline: 32px;
+  padding-inline: clamp(28px, 4vw, 40px);
 }
 
 .mpw-input-form {
@@ -2832,9 +2838,12 @@ span.mp-chat-diff-path {
 }
 
 #composer-pr-menu svg,
-.mp-repository-dismiss svg {
+#composer-pr-menu .cds-icon,
+.mp-repository-dismiss svg,
+.mp-repository-dismiss .cds-icon {
   width: 14px;
   height: 14px;
+  font-size: 14px;
 }
 
 .mp-repository-dismiss {
@@ -3038,7 +3047,7 @@ span.mp-chat-diff-path {
   border-radius: var(--cds-radius);
   color: var(--cds-text-secondary);
   background: var(--cds-fill-secondary);
-  font-size: var(--cds-font-size-body);
+  font-size: 12px;
   line-height: var(--cds-leading-body);
   white-space: nowrap;
 }
@@ -3436,9 +3445,11 @@ span.mp-chat-diff-path {
   background: transparent;
 }
 
-.mp-worktree-box svg {
+.mp-worktree-box svg,
+.mp-worktree-box .cds-icon {
   width: 11px;
   height: 11px;
+  font-size: 11px;
   opacity: 0;
   transition: opacity var(--mp-dur-fast);
 }
@@ -3449,7 +3460,8 @@ span.mp-chat-diff-path {
   color: #fff;
 }
 
-.mp-composer-worktree[aria-checked="true"] .mp-worktree-box svg {
+.mp-composer-worktree[aria-checked="true"] .mp-worktree-box svg,
+.mp-composer-worktree[aria-checked="true"] .mp-worktree-box .cds-icon {
   opacity: 1;
 }
 
@@ -3458,11 +3470,16 @@ span.mp-chat-diff-path {
 }
 
 .mp-composer-environment svg,
+.mp-composer-environment .cds-icon,
 .mp-composer-workspace svg,
+.mp-composer-workspace .cds-icon,
 .mp-composer-branch svg,
-.mp-composer-folder-add svg {
-  width: var(--cds-icon--sm);
-  height: var(--cds-icon--sm);
+.mp-composer-branch .cds-icon,
+.mp-composer-folder-add svg,
+.mp-composer-folder-add .cds-icon {
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
   flex: none;
 }
 
@@ -3497,20 +3514,20 @@ span.mp-chat-diff-path {
 .mpw-scroll {
   position: relative;
   display: flex;
-  min-height: 44px;
+  min-height: 48px;
   max-height: 220px;
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--cds-border, var(--mp-rule));
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--mp-composer);
-  box-shadow: 0 1px 2px rgba(11, 11, 11, 0.03);
+  box-shadow: 0 1px 3px rgba(11, 11, 11, 0.03), 0 0 0 0.5px rgba(11, 11, 11, 0.02);
   transition: border-color var(--mp-dur-fast), box-shadow var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
 .mpw-input-root:focus-within .mpw-scroll {
-  border-color: color-mix(in srgb, var(--mp-text) 30%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mp-text) 6%, transparent);
+  border-color: var(--cds-border-strong, var(--mp-rule-strong));
+  box-shadow: 0 2px 8px rgba(11, 11, 11, 0.05);
 }
 
 .mpw-grow {
@@ -3538,17 +3555,17 @@ span.mp-chat-diff-path {
 
 .mpw-input {
   width: 100%;
-  min-height: 44px;
+  min-height: 46px;
   max-height: 218px;
-  padding: 13px 46px 13px 10px;
+  padding: 13px 48px 13px 16px;
   overflow: auto;
   border: 0;
   resize: none;
   background: transparent;
   color: var(--mp-text);
-  font-size: 14px;
-  line-height: 18px;
-  font-variation-settings: "wght" 360;
+  font-size: 14.5px;
+  line-height: 22px;
+  font-weight: 400;
 }
 
 .mpw-input::placeholder {
@@ -3608,6 +3625,7 @@ span.mp-chat-diff-path {
 .mpw-row {
   display: flex;
   height: 34px;
+  padding: 2px 2px 0;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -3659,14 +3677,15 @@ span.mp-chat-diff-path {
 .mpw-primary,
 .mpw-perm {
   display: inline-flex;
-  height: 26px;
-  min-width: 26px;
+  height: 28px;
+  min-width: 28px;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 0 5px;
-  border-radius: var(--mp-r5);
-  color: var(--mp-text-muted);
+  padding: 0 6px;
+  border-radius: 7px;
+  color: var(--cds-text-secondary, var(--mp-text-muted));
+  font-size: 12.5px;
   white-space: nowrap;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast), transform var(--mp-dur-fast);
 }
@@ -3676,23 +3695,23 @@ span.mp-chat-diff-path {
 .mpw-perm:hover,
 .mpw-perm[aria-expanded="true"] {
   color: var(--mp-text);
-  background: var(--mp-hover);
+  background: var(--cds-fill-ghost-hover, var(--mp-hover));
 }
 
 .mpw-add {
-  height: 32px;
-  min-width: 32px;
-  border-radius: 8px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 7px;
 }
 
 .mpw-primary {
   position: absolute;
   top: auto;
-  right: 8px;
-  bottom: 8px;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
+  right: 9px;
+  bottom: 9px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
   padding: 0;
   border-radius: 8px;
   color: #ffffff;
@@ -3778,8 +3797,9 @@ span.mp-chat-diff-path {
 }
 
 .mpw-perm-chev {
-  width: 10px !important;
-  height: 10px !important;
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
 }
 
 .mpw-model {
@@ -4371,11 +4391,11 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-shell[data-inspector="open"] .mpw-stream > .view-empty,
 .mp-shell[data-inspector="open"] .mpw-trajectory-seat > *,
 .mp-shell[data-inspector="open"] .mpw-perm-ask {
-  padding-inline: 24px;
+  padding-inline: clamp(28px, 4vw, 40px);
 }
 
 .mp-shell[data-inspector="open"] .mpw-composer-stack {
-  padding-inline: 24px;
+  padding-inline: clamp(28px, 4vw, 40px);
 }
 
 .mp-shell[data-task-surface="background"] .mp-chat-flow,

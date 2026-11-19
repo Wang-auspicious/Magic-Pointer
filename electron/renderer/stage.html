@@ -8,6 +8,7 @@
     <script src="input_composition.js"></script>
     <link rel="stylesheet" href="oreo_tokens.css" />
     <link rel="stylesheet" href="cds_tokens.css" />
+    <link rel="stylesheet" href="cds_icons.css" />
     <link rel="stylesheet" href="theme_tokens.css" />
     <link rel="stylesheet" href="chat_styles.css" />
     <link rel="stylesheet" href="decision_card.css" />
@@ -48,8 +49,8 @@
           />
           <p id="transcript" class="capsule-transcript" aria-live="polite"></p>
           <button type="button" id="capsule-send" class="capsule-send" data-no-drag="1" aria-label="提交">
-            <svg class="capsule-send-icon" aria-hidden="true"><use href="#ic-arrow-up" /></svg>
-            <svg class="capsule-stop-icon" aria-hidden="true"><use href="#ic-stop" /></svg>
+            <span class="cds-icon capsule-send-icon" data-size="small" aria-hidden="true">&#xE013;</span>
+            <span class="cds-icon capsule-stop-icon" data-size="small" aria-hidden="true">&#xE0EC;</span>
           </button>
         </div>
         <div class="composer-tools" aria-hidden="true">
@@ -65,16 +66,16 @@
           <div class="thread-head-row">
             <b id="thread-title" class="thread-title"></b>
             <span id="thread-eyebrow" class="thread-eyebrow" data-state="done">
-              <svg aria-hidden="true"><use href="#ic-check" /></svg><em id="thread-eyebrow-text">已完成</em>
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE03B;</span><em id="thread-eyebrow-text">已完成</em>
             </span>
             <span class="thread-head-spacer"></span>
             <button type="button" id="thread-stop" class="thread-icon" data-no-drag="1"
                     aria-label="停止任务" title="停止任务" hidden>
-              <svg class="thread-stop-icon" aria-hidden="true"><use href="#ic-stop" /></svg>
+              <span class="cds-icon thread-stop-icon" data-size="small" aria-hidden="true">&#xE0EC;</span>
             </button>
             <button type="button" id="thread-close" class="thread-icon is-close" data-no-drag="1"
                     aria-label="关闭" title="关闭">
-              <svg class="thread-close-icon" aria-hidden="true"><use href="#ic-x" /></svg>
+              <span class="cds-icon thread-close-icon" data-size="small" aria-hidden="true">&#xE10F;</span>
             </button>
           </div>
         </header>
@@ -91,22 +92,22 @@
         </div>
         <button type="button" id="passage-expand" class="passage-expand" data-no-drag="1" hidden
                 aria-label="把选中的这段展开讲">
-          <svg aria-hidden="true"><use href="#ic-expand" /></svg><span>展开讲讲</span>
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE067;</span><span>展开讲讲</span>
         </button>
         <footer class="thread-bar" data-drag-handle="1">
           <button type="button" id="thread-retry" class="thread-icon" data-no-drag="1"
                   aria-label="重问一次" title="重问一次">
-            <svg aria-hidden="true"><use href="#ic-redo" /></svg>
+            <span class="cds-icon" data-size="small" aria-hidden="true">&#xE11D;</span>
           </button>
           <input type="text" id="thread-followup" class="thread-followup" data-no-drag="1"
                  autocomplete="off" spellcheck="false" aria-label="继续追问" />
           <span id="thread-count" class="thread-count"></span>
           <button type="button" id="thread-copy" class="thread-icon" data-no-drag="1"
                   aria-label="复制" title="复制">
-            <svg aria-hidden="true"><use href="#ic-copy" /></svg>
+            <span class="cds-icon" data-size="small" aria-hidden="true">&#xE056;</span>
           </button>
           <button type="button" id="thread-send" class="thread-send" data-no-drag="1" aria-label="发送追问">
-            <svg aria-hidden="true"><use href="#ic-arrow-up" /></svg>
+            <span class="cds-icon" data-size="small" aria-hidden="true">&#xE013;</span>
           </button>
         </footer>
       </section>

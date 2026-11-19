@@ -7,11 +7,13 @@
   max-height: min(380px, 52vh);
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--mp-rule, #dfded8);
-  border-radius: 12px;
+  border: 1px solid var(--cds-border, var(--mp-rule, #dfded8));
+  border-radius: 14px;
   background: var(--mp-panel, #ffffff);
-  box-shadow: var(--mp-shadow-menu);
-  padding: 6px 12px 10px;
+  box-shadow: var(--cds-shadow-popover, 0 8px 28px rgba(11, 11, 11, 0.12));
+  padding: 8px 14px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 .mp-perception-popover[hidden] {
   display: none;
@@ -49,7 +51,7 @@
   padding: 4px 2px;
   cursor: pointer;
   list-style: none;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 .mp-perception-summary::-webkit-details-marker {
   display: none;
@@ -66,7 +68,7 @@
   color: var(--mp-clay, #c36b4d);
 }
 .mp-perception-title {
-  font-weight: 550;
+  font-weight: 500;
 }
 .mp-perception-state,
 .mp-perception-count {
