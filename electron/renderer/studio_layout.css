@@ -1040,12 +1040,13 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   background: var(--mp-hover);
 }
 
-.mp-header-legacy-action {
+.mpw-header-actions .mp-header-legacy-action,
+.mpw-header-actions button[hidden] {
   display: none;
 }
 
-#chat-tour-toggle[aria-pressed="true"],
-#chat-record-demo-toggle[aria-pressed="true"] {
+.mpw-header-actions #chat-tour-toggle[aria-pressed="true"],
+.mpw-header-actions #chat-record-demo-toggle[aria-pressed="true"] {
   display: inline-grid;
   background: color-mix(in srgb, var(--mp-clay) 14%, transparent);
   color: var(--mp-clay);
