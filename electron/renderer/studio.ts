@@ -885,7 +885,8 @@ function renderComposerBranchMenu(branches: string[]): void {
   );
   const search = document.createElement('label');
   search.className = 'mp-branch-menu-search';
-  search.innerHTML = '<svg aria-hidden="true"><use href="#ic-search" /></svg>';
+  search.innerHTML =
+    '<span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>';
   const input = document.createElement('input');
   input.type = 'search';
   input.placeholder = 'Search branches…';
@@ -10285,7 +10286,7 @@ function renderWorkflowRunBlocks(
       section.className = 'mpwf-run';
       section.innerHTML =
         '<header class="mpwf-header"><strong class="mpwf-name"></strong>' +
-        '<button type="button" class="mpwf-stop" title="Stop run" aria-label="Stop run"><svg aria-hidden="true"><use href="#ic-stop" /></svg></button></header>' +
+        '<button type="button" class="mpwf-stop" title="Stop run" aria-label="Stop run"><span class="cds-icon" data-size="xs" aria-hidden="true">&#xE0EC;</span></button></header>' +
         '<p class="mpwf-meta"><span class="mpwf-state"></span><span class="mpwf-progress"></span><span class="mpwf-tokens"></span></p>' +
         '<ol class="mpwf-timeline"></ol>' +
         '<p class="mpwf-stop-error" role="status" hidden></p>';
@@ -10452,7 +10453,7 @@ function renderProjectTasks() {
       heading.className = 'mp-subagent-section-header';
       if (label === 'Finished') {
         heading.innerHTML =
-          '<button type="button" class="mp-subagent-finished-toggle"><span></span><svg aria-hidden="true"><use href="#ic-chev" /></svg></button>' +
+          '<button type="button" class="mp-subagent-finished-toggle"><span></span><span class="cds-icon" data-size="xs" aria-hidden="true">&#xF003;</span></button>' +
           '<button type="button" class="mp-subagent-clear">Clear</button>';
         heading.querySelector('button')!.addEventListener('click', () => {
           view.finishedOpen = !view.finishedOpen;
@@ -10493,7 +10494,7 @@ function renderProjectTasks() {
         row = document.createElement('article');
         row.className = 'mp-subagent-task';
         row.innerHTML =
-          '<div class="mp-subagent-heading"><strong></strong><button type="button" class="mp-subagent-stop" title="Stop task" aria-label="Stop task"><svg aria-hidden="true"><use href="#ic-stop" /></svg></button></div>' +
+          '<div class="mp-subagent-heading"><strong></strong><button type="button" class="mp-subagent-stop" title="Stop task" aria-label="Stop task"><span class="cds-icon" data-size="xs" aria-hidden="true">&#xE0EC;</span></button></div>' +
           '<div class="mp-subagent-meta"><span>Agent</span><span class="mp-subagent-model"></span><span class="mp-subagent-time"></span><span class="mp-subagent-state"></span></div>' +
           '<div class="mp-subagent-stats"><span class="mp-subagent-tool-uses"></span><span class="mp-subagent-current-tool"></span><span class="mp-subagent-usage"></span>' +
           '<button type="button" class="mp-subagent-transcript" aria-expanded="false">View transcript</button></div>' +
@@ -13077,7 +13078,8 @@ function renderComposerMaterials() {
         'aria-label',
         studioT('watch.remove_source', {title: source.title}),
       );
-      remove.innerHTML = '<svg aria-hidden="true"><use href="#ic-x" /></svg>';
+      remove.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE10F;</span>';
       remove.addEventListener('click', () =>
         selectTaskMaterial(source.sourceId),
       );
@@ -13145,7 +13147,8 @@ function renderComposerAttachments() {
         'aria-label',
         studioT('common.remove_named', {name: String(name.textContent || '')}),
       );
-      remove.innerHTML = '<svg aria-hidden="true"><use href="#ic-x" /></svg>';
+      remove.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE10F;</span>';
       remove.addEventListener('click', () => {
         composerAttachments = composerAttachments.filter(
           path => path !== filePath,
@@ -17240,8 +17243,8 @@ function openStashViewer(src: string, desc: string) {
         <div class="stash-viewer-head">
           <b class="stash-viewer-title"></b>
           <span class="stash-viewer-actions">
-            <button type="button" class="icon-btn is-plain" id="stash-viewer-copy" title="${studioT('stash.copy_image')}"><svg><use href="#ic-clip"/></svg></button>
-            <button type="button" class="icon-btn is-plain" id="stash-viewer-close" title="${studioT('common.close')}"><svg><use href="#ic-x"/></svg></button>
+            <button type="button" class="icon-btn is-plain" id="stash-viewer-copy" title="${studioT('stash.copy_image')}"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE056;</span></button>
+            <button type="button" class="icon-btn is-plain" id="stash-viewer-close" title="${studioT('common.close')}"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE10F;</span></button>
           </span>
         </div>
         <img class="stash-viewer-img" alt="" />

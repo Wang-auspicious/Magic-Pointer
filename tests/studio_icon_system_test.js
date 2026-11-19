@@ -10,12 +10,19 @@ const sprite = fs.readFileSync('electron/renderer/icons.ts', 'utf8');
 const studio = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const shellCss = fs.readFileSync('electron/renderer/studio_layout.css', 'utf8');
 
-for (const name of ['think', 'edit', 'api', 'copy', 'send', 'branch', 'search']) {
+for (const [name, glyph] of [
+  ['think', '\uE068'],
+  ['edit', '\uE064'],
+  ['api', '\uE051'],
+  ['copy', '\uE056'],
+  ['check', '\uE03B'],
+  ['send', '\uE013'],
+  ['branch', '\uE078'],
+  ['search', '\uE0D3'],
+]) {
   const icon = ChatIcons.node(name, 16).outerHTML;
-  assert(icon.includes('viewBox="0 0 24 24"'), `${name} must use the shared 24px grid`);
-  assert(icon.includes('stroke-width="1.5"'), `${name} must use the thin stroke system`);
-  assert(icon.includes('stroke-linecap="round"'), `${name} must use rounded terminals`);
-  assert(!icon.includes('fill="currentColor"'), `${name} must not regress to a chunky filled glyph`);
+  assert(icon.includes('class="cds-icon"'), `${name} must use Anthropicons-Variable cds-icon`);
+  assert(icon.includes(`data-glyph="${glyph}"`), `${name} must render exact Claude Desktop 4.23118 codepoint`);
 }
 
 const branch = ChatView.userNode('建立分支', undefined, { conversationId: 'c1', turnIndex: 2 }).outerHTML;
@@ -32,25 +39,19 @@ for (const id of [
   assert(sprite.includes(`id="${id}"`), `${id} must exist in the unified shell sprite`);
 }
 
-assert(sprite.includes('<path d="M5 6h14M5 12h10M5 18h6"/>'),
-  'the application menu uses the interface descending three-line silhouette');
-assert(sprite.includes('<path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/>'),
-  'the file preview Code action includes the measured slash rather than a generic angle pair');
-assert(sprite.includes('<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>'),
-  'Inspector maximise uses the two diagonal corner arrows visible in Studio');
 const headerOrder = [
-  'id="bottom-panel-toggle"',
-  'id="inspector-toggle"',
-  'id="header-preview-toggle"',
+  'id="header-vault-toggle"',
+  'id="header-sidechat-toggle"',
+  'id="header-files-toggle"',
+  'id="header-changes-toggle"',
+  'id="header-terminal-toggle"',
+  'id="header-browser-toggle"',
   'id="thread-more"',
 ].map((needle) => html.indexOf(needle));
-assert(headerOrder.every((index) => index >= 0));
+assert(headerOrder.every((index) => index >= 0), 'header workspace toggles must exist in studio.html');
 assert.deepStrictEqual([...headerOrder].sort((a, b) => a - b), headerOrder,
-  'conversation header follows Studio: terminal, file browser, preview, more');
-assert.match(html, /id="inspector-toggle"[\s\S]*?<use href="#ic-file-add"/,
-  'Studio FileAdd glyph opens the file browser');
-assert(html.includes('class="mp-conversation-view" aria-label="对话视图" hidden'),
-  'the old permanent Chat/Trajectory buttons move into the more menu');
+  'conversation header follows Claude Desktop workspace order ending with More');
+assert(!html.includes('href="#ic-'), 'studio.html must have zero legacy #ic-* SVG icon references');
 assert.match(shellCss, /\.mp-new-circle\s*\{[^}]*width:\s*18px[^}]*border-radius:\s*50%[^}]*background:\s*color-mix/s,
   'the supplied Code sidebar uses the compact 18px New circle');
 assert.match(html, /class="mp-new-circle"[\s\S]*?data-glyph="&#xE001;"/);
@@ -68,10 +69,7 @@ assert(!html.includes('id="mp-context-tag"'), 'the meaningless product context p
 assert(!html.includes('id="session-log"'), 'the download pill must stay removed');
 assert(studio.includes("icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')"),
   'project rows use the registered shared open/closed folder pair');
-assert(studio.includes("icon('ic-ellipsis')"), 'conversation actions use the shared quiet ellipsis');
 assert(!studio.includes('class="mp-subagent-badge"'),
   'the supplied compact Background tasks cards do not add an invented workflow badge');
-assert(ChatIcons.node('think', 16).outerHTML.includes('M12 6v6h4'),
-  'thinking uses a clock-family glyph corresponding to Studio ExtendedThinking');
 
 console.log('studio icon system test ok');

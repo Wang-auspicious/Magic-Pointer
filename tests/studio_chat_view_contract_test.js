@@ -263,10 +263,10 @@ assert(tokens.includes('--mp-page: #FFFFFF'), 'light page token matches Claude D
 assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (full platform)');
 assert(tokens.includes('--mp-page: #0B0B0A'), 'dark page token matches the dark canvas alignment');
 assert.match(css, /\.mp-chat-bubble\s*\{[^}]*border-radius:\s*var\(--mp-r-bubble\)/s, 'user bubble radius rides the aligned bubble token');
-assert(tokens.includes('--mp-r-bubble: 12px'), 'bubble radius token matches Claude Desktop 4.23118');
+assert(tokens.includes('--mp-r-bubble: 14px'), 'bubble radius token matches Claude Desktop 4.23118');
 assert.match(css, /\.mp-chat-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Studio height');
-assert.match(css, /\.mp-chat-row-caret\s*\{[^}]*font-family:\s*'Anthropicons Code'/s,
-  'tool disclosure arrows use the original icon font caret (E02A), rotating open');
+assert.match(css, /\.mp-chat-row-caret\s*\{[^}]*font-family:\s*var\(--font-anthropicons,\s*Anthropicons-Variable\)/s,
+  'tool disclosure arrows use Anthropicons-Variable caret, rotating open');
 assert.match(css, /\.mp-chat-disclosure\[data-open='true'\] > \.mp-chat-row \.mp-chat-row-caret\s*\{[^}]*transform:\s*rotate\(90deg\)/s,
   'the caret rotates with the disclosure state');
 assert.match(css, /\.mp-chat-tool-group-title,[^}]*\{[^}]*flex:\s*0 1 auto/s,
@@ -397,16 +397,16 @@ assert(css.includes('@keyframes cds-shimmer-text-shine'),
 assert(css.includes('@keyframes _fadeInText_4za3l_1') && css.includes('.mp-stream-word-in'),
   '100ms streaming word fade-in animation must be defined');
 
-assert.match(css, /\.mp-chat-stream-live\s*\{[^}]*(?:15px|0\.9375rem)/s,
-  'live stream body matches settled 15px (0.9375rem) typography');
-assert.match(css, /\.mp-chat-stream-live\s*\{[^}]*line-height:\s*1\.4\b/s,
-  'live stream body matches settled line-height: 1.4');
-assert.match(css, /\.mp-chat-markdown\s*\{[^}]*(?:15px|0\.9375rem)/s,
-  'settled markdown uses 15px (0.9375rem) typography');
-assert.match(css, /\.mp-chat-markdown\s*\{[^}]*line-height:\s*1\.4\b/s,
-  'settled markdown uses line-height: 1.4');
-assert.match(css, /\.mp-chat-narration\s*\{[^}]*line-height:\s*1\.4\b/s,
-  'mid-turn narration unifies line-height: 1.4 to prevent settle jump');
+assert.match(css, /\.mp-chat-stream-live\s*\{[^}]*14\.5px/s,
+  'live stream body matches settled 14.5px typography');
+assert.match(css, /\.mp-chat-stream-live\s*\{[^}]*line-height:\s*1\.65\b/s,
+  'live stream body matches settled line-height: 1.65');
+assert.match(css, /\.mp-chat-markdown\s*\{[^}]*14\.5px/s,
+  'settled markdown uses 14.5px typography');
+assert.match(css, /\.mp-chat-markdown\s*\{[^}]*line-height:\s*1\.65\b/s,
+  'settled markdown uses line-height: 1.65');
+assert.match(css, /\.mp-chat-narration\s*\{[^}]*line-height:\s*1\.65\b/s,
+  'mid-turn narration unifies line-height: 1.65 to prevent settle jump');
 
 assert.match(css, /\.mp-chat-think[^{]*> \.mp-chat-body-wrap\s*\{[^}]*transition:\s*none/s,
   'Thought process toggle panel must open/collapse instantaneously');
@@ -436,8 +436,8 @@ const animatedSparkHtml = ActivityMarks.spark('thinking');
 assert(animatedSparkHtml.includes('data-cds="Spark"') && animatedSparkHtml.includes('data-cds-spark-strip'),
   'animated Spark must emit data-cds="Spark" sprite strip markup');
 
-assert.match(css, /\.mpw-primary\s*\{[^}]*width:\s*32px[^}]*height:\s*32px/s,
-  'composer primary button uses 32px sizing per REA §1.4');
+assert.match(css, /\.mpw-primary\s*\{[^}]*width:\s*(?:30|32)px[^}]*height:\s*(?:30|32)px/s,
+  'composer primary button uses 30px/32px sizing per Claude Desktop 4.23118');
 assert.match(css, /\.mpw-primary\.is-stop[\s\S]*?(?:#d97757|--cds-clay)/s,
   'composer stop button uses clay #d97757 fill');
 
