@@ -1580,7 +1580,7 @@ function conversationNode(
       ? 'running'
       : activity === 'awaiting'
         ? 'awaiting'
-        : activity === 'failed'
+        : activity === 'failed' && (unread || c.id === activeConversationId)
           ? 'error'
           : unread
             ? 'ready'
@@ -1606,7 +1606,8 @@ function conversationNode(
   ellipsis.setAttribute('tabindex', '0');
   ellipsis.setAttribute('aria-label', studioT('convo.row_actions'));
   ellipsis.dataset.sessionMenu = String(c.id || '');
-  ellipsis.innerHTML = icon('ic-mp-chat-ellipsis');
+  ellipsis.innerHTML =
+    '<span class="cds-icon" data-size="micro" aria-hidden="true">&#xE061;</span>';
   actions.appendChild(ellipsis);
   actions.appendChild(buildSessionMenu(c, pinnedIds));
   row.append(title, actions);
@@ -7543,8 +7544,10 @@ function applyTheme(theme: 'light' | 'dark') {
   }
   window.magicPointerDashboard?.setTheme?.(theme);
   window.dispatchEvent(new CustomEvent('mp:theme-toggle', {detail: theme}));
-  const use = document.getElementById('theme-toggle-icon');
-  use?.setAttribute('href', theme === 'dark' ? '#ic-sun' : '#ic-moon');
+  const iconEl = document.getElementById('theme-toggle-icon');
+  if (iconEl) {
+    iconEl.textContent = theme === 'dark' ? '\uE0EE' : '\uE0B2';
+  }
   const toggle = document.getElementById('theme-toggle');
   if (toggle) {
     toggle.setAttribute(
@@ -7598,8 +7601,10 @@ function toggleAnimatedTheme(origin?: {x: number; y: number}) {
   const current =
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
   document.body.toggleAttribute('data-ds-dark-theme', current === 'dark');
-  const use = document.getElementById('theme-toggle-icon');
-  use?.setAttribute('href', current === 'dark' ? '#ic-sun' : '#ic-moon');
+  const iconEl = document.getElementById('theme-toggle-icon');
+  if (iconEl) {
+    iconEl.textContent = current === 'dark' ? '\uE0EE' : '\uE0B2';
+  }
   button?.setAttribute(
     'aria-label',
     current === 'dark' ? studioT('theme.to_light') : studioT('theme.to_dark'),
@@ -8361,14 +8366,35 @@ function openThreadMenu(button: HTMLElement) {
   const make = (
     label: string,
     run: () => void,
-    options: {danger?: boolean; disabled?: boolean; shortcut?: string} = {},
+    options: {
+      danger?: boolean;
+      disabled?: boolean;
+      shortcut?: string;
+      glyph?: string;
+      checked?: boolean;
+    } = {},
   ) => {
     const item = document.createElement('button');
     item.type = 'button';
+    if (options.glyph) {
+      const gly = document.createElement('span');
+      gly.className = 'cds-icon';
+      gly.dataset.size = 'small';
+      gly.setAttribute('aria-hidden', 'true');
+      gly.textContent = options.glyph;
+      item.append(gly);
+    }
     const text = document.createElement('span');
     text.textContent = label;
     item.append(text);
-    if (options.shortcut) {
+    if (options.checked) {
+      const check = document.createElement('span');
+      check.className = 'cds-icon';
+      check.dataset.size = 'micro';
+      check.setAttribute('aria-hidden', 'true');
+      check.textContent = '\uE03B';
+      item.append(check);
+    } else if (options.shortcut) {
       const hint = document.createElement('kbd');
       hint.textContent = options.shortcut;
       item.append(hint);
@@ -8384,11 +8410,68 @@ function openThreadMenu(button: HTMLElement) {
   };
   const divider = () => document.createElement('hr');
   const unavailable = !activeConversationId;
+  const pressed = (id: string) =>
+    document.getElementById(id)?.getAttribute('aria-pressed') === 'true';
+  const inspectorOpen = shell.dataset.inspector === 'open';
   menu.append(
-    make('Files', () => toggleMaterialsPanel(), {shortcut: 'Ctrl+Shift+F'}),
-    make('Terminal', () => toggleTerminalPanel()),
-    make('Preview', () => setInspector(true, 'browser')),
-    make('Mods', () => setInspector(true, 'modules')),
+    make('Files', () => toggleMaterialsPanel(), {
+      glyph: '\uE072',
+      shortcut: 'Ctrl+Shift+F',
+      checked: inspectorOpen && activeInspectorTab === 'files',
+    }),
+    make('Changes', () => setInspector(true, 'changes'), {
+      glyph: '\uE02D',
+      checked: inspectorOpen && activeInspectorTab === 'changes',
+    }),
+    make('Terminal', () => toggleTerminalPanel(), {
+      glyph: '\uE051',
+      checked: shell.dataset.bottomPanel === 'open',
+    }),
+    make('Browser', () => setInspector(true, 'browser'), {
+      glyph: '\uE082',
+      checked: inspectorOpen && activeInspectorTab === 'browser',
+    }),
+    make('Knowledge Vault', () => setInspector(true, 'vault'), {
+      glyph: '\uE01E',
+      checked: inspectorOpen && activeInspectorTab === 'vault',
+    }),
+    make('Side Chat', () => setInspector(true, 'side-chat'), {
+      glyph: '\uE012',
+      checked: inspectorOpen && activeInspectorTab === 'side-chat',
+    }),
+    make('Mods', () => setInspector(true, 'modules'), {
+      glyph: '\uE100',
+      checked: inspectorOpen && activeInspectorTab === 'modules',
+    }),
+    divider(),
+    make(
+      'Skim highlights',
+      () => document.getElementById('chat-skim-toggle')?.click(),
+      {glyph: '\uE069', checked: pressed('chat-skim-toggle')},
+    ),
+    make(
+      'Learning workbench',
+      () => document.getElementById('chat-learn-toggle')?.click(),
+      {glyph: '\uE083', checked: pressed('chat-learn-toggle')},
+    ),
+    make(
+      'Guided screen tour',
+      () => document.getElementById('chat-tour-toggle')?.click(),
+      {glyph: '\uE059', checked: pressed('chat-tour-toggle')},
+    ),
+    make(
+      'Record screen demo',
+      () => document.getElementById('chat-record-demo-toggle')?.click(),
+      {glyph: '\uE0C3', checked: pressed('chat-record-demo-toggle')},
+    ),
+    make(
+      'Activity',
+      () => document.getElementById('execution-toggle')?.click(),
+      {
+        glyph: '\uE005',
+        checked: inspectorOpen && activeInspectorTab === 'activity',
+      },
+    ),
     divider(),
     make('Open project folder', () => {
       if (activeProjectRoot) {
@@ -8481,8 +8564,31 @@ function openSidebarMenu(button: HTMLElement) {
   menu.id = 'sidebar-menu';
   menu.className = 'mp-thread-menu';
   menu.setAttribute('role', 'menu');
+  const addedViews = new Set<string>();
+  for (const [label, view, glyph] of [
+    ['Resources', 'resources', '\uE01F'],
+    ['Routines', 'scheduled', '\uE043'],
+  ] as Array<[string, string, string]>) {
+    addedViews.add(view);
+    const item = document.createElement('button');
+    item.type = 'button';
+    const gly = document.createElement('span');
+    gly.className = 'cds-icon';
+    gly.dataset.size = 'small';
+    gly.setAttribute('aria-hidden', 'true');
+    gly.textContent = glyph;
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.append(gly, text);
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      closeSidebarMenu(true);
+      show(view);
+    });
+    menu.append(item);
+  }
   for (const view of studioLibraries.preferences.hiddenNavigation as string[]) {
-    if (view === 'designs') {
+    if (view === 'designs' || addedViews.has(view)) {
       continue;
     }
     const source = document.querySelector<HTMLElement>(
@@ -8491,6 +8597,7 @@ function openSidebarMenu(button: HTMLElement) {
     if (!source) {
       continue;
     }
+    addedViews.add(view);
     const item = document.createElement('button');
     item.type = 'button';
     item.textContent = source.textContent;
@@ -10905,6 +11012,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       button.classList.toggle('is-on', active);
       button.setAttribute('aria-selected', String(active));
     });
+  syncHeaderWorkspaceToggles();
   if (!open) {
     closeProjectBrowserView();
     return;
@@ -10991,6 +11099,42 @@ function toggleTerminalPanel(): void {
     setBottomPanel(true);
   }
 }
+
+function syncHeaderWorkspaceToggles(): void {
+  const inspectorOpen = shell.dataset.inspector === 'open';
+  const terminalOpen = shell.dataset.bottomPanel === 'open';
+  document
+    .querySelectorAll<HTMLElement>('.mp-workspace-toggle[data-inspector-target]')
+    .forEach(btn => {
+      const target = btn.dataset.inspectorTarget || '';
+      const active =
+        target === 'terminal'
+          ? terminalOpen
+          : inspectorOpen && activeInspectorTab === target;
+      btn.classList.toggle('is-on', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+}
+
+document
+  .querySelectorAll<HTMLElement>('.mp-workspace-toggle[data-inspector-target]')
+  .forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.inspectorTarget || '';
+      if (!target) {
+        return;
+      }
+      if (target === 'terminal') {
+        toggleTerminalPanel();
+        return;
+      }
+      if (shell.dataset.inspector === 'open' && activeInspectorTab === target) {
+        setInspector(false);
+      } else {
+        setInspector(true, target);
+      }
+    });
+  });
 
 document
   .getElementById('execution-toggle')
@@ -11620,6 +11764,7 @@ function setBottomPanel(open: boolean) {
   document
     .getElementById('bottom-panel-toggle')
     ?.setAttribute('aria-expanded', String(open));
+  syncHeaderWorkspaceToggles();
   if (open) {
     renderTerminalPrompt();
     requestAnimationFrame(() =>
@@ -14719,6 +14864,20 @@ window.magicPointerDashboard?.desktopPerception?.onCaptured?.(raw => {
   renderCapturedEvidenceBar();
 });
 
+function cleanVaultExcerpt(raw: string): string {
+  return raw
+    .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
+    .replace(/\$([^$\n]+?)\$/g, '$1')
+    .replace(/\^T\b/g, 'ᵀ')
+    .replace(/\\cdot\b/g, '·')
+    .replace(/\\times\b/g, '×')
+    .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1/$2')
+    .replace(/\\([a-zA-Z]+)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function renderVaultPanel() {
   const host = document.getElementById('vault-panel-host');
   if (!host) {
@@ -14758,7 +14917,20 @@ async function renderVaultPanel() {
   head.className = 'mp-vault-head';
   const pathEl = document.createElement('div');
   pathEl.className = 'mp-vault-path';
-  pathEl.textContent = `Obsidian 双向知识库：${data.vaultDir || '本地默认库'}`;
+  const vaultFullDir = String(data.vaultDir || '').trim();
+  const vaultFolderName =
+    vaultFullDir.split(/[\\/]/).filter(Boolean).pop() || '本地默认库';
+  if (vaultFullDir) {
+    pathEl.title = vaultFullDir;
+  }
+  const folderIcon = document.createElement('span');
+  folderIcon.className = 'cds-icon';
+  folderIcon.dataset.size = 'small';
+  folderIcon.setAttribute('aria-hidden', 'true');
+  folderIcon.textContent = '\uE072';
+  const pathText = document.createElement('span');
+  pathText.textContent = vaultFolderName;
+  pathEl.append(folderIcon, pathText);
   head.appendChild(pathEl);
 
   const actions = document.createElement('div');
@@ -14911,7 +15083,7 @@ async function renderVaultPanel() {
       if (note.excerpt) {
         const ex = document.createElement('div');
         ex.className = 'mp-captured-evidence-ocr';
-        ex.textContent = note.excerpt;
+        ex.textContent = cleanVaultExcerpt(note.excerpt);
         card.appendChild(ex);
       }
       const meta = document.createElement('div');

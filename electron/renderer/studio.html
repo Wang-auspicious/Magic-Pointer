@@ -38,19 +38,19 @@
     <header class="mp-window-titlebar mp-window-bar" id="window-titlebar">
       <div class="mp-window-titlebar-leading">
         <button type="button" class="mp-toolbar-button" id="app-menu" aria-label="App menu" title="App menu" aria-haspopup="menu" aria-expanded="false">
-          <svg class="codex-icon" aria-hidden="true"><use href="#ic-menu" /></svg>
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0AA;</span>
         </button>
         <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="Collapse sidebar" title="Collapse sidebar" aria-controls="studio-sidebar" aria-expanded="true">
           <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0DD;</span>
         </button>
         <button type="button" class="mp-toolbar-button" id="global-search-toggle" aria-label="Global search" title="Search conversations, projects, and commands">
-          <svg class="codex-icon" aria-hidden="true"><use href="#ic-search" /></svg>
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span>
         </button>
         <button type="button" class="mp-toolbar-button" id="window-back" aria-label="Back" title="Back" disabled>
-          <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg>
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE00C;</span>
         </button>
         <button type="button" class="mp-toolbar-button" id="window-forward" aria-label="Forward" title="Forward" disabled>
-          <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE010;</span>
         </button>
       </div>
       <div class="mp-window-caption-safe" aria-hidden="true"></div>
@@ -75,19 +75,19 @@
           <span class="mp-nav-leading"><span class="mp-new-circle"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></span></span><span class="mp-nav-label mpw-new-session-label">New</span>
         </button>
         <button class="mpw-customize" id="nav-projects" data-goto="projects" data-library-nav="projects">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE0C9;" aria-hidden="true"></span></span><span class="mp-nav-label">Projects</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE0C9;" aria-hidden="true"></span></span><span class="mp-nav-label">Projects</span>
         </button>
         <button class="mpw-customize" id="nav-resources" data-goto="resources">
-          <span class="mp-nav-leading"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg></span><span class="mp-nav-label">Resources</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE01F;" aria-hidden="true"></span></span><span class="mp-nav-label">Resources</span>
         </button>
         <div class="mp-nav-row"><button class="mpw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
         </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="Create artifact" title="Create artifact"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
         <button class="mpw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Routines</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Routines</span>
         </button>
         <button class="mpw-customize" id="nav-customize" data-goto="customize" data-library-nav="customize">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE100;" aria-hidden="true"></span></span><span class="mp-nav-label">Customize</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE100;" aria-hidden="true"></span></span><span class="mp-nav-label">Customize</span>
         </button>
         <button class="mpw-customize" id="sidebar-more" aria-haspopup="menu" aria-expanded="false">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE027;" aria-hidden="true"></span></span><span class="mp-nav-label">More</span>
@@ -114,7 +114,7 @@
             </button>
             <button type="button" class="mpw-workspace-action" id="workspace-add"
               aria-label="Open project" title="Open project folder">
-              <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE074;</span>
             </button>
           </div>
           <p class="mpw-workspace-note" id="workspace-note" role="status" aria-live="polite" hidden></p>
@@ -125,10 +125,10 @@
 
         <div class="mpw-foot">
           <button type="button" class="mp-update-card" id="update-card" hidden>
-            <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">Restart to update</strong><small id="update-card-detail"></small></span><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">Restart to update</strong><small id="update-card-detail"></small></span><span class="cds-icon" data-size="small" aria-hidden="true">&#xE010;</span>
           </button>
           <button type="button" class="mp-account-footer" id="account-footer" aria-label="Local account and provider" aria-haspopup="menu" aria-expanded="false">
-            <span class="mp-account-mark" aria-hidden="true"></span><span><strong>zjz65</strong><small>Gateway</small></span><span class="cds-icon" data-size="micro" aria-hidden="true">&#xE027;</span>
+            <span class="mp-account-mark" aria-hidden="true">Z</span><span><strong>zjz65</strong><small>Gateway</small></span><span class="cds-icon" data-size="micro" aria-hidden="true">&#xE027;</span>
           </button>
           <div class="mp-account-menu" id="account-menu" hidden role="menu" aria-label="Magic Pointer menu">
             <p class="mp-account-menu-header">zjz65 · Gateway</p>
@@ -143,7 +143,7 @@
             <div class="mp-compact-menu mp-account-submenu" id="account-submenu" hidden role="menu"></div>
           </div>
           <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Toggle theme">
-            <svg aria-hidden="true"><use id="theme-toggle-icon" href="#ic-moon" /></svg>
+            <span class="cds-icon" id="theme-toggle-icon" data-size="small" aria-hidden="true">&#xE0B2;</span>
           </button>
         </div>
       </div>
@@ -174,29 +174,35 @@
                   <img id="chat-source-thumb" alt="Selected region thumbnail" />
                 </button>
                 <span class="mpw-peek" role="tooltip" id="chat-peek" hidden>
-                  <span class="peek-top"><svg><use href="#ic-eye" /></svg>Source<em id="peek-label">Selection preview</em></span>
+                  <span class="peek-top"><span class="cds-icon" data-size="micro" aria-hidden="true">&#xE069;</span>Source<em id="peek-label">Selection preview</em></span>
                   <img id="peek-image" class="peek-img" alt="Selected region preview" />
                 </span>
               </div>
-              <button type="button" class="mp-thread-action" id="chat-skim-toggle" aria-label="Skim highlights" title="Skim highlights (Hold Alt to reveal full ink)" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE069;" aria-hidden="true"></span></button>
-              <button type="button" class="mp-thread-action" id="chat-learn-toggle" aria-label="Learning controls and workbench" title="Learning controls &amp; side chat" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span></button>
-              <button type="button" class="mp-thread-action" id="chat-tour-toggle" aria-label="Guided screen tour" title="Guided screen tour (Clicky Coach)" aria-pressed="false"><svg class="codex-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5L15.5 9.2L10.3 10.9L8.4 16L4 3.5Z"/></svg></button>
-              <button type="button" class="mp-thread-action" id="chat-record-demo-toggle" aria-label="Record screen demo" title="Record screen demo into a replayable tour (Watch &amp; Record)" aria-pressed="false"><svg class="codex-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="2.7" fill="currentColor" stroke="none"/></svg></button>
-              <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="Activity" title="Activity"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
-              <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-vault-toggle" data-workspace-mode="design" data-inspector-target="vault" aria-label="Knowledge Vault" title="Knowledge Vault (知识库)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE01E;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-sidechat-toggle" data-workspace-mode="design" data-inspector-target="side-chat" aria-label="Side Chat" title="Side Chat (并排探讨)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE012;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-files-toggle" data-inspector-target="files" aria-label="Files" title="Files" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE072;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-changes-toggle" data-workspace-mode="walker" data-inspector-target="changes" aria-label="Changes" title="Changes" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE02D;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-terminal-toggle" data-workspace-mode="walker" data-inspector-target="terminal" aria-label="Terminal" title="Terminal" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE051;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-browser-toggle" data-inspector-target="browser" aria-label="Browser" title="Browser" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE082;</span></button>
+              <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-skim-toggle" aria-label="Skim highlights" title="Skim highlights (Hold Alt to reveal full ink)" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE069;" aria-hidden="true"></span></button>
+              <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-learn-toggle" aria-label="Learning controls and workbench" title="Learning controls &amp; side chat" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span></button>
+              <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-tour-toggle" aria-label="Guided screen tour" title="Guided screen tour (Clicky Coach)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE059;</span></button>
+              <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-record-demo-toggle" aria-label="Record screen demo" title="Record screen demo into a replayable tour (Watch &amp; Record)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0C3;</span></button>
+              <button type="button" class="mp-thread-action mp-header-legacy-action" id="execution-toggle" aria-label="Activity" title="Activity"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE005;</span><span id="execution-attention" hidden></span></button>
+              <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE062;</span></button>
             </div>
           </div>
           <section class="mp-magic-brain" id="magic-brain-popover" hidden aria-label="Task materials and connections">
             <header><span>Task materials and connections</span><small id="magic-brain-project">Current task</small></header>
             <button type="button" class="mp-brain-row" id="magic-brain-changes">
-              <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-git-pull-request" /></svg></span>
+              <span class="mp-brain-row-icon"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE07E;</span></span>
               <span><strong>Worktree changes</strong><small id="magic-brain-changes-detail">Loading…</small></span>
-              <svg class="codex-icon mp-brain-trailing" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+              <span class="cds-icon mp-brain-trailing" data-size="small" aria-hidden="true">&#xE010;</span>
             </button>
             <button type="button" class="mp-brain-row" id="magic-brain-branch">
-              <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-branch" /></svg></span>
+              <span class="mp-brain-row-icon"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE078;</span></span>
               <span><strong id="magic-brain-branch-name">Git branch</strong><small id="magic-brain-branch-detail">Loading…</small></span>
-              <svg class="codex-icon mp-brain-trailing" aria-hidden="true"><use href="#ic-open" /></svg>
+              <span class="cds-icon mp-brain-trailing" data-size="small" aria-hidden="true">&#xE00E;</span>
             </button>
             <div class="mp-brain-sources" id="magic-brain-sources">
               <div class="mp-brain-section-title">Sources for this task</div>

@@ -24,7 +24,7 @@
   min-width: 0;
   padding: 0 0 0 8px;
   background: linear-gradient(to right, var(--mp-sidebar) 0 var(--mp-sidebar-seat), var(--mp-page) var(--mp-sidebar-seat) 100%);
-  border-bottom: 1px solid color-mix(in srgb, var(--mp-rule) 42%, transparent);
+  border-bottom: 1px solid transparent;
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -32,7 +32,7 @@
 .mp-window-titlebar-leading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   height: 100%;
   min-width: 0;
 }
@@ -118,7 +118,7 @@ body:has(#view-settings:not([hidden]), #plugin-directory:not([hidden])) .mp-wind
   width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 12px 8px 8px;
+  padding: 8px 8px 8px;
   background: var(--mp-sidebar);
   font-family: var(--cds-font-sans);
 }
@@ -143,7 +143,7 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   height: 28px;
   padding: 1px;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--mp-text) 4%, transparent);
+  background: var(--cds-alpha-1, color-mix(in srgb, var(--mp-text) 4%, transparent));
 }
 
 .mp-mode-segment button {
@@ -161,15 +161,17 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast), box-shadow var(--mp-dur-fast);
 }
 
-.mp-mode-segment button svg {
+.mp-mode-segment button svg,
+.mp-mode-segment button .cds-icon {
   width: 15px;
   height: 15px;
+  font-size: 15px;
 }
 
 .mp-mode-segment button.is-on {
   color: var(--mp-text);
   background: var(--mp-panel);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--mp-text) 8%, transparent);
+  box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.08);
 }
 
 .mpw-new-session,
@@ -179,9 +181,9 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   align-items: center;
   gap: 4px;
   width: 100%;
-  height: 26px;
+  height: 28px;
   padding: 0 2px;
-  border-radius: var(--mp-r6);
+  border-radius: 6px;
   color: var(--mp-text-secondary);
   font-size: 13px;
   line-height: var(--cds-leading-body);
@@ -222,19 +224,30 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 .mpw-new-session:hover .mp-new-circle { background: color-mix(in srgb, var(--mp-text-muted) 25%, transparent); }
 .mp-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.mpw-new-session:hover,
 .mpw-customize:hover,
 .mp-design-nav button:hover,
-.mpw-new-session.is-on,
 .mpw-customize.is-on,
 .mp-design-nav button.is-on {
   color: var(--mp-text);
   background: var(--mp-hover);
 }
 
-.mpw-new-session {
+.mpw-new-session,
+.mpw-new-session.is-on {
   margin-bottom: .5px;
+  background: transparent;
   color: var(--mp-text);
+  font-weight: 450;
+}
+
+.mpw-new-session:hover {
+  color: var(--mp-text);
+  background: var(--df-hover, var(--mp-hover));
+}
+
+.mp-main-navigation #nav-resources,
+.mp-main-navigation #nav-scheduled {
+  display: none;
 }
 
 .mpw-customize {
@@ -248,7 +261,6 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   margin: -8px 0 14px;
 }
 
-.mp-shell[data-product-mode="design"] #stream {max-width: 820px; margin-inline: auto; width: 100%;}
 .mp-shell[data-product-mode="design"] #stream .mp-chat-assistant-body {line-height: 1.75;}
 
 .mpw-workspace-browser {
@@ -606,9 +618,9 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 }
 
 .side-ellipsis .cds-icon {
-  font-size: 16px;
-  --cds-wght: 533.3;
-  --cds-opsz: 16;
+  font-size: 13px;
+  --cds-wght: 550;
+  --cds-opsz: 14;
 }
 
 .side-ellipsis svg {
@@ -873,9 +885,18 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 }
 
 .mp-account-mark {
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mp-text) 9%, transparent);
+  color: var(--mp-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1005,7 +1026,7 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   min-width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: var(--mp-r5);
+  border-radius: 6px;
   color: var(--mp-text-secondary);
 }
 
@@ -1013,9 +1034,26 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 .mp-conversation-view button:hover,
 .mp-thread-action:hover,
 .mp-location-action:hover,
+.mpw-header-actions button.is-on,
 .mp-conversation-view button.is-on {
   color: var(--mp-text);
   background: var(--mp-hover);
+}
+
+.mp-header-legacy-action {
+  display: none;
+}
+
+#chat-tour-toggle[aria-pressed="true"],
+#chat-record-demo-toggle[aria-pressed="true"] {
+  display: inline-grid;
+  background: color-mix(in srgb, var(--mp-clay) 14%, transparent);
+  color: var(--mp-clay);
+}
+
+.mp-shell:not([data-product-mode="design"]) .mp-workspace-toggle[data-workspace-mode="design"],
+.mp-shell[data-product-mode="design"] .mp-workspace-toggle[data-workspace-mode="walker"] {
+  display: none;
 }
 
 .mpw-header-actions svg,
@@ -3978,6 +4016,10 @@ dialog.mpw-perm-confirm::backdrop {
   color: var(--mp-text-muted);
   font-family: var(--mp-font-ui);
   font-size: 12.5px;
+}
+.mp-thread-menu > button > .cds-icon[data-size="micro"] {
+  margin-left: auto;
+  color: var(--mp-text);
 }
 :root[data-theme="dark"] .mp-thread-menu { box-shadow: 0 10px 30px #00000066, 0 2px 8px #0000004d; }
 .mp-conversation-delete-error,
