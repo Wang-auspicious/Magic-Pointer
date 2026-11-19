@@ -3305,6 +3305,9 @@ function quotedSelection(text: string): string {
 }
 
 (function bindSelectionActions() {
+  if (typeof SideChatBar !== 'undefined') {
+    return;
+  }
   const stream = document.getElementById('stream');
   if (!stream) {
     return;

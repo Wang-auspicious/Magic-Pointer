@@ -167,7 +167,10 @@ declare global {
           return;
         }
         const common = range.commonAncestorContainer;
-        const mdHost = closestElement(common, '.mp-chat-markdown');
+        const mdHost = closestElement(
+          common,
+          '.mp-chat-markdown, .mp-chat-bubble',
+        );
         if (!mdHost) {
           hide();
           return;

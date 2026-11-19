@@ -22,6 +22,17 @@ test('Phase 2.1: Claude Desktop native selection bar (Start a side chat | Reply)
 
   const css = readRepo('electron/renderer/chat_styles.css');
   assert.match(css, /\.mp-selection-bar\b/, 'chat_styles.css must style .mp-selection-bar');
+
+  const studioSrc = readRepo('electron/renderer/studio.ts');
+  const legacyBlock = studioSrc.slice(
+    studioSrc.indexOf('function bindSelectionActions()'),
+    studioSrc.indexOf('function bindSelectionActions()') + 450,
+  );
+  assert.match(
+    legacyBlock,
+    /typeof\s+SideChatBar\s*!==\s*'undefined'/,
+    'legacy bindSelectionActions must yield to SideChatBar so only one floating bar renders',
+  );
 });
 
 test('Phase 2.2: Learn HUD is opt-in (zero clutter on default canvas) with header toggle', () => {
