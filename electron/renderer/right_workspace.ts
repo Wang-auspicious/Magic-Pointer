@@ -110,6 +110,20 @@
       item.classList.toggle('is-active', tab.id === state.activeId);
       const select = element('button', 'mpw-workspace-tab-select');
       select.type = 'button';
+      if (tab.kind === 'file') {
+        const highlighter = (
+          globalThis as typeof globalThis & {
+            ChatHighlight?: {
+              langForPath?: (path: string) => {lang: string; accent: string};
+            };
+          }
+        ).ChatHighlight;
+        const langMeta = highlighter?.langForPath?.(tab.title);
+        if (langMeta && langMeta.lang !== 'plain') {
+          item.style.setProperty('--mp-tab-accent', langMeta.accent);
+          item.dataset.lang = langMeta.lang;
+        }
+      }
       select.textContent = tab.title;
       const hint = tab.kind === 'browser' && tab.url ? tab.url : tab.title;
       select.title = hint;

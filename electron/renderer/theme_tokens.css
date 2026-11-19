@@ -157,13 +157,17 @@
      passes over it. This is the lighter companion of the running text colour. */
   --mp-shimmer-peak: #F59575;
 
-  --mp-syn-command: #0073E6;
-  --mp-syn-keyword: #C5621B;
-  --mp-syn-variable: #737373;
-  --mp-syn-number: #E3116C;
-  --mp-syn-string: #1E9E3C;
-  --mp-syn-comment: #6E7B6E;
-  --mp-syn-operator: #52514E;
+  --mp-syn-command: #1D4ED8;
+  --mp-syn-keyword: #AF3A03;
+  --mp-syn-variable: #44403C;
+  --mp-syn-number: #BE123C;
+  --mp-syn-string: #15803D;
+  --mp-syn-comment: #6B7280;
+  --mp-syn-operator: #57534E;
+  --mp-syn-function: #1D4ED8;
+  --mp-syn-type: #7C3AED;
+  --mp-syn-decorator: #B45309;
+  --mp-syn-property: #0F766E;
 
   --mp-usage-cache-read: #2E7D4F;
   --mp-usage-cache-write: #8B3A9E;
@@ -305,13 +309,17 @@ body[data-ds-dark-theme] {
   --mp-git-added: #32D74B; /* --cds-text-git-added dark */
   --mp-git-removed: #FF2C56; /* --cds-text-git-removed dark */
   --mp-shimmer-peak: #FFA98A;
-  --mp-syn-command: #86ACEA;
-  --mp-syn-keyword: #E0A030;
-  --mp-syn-variable: #FF918A;
-  --mp-syn-number: #FF918A;
-  --mp-syn-string: #74C295;
-  --mp-syn-comment: #8A9A8A;
-  --mp-syn-operator: #A9A79F;
+  --mp-syn-command: #79B8FF;
+  --mp-syn-keyword: #F2A365;
+  --mp-syn-variable: #E5E3DC;
+  --mp-syn-number: #FF8A80;
+  --mp-syn-string: #85D899;
+  --mp-syn-comment: #7E877E;
+  --mp-syn-operator: #A8A29E;
+  --mp-syn-function: #79B8FF;
+  --mp-syn-type: #C4A7E7;
+  --mp-syn-decorator: #F6C177;
+  --mp-syn-property: #7DD3FC;
   --mp-usage-cache-read: #74C295;
   --mp-usage-cache-write: #C77BD8;
   --mp-usage-input: #86ACEA;

@@ -5846,8 +5846,14 @@ const ChatView = (() => {
       (entry): entry is Extract<FlowItem, {type: 'reasoning'}> =>
         entry.type === 'reasoning',
     );
-    const reasoningId = (entry: {id?: string}): string =>
-      entry.id === 'head' ? `${scope}:head` : `${scope}:r${entry.id ?? '0'}`;
+    const reasoningId = (entry: {id?: string}): string => {
+      if (entry.id && scope && entry.id.startsWith(`${scope}:`)) {
+        return entry.id;
+      }
+      return entry.id === 'head'
+        ? `${scope}:head`
+        : `${scope}:r${entry.id ?? '0'}`;
+    };
     const fallbackId = firstReasoning
       ? `thought:${firstReasoning.id ?? '0'}`
       : 'thought';
@@ -5925,9 +5931,15 @@ const ChatView = (() => {
     for (let index = 0; index < entries.length; index++) {
       const entry = entries[index];
       if (entry.type === 'reasoning') {
+        const autoCollapsed = !thoughtOnly || index < entries.length - 1;
         attach(
           body,
-          thinkNode(entry.text, entry.running === true, reasoningId(entry)),
+          thinkNode(
+            entry.text,
+            entry.running === true && !autoCollapsed,
+            reasoningId(entry),
+            autoCollapsed,
+          ),
         );
         continue;
       }
@@ -6424,6 +6436,45 @@ const ChatView = (() => {
       }
     }
 
+    let chipRun: TurnChip[] = [];
+    let workRun: FlowItem[] = [];
+    const fileRuns: Array<{callIds: string[]; bareEdit: boolean}> = [];
+    const flushChips = () => {
+      if (!chipRun.length) {
+        for (let wIdx = 0; wIdx < workRun.length; wIdx++) {
+          const entry = workRun[wIdx];
+          if (entry.type === 'reasoning') {
+            const hasFollowerInRun = wIdx + 1 < workRun.length;
+            const autoCollapsed = hasFollowerInRun || !entry.running;
+            attach(
+              bodyHost,
+              thinkNode(
+                entry.text,
+                entry.running === true && !hasFollowerInRun,
+                entry.id || '',
+                autoCollapsed,
+              ),
+            );
+          } else if (entry.type === 'narration') {
+            attach(bodyHost, narrationNode(entry.text));
+          }
+        }
+        workRun = [];
+        return;
+      }
+      attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
+      const chip = chipRun[0];
+      fileRuns.push({
+        callIds: chipRun.map(chip => chip.callId),
+        bareEdit:
+          singleToolGroup(chipRun, workRun) &&
+          FILE_WRITE_TOOLS.has(chip.name) &&
+          Boolean(deriveFilePath(classifyTool(chip.name), chip.argsRaw)),
+      });
+      chipRun = [];
+      workRun = [];
+    };
+
     if (
       turn.thinking &&
       !turn.trajectory?.some(
@@ -6441,43 +6492,14 @@ const ChatView = (() => {
         'head',
         seenReasoningIds,
       );
-      attach(
-        bodyHost,
-        thinkNode(
-          turn.thinking,
-          turn.running === true && !hasHeadFollower,
-          headThinkId,
-          hasHeadFollower,
-        ),
-      );
+      workRun.push({
+        type: 'reasoning',
+        text: turn.thinking,
+        id: headThinkId,
+        running: turn.running === true && !hasHeadFollower,
+      });
     }
 
-    let chipRun: TurnChip[] = [];
-    let workRun: FlowItem[] = [];
-    const fileRuns: Array<{callIds: string[]; bareEdit: boolean}> = [];
-    const flushChips = () => {
-      if (!chipRun.length) {
-        workRun
-          .filter(
-            (entry): entry is Extract<FlowItem, {type: 'narration'}> =>
-              entry.type === 'narration',
-          )
-          .forEach(entry => attach(bodyHost, narrationNode(entry.text)));
-        workRun = [];
-        return;
-      }
-      attach(bodyHost, toolGroupNode(chipRun, false, workRun, turnScope));
-      const chip = chipRun[0];
-      fileRuns.push({
-        callIds: chipRun.map(chip => chip.callId),
-        bareEdit:
-          singleToolGroup(chipRun, workRun) &&
-          FILE_WRITE_TOOLS.has(chip.name) &&
-          Boolean(deriveFilePath(classifyTool(chip.name), chip.argsRaw)),
-      });
-      chipRun = [];
-      workRun = [];
-    };
     for (let flowIndex = 0; flowIndex < flow.length; flowIndex++) {
       const item = flow[flowIndex];
       if (options.taskPanel && item.type === 'chip') {
@@ -6495,7 +6517,6 @@ const ChatView = (() => {
         }
       }
       if (item.type === 'reasoning') {
-        flushChips();
         const hasFollowing = hasFlowFollower(
           flow,
           flowIndex,
@@ -6507,15 +6528,13 @@ const ChatView = (() => {
           item.id ?? String(flowIndex),
           seenReasoningIds,
         );
-        attach(
-          bodyHost,
-          thinkNode(
-            item.text,
-            item.running === true && !hasFollowing,
-            thinkId,
-            hasFollowing,
-          ),
-        );
+        workRun.push({
+          type: 'reasoning',
+          text: item.text,
+          id: thinkId,
+          running: item.running === true && !hasFollowing,
+          turn: item.turn,
+        });
       } else if (item.type === 'narration') {
         flushChips();
         attach(bodyHost, narrationNode(item.text));
@@ -7213,6 +7232,18 @@ const ChatView = (() => {
           let runSequence = 0;
           const flush = () => {
             if (!chips.length) {
+              for (const entry of work) {
+                if (entry.type === 'reasoning') {
+                  const thinkId = entry.id || `${scope}:r${++runSequence}`;
+                  const running = entry.running === true;
+                  render(
+                    `thought:${thinkId}`,
+                    {text: entry.text, running},
+                    () => thinkNode(entry.text, running, thinkId, !running),
+                    !running,
+                  );
+                }
+              }
               work = [];
               workTurn = undefined;
               return;
@@ -7283,7 +7314,6 @@ const ChatView = (() => {
               }
               const reasoning = trajectoryReasoning(record, index);
               if (reasoning) {
-                flush();
                 const hasFollowing = hasTrajectoryFollower(
                   records,
                   index,
@@ -7296,12 +7326,13 @@ const ChatView = (() => {
                   seenReasoningIds,
                 );
                 const running = reasoning.running === true && !hasFollowing;
-                render(
-                  `thought:${thinkId}`,
-                  {text: reasoning.text, running},
-                  () => thinkNode(reasoning.text, running, thinkId, hasFollowing),
-                  hasFollowing,
-                );
+                work.push({
+                  type: 'reasoning',
+                  text: reasoning.text,
+                  id: thinkId,
+                  running,
+                  turn,
+                });
               }
               if (record.kind === 'message' && record.text) {
                 flush();

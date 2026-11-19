@@ -1263,8 +1263,28 @@ span.mp-chat-diff-path {
   background: var(--mp-panel);
 }
 
-.mp-chat-tool-group:not([data-single='true']):not([data-thought-only='true']) > .mp-chat-tool-group-body > .mp-chat-tool + .mp-chat-tool {
+.mp-chat-tool-group:not([data-single='true']):not([data-thought-only='true']) > .mp-chat-tool-group-body > * + * {
   border-top: 1px solid var(--cds-border, var(--mp-rule));
+}
+
+.mp-chat-tool-group:not([data-single='true']):not([data-thought-only='true']) > .mp-chat-tool-group-body > .mp-chat-think > .mp-chat-row {
+  width: 100%;
+  min-height: 36px;
+  justify-content: flex-start;
+  gap: 4px;
+  margin-inline: 0;
+  padding: 7px 12px;
+  border-radius: 0;
+  font-size: 13.5px;
+  line-height: 20px;
+}
+
+.mp-chat-tool-group:not([data-single='true']):not([data-thought-only='true']) > .mp-chat-tool-group-body > .mp-chat-think > .mp-chat-row:hover {
+  background: var(--mp-hover);
+}
+
+.mp-chat-tool-group:not([data-single='true']):not([data-thought-only='true']) > .mp-chat-tool-group-body > .mp-chat-think > .mp-chat-body-wrap {
+  padding: 0 12px 10px;
 }
 
 .mp-chat-coalesced-result {
@@ -1912,12 +1932,16 @@ span.mp-chat-diff-path {
 }
 
 .mp-chat-tok-command { color: var(--mp-syn-command); }
-.mp-chat-tok-keyword { color: var(--mp-syn-keyword); }
+.mp-chat-tok-keyword { color: var(--mp-syn-keyword); font-weight: 500; }
 .mp-chat-tok-variable { color: var(--mp-syn-variable); }
 .mp-chat-tok-number { color: var(--mp-syn-number); }
 .mp-chat-tok-string { color: var(--mp-syn-string); }
 .mp-chat-tok-comment { color: var(--mp-syn-comment); font-style: italic; }
 .mp-chat-tok-operator { color: var(--mp-syn-operator); }
+.mp-chat-tok-function { color: var(--mp-syn-function); }
+.mp-chat-tok-type { color: var(--mp-syn-type); }
+.mp-chat-tok-decorator { color: var(--mp-syn-decorator); }
+.mp-chat-tok-property { color: var(--mp-syn-property); }
 .mp-chat-tok-plain { color: inherit; }
 
 .mp-chat-code-lang {
@@ -2740,17 +2764,25 @@ span.mp-chat-diff-path {
 
 .mp-repository-context {
   display: flex;
-  min-height: 40px;
+  min-height: 36px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   padding: 4px 8px;
+  border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r7);
   background: var(--mp-repository-surface);
   color: var(--mp-text-muted);
 }
 
-.mp-repository-identity,
+.mp-repository-identity {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+}
+
 .mp-repository-actions,
 .mp-repository-location,
 .mp-repository-diff,
@@ -2761,11 +2793,13 @@ span.mp-chat-diff-path {
 }
 
 .mp-repository-location {
-  height: 30px;
-  gap: 12px;
+  height: 26px;
+  max-width: 100%;
+  gap: 8px;
   padding: 0 4px;
   border-radius: var(--mp-r5);
   color: var(--mp-text-muted);
+  font-size: 12.5px;
   white-space: nowrap;
 }
 
@@ -2774,10 +2808,20 @@ span.mp-chat-diff-path {
   background: var(--mp-hover);
 }
 
-#composer-repository-name,
-#composer-branch-name {
-  max-width: 180px;
+#composer-repository-name {
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
+  color: var(--mp-text-secondary);
+  font-weight: var(--mp-weight-medium);
+  text-overflow: ellipsis;
+}
+
+#composer-branch-name {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--mp-text-muted);
   text-overflow: ellipsis;
 }
 
@@ -2789,18 +2833,20 @@ span.mp-chat-diff-path {
 
 .mp-repository-diff,
 .mp-repository-pr-split {
-  height: 28px;
+  height: 26px;
+  flex: 0 0 auto;
   border: 1px solid var(--mp-rule);
-  border-radius: var(--mp-r5);
+  border-radius: 6px;
   background: var(--mp-panel);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--mp-text) 4%, transparent);
 }
 
 .mp-repository-diff {
   gap: 5px;
   padding: 0 8px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: var(--mp-weight-medium);
+  white-space: nowrap;
 }
 
 .mp-repository-diff:hover,
@@ -2809,11 +2855,11 @@ span.mp-chat-diff-path {
 }
 
 .mp-repository-diff .is-added {
-  color: var(--mp-success);
+  color: var(--mp-git-added, var(--mp-success));
 }
 
 .mp-repository-diff .is-deleted {
-  color: var(--mp-danger);
+  color: var(--mp-git-removed, var(--mp-danger));
 }
 
 .mp-repository-pr-split {
@@ -2821,10 +2867,16 @@ span.mp-chat-diff-path {
 }
 
 .mp-repository-pr-split > button {
-  height: 26px;
-  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 9px;
   color: var(--mp-text);
+  font-size: 12px;
   font-weight: var(--mp-weight-medium);
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .mp-repository-pr-split > button:hover {
@@ -2832,26 +2884,33 @@ span.mp-chat-diff-path {
 }
 
 #composer-pr-menu {
-  width: 29px;
+  width: 24px;
   padding: 0;
   border-left: 1px solid var(--mp-rule);
+  color: var(--mp-text-muted);
+}
+
+#composer-pr-menu:hover {
+  color: var(--mp-text);
 }
 
 #composer-pr-menu svg,
 #composer-pr-menu .cds-icon,
 .mp-repository-dismiss svg,
 .mp-repository-dismiss .cds-icon {
-  width: 14px;
-  height: 14px;
-  font-size: 14px;
+  width: 13px;
+  height: 13px;
+  font-size: 13px;
 }
 
 .mp-repository-dismiss {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: var(--mp-r5);
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
   color: var(--mp-text-muted);
 }
 
@@ -3568,6 +3627,12 @@ span.mp-chat-diff-path {
   font-weight: 400;
 }
 
+.mpw-input:placeholder-shown {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .mpw-input::placeholder {
   color: var(--mp-text-muted);
 }
@@ -3748,35 +3813,58 @@ span.mp-chat-diff-path {
   height: 20px;
 }
 
-.mpw-ring svg,
+.mpw-ring svg {
+  width: 15px;
+  height: 15px;
+}
+
 .mpw-perm svg {
   width: 16px;
   height: 16px;
 }
 
 .mpw-ring {
-  width: 26px;
-  min-width: 26px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
   padding: 0;
+  border-radius: 6px;
   --mp-context-progress: 0;
 }
 
 .mp-context-track,
 .mp-context-value {
   fill: none;
-  stroke-width: 2;
+  stroke-width: 1.55;
 }
 
 .mp-context-track {
-  stroke: color-mix(in srgb, var(--mp-text-muted) 32%, transparent);
+  stroke: color-mix(in srgb, var(--mp-text) 18%, transparent);
 }
 
 .mp-context-value {
-  stroke: var(--mp-activity-blue);
+  stroke: color-mix(in srgb, var(--mp-text) 56%, transparent);
   stroke-linecap: round;
   stroke-dasharray: var(--mp-context-progress) 100;
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
+  transition: stroke-dasharray 240ms var(--mp-ease-out), stroke 180ms ease;
+}
+
+.mpw-ring[data-empty="true"] .mp-context-value {
+  opacity: 0;
+}
+
+.mpw-ring[data-level="mid"] .mp-context-value {
+  stroke: var(--mp-focus);
+}
+
+.mpw-ring[data-level="high"] .mp-context-value {
+  stroke: var(--mp-clay);
+}
+
+.mpw-ring[data-level="critical"] .mp-context-value {
+  stroke: var(--mp-danger);
 }
 
 .mp-visually-hidden {

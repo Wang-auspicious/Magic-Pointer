@@ -260,18 +260,18 @@ function withDom<T>(run: (helpers: {
   }
 }
 
-test('Thought process renders as independent sibling before tool group and auto-collapses when work or prose follows', () => {
+test('Thought process unifies with contiguous tools into one collapsible run and splits cleanly at assistant prose', () => {
   withDom(({ChatView}) => {
-    // 1a. Live turn transitions: standalone reasoning starts open, then collapses in place when Read tool follows.
+    // 1a. Live turn transitions: standalone reasoning starts open, then folds into a unified collapsible group when tools follow.
     const host = new FidelityNode('div');
     const live = ChatView.createLiveTurn(host as unknown as HTMLElement, 'live-think#0');
     live.update({
       trajectory: [{kind: 'message', turn: 1, reasoning: 'Inspecting files', state: 'running'}],
     });
-    const thinkEl = host.querySelector('.mp-chat-think');
-    assert.ok(thinkEl, 'standalone reasoning renders .mp-chat-think');
-    assert.equal(thinkEl.getAttribute('data-open'), 'true', 'standalone reasoning stays open while nothing follows');
-    assert.equal(thinkEl.getAttribute('data-row-id'), 'think:live-think#0:r1');
+    const standaloneThink = host.querySelector('.mp-chat-think');
+    assert.ok(standaloneThink, 'standalone reasoning renders .mp-chat-think');
+    assert.equal(standaloneThink.getAttribute('data-open'), 'true', 'standalone reasoning stays open while nothing follows');
+    assert.equal(standaloneThink.getAttribute('data-row-id'), 'think:live-think#0:r1');
 
     live.update({
       trajectory: [
@@ -279,52 +279,55 @@ test('Thought process renders as independent sibling before tool group and auto-
         {kind: 'tool', turn: 1, callId: 'read-1', name: 'Read', text: '{"path":"src/a.ts"}', state: 'running'},
       ],
     });
-    assert.equal(host.querySelector('.mp-chat-think'), thinkEl, 'existing .mp-chat-think updates in place');
-    assert.equal(thinkEl.getAttribute('data-open'), 'false', 'auto-opened Thought process collapses when tool follows');
     const group = host.querySelector('.mp-chat-tool-group');
-    assert.ok(group, 'Read tool renders a tool group');
-    assert.equal(group.getAttribute('data-single'), 'true');
-    assert.equal(group.hasAttribute('open'), false, 'single Read tool stays collapsed');
-    assert.equal(
-      group.querySelector('.mp-chat-tool-group-body')?.querySelector('.mp-chat-think'),
-      null,
-      'Thought process must NEVER render inside .mp-chat-tool-group-body',
-    );
-    const thinkIdx = host.children.indexOf(thinkEl);
-    const groupIdx = host.children.indexOf(group);
-    assert.ok(thinkIdx >= 0 && groupIdx > thinkIdx, '.mp-chat-think is a top-level sibling BEFORE .mp-chat-tool-group');
+    assert.ok(group, 'thought + tool folds into one unified .mp-chat-tool-group');
+    assert.equal(group.getAttribute('data-single'), null, 'mixed thought+tool group is multi-item so user can expand both');
+    assert.equal(group.hasAttribute('open'), false, 'unified thought+tool group stays collapsed by default');
+    const groupedThink = group.querySelector('.mp-chat-tool-group-body')?.querySelector('.mp-chat-think');
+    assert.ok(groupedThink, 'Thought process lives inside the unified .mp-chat-tool-group-body');
+    assert.equal(groupedThink.getAttribute('data-open'), 'false', 'nested thought inside group starts collapsed');
 
-    // 1b. Settled assistantTurnNode has the exact same top-level sibling structure & collapse behavior.
+    // 1b. Settled assistantTurnNode collapses N thoughts + M tools before an intermediate message into ONE group,
+    // keeps the intermediate message outside, and starts the next unified group after it.
     ChatView.expansion.clear();
     const settledNodes = ChatView.assistantTurnNode({
       conversationId: 'settled',
       turnIndex: 0,
       answer: 'Done.',
       trajectory: [
-        {kind: 'message', turn: 1, reasoning: 'Need to inspect src/a.ts', state: 'done'},
+        {kind: 'message', turn: 1, reasoning: 'Plan step 1', state: 'done'},
         {kind: 'tool', turn: 1, callId: 'read-1', name: 'Read', text: '{"path":"src/a.ts"}', result: 'ok', state: 'done'},
+        {kind: 'message', turn: 2, reasoning: 'Plan step 2', state: 'done'},
+        {kind: 'tool', turn: 2, callId: 'bash-1', name: 'Bash', text: '{"command":"ls"}', result: 'a.ts', state: 'done'},
+        {kind: 'message', turn: 2, text: 'I found the file, checking details next.', state: 'done'},
+        {kind: 'message', turn: 3, reasoning: 'Plan step 3', state: 'done'},
+        {kind: 'tool', turn: 3, callId: 'read-2', name: 'Read', text: '{"path":"src/b.ts"}', result: 'ok', state: 'done'},
       ],
     }) as unknown as FidelityNode[];
     const assistant = settledNodes[0];
     const body = assistant.querySelector('.mp-chat-assistant-body')!;
-    const settledThink = body.children.find(c => c.classList.contains('mp-chat-think'));
-    const settledGroup = body.children.find(c => c.classList.contains('mp-chat-tool-group'));
-    assert.ok(settledThink, 'settled assistantTurnNode renders .mp-chat-think directly inside .mp-chat-assistant-body');
-    assert.ok(settledGroup, 'settled assistantTurnNode renders .mp-chat-tool-group directly inside .mp-chat-assistant-body');
-    assert.ok(
-      body.children.indexOf(settledThink) < body.children.indexOf(settledGroup),
-      'settled .mp-chat-think comes BEFORE .mp-chat-tool-group',
+    const settledGroups = body.children.filter(c => c.classList.contains('mp-chat-tool-group'));
+    assert.equal(settledGroups.length, 2, 'two tool+thought runs separated by intermediate prose render as 2 unified groups');
+    assert.equal(
+      body.children.filter(c => c.classList.contains('mp-chat-think')).length,
+      0,
+      'no orphan top-level Thought process rows leak outside the unified groups',
+    );
+    const firstBody = settledGroups[0].querySelector('.mp-chat-tool-group-body')!;
+    assert.equal(
+      firstBody.children.filter(c => c.classList.contains('mp-chat-think')).length,
+      2,
+      'first unified group contains both interleaved Thought process rows',
     );
     assert.equal(
-      settledGroup.querySelector('.mp-chat-tool-group-body')?.querySelector('.mp-chat-think'),
-      null,
-      'settled Thought process must NEVER live inside .mp-chat-tool-group-body',
+      firstBody.children.filter(c => c.classList.contains('mp-chat-tool')).length,
+      2,
+      'first unified group contains both tool rows',
     );
-    assert.equal(settledThink.getAttribute('data-open'), 'false');
-    assert.equal(settledGroup.getAttribute('data-single'), 'true');
-    assert.equal(settledGroup.hasAttribute('open'), false);
+    assert.equal(settledGroups[0].hasAttribute('open'), false, 'first unified group collapses by default');
+    assert.equal(settledGroups[1].hasAttribute('open'), false, 'second unified group collapses by default');
 
-    // 1c. Explicit ROW_EXPANSION toggle always wins over auto-collapse and standalone default.
+    // 1c. Explicit ROW_EXPANSION toggle on a thought inside a unified group keeps both the group and thought open.
     ChatView.expansion.clear();
     ChatView.expansion.setRow('think:pin-live#0:r1', true);
     const pinHost = new FidelityNode('div');

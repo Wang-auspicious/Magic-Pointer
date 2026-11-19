@@ -365,10 +365,10 @@
                         <button type="button" class="mpw-add mp-composer-secondary" id="composer-effort" aria-label="Reasoning effort: Extra" aria-haspopup="listbox" aria-expanded="false" title="Reasoning effort"><span id="composer-effort-label">Extra</span></button>
                         <div class="mpw-perm-menu mp-effort-menu" id="composer-effort-menu" hidden role="listbox" aria-label="Reasoning effort"></div>
                         <button type="button" class="mpw-ring" id="composer-context" aria-label="Context usage"
-                          aria-haspopup="dialog" aria-expanded="false" title="Context usage">
-                          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
-                            <circle class="mp-context-track" cx="10" cy="10" r="7" pathLength="100" />
-                            <circle class="mp-context-value" cx="10" cy="10" r="7" pathLength="100" />
+                          aria-haspopup="dialog" aria-expanded="false" title="Context usage" data-empty="true">
+                          <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
+                            <circle class="mp-context-track" cx="10" cy="10" r="6.75" pathLength="100" />
+                            <circle class="mp-context-value" cx="10" cy="10" r="6.75" pathLength="100" />
                           </svg>
                           <span class="mp-visually-hidden" id="composer-usage-label"></span>
                         </button>
@@ -575,14 +575,23 @@
         <div class="mp-file-tree" id="project-file-tree" role="tree" tabindex="0"><p class="mp-inspector-empty">Files appear after opening a project.</p></div>
         <article class="mp-file-preview" id="project-file-preview" hidden>
           <header>
-            <span id="project-file-name"></span>
-            <input id="project-file-search-input" type="search" placeholder="Search in file…" aria-label="Search in file" hidden />
+            <div class="mp-file-preview-ident">
+              <span id="project-file-name"></span>
+              <span class="mp-file-preview-meta" id="project-file-meta" hidden></span>
+            </div>
+            <div class="mp-file-search-bar" id="project-file-search-bar" hidden>
+              <input id="project-file-search-input" type="search" placeholder="Find in file…" aria-label="Search in file" />
+              <span class="mp-file-search-count" id="project-file-search-count"></span>
+              <button type="button" id="project-file-search-prev" title="Previous match" aria-label="Previous match"><span class="cds-icon" data-size="xs" aria-hidden="true">&#xE02B;</span></button>
+              <button type="button" id="project-file-search-next" title="Next match" aria-label="Next match"><span class="cds-icon" data-size="xs" aria-hidden="true">&#xF003;</span></button>
+            </div>
             <div class="mp-file-preview-actions">
+              <button type="button" id="project-file-wrap" title="Toggle word wrap" aria-label="Toggle word wrap" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE00F;</span></button>
+              <button type="button" id="project-file-code" title="Toggle source / preview" aria-label="Toggle source / preview" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE048;</span></button>
+              <button type="button" id="project-file-search" title="Find in file" aria-label="Find in file" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span></button>
+              <button type="button" id="project-file-copy" title="Copy file" aria-label="Copy file"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE056;</span></button>
               <button type="button" id="project-file-open" title="Open in default app" aria-label="Open in default app"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE00E;</span></button>
-              <button type="button" id="project-file-code" title="Code" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE048;</span></button>
-              <button type="button" id="project-file-search" title="Search"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span></button>
-              <button type="button" id="project-file-back" title="Show files"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE073;</span></button>
-              <button type="button" id="project-file-copy" title="Copy"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE056;</span></button>
+              <button type="button" id="project-file-back" title="Show file tree" aria-label="Show file tree"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE073;</span></button>
             </div>
           </header>
           <div class="mp-file-preview-content" id="project-file-content"></div>

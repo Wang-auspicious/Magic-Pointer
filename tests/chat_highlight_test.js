@@ -6,6 +6,7 @@ const ChatHighlight = require('../electron/renderer/chat_highlight');
 
 const TOKENS = [
   'plain', 'keyword', 'string', 'number', 'command', 'variable', 'comment', 'operator',
+  'function', 'type', 'decorator', 'property',
 ];
 const SEEN = new Set();
 
@@ -216,13 +217,49 @@ assert.deepStrictEqual(
 check('Write-Host "中文"', 'powershell');
 
 
-for (const lang of ['plain', 'python', '', 'POWERSHELL2', undefined, null]) {
+for (const lang of ['plain', 'unknownlang', '', 'POWERSHELL2', undefined, null]) {
   const code = 'if ($x) { "not highlighted" } # nope';
   const result = check(code, lang);
   assert.deepStrictEqual(result, [[{ text: code, token: 'plain' }]], `${lang} degrades to plain`);
 }
 assert.deepStrictEqual(ChatHighlight.highlight('a\nb', 'plain'),
   [[{ text: 'a', token: 'plain' }], [{ text: 'b', token: 'plain' }]]);
+
+// Multi-language syntax highlighting (Python, TypeScript, CSS, HTML, SQL, YAML, langForPath)
+{
+  const pyCode = '"""Docstring line 1\nline 2"""\n@dataclass\ndef run_task(x: int) -> str:\n    # comment\n    return f"val={x}"';
+  const pyLines = check(pyCode, 'python');
+  assert.strictEqual(pyLines[0][0].token, 'string', 'Python triple-quote line 1');
+  assert.strictEqual(pyLines[1][0].token, 'string', 'Python triple-quote line 2');
+  assert.strictEqual(pyLines[2][0].token, 'decorator', 'Python decorator');
+  assert.ok(pyLines[3].some(s => s.text === 'def' && s.token === 'keyword'), 'Python def keyword');
+  assert.ok(pyLines[3].some(s => s.text === 'run_task' && s.token === 'function'), 'Python def function name');
+  assert.ok(pyLines[4].some(s => s.token === 'comment'), 'Python comment');
+  assert.ok(pyLines[5].some(s => s.text === 'return' && s.token === 'keyword'), 'Python return keyword');
+
+  const tsCode = '/* block\ncomment */\nexport interface Foo { count: number; }\nconst fn = (a: string) => a.trim();';
+  const tsLines = check(tsCode, 'typescript');
+  assert.strictEqual(tsLines[0][0].token, 'comment');
+  assert.strictEqual(tsLines[1][0].token, 'comment');
+  assert.ok(tsLines[2].some(s => s.text === 'interface' && s.token === 'keyword'));
+  assert.ok(tsLines[2].some(s => s.text === 'Foo' && s.token === 'type'));
+
+  const cssLines = check('.card { color: #d97757; --gap: 12px; }', 'css');
+  assert.ok(cssLines[0].some(s => s.text === '.card' && s.token === 'type'));
+  assert.ok(cssLines[0].some(s => s.text === '#d97757' && s.token === 'number'));
+  assert.ok(cssLines[0].some(s => s.text === '--gap' && s.token === 'variable'));
+
+  const htmlLines = check('<div class="box"><!-- note --></div>', 'html');
+  assert.ok(htmlLines[0].some(s => s.text === 'div' && s.token === 'keyword'));
+  assert.ok(htmlLines[0].some(s => s.text === 'class' && s.token === 'property'));
+  assert.ok(htmlLines[0].some(s => s.text === '"box"' && s.token === 'string'));
+  assert.ok(htmlLines[0].some(s => s.token === 'comment'));
+
+  assert.strictEqual(ChatHighlight.langForPath('DiskSentry/launcher.py').lang, 'python');
+  assert.strictEqual(ChatHighlight.langForPath('DiskSentry/launcher.py').label, 'Python');
+  assert.strictEqual(ChatHighlight.langForPath('src/app.tsx').lang, 'typescript');
+  assert.strictEqual(ChatHighlight.langForPath('README.md').lang, 'markdown');
+}
 
 
 assert.doesNotThrow(() => ChatHighlight.highlight(undefined, 'shell'));

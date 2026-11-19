@@ -2780,6 +2780,7 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   z-index: 120;
   inset: var(--mp-window-bar) 0 0;
   display: grid;
+  padding: 16px;
   place-items: center;
 }
 
@@ -2802,9 +2803,10 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   position: relative;
   z-index: 1;
   display: grid;
-  width: min(1004px, calc(100vw - 32px));
-  height: min(800px, calc(100vh - 32px));
-  grid-template-columns: 208px minmax(0, 1fr);
+  width: min(960px, 100%);
+  height: min(720px, 100%);
+  max-height: 100%;
+  grid-template-columns: 212px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r-sheet);
@@ -2875,15 +2877,21 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--mp-rule-strong) transparent;
   container-type: inline-size;
 }
 
 .mpw-settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   height: 44px;
   align-items: center;
   justify-content: flex-end;
   padding: 0 14px;
+  background: linear-gradient(to bottom, var(--mp-panel) 78%, transparent);
 }
 
 .mpw-settings-close {
@@ -2892,6 +2900,13 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   height: 30px;
   place-items: center;
   border-radius: var(--mp-r5);
+  color: var(--mp-text-muted);
+  transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
+}
+
+.mpw-settings-close:hover {
+  color: var(--mp-text);
+  background: var(--mp-hover);
 }
 
 .mpw-settings-close .cds-icon {
@@ -3192,7 +3207,8 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 
 .mpw-settings-options {
   min-width: 0;
-  padding: 16px 20px 48px;
+  max-width: 720px;
+  padding: 2px 28px 40px;
 }
 
 .mpw-settings-nav-list {
@@ -3434,7 +3450,7 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 .mp-settings-sections {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 24px;
 }
 
 .mp-settings-section {
@@ -3444,8 +3460,8 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 .mp-settings-section h3 {
   margin: 0 0 8px;
   color: var(--mp-text);
-  font-size: 16px;
-  line-height: 22px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: var(--mp-weight-semibold);
 }
 
@@ -3453,7 +3469,8 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   min-width: 0;
   padding: 0 16px;
   border: 1px solid var(--mp-rule);
-  border-radius: 10px;
+  border-radius: 12px;
+  background: var(--mp-panel);
   overflow: hidden;
 }
 
@@ -3465,15 +3482,15 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 56px;
+  min-height: 52px;
   flex-direction: column;
   align-items: stretch;
   justify-content: center;
   gap: 8px;
-  padding: 12px 0;
+  padding: 11px 0;
 }
 
-@container (min-width: 52rem) {
+@container (min-width: 440px) {
   .mp-settings-row {
     flex-direction: row;
     align-items: center;
@@ -3485,29 +3502,33 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 .mp-settings-copy {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   flex-direction: column;
+  gap: 2px;
 }
 
 .mp-settings-copy b {
   color: var(--mp-text);
-  font-size: 15px;
-  line-height: 21px;
-  font-weight: var(--mp-weight-regular);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: var(--mp-weight-medium);
 }
 
 .mp-settings-copy small {
-  max-width: 620px;
+  max-width: 460px;
   color: var(--mp-text-muted);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 12.5px;
+  line-height: 17px;
 }
 
 .mp-settings-control {
   display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   justify-content: flex-start;
 }
 
-@container (min-width: 52rem) {
+@container (min-width: 440px) {
   .mp-settings-control {
     justify-content: flex-end;
   }
@@ -3516,23 +3537,31 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 .settings-select {
   position: relative;
   display: flex;
-  min-width: 176px;
-  height: 34px;
+  min-width: 172px;
+  height: 32px;
   align-items: center;
   border: 1px solid var(--mp-rule);
   border-radius: 8px;
   background: var(--mp-page);
+  transition: border-color var(--mp-dur-fast);
+}
+
+.settings-select:hover,
+.settings-input:hover {
+  border-color: var(--mp-rule-strong);
 }
 
 .settings-select select {
   appearance: none;
   width: 100%;
   height: 100%;
-  padding: 0 28px 0 8px;
+  padding: 0 28px 0 10px;
   border: 0;
   background: transparent;
   color: var(--mp-text);
   font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .settings-select > svg {
@@ -3540,35 +3569,41 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   right: 8px;
   width: 12px;
   height: 12px;
+  color: var(--mp-text-muted);
   pointer-events: none;
 }
 
 .settings-input {
-  min-width: 176px;
-  max-width: min(320px, 100%);
-  height: 34px;
-  padding: 0 8px;
+  min-width: 172px;
+  max-width: min(300px, 100%);
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--mp-rule);
   border-radius: 8px;
   background: var(--mp-page);
+  color: var(--mp-text);
+  font-size: 13px;
+  transition: border-color var(--mp-dur-fast);
 }
 
 .settings-range {
   display: inline-flex;
-  min-width: 176px;
+  min-width: 172px;
   align-items: center;
   gap: 10px;
 }
 
 .settings-range input[type='range'] {
-  width: 132px;
+  width: 128px;
   accent-color: var(--mp-text);
+  cursor: pointer;
 }
 
 .settings-range output {
-  min-width: 32px;
+  min-width: 34px;
   color: var(--mp-text-secondary);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
@@ -3582,10 +3617,12 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 
 .settings-switch {
   position: relative;
+  flex: none;
   width: 36px;
   height: 20px;
   border-radius: var(--mp-r-pill);
-  background: var(--mp-rule-strong);
+  background: color-mix(in srgb, var(--mp-text) 16%, transparent);
+  cursor: pointer;
   transition: background-color var(--mp-dur-fast);
 }
 
@@ -3602,6 +3639,7 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   height: 16px;
   border-radius: 50%;
   background: var(--mp-panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
   transition: transform var(--mp-dur-fast) var(--mp-ease-out);
 }
 
@@ -3706,10 +3744,15 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
 }
 
 @media (max-width: 760px) {
+  .mpw-settings-overlay,
+  .mp-directory-overlay {
+    padding: 10px;
+  }
+
   .mpw-settings-panel {
-    width: calc(100vw - 20px);
-    height: calc(100vh - 20px);
-    grid-template-columns: 190px minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    grid-template-columns: 184px minmax(0, 1fr);
   }
 
   .mpw-settings-options {

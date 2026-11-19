@@ -49,6 +49,16 @@ declare global {
         clear(rootEl: Element): Element;
       }
     | undefined;
+
+  const ChatHighlight: {
+    highlight(
+      code: string,
+      lang: string,
+    ): Array<Array<{text: string; token: string}>>;
+    langFor(toolName: string, command: string): string;
+    langForPath(filePath: string): {lang: string; label: string; accent: string};
+    languageOf(lang: string): string;
+  };
 }
 
 function hash(str: string) {
@@ -3820,6 +3830,15 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   const contextProgress = Math.max(0, Math.min(100, Math.round(contextRatio)));
   button.hidden = false;
   button.style.setProperty('--mp-context-progress', String(contextProgress));
+  button.dataset.empty = contextProgress <= 0 ? 'true' : 'false';
+  button.dataset.level =
+    contextProgress >= 90
+      ? 'critical'
+      : contextProgress >= 75
+        ? 'high'
+        : contextProgress >= 35
+          ? 'mid'
+          : 'low';
   label.textContent =
     known && contextWindow > 0
       ? `${measured ? '' : '≈'}${Math.round(contextRatio)}% context used`
@@ -9277,15 +9296,166 @@ async function refreshProjectInspector() {
   }
 }
 
+let projectFileWrap = false;
+let projectFileSearchQuery = '';
+let projectFileSearchHits: HTMLElement[] = [];
+let projectFileSearchIndex = -1;
+let projectFileCopyTimer: number | null = null;
+
+function setProjectFileHeaderPath(rawPath: string, suffix = '') {
+  const name = document.getElementById('project-file-name');
+  if (!name) {
+    return;
+  }
+  const normalized = String(rawPath || '').replace(/\\/g, '/');
+  const slash = normalized.lastIndexOf('/');
+  name.replaceChildren();
+  if (slash >= 0) {
+    const dir = document.createElement('span');
+    dir.className = 'mp-file-path-dir';
+    dir.textContent = normalized.slice(0, slash + 1);
+    const base = document.createElement('span');
+    base.className = 'mp-file-path-base';
+    base.textContent = normalized.slice(slash + 1) + suffix;
+    name.append(dir, base);
+  } else {
+    const base = document.createElement('span');
+    base.className = 'mp-file-path-base';
+    base.textContent = normalized + suffix;
+    name.append(base);
+  }
+  name.title = normalized + suffix;
+}
+
+function appendHighlightedSegment(
+  parent: HTMLElement,
+  text: string,
+  token: string,
+  queryLower: string,
+  hits: HTMLElement[],
+) {
+  if (!text) {
+    return;
+  }
+  const makeLeaf = (slice: string) => {
+    if (token === 'plain') {
+      return document.createTextNode(slice);
+    }
+    const span = document.createElement('span');
+    span.className = `mp-chat-tok-${token}`;
+    span.textContent = slice;
+    return span;
+  };
+  if (!queryLower) {
+    parent.append(makeLeaf(text));
+    return;
+  }
+  const lower = text.toLowerCase();
+  let cursor = 0;
+  let matchAt = lower.indexOf(queryLower, cursor);
+  while (matchAt >= 0) {
+    if (matchAt > cursor) {
+      parent.append(makeLeaf(text.slice(cursor, matchAt)));
+    }
+    const mark = document.createElement('mark');
+    mark.className = 'mp-code-hit';
+    mark.textContent = text.slice(matchAt, matchAt + queryLower.length);
+    parent.append(mark);
+    hits.push(mark);
+    cursor = matchAt + queryLower.length;
+    matchAt = lower.indexOf(queryLower, cursor);
+  }
+  if (cursor < text.length) {
+    parent.append(makeLeaf(text.slice(cursor)));
+  }
+}
+
+function syncProjectFileSearchFocus(scroll = true) {
+  const countEl = document.getElementById('project-file-search-count');
+  const total = projectFileSearchHits.length;
+  projectFileSearchHits.forEach((mark, idx) => {
+    mark.classList.toggle('is-current', idx === projectFileSearchIndex);
+  });
+  if (countEl) {
+    if (!projectFileSearchQuery) {
+      countEl.textContent = '';
+    } else if (total === 0) {
+      countEl.textContent = '0/0';
+    } else {
+      countEl.textContent = `${projectFileSearchIndex + 1}/${total}`;
+    }
+  }
+  if (scroll && total > 0 && projectFileSearchIndex >= 0) {
+    projectFileSearchHits[projectFileSearchIndex]?.scrollIntoView({
+      block: 'center',
+      inline: 'nearest',
+    });
+  }
+}
+
+function buildCodePreviewNode(
+  text: string,
+  filePath: string,
+  wrap: boolean,
+  query: string,
+): {node: HTMLElement; lineCount: number; meta: {lang: string; label: string; accent: string}} {
+  const meta = ChatHighlight.langForPath(filePath);
+  const highlighted = ChatHighlight.highlight(text, meta.lang);
+  const viewer = document.createElement('div');
+  viewer.className = wrap ? 'mp-code-viewer is-wrapped' : 'mp-code-viewer';
+  viewer.dataset.lang = meta.lang;
+  const queryLower = query.trim().toLowerCase();
+  const hits: HTMLElement[] = [];
+  const digits = Math.max(2, String(highlighted.length).length);
+  const gutterWidth = `${digits * 8 + 24}px`;
+
+  for (let i = 0; i < highlighted.length; i += 1) {
+    const lineSpans = highlighted[i];
+    const row = document.createElement('div');
+    row.className = 'mp-code-line';
+    const ln = document.createElement('span');
+    ln.className = 'mp-code-ln';
+    ln.style.minWidth = gutterWidth;
+    ln.textContent = String(i + 1);
+    const code = document.createElement('span');
+    code.className = 'mp-code-text';
+    const hitsBefore = hits.length;
+    if (lineSpans.length === 1 && !lineSpans[0].text) {
+      code.textContent = ' ';
+    } else {
+      for (const span of lineSpans) {
+        appendHighlightedSegment(code, span.text, span.token, queryLower, hits);
+      }
+    }
+    if (hits.length > hitsBefore) {
+      row.classList.add('is-hit-line');
+    }
+    row.append(ln, code);
+    viewer.append(row);
+  }
+  projectFileSearchHits = hits;
+  projectFileSearchIndex = hits.length > 0 ? 0 : -1;
+  return {node: viewer, lineCount: highlighted.length, meta};
+}
+
 function renderSelectedProjectFile() {
   const preview = document.getElementById('project-file-preview');
   const content = document.getElementById('project-file-content');
   const code = document.getElementById('project-file-code');
+  const wrapBtn = document.getElementById('project-file-wrap');
+  const metaEl = document.getElementById('project-file-meta');
   if (!preview || !content) {
     return;
   }
   const renderMarkdown = selectedProjectFileMarkdown && !projectFileCodeView;
-  const media = selectedProjectPreview?.kind === 'image' || selectedProjectPreview?.kind === 'pdf';
+  const media =
+    selectedProjectPreview?.kind === 'image' ||
+    selectedProjectPreview?.kind === 'pdf';
+  const isCodeText =
+    (!selectedProjectPreview || selectedProjectPreview.kind === 'text') &&
+    !selectedProjectFileDiff &&
+    !(selectedProjectFileSnapshot && !selectedProjectFileReadFailed) &&
+    !renderMarkdown;
   content.setAttribute('aria-busy', String(selectedProjectFileLoading));
   preview.classList.toggle('is-markdown', renderMarkdown);
   code?.setAttribute('aria-pressed', String(projectFileCodeView));
@@ -9295,8 +9465,13 @@ function renderSelectedProjectFile() {
       selectedProjectFileDiff !== null ||
       selectedProjectFileSnapshot ||
       media ||
+      !selectedProjectFileMarkdown ||
       selectedProjectPreview?.kind === 'document' ||
       selectedProjectPreview?.kind === 'spreadsheet';
+  }
+  if (wrapBtn) {
+    wrapBtn.hidden = !isCodeText || selectedProjectFileLoading;
+    wrapBtn.setAttribute('aria-pressed', String(projectFileWrap));
   }
   const external = document.getElementById(
     'project-file-open',
@@ -9310,20 +9485,53 @@ function renderSelectedProjectFile() {
     (copy as HTMLButtonElement).disabled = selectedProjectFileLoading;
   }
   if (selectedProjectPreview && selectedProjectPreview.kind !== 'text') {
+    if (metaEl) {
+      metaEl.hidden = true;
+    }
     ProjectPreviewView.renderProjectPreview(content, selectedProjectPreview);
     return;
   }
   content.classList.remove('is-office-preview', 'is-browser-pane');
+  projectFileSearchHits = [];
+  projectFileSearchIndex = -1;
   if (selectedProjectFileDiff) {
+    if (metaEl) {
+      metaEl.hidden = true;
+    }
     content.replaceChildren(ChatView.fileDiffNode(selectedProjectFileDiff));
   } else if (selectedProjectFileSnapshot && !selectedProjectFileReadFailed) {
+    if (metaEl) {
+      metaEl.hidden = true;
+    }
     content.replaceChildren(ChatView.deletedFileNode(selectedProjectFileText));
   } else if (renderMarkdown) {
+    if (metaEl) {
+      const dot = document.createElement('span');
+      dot.className = 'mp-file-meta-dot';
+      dot.style.background = '#7C3AED';
+      metaEl.replaceChildren(dot, document.createTextNode('Markdown'));
+      metaEl.hidden = false;
+    }
     content.replaceChildren(ChatMarkdown.render(selectedProjectFileText));
   } else {
-    const pre = document.createElement('pre');
-    pre.textContent = selectedProjectFileText;
-    content.replaceChildren(pre);
+    const built = buildCodePreviewNode(
+      selectedProjectFileText,
+      selectedProjectFile,
+      projectFileWrap,
+      projectFileSearchQuery,
+    );
+    if (metaEl) {
+      const dot = document.createElement('span');
+      dot.className = 'mp-file-meta-dot';
+      dot.style.background = built.meta.accent;
+      metaEl.replaceChildren(
+        dot,
+        document.createTextNode(`${built.meta.label} · ${built.lineCount}L`),
+      );
+      metaEl.hidden = selectedProjectFileLoading;
+    }
+    content.replaceChildren(built.node);
+    syncProjectFileSearchFocus(Boolean(projectFileSearchQuery));
   }
 }
 
@@ -9460,16 +9668,14 @@ async function selectProjectFile(
     !options.diffReference &&
     /\.(?:md|mdx|markdown)$/i.test(relativePath) && Boolean(response?.ok);
   projectFileCodeView = false;
-  const name = document.getElementById('project-file-name');
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
     inspectorTitle.textContent = studioT('inspector.files');
   }
-  if (name) {
-    name.textContent =
-      (options.title || relativePath) +
-      (response?.truncated ? studioT('files.truncated') : '');
-  }
+  setProjectFileHeaderPath(
+    options.title || relativePath,
+    response?.truncated ? studioT('files.truncated') : '',
+  );
   renderSelectedProjectFile();
   renderProjectFileTree();
 }
@@ -11495,38 +11701,105 @@ if (projectFileContent) {
   ChatView.bindDelegation(projectFileContent);
 }
 
+document.getElementById('project-file-wrap')?.addEventListener('click', () => {
+  projectFileWrap = !projectFileWrap;
+  renderSelectedProjectFile();
+});
 document.getElementById('project-file-code')?.addEventListener('click', () => {
   projectFileCodeView = !projectFileCodeView;
   renderSelectedProjectFile();
 });
-document.getElementById('project-file-copy')?.addEventListener('click', () => {
-  if (selectedProjectFileText) {
-    void navigator.clipboard.writeText(selectedProjectFileText);
+document.getElementById('project-file-copy')?.addEventListener('click', event => {
+  if (!selectedProjectFileText) {
+    return;
+  }
+  void navigator.clipboard.writeText(selectedProjectFileText);
+  const button = event.currentTarget as HTMLButtonElement | null;
+  const iconEl = button?.querySelector('.cds-icon');
+  if (button && iconEl) {
+    button.classList.add('is-copied');
+    iconEl.textContent = '\uE03B';
+    if (projectFileCopyTimer !== null) {
+      window.clearTimeout(projectFileCopyTimer);
+    }
+    projectFileCopyTimer = window.setTimeout(() => {
+      button.classList.remove('is-copied');
+      iconEl.textContent = '\uE056';
+      projectFileCopyTimer = null;
+    }, 1500);
   }
 });
 document
   .getElementById('project-file-search')
-  ?.addEventListener('click', () => {
+  ?.addEventListener('click', event => {
+    const bar = document.getElementById('project-file-search-bar');
     const input = document.getElementById(
       'project-file-search-input',
     ) as HTMLInputElement | null;
-    if (!input) {
+    const button = event.currentTarget as HTMLButtonElement | null;
+    if (!bar || !input) {
       return;
     }
-    input.hidden = !input.hidden;
-    if (!input.hidden) {
+    const nextOpen = bar.hidden;
+    bar.hidden = !nextOpen;
+    button?.setAttribute('aria-pressed', String(nextOpen));
+    if (nextOpen) {
       input.focus();
+      input.select();
+    } else if (projectFileSearchQuery) {
+      projectFileSearchQuery = '';
+      input.value = '';
+      renderSelectedProjectFile();
     }
   });
 document
   .getElementById('project-file-search-input')
   ?.addEventListener('input', event => {
-    const query = (event.currentTarget as HTMLInputElement).value;
-    const find = (window as Window & {find?: (...args: unknown[]) => boolean})
-      .find;
-    if (query && find) {
-      find.call(window, query, false, false, true, false, true, false);
+    projectFileSearchQuery = (event.currentTarget as HTMLInputElement).value;
+    renderSelectedProjectFile();
+  });
+document
+  .getElementById('project-file-search-input')
+  ?.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      const bar = document.getElementById('project-file-search-bar');
+      const searchBtn = document.getElementById('project-file-search');
+      if (bar) {
+        bar.hidden = true;
+      }
+      searchBtn?.setAttribute('aria-pressed', 'false');
+      projectFileSearchQuery = '';
+      (event.currentTarget as HTMLInputElement).value = '';
+      renderSelectedProjectFile();
+    } else if (event.key === 'Enter' && projectFileSearchHits.length > 0) {
+      event.preventDefault();
+      const delta = event.shiftKey ? -1 : 1;
+      projectFileSearchIndex =
+        (projectFileSearchIndex + delta + projectFileSearchHits.length) %
+        projectFileSearchHits.length;
+      syncProjectFileSearchFocus(true);
     }
+  });
+document
+  .getElementById('project-file-search-prev')
+  ?.addEventListener('click', () => {
+    if (projectFileSearchHits.length === 0) {
+      return;
+    }
+    projectFileSearchIndex =
+      (projectFileSearchIndex - 1 + projectFileSearchHits.length) %
+      projectFileSearchHits.length;
+    syncProjectFileSearchFocus(true);
+  });
+document
+  .getElementById('project-file-search-next')
+  ?.addEventListener('click', () => {
+    if (projectFileSearchHits.length === 0) {
+      return;
+    }
+    projectFileSearchIndex =
+      (projectFileSearchIndex + 1) % projectFileSearchHits.length;
+    syncProjectFileSearchFocus(true);
   });
 document
   .getElementById('project-browser-form')

@@ -788,7 +788,45 @@ const ChatMarkdown = (() => {
         };
         append(head, h('button', copyAttrs, codeCopyIcon()));
         append(card, head);
-        append(card, h('pre', {}, h('code', attrs, body.join('\n'))));
+        const rawCode = body.join('\n');
+        const codeNode = h('code', attrs);
+        const highlighter = (
+          globalThis as typeof globalThis & {
+            ChatHighlight?: {
+              highlight: (
+                code: string,
+                language: string,
+              ) => Array<Array<{text: string; token: string}>>;
+              languageOf?: (language: string) => string;
+            };
+          }
+        ).ChatHighlight;
+        const resolvedLang =
+          lang && highlighter?.languageOf ? highlighter.languageOf(lang) : 'plain';
+        if (highlighter && resolvedLang !== 'plain') {
+          const highlightedLines = highlighter.highlight(rawCode, resolvedLang);
+          highlightedLines.forEach((spans, lineIdx) => {
+            for (const span of spans) {
+              if (!span.text) {
+                continue;
+              }
+              if (span.token === 'plain') {
+                append(codeNode, span.text);
+              } else {
+                append(
+                  codeNode,
+                  h('span', {class: `mp-chat-tok-${span.token}`}, span.text),
+                );
+              }
+            }
+            if (lineIdx + 1 < highlightedLines.length) {
+              append(codeNode, '\n');
+            }
+          });
+        } else {
+          append(codeNode, rawCode);
+        }
+        append(card, h('pre', {}, codeNode));
         blocks.push(card);
         continue;
       }
