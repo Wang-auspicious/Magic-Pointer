@@ -4637,7 +4637,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   align-items: center;
   gap: 4px;
   padding: 8px 12px 6px;
-  border-bottom: 1px solid var(--mp-hairline);
+  border-bottom: 1px solid var(--cds-border, var(--mp-rule));
   overflow-x: auto;
   flex: none;
 }
@@ -4645,7 +4645,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-sidechat-tab {
   font: inherit;
   font-size: 12px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -4655,26 +4655,26 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 }
 
 .mp-sidechat-tab:hover {
-  color: var(--mp-ink);
+  color: var(--mp-text);
   background: var(--mp-hover);
 }
 
 .mp-sidechat-tab.is-on {
-  color: var(--mp-ink);
+  color: var(--mp-text);
   background: var(--mp-repository-surface);
-  border-color: var(--mp-hairline);
+  border-color: var(--cds-border, var(--mp-rule));
   font-weight: 500;
 }
 
 .mp-sidechat-tab.is-mounted::after {
   content: ' · 挂';
-  color: var(--mp-accent);
+  color: var(--mp-clay, #d97757);
   font-size: 11px;
 }
 
 .mp-sidechat-head {
   padding: 10px 14px;
-  border-bottom: 1px solid var(--mp-hairline);
+  border-bottom: 1px solid var(--cds-border, var(--mp-rule));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4687,22 +4687,22 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   gap: 6px;
   font-size: 12.5px;
   line-height: 1.45;
-  color: var(--mp-ink);
+  color: var(--mp-text);
 }
 
 .mp-sidechat-anchor-tag {
   flex: none;
   font-size: 11px;
   font-weight: 600;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   background: var(--mp-repository-surface);
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 4px;
   padding: 1px 5px;
 }
 
 .mp-sidechat-anchor-text {
-  color: var(--mp-ink);
+  color: var(--mp-text);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -4720,9 +4720,9 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 
 .mp-sidechat-cache-badge {
   font-size: 11px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   background: var(--mp-repository-surface);
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 999px;
   padding: 2px 8px;
 }
@@ -4731,9 +4731,9 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   font: inherit;
   font-size: 11.5px;
   font-weight: 500;
-  color: var(--mp-ink);
+  color: var(--mp-text);
   background: var(--mp-page);
-  border: 1px solid var(--mp-border);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 6px;
   padding: 3px 9px;
   cursor: pointer;
@@ -4744,9 +4744,9 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 }
 
 .mp-sidechat-mount-btn.is-mounted {
-  color: var(--mp-accent);
-  border-color: color-mix(in srgb, var(--mp-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--mp-accent) 8%, transparent);
+  color: var(--mp-clay-strong, #c6613f);
+  border-color: color-mix(in srgb, var(--mp-clay, #d97757) 45%, transparent);
+  background: color-mix(in srgb, var(--mp-clay, #d97757) 9%, transparent);
 }
 
 .mp-sidechat-stream {
@@ -4760,7 +4760,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 }
 
 .mp-sidechat-empty {
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   font-size: 13px;
   line-height: 1.6;
   padding: 16px 6px;
@@ -4776,7 +4776,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   padding: 8px 12px;
   border-radius: var(--mp-r-bubble);
   background: var(--mp-user-bubble);
-  color: var(--mp-ink);
+  color: var(--mp-text);
   font-size: 13.5px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -4789,7 +4789,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 }
 
 .mp-sidechat-thinking {
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   font-size: 12.5px;
 }
 
@@ -4801,7 +4801,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-sidechat-composer {
   flex: none;
   padding: 10px 12px 12px;
-  border-top: 1px solid var(--mp-hairline);
+  border-top: 1px solid var(--cds-border, var(--mp-rule));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4817,24 +4817,24 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-sidechat-chip {
   font: inherit;
   font-size: 11.5px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   background: var(--mp-repository-surface);
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 999px;
   padding: 3px 9px;
   cursor: pointer;
 }
 
 .mp-sidechat-chip:hover {
-  color: var(--mp-ink);
-  border-color: var(--mp-border);
+  color: var(--mp-text);
+  border-color: var(--cds-border-hover, var(--mp-rule));
 }
 
 .mp-sidechat-input-row {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  border: 1px solid var(--mp-border);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 10px;
   padding: 6px 8px;
   background: var(--mp-page);
@@ -4846,7 +4846,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   outline: none;
   resize: none;
   background: transparent;
-  color: var(--mp-ink);
+  color: var(--mp-text);
   font: inherit;
   font-size: 13px;
   line-height: 1.45;
@@ -4860,7 +4860,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   font-size: 12px;
   font-weight: 500;
   color: #fff;
-  background: var(--mp-accent);
+  background: var(--mp-clay, #d97757);
   border: 0;
   border-radius: 7px;
   padding: 5px 11px;
@@ -4874,8 +4874,8 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 /* External zero-context mounted side-chat card inside parent stream */
 .mp-mounted-sidechat {
   margin: 10px 0 16px;
-  border: 1px solid var(--mp-hairline);
-  border-left: 2.5px solid var(--mp-accent);
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-left: 2.5px solid var(--mp-clay, #d97757);
   border-radius: 8px;
   background: var(--mp-repository-surface);
   overflow: hidden;
@@ -4901,8 +4901,8 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-mounted-sidechat-kind {
   font-size: 11px;
   font-weight: 600;
-  color: var(--mp-accent);
-  background: color-mix(in srgb, var(--mp-accent) 12%, transparent);
+  color: var(--mp-clay-strong, #c6613f);
+  background: color-mix(in srgb, var(--mp-clay, #d97757) 12%, transparent);
   border-radius: 4px;
   padding: 1px 6px;
 }
@@ -4910,19 +4910,19 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-mounted-sidechat-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--mp-ink);
+  color: var(--mp-text);
 }
 
 .mp-mounted-sidechat-count {
   font-size: 11.5px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
 }
 
 .mp-mounted-sidechat-cache {
   font-size: 11px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   background: var(--mp-page);
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 999px;
   padding: 1px 7px;
 }
@@ -4937,9 +4937,9 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-mounted-sidechat-btn {
   font: inherit;
   font-size: 11.5px;
-  color: var(--mp-ink);
+  color: var(--mp-text);
   background: var(--mp-page);
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   border-radius: 6px;
   padding: 2px 8px;
   cursor: pointer;
@@ -4950,20 +4950,20 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 }
 
 .mp-mounted-sidechat-btn.is-subtle {
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
 }
 
 .mp-mounted-sidechat-summary {
   margin: 0;
   padding: 0 12px 9px;
   font-size: 12.5px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   line-height: 1.5;
 }
 
 .mp-mounted-sidechat-body {
   padding: 10px 14px 12px;
-  border-top: 1px solid var(--mp-hairline);
+  border-top: 1px solid var(--cds-border, var(--mp-rule));
   background: var(--mp-page);
   display: flex;
   flex-direction: column;
@@ -4973,7 +4973,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 .mp-mounted-sidechat-q {
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
 }
 
 .mp-mounted-sidechat-a {
@@ -5007,13 +5007,13 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   padding: 2px;
   border-radius: 8px;
   background: var(--mp-repository-surface);
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
 }
 
 .mp-learn-stance-btn {
   font: inherit;
   font-size: 12px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -5023,11 +5023,11 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
 }
 
 .mp-learn-stance-btn:hover {
-  color: var(--mp-ink);
+  color: var(--mp-text);
 }
 
 .mp-learn-stance-btn.is-on {
-  color: var(--mp-ink);
+  color: var(--mp-text);
   background: var(--mp-page);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   font-weight: 500;
@@ -5044,10 +5044,10 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   padding: 6px 10px;
   margin-bottom: 6px;
   border-radius: 7px;
-  border: 1px solid var(--mp-hairline);
+  border: 1px solid var(--cds-border, var(--mp-rule));
   background: var(--mp-repository-surface);
   font-size: 12px;
-  color: var(--mp-muted);
+  color: var(--mp-text-secondary, var(--mp-muted));
 }
 
 .mp-cu-receipt-chip {
@@ -5057,8 +5057,8 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   padding: 1px 7px;
   border-radius: 999px;
   background: var(--mp-page);
-  border: 1px solid var(--mp-hairline);
-  color: var(--mp-ink);
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  color: var(--mp-text);
   font-size: 11.5px;
 }
 

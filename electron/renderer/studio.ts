@@ -7286,6 +7286,7 @@ type ProductMode = 'walker' | 'design';
 type LearnStance = 'explain' | 'socratic' | 'coach';
 let productMode: ProductMode = 'walker';
 let learnStance: LearnStance = 'explain';
+let guidedTourCoachActive = false;
 
 function setLearnStance(next: LearnStance) {
   learnStance = next;
@@ -7344,7 +7345,7 @@ function setProductMode(mode: ProductMode, navigate = true) {
     /* renderer storage unavailable */
   }
   syncSkimToggleUi(activeConversationRecord);
-  if (inspectorState.open) {
+  if (changed && inspectorState.open) {
     if (
       mode === 'walker' &&
       activeInspectorTab === 'learn'
@@ -10732,6 +10733,7 @@ function renderInspectorTitle() {
     return;
   }
   const labels: Record<string, string> = {
+    'side-chat': 'inspector.side_chat',
     learn: 'inspector.learn',
     activity: 'activity.log',
     materials: 'inspector.materials',
@@ -10746,7 +10748,12 @@ function renderInspectorTitle() {
     artifact: 'inspector.artifact',
     modules: 'inspector.modules',
   };
-  title.textContent = studioT(labels[inspectorState.tab] || 'inspector.task');
+  title.textContent =
+    inspectorState.tab === 'side-chat'
+      ? getStudioLanguage() === 'zh-CN'
+        ? '并排探讨'
+        : 'Side chat'
+      : studioT(labels[inspectorState.tab] || 'inspector.task');
 }
 
 function syncInspectorGeometry() {
@@ -14514,7 +14521,6 @@ if (chatLearnToggle) {
   });
 }
 const chatTourToggle = document.getElementById('chat-tour-toggle');
-let guidedTourCoachActive = false;
 if (chatTourToggle) {
   chatTourToggle.addEventListener('click', () => {
     guidedTourCoachActive = !guidedTourCoachActive;
