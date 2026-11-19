@@ -179,7 +179,18 @@ ${rawCode}
       frame.setAttribute('referrerpolicy', 'no-referrer');
       frame.title = title;
       frame.style.height = '260px';
-      frame.srcdoc = buildSrcdoc(widgetId, rawSrc);
+      const docHtml = buildSrcdoc(widgetId, rawSrc);
+      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        const blobUrl = URL.createObjectURL(
+          new Blob([docHtml], {type: 'text/html;charset=utf-8'}),
+        );
+        frame.src = blobUrl;
+        frame.addEventListener('load', () => {
+          window.setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+        }, {once: true});
+      } else {
+        frame.srcdoc = docHtml;
+      }
       frameById.set(widgetId, frame);
 
       card.append(head, frame);
