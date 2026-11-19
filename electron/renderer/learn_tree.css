@@ -963,8 +963,8 @@
 .mp-learn-deck {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 12px;
+  gap: 16px;
+  padding: 16px;
   height: 100%;
   overflow-y: auto;
 }
@@ -974,13 +974,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-bottom: 8px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--mp-line-soft);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .mp-learn-deck-header p {
   margin: 2px 0 0;
   font-size: 11.5px;
+  font-weight: 400;
   color: var(--mp-text-muted, #767578);
 }
 

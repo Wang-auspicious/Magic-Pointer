@@ -533,8 +533,8 @@
         <strong class="mp-inspector-title" id="inspector-title">Files</strong>
         <div id="workspace-resource-tabs-host" aria-label="Workspace resource tabs" hidden></div>
         <div class="mp-inspector-actions">
-          <button type="button" class="mp-thread-action" id="inspector-maximize" aria-label="Expand project panel" aria-pressed="false"><svg aria-hidden="true"><use href="#ic-maximize" /></svg></button>
-          <button type="button" class="mp-thread-action" id="inspector-close" aria-label="Close project panel"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
+          <button type="button" class="mp-thread-action" id="inspector-maximize" aria-label="Expand project panel" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE016;</span></button>
+          <button type="button" class="mp-thread-action" id="inspector-close" aria-label="Close project panel"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE10F;</span></button>
         </div>
       </header>
       <nav class="mp-inspector-tabs" aria-label="Task and project tools">
@@ -571,18 +571,18 @@
         <article class="mp-task-material-detail" id="task-material-detail" hidden></article>
       </section>
       <section class="mp-inspector-panel is-on" id="inspector-files" data-inspector-panel="files">
-        <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="Filter files…" autocomplete="off" /></label>
+        <label class="mp-inspector-filter"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span><input id="file-tree-filter" type="search" placeholder="Filter files…" autocomplete="off" /></label>
         <div class="mp-file-tree" id="project-file-tree" role="tree" tabindex="0"><p class="mp-inspector-empty">Files appear after opening a project.</p></div>
         <article class="mp-file-preview" id="project-file-preview" hidden>
           <header>
             <span id="project-file-name"></span>
             <input id="project-file-search-input" type="search" placeholder="Search in file…" aria-label="Search in file" hidden />
             <div class="mp-file-preview-actions">
-              <button type="button" id="project-file-open" title="Open in default app" aria-label="Open in default app"><svg aria-hidden="true"><use href="#ic-open" /></svg></button>
-              <button type="button" id="project-file-code" title="Code" aria-pressed="false"><svg aria-hidden="true"><use href="#ic-code" /></svg></button>
-              <button type="button" id="project-file-search" title="Search"><svg aria-hidden="true"><use href="#ic-search" /></svg></button>
-              <button type="button" id="project-file-back" title="Show files"><svg aria-hidden="true"><use href="#ic-folder-open" /></svg></button>
-              <button type="button" id="project-file-copy" title="Copy"><svg aria-hidden="true"><use href="#ic-copy" /></svg></button>
+              <button type="button" id="project-file-open" title="Open in default app" aria-label="Open in default app"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE00E;</span></button>
+              <button type="button" id="project-file-code" title="Code" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE048;</span></button>
+              <button type="button" id="project-file-search" title="Search"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE0D3;</span></button>
+              <button type="button" id="project-file-back" title="Show files"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE073;</span></button>
+              <button type="button" id="project-file-copy" title="Copy"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE056;</span></button>
             </div>
           </header>
           <div class="mp-file-preview-content" id="project-file-content"></div>
@@ -596,14 +596,14 @@
           <button type="button" class="mp-browser-quick-btn" data-quick-url="https://arxiv.org">arXiv</button>
         </div>
         <div class="mp-browser-toolbar">
-          <button type="button" id="project-browser-back" aria-label="Back" title="Back" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg></button>
-          <button type="button" id="project-browser-forward" aria-label="Forward" title="Forward" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg></button>
-          <button type="button" id="project-browser-reload" aria-label="Reload" title="Reload"><svg class="codex-icon" aria-hidden="true"><use href="#ic-refresh" /></svg></button>
-          <form class="mp-browser-bar" id="project-browser-form"><input id="project-browser-url" type="text" inputmode="url" placeholder="Enter a URL or localhost address" aria-label="Browser address" /><button type="submit" aria-label="Go" title="Go"><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg></button></form>
-          <button type="button" id="project-browser-external" aria-label="Open in web browser" title="Open in web browser"><svg class="codex-icon" aria-hidden="true"><use href="#ic-open" /></svg></button>
+          <button type="button" id="project-browser-back" aria-label="Back" title="Back" disabled><span class="cds-icon" data-size="small" aria-hidden="true">&#xE00C;</span></button>
+          <button type="button" id="project-browser-forward" aria-label="Forward" title="Forward" disabled><span class="cds-icon" data-size="small" aria-hidden="true">&#xE010;</span></button>
+          <button type="button" id="project-browser-reload" aria-label="Reload" title="Reload"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE11D;</span></button>
+          <form class="mp-browser-bar" id="project-browser-form"><input id="project-browser-url" type="text" inputmode="url" placeholder="Enter a URL or localhost address" aria-label="Browser address" /><button type="submit" aria-label="Go" title="Go"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE010;</span></button></form>
+          <button type="button" id="project-browser-external" aria-label="Open in web browser" title="Open in web browser"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE00E;</span></button>
         </div>
         <div class="mp-browser-host" id="project-browser-host" aria-label="Built-in web browser">
-          <div class="mp-browser-empty" id="project-browser-empty"><svg class="codex-icon" aria-hidden="true"><use href="#ic-globe" /></svg><strong>ego lite</strong><p data-browser-message="browser.empty">Open websites in ego lite. Local documents and previews appear here.</p></div>
+          <div class="mp-browser-empty" id="project-browser-empty"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE082;</span><strong>ego lite</strong><p data-browser-message="browser.empty">Open websites in ego lite. Local documents and previews appear here.</p></div>
         </div>
       </section>
       <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>

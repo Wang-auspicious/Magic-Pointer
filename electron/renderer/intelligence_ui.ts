@@ -27,8 +27,8 @@ declare global {
   function themeCssVars(): string {
     const dark = document.documentElement.dataset.theme === 'dark';
     return dark
-      ? `:root{--bg:#141413;--surface:#1d1d1b;--text:#ecebe6;--muted:#a4a29a;--border:rgba(255,255,255,.12);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--blue:#6da7ec;--green:#86efac;--danger:#ec7e7e;}`
-      : `:root{--bg:#ffffff;--surface:#f7f7f5;--text:#1f1f1d;--muted:#6e6d68;--border:rgba(15,15,14,.12);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--blue:#184f95;--green:#166534;--danger:#8e2626;}`;
+      ? `:root{--bg:#191919;--surface:#20201f;--text:#ecebe6;--muted:#a4a29a;--border:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.20);--hover:rgba(255,255,255,.075);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--blue:#6da7ec;--green:#86efac;--danger:#ec7e7e;}`
+      : `:root{--bg:#ffffff;--surface:#f7f7f5;--text:#1f1f1d;--muted:#6e6d68;--border:rgba(11,11,11,.09);--border-strong:rgba(11,11,11,.18);--hover:rgba(11,11,11,.05);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--blue:#184f95;--green:#166534;--danger:#8e2626;}`;
   }
 
   function ensureMessageListener(): void {
@@ -97,13 +97,15 @@ declare global {
 
       const left = document.createElement('div');
       left.className = 'mp-iui-title-wrap';
-      const badge = document.createElement('span');
-      badge.className = 'mp-iui-badge';
-      badge.textContent = 'Intelligence UI';
+      const icon = document.createElement('span');
+      icon.className = 'cds-icon mp-iui-icon';
+      icon.dataset.size = 'small';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '\uE018';
       const titleEl = document.createElement('strong');
       titleEl.className = 'mp-iui-title';
       titleEl.textContent = title;
-      left.append(badge, titleEl);
+      left.append(icon, titleEl);
 
       const actions = document.createElement('div');
       actions.className = 'mp-iui-actions';

@@ -216,10 +216,21 @@ declare global {
       const mountBtn = el(
         'button',
         `mp-sidechat-mount-btn${isMounted ? ' is-mounted' : ''}`,
-        isMounted ? '已外挂到主对话（零上下文）' : '外挂到主对话（不入上下文）',
       );
       mountBtn.type = 'button';
       mountBtn.dataset.sidechatAction = 'toggle-mount';
+      const mountIcon = el('span', 'cds-icon');
+      mountIcon.dataset.size = 'xs';
+      mountIcon.setAttribute('aria-hidden', 'true');
+      mountIcon.textContent = isMounted ? '\uE03B' : '\uE012';
+      mountBtn.append(
+        mountIcon,
+        document.createTextNode(
+          isMounted
+            ? '已外挂到主对话（零上下文）'
+            : '外挂到主对话（不入上下文）',
+        ),
+      );
       mountBtn.addEventListener('click', () => {
         void handlers.onToggleMount(
           conversation.id,

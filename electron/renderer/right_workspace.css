@@ -372,3 +372,61 @@
   max-width: none;
   max-height: none;
 }
+
+/*
+ * Claude Desktop 4.23118 seamless full-height right split pane.
+ * Loaded after studio_layout.css so it cleanly overrides the floating box
+ * geometry and aligns the right header (48px) to the exact pixel with .mpw-header.
+ */
+.mp-inspector {
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--mp-rule);
+  border-radius: 0;
+  width: clamp(360px, 36vw, 560px);
+  min-width: 340px;
+  max-width: 760px;
+}
+
+.mp-inspector-header {
+  min-height: 48px;
+  flex: 0 0 48px;
+  padding: 0 12px 0 16px;
+}
+
+.mp-inspector-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--mp-text);
+}
+
+.mp-inspector-filter .cds-icon,
+.mp-file-preview header button .cds-icon,
+.mp-browser-toolbar .cds-icon {
+  flex: none;
+}
+
+.mp-browser-empty .cds-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 20px;
+  color: var(--mp-text-muted);
+}
+
+@media (max-width: 1020px) {
+  .mp-inspector {
+    min-width: 340px;
+    width: clamp(340px, 40vw, 420px);
+  }
+}
+
+@media (max-width: 820px) {
+  .mp-inspector:not([hidden]) {
+    inset: var(--mp-window-bar) 0 0 var(--mp-sidebar-seat);
+    border-left: 1px solid var(--mp-rule);
+    border-radius: 0;
+  }
+}
