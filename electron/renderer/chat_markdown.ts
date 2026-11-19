@@ -113,11 +113,8 @@ const ChatMarkdown = (() => {
 
   function learnAskSvgMarkup(): string {
     return (
-      '<svg class="mp-learn-icon" width="14" height="14" viewBox="0 0 20 20" ' +
-      'fill="none" stroke="currentColor" stroke-width="1.35" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M4.625 15.375L15.375 4.625M15.375 11.696L15.375 4.625L8.304 4.625" vector-effect="non-scaling-stroke"/>' +
-      '</svg>'
+      '<span class="cds-icon mp-learn-icon" data-size="sm" data-glyph="&#xE015;" ' +
+      'style="font-size:14px;--cds-opsz:16;--cds-wght:533.3;" aria-hidden="true"></span>'
     );
   }
 

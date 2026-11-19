@@ -38,7 +38,7 @@
 @font-face {
   font-family: "anthropic-mono";
   src: url("./assets/fonts/AnthropicMono-Regular.woff2") format("woff2");
-  font-weight: 400;
+  font-weight: 300 800;
   font-style: normal;
   font-display: swap;
 }
@@ -46,7 +46,7 @@
 @font-face {
   font-family: "anthropic-mono";
   src: url("./assets/fonts/AnthropicMono-Italic.woff2") format("woff2");
-  font-weight: 400;
+  font-weight: 300 800;
   font-style: italic;
   font-display: swap;
 }
@@ -88,7 +88,7 @@
 :root[data-theme="dark"],
 :root[data-mode="light"],
 :root[data-mode="dark"] {
-  --cds-font-sans: "anthropic-sans", "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+  --cds-font-sans: "anthropic-sans", "PingFang SC", "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
   --cds-font-sans-display: "anthropic-sans-display", "anthropic-sans", "Anthropic Sans", var(--cds-font-sans);
   --cds-font-mono: "anthropic-mono", "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
   --mp-font-mono: var(--cds-font-mono);
@@ -123,7 +123,7 @@
   --mp-text: var(--cds-text-primary);
   --mp-text-secondary: var(--cds-text-secondary);
   --mp-text-muted: var(--cds-text-muted);
-  --mp-rule: rgba(11, 11, 11, .10); /* --cds-alpha-2 */
+  --mp-rule: rgba(11, 11, 11, 0.09); /* --cds-alpha-2 */
   --mp-rule-strong: rgba(11, 11, 11, .20); /* --cds-border-strong = --cds-alpha-3 */
   --mp-hover: rgba(11, 11, 11, .05); /* --cds-fill-ghost-hover light = --cds-alpha-1 */
   --mp-task-card: var(--mp-hover);
@@ -227,7 +227,7 @@
   --mp-r7: 10px;
   --mp-r8: 12px;
   --mp-r-sheet: 16px;
-  --mp-r-bubble: 12px;
+  --mp-r-bubble: 14px;
   --mp-r-pill: 999px;
 
   /* Motion. Four of these are exact CDS values; --mp-dur-normal is Claude's
@@ -338,6 +338,7 @@ body {
   font-weight: var(--mp-weight-regular);
   line-height: var(--mp-leading-body);
   -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
   text-rendering: auto;
   user-select: none;
   -webkit-user-select: none;
