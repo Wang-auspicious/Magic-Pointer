@@ -243,6 +243,27 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       return () => ipcRenderer.removeListener('desktop-perception:changed', listener);
     },
   },
+  guidedTour: {
+    point: (payload: {
+      x?: unknown;
+      y?: unknown;
+      normalized?: unknown;
+      screen?: unknown;
+      label?: unknown;
+      caption?: unknown;
+      ttlMs?: unknown;
+    }) =>
+      ipcRenderer.invoke('guided-tour:point', {
+        x: Number(payload?.x) || 0,
+        y: Number(payload?.y) || 0,
+        normalized: payload?.normalized !== false,
+        screen: Number(payload?.screen) || 1,
+        label: String(payload?.label || '').slice(0, 80),
+        caption: String(payload?.caption || '').slice(0, 140),
+        ttlMs: Number(payload?.ttlMs) || 4000,
+      }),
+    clear: () => ipcRenderer.invoke('guided-tour:clear'),
+  },
   hide: () => ipcRenderer.send('dashboard:hide'),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', {theme}),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) =>

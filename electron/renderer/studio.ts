@@ -3252,7 +3252,7 @@ function renderStreamRail() {
     return;
   }
   const entries = railEntries();
-  if (!entries.length || activeConversationTab !== 'chat') {
+  if (entries.length < 3 || activeConversationTab !== 'chat') {
     rail.hidden = true;
     marks.replaceChildren();
     menu.replaceChildren();
@@ -4914,6 +4914,10 @@ async function openConversation(id: string) {
   renderProjectTasks();
   if (inspectorState.open && activeInspectorTab === 'activity') {
     renderConversationActivity();
+  }
+  const viewChatEl = document.getElementById('view-chat');
+  if (viewChatEl) {
+    viewChatEl.dataset.hasMessages = turns.length > 0 ? 'true' : 'false';
   }
   if (!turns.length) {
     stream.innerHTML = emptyStateMarkup(
@@ -14184,6 +14188,138 @@ if (typeof LearnTree !== 'undefined') {
     },
   });
 }
+if (typeof SideChatBar !== 'undefined') {
+  SideChatBar.init({
+    isSideChatOpen: () => Boolean(activeConversationRecord?.branches?.length),
+    onStartSideChat: payload => {
+      const opened = LearnTree?.openSelectionInquiry?.(
+        payload.quote,
+        payload.rect,
+        payload.anchorNode,
+      );
+      if (!opened) {
+        setInspector(true, 'learn');
+      }
+    },
+    onReply: payload => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '#composer-form textarea, .mpw-input',
+      );
+      if (!textarea) {
+        return;
+      }
+      const prefix = quotedSelection(payload.quote);
+      textarea.value = textarea.value ? `${prefix}${textarea.value}` : prefix;
+      fitComposer(textarea);
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    },
+  });
+}
+const chatLearnToggle = document.getElementById('chat-learn-toggle');
+if (chatLearnToggle) {
+  chatLearnToggle.addEventListener('click', () => {
+    const viewChatEl = document.getElementById('view-chat');
+    if (!viewChatEl) {
+      return;
+    }
+    const next = viewChatEl.dataset.hudExpanded !== 'true';
+    viewChatEl.dataset.hudExpanded = next ? 'true' : 'false';
+    chatLearnToggle.setAttribute('aria-pressed', String(next));
+    if (next && activeConversationRecord) {
+      LearnTree?.renderHud(
+        document.getElementById('learn-hud'),
+        activeConversationRecord,
+        document.getElementById('stream'),
+      );
+      setInspector(true, 'learn');
+      LearnTree?.renderDeck(
+        document.getElementById('learn-deck-host'),
+        activeConversationRecord,
+      );
+    }
+  });
+}
+const chatTourToggle = document.getElementById('chat-tour-toggle');
+let guidedTourCoachActive = false;
+if (chatTourToggle) {
+  chatTourToggle.addEventListener('click', () => {
+    guidedTourCoachActive = !guidedTourCoachActive;
+    chatTourToggle.setAttribute('aria-pressed', String(guidedTourCoachActive));
+    const viewChatEl = document.getElementById('view-chat');
+    if (viewChatEl) {
+      viewChatEl.dataset.tourCoach = guidedTourCoachActive ? 'true' : 'false';
+    }
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea, .mpw-input',
+    );
+    if (guidedTourCoachActive && textarea && !textarea.value.trim()) {
+      textarea.placeholder =
+        getStudioLanguage() === 'zh-CN'
+          ? '屏幕教练已开启：描述你想学的操作，AI 将用飞指光标一步步带你点…'
+          : 'Coach Tour on: ask how to do anything on screen and AI will point step-by-step…';
+      textarea.focus();
+    } else if (!guidedTourCoachActive) {
+      void window.magicPointerDashboard?.guidedTour?.clear?.();
+      if (textarea) {
+        textarea.placeholder = 'Type / for commands';
+      }
+    }
+  });
+}
+document.addEventListener('click', event => {
+  const target = event.target as HTMLElement | null;
+  const tourBtn = target?.closest<HTMLElement>('[data-tour-act]');
+  if (!tourBtn) {
+    return;
+  }
+  const act = tourBtn.dataset.tourAct;
+  if (act === 'point') {
+    const card = tourBtn.closest('.mp-tour-card');
+    card?.querySelectorAll('.mp-tour-step.is-active').forEach(el => {
+      el.classList.remove('is-active');
+    });
+    tourBtn.classList.add('is-active');
+    void window.magicPointerDashboard?.guidedTour?.point({
+      x: Number(tourBtn.dataset.tourX || 0),
+      y: Number(tourBtn.dataset.tourY || 0),
+      screen: Number(tourBtn.dataset.tourScreen || 1),
+      normalized: tourBtn.dataset.tourNormalized !== 'false',
+      label: tourBtn.dataset.tourLabel || '',
+      caption: tourBtn.dataset.tourCaption || tourBtn.dataset.tourLabel || '',
+      ttlMs: 3800,
+    });
+    return;
+  }
+  if (act === 'clear') {
+    void window.magicPointerDashboard?.guidedTour?.clear?.();
+    return;
+  }
+  if (act === 'autopilot') {
+    const card = tourBtn.closest('.mp-tour-card');
+    const stepLabels = Array.from(
+      card?.querySelectorAll<HTMLElement>('.mp-tour-step') || [],
+    )
+      .map((el, i) => `${i + 1}. ${el.dataset.tourLabel || ''}`)
+      .filter(Boolean);
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea, .mpw-input',
+    );
+    if (textarea) {
+      const promptText =
+        getStudioLanguage() === 'zh-CN'
+          ? `请切换到代操作模式，按以下导览步骤帮我执行并展示进度：\n${stepLabels.join('\n')}`
+          : `Switch to Autopilot and execute these guided tour steps for me:\n${stepLabels.join('\n')}`;
+      textarea.value = promptText;
+      fitComposer(textarea);
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
+      textarea.focus();
+    }
+  }
+});
 if (modulesHost && globalThis.ModsWorkspace) {
   const unavailableModules = () => ({
     ok: false, sessionId: '', modules: [], errors: [],
@@ -14253,6 +14389,44 @@ desktopPerceptionController = desktopPerceptionHost && globalThis.DesktopPercept
       language: () => getStudioLanguage(),
     })
   : null;
+const composerPerceptionToggle = document.getElementById('composer-perception-toggle');
+if (composerPerceptionToggle && desktopPerceptionHost) {
+  const closePerceptionPopover = () => {
+    desktopPerceptionHost.hidden = true;
+    composerPerceptionToggle.setAttribute('aria-expanded', 'false');
+  };
+  composerPerceptionToggle.addEventListener('click', event => {
+    event.stopPropagation();
+    const opening = desktopPerceptionHost.hidden;
+    desktopPerceptionHost.hidden = !opening;
+    composerPerceptionToggle.setAttribute('aria-expanded', String(opening));
+    if (opening) {
+      const details = desktopPerceptionHost.querySelector('details');
+      if (details) {
+        details.open = true;
+      }
+      void desktopPerceptionController?.refresh();
+    }
+  });
+  document.addEventListener('click', event => {
+    if (desktopPerceptionHost.hidden) {
+      return;
+    }
+    const target = event.target as Node | null;
+    if (
+      target &&
+      !desktopPerceptionHost.contains(target) &&
+      !composerPerceptionToggle.contains(target)
+    ) {
+      closePerceptionPopover();
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !desktopPerceptionHost.hidden) {
+      closePerceptionPopover();
+    }
+  });
+}
 if (desktopPerceptionController) {
   const controller = desktopPerceptionController;
   controller.updateContext(activeTaskContext);
@@ -15702,6 +15876,10 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
     pendingBody.className = 'mp-chat-assistant-body';
     pending.appendChild(pendingBody);
     flow.appendChild(pending);
+    const viewChatOnSend = document.getElementById('view-chat');
+    if (viewChatOnSend) {
+      viewChatOnSend.dataset.hasMessages = 'true';
+    }
     ChatView.bindDelegation(stream);
     scrollChatToBottom();
     scheduleStreamRail();
@@ -15769,10 +15947,13 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       ) {
         return;
       }
+      const outgoingQuestion = guidedTourCoachActive
+        ? `${question}\n\n[Coach Screen Tour Mode: Reply with concise step-by-step on-screen instructions. Before each step sentence, place an inline coordinate tag [POINT:x,y:ShortLabel:screen1] using 0-1000 normalized screen coordinates so the floating pointer guides the user directly on screen without clicking for them.]`
+        : question;
       const response = await Data.sendConversation({
         conversationId,
         workMode: productMode === 'design' ? 'learn' : 'code',
-        question,
+        question: outgoingQuestion,
         permissionPreset,
         requestId,
         workspaceRoot: workspace.projectRoot,
@@ -15995,6 +16176,10 @@ function detachPendingConversation() {
 }
 
 function startNewChat(draftId?: string) {
+  const viewChatEl = document.getElementById('view-chat');
+  if (viewChatEl) {
+    viewChatEl.dataset.hasMessages = 'false';
+  }
   captureComposerDraft();
   const saved = draftId
     ? windowNavigation.draft({kind: 'draft', id: draftId})

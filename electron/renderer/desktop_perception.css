@@ -1,3 +1,33 @@
+.mp-perception-popover {
+  position: relative;
+  border: 1px solid var(--mp-rule, #dfded8);
+  border-radius: 12px;
+  background: var(--mp-panel, #ffffff);
+  box-shadow: var(--mp-shadow-menu);
+  padding: 6px 12px 10px;
+}
+.mp-perception-popover[hidden] {
+  display: none;
+}
+.mp-composer-perception-btn {
+  position: relative;
+}
+.mp-perception-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--mp-clay, #d97757);
+  opacity: 0.85;
+}
+.mp-composer-perception-btn[data-state='paused'] .mp-perception-dot,
+.mp-composer-perception-btn[data-state='unavailable'] .mp-perception-dot {
+  background: var(--mp-text-muted);
+  opacity: 0.45;
+}
+
 .mp-desktop-perception {
   color: var(--mp-text, #292927);
   font: inherit;

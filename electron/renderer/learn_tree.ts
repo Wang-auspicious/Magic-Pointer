@@ -30,6 +30,11 @@ declare global {
     hasDockedBranches(
       conversation: MagicPointerConversation | null | undefined,
     ): boolean;
+    openSelectionInquiry?(
+      quote: string,
+      rect: {left: number; right: number; top: number; bottom: number},
+      anchorNode: Node | null,
+    ): boolean;
   }
 
   var LearnTree: LearnTreeController | undefined;
@@ -3234,7 +3239,13 @@ declare global {
     });
 
     // 5. Text Selection Contextual Inquiry Popover inside [data-block-index]
+    // When SideChatBar (Claude Desktop native 'Start a side chat | Reply' pill)
+    // is loaded, defer raw text-selection mouseup to it so users first see the
+    // calm 2-button pill and only open the inquiry box on 'Start a side chat'.
     document.addEventListener('mouseup', ev => {
+      if (globalThis.SideChatBar) {
+        return;
+      }
       if (
         inquiryPopover &&
         ev.target &&
@@ -3350,6 +3361,37 @@ declare global {
     renderLemmaStrip(hostEl, '__main__');
   }
 
+  function openSelectionInquiry(
+    quote: string,
+    rect: RectLike,
+    anchorNode: Node | null,
+  ): boolean {
+    const conv = hooks?.getConversation();
+    if (!conv) {
+      return false;
+    }
+    const ctx = anchorNode ? resolveTurnContext(anchorNode) : null;
+    const parentTurnIndex =
+      ctx?.parentTurnIndex ?? Math.max(0, (conv.turns?.length || 1) - 1);
+    openInquiryPopover(
+      {
+        conversationId: conv.id,
+        parentBranchId: ctx?.parentBranchId ?? null,
+        parentTurnIndex,
+        anchor: {
+          kind: 'selection',
+          label: quote.slice(0, 48),
+          snippet: quote,
+          ...(ctx?.blockIndex !== undefined ? {blockIndex: ctx.blockIndex} : {}),
+        },
+        rect,
+        fromSelection: true,
+      },
+      {focusInput: true},
+    );
+    return true;
+  }
+
   const LearnTreeApi = {
     init,
     mountConversation,
@@ -3357,6 +3399,7 @@ declare global {
     renderDeck,
     renderMainComposerLemmas,
     formatQuestionWithMainLemmas,
+    openSelectionInquiry,
     hasDockedBranches(
       conversation: MagicPointerConversation | null | undefined,
     ): boolean {

@@ -107,17 +107,19 @@
   --mp-inspector-min: 420px; /* Magic Pointer's own; Claude's pane floor is 320px */
   --mp-inspector-max: 760px; /* Magic Pointer's own; Claude has no pane ceiling */
 
-  /* Surface roles follow open-claude-ui 2834bc1, code-examples/cds-theme.css. */
-  --mp-page: #F5F5F3;
-  --mp-sidebar: #FCFCFB;
+  /* Surface roles aligned to Claude Desktop 4.23118 (c6a992d55-BxgTbpOo.css). */
+  --mp-page: #FFFFFF; /* --cds-gray-0 */
+  --mp-sidebar: #F9F9F7; /* --cds-gray-20 */
   --mp-panel: #FFFFFF; /* --cds-surface-2 light = --cds-surface-3 light = --cds-gray-0 */
-  --mp-panel-subtle: #F3F3F2; /* no CDS counterpart: Claude recesses with --cds-fill-control (alpha-2) */
-  --mp-markdown-cell: #F2F2F1; /* no CDS counterpart */
+  --mp-panel-subtle: #F3F3F0; /* --cds-gray-40 */
+  --mp-markdown-cell: #F6F6F4; /* --cds-gray-30 */
   --mp-code-surface: #FFFFFF; /* --cds-gray-0 */
-  --mp-repository-surface: #F2F2F1; /* no CDS counterpart */
+  --mp-repository-surface: #F6F6F4; /* --cds-gray-30 */
   --mp-composer: #FFFFFF;
-  --mp-user-bubble: #F0F4F8;
-  --mp-selected: #EDECE8; /* no CDS counterpart: Claude selects with --cds-fill-ghost-selected (alpha-2) */
+  --mp-user-bubble: rgba(11, 11, 11, .05); /* --cds-bg-user-message = --cds-alpha-1 */
+  --mp-prose-code-color: #8E2626; /* --cds-red-600 */
+  --mp-file-link: #184F95; /* --cds-blue-600 */
+  --mp-selected: #EDECE8; /* --cds-gray-60 */
   --mp-text: var(--cds-text-primary);
   --mp-text-secondary: var(--cds-text-secondary);
   --mp-text-muted: var(--cds-text-muted);
@@ -225,7 +227,7 @@
   --mp-r7: 10px;
   --mp-r8: 12px;
   --mp-r-sheet: 16px;
-  --mp-r-bubble: 18px;
+  --mp-r-bubble: 12px;
   --mp-r-pill: 999px;
 
   /* Motion. Four of these are exact CDS values; --mp-dur-normal is Claude's
@@ -284,6 +286,8 @@ body[data-ds-dark-theme] {
   --mp-repository-surface: #292928; /* no CDS counterpart */
   --mp-composer: #20201E;
   --mp-user-bubble: rgba(255, 255, 255, .06);
+  --mp-prose-code-color: #EC7E7E; /* --cds-red-300 */
+  --mp-file-link: #6DA7EC; /* --cds-blue-300 */
   --mp-selected: #343433; /* no CDS counterpart: Claude uses --cds-fill-ghost-selected dark = 15% white */
   --mp-task-card: #2F2F2F; /* no CDS counterpart */
   --mp-text: var(--cds-text-primary);

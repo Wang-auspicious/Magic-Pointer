@@ -1544,7 +1544,10 @@ const ChatView = (() => {
 
   /** Claude's `lR`. Keeps the last two path segments. */
   function shortenPath(path: string): string {
-    const parts = path.split('/');
+    const parts = path.split(/[\\/]+/).filter(Boolean);
+    if (!parts.length) {
+      return path;
+    }
     return parts.length > 2
       ? parts.slice(-2).join('/')
       : parts[parts.length - 1] || path;
@@ -2378,6 +2381,10 @@ const ChatView = (() => {
         : descriptiveBase;
     if (name === 'Tools' && Array.isArray(input.names)) {
       summary = input.names.join(', ');
+    }
+    if ((name === 'Skill' || name === 'skill') && typeof input.skill === 'string' && input.skill.trim()) {
+      const s = input.skill.trim();
+      summary = s.startsWith('/') ? s : `/${s}`;
     }
 
     // The reference's category labels are its *last resort*: "Ran a command"

@@ -933,11 +933,11 @@ body[data-ds-dark-theme] :is(.mpw-sidebar, .dframe-sidebar) {
   position: relative;
   z-index: 20;
   display: flex;
-  min-height: 52px;
-  flex: 0 0 52px;
+  min-height: 48px;
+  flex: 0 0 48px;
   align-items: center;
   padding: 0 16px;
-  border-bottom: 1px solid var(--mp-rule);
+  border-bottom: 1px solid transparent;
   background: var(--mp-page);
 }
 

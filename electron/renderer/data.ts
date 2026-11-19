@@ -871,6 +871,18 @@ declare global {
       setPaused(paused: boolean): Promise<{ok: boolean; error?: string}>;
       onChanged(callback: (status: DesktopPerceptionStatus) => void): () => void;
     };
+    guidedTour?: {
+      point(payload: {
+        x: number;
+        y: number;
+        normalized?: boolean;
+        screen?: number;
+        label?: string;
+        caption?: string;
+        ttlMs?: number;
+      }): Promise<{ok: boolean; x?: number; y?: number; error?: string}>;
+      clear(): Promise<{ok: boolean}>;
+    };
     personalActivity?: {
       read(date?: string): Promise<Record<string, any>>;
       configure(patch: Record<string, any>): Promise<Record<string, any>>;

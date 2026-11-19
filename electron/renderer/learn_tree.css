@@ -1265,6 +1265,10 @@
 }
 
 /* 9. Learn Workbench HUD, Multi-Resolution StretchText & Tufte Margin Sidenotes */
+#view-chat:not([data-hud-expanded="true"]) #learn-hud {
+  display: none;
+}
+
 .mp-learn-hud {
   display: flex;
   flex-wrap: wrap;

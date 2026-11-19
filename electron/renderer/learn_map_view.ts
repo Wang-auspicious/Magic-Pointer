@@ -183,22 +183,43 @@ declare global {
       .map(normEdge)
       .filter(e => visibleIds.has(e.from) && visibleIds.has(e.to));
 
+    function cognitiveTier(role: string): number {
+      switch (role) {
+        case 'prereq':
+        case 'prerequisite':
+          return 0;
+        case 'concept':
+        case 'mechanism':
+          return 1;
+        case 'formula':
+        case 'compare':
+        case 'lab':
+          return 2;
+        case 'trap':
+        case 'conclusion':
+          return 3;
+        default:
+          return 2;
+      }
+    }
+
     const layerById = new Map<string, number>();
     const incoming = new Map<string, string[]>();
     for (const n of nodes) {
       incoming.set(n.id, []);
-      layerById.set(
-        n.id,
-        n.role === 'prereq' || n.role === 'prerequisite' ? 0 : 1,
-      );
+      layerById.set(n.id, cognitiveTier(n.role));
     }
-    for (const e of edges) {
+    const dependencyEdges = edges.filter(
+      e => e.kind === 'requires' || e.kind === 'prereq',
+    );
+    for (const e of dependencyEdges) {
       incoming.get(e.to)?.push(e.from);
     }
-    // Relax layers in topological direction (bounded passes prevent cycles).
+    // Relax layers strictly along prerequisite/dependency edges so sibling
+    // concepts spread horizontally instead of collapsing into a 1-column stick.
     for (let pass = 0; pass < Math.max(1, nodes.length); pass++) {
       let changed = false;
-      for (const e of edges) {
+      for (const e of dependencyEdges) {
         const fromL = layerById.get(e.from) ?? 0;
         const toL = layerById.get(e.to) ?? 0;
         if (toL <= fromL) {
@@ -211,13 +232,23 @@ declare global {
       }
     }
 
-    const byLayer = new Map<number, ConceptMapNode[]>();
+    // Wrap wide tiers (> 3 siblings) into neat balanced rows of at most 3 columns.
+    const rawByLayer = new Map<number, ConceptMapNode[]>();
     for (const n of nodes) {
       const l = layerById.get(n.id) ?? 0;
-      if (!byLayer.has(l)) {
-        byLayer.set(l, []);
+      if (!rawByLayer.has(l)) {
+        rawByLayer.set(l, []);
       }
-      byLayer.get(l)!.push(n);
+      rawByLayer.get(l)!.push(n);
+    }
+    const byLayer = new Map<number, ConceptMapNode[]>();
+    let visualRow = 0;
+    const rawSorted = [...rawByLayer.keys()].sort((a, b) => a - b);
+    for (const l of rawSorted) {
+      const group = rawByLayer.get(l) || [];
+      for (let i = 0; i < group.length; i += 3) {
+        byLayer.set(visualRow++, group.slice(i, i + 3));
+      }
     }
     const sortedLayers = [...byLayer.keys()].sort((a, b) => a - b);
     const nodeW = 156;

@@ -244,6 +244,26 @@ const ChatMarkdown = (() => {
 
   type InlineMatch = {index: number; length: number; nodes: MdChild[]};
 
+  const FILE_EXT_RE =
+    /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|swift|c|cc|cpp|h|hpp|cs|rb|php|sh|ps1|bat|cmd|css|scss|less|html|htm|xml|json|yaml|yml|toml|ini|md|mdx|txt|sql|vue|svelte|graphql|proto|lock|env|cfg|conf|log)$/i;
+
+  function looksLikeFilePathCode(raw: string): boolean {
+    const trimmed = raw.trim();
+    if (
+      !trimmed ||
+      trimmed.length > 220 ||
+      /[\s=<>|"'`]/.test(trimmed) ||
+      /^https?:\/\//i.test(trimmed)
+    ) {
+      return false;
+    }
+    const stripped = trimmed.replace(/:\d+(?:-\d+)?(?::\d+)?$/, '');
+    if (!FILE_EXT_RE.test(stripped)) {
+      return false;
+    }
+    return /[\\/]/.test(stripped) || /:\d+/.test(trimmed);
+  }
+
   function firstInline(text: string): InlineMatch | null {
     const candidates: InlineMatch[] = [];
     const add = (match: RegExpExecArray | null, nodes: MdChild[]) => {
@@ -253,7 +273,25 @@ const ChatMarkdown = (() => {
     };
 
     let match = /`([^`\n]+)`/.exec(text);
-    add(match, match ? [h('code', {}, match[1])] : []);
+    if (match) {
+      const codeText = match[1];
+      const isFile = looksLikeFilePathCode(codeText);
+      add(match, [
+        h(
+          'code',
+          isFile
+            ? {
+                class: 'mp-chat-file-pill',
+                'data-mp-file-ref': codeText.trim(),
+                role: 'button',
+                tabindex: '0',
+                title: codeText.trim(),
+              }
+            : {},
+          codeText,
+        ),
+      ]);
+    }
 
     // Escaped literal \$ -> '$'
     match = /\\\$/.exec(text);
@@ -784,7 +822,9 @@ const ChatMarkdown = (() => {
             ),
           ),
         );
-        blocks.push(h('table', {}, thead, tbody));
+        blocks.push(
+          h('div', {class: 'mp-chat-table-scroll'}, h('table', {}, thead, tbody)),
+        );
         continue;
       }
 
@@ -840,16 +880,143 @@ const ChatMarkdown = (() => {
     return blocks;
   }
 
+  const TOUR_POINT_RE =
+    /\[POINT:\s*(\d{1,5})\s*,\s*(\d{1,5})(?:\s*:\s*([^:\]]+?))?(?:\s*:\s*screen(\d+))?\s*\]/gi;
+  const TOUR_ANY_TAG_RE =
+    /\[(?:POINT:\s*\d{1,5}\s*,\s*\d{1,5}(?:\s*:\s*[^:\]]+?)?(?:\s*:\s*screen\d+)?|CIRCLE:\s*\d{1,5}\s*,\s*\d{1,5}\s*,\s*\d{1,5}(?:\s*:\s*[^\]]+)?|ARROW:\s*\d{1,5}\s*,\s*\d{1,5}\s*->\s*\d{1,5}\s*,\s*\d{1,5}|LABEL:\s*\d{1,5}\s*,\s*\d{1,5}\s*:\s*[^\]]+)\]/gi;
+
+  interface InlineTourStep {
+    x: number;
+    y: number;
+    screen: number;
+    label: string;
+    sentence: string;
+    normalized: boolean;
+  }
+
+  function extractInlineTourSteps(source: string): InlineTourStep[] {
+    if (!source.includes('[POINT:')) {
+      return [];
+    }
+    const matches = Array.from(source.matchAll(TOUR_POINT_RE));
+    if (!matches.length) {
+      return [];
+    }
+    const steps: InlineTourStep[] = [];
+    for (let i = 0; i < matches.length; i += 1) {
+      const m = matches[i];
+      const x = Number(m[1]);
+      const y = Number(m[2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        continue;
+      }
+      const label = (m[3] || '').trim() || `步骤 ${steps.length + 1}`;
+      const screen = m[4] ? Math.max(1, Number(m[4]) || 1) : 1;
+      const startAfter = (m.index ?? 0) + m[0].length;
+      const nextStart =
+        i + 1 < matches.length ? (matches[i + 1].index ?? source.length) : source.length;
+      const sentence = source
+        .slice(startAfter, nextStart)
+        .replace(TOUR_ANY_TAG_RE, '')
+        .split(/\r?\n/)[0]
+        .trim()
+        .slice(0, 140);
+      steps.push({
+        x,
+        y,
+        screen,
+        label,
+        sentence,
+        normalized: x <= 1000 && y <= 1000,
+      });
+    }
+    return steps;
+  }
+
+  function buildGuidedTourCard(steps: InlineTourStep[]): MdNode {
+    const card = h('section', {
+      class: 'mp-tour-card',
+      'aria-label': '屏幕指点导览',
+    });
+    const head = h('header', {class: 'mp-tour-card-head'});
+    append(
+      head,
+      h('span', {class: 'mp-tour-card-title'}, `屏幕指点导览 · ${steps.length} 步`),
+    );
+    const controls = h('div', {class: 'mp-tour-card-controls'});
+    append(
+      controls,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-tour-ctrl-btn',
+          'data-tour-act': 'autopilot',
+          title: '切换由 Magic Pointer 代为执行这些步骤',
+        },
+        '由 AI 代操作',
+      ),
+    );
+    append(
+      controls,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-tour-ctrl-btn',
+          'data-tour-act': 'clear',
+          title: '隐藏屏幕光标',
+        },
+        '隐藏光标',
+      ),
+    );
+    append(head, controls);
+    append(card, head);
+
+    const list = h('ol', {class: 'mp-tour-step-list'});
+    steps.forEach((step, idx) => {
+      const btn = h(
+        'button',
+        {
+          type: 'button',
+          class: 'mp-tour-step',
+          'data-tour-act': 'point',
+          'data-tour-index': String(idx),
+          'data-tour-x': String(step.x),
+          'data-tour-y': String(step.y),
+          'data-tour-screen': String(step.screen),
+          'data-tour-normalized': step.normalized ? 'true' : 'false',
+          'data-tour-label': step.label,
+          'data-tour-caption': step.sentence || step.label,
+        },
+        h('span', {class: 'mp-tour-step-num'}, String(idx + 1)),
+        h('span', {class: 'mp-tour-step-label'}, step.label),
+        step.sentence
+          ? h('span', {class: 'mp-tour-step-desc'}, step.sentence)
+          : null,
+      );
+      append(list, h('li', {}, btn));
+    });
+    append(card, list);
+    return card;
+  }
+
   function render(markdown: unknown): MdNode {
     const root = h('div', {class: 'mp-chat-markdown'});
-    const lines = String(markdown || '')
-      .replace(/\r\n?/g, '\n')
-      .split('\n');
+    const raw = String(markdown || '').replace(/\r\n?/g, '\n');
+    const tourSteps = extractInlineTourSteps(raw);
+    const cleaned = tourSteps.length || /\[(?:CIRCLE|ARROW|LABEL):/i.test(raw)
+      ? raw.replace(TOUR_ANY_TAG_RE, '').replace(/[ \t]{2,}/g, ' ')
+      : raw;
+    const lines = cleaned.split('\n');
     const blocks = renderBlocks(lines);
     blocks.forEach((block, blockIndex) => {
       block.setAttribute('data-block-index', String(blockIndex));
       append(root, block);
     });
+    if (tourSteps.length) {
+      append(root, buildGuidedTourCard(tourSteps));
+    }
     return root;
   }
 

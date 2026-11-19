@@ -222,6 +222,7 @@ const {CaptureCommitCoordinator} = require('./capture_commit_coordinator');
 const {nativeShapeRegions} = require('./stage_hit_regions');
 const {isSurfaceSender} = require('./ipc_surface_policy');
 const {AgentCursorSurfaces} = require('./agent_cursor_window');
+const {denormalizeTourPoint} = require('./guided_tour');
 const {
   buildGoogleMapsDirectionsUrl,
   isAllowedGoogleMapsDirectionsUrl,
@@ -12475,6 +12476,68 @@ ipcMain.handle('desktop-perception:activate', async (event: Electron.IpcMainInvo
     return {ok: false, error: 'unauthorized_desktop_perception_sender'};
   }
   return activateDesktopPerception();
+});
+ipcMain.handle(
+  'guided-tour:point',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      x?: unknown;
+      y?: unknown;
+      normalized?: unknown;
+      screen?: unknown;
+      label?: unknown;
+      caption?: unknown;
+      ttlMs?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_guided_tour_sender'};
+    }
+    const x = Number(payload.x);
+    const y = Number(payload.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return {ok: false, error: 'invalid_tour_coordinates'};
+    }
+    const displays = screen.getAllDisplays().map((d: Electron.Display) => ({
+      x: d.bounds.x,
+      y: d.bounds.y,
+      width: d.bounds.width,
+      height: d.bounds.height,
+    }));
+    const target = denormalizeTourPoint(
+      {
+        x,
+        y,
+        screen: Number(payload.screen) || 1,
+        normalized: payload.normalized !== false,
+      },
+      displays,
+    );
+    if (!target) {
+      return {ok: false, error: 'no_display_for_tour_point'};
+    }
+    syncAgentCursorSurfaces();
+    const caption =
+      String(payload.caption || payload.label || '').trim().slice(0, 64) ||
+      undefined;
+    const sent = sendAgentCursorCommand({
+      kind: 'guide',
+      id: 'guided-tour',
+      x: target.x,
+      y: target.y,
+      caption,
+      accent: '#D97757',
+      ttlMs: Math.max(1200, Math.min(4000, Number(payload.ttlMs) || 3800)),
+    });
+    return {ok: sent, x: target.x, y: target.y};
+  },
+);
+ipcMain.handle('guided-tour:clear', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_guided_tour_sender'};
+  }
+  return {ok: sendAgentCursorCommand({kind: 'clear'})};
 });
 ipcMain.handle('desktop-perception:set-paused', async (event: Electron.IpcMainInvokeEvent, payload: {paused?: unknown} = {}) => {
   if (!isDashboardSender(event)) {

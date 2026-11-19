@@ -179,6 +179,8 @@
                 </span>
               </div>
               <button type="button" class="mp-thread-action" id="chat-skim-toggle" aria-label="Skim highlights" title="Skim highlights (Hold Alt to reveal full ink)" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE069;" aria-hidden="true"></span></button>
+              <button type="button" class="mp-thread-action" id="chat-learn-toggle" aria-label="Learning controls and workbench" title="Learning controls &amp; side chat" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span></button>
+              <button type="button" class="mp-thread-action" id="chat-tour-toggle" aria-label="Guided screen tour" title="Guided screen tour (Clicky Coach)" aria-pressed="false"><svg class="codex-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5L15.5 9.2L10.3 10.9L8.4 16L4 3.5Z"/></svg></button>
               <button type="button" class="mp-thread-action" id="execution-toggle" aria-label="Activity" title="Activity"><svg class="codex-icon" aria-hidden="true"><use href="#ic-activity" /></svg><span id="execution-attention" hidden></span></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
@@ -252,7 +254,7 @@
 
           <div class="mpw-composer-seat">
             <div class="mpw-composer-stack">
-              <div id="desktop-perception"></div>
+              <div id="desktop-perception" class="mp-perception-popover" hidden></div>
               <div class="mpw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="Needs your decision"></div>
               <div class="mp-repository-context" id="composer-repository-context" hidden aria-label="Repository status">
                 <div class="mp-repository-identity">
@@ -334,6 +336,10 @@
                         </div>
                         <button type="button" class="mpw-add mp-composer-secondary" id="composer-mention" aria-label="Mention context" title="Mention files or context">
                           <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
+                        </button>
+                        <button type="button" class="mpw-add mp-composer-perception-btn" id="composer-perception-toggle" aria-label="Point at your screen" aria-haspopup="dialog" aria-expanded="false" title="Point at your screen">
+                          <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15L15 5M15 11.5V5H8.5"/></svg>
+                          <span class="mp-perception-dot" id="composer-perception-dot" aria-hidden="true"></span>
                         </button>
                         <button type="button" class="mpw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="Agent permissions for this turn">
                           <svg class="mpw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
@@ -771,6 +777,7 @@
   <script defer src="concept_graph.js?v=1"></script>
   <script defer src="learn_lab.js?v=1"></script>
   <script defer src="learn_map_view.js?v=1"></script>
+  <script defer src="side_chat_bar.js?v=1"></script>
   <script defer src="learn_tree.js?v=1"></script>
   <script defer src="studio.js?v=28"></script>
 </body>

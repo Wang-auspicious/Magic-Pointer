@@ -259,11 +259,11 @@ assert(errorTurn.includes('class="mp-chat-dot"'), 'the error row leads with the 
 assert(ChatView.turnStatusNode('Thinking').outerHTML.includes('class="mp-chat-turn-status"'));
 assert(!css.includes('@keyframes mp-chat-turn-status-shimmer'), 'perpetual status shimmer must be removed');
 
-assert(tokens.includes('--mp-page: #F5F5F3'), 'light page token matches the open-claude-ui alignment (6be99bc)');
+assert(tokens.includes('--mp-page: #FFFFFF'), 'light page token matches Claude Desktop 4.23118 (--cds-gray-0)');
 assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (full platform)');
-assert(tokens.includes('--mp-page: #0B0B0A'), 'dark page token matches the open-claude-ui alignment (6be99bc)');
+assert(tokens.includes('--mp-page: #0B0B0A'), 'dark page token matches the dark canvas alignment');
 assert.match(css, /\.mp-chat-bubble\s*\{[^}]*border-radius:\s*var\(--mp-r-bubble\)/s, 'user bubble radius rides the aligned bubble token');
-assert(tokens.includes('--mp-r-bubble: 18px'), 'bubble radius token matches the open-claude-ui alignment (6be99bc)');
+assert(tokens.includes('--mp-r-bubble: 12px'), 'bubble radius token matches Claude Desktop 4.23118');
 assert.match(css, /\.mp-chat-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Studio height');
 assert.match(css, /\.mp-chat-row-caret\s*\{[^}]*font-family:\s*'Anthropicons Code'/s,
   'tool disclosure arrows use the original icon font caret (E02A), rotating open');
