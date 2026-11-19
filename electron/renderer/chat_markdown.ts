@@ -512,6 +512,7 @@ const ChatMarkdown = (() => {
       /^\s*:::card\b/i.test(line) ||
       /^\s*:::prereq\b/i.test(line) ||
       /^\s*:::lab\b/i.test(line) ||
+      /^\s*:::(?:ui|widget)\b/i.test(line) ||
       /^\s*\$\$/.test(line) ||
       /^\s*\\\[/.test(line) ||
       /^\s{0,3}#{1,6}\s+/.test(line) ||
@@ -583,6 +584,35 @@ const ChatMarkdown = (() => {
           );
         });
         blocks.push(strip);
+        continue;
+      }
+
+      // Intelligence UI live sandboxed widget: :::ui [Title]\n<html>...\n:::
+      const uiMatch = /^\s*:::(?:ui|widget)\b(?:\s+(.*))?$/i.exec(line);
+      if (uiMatch) {
+        const uiTitle = (uiMatch[1] || '').trim() || '交互式认知微件';
+        const uiLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          uiLines.push(lines[index++]);
+        }
+        const complete = index < lines.length && /^\s*:::\s*$/.test(lines[index]);
+        if (complete) {
+          index += 1;
+        }
+        const rawSrc = uiLines.join('\n').trim();
+        blocks.push(
+          h(
+            'section',
+            {
+              class: 'mp-iui-card',
+              'data-iui-complete': complete ? 'true' : 'false',
+              'data-iui-title': uiTitle,
+              'data-iui-src': complete ? rawSrc : '',
+            },
+            complete ? '正在挂载交互微件…' : '正在构建 Intelligence UI 微件…',
+          ),
+        );
         continue;
       }
 

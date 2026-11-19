@@ -4986,8 +4986,7 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
    ============================================================================ */
 [data-product-mode="walker"] #chat-skim-toggle,
 [data-product-mode="walker"] #chat-learn-toggle,
-[data-product-mode="walker"] [data-inspector-tab="learn"],
-[data-product-mode="walker"] .mp-learn-stance-bar {
+[data-product-mode="walker"] [data-inspector-tab="learn"] {
   display: none;
 }
 
@@ -5000,37 +4999,234 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   display: none !important;
 }
 
-.mp-learn-stance-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--mp-repository-surface);
+/* ============================================================================
+   Paradigm B & C: Intelligence UI Widgets, Obsidian Vault & App Quick Bar
+   ============================================================================ */
+.mp-iui-card {
+  margin: 12px 0;
   border: 1px solid var(--cds-border, var(--mp-rule));
+  border-radius: 10px;
+  background: var(--mp-page);
+  overflow: hidden;
 }
 
-.mp-learn-stance-btn {
-  font: inherit;
-  font-size: 12px;
-  color: var(--mp-text-secondary, var(--mp-muted));
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  padding: 3px 9px;
-  cursor: pointer;
+.mp-iui-card.is-expanded {
+  position: fixed;
+  inset: 28px;
+  z-index: 90;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+}
+
+.mp-iui-card.is-expanded .mp-iui-frame {
+  flex: 1 1 auto;
+  height: 100% !important;
+}
+
+.mp-iui-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--mp-repository-surface);
+  border-bottom: 1px solid var(--cds-border, var(--mp-rule));
+}
+
+.mp-iui-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mp-iui-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--mp-clay-strong, #c6613f);
+  background: color-mix(in srgb, var(--mp-clay, #d97757) 13%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
   white-space: nowrap;
 }
 
-.mp-learn-stance-btn:hover {
+.mp-iui-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mp-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-iui-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.mp-iui-btn {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--mp-text);
+  background: var(--mp-page);
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.mp-iui-btn:hover {
+  background: var(--mp-hover);
+}
+
+.mp-iui-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--mp-page);
+}
+
+.mp-browser-quick-apps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--cds-border, var(--mp-rule));
+  background: var(--mp-repository-surface);
+  flex-wrap: wrap;
+}
+
+.mp-browser-quick-btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--mp-text);
+  background: var(--mp-page);
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.mp-browser-quick-btn:hover {
+  border-color: var(--mp-clay, #d97757);
+  color: var(--mp-clay-strong, #c6613f);
+}
+
+#vault-panel-host {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+.mp-vault-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.mp-vault-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--cds-border, var(--mp-rule));
+}
+
+.mp-vault-path {
+  font-size: 11.5px;
+  color: var(--mp-text-secondary, var(--mp-muted));
+  word-break: break-all;
+}
+
+.mp-vault-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mp-vault-btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--mp-text);
+  background: var(--mp-page);
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.mp-vault-btn:hover {
+  background: var(--mp-hover);
+}
+
+.mp-vault-btn.is-primary {
+  background: var(--mp-clay, #d97757);
+  border-color: var(--mp-clay, #d97757);
+  color: #fff;
+}
+
+.mp-vault-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mp-text-secondary, var(--mp-muted));
+  margin: 0 0 6px;
+}
+
+.mp-vault-todo-list,
+.mp-vault-note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mp-vault-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--mp-repository-surface);
+  font-size: 12.5px;
+}
+
+.mp-vault-todo.is-done span {
+  text-decoration: line-through;
+  color: var(--mp-text-secondary, var(--mp-muted));
+}
+
+.mp-vault-note {
+  padding: 8px 10px;
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-radius: 8px;
+  background: var(--mp-page);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mp-vault-note-title {
+  font-weight: 500;
   color: var(--mp-text);
 }
 
-.mp-learn-stance-btn.is-on {
-  color: var(--mp-text);
-  background: var(--mp-page);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  font-weight: 500;
+.mp-vault-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--mp-text-secondary, var(--mp-muted));
+}
+
+.mp-vault-pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--mp-repository-surface);
+  border: 1px solid var(--cds-border, var(--mp-rule));
 }
 
 /* ============================================================================
@@ -5084,4 +5280,81 @@ body[data-ds-dark-theme] .mpw-model-more-panel {
   color: #fdba74;
   border-color: rgba(253, 186, 116, 0.28);
   background: rgba(253, 186, 116, 0.1);
+}
+
+/* ============================================================================
+   Fix-Batch: Floating Perception Popover Context & Captured Screen Bar
+   ============================================================================ */
+.mpw-composer-stack {
+  position: relative;
+}
+
+.mp-captured-evidence-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-left: 2.5px solid var(--mp-clay, #d97757);
+  border-radius: 10px;
+  background: var(--mp-repository-surface);
+  font-size: 12px;
+}
+
+.mp-captured-evidence-bar[hidden] {
+  display: none;
+}
+
+.mp-captured-evidence-thumb {
+  width: 56px;
+  height: 38px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  flex: none;
+}
+
+.mp-captured-evidence-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mp-captured-evidence-app {
+  font-weight: 600;
+  color: var(--mp-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-captured-evidence-ocr {
+  color: var(--mp-text-secondary, var(--mp-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-captured-evidence-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+}
+
+.mp-captured-evidence-btn {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--mp-text);
+  background: var(--mp-page);
+  border: 1px solid var(--cds-border, var(--mp-rule));
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.mp-captured-evidence-btn:hover {
+  background: var(--mp-hover);
 }

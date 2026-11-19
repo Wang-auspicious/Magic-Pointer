@@ -32,7 +32,8 @@ test('Learn and Code use distinct task instructions on the same runtime', async 
     workMode: 'code',
   } as Parameters<typeof buildSystemPrompt>[0]);
   assert.match(learn, /工作模式：Learn/);
-  assert.match(learn, /concept\|mechanism\|compare\|trap\|formula/);
+  assert.match(learn, /短回合|3~6\s*句/);
+  assert.match(learn, /Intelligence UI|:::ui/);
   assert.doesNotMatch(learn, /\bP0\b|\bP1\b|\bP2\b/);
   assert.doesNotMatch(learn, /[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/u);
   assert.equal(learn, legacyWork);

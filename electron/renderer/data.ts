@@ -873,6 +873,7 @@ declare global {
       activate(): Promise<{ok: boolean; error?: string; state?: string}>;
       setPaused(paused: boolean): Promise<{ok: boolean; error?: string}>;
       onChanged(callback: (status: DesktopPerceptionStatus) => void): () => void;
+      onCaptured?(callback: (payload: Record<string, unknown>) => void): () => void;
     };
     guidedTour?: {
       point(payload: {
@@ -900,6 +901,22 @@ declare global {
       action?(action: string): Promise<Record<string, unknown>>;
       onState?(cb: (state: Record<string, unknown>) => void): void;
       onEvent?(cb: (event: Record<string, unknown>) => void): void;
+    };
+    vault?: {
+      overview(): Promise<Record<string, unknown>>;
+      selectDir(): Promise<Record<string, unknown>>;
+      saveNote(payload: {
+        title: string;
+        folder?: string;
+        tags?: string[];
+        source?: string;
+        body: string;
+      }): Promise<Record<string, unknown>>;
+      toggleTodo(payload: {
+        filePath: string;
+        lineIndex: number;
+        done: boolean;
+      }): Promise<Record<string, unknown>>;
     };
     personalActivity?: {
       read(date?: string): Promise<Record<string, any>>;

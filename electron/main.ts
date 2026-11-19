@@ -229,6 +229,11 @@ const {
   formatRecordedTourMarkdown,
 } = require('./cu_live_overlay');
 const {
+  scanKnowledgeVault,
+  saveVaultNote,
+  toggleVaultTodo,
+} = require('./knowledge_vault');
+const {
   buildGoogleMapsDirectionsUrl,
   isAllowedGoogleMapsDirectionsUrl,
 } = require('./route_policy');
@@ -1323,15 +1328,8 @@ function createStageWindow() {
   stageWindow.setAlwaysOnTop(true, 'screen-saver');
   attachChatImageMenu(stageWindow, Menu);
   stageWindow.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: true});
-  if (CAPSULE_CONTENT_PROTECTED) {
-    try {
-      stageWindow.setContentProtection(true);
-    } catch (error) {
-      log(
-        `stage content protection unavailable: ${(error as {message?: string})?.message || error}`,
-      );
-    }
-  }
+  // Keep stageWindow visible to screenshots/screen recordings; only overlayWindow
+  // (red gesture ink) uses WDA_EXCLUDEFROMCAPTURE during frame freeze.
   stageWindow.loadFile(path.join(__dirname, 'renderer', 'stage.html'));
   stageWindow.setIgnoreMouseEvents(true, {forward: true});
   stageWindow.webContents.on('did-start-loading', () => stageReadiness.reset());
@@ -5151,10 +5149,18 @@ async function sendConversation(
       threadWorkspaceRoot,
     ),
   );
-  const effectiveWorkspaceRoot = requestedWorkspaceRoot
+  const resolvedKnownRoot = requestedWorkspaceRoot
     ? knownProjectRoot(requestedWorkspaceRoot)
     : '';
-  if (requestedWorkspaceRoot && !effectiveWorkspaceRoot) {
+  const effectiveWorkspaceRoot =
+    resolvedKnownRoot && fs.existsSync(resolvedKnownRoot)
+      ? resolvedKnownRoot
+      : '';
+  if (
+    requestedWorkspaceRoot &&
+    !resolvedKnownRoot &&
+    fs.existsSync(requestedWorkspaceRoot)
+  ) {
     return {ok: false, error: '请选择已登记的工作目录。'};
   }
   const projectRoot = effectiveWorkspaceRoot || '';
@@ -10192,6 +10198,36 @@ function beginSelectionSession(
         );
         syncPointerEpisodeChord();
         persistCurrentObjectEpisode(attached);
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+          const snap = attached.snapshot || {};
+          const sum = attached.summary || {};
+          const imagePath = String(
+            snap.selection_crop_path ||
+              snap.screenshot_path ||
+              snap.frame_lease?.framePath ||
+              snap.frameLease?.framePath ||
+              '',
+          ).trim();
+          const ocrText = String(
+            sum.selectedText ||
+              sum.ocrText ||
+              snap.ocr_text ||
+              snap.selected_text ||
+              '',
+          )
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 320);
+          dashboardWindow.webContents.send('desktop-perception:captured', {
+            token: entry.token,
+            app: String(sum.app || snap.app || 'Screen').trim(),
+            windowTitle: String(sum.windowTitle || snap.window_title || '').trim(),
+            ocrText,
+            imagePath,
+            imageUrl: imagePath ? pathToFileURL(imagePath).toString() : '',
+            capturedAt: Date.now(),
+          });
+        }
         attached.captureEligibility = captureEligibility({
           snapshot: attached.snapshot,
           summary: attached.summary,
@@ -12706,6 +12742,104 @@ ipcMain.handle('cu-overlay:stop', async () => {
   sendAgentCursorCommand({kind: 'clear'});
   return {ok: true, state};
 });
+
+function vaultConfigPath(): string {
+  return path.join(FABRIC_DATA_DIR, 'vault-config.json');
+}
+
+function activeKnowledgeVaultDir(): string {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(vaultConfigPath(), 'utf8'));
+    if (cfg && typeof cfg.vaultDir === 'string' && cfg.vaultDir.trim() && fs.existsSync(cfg.vaultDir)) {
+      return cfg.vaultDir.trim();
+    }
+  } catch {
+    /* fall through to default local vault */
+  }
+  const fallback = path.join(FABRIC_DATA_DIR, 'knowledge-vault');
+  try {
+    fs.mkdirSync(fallback, {recursive: true});
+  } catch {}
+  return fallback;
+}
+
+ipcMain.handle('vault:overview', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_vault_sender'};
+  }
+  const dir = activeKnowledgeVaultDir();
+  return {ok: true, ...scanKnowledgeVault(dir)};
+});
+
+ipcMain.handle('vault:select-dir', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_vault_sender'};
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  const picked = await dialog.showOpenDialog(owner, {
+    title: '选择 Obsidian 知识库文件夹（Vault）',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (picked.canceled || !picked.filePaths?.length) {
+    return {ok: false, canceled: true};
+  }
+  const vaultDir = picked.filePaths[0];
+  try {
+    fs.mkdirSync(FABRIC_DATA_DIR, {recursive: true});
+    fs.writeFileSync(vaultConfigPath(), JSON.stringify({vaultDir}, null, 2), 'utf8');
+  } catch {}
+  return {ok: true, ...scanKnowledgeVault(vaultDir)};
+});
+
+ipcMain.handle(
+  'vault:save-note',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      title?: unknown;
+      folder?: unknown;
+      tags?: unknown;
+      source?: unknown;
+      body?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_vault_sender'};
+    }
+    const dir = activeKnowledgeVaultDir();
+    const tags = Array.isArray(payload.tags)
+      ? payload.tags.map(t => String(t))
+      : [];
+    const saved = saveVaultNote(dir, {
+      title: String(payload.title || '学习笔记'),
+      folder: String(payload.folder || ''),
+      tags,
+      source: String(payload.source || 'Magic Pointer'),
+      body: String(payload.body || ''),
+    });
+    return {...saved, overview: scanKnowledgeVault(dir)};
+  },
+);
+
+ipcMain.handle(
+  'vault:toggle-todo',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {filePath?: unknown; lineIndex?: unknown; done?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_vault_sender'};
+    }
+    const dir = activeKnowledgeVaultDir();
+    const res = toggleVaultTodo(
+      dir,
+      String(payload.filePath || ''),
+      Number(payload.lineIndex),
+      Boolean(payload.done),
+    );
+    return {...res, overview: scanKnowledgeVault(dir)};
+  },
+);
 
 ipcMain.handle(
   'cu-overlay:action',

@@ -6870,6 +6870,11 @@ const ChatView = (() => {
         (
           globalThis as unknown as {LearnLab?: {hydrate?(el: HTMLElement): void}}
         ).LearnLab?.hydrate?.(node);
+        (
+          globalThis as unknown as {
+            IntelligenceUI?: {hydrate?(el: HTMLElement): void};
+          }
+        ).IntelligenceUI?.hydrate?.(node);
         return;
       }
       const blocks = Array.from(next.childNodes);
@@ -6877,6 +6882,17 @@ const ChatView = (() => {
         const existing = current.childNodes[index];
         if (!existing) {
           current.appendChild(block);
+        } else if (
+          existing instanceof HTMLElement &&
+          block instanceof HTMLElement &&
+          existing.hasAttribute('data-iui-src') &&
+          block.hasAttribute('data-iui-src')
+        ) {
+          if (block.dataset.iuiComplete === 'true' && existing.dataset.iuiHydrated !== 'true') {
+            existing.dataset.iuiSrc = block.dataset.iuiSrc;
+            existing.dataset.iuiTitle = block.dataset.iuiTitle;
+            existing.dataset.iuiComplete = 'true';
+          }
         } else if (
           existing instanceof HTMLElement &&
           block instanceof HTMLElement &&
@@ -6924,6 +6940,11 @@ const ChatView = (() => {
       (
         globalThis as unknown as {LearnLab?: {hydrate?(el: HTMLElement): void}}
       ).LearnLab?.hydrate?.(node);
+      (
+        globalThis as unknown as {
+          IntelligenceUI?: {hydrate?(el: HTMLElement): void};
+        }
+      ).IntelligenceUI?.hydrate?.(node);
     };
 
     const liveMarkdownNode = (text: string) => {

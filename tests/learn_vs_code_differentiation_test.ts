@@ -34,26 +34,16 @@ test('Batch 2.1: CSS separates Learn vs Code header actions, inspector tabs, and
     /\[data-product-mode="design"\][^{]*\[data-inspector-tab="changes"\]/,
     'Learn mode must hide Git Changes inspector tab',
   );
-  assert.match(
-    css,
-    /\[data-product-mode="walker"\][^{]*\.mp-learn-stance-bar/,
-    'Code mode must hide the Learn stance bar',
-  );
 });
 
-test('Batch 2.2: Learn mode provides stance selector (explain / socratic / coach) wired in studio.html and studio.ts', () => {
+test('Batch 2.2: Learn mode reconciles inspector tab on switch and avoids rigid 3-mode radio clutter', () => {
   const html = readRepo('electron/renderer/studio.html');
-  assert.match(html, /id="learn-stance-bar"/, 'studio.html must include #learn-stance-bar');
-  assert.match(html, /data-learn-stance="explain"/, 'must offer explain stance');
-  assert.match(html, /data-learn-stance="socratic"/, 'must offer socratic stance');
-  assert.match(html, /data-learn-stance="coach"/, 'must offer coach screen-tour stance');
-
-  const studioSrc = readRepo('electron/renderer/studio.ts');
-  assert.match(
-    studioSrc,
-    /learnStance/,
-    'studio.ts must track and apply learnStance on mode switch and send',
+  assert.doesNotMatch(
+    html,
+    /id="learn-stance-bar"/,
+    'Learn mode must not show rigid 3-mode radio buttons above composer',
   );
+  const studioSrc = readRepo('electron/renderer/studio.ts');
   assert.match(
     studioSrc,
     /activeInspectorTab\s*===\s*'learn'/,

@@ -4986,6 +4986,31 @@ async function openConversation(id: string) {
       );
     }
   }
+  if (typeof IntelligenceUI !== 'undefined') {
+    IntelligenceUI.hydrate(stream, {
+      onAskMentor: promptText => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+          '#composer-form textarea, .mpw-input',
+        );
+        if (textarea) {
+          textarea.value = promptText;
+          fitComposer(textarea);
+          textarea.dispatchEvent(new Event('input', {bubbles: true}));
+          syncComposerSubmitState();
+          textarea.focus();
+        }
+      },
+      onSaveToVault: (title, summary) => {
+        void window.magicPointerDashboard?.vault?.saveNote({
+          title,
+          folder: 'Intelligence-UI',
+          tags: ['learn', 'widget'],
+          source: activeConversationRecord?.title || 'Magic Pointer Learn',
+          body: summary,
+        });
+      },
+    });
+  }
   applySkimSaliency(stream, c);
   syncExternalConversationRun(c);
   scheduleStreamRail();
@@ -7283,37 +7308,8 @@ document
 syncWindowNavigation();
 
 type ProductMode = 'walker' | 'design';
-type LearnStance = 'explain' | 'socratic' | 'coach';
 let productMode: ProductMode = 'walker';
-let learnStance: LearnStance = 'explain';
 let guidedTourCoachActive = false;
-
-function setLearnStance(next: LearnStance) {
-  learnStance = next;
-  document
-    .querySelectorAll<HTMLElement>('#learn-stance-bar [data-learn-stance]')
-    .forEach(button => {
-      const selected = button.dataset.learnStance === next;
-      button.classList.toggle('is-on', selected);
-      button.setAttribute('aria-checked', String(selected));
-    });
-  if (next === 'coach' && !guidedTourCoachActive) {
-    document.getElementById('chat-tour-toggle')?.click();
-  } else if (next !== 'coach' && guidedTourCoachActive) {
-    document.getElementById('chat-tour-toggle')?.click();
-  }
-}
-
-document
-  .querySelectorAll<HTMLElement>('#learn-stance-bar [data-learn-stance]')
-  .forEach(button => {
-    button.addEventListener('click', () => {
-      const raw = button.dataset.learnStance;
-      if (raw === 'explain' || raw === 'socratic' || raw === 'coach') {
-        setLearnStance(raw);
-      }
-    });
-  });
 
 function setProductMode(mode: ProductMode, navigate = true) {
   const changed = productMode !== mode;
@@ -10734,6 +10730,7 @@ function renderInspectorTitle() {
   }
   const labels: Record<string, string> = {
     'side-chat': 'inspector.side_chat',
+    vault: 'inspector.vault',
     learn: 'inspector.learn',
     activity: 'activity.log',
     materials: 'inspector.materials',
@@ -10753,7 +10750,11 @@ function renderInspectorTitle() {
       ? getStudioLanguage() === 'zh-CN'
         ? '并排探讨'
         : 'Side chat'
-      : studioT(labels[inspectorState.tab] || 'inspector.task');
+      : inspectorState.tab === 'vault'
+        ? getStudioLanguage() === 'zh-CN'
+          ? '知识库 · Obsidian Vault'
+          : 'Knowledge Vault'
+        : studioT(labels[inspectorState.tab] || 'inspector.task');
 }
 
 function syncInspectorGeometry() {
@@ -10939,6 +10940,9 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       activeConversationRecord,
       buildSideChatPaneHandlers(),
     );
+  }
+  if (activeInspectorTab === 'vault') {
+    void renderVaultPanel();
   }
   if (activeInspectorTab === 'learn' && typeof LearnTree !== 'undefined') {
     LearnTree.renderDeck(
@@ -14616,6 +14620,363 @@ document.addEventListener('click', event => {
   }
 });
 
+let latestCapturedScreenEvidence: {
+  token: string;
+  app: string;
+  windowTitle: string;
+  ocrText: string;
+  imagePath: string;
+  imageUrl: string;
+  capturedAt: number;
+} | null = null;
+
+function renderCapturedEvidenceBar() {
+  const bar = document.getElementById('captured-evidence-bar');
+  if (!bar) {
+    return;
+  }
+  if (!latestCapturedScreenEvidence) {
+    bar.hidden = true;
+    bar.replaceChildren();
+    return;
+  }
+  const ev = latestCapturedScreenEvidence;
+  bar.hidden = false;
+  bar.replaceChildren();
+  if (ev.imageUrl) {
+    const img = document.createElement('img');
+    img.className = 'mp-captured-evidence-thumb';
+    img.src = ev.imageUrl;
+    img.alt = ev.windowTitle || ev.app || 'Captured screen';
+    bar.appendChild(img);
+  }
+  const meta = document.createElement('div');
+  meta.className = 'mp-captured-evidence-meta';
+  const appEl = document.createElement('div');
+  appEl.className = 'mp-captured-evidence-app';
+  appEl.textContent = ev.windowTitle
+    ? `已捕获屏幕 · ${ev.app} · ${ev.windowTitle}`
+    : `已捕获屏幕 · ${ev.app}`;
+  meta.appendChild(appEl);
+  if (ev.ocrText) {
+    const ocrEl = document.createElement('div');
+    ocrEl.className = 'mp-captured-evidence-ocr';
+    ocrEl.textContent = ev.ocrText;
+    meta.appendChild(ocrEl);
+  }
+  bar.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'mp-captured-evidence-actions';
+
+  const askBtn = document.createElement('button');
+  askBtn.type = 'button';
+  askBtn.className = 'mp-captured-evidence-btn';
+  askBtn.textContent = '结合画面提问';
+  askBtn.addEventListener('click', () => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea, .mpw-input',
+    );
+    if (textarea) {
+      const ctx = ev.ocrText
+        ? `结合我刚圈选的画面（${ev.app}${ev.windowTitle ? ` · ${ev.windowTitle}` : ''}，文字摘录：「${ev.ocrText.slice(0, 120)}」），`
+        : `结合我刚圈选的画面（${ev.app}），`;
+      if (!textarea.value.trim()) {
+        textarea.value = ctx;
+      }
+      fitComposer(textarea);
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
+      syncComposerSubmitState();
+      textarea.focus();
+    }
+  });
+  actions.appendChild(askBtn);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'mp-captured-evidence-btn';
+  closeBtn.textContent = '×';
+  closeBtn.setAttribute('aria-label', 'Dismiss captured screen evidence');
+  closeBtn.addEventListener('click', () => {
+    latestCapturedScreenEvidence = null;
+    renderCapturedEvidenceBar();
+  });
+  actions.appendChild(closeBtn);
+  bar.appendChild(actions);
+}
+
+window.magicPointerDashboard?.desktopPerception?.onCaptured?.(raw => {
+  const payload = raw as Record<string, unknown>;
+  latestCapturedScreenEvidence = {
+    token: String(payload.token || ''),
+    app: String(payload.app || 'Screen'),
+    windowTitle: String(payload.windowTitle || ''),
+    ocrText: String(payload.ocrText || ''),
+    imagePath: String(payload.imagePath || ''),
+    imageUrl: String(payload.imageUrl || ''),
+    capturedAt: Number(payload.capturedAt) || Date.now(),
+  };
+  renderCapturedEvidenceBar();
+});
+
+async function renderVaultPanel() {
+  const host = document.getElementById('vault-panel-host');
+  if (!host) {
+    return;
+  }
+  const vaultApi = window.magicPointerDashboard?.vault;
+  if (!vaultApi) {
+    host.textContent = '知识库通道暂不可用。';
+    return;
+  }
+  const data = (await vaultApi.overview()) as {
+    ok?: boolean;
+    vaultDir?: string;
+    notes?: Array<{
+      filePath: string;
+      relativePath: string;
+      title: string;
+      source: string;
+      tags: string[];
+      links: string[];
+      backlinks: string[];
+      excerpt: string;
+    }>;
+    todos?: Array<{
+      filePath: string;
+      noteTitle: string;
+      lineIndex: number;
+      text: string;
+      done: boolean;
+    }>;
+  };
+  host.replaceChildren();
+  const panel = document.createElement('div');
+  panel.className = 'mp-vault-panel';
+
+  const head = document.createElement('div');
+  head.className = 'mp-vault-head';
+  const pathEl = document.createElement('div');
+  pathEl.className = 'mp-vault-path';
+  pathEl.textContent = `Obsidian 双向知识库：${data.vaultDir || '本地默认库'}`;
+  head.appendChild(pathEl);
+
+  const actions = document.createElement('div');
+  actions.className = 'mp-vault-actions';
+
+  const bindBtn = document.createElement('button');
+  bindBtn.type = 'button';
+  bindBtn.className = 'mp-vault-btn';
+  bindBtn.textContent = '绑定我的 Obsidian 库';
+  bindBtn.addEventListener('click', async () => {
+    await vaultApi.selectDir();
+    void renderVaultPanel();
+  });
+
+  const saveConvBtn = document.createElement('button');
+  saveConvBtn.type = 'button';
+  saveConvBtn.className = 'mp-vault-btn is-primary';
+  saveConvBtn.textContent = '存入当前对话要点';
+  saveConvBtn.addEventListener('click', async () => {
+    const conv = activeConversationRecord;
+    if (!conv || !conv.turns?.length) {
+      return;
+    }
+    const body = conv.turns
+      .map(
+        (t, idx) =>
+          `## 回合 ${idx + 1}\n\n**问**：${t.question || ''}\n\n${t.answer || ''}`,
+      )
+      .join('\n\n---\n\n');
+    await vaultApi.saveNote({
+      title: conv.title || '学习沉淀',
+      folder: 'Learn-Notes',
+      tags: [conv.workMode === 'code' ? 'code' : 'learn'],
+      source: 'Magic Pointer Conversation',
+      body: `${body}\n\n- [ ] 回顾并提炼 1 条可迁移的核心直觉`,
+    });
+    void renderVaultPanel();
+  });
+
+  const syncSocialBtn = document.createElement('button');
+  syncSocialBtn.type = 'button';
+  syncSocialBtn.className = 'mp-vault-btn';
+  syncSocialBtn.textContent = '导入 X/小红书收藏';
+  syncSocialBtn.addEventListener('click', async () => {
+    const resApi = window.magicPointerDashboard?.resources;
+    if (!resApi?.request) {
+      show('resources');
+      return;
+    }
+    const listRes = await resApi.request('list');
+    const items = Array.isArray(listRes?.items) ? listRes.items.slice(0, 15) : [];
+    if (!items.length) {
+      show('resources');
+      return;
+    }
+    for (const item of items) {
+      const col = item.collection;
+      const title =
+        String(col?.title || item.desc || col?.summary || item.summary || col?.url || '社交媒体收藏')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 56) || '社交媒体收藏';
+      const src = [
+        col?.platform || item.app || 'Social',
+        col?.authorName || col?.sourceAccount || '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const tags = Array.isArray(col?.tags)
+        ? col.tags.map((t: string) => String(t)).filter(Boolean)
+        : [];
+      const bodyParts = [
+        col?.url ? `来源链接：${col.url}` : '',
+        col?.summary || item.summary || '',
+        col?.sourceExcerpt || item.text || '',
+        col?.note ? `个人备注：${col.note}` : '',
+        col?.nextStep
+          ? `- [ ] ${col.nextStep}`
+          : '- [ ] 精读并拆解这条收藏里的核心观点',
+      ].filter(Boolean);
+      await vaultApi.saveNote({
+        title,
+        folder: 'Social-Inbox',
+        tags: tags.length ? tags : ['inbox'],
+        source: src,
+        body: bodyParts.join('\n\n'),
+      });
+    }
+    void renderVaultPanel();
+  });
+
+  actions.append(bindBtn, saveConvBtn, syncSocialBtn);
+  head.appendChild(actions);
+  panel.appendChild(head);
+
+  const todos = Array.isArray(data.todos) ? data.todos : [];
+  if (todos.length) {
+    const todoSec = document.createElement('section');
+    const h3 = document.createElement('h3');
+    h3.className = 'mp-vault-section-title';
+    h3.textContent = `学习待办 (${todos.filter(t => !t.done).length} 未完成 / ${todos.length})`;
+    todoSec.appendChild(h3);
+    const list = document.createElement('div');
+    list.className = 'mp-vault-todo-list';
+    for (const item of todos.slice(0, 20)) {
+      const row = document.createElement('label');
+      row.className = `mp-vault-todo${item.done ? ' is-done' : ''}`;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = item.done;
+      cb.addEventListener('change', async () => {
+        await vaultApi.toggleTodo({
+          filePath: item.filePath,
+          lineIndex: item.lineIndex,
+          done: cb.checked,
+        });
+        void renderVaultPanel();
+      });
+      const txt = document.createElement('span');
+      txt.textContent = `${item.text} · 《${item.noteTitle}》`;
+      row.append(cb, txt);
+      list.appendChild(row);
+    }
+    todoSec.appendChild(list);
+    panel.appendChild(todoSec);
+  }
+
+  const notes = Array.isArray(data.notes) ? data.notes : [];
+  const noteSec = document.createElement('section');
+  const noteTitle = document.createElement('h3');
+  noteTitle.className = 'mp-vault-section-title';
+  noteTitle.textContent = `知识笔记 (${notes.length})`;
+  noteSec.appendChild(noteTitle);
+  const noteList = document.createElement('div');
+  noteList.className = 'mp-vault-note-list';
+  if (!notes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'mp-sidechat-empty';
+    empty.textContent =
+      '暂无笔记。点击上方「绑定我的 Obsidian 库」直接接管现有 Vault，或一键存入当前对话 / 导入 X 与小红书收藏。';
+    noteList.appendChild(empty);
+  } else {
+    for (const note of notes.slice(0, 30)) {
+      const card = document.createElement('article');
+      card.className = 'mp-vault-note';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'mp-vault-note-title';
+      titleEl.textContent = note.title;
+      card.appendChild(titleEl);
+      if (note.excerpt) {
+        const ex = document.createElement('div');
+        ex.className = 'mp-captured-evidence-ocr';
+        ex.textContent = note.excerpt;
+        card.appendChild(ex);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'mp-vault-note-meta';
+      for (const tag of note.tags.slice(0, 4)) {
+        const pill = document.createElement('span');
+        pill.className = 'mp-vault-pill';
+        pill.textContent = `#${tag}`;
+        meta.appendChild(pill);
+      }
+      if (note.backlinks.length) {
+        const bl = document.createElement('span');
+        bl.className = 'mp-vault-pill';
+        bl.textContent = `← ${note.backlinks.length} 条反链`;
+        meta.appendChild(bl);
+      }
+      const askNoteBtn = document.createElement('button');
+      askNoteBtn.type = 'button';
+      askNoteBtn.className = 'mp-captured-evidence-btn';
+      askNoteBtn.textContent = '带入对话探讨';
+      askNoteBtn.addEventListener('click', () => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(
+          '#composer-form textarea, .mpw-input',
+        );
+        if (textarea) {
+          textarea.value = `结合我知识库里的笔记《${note.title}》（${note.excerpt}），帮我深挖背后的底层机制：`;
+          fitComposer(textarea);
+          textarea.dispatchEvent(new Event('input', {bubbles: true}));
+          syncComposerSubmitState();
+          textarea.focus();
+        }
+      });
+      meta.appendChild(askNoteBtn);
+      card.appendChild(meta);
+      noteList.appendChild(card);
+    }
+  }
+  noteSec.appendChild(noteList);
+  panel.appendChild(noteSec);
+  host.appendChild(panel);
+}
+
+document
+  .querySelectorAll<HTMLElement>('.mp-browser-quick-apps [data-quick-url]')
+  .forEach(button => {
+    button.addEventListener('click', () => {
+      const url = button.dataset.quickUrl;
+      if (!url) {
+        return;
+      }
+      setInspector(true, 'browser');
+      const input = document.getElementById(
+        'project-browser-url',
+      ) as HTMLInputElement | null;
+      if (input) {
+        input.value = url;
+      }
+      const bounds = projectBrowserBounds();
+      if (bounds) {
+        browserViewVisible = true;
+        void Data.openBrowserView(url, bounds, activeProjectRoot);
+      }
+    });
+  });
+
 let demoRecordingActive = false;
 const chatRecordDemoToggle = document.getElementById('chat-record-demo-toggle');
 if (chatRecordDemoToggle) {
@@ -16329,13 +16690,18 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       ) {
         return;
       }
-      const socraticSuffix =
-        productMode === 'design' && learnStance === 'socratic'
-          ? '\n\n[Socratic Learn Mode: 先给出 1 句核心直觉锚点，再提出 1~2 个引导性关键追问，帮用户自己推导出结论，不要一次性剧透全部答案。]'
-          : '';
       const outgoingQuestion = guidedTourCoachActive
         ? `${question}\n\n[Coach Screen Tour Mode: Reply with concise step-by-step on-screen instructions. Before each step sentence, place an inline coordinate tag [POINT:x,y:ShortLabel:screen1] using 0-1000 normalized screen coordinates so the floating pointer guides the user directly on screen without clicking for them.]`
-        : `${question}${socraticSuffix}`;
+        : question;
+      const mergedAttachments =
+        latestCapturedScreenEvidence?.imagePath &&
+        !attachmentPaths.includes(latestCapturedScreenEvidence.imagePath)
+          ? [...attachmentPaths, latestCapturedScreenEvidence.imagePath]
+          : attachmentPaths;
+      if (latestCapturedScreenEvidence) {
+        latestCapturedScreenEvidence = null;
+        renderCapturedEvidenceBar();
+      }
       const response = await Data.sendConversation({
         conversationId,
         workMode: productMode === 'design' ? 'learn' : 'code',
@@ -16347,7 +16713,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         permissionGrant: permissionChoice?.grant,
         permissionDeny: permissionChoice?.deny,
         permissionGrantOnce: permissionChoice?.once,
-        attachments: attachmentPaths,
+        attachments: mergedAttachments,
         taskInput,
         executionWorkspaceRoot: workspace.executionWorkspaceRoot,
         projectId: workspace.projectId,

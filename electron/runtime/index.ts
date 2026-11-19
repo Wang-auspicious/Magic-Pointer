@@ -228,16 +228,20 @@ export async function runRuntime(
       ? savedWorkspace
       : undefined;
   const selectedWorkspace = String(payload.workspaceRoot ?? '').trim();
-  const workspace = Object.hasOwn(payload, 'workspaceRoot')
+  const requestedWorkspace = Object.hasOwn(payload, 'workspaceRoot')
     ? selectedWorkspace
       ? path.resolve(selectedWorkspace)
       : undefined
     : savedFolders
       ? savedFolders.root || undefined
       : validSavedWorkspace;
-  if (workspace && !(await stat(workspace)).isDirectory()) {
-    throw new Error('Workspace must be an existing directory');
-  }
+  const workspaceDirectoryExists = requestedWorkspace
+    ? await stat(requestedWorkspace).then(
+        info => info.isDirectory(),
+        () => false,
+      )
+    : false;
+  const workspace = workspaceDirectoryExists ? requestedWorkspace : undefined;
   const additionalFolders = await validateAdditionalFolders(
     workspace || '',
     payload.additionalFolders ??

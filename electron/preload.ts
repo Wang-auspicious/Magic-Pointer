@@ -242,6 +242,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       ipcRenderer.on('desktop-perception:changed', listener);
       return () => ipcRenderer.removeListener('desktop-perception:changed', listener);
     },
+    onCaptured: (callback: (payload: unknown) => void) =>
+      onPayload('desktop-perception:captured', callback),
   },
   guidedTour: {
     point: (payload: {
@@ -283,6 +285,22 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       onPayload('cu-overlay:state', cb),
     onEvent: (cb: (event: unknown) => void) =>
       onPayload('cu-overlay:event', cb),
+  },
+  vault: {
+    overview: () => ipcRenderer.invoke('vault:overview'),
+    selectDir: () => ipcRenderer.invoke('vault:select-dir'),
+    saveNote: (payload: {
+      title?: unknown;
+      folder?: unknown;
+      tags?: unknown;
+      source?: unknown;
+      body?: unknown;
+    }) => ipcRenderer.invoke('vault:save-note', payload),
+    toggleTodo: (payload: {
+      filePath?: unknown;
+      lineIndex?: unknown;
+      done?: unknown;
+    }) => ipcRenderer.invoke('vault:toggle-todo', payload),
   },
   hide: () => ipcRenderer.send('dashboard:hide'),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', {theme}),

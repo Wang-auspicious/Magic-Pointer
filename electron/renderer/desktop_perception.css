@@ -1,5 +1,12 @@
 .mp-perception-popover {
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 45;
+  max-height: min(380px, 52vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--mp-rule, #dfded8);
   border-radius: 12px;
   background: var(--mp-panel, #ffffff);
