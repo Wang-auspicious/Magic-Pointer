@@ -41,7 +41,9 @@ test('Paradigm B: Intelligence UI engine renders sandboxed :::ui interactive wid
   assert.ok(fs.existsSync(iuiPath), 'intelligence_ui.ts must exist');
   const iuiSrc = fs.readFileSync(iuiPath, 'utf8');
   assert.match(iuiSrc, /sandbox/, 'Intelligence UI must isolate widget execution inside a sandboxed iframe');
-  assert.match(iuiSrc, /Content-Security-Policy/, 'Intelligence UI srcdoc must set strict CSP');
+  assert.match(iuiSrc, /iui_sandbox\.html/, 'Intelligence UI must load dedicated file:// sandbox host');
+  const sandboxHtml = readRepo('electron/renderer/iui_sandbox.html');
+  assert.match(sandboxHtml, /Content-Security-Policy/, 'iui_sandbox.html must set strict CSP');
   assert.match(iuiSrc, /mp-iui-resize|postMessage/, 'Intelligence UI must support auto-resize and mentor feedback postMessage');
 
   const mdSrc = readRepo('electron/renderer/chat_markdown.ts');

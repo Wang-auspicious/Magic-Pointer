@@ -18,6 +18,10 @@ declare global {
   let widgetSeq = 0;
   let listenerBound = false;
   const frameById = new Map<string, HTMLIFrameElement>();
+  const pendingPayloadByWindow = new WeakMap<
+    Window,
+    {id: string; themeCss: string; html: string}
+  >();
   let activeAskHandler: ((prompt: string) => void) | undefined;
 
   function themeCssVars(): string {
@@ -25,51 +29,6 @@ declare global {
     return dark
       ? `:root{--bg:#141413;--surface:#1d1d1b;--text:#ecebe6;--muted:#a4a29a;--border:rgba(255,255,255,.12);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--blue:#6da7ec;--green:#86efac;--danger:#ec7e7e;}`
       : `:root{--bg:#ffffff;--surface:#f7f7f5;--text:#1f1f1d;--muted:#6e6d68;--border:rgba(15,15,14,.12);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--blue:#184f95;--green:#166534;--danger:#8e2626;}`;
-  }
-
-  function buildSrcdoc(widgetId: string, rawCode: string): string {
-    return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;" />
-<style>
-${themeCssVars()}
-*{box-sizing:border-box;}
-html,body{margin:0;padding:12px 14px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif;font-size:13.5px;line-height:1.5;overflow-x:hidden;}
-button{font:inherit;font-size:12.5px;padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;transition:background .15s;}
-button:hover{background:var(--accent-soft);border-color:var(--accent);}
-button.active,button.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
-input[type="range"]{accent-color:var(--accent);cursor:pointer;}
-.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:10px 12px;}
-</style>
-</head>
-<body>
-${rawCode}
-<script>
-(function(){
-  var WID = ${JSON.stringify(widgetId)};
-  function reportHeight(){
-    var h = Math.max(120, Math.min(680, Math.ceil(document.documentElement.scrollHeight)));
-    parent.postMessage({type:'mp-iui-resize', id:WID, height:h}, '*');
-  }
-  window.mpWidget = {
-    resize: reportHeight,
-    ask: function(text){
-      parent.postMessage({type:'mp-iui-ask', id:WID, prompt:String(text || '')}, '*');
-    }
-  };
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(reportHeight).observe(document.body);
-  }
-  window.addEventListener('load', reportHeight);
-  setTimeout(reportHeight, 60);
-  setTimeout(reportHeight, 260);
-})();
-</script>
-</body>
-</html>`;
   }
 
   function ensureMessageListener(): void {
@@ -80,6 +39,14 @@ ${rawCode}
     window.addEventListener('message', event => {
       const data = event.data as Record<string, unknown> | null;
       if (!data || typeof data !== 'object') {
+        return;
+      }
+      if (data.type === 'mp-iui-ready' && event.source) {
+        const srcWin = event.source as Window;
+        const payload = pendingPayloadByWindow.get(srcWin);
+        if (payload) {
+          srcWin.postMessage({type: 'mp-iui-init', ...payload}, '*');
+        }
         return;
       }
       const id = String(data.id || '');
@@ -179,20 +146,19 @@ ${rawCode}
       frame.setAttribute('referrerpolicy', 'no-referrer');
       frame.title = title;
       frame.style.height = '260px';
-      const docHtml = buildSrcdoc(widgetId, rawSrc);
-      if (typeof btoa === 'function' && typeof TextEncoder !== 'undefined') {
-        const bytes = new TextEncoder().encode(docHtml);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
+      const payload = {id: widgetId, themeCss: themeCssVars(), html: rawSrc};
+      frame.addEventListener('load', () => {
+        if (frame.contentWindow) {
+          pendingPayloadByWindow.set(frame.contentWindow, payload);
+          frame.contentWindow.postMessage({type: 'mp-iui-init', ...payload}, '*');
         }
-        frame.src = `data:text/html;charset=utf-8;base64,${btoa(binary)}`;
-      } else {
-        frame.srcdoc = docHtml;
-      }
+      });
+      frame.src = 'iui_sandbox.html';
       frameById.set(widgetId, frame);
-
       card.append(head, frame);
+      if (frame.contentWindow) {
+        pendingPayloadByWindow.set(frame.contentWindow, payload);
+      }
     }
   }
 
