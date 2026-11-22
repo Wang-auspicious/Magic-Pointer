@@ -1249,7 +1249,17 @@ export function registerCodingTools(
   add(
     'Glob',
     'Find files matching a glob, ordered by most recent modification. Defaults to the working folder; set path to search an additional session folder.',
-    schema({pattern: string, path: string}, ['pattern']),
+    schema(
+      {
+        pattern: string,
+        path: string,
+        description: {
+          type: 'string',
+          description: 'Short 3-6 word summary of what this call checks.',
+        },
+      },
+      ['pattern'],
+    ),
     async (args, context) => {
       const pattern = str(args.pattern);
       const match = globRegex(pattern);
@@ -1291,6 +1301,10 @@ export function registerCodingTools(
         context: integer,
         offset: integer,
         case_sensitive: boolean,
+        description: {
+          type: 'string',
+          description: 'Short 3-6 word summary of what this search checks.',
+        },
         output_mode: {
           type: 'string',
           enum: ['content', 'files_with_matches', 'count'],
@@ -1373,6 +1387,10 @@ export function registerCodingTools(
     schema(
       {
         command: string,
+        description: {
+          type: 'string',
+          description: 'Short 3-6 word summary of what this command checks or does.',
+        },
         cwd: string,
         timeout_s: {type: 'number'},
         background: boolean,

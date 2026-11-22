@@ -1,9 +1,26 @@
 interface DashboardChartMeta {
   chartId: string;
   title: string;
-  type: 'kpi' | 'line' | 'table';
+  type:
+    | 'kpi'
+    | 'line'
+    | 'area'
+    | 'stacked_area'
+    | 'bar'
+    | 'stacked_bar'
+    | 'scatter'
+    | 'heatmap'
+    | 'pie'
+    | 'donut'
+    | 'table';
   format?: 'money' | 'number' | 'percent';
   currency?: string;
+  xField?: string;
+  yField?: string;
+  seriesField?: string;
+  ghostSeries?: string;
+  orientation?: 'vertical' | 'horizontal';
+  watch?: {target?: number; min?: number; max?: number; label?: string};
   columns?: Array<{format?: 'money' | 'number' | 'percent'; currency?: string}>;
 }
 interface DashboardViewCallbacks {
@@ -12,6 +29,13 @@ interface DashboardViewCallbacks {
   onInspect(chartId: string, traceId: string): void;
   onRefresh?(): void;
   onEdit?(): void;
+  onQueryRun?(chartId: string, querySql: string): Promise<void> | void;
+  onAskAgent?(prompt: string, chartId?: string): void;
+  onUndo?(): void;
+  onRemix?(format: 'design_canvas' | 'markdown_memo' | 'slides'): void;
+  onExportChartCsv?(chartId: string): void;
+  onExportPng?(chartId?: string): void;
+  embed?: boolean;
 }
 interface DashboardViewNumber {
   value: number | null;
@@ -24,11 +48,24 @@ interface DashboardViewGroup {
 }
 interface DashboardViewSnapshot {
   generatedAt: string;
+  trustBadge?: 'verified_file' | 'workspace_sql' | 'inline_static';
+  diagnostics?: Array<{
+    code: string;
+    message: string;
+    severity: 'warning' | 'error';
+  }>;
   charts: Array<{
     chartId: string;
     queryText: string;
     error?: string;
+    errorCode?: string;
     warnings?: string[];
+    diagnostics?: Array<{
+      code: string;
+      message: string;
+      severity: 'warning' | 'error';
+    }>;
+    trustBadge?: string;
     groups: DashboardViewGroup[];
     current?: DashboardViewNumber;
     prior?: DashboardViewNumber;
@@ -59,6 +96,21 @@ function dashboardEscape(value: unknown): string {
   );
 }
 
+function dashboardLang(): string {
+  return typeof getStudioLanguage === 'function' ? getStudioLanguage() : 'en';
+}
+
+function dashboardT(
+  key: string,
+  fallback: string,
+  params?: Record<string, string | number>,
+): string {
+  if (typeof studioT === 'function') {
+    return studioT(key, params);
+  }
+  return fallback;
+}
+
 function dashboardFormat(
   value: number | null,
   format?: DashboardChartMeta['format'],
@@ -68,10 +120,10 @@ function dashboardFormat(
     return '—';
   }
   if (format === 'percent') {
-    return `${value.toLocaleString(getStudioLanguage(), {maximumFractionDigits: 2})}%`;
+    return `${value.toLocaleString(dashboardLang(), {maximumFractionDigits: 2})}%`;
   }
   return new Intl.NumberFormat(
-    getStudioLanguage(),
+    dashboardLang(),
     format === 'money'
       ? {
           style: 'currency',
@@ -83,135 +135,68 @@ function dashboardFormat(
   ).format(value);
 }
 
-function dashboardDelta(current: number | null, prior: number | null): string {
-  if (current === null || prior === null || prior === 0) {
-    return '';
-  }
-  const percent = ((current - prior) / Math.abs(prior)) * 100;
-  return studioT('dashboard.delta', {
-    percent: `${percent > 0 ? '+' : ''}${percent.toFixed(1)}`,
-  });
-}
-
-interface DashboardSeries {
-  label: string;
-  points: Array<{x: string; y: number | null; traceId?: string}>;
-}
-
-function splitLineSeries(groups: DashboardViewGroup[]): DashboardSeries[] {
-  const series = new Map<string, DashboardSeries['points']>();
-  for (const group of groups) {
-    const [x, label = ''] = group.dimensions;
-    const points = series.get(label) ?? [];
-    points.push({x, y: group.total.value, traceId: group.total.trace.traceId});
-    series.set(label, points);
-  }
-  return [...series].map(([label, points]) => ({
-    label,
-    points: points.sort((a, b) => a.x.localeCompare(b.x)),
-  }));
-}
-
 function dashboardLineSvg(
-  series: DashboardSeries[],
+  series: Array<{
+    label: string;
+    points: Array<{x: string; y: number | null; traceId?: string}>;
+  }>,
   meta: DashboardChartMeta,
 ): string {
-  const colors = ['#2563eb', '#16a34a', '#ea580c', '#7c3aed', '#0891b2'];
-  const points = series
-    .flatMap(item => item.points)
-    .filter(point => point.y !== null);
-  if (!points.length) {
-    return `<p class="mp-dash-note">${studioT('dashboard.no_query_values')}</p>`;
-  }
-  const width = 720;
-  const height = 280;
-  const left = 76;
-  const right = 18;
-  const top = 16;
-  const bottom = 38;
-  const domain = [
-    ...new Set(series.flatMap(item => item.points.map(point => point.x))),
-  ].sort();
-  const dateAxis = domain.every(
-    value =>
-      /^\d{4}-\d{2}-\d{2}/.test(value) && Number.isFinite(Date.parse(value)),
-  );
-  const coordinates = domain.map((value, index) =>
-    dateAxis ? Date.parse(value) : index,
-  );
-  const first = coordinates[0];
-  const last = coordinates.at(-1)!;
-  const positions = new Map(
-    domain.map((value, index) => [
-      value,
-      first === last
-        ? left + (width - left - right) / 2
-        : left +
-          ((coordinates[index] - first) / (last - first)) *
-            (width - left - right),
-    ]),
-  );
-  const values = points.map(point => point.y!);
-  const low = Math.min(0, ...values);
-  const high = Math.max(0, ...values);
-  const span = high - low || 1;
-  const maximum = high + span * 0.08;
-  const minimum = low < 0 ? low - span * 0.08 : 0;
-  const y = (value: number) =>
-    top + ((maximum - value) / (maximum - minimum)) * (height - top - bottom);
-  let svg = `<svg viewBox="0 0 ${width} ${height}" class="mp-dash-line" role="img" aria-label="${dashboardEscape(meta.title)}">`;
-  for (let index = 0; index <= 4; index += 1) {
-    const value = minimum + ((maximum - minimum) * index) / 4;
-    svg += `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}" class="mp-dash-grid"/><text x="${left - 8}" y="${y(value) + 4}" class="mp-dash-axis" text-anchor="end">${dashboardEscape(dashboardFormat(value, meta.format, meta.currency))}</text>`;
-  }
-  const step = Math.max(1, Math.ceil(domain.length / 7));
-  domain.forEach((value, index) => {
-    if (index % step && index !== domain.length - 1) {
-      return;
+  const groups: DashboardViewGroup[] = [];
+  for (const s of series) {
+    for (const p of s.points) {
+      groups.push({
+        key: s.label ? JSON.stringify([p.x, s.label]) : p.x,
+        dimensions: s.label ? [p.x, s.label] : [p.x],
+        total: {value: p.y, trace: {traceId: p.traceId}},
+      });
     }
-    const label = dateAxis ? value.slice(5, 10) : value;
-    svg += `<text x="${positions.get(value)}" y="${height - 10}" class="mp-dash-axis" text-anchor="${index === 0 ? 'start' : index === domain.length - 1 ? 'end' : 'middle'}">${dashboardEscape(label)}</text>`;
-  });
-  series.forEach((item, index) => {
-    const color = colors[index % colors.length];
-    let connected = false;
-    const segments = item.points
-      .map(point => {
-        if (point.y === null) {
-          connected = false;
-          return '';
-        }
-        const command = `${connected ? 'L' : 'M'}${positions.get(point.x)},${y(point.y)}`;
-        connected = true;
-        return command;
-      })
-      .join(' ');
-    svg += `<path d="${segments}" fill="none" stroke="${color}" stroke-width="2"/>`;
-    for (const point of item.points) {
-      if (point.y === null) {
-        continue;
-      }
-      svg += `<circle cx="${positions.get(point.x)}" cy="${y(point.y)}" r="4" fill="${color}" data-dash-x="${dashboardEscape(point.x)}" data-dash-series="${dashboardEscape(item.label)}" ${point.traceId ? `data-dash-trace="${dashboardEscape(point.traceId)}" tabindex="0" role="button" aria-label="${dashboardEscape(`${item.label} ${point.x}: ${dashboardFormat(point.y, meta.format, meta.currency)}. ${studioT('dashboard.view_rows')}.`)}"` : ''}><title>${dashboardEscape(`${item.label} ${point.x}: ${dashboardFormat(point.y, meta.format, meta.currency)}`)}</title></circle>`;
-    }
-  });
-  svg += '</svg><div class="mp-dash-legend">';
-  series.forEach((item, index) => {
-    const lastPoint = item.points.filter(point => point.y !== null).at(-1);
-    svg += `<span><i style="background:${colors[index % colors.length]}"></i>${dashboardEscape(item.label || meta.title)}${lastPoint ? ` · ${dashboardEscape(dashboardFormat(lastPoint.y, meta.format, meta.currency))}` : ''}</span>`;
-  });
-  return svg + '</div>';
+  }
+  if (globalThis.DashboardCharts) {
+    return globalThis.DashboardCharts.renderChart(
+      {chartId: meta.chartId, queryText: '', groups},
+      meta,
+    );
+  }
+  return `<p class="mp-dash-note">${dashboardEscape(meta.title)}</p>`;
 }
 
-function dashboardNumber(
-  value: DashboardViewNumber | null | undefined,
-  meta: {format?: DashboardChartMeta['format']; currency?: string},
+function trustBadgeLabel(badge?: string): string {
+  if (badge === 'workspace_sql') {
+    return 'Workspace SQL';
+  }
+  if (badge === 'inline_static') {
+    return 'Inline Sample';
+  }
+  return 'Verified File';
+}
+
+function exportChartAsCsv(
+  chart: DashboardViewSnapshot['charts'][number],
+  meta: {title: string},
 ): string {
-  const label = dashboardEscape(
-    dashboardFormat(value?.value ?? null, meta.format, meta.currency),
-  );
-  return value?.trace.traceId
-    ? `<button type="button" class="mp-dash-value-button" data-dash-trace="${dashboardEscape(value.trace.traceId)}" title="${studioT('dashboard.view_rows')}">${label}</button>`
-    : label;
+  const quote = (v: unknown) => `"${String(v ?? '').replaceAll('"', '""')}"`;
+  if (chart.table) {
+    const lines = [
+      chart.table.columns.map(quote).join(','),
+      ...chart.table.rows.map(r =>
+        [r.key, ...r.cells.map(c => c?.value ?? '')].map(quote).join(','),
+      ),
+    ];
+    return `\uFEFF${lines.join('\r\n')}\r\n`;
+  }
+  if (chart.groups.length) {
+    const lines = [
+      ['Dimension', 'Series', meta.title].map(quote).join(','),
+      ...chart.groups.map(g =>
+        [g.dimensions[0] ?? '', g.dimensions[1] ?? '', g.total.value ?? '']
+          .map(quote)
+          .join(','),
+      ),
+    ];
+    return `\uFEFF${lines.join('\r\n')}\r\n`;
+  }
+  return `\uFEFF${quote(meta.title)},${quote(chart.current?.value ?? '')}\r\n`;
 }
 
 function renderDashboard(
@@ -221,100 +206,371 @@ function renderDashboard(
   metas: DashboardChartMeta[],
   callbacks: DashboardViewCallbacks,
 ): void {
-  const byId = new Map(metas.map(meta => [meta.chartId, meta]));
-  const updated = new Date(snapshot.generatedAt).toLocaleString(
-    getStudioLanguage(),
-  );
-  let html = `<header class="mp-dash-head"><strong class="mp-dash-title">${dashboardEscape(title)}</strong><div class="mp-dash-head-right"><span class="mp-dash-updated">${dashboardEscape(studioT('dashboard.updated', {time: updated}))}</span>${callbacks.onRefresh ? `<button type="button" data-dash-act="refresh">${studioT('dashboard.refresh')}</button>` : ''}${callbacks.onEdit ? `<button type="button" data-dash-act="edit">${studioT('dashboard.edit')}</button>` : ''}<button type="button" data-dash-act="share">${studioT('dashboard.export_html')}</button><button type="button" data-dash-act="close" aria-label="${studioT('common.close')}">×</button></div></header><div class="mp-dash-body">`;
-  const card = (chart: DashboardViewSnapshot['charts'][number]): string => {
-    const meta = byId.get(chart.chartId);
-    if (!meta) {
-      return '';
-    }
-    let body = `<article class="${meta.type === 'kpi' ? 'mp-dash-kpi' : 'mp-dash-card'}" data-dash-chart="${dashboardEscape(chart.chartId)}"><h2 class="mp-dash-card-title">${dashboardEscape(meta.title)}</h2>`;
-    if (chart.error) {
-      body += `<p class="mp-dash-error">${dashboardEscape(chart.error)}</p>`;
-    } else if (meta.type === 'kpi') {
-      const current = chart.current?.value ?? null;
-      const prior = chart.prior?.value ?? null;
-      const delta = dashboardDelta(current, prior);
-      body += `<div class="mp-dash-kpi-value">${dashboardNumber(chart.current, meta)}</div>`;
-      if (delta) {
-        body += `<div class="mp-dash-delta ${current! >= prior! ? 'up' : 'down'}">${dashboardEscape(delta)}</div>`;
-      }
-      if (chart.prior) {
-        body += `<small>${studioT('dashboard.prior')}: ${dashboardNumber(chart.prior, meta)}</small>`;
-      }
-      if (current === null) {
-        body += `<p class="mp-dash-note">${studioT('dashboard.no_values')}</p>`;
-      }
-    } else if (meta.type === 'line') {
-      body += dashboardLineSvg(splitLineSeries(chart.groups), meta);
-    } else if (chart.table) {
-      if (!chart.table.rows.length) {
-        body += `<p class="mp-dash-note">${studioT('dashboard.no_query_values')}</p>`;
-      } else {
-        body += `<div class="mp-dash-table-scroll"><table class="mp-dash-table"><thead><tr>${chart.table.columns.map(column => `<th>${dashboardEscape(column)}</th>`).join('')}</tr></thead><tbody>`;
-        for (const row of chart.table.rows) {
-          body += `<tr><th scope="row">${dashboardEscape(row.key)}</th>${row.cells.map((value, index) => `<td>${dashboardNumber(value, index === 0 ? meta : {currency: meta.currency, ...(meta.columns?.[index - 1] ?? {})})}</td>`).join('')}</tr>`;
-        }
-        body += '</tbody></table></div>';
-      }
-    }
-    if (chart.warnings?.length) {
-      body += `<details class="mp-dash-note"><summary>Data notes (${chart.warnings.length})</summary><ul>${chart.warnings.map(warning => `<li>${dashboardEscape(warning)}</li>`).join('')}</ul></details>`;
-    }
-    return (
-      body +
-      `<details class="mp-dash-query"><summary>${studioT('dashboard.query')}</summary><code>${dashboardEscape(chart.queryText)}</code></details></article>`
+  const store = globalThis.DashboardStore
+    ? globalThis.DashboardStore.createDashboardStore(snapshot, metas)
+    : null;
+  const tableStates = new Map<
+    string,
+    {search?: string; sortCol?: number; sortDir?: 1 | -1; page?: number}
+  >();
+  const openInspectors = new Set<string>();
+
+  const renderNow = () => {
+    const state = store
+      ? store.getState()
+      : {
+          snapshot,
+          metas,
+          activeFilters: [] as Array<{
+            field: string;
+            op: 'eq' | 'in' | 'gte' | 'lte';
+            values: Array<string | number>;
+          }>,
+          hoveredX: null as string | null,
+          hiddenSeries: new Map<string, Set<string>>(),
+          canUndo: false,
+          canRedo: false,
+        };
+    const filteredSnapshot =
+      store && state.activeFilters.length
+        ? globalThis.DashboardStore.filterSnapshot(
+            state.snapshot,
+            state.activeFilters,
+          )
+        : state.snapshot;
+    const byId = new Map(state.metas.map(meta => [meta.chartId, meta]));
+    const updated = new Date(filteredSnapshot.generatedAt).toLocaleString(
+      dashboardLang(),
     );
-  };
-  const kpis = snapshot.charts.filter(
-    chart => byId.get(chart.chartId)?.type === 'kpi',
-  );
-  if (kpis.length) {
-    html += `<div class="mp-dash-kpis">${kpis.map(card).join('')}</div>`;
-  }
-  html +=
-    snapshot.charts
-      .filter(chart => byId.get(chart.chartId)?.type !== 'kpi')
-      .map(card)
-      .join('') + '</div>';
-  container.innerHTML = html;
-  for (const [action, callback] of Object.entries({
-    share: callbacks.onShare,
-    close: callbacks.onClose,
-    refresh: callbacks.onRefresh,
-    edit: callbacks.onEdit,
-  })) {
-    if (callback) {
-      container
-        .querySelector(`[data-dash-act="${action}"]`)
-        ?.addEventListener('click', callback);
+    const embedClass = callbacks.embed ? ' mp-dash-embed' : '';
+    const trust = filteredSnapshot.trustBadge || 'verified_file';
+
+    let html = `<div class="mp-dash-shell${embedClass}">`;
+    html += `<header class="mp-dash-head"><div class="mp-dash-head-left"><strong class="mp-dash-title">${dashboardEscape(title)}</strong><span class="mp-dash-trust mp-dash-trust-${dashboardEscape(trust)}">${dashboardEscape(trustBadgeLabel(trust))}</span></div><div class="mp-dash-head-right"><span class="mp-dash-updated">${dashboardEscape(dashboardT('dashboard.updated', `Updated ${updated}`, {time: updated}))}</span>`;
+    if (callbacks.onRefresh) {
+      html += `<button type="button" data-dash-act="refresh">${dashboardT('dashboard.refresh', 'Refresh')}</button>`;
     }
-  }
-  container
-    .querySelectorAll<HTMLElement | SVGElement>('[data-dash-trace]')
-    .forEach(element => {
-      const inspect = () =>
-        callbacks.onInspect(
-          element.closest<HTMLElement>('[data-dash-chart]')?.dataset
-            .dashChart || '',
-          element.dataset.dashTrace || '',
+    if (state.canUndo || callbacks.onUndo) {
+      html += `<button type="button" data-dash-act="undo" ${!state.canUndo && !callbacks.onUndo ? 'disabled' : ''}>Undo</button>`;
+    }
+    if (callbacks.onRemix) {
+      html += `<select class="mp-dash-remix-select" data-dash-remix aria-label="Remix dashboard"><option value="">Remix…</option><option value="design_canvas">Design Canvas</option><option value="markdown_memo">Markdown Memo</option><option value="slides">Slides</option></select>`;
+    }
+    if (callbacks.onEdit) {
+      html += `<button type="button" data-dash-act="edit">${dashboardT('dashboard.edit', 'Edit')}</button>`;
+    }
+    html += `<button type="button" data-dash-act="share">${dashboardT('dashboard.export_html', 'Export HTML')}</button>`;
+    if (!callbacks.embed) {
+      html += `<button type="button" data-dash-act="close" aria-label="${dashboardT('common.close', 'Close')}">×</button>`;
+    }
+    html += '</div></header>';
+
+    if (!callbacks.embed && callbacks.onAskAgent) {
+      html += `<form class="mp-dash-nl-bar" data-dash-nl-form><input type="text" class="mp-dash-nl-input" data-dash-nl-input placeholder="Ask Agent to Edit… (e.g. Switch to stacked bar by region, add target watchpoint)" /><button type="submit">Apply</button></form>`;
+    }
+
+    if (state.activeFilters.length) {
+      html += '<div class="mp-dash-filter-bar" data-dash-filter-bar>';
+      state.activeFilters.forEach((f, idx) => {
+        html += `<button type="button" class="mp-dash-filter-pill" data-dash-clear-filter="${idx}">${dashboardEscape(f.field)}: ${dashboardEscape(f.values.join(', '))} ×</button>`;
+      });
+      html += '<button type="button" class="mp-dash-filter-clear" data-dash-clear-all>Clear all</button></div>';
+    }
+
+    html += '<div class="mp-dash-body">';
+    const card = (chart: DashboardViewSnapshot['charts'][number]): string => {
+      const meta = byId.get(chart.chartId);
+      if (!meta) {
+        return '';
+      }
+      const isKpi = meta.type === 'kpi';
+      const inspectorOpen = openInspectors.has(chart.chartId);
+      let body = `<article class="${isKpi ? 'mp-dash-kpi' : 'mp-dash-card'}" data-dash-chart="${dashboardEscape(chart.chartId)}">`;
+      body += `<div class="mp-dash-card-head"><h2 class="mp-dash-card-title">${dashboardEscape(meta.title)}</h2><div class="mp-dash-card-actions">`;
+      if (chart.diagnostics?.length) {
+        for (const diag of chart.diagnostics) {
+          body += `<span class="mp-dash-qa-chip mp-dash-qa-${dashboardEscape(diag.severity)}" title="${dashboardEscape(diag.message)}">${dashboardEscape(diag.code)}</span>`;
+        }
+      }
+      body += `<button type="button" class="mp-dash-mini-btn" data-dash-toggle-inspector="${dashboardEscape(chart.chartId)}" title="Query & Lineage Inspector">SQL</button>`;
+      body += `<button type="button" class="mp-dash-mini-btn" data-dash-csv="${dashboardEscape(chart.chartId)}" title="Export CSV">CSV</button>`;
+      body += '</div></div>';
+
+      if (globalThis.DashboardCharts) {
+        body += globalThis.DashboardCharts.renderChart(chart, meta, {
+          hoveredX: state.hoveredX,
+          hiddenSeries: state.hiddenSeries.get(chart.chartId),
+          tableState: tableStates.get(chart.chartId),
+        });
+      } else if (chart.error) {
+        body += `<p class="mp-dash-error">${dashboardEscape(chart.error)}</p>`;
+      }
+
+      if (chart.warnings?.length) {
+        body += `<details class="mp-dash-note"><summary>Data notes (${chart.warnings.length})</summary><ul>${chart.warnings.map(w => `<li>${dashboardEscape(w)}</li>`).join('')}</ul></details>`;
+      }
+
+      if (inspectorOpen) {
+        body += `<div class="mp-dash-inspector" data-dash-inspector="${dashboardEscape(chart.chartId)}"><div class="mp-dash-inspector-meta"><span>Query &amp; Lineage Inspector</span><span>${dashboardEscape(chart.trustBadge || trust)}</span></div><textarea class="mp-dash-sql-input" data-dash-sql-input="${dashboardEscape(chart.chartId)}" rows="3">${dashboardEscape(chart.queryText)}</textarea><div class="mp-dash-inspector-actions">${callbacks.onQueryRun ? `<button type="button" data-dash-run-sql="${dashboardEscape(chart.chartId)}">Run SQL</button>` : ''}<span class="mp-dash-note">Generated ${dashboardEscape(updated)}</span></div></div>`;
+      } else {
+        body += `<details class="mp-dash-query"><summary>${dashboardT('dashboard.query', 'Query')}</summary><code>${dashboardEscape(chart.queryText)}</code></details>`;
+      }
+      return `${body}</article>`;
+    };
+
+    const kpis = filteredSnapshot.charts.filter(
+      chart => byId.get(chart.chartId)?.type === 'kpi',
+    );
+    if (kpis.length) {
+      html += `<div class="mp-dash-kpis">${kpis.map(card).join('')}</div>`;
+    }
+    const rest = filteredSnapshot.charts.filter(
+      chart => byId.get(chart.chartId)?.type !== 'kpi',
+    );
+    html += `<div class="mp-dash-grid">${rest.map(card).join('')}</div>`;
+    html += '</div><div class="mp-dash-tooltip" data-dash-tooltip hidden></div></div>';
+    container.innerHTML = html;
+
+    // Bind header actions
+    for (const [action, callback] of Object.entries({
+      share: callbacks.onShare,
+      close: callbacks.onClose,
+      refresh: callbacks.onRefresh,
+      edit: callbacks.onEdit,
+    })) {
+      if (callback) {
+        container
+          .querySelector(`[data-dash-act="${action}"]`)
+          ?.addEventListener('click', callback);
+      }
+    }
+
+    container
+      .querySelector('[data-dash-act="undo"]')
+      ?.addEventListener('click', () => {
+        if (store && store.getState().canUndo) {
+          store.undo();
+        } else {
+          callbacks.onUndo?.();
+        }
+      });
+
+    container
+      .querySelector<HTMLSelectElement>('[data-dash-remix]')
+      ?.addEventListener('change', event => {
+        const select = event.currentTarget as HTMLSelectElement;
+        const val = select.value as
+          | 'design_canvas'
+          | 'markdown_memo'
+          | 'slides'
+          | '';
+        if (val) {
+          callbacks.onRemix?.(val);
+          select.value = '';
+        }
+      });
+
+    container
+      .querySelector('[data-dash-nl-form]')
+      ?.addEventListener('submit', event => {
+        event.preventDefault();
+        const input = container.querySelector<HTMLInputElement>(
+          '[data-dash-nl-input]',
         );
-      element.addEventListener('click', inspect);
-      if (element.tagName.toLowerCase() === 'circle') {
-        element.addEventListener('keydown', event => {
-          if (
-            (event as KeyboardEvent).key === 'Enter' ||
-            (event as KeyboardEvent).key === ' '
-          ) {
-            event.preventDefault();
-            inspect();
+        const prompt = input?.value.trim() || '';
+        if (prompt) {
+          callbacks.onAskAgent?.(prompt);
+          if (input) {
+            input.value = '';
+          }
+        }
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-clear-filter]')
+      .forEach(btn => {
+        btn.addEventListener('click', () => {
+          store?.removeFilter(Number(btn.dataset.dashClearFilter));
+        });
+      });
+
+    container
+      .querySelector('[data-dash-clear-all]')
+      ?.addEventListener('click', () => {
+        store?.clearFilters();
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-toggle-inspector]')
+      .forEach(btn => {
+        btn.addEventListener('click', () => {
+          const cid = btn.dataset.dashToggleInspector || '';
+          if (openInspectors.has(cid)) {
+            openInspectors.delete(cid);
+          } else {
+            openInspectors.add(cid);
+          }
+          renderNow();
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-run-sql]')
+      .forEach(btn => {
+        btn.addEventListener('click', () => {
+          const cid = btn.dataset.dashRunSql || '';
+          const textarea = container.querySelector<HTMLTextAreaElement>(
+            `[data-dash-sql-input="${cid}"]`,
+          );
+          if (textarea) {
+            void callbacks.onQueryRun?.(cid, textarea.value);
           }
         });
-      }
-    });
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-csv]')
+      .forEach(btn => {
+        btn.addEventListener('click', () => {
+          const cid = btn.dataset.dashCsv || '';
+          if (callbacks.onExportChartCsv) {
+            callbacks.onExportChartCsv(cid);
+            return;
+          }
+          const chart = filteredSnapshot.charts.find(c => c.chartId === cid);
+          const meta = byId.get(cid);
+          if (chart && meta && typeof Blob !== 'undefined') {
+            const csv = exportChartAsCsv(chart, meta);
+            const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${cid}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-legend]')
+      .forEach(btn => {
+        btn.addEventListener('click', () => {
+          store?.toggleSeries(
+            btn.dataset.dashLegend || '',
+            btn.dataset.dashSeries || '',
+          );
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-filter-val]')
+      .forEach(el => {
+        el.addEventListener('click', event => {
+          if ((event as MouseEvent).shiftKey && el.dataset.dashTrace) {
+            return;
+          }
+          const field = el.dataset.dashFilterField || 'dimension';
+          const val = el.dataset.dashFilterVal || '';
+          if (store && val) {
+            store.toggleFilter({field, op: 'eq', values: [val]});
+          }
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-sort]')
+      .forEach(th => {
+        th.addEventListener('click', () => {
+          const [cid, colStr] = (th.dataset.dashSort || '').split(':');
+          const col = Number(colStr);
+          const cur = tableStates.get(cid) ?? {};
+          const dir: 1 | -1 =
+            cur.sortCol === col ? (cur.sortDir === -1 ? 1 : -1) : -1;
+          tableStates.set(cid, {...cur, sortCol: col, sortDir: dir, page: 0});
+          renderNow();
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLInputElement>('[data-dash-table-search]')
+      .forEach(input => {
+        input.addEventListener('input', () => {
+          const cid = input.dataset.dashTableSearch || '';
+          const cur = tableStates.get(cid) ?? {};
+          tableStates.set(cid, {...cur, search: input.value, page: 0});
+          renderNow();
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLElement>('[data-dash-page]')
+      .forEach(btn => {
+        btn.addEventListener('click', () => {
+          const [cid, pageStr] = (btn.dataset.dashPage || '').split(':');
+          const cur = tableStates.get(cid) ?? {};
+          tableStates.set(cid, {...cur, page: Number(pageStr)});
+          renderNow();
+        });
+      });
+
+    const tipEl = container.querySelector<HTMLElement>('[data-dash-tooltip]');
+    container
+      .querySelectorAll<HTMLElement | SVGElement>('[data-dash-tip]')
+      .forEach(el => {
+        el.addEventListener('mouseenter', event => {
+          if (tipEl) {
+            tipEl.hidden = false;
+            tipEl.textContent = el.getAttribute('data-dash-tip') || '';
+            const me = event as MouseEvent;
+            tipEl.style.left = `${me.clientX + 12}px`;
+            tipEl.style.top = `${me.clientY + 12}px`;
+          }
+        });
+        el.addEventListener('mouseleave', () => {
+          if (tipEl) {
+            tipEl.hidden = true;
+          }
+        });
+      });
+
+    container
+      .querySelectorAll<HTMLElement | SVGElement>('[data-dash-trace]')
+      .forEach(element => {
+        const inspect = () =>
+          callbacks.onInspect(
+            element.closest<HTMLElement>('[data-dash-chart]')?.dataset
+              .dashChart || '',
+            element.dataset.dashTrace || '',
+          );
+        element.addEventListener('click', event => {
+          if (
+            element.hasAttribute('data-dash-filter-val') &&
+            !(event as MouseEvent).shiftKey &&
+            store
+          ) {
+            return;
+          }
+          inspect();
+        });
+        if (element.tagName.toLowerCase() === 'circle') {
+          element.addEventListener('keydown', event => {
+            if (
+              (event as KeyboardEvent).key === 'Enter' ||
+              (event as KeyboardEvent).key === ' '
+            ) {
+              event.preventDefault();
+              inspect();
+            }
+          });
+        }
+      });
+  };
+
+  if (store) {
+    store.subscribe(renderNow);
+  }
+  renderNow();
 }
 
 if (typeof module !== 'undefined' && module.exports) {

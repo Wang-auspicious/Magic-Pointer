@@ -23,13 +23,14 @@ const object = (
 const sourceSchema = object(
   {
     sourceId: text,
-    kind: {enum: ['csv', 'xlsx', 'static']},
+    kind: {enum: ['csv', 'xlsx', 'static', 'json', 'sqlite']},
     path: {
       type: 'string',
       description:
-        'Absolute path to an attached or workspace-authorized CSV/XLSX file.',
+        'Absolute path to an attached or workspace-authorized CSV/XLSX/JSON/SQLite file.',
     },
     sheet: text,
+    table: text,
     headerRow: {type: 'integer', minimum: 1},
     rows: {
       type: 'array',
@@ -93,14 +94,46 @@ const chartSchema = object(
   {
     chartId: text,
     title: text,
-    type: {enum: ['kpi', 'line', 'table']},
+    type: {
+      enum: [
+        'kpi',
+        'line',
+        'area',
+        'stacked_area',
+        'bar',
+        'stacked_bar',
+        'scatter',
+        'heatmap',
+        'pie',
+        'donut',
+        'table',
+      ],
+    },
     select: selectSchema,
+    querySql: {
+      type: 'string',
+      description:
+        'Optional read-only SQL query (SELECT / WITH CTE / JOIN / GROUP BY / $filters) executed against registered sources.',
+    },
+    xField: text,
+    yField: text,
+    seriesField: text,
+    sizeField: text,
+    valueField: text,
+    ghostSeries: text,
+    orientation: {enum: ['vertical', 'horizontal']},
+    watch: object({
+      target: {type: 'number'},
+      min: {type: 'number'},
+      max: {type: 'number'},
+      label: text,
+    }),
     format,
     currency,
     primaryLabel: text,
     queryText: {
       type: 'string',
-      description: 'Generated from select when saved; never executed as SQL.',
+      description: 'Generated from select or querySql when saved.',
     },
     columns: {
       type: 'array',
@@ -112,7 +145,7 @@ const chartSchema = object(
       ]),
     },
   },
-  ['chartId', 'title', 'type', 'select'],
+  ['chartId', 'title', 'type'],
 );
 
 export type DashboardEdit =
@@ -180,6 +213,8 @@ function summary(run: DashboardRun) {
     title: run.spec.title,
     snapshotId: run.snapshot.snapshotId,
     generatedAt: run.snapshot.generatedAt,
+    trustBadge: run.snapshot.trustBadge,
+    diagnostics: run.snapshot.diagnostics,
     definition: {
       ...run.spec,
       sources: run.spec.sources.map(source => ({...source, rows: undefined})),
@@ -194,6 +229,9 @@ function summary(run: DashboardRun) {
     charts: run.snapshot.charts.map(chart => ({
       chartId: chart.chartId,
       error: chart.error,
+      errorCode: chart.errorCode,
+      trustBadge: chart.trustBadge,
+      diagnostics: chart.diagnostics,
       query: chart.queryText,
       current: number(chart.current),
       prior: number(chart.prior),

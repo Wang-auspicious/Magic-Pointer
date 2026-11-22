@@ -143,9 +143,41 @@ export function denormalizeTourPoint(
   };
 }
 
+export function formatCursorCaption(raw: string, maxChars = 18): string {
+  const cleaned = String(raw || '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/[*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) {
+    return '';
+  }
+  const firstClause = cleaned.split(/[：:。；;！!\n]/)[0].trim() || cleaned;
+  const limit = Math.max(4, Math.floor(maxChars));
+  return firstClause.length > limit
+    ? `${firstClause.slice(0, limit)}…`
+    : firstClause;
+}
+
+export function shouldAutoLaunchTourCursor(
+  steps: ReadonlyArray<{x?: number; y?: number; screen?: number; label?: string}>,
+  context: {studioForeground?: boolean} = {},
+): boolean {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return false;
+  }
+  if (context.studioForeground === true) {
+    return false;
+  }
+  return true;
+}
+
 module.exports = {
   denormalizeTourPoint,
   extractTourSteps,
+  formatCursorCaption,
+  shouldAutoLaunchTourCursor,
   snapPointToControl,
   stripTourMarkers,
 };

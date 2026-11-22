@@ -15,7 +15,14 @@ declare global {
     mount(
       host: HTMLElement,
       api: ResourceCollectionApi,
-      options: {openTask(id: string): void; openCanvas(): void},
+      options: {
+        openTask(id: string): void;
+        openCanvas(): void;
+        openRightBrowser?(): void;
+        startLearnChat?(prompt: string): void;
+        openVaultNote?(relativePath?: string): void;
+        onVaultUpdated?(): void;
+      },
     ): {show(): void; hide(): void; refresh(): Promise<void>};
   };
 }
@@ -29,28 +36,128 @@ declare global {
           c
         ]!,
     );
+  const stripTagSpam = (raw: string): string =>
+    String(raw || '')
+      .replace(/(?:\s*#[^\s#]{1,32}#?){2,}\s*$/gm, '')
+      .replace(/^(?:\s*#[^\s#]{1,32}#?){2,}\s*$/gm, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  function normalizeCleanTag(raw: string): string {
+    return raw
+      .replace(/\[话题\]/g, '')
+      .replace(/#+$/g, '')
+      .trim();
+  }
+
+  function splitPostParagraphs(raw: string): {
+    paragraphs: string[];
+    cleanTags: string[];
+  } {
+    const text = String(raw || '').replace(/\r\n?/g, '\n').trim();
+    if (!text) {
+      return {paragraphs: [], cleanTags: []};
+    }
+    const cleanTags: string[] = [];
+    const seen = new Set<string>();
+    for (const match of text.matchAll(/(?:^|\s)#([^\s#]{1,32}#?)/g)) {
+      const tag = normalizeCleanTag(match[1]);
+      if (!tag || tag.length < 2) {
+        continue;
+      }
+      const key = tag.toLowerCase();
+      if (
+        !seen.has(key) &&
+        !['每天学习一点点', '学习打卡', '日常', 'ai', 'study'].includes(key)
+      ) {
+        seen.add(key);
+        cleanTags.push(tag);
+        if (cleanTags.length >= 4) {
+          break;
+        }
+      }
+    }
+    const blocks = text
+      .split(/\n{2,}|\n/)
+      .map(line =>
+        line
+          .replace(/(?:\s*#[^\s#]{1,32}#?){2,}\s*$/g, '')
+          .replace(/^(?:\s*#[^\s#]{1,32}#?\s*)+$/g, '')
+          .trim(),
+      )
+      .filter(Boolean);
+    const paragraphs: string[] = [];
+    for (const block of blocks) {
+      if (/^https?:\/\/\S+$/i.test(block)) {
+        paragraphs.push(block);
+        continue;
+      }
+      const hasCjk = /[\u4e00-\u9fa5]/.test(block);
+      const minSplitLen = hasCjk ? 60 : 160;
+      if (block.length <= minSplitLen) {
+        paragraphs.push(block);
+        continue;
+      }
+      const sentences =
+        block.match(/[^。！？.!?\n]+[。！？.!?]?/g)?.map(s => s.trim()) || [];
+      if (sentences.length < 3 && block.length <= 160) {
+        paragraphs.push(block);
+        continue;
+      }
+      const bucketLimit = hasCjk ? 56 : 135;
+      let bucket = '';
+      for (const s of sentences) {
+        if (!s) {
+          continue;
+        }
+        if (bucket && bucket.length + s.length > bucketLimit) {
+          paragraphs.push(bucket.trim());
+          bucket = s;
+        } else {
+          bucket = bucket ? `${bucket} ${s}`.replace(/([。！？]) /, '$1') : s;
+        }
+      }
+      if (bucket.trim()) {
+        paragraphs.push(bucket.trim());
+      }
+    }
+    return {paragraphs, cleanTags};
+  }
+
   function mount(
     host: HTMLElement,
     api: ResourceCollectionApi,
-    options: {openTask(id: string): void; openCanvas(): void},
+    options: {
+      openTask(id: string): void;
+      openCanvas(): void;
+      openRightBrowser?(): void;
+      startLearnChat?(prompt: string): void;
+      openVaultNote?(relativePath?: string): void;
+      onVaultUpdated?(): void;
+    },
   ) {
     const t = (en: string, zh: string) =>
       document.documentElement.lang.startsWith('zh') ? zh : en;
+    const listSep = () => (document.documentElement.lang.startsWith('zh') ? '：' : ': ');
     let snapshot: ResourceResponse = {ok: true, items: [], projects: []};
     let selected = '';
     let filter = 'all';
+    let lens: 'all' | 'goal' | 'practice' | 'recent' = 'all';
+    let activeGoalId = '';
     let mediaScope = 'bookmarks';
     let sort = (localStorage.getItem('mp:collection-sort') || 'time') as
-      'time' | 'importance';
+      | 'time'
+      | 'importance';
     let focus = '';
     let cardLimit = 120;
-    let masonryFrame = 0;
-    const masonryObserver = new ResizeObserver(() => scheduleMasonry());
+    let captureOpen = false;
+    const savedToVaultIds = new Set<string>();
+    const savedTodoIds = new Set<string>();
     let query = '';
     let searchMatches: Set<string> | undefined;
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
     let searchEpoch = 0;
-    let tab = 'library';
+    let tab: 'library' | 'sources' | 'browser' = 'library';
     let visible = false;
     let dirty = false;
     let editorRevision = 0;
@@ -157,6 +264,29 @@ declare global {
         ...item.collection,
       }) as ResourceCollection;
     const current = () => snapshot.items?.find(item => item.id === selected);
+
+    function viewFilterValue(): string {
+      return `${mediaScope}:${filter}:${lens}`;
+    }
+
+    function applyViewFilterValue(value: string): void {
+      const [nextScope = 'bookmarks', nextFilter = 'all', nextLens = 'all'] =
+        String(value || 'bookmarks:all:all').split(':');
+      mediaScope = nextScope;
+      filter = nextFilter;
+      lens = nextLens as typeof lens;
+      cardLimit = 120;
+    }
+
+    function syncReadingChrome(): void {
+      const shell = host.querySelector<HTMLElement>('.rl-shell');
+      if (!shell) {
+        return;
+      }
+      const isReading = tab === 'library' && Boolean(current());
+      shell.classList.toggle('is-reading', isReading);
+    }
+
     function pausePostMedia(release = false) {
       host
         .querySelectorAll<HTMLMediaElement>('.rl-post video,.rl-post audio')
@@ -173,6 +303,7 @@ declare global {
       if (output) {
         output.textContent = message;
         output.dataset.error = String(error);
+        output.hidden = !message;
       }
     }
     async function call(action: ResourceAction, input: ResourceRequest = {}) {
@@ -221,18 +352,26 @@ declare global {
       if (tab !== 'browser') {
         void api.request('browser-command', {command: 'hide'});
       }
-      host.innerHTML = `<div class="rl-shell">
-        <header class="rl-heading"><div><p class="rl-kicker">${t('A little less scattered', '让零散，慢慢有了去处')}</p><h1>${t('Resources', '收集')}</h1></div><nav aria-label="${t('Resource views', '资源视图')}">${[
+      const isReading = tab === 'library' && Boolean(current());
+      const activeTopTab = tab === 'sources' ? 'sources' : 'library';
+      host.innerHTML = `<div class="rl-shell${isReading ? ' is-reading' : ''}">
+        <header class="rl-heading">
+          <h1>${t('Resources', '收集')}</h1>
+          <button type="button" class="rl-browser-shortcut" data-rl-open-browser title="${t('Open Browser side panel', '在右侧打开浏览器')}">
+            <span class="cds-icon" data-size="small" aria-hidden="true">&#xE082;</span>
+            <span>${t('Browser', '浏览器')}</span>
+          </button>
+        </header>
+        <div class="mp-library-tabs mp-library-top-tabs rl-top-tabs" role="tablist" aria-label="${t('Resource views', '资源视图')}">${[
           ['library', t('Library', '资料')],
-          ['browser', t('Browser', '浏览器')],
           ['sources', t('Sources', '来源')],
         ]
           .map(
             ([id, name]) =>
-              `<button type="button" data-rl-tab="${id}" aria-pressed="${tab === id}">${name}</button>`,
+              `<button type="button" role="tab" data-rl-tab="${id}" class="${activeTopTab === id ? 'is-on' : ''}" aria-selected="${activeTopTab === id}">${name}</button>`,
           )
-          .join('')}</nav></header>
-        <div class="rl-status" data-resource-status role="status" aria-live="polite"></div>
+          .join('')}</div>
+        <div class="rl-status" data-resource-status role="status" aria-live="polite" hidden></div>
         <div class="rl-content"></div>
       </div>`;
       if (tab === 'library') {
@@ -254,40 +393,86 @@ declare global {
         }, 5000);
       }
     }
+    function renderGoalStrip(): void {
+      const strip = host.querySelector<HTMLElement>('[data-rl-goal-strip]');
+      if (!strip) {
+        return;
+      }
+      const goals = snapshot.learningGoals || [];
+      if (!goals.length) {
+        strip.hidden = true;
+        strip.replaceChildren();
+        return;
+      }
+      const bridgeMap = snapshot.learningBridge || {};
+      const matchCount = (goalId: string) =>
+        (snapshot.items || []).filter(
+          item =>
+            (item.learningBridge || bridgeMap[item.id])?.goalMatch?.goalId ===
+            goalId,
+        ).length;
+      strip.hidden = false;
+      strip.innerHTML = `<span class="rl-goal-strip-title">${t('Study topics', '学习脉络')}</span><div class="rl-goal-pills">${goals
+        .map(goal => {
+          const count = matchCount(goal.id);
+          return `<button type="button" class="rl-goal-pill" data-rl-goal="${esc(goal.id)}" aria-pressed="${activeGoalId === goal.id}">${esc(goal.label)}${count ? ` <em>${count}</em>` : ''}</button>`;
+        })
+        .join('')}${activeGoalId ? `<button type="button" class="rl-goal-clear" data-rl-goal="">${t('Clear', '清除')}</button>` : ''}</div><button type="button" class="rl-goal-vault-btn" data-rl-action="open-vault">${t('Vault', '知识库')} ↗</button>`;
+    }
     function renderLibrary() {
       pausePostMedia(true);
+      const filterChoices: Array<[string, string]> = [
+        ['bookmarks:all:all', t('Bookmarks and links', '收藏与链接')],
+        ['bookmarks:all:goal', t('Best fit for study', '最贴合学习目标')],
+        ['bookmarks:all:practice', t('Ready to practice', '可直接动手练')],
+        ['bookmarks:all:recent', t('Recently saved', '最近收藏')],
+        ['files:all:all', t('Files and screenshots', '文件与截图')],
+        ['all:all:all', t('All materials', '全部资料')],
+        ['all:inbox:all', t('Inbox', '待整理')],
+        ['all:ready:all', t('Collected', '已整理')],
+        ['all:reference:all', t('References', '参考')],
+        ['all:todo:all', t('To do', '待办')],
+        ['all:revisit:all', t('Revisit', '回看')],
+        ['all:ignored:all', t('Ignored', '已忽略')],
+      ];
+      const currentFilterVal = viewFilterValue();
+      const searchSvg = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.7 10.7L14 14" stroke-linecap="round"/></svg>`;
       host.querySelector('.rl-content')!.innerHTML =
-        `<form class="rl-capture" data-rl-capture><span class="rl-add-mark" aria-hidden="true">＋</span><textarea name="text" rows="1" placeholder="${t('Drop a thought. Paste a link. Keep something good.', '记下一点想法，粘贴一个链接，留住值得回看的东西。')}" aria-label="${t('Text or link to collect', '要收集的文字或链接')}" required>${esc(captureDraft)}</textarea><button type="submit" ${capturing ? 'disabled' : ''}>${t('Keep', '收下')} ↗</button></form>
-        <div class="rl-tools"><div class="rl-filters">${[
-          ['all', t('All saved', '全部收藏')],
-          ['inbox', t('Inbox', '待整理')],
-          ['ready', t('Collected', '已整理')],
-          ['reference', t('References', '参考')],
-          ['todo', t('To do', '待办')],
-          ['revisit', t('Revisit', '回看')],
-          ['ignored', t('Ignored', '已忽略')],
-        ]
-          .map(
-            ([id, label]) =>
-              `<button type="button" data-rl-filter="${id}" aria-pressed="${filter === id}">${label}</button>`,
-          )
-          .join(
-            '',
-          )}</div><input type="search" class="rl-search" placeholder="${t('Find a resource', '搜索资料')}" aria-label="${t('Find a resource', '搜索资料')}" value="${esc(query)}"><button type="button" data-rl-action="files">${t('Add files', '添加文件')}</button><button type="button" data-rl-action="canvas">${t('Canvas', '画布')} ↗</button></div>
-        <div class="rl-library-options"><select data-rl-scope aria-label="${t('Material type', '资料类型')}"><option value="bookmarks" ${mediaScope === 'bookmarks' ? 'selected' : ''}>${t('Bookmarks and links', '收藏与链接')}</option><option value="files" ${mediaScope === 'files' ? 'selected' : ''}>${t('Files and screenshots', '文件与截图')}</option><option value="all" ${mediaScope === 'all' ? 'selected' : ''}>${t('All materials', '全部资料')}</option></select><div data-rl-sync-summary role="status"></div><label>${t('Sort', '排序')} <select data-rl-sort><option value="time" ${sort === 'time' ? 'selected' : ''}>${t('Saved order', '按收藏时间')}</option><option value="importance" ${sort === 'importance' ? 'selected' : ''}>${t('Important now', '对当下的重要性')}</option></select></label></div><div class="rl-focus" ${sort === 'importance' ? '' : 'hidden'}><label>${t('Current focus', '当前关注')} <input data-rl-focus value="${esc(focus)}" placeholder="${esc(snapshot.focus || t('Recent MP tasks', '最近的 MP 任务'))}"></label><small>${t('Uses recent tasks, project links, next steps and unread older material. You can change the focus.', '结合最近任务、关联项目、下一步和未回看的旧资料排序，也可填写当前关注的事。')}</small></div>
-        <div class="rl-workspace"><div class="rl-grid" role="list" aria-label="${t('Collected resources', '收集的资料')}"></div><aside class="rl-detail" aria-label="${t('Resource details', '资料详情')}" hidden></aside></div>`;
-      masonryObserver.disconnect();
-      masonryObserver.observe(host.querySelector('.rl-grid')!);
-      host.querySelector('.rl-grid')!.addEventListener('scroll', event => {
-        const grid = event.target as HTMLElement;
-        if (
-          grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 350 &&
-          grid.querySelector('[data-rl-more]')
-        ) {
-          cardLimit += 120;
-          renderList();
-        }
-      });
+        `<div class="mp-library-toolbar rl-toolbar">
+          <label class="mp-library-search rl-search-box">${searchSvg}<input type="search" class="rl-search" placeholder="${t('Search', '搜索资料')}" aria-label="${t('Find a resource', '搜索资料')}" value="${esc(query)}"></label>
+          <select data-rl-view-filter aria-label="${t('Filter resources', '筛选资料')}">${filterChoices
+            .map(
+              ([val, label]) =>
+                `<option value="${esc(val)}" ${currentFilterVal === val ? 'selected' : ''}>${esc(label)}</option>`,
+            )
+            .join('')}</select>
+          <select data-rl-sort aria-label="${t('Sort', '排序')}"><option value="time" ${sort === 'time' ? 'selected' : ''}>${t('Saved order', '按收藏时间')}</option><option value="importance" ${sort === 'importance' ? 'selected' : ''}>${t('Important now', '对当下的重要性')}</option></select>
+          <button type="button" class="rl-tool-btn" data-rl-action="canvas">${t('Canvas', '画布')}</button>
+          <button type="button" class="mp-library-primary rl-add-btn" data-rl-toggle-capture aria-expanded="${captureOpen}">${captureOpen ? t('Close', '收起') : `+ ${t('Add', '添加')}`}</button>
+        </div>
+        <div class="rl-capture-drawer" data-rl-capture-drawer ${captureOpen ? '' : 'hidden'}>
+          <form class="rl-capture" data-rl-capture><textarea name="text" rows="1" placeholder="${t('Drop a thought or paste a link…', '记下想法或粘贴链接…')}" aria-label="${t('Text or link to collect', '要收集的文字或链接')}" required>${esc(captureDraft)}</textarea><button type="button" class="rl-capture-secondary" data-rl-action="files">${t('Add files', '添加文件')}</button><button type="submit" class="mp-library-primary" ${capturing ? 'disabled' : ''}>${t('Keep', '收下')}</button></form>
+        </div>
+        <div class="rl-goal-strip" data-rl-goal-strip hidden></div>
+        <div class="rl-focus" ${sort === 'importance' ? '' : 'hidden'}><label>${t('Current focus', '当前关注')} <input data-rl-focus value="${esc(focus)}" placeholder="${esc(snapshot.focus || t('Recent MP tasks', '最近的 MP 任务'))}"></label></div>
+        <div class="rl-sync-bar" data-rl-sync-summary role="status" hidden></div>
+        <div class="rl-workspace"><div class="rl-grid" role="list" aria-label="${t('Collected resources', '收集的资料')}"></div><aside class="rl-detail" hidden aria-label="${t('Resource details', '资料详情')}"></aside></div>`;
+      renderGoalStrip();
+      const contentEl = host.querySelector<HTMLElement>('.rl-content');
+      if (contentEl) {
+        contentEl.onscroll = () => {
+          if (
+            tab === 'library' &&
+            !selected &&
+            contentEl.scrollTop + contentEl.clientHeight >=
+              contentEl.scrollHeight - 350 &&
+            contentEl.querySelector('[data-rl-more]')
+          ) {
+            cardLimit += 120;
+            renderList();
+          }
+        };
+      }
       renderList();
       renderDetail();
       syncSummary();
@@ -301,46 +486,20 @@ declare global {
         job => job.list === 'saved',
       );
       const running = jobs.find(job => job.status === 'running');
-      const accounts = snapshot.accounts || [];
-      output.textContent = running
-        ? t(
-            `Importing ${running.mode === 'check' ? 'new bookmarks' : 'history'} · ${running.retained} retained`,
-            `正在${running.mode === 'check' ? '检查新增收藏' : '初始化历史收藏'} · 已收录 ${running.retained} 条`,
-          )
-        : accounts.some(account => account.enabled)
-          ? t('Bookmarks sync automatically every hour', '收藏每小时自动同步')
-          : t(
-              'Sign in to an account to import its saved posts automatically',
-              '登录账号后，自动收录历史收藏',
-            );
-    }
-    function scheduleMasonry() {
-      cancelAnimationFrame(masonryFrame);
-      masonryFrame = requestAnimationFrame(() => {
-        const grid = host.querySelector<HTMLElement>('.rl-grid');
-        const canvas = grid?.querySelector<HTMLElement>('.rl-masonry');
-        if (!grid || !canvas || !visible || tab !== 'library') {
-          return;
-        }
-        const width = grid.clientWidth - 6;
-        const columns = Math.max(
-          1,
-          Math.min(5, Math.floor((width + 16) / 170)),
-        );
-        const cardWidth = (width - (columns - 1) * 16) / columns;
-        const heights = Array<number>(columns).fill(0);
-        canvas.dataset.columns = String(columns);
-        canvas.querySelectorAll<HTMLElement>('[data-rl-id]').forEach(card => {
-          const column = heights.indexOf(Math.min(...heights));
-          card.style.width = `${cardWidth}px`;
-          card.style.left = `${column * (cardWidth + 16)}px`;
-          card.style.top = `${heights[column]}px`;
-          heights[column] += card.getBoundingClientRect().height + 16;
-        });
-        canvas.style.height = `${Math.max(...heights)}px`;
-      });
+      if (!running) {
+        output.textContent = '';
+        output.hidden = true;
+        return;
+      }
+      output.hidden = false;
+      output.textContent = t(
+        `Importing ${running.mode === 'check' ? 'new bookmarks' : 'history'} · ${running.retained} retained`,
+        `正在${running.mode === 'check' ? '检查新增收藏' : '初始化历史收藏'} · 已收录 ${running.retained} 条`,
+      );
     }
     function renderList() {
+      renderGoalStrip();
+      syncReadingChrome();
       const grid = host.querySelector('.rl-grid');
       if (!grid) {
         return;
@@ -351,13 +510,25 @@ declare global {
       if (restore) {
         focusedId = focused.dataset.rlId || '';
       }
+      const bridgeMap = snapshot.learningBridge || {};
       const items = (snapshot.items || []).filter(item => {
         const detail = details(item);
+        const bridge = item.learningBridge || bridgeMap[item.id];
         const accountHome =
           /^https?:\/\/(?:www\.)?xiaohongshu\.com\/(?:explore)?(?:[?#]|$)/i.test(
             detail.url,
           );
+        const lensMatch =
+          lens === 'all' ||
+          (lens === 'goal' &&
+            (Boolean(bridge?.goalMatch) || (bridge?.score ?? 0) >= 6)) ||
+          (lens === 'practice' && bridge?.intent === 'practice') ||
+          lens === 'recent';
+        const goalMatch =
+          !activeGoalId || bridge?.goalMatch?.goalId === activeGoalId;
         return (
+          lensMatch &&
+          goalMatch &&
           (mediaScope === 'all' ||
             (mediaScope === 'bookmarks'
               ? Boolean(item.collection) && !accountHome
@@ -383,7 +554,17 @@ declare global {
               .includes(query.toLowerCase()))
         );
       });
-      if (filter === 'revisit') {
+      if (lens === 'goal' || activeGoalId) {
+        items.sort((left, right) => {
+          const scoreLeft =
+            (left.learningBridge || bridgeMap[left.id])?.score ?? 0;
+          const scoreRight =
+            (right.learningBridge || bridgeMap[right.id])?.score ?? 0;
+          return scoreRight - scoreLeft || right.capturedAt - left.capturedAt;
+        });
+      } else if (lens === 'recent') {
+        items.sort((left, right) => right.capturedAt - left.capturedAt);
+      } else if (filter === 'revisit') {
         items.sort(
           (left, right) =>
             details(left).lastViewedAt - details(right).lastViewedAt ||
@@ -401,6 +582,7 @@ declare global {
             .slice(0, cardLimit)
             .map(item => {
               const detail = details(item);
+              const bridge = item.learningBridge || bridgeMap[item.id];
               const project = snapshot.projects?.find(
                 row => row.id === detail.projectId,
               );
@@ -408,25 +590,53 @@ declare global {
                 document.documentElement.lang || 'en',
                 {month: 'short', day: 'numeric'},
               );
-              const preview = (
-                item as CollectedResource & {previewUrl?: string}
-              ).previewUrl;
-              return `<button type="button" class="rl-item ${selected === item.id ? 'is-selected' : ''}" data-rl-id="${esc(item.id)}" tabindex="${focusedId === item.id ? 0 : -1}" aria-pressed="${selected === item.id}">
-          ${preview ? `<div class="rl-thumbnail"><img src="${esc(preview)}" alt="${esc(detail.title)}" loading="lazy"></div>` : `<div class="rl-excerpt">${esc((detail.sourceExcerpt || detail.summary || item.text || detail.url || '').slice(0, 350))}</div>`}
-          <div class="rl-item-copy"><span class="rl-item-meta">${esc(detail.authorName || item.app || item.media)} <span>${date}</span></span><strong>${esc(detail.title || t('Untitled resource', '未命名资料'))}</strong>${detail.tags?.length ? `<span class="rl-card-tags">${esc(detail.tags.join(' · '))}</span>` : ''}${sort === 'importance' && item.relevanceReason ? `<span class="rl-relevance">${esc(item.relevanceReason)}</span>` : ''}<div class="rl-item-foot"><span>${esc(project?.name || labels()[detail.intent === 'save' && detail.suggestedIntent ? detail.suggestedIntent : detail.intent])}</span><span>${detail.captureStatus === 'loading' ? t('Saving original…', '保存原帖中…') : detail.captureStatus === 'partial' ? t('Media incomplete', '媒体未齐') : detail.state === 'queued' ? t('Queued', '等待整理') : detail.state === 'waiting' ? t('Needs your input', '等待你的处理') : detail.state === 'processing' ? t('Processing…', '正在整理…') : detail.state === 'error' ? t('Needs attention', '需要处理') : detail.exportedPath ? t('In project', '已放入项目') : '↗'}</span></div></div></button>`;
+              const previewUrl = item.previewUrl;
+              const cardTitle = detail.title || t('Untitled resource', '未命名资料');
+              const rawBody = stripTagSpam(
+                bridge?.lead ||
+                  detail.sourceExcerpt ||
+                  detail.summary ||
+                  item.text ||
+                  detail.url ||
+                  '',
+              ).slice(0, 180);
+              const snippet =
+                rawBody &&
+                rawBody !== cardTitle &&
+                !/^https?:\/\/\S+$/i.test(rawBody)
+                  ? rawBody
+                  : '';
+              const sourceMeta = detail.authorName || item.app || item.media;
+              const statusNote =
+                detail.captureStatus === 'loading'
+                  ? t('Saving…', '保存中…')
+                  : detail.captureStatus === 'partial'
+                    ? t('Media incomplete', '媒体未齐')
+                    : project?.name
+                      ? project.name
+                      : detail.exportedPath
+                        ? t('In project', '已放入项目')
+                        : '';
+              return `<button type="button" class="mp-library-card rl-item ${selected === item.id ? 'is-selected' : ''}" data-rl-id="${esc(item.id)}" tabindex="${focusedId === item.id ? 0 : -1}" aria-pressed="${selected === item.id}">
+          ${previewUrl ? `<div class="rl-thumbnail"><img src="${esc(previewUrl)}" alt="${esc(cardTitle)}" loading="lazy"></div>` : ''}
+          <div class="rl-item-copy">
+            <strong>${esc(cardTitle)}</strong>
+            ${snippet ? `<p class="rl-card-excerpt">${esc(snippet)}</p>` : ''}
+            <small class="rl-item-foot"><span>${esc(sourceMeta)} · ${esc(date)}</span>${statusNote ? `<span>${esc(statusNote)}</span>` : ''}</small>
+          </div>
+        </button>`;
             })
             .join('') +
           '</div>' +
           (items.length > cardLimit
-            ? `<button type="button" data-rl-action="more" data-rl-more>${t('Load more', '加载更多')} · ${Math.min(cardLimit, items.length)} / ${items.length}</button>`
+            ? `<button type="button" class="rl-load-more" data-rl-action="more" data-rl-more>${t('Load more', '加载更多')} · ${Math.min(cardLimit, items.length)} / ${items.length}</button>`
             : '')
         : snapshot.items?.length
-          ? `<div class="rl-empty"><h2>${t('No resources match.', '没有符合条件的资料。')}</h2><p>${t('Try another search or view your other resources.', '试试其他关键词，或查看其他分类。')}</p><button type="button" data-rl-action="clear-search">${t(query ? 'Clear search' : 'View all resources', query ? '清除搜索' : '查看全部资料')}</button></div>`
-          : `<div class="rl-empty"><span class="rl-empty-mark" aria-hidden="true">↙</span><h2>${t('Room for the next good idea.', '留一点空间，给下一个好想法。')}</h2><p>${t('A screenshot, a paper, a small detail you want to borrow. Keep it here; decide what it becomes next.', '截图、论文、想借鉴的小细节。先收在这里，再决定它会成为什么。')}</p><button type="button" data-rl-tab="browser">${t('Open your browser', '打开内置浏览器')} ↗</button></div>`;
+          ? `<div class="mp-library-empty rl-empty"><h2>${t('No matching resources', '没有符合条件的资料')}</h2><p>${t('Try a different search or filter.', '试试其他关键词或筛选条件。')}</p><button type="button" data-rl-action="clear-search">${t(query ? 'Clear search' : 'View all', query ? '清除搜索' : '查看全部')}</button></div>`
+          : `<div class="mp-library-empty rl-empty"><h2>${t('No saved resources yet', '还没有收集资料')}</h2><p>${t('Add a thought, paste a link, or connect Xiaohongshu or X in Sources.', '点击右上角“添加”记下想法或链接，或在“来源”中绑定账号。')}</p><button type="button" class="mp-library-primary" data-rl-tab="sources">${t('Connect sources', '连接来源')}</button></div>`;
       if (restore) {
         focusCard(focusedId);
       }
-      scheduleMasonry();
     }
 
     function focusCard(id: string): void {
@@ -465,6 +675,7 @@ declare global {
       focusCard(id);
     }
     function renderDetail() {
+      syncReadingChrome();
       const panel = host.querySelector<HTMLElement>('.rl-detail');
       const item = current();
       if (!panel || dirty) {
@@ -504,17 +715,17 @@ declare global {
         panel.replaceChildren();
         return;
       }
+      const bridge = item.learningBridge || snapshot.learningBridge?.[item.id];
       const detail = details(item);
       host
         .querySelector('.rl-workspace')
-        ?.classList.toggle(
-          'is-reading',
-          Boolean(detail.postPath && detailView === 'post'),
-        );
+        ?.classList.toggle('is-reading', true);
+      const vaultFlag = savedToVaultIds.has(item.id) ? 'v1' : 'v0';
+      const todoFlag = savedTodoIds.has(item.id) ? 't1' : 't0';
       const contentKey =
         detail.postPath && detailView === 'post'
-          ? `${item.id}:post:${detail.postPath}:${detail.captureStatus}:${detail.thumbnailPath}`
-          : `${item.id}:${detail.revision}:${detailView}`;
+          ? `${item.id}:post:${detail.postPath}:${detail.captureStatus}:${detail.thumbnailPath}:${vaultFlag}:${todoFlag}`
+          : `${item.id}:${detail.revision}:${detailView}:${vaultFlag}:${todoFlag}`;
       if (panel.dataset.contentKey === contentKey) {
         return;
       }
@@ -526,15 +737,9 @@ declare global {
         detail.state === 'waiting' && detail.taskId
           ? `<button type="button" data-rl-action="task">${t('Continue task', '继续整理任务')} ↗</button>`
           : `<button type="button" data-rl-action="process" ${busy || detail.state === 'waiting' ? 'disabled' : ''}>${busy ? t('Working…', '正在处理…') : detail.state === 'queued' ? t('Organize now', '立即整理') : t('Let MP organize', '交给 MP 整理')}</button>`;
-      panel.innerHTML = `<div class="rl-detail-top"><span>${t('Make it useful', '让它派上用场')}</span><button type="button" data-rl-action="close" aria-label="${t('Close details', '关闭详情')}">×</button></div>
-        ${detail.postPath ? `<div class="rl-reading-tabs"><button type="button" data-rl-detail-view="post" aria-pressed="${detailView === 'post'}">${t('Original post', '原帖')}</button><button type="button" data-rl-detail-view="notes" aria-pressed="${detailView === 'notes'}">${t('Use & notes', '用途与整理')}</button></div><article class="rl-post" data-rl-post ${detailView === 'post' ? '' : 'hidden'} aria-busy="true"><p>${t('Loading saved post…', '正在读取已保存原帖…')}</p></article>` : ''}
-        ${detail.url && detail.captureStatus !== 'saved' ? `<div class="rl-capture-state" role="status"><p>${esc(detail.captureError || t('The link is saved. Capture the page to keep its text and media here.', '链接已保留。提取正文和媒体后，即可在这里阅读。'))}</p><button type="button" data-rl-action="capture-source" ${detail.captureStatus === 'loading' ? 'disabled' : ''}>${detail.captureStatus === 'loading' ? t('Saving…', '正在保存…') : t('Capture / retry media', '提取正文 / 重试媒体')}</button></div>` : ''}
-        <div class="rl-notes" ${detail.postPath && detailView === 'post' ? 'hidden' : ''}>
-        ${detail.suggestedIntent && detail.suggestedIntent !== detail.intent ? `<div class="rl-use-suggestion"><span>${t('Suggested use', '建议用途')}：${esc(labels()[detail.suggestedIntent])}</span><button type="button" data-rl-action="adopt-intent">${t('Use this', '采用建议')}</button></div>` : ''}
-        <button type="button" class="rl-read-original" data-rl-action="preview">${t('Read saved original', '阅读保存的原件')} <span aria-hidden="true">↗</span></button>
-        ${detail.paperPath ? `<button type="button" class="rl-read-original" data-rl-action="paper">${t('Read downloaded paper', '阅读已下载的论文')} <span aria-hidden="true">PDF ↗</span></button>` : ''}
-        <button type="button" data-rl-action="reload" hidden>${t('Discard draft and reload', '舍弃草稿并重新加载')}</button>
-        <form data-rl-edit><label>${t('Title', '标题')}<input name="title" value="${esc(detail.title)}" required></label><div class="rl-pair"><label>${t('Project', '项目')}<select name="projectId">${projectOptions(detail.projectId)}</select></label><label>${t('Use it for', '用途')}<select name="intent">${Object.entries(
+      const savedInVault = savedToVaultIds.has(item.id);
+      const addedTodo = savedTodoIds.has(item.id);
+      const editFormMarkup = `<form data-rl-edit><label>${t('Title', '标题')}<input name="title" value="${esc(detail.title)}" required></label><div class="rl-pair"><label>${t('Project', '项目')}<select name="projectId">${projectOptions(detail.projectId)}</select></label><label>${t('Use it for', '用途')}<select name="intent">${Object.entries(
           labels(),
         )
           .map(
@@ -544,10 +749,52 @@ declare global {
           .join('')}</select></label></div>
         <label>${t('Your note', '你的想法')}<textarea name="note" rows="2" placeholder="${t('Why did this catch your eye?', '当时为什么想收下它？')}">${esc(detail.note)}</textarea></label>
         <label>${t('Processed content', '整理后的内容')}<textarea name="summary" rows="6" placeholder="${t('Let the agent read your saved material, or write your own.', '让 Agent 整理已保存的材料，也可以自己写。')}">${esc(detail.summary)}</textarea></label>
-        <label>${t('Next time', '下次可以做什么')}<textarea name="nextStep" rows="2">${esc(detail.nextStep)}</textarea></label><button type="submit" class="rl-save">${t('Save changes', '保存修改')}</button></form>
+        <label>${t('Next time', '下次可以做什么')}<textarea name="nextStep" rows="2">${esc(detail.nextStep)}</textarea></label><button type="submit" class="rl-save">${t('Save changes', '保存修改')}</button></form>`;
+      const fallbackParagraphs = splitPostParagraphs(
+        detail.summary || detail.sourceExcerpt || item.text || '',
+      );
+      const linkedNotesHtml = bridge?.relatedNoteTitles?.length
+        ? bridge.relatedNoteTitles
+            .map(
+              noteTitle =>
+                `<button type="button" class="rl-inline-link" data-rl-action="open-vault">[[${esc(noteTitle)}]]</button>`,
+            )
+            .join(' · ')
+        : '';
+      const readerContextLine =
+        bridge?.goalMatch || linkedNotesHtml
+          ? `<p class="rl-reader-context">${bridge?.goalMatch ? esc(bridge.goalMatch.reason) : ''}${bridge?.goalMatch && linkedNotesHtml ? ' · ' : ''}${linkedNotesHtml ? `${t('Linked notes', '关联笔记')}${listSep()}${linkedNotesHtml}` : ''}</p>`
+          : '';
+      const readerBar = `<div class="rl-reader-bar">
+        <button type="button" class="rl-back-btn" data-rl-action="close" aria-label="${t('Back to list', '返回列表')}">← ${t('Resources', '返回列表')}</button>
+        <div class="rl-bridge-actions">
+          <button type="button" class="mp-library-primary rl-bridge-primary" data-rl-action="learn-distill">${t('Bring into Learn', '带入 Learn 深聊')}</button>
+          <button type="button" class="rl-bridge-btn" data-rl-action="${savedInVault ? 'open-vault' : 'save-to-vault'}">${savedInVault ? t('Saved in Vault', '已存知识库') : t('Save to Vault', '存入知识库')}</button>
+          <button type="button" class="rl-bridge-btn" data-rl-action="add-vault-todo" ${addedTodo ? 'disabled' : ''}>${addedTodo ? t('Added to Todo', '已加入待办') : t('+ Study Todo', '+ 学习待办')}</button>
+          <details class="rl-reader-more"><summary aria-label="${t('More actions', '更多操作')}">···</summary><div class="rl-reader-more-menu">${primary}<button type="button" data-rl-action="deliver" ${busy ? 'disabled' : ''}>${t('Send to project', '放入项目')} ↗</button>${detail.url ? `<button type="button" data-rl-action="source">${t('Original page', '原始页面')} ↗</button>` : ''}${detail.postPath ? `<button type="button" data-rl-action="copy-post">${t('Copy post', '复制正文')}</button>` : ''}<button type="button" data-rl-action="ignore">${detail.state === 'ignored' ? t('Restore', '恢复') : t('Ignore', '忽略')}</button></div></details>
+        </div>
+      </div>`;
+      const readerTabs = `<div class="mp-library-tabs rl-reading-tabs" role="tablist">
+        <button type="button" role="tab" data-rl-detail-view="post" class="${detailView === 'post' ? 'is-on' : ''}" aria-pressed="${detailView === 'post'}">${t('Article', '正文精读')}</button>
+        <button type="button" role="tab" data-rl-detail-view="notes" class="${detailView === 'notes' ? 'is-on' : ''}" aria-pressed="${detailView === 'notes'}">${t('Notes & metadata', '备注与整理')}</button>
+      </div>`;
+      panel.innerHTML = `<div class="rl-reader-shell">
+        ${readerBar}
+        ${readerTabs}
+        ${readerContextLine}
+        ${detail.postPath ? `<article class="rl-post" data-rl-post ${detailView === 'post' ? '' : 'hidden'} aria-busy="true"><p>${t('Loading saved post…', '正在读取已保存原帖…')}</p></article>` : `<article class="rl-post" ${detailView === 'post' ? '' : 'hidden'}><header><span class="rl-post-platform">${esc(item.app || item.media)}</span><h2>${esc(detail.title || t('Untitled resource', '未命名资料'))}</h2>${detail.authorName ? `<p class="rl-post-byline">${esc(detail.authorName)}</p>` : ''}</header><div class="rl-post-text rl-post-paragraphs">${(fallbackParagraphs.paragraphs.length ? fallbackParagraphs.paragraphs : [detail.url || t('Saved link.', '已保存链接。')]).map(p => `<p class="rl-post-paragraph">${esc(p)}</p>`).join('')}</div>${bridge?.cleanTags?.length ? `<div class="rl-post-clean-tags">${bridge.cleanTags.map(tag => `<span>#${esc(tag)}</span>`).join('')}</div>` : ''}</article>`}
+        ${detail.url && detail.captureStatus !== 'saved' ? `<div class="rl-capture-state" role="status"><p>${esc(detail.captureError || t('The link is saved. Capture the page to keep its text and media here.', '链接已保留。提取正文和媒体后，即可在这里阅读。'))}</p><button type="button" data-rl-action="capture-source" ${detail.captureStatus === 'loading' ? 'disabled' : ''}>${detail.captureStatus === 'loading' ? t('Saving…', '正在保存…') : t('Capture / retry media', '提取正文 / 重试媒体')}</button></div>` : ''}
+        <div class="rl-notes" ${detailView === 'notes' ? '' : 'hidden'}>
+        ${detail.suggestedIntent && detail.suggestedIntent !== detail.intent ? `<div class="rl-use-suggestion"><span>${t('Suggested use', '建议用途')}${listSep()}${esc(labels()[detail.suggestedIntent])}</span><button type="button" data-rl-action="adopt-intent">${t('Use this', '采用建议')}</button></div>` : ''}
+        <button type="button" class="rl-read-original" data-rl-action="preview">${t('Read saved original', '阅读保存的原件')} <span aria-hidden="true">↗</span></button>
+        ${detail.paperPath ? `<button type="button" class="rl-read-original" data-rl-action="paper">${t('Read downloaded paper', '阅读已下载的论文')} <span aria-hidden="true">PDF ↗</span></button>` : ''}
+        <button type="button" data-rl-action="reload" hidden>${t('Discard draft and reload', '舍弃草稿并重新加载')}</button>
+        ${detailView === 'notes' ? editFormMarkup : ''}
         <div class="rl-evidence">${detail.decisionReason ? `<span>${t('Collection decision', '收录判断')}</span><p>${esc(detail.decisionReason)}</p>` : ''}<span>${t('Reading coverage', '实际阅读范围')}</span><p>${esc(detail.coverage || t('Saved material; not yet reviewed.', '已保存材料，尚未阅读整理。'))}</p>${detail.error ? `<p class="rl-error">${esc(detail.error)}</p>` : ''}${detail.exportedPath ? `<p>${esc(detail.exportedPath)}</p>` : ''}</div>
         <div class="rl-actions" aria-busy="${busy}">${primary}<button type="button" data-rl-action="deliver" ${busy ? 'disabled' : ''}>${t('Send to project', '放入项目')} ↗</button></div>
-        </div><div class="rl-links">${detail.url ? `<button type="button" data-rl-action="source">${t('Original page', '原始页面')} ↗</button>` : ''}${detail.postPath ? `<button type="button" data-rl-action="copy-post">${t('Copy post', '复制正文')}</button>` : `<button type="button" data-rl-action="original">${t('Saved original', '保存的原件')} ↗</button>`}${detail.taskId ? `<button type="button" data-rl-action="task">${t('Agent task', '整理任务')} ↗</button>` : ''}<button type="button" data-rl-action="ignore">${detail.state === 'ignored' ? t('Restore', '恢复') : t('Ignore', '忽略')}</button></div>`;
+        </div>
+        ${detailView === 'post' ? `<details class="rl-edit-drawer"><summary>${t('Edit notes, project & intent', '补充想法 / 归属项目 / 修改信息')}</summary>${editFormMarkup}</details>` : ''}
+        <div class="rl-links">${detail.url ? `<button type="button" data-rl-action="source">${t('Original page', '原始页面')} ↗</button>` : ''}${detail.postPath ? `<button type="button" data-rl-action="copy-post">${t('Copy post', '复制正文')}</button>` : `<button type="button" data-rl-action="original">${t('Saved original', '保存的原件')} ↗</button>`}${detail.taskId ? `<button type="button" data-rl-action="task">${t('Agent task', '整理任务')} ↗</button>` : ''}<button type="button" data-rl-action="ignore">${detail.state === 'ignored' ? t('Restore', '恢复') : t('Ignore', '忽略')}</button></div></div>`;
       if (detail.postPath && detailView === 'post') {
         void loadPost(item.id);
       }
@@ -590,7 +837,16 @@ declare global {
         }
         const post = result.post!;
         displayedPost = post;
-        article.innerHTML = `<header><span class="rl-post-platform">${esc(post.platform === 'xiaohongshu' ? '小红书' : post.platform === 'x' ? 'X' : new URL(post.url).hostname)}</span><h2>${esc(post.title)}</h2><p class="rl-post-byline">${esc(post.author.name)}${post.publishedAt ? ` · ${esc(new Date(post.publishedAt).toLocaleDateString(document.documentElement.lang))}` : ''}</p></header><div class="rl-post-text">${esc(post.text)}</div><div class="rl-post-media">${post.media.map((media, index) => (media.localUrl ? (media.kind === 'image' ? `<button type="button" class="rl-post-image" data-rl-media="${index}" aria-label="${t('Enlarge image', '放大图片')} ${index + 1}"><img src="${esc(media.localUrl)}" loading="lazy" alt="${t('Saved post image', '已保存图片')} ${index + 1}"></button>` : `<video controls preload="metadata" src="${esc(media.localUrl)}"></video>`) : `<div class="rl-media-missing">${t('Media not saved', '媒体尚未保存')} ${index + 1}<p>${esc(media.error || '')}</p></div>`)).join('')}</div>${post.links.length ? `<details class="rl-post-links"><summary>${t('Links in this post', '帖子中的链接')} (${post.links.length})</summary>${post.links.map(url => `<button type="button" data-rl-url="${esc(url)}">${esc(url)}</button>`).join('')}</details>` : ''}<p class="rl-post-coverage">${esc(post.coverage)}</p>`;
+        const formatted = splitPostParagraphs(post.text);
+        const bodyHtml = formatted.paragraphs.length
+          ? `<div class="rl-post-text rl-post-paragraphs">${formatted.paragraphs
+              .map(p => `<p class="rl-post-paragraph">${esc(p)}</p>`)
+              .join('')}</div>`
+          : formatted.cleanTags.length || !post.text.trim()
+            ? ''
+            : `<div class="rl-post-text rl-post-paragraphs"><p class="rl-post-paragraph">${esc(post.text)}</p></div>`;
+        const mediaCount = post.media.length;
+        article.innerHTML = `<header><span class="rl-post-platform">${esc(post.platform === 'xiaohongshu' ? '小红书' : post.platform === 'x' ? 'X' : new URL(post.url).hostname)}</span><h2>${esc(post.title)}</h2><p class="rl-post-byline">${esc(post.author.name)}${post.publishedAt ? ` · ${esc(new Date(post.publishedAt).toLocaleDateString(document.documentElement.lang))}` : ''}</p></header>${bodyHtml}${formatted.cleanTags.length ? `<div class="rl-post-clean-tags">${formatted.cleanTags.map(tag => `<span>#${esc(tag)}</span>`).join('')}</div>` : ''}<div class="rl-post-media" data-media-count="${mediaCount}">${post.media.map((media, index) => (media.localUrl ? (media.kind === 'image' ? `<button type="button" class="rl-post-image" data-rl-media="${index}" aria-label="${t('Enlarge image', '放大图片')} ${index + 1}"><img src="${esc(media.localUrl)}" loading="lazy" alt="${t('Saved post image', '已保存图片')} ${index + 1}"></button>` : `<video controls preload="metadata" src="${esc(media.localUrl)}"></video>`) : `<div class="rl-media-missing">${t('Media not saved', '媒体尚未保存')} ${index + 1}<p>${esc(media.error || '')}</p></div>`)).join('')}</div>${post.links.length ? `<details class="rl-post-links"><summary>${t('Links in this post', '帖子中的链接')} (${post.links.length})</summary>${post.links.map(url => `<button type="button" data-rl-url="${esc(url)}">${esc(url)}</button>`).join('')}</details>` : ''}<p class="rl-post-coverage">${esc(post.coverage)}</p>`;
         article.setAttribute('aria-busy', 'false');
       } catch (error) {
         if (epoch === postGeneration && article.isConnected) {
@@ -606,8 +862,15 @@ declare global {
         localStorage.getItem('mp:collection-url:' + browserSlot) ||
         browserAccounts.find(account => account.id === browserSlot)!.url;
       host.querySelector('.rl-content')!.innerHTML =
-        `<div class="rl-browser rl-embedded"><div class="rl-browser-accounts" role="group" aria-label="${t('Separate sign-in sessions', '独立登录会话')}">${browserAccounts.map(account => `<button type="button" data-rl-account="${account.id}" aria-pressed="${account.id === browserSlot}">${account.name}</button>`).join('')}<span>${t('Sign in once. Each account stays separate on this device.', '登录状态保存在本机，各账号互不串用。')}</span></div>
-        <form class="rl-browser-bar" data-rl-browser><button type="button" data-rl-browser-command="back" aria-label="${t('Back', '后退')}">←</button><button type="button" data-rl-browser-command="forward" aria-label="${t('Forward', '前进')}">→</button><button type="button" data-rl-browser-command="reload" aria-label="${t('Reload', '刷新')}">↻</button><input name="url" aria-label="URL" value="${esc(savedBrowserUrl)}" required><button type="submit">${t('Go', '前往')}</button><button type="button" data-rl-action="${browserSlot.startsWith('xiaohongshu-') ? 'sync-bookmarks' : 'capture'}">${browserSlot.startsWith('xiaohongshu-') ? t('View synced bookmarks', '查看同步收藏') : t('Save this page', '保存当前网页')}</button></form><p class="rl-browser-sync-help">${browserSlot.startsWith('xiaohongshu-') ? t('After sign-in, MP imports your saved history automatically, then checks for new bookmarks every hour.', '登录后自动初始化全部历史收藏，之后每小时检查新增收藏。可返回资料页查看导入进度。') : ''}</p><div class="rl-browser-canvas"><div class="rl-browser-surface" data-rl-browser-host><p>${t('Your page opens here, inside MP.', '网页在这里打开，始终留在 MP 内。')}</p></div><aside class="rl-browser-recall" data-rl-related hidden aria-label="${t('Previously saved references', '以前留下的资料')}"></aside></div></div>`;
+        `<div class="rl-browser rl-embedded">
+          <div class="rl-browser-accounts" role="group" aria-label="${t('Separate sign-in sessions', '独立登录会话')}">
+            <button type="button" class="rl-back-btn" data-rl-tab="sources">← ${t('Back to Sources', '返回来源')}</button>
+            ${browserAccounts.map(account => `<button type="button" data-rl-account="${account.id}" aria-pressed="${account.id === browserSlot}">${account.name}</button>`).join('')}
+            <span>${t('Each session stays isolated on this device.', '各账号登录状态保存在本机，互不串用。')}</span>
+          </div>
+          <form class="rl-browser-bar" data-rl-browser><button type="button" data-rl-browser-command="back" aria-label="${t('Back', '后退')}">←</button><button type="button" data-rl-browser-command="forward" aria-label="${t('Forward', '前进')}">→</button><button type="button" data-rl-browser-command="reload" aria-label="${t('Reload', '刷新')}">↻</button><input name="url" aria-label="URL" value="${esc(savedBrowserUrl)}" required><button type="submit">${t('Go', '前往')}</button><button type="button" data-rl-action="${browserSlot.startsWith('xiaohongshu-') ? 'sync-bookmarks' : 'capture'}">${browserSlot.startsWith('xiaohongshu-') ? t('View synced bookmarks', '查看同步收藏') : t('Save this page', '保存当前网页')}</button></form>
+          <div class="rl-browser-canvas"><div class="rl-browser-surface" data-rl-browser-host><p>${t('Loading session…', '正在打开页面…')}</p></div><aside class="rl-browser-recall" data-rl-related hidden aria-label="${t('Previously saved references', '以前留下的资料')}"></aside></div>
+        </div>`;
       browserObserver.disconnect();
       browserObserver.observe(host);
       browserObserver.observe(host.querySelector('[data-rl-browser-host]')!);
@@ -645,10 +908,10 @@ declare global {
           Boolean(rows.length),
         );
         aside.innerHTML = rows.length
-          ? `<h3>${t('You kept something here.', '你以前在这里留过东西。')}</h3><p class="rl-recall-intro">${t('A note, a reference, a next step. Pick it up where you left it.', '当时的一点想法、一个参考，或留给下次的事。')}</p>${rows
+          ? `<h3>${t('Saved from here earlier', '以前在这里留过资料')}</h3><p class="rl-recall-intro">${t('Pick up where you left off.', '当时留下的想法、参考或下一步。')}</p>${rows
               .map(row => {
                 const detail = details(row.entry);
-                return `<button type="button" data-rl-revisit="${esc(row.entry.id)}"><small>${row.relation === 'page' ? t('This page', '同一页面') : row.relation === 'link' ? t('Links to this page', '提到了这个页面') : t('From this website', '同一网站的资料')} · ${esc(labels()[detail.intent === 'save' && detail.suggestedIntent ? detail.suggestedIntent : detail.intent])}</small><strong>${esc(detail.title)}</strong><p>${esc((detail.note || detail.summary || detail.nextStep || '').slice(0, 220))}</p></button>`;
+                return `<button type="button" data-rl-revisit="${esc(row.entry.id)}"><small>${row.relation === 'page' ? t('This page', '同一页面') : row.relation === 'link' ? t('Links here', '提到此页') : t('Same site', '同一网站')} · ${esc(labels()[detail.intent === 'save' && detail.suggestedIntent ? detail.suggestedIntent : detail.intent])}</small><strong>${esc(detail.title)}</strong><p>${esc((detail.note || detail.summary || detail.nextStep || '').slice(0, 220))}</p></button>`;
               })
               .join('')}`
           : '';
@@ -660,46 +923,77 @@ declare global {
     }
     function renderSources() {
       const source = snapshot.source;
+      const xhsRows = browserAccounts
+        .filter(account => account.id.startsWith('xiaohongshu-'))
+        .map(account => ({
+          id: account.id,
+          name: account.name,
+          subtitle: t('Isolated sign-in session', '本机独立登录会话'),
+          sync: t('Hourly', '每小时'),
+        }));
       host.querySelector('.rl-content')!.innerHTML =
-        `<div class="rl-sources"><h2>${t('Sign in. Your bookmarks follow.', '登录一次，收藏自动收进来。')}</h2><p>${t('MP imports all available saved history after sign-in, then checks for new bookmarks every hour. Text and media remain readable here.', '登录后先初始化历史收藏，之后每小时检查新增收藏。正文和媒体保留在本机，回到资料页就能查看。')}</p>
-        ${browserAccounts
-          .filter(account => account.id !== 'web')
-          .map(
-            account =>
-              `<section class="rl-source-account"><div class="rl-source-row"><div><h3>${esc(account.name)}</h3><p>${t('A separate sign-in session saved on this device.', '独立登录会话，保存在这台电脑。')}</p></div><button type="button" data-rl-connect-account="${account.id}">${t('Open in MP', '在 MP 内打开')} ↗</button></div>${account.id.startsWith('xiaohongshu-') ? `<div data-rl-history-account="${account.id}" class="rl-history"></div>` : ''}</section>`,
-          )
-          .join('')}
-        <details class="rl-api-options"><summary>${t('Optional X developer API connection', '可选：X 开发者 API 接入')}</summary>
-        <section class="rl-source-row"><div><h3>X</h3><p>${t('Official, read-only API · every 30 minutes when enabled', '官方只读 API · 启用后每 30 分钟检查')}</p></div><span data-rl-source-account></span></section>
-        <p data-rl-source-feedback role="status" aria-live="polite"></p>
-        <form data-rl-x><label>${t('User OAuth access token', '用户 OAuth access token')}<input name="token" type="password" autocomplete="off" required placeholder="${t('Stored encrypted on this device', '仅加密保存在本机')}"></label><p>${t('Requires your X developer application and user-authorized read scopes. API usage may be billed by X. Your browser login is not this token.', '需要你自己的 X 开发者应用和用户授权的读取权限，X API 可能计费。浏览器的登录状态不能代替这个 token。')}</p><button type="submit">${t('Connect official API', '连接官方 API')}</button></form>
-        <div class="rl-source-options"><label><input type="checkbox" data-rl-x-option="bookmarks" ${source?.bookmarks ? 'checked' : ''}> ${t('Bookmarks', '收藏')}</label><label><input type="checkbox" data-rl-x-option="likes" ${source?.likes ? 'checked' : ''}> ${t('Likes', '点赞')}</label><label><input type="checkbox" data-rl-x-option="enabled" ${source?.enabled ? 'checked' : ''}> ${t('Automatic checks', '定时检查')}</label><button type="button" data-rl-action="sync" ${source?.accountId ? '' : 'disabled'}>${t('Check now', '现在检查')}</button></div>
-        <p>${t('Recent window only, up to 500 entries per list per check. Imported materials are retained even when the source is unavailable.', 'API 每次检查近期窗口，每类最多 500 条。来源不可用时，已经保存的材料仍然保留。')}</p>
-        <p class="rl-source-result"></p></details>
-        <form data-rl-rules><label>${t('What is worth keeping?', '哪些内容值得留下？')}<textarea name="rules" rows="3" placeholder="${t('Keep UI references and research ideas; ignore giveaways.', '保留 UI 参考与论文思路，忽略抽奖。')}">${esc(source?.rules || '')}</textarea></label><button type="submit">${t('Save collection rule', '保存收集规则')}</button></form>
-        <div class="rl-source-options"><label><input type="checkbox" data-rl-x-option="organize" ${source?.organize ? 'checked' : ''}> ${t('Organize new imports with MP (uses model credits)', '自动整理新导入内容（消耗模型额度）')}</label></div>
-        ${[
-          [
-            '抖音 / B站',
-            t(
-              'Browse and clip manually. Automatic account collection is not enabled without a verified permitted interface.',
-              '可在内置浏览器中正常浏览、主动收录。未核实允许的接口前，不启用账号自动采集。',
-            ),
-          ],
-          [
-            'iPhone / Android',
-            t(
-              'Share or transfer files to this PC, then add them here. A paired mobile inbox and automatic album sync are not connected in this build.',
-              '可以先将文件分享到电脑，再添加到这里。本版尚未接通手机配对收件箱与自动相册同步。',
-            ),
-          ],
-        ]
-          .map(
-            ([name, body]) =>
-              `<section class="rl-source-row"><div><h3>${name}</h3><p>${body}</p></div></section>`,
-          )
-          .join('')}
-        <button type="button" data-rl-action="settings">${t('Clipboard collection settings', '剪贴板收集设置')} ↗</button></div>`;
+        `<div class="rl-sources">
+          <h2 class="mp-library-section-title">${t('Your bookmark sources', '收藏来源')}</h2>
+          <p class="mp-library-note">${t('Sign in once on this device to import and sync saved posts locally.', '在本机登录一次后即可自动收录并保留本地正文与媒体。')}</p>
+          <div class="mp-connector-table">
+            <div class="mp-connector-head"><span>${t('Source', '来源')}</span><span>${t('Sync', '同步')}</span><span>${t('Status', '状态')}</span><span>${t('Action', '操作')}</span></div>
+            ${xhsRows
+              .map(
+                row => `<div class="mp-connector-row" data-rl-source-row="${row.id}">
+                  <span><strong>${esc(row.name)}</strong></span>
+                  <span>${esc(row.sync)}</span>
+                  <span data-rl-source-status="${row.id}">${t('Not connected', '未连接')}</span>
+                  <button type="button" data-rl-connect-account="${row.id}">${t('Open', '打开')}</button>
+                </div>`,
+              )
+              .join('')}
+            <div class="mp-connector-row" data-rl-source-row="x-1">
+              <span><strong>X</strong></span>
+              <span>${t('Session + API', '会话 + API')}</span>
+              <span data-rl-source-account>${t('Not connected', '未连接')}</span>
+              <button type="button" data-rl-connect-account="x-1">${t('Open', '打开')}</button>
+            </div>
+            <div class="mp-connector-row">
+              <span><strong>${t('Clipboard', '剪贴板')}</strong></span>
+              <span>${t('Local', '本机')}</span>
+              <span>${t('On this device', '本机设置')}</span>
+              <button type="button" data-rl-action="settings">${t('Settings', '设置')}</button>
+            </div>
+          </div>
+
+          <details class="rl-source-disclosure">
+            <summary>${t('Xiaohongshu sync & import history', '小红书收藏同步与导入明细')}</summary>
+            ${xhsRows
+              .map(
+                row =>
+                  `<div class="rl-source-history-block"><h4>${esc(row.name)}</h4><div data-rl-history-account="${row.id}" class="rl-history"></div></div>`,
+              )
+              .join('')}
+          </details>
+
+          <details class="rl-source-disclosure">
+            <summary>${t('X API connection & collection rules', 'X 开发者 API 与自动整理规则')}</summary>
+            <div class="rl-api-panel">
+              <p data-rl-source-feedback role="status" aria-live="polite"></p>
+              <form data-rl-x>
+                <label>${t('User OAuth access token', '用户 OAuth access token')}<input name="token" type="password" autocomplete="off" required placeholder="${t('Stored encrypted on this device', '仅加密保存在本机')}"></label>
+                <p class="mp-library-note">${t('Requires an authorized X developer app token (up to 500 recent items per check).', '需要你自己的 X 开发者应用读取 token（每次检查近期最多 500 条）。')}</p>
+                <button type="submit">${t('Connect official API', '连接官方 API')}</button>
+              </form>
+              <div class="rl-source-options">
+                <label><input type="checkbox" data-rl-x-option="bookmarks" ${source?.bookmarks ? 'checked' : ''}> ${t('Bookmarks', '收藏')}</label>
+                <label><input type="checkbox" data-rl-x-option="likes" ${source?.likes ? 'checked' : ''}> ${t('Likes', '点赞')}</label>
+                <label><input type="checkbox" data-rl-x-option="enabled" ${source?.enabled ? 'checked' : ''}> ${t('Automatic checks', '定时检查')}</label>
+                <label><input type="checkbox" data-rl-x-option="organize" ${source?.organize ? 'checked' : ''}> ${t('Auto-organize with MP', '自动整理新导入内容')}</label>
+                <button type="button" data-rl-action="sync" ${source?.accountId ? '' : 'disabled'}>${t('Check now', '现在检查')}</button>
+              </div>
+              <p class="rl-source-result"></p>
+              <form data-rl-rules><label>${t('What is worth keeping?', '哪些内容值得留下？')}<textarea name="rules" rows="3" placeholder="${t('Keep UI references and research ideas; ignore giveaways.', '保留 UI 参考与论文思路，忽略抽奖。')}">${esc(source?.rules || '')}</textarea></label><button type="submit">${t('Save collection rule', '保存收集规则')}</button></form>
+            </div>
+          </details>
+
+          <p class="mp-library-note">${t('Douyin / Bilibili: browse and clip manually in the Browser side panel. Mobile inbox sync is not connected in this build.', '抖音 / B 站可在右侧浏览器中手动收录；手机配对同步暂未接通。')}</p>
+        </div>`;
       syncSourceView();
     }
     function syncSourceView() {
@@ -707,6 +1001,26 @@ declare global {
         return;
       }
       const source = snapshot.source;
+      host
+        .querySelectorAll<HTMLElement>('[data-rl-source-status]')
+        .forEach(cell => {
+          const accountId = cell.dataset.rlSourceStatus!;
+          const connected = snapshot.accounts?.find(
+            account => account.account === accountId,
+          );
+          const jobs = (snapshot.histories || []).filter(
+            job => job.account === accountId,
+          );
+          const savedJob = jobs.find(job => job.list === 'saved');
+          if (connected && connected.error !== 'auth_required') {
+            const countText = savedJob ? ` · ${savedJob.retained}` : '';
+            const runningText =
+              savedJob?.status === 'running' ? ` (${t('syncing', '同步中')})` : '';
+            cell.textContent = `${connected.name || t('Connected', '已连接')}${countText}${runningText}`;
+          } else {
+            cell.textContent = t('Not connected', '未连接');
+          }
+        });
       host
         .querySelectorAll<HTMLElement>('[data-rl-history-account]')
         .forEach(container => {
@@ -718,7 +1032,7 @@ declare global {
             job => job.account === accountId,
           );
           const busy = jobs.some(job => job.status === 'running');
-          const labels = {
+          const statusLabels = {
             running: t('Importing bookmarks…', '正在收录收藏…'),
             paused: t('Paused · end not confirmed', '已暂停 · 未确认历史到底'),
             complete: t('Up to date', '本次同步完成'),
@@ -735,14 +1049,13 @@ declare global {
           container.innerHTML =
             (connected && connected.error !== 'auth_required'
               ? `<p>${esc(connected.name || t('Signed in', '已登录'))} · <label><input type="checkbox" data-rl-bookmark-enabled="${accountId}" ${connected.enabled ? 'checked' : ''}> ${t('Sync bookmarks every hour', '每小时自动同步收藏')}</label></p><p>${connected.enabled && connected.nextCheckAt ? t('Next check: ', '下次检查：') + new Date(connected.nextCheckAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : ''}</p>`
-              : `<p>${t('After sign-in, history import starts automatically.', '登录后自动开始初始化历史收藏。')}</p>`) +
+              : `<p>${t('Sign in via Open above to start importing saved posts.', '点击上方“打开”登录后开始导入历史收藏。')}</p>`) +
             (['saved', 'liked'] as const)
               .map(list => {
                 const job = jobs.find(row => row.list === list);
-                return `<div class="rl-history-list"><div><strong>${list === 'saved' ? t('Saved notes', '收藏笔记') : t('Liked notes', '点赞笔记')}</strong><p>${job ? `${esc(labels[job.status])} · ${job.retained} ${t('links retained', '条链接已留存')}` : t('Not imported yet', '尚未导入')}</p>${job?.error ? `<p class="rl-error">${esc(job.error)}</p>` : ''}</div><div class="rl-history-actions"><button type="button" data-rl-history="${job?.status === 'running' ? 'pause' : 'start'}" data-account="${accountId}" data-list="${list}" ${busy && job?.status !== 'running' ? 'disabled' : ''}>${job?.status === 'running' ? t('Pause', '暂停') : job ? t('Continue / check again', '继续 / 再次检查') : t('Import history', '导入历史')}</button>${job?.url ? `<button type="button" data-rl-history-view="${esc(job.url)}" data-account="${accountId}">${t('Check account page', '查看账号页面')} ↗</button>` : ''}</div></div>`;
+                return `<div class="rl-history-list"><div><strong>${list === 'saved' ? t('Saved notes', '收藏笔记') : t('Liked notes', '点赞笔记')}</strong><p>${job ? `${esc(statusLabels[job.status])} · ${job.retained} ${t('links retained', '条链接已留存')}` : t('Not imported yet', '尚未导入')}</p>${job?.error ? `<p class="rl-error">${esc(job.error)}</p>` : ''}</div><div class="rl-history-actions"><button type="button" data-rl-history="${job?.status === 'running' ? 'pause' : 'start'}" data-account="${accountId}" data-list="${list}" ${busy && job?.status !== 'running' ? 'disabled' : ''}>${job?.status === 'running' ? t('Pause', '暂停') : job ? t('Continue / check again', '继续 / 再次检查') : t('Import history', '导入历史')}</button>${job?.url ? `<button type="button" data-rl-history-view="${esc(job.url)}" data-account="${accountId}">${t('Check account page', '查看账号页面')} ↗</button>` : ''}</div></div>`;
               })
-              .join('') +
-            `<details class="rl-history-coverage"><summary>${t('Import details', '导入明细')}</summary><p>${t('Saved posts are retained locally. If the platform hides older posts or requests verification, synchronization stops and keeps its progress.', '已取得的原帖保留在本机。平台隐藏旧帖、要求验证或列表加载中断时，会保留进度并明确显示暂停原因。')}</p></details>`;
+              .join('');
         });
       const account = host.querySelector<HTMLElement>(
         '[data-rl-source-account]',
@@ -756,7 +1069,10 @@ declare global {
         .querySelectorAll<HTMLInputElement>('[data-rl-x-option]')
         .forEach(input => {
           const key = input.dataset.rlXOption as
-            'enabled' | 'likes' | 'bookmarks' | 'organize';
+            | 'enabled'
+            | 'likes'
+            | 'bookmarks'
+            | 'organize';
           input.checked = Boolean(source?.[key]);
           input.disabled = sourcePending;
         });
@@ -968,12 +1284,7 @@ declare global {
       if (input) {
         input.value = savedBrowserUrl;
       }
-      status(
-        t(
-          'Ready. Signed-in Xiaohongshu accounts synchronize bookmarks automatically.',
-          '已就绪。小红书账号登录后会自动同步收藏。',
-        ),
-      );
+      status('');
       await updateRelated(savedBrowserUrl);
     }
     const run = (operation: () => Promise<void>) => {
@@ -1025,6 +1336,11 @@ declare global {
         });
         return;
       }
+      if (input.matches('[data-rl-view-filter]')) {
+        applyViewFilterValue(input.value);
+        renderList();
+        return;
+      }
       if (input.matches('[data-rl-sort]')) {
         sort = input.value as 'time' | 'importance';
         localStorage.setItem('mp:collection-sort', sort);
@@ -1032,12 +1348,6 @@ declare global {
           await refresh();
           renderLibrary();
         });
-        return;
-      }
-      if (input.matches('[data-rl-scope]')) {
-        mediaScope = input.value;
-        cardLimit = 120;
-        renderList();
         return;
       }
       if (input.matches('[data-rl-focus]')) {
@@ -1123,6 +1433,7 @@ declare global {
           });
           if (captureDraft === draft) {
             captureDraft = '';
+            captureOpen = false;
             const currentField = host.querySelector<HTMLTextAreaElement>(
               '[data-rl-capture] textarea',
             );
@@ -1133,16 +1444,17 @@ declare global {
           if (selected === previousSelection && tab === 'library' && !dirty) {
             selected = result.entry?.id || '';
             filter = 'inbox';
+            mediaScope = 'all';
             renderLibrary();
           }
           await refresh();
           status(
             result.items && result.items.length > 1
               ? t(
-                  `${result.items.length} links saved. Originals are being captured in the background.`,
-                  `已保留 ${result.items.length} 条链接，正在后台保存原帖。`,
+                  `${result.items.length} links saved.`,
+                  `已保留 ${result.items.length} 条链接。`,
                 )
-              : t('Kept. Ready when you are.', '收下了，随时可以继续。'),
+              : t('Saved.', '已收下。'),
           );
         } finally {
           capturing = false;
@@ -1163,11 +1475,45 @@ declare global {
         return;
       }
       run(async () => {
+        if ('rlOpenBrowser' in button.dataset) {
+          if (options.openRightBrowser) {
+            options.openRightBrowser();
+          } else {
+            document.getElementById('header-browser-toggle')?.click();
+          }
+          return;
+        }
+        if ('rlToggleCapture' in button.dataset) {
+          captureOpen = !captureOpen;
+          const drawer = host.querySelector<HTMLElement>(
+            '[data-rl-capture-drawer]',
+          );
+          if (drawer) {
+            drawer.hidden = !captureOpen;
+          }
+          button.setAttribute('aria-expanded', String(captureOpen));
+          button.textContent = captureOpen
+            ? t('Close', '收起')
+            : `+ ${t('Add', '添加')}`;
+          if (captureOpen) {
+            host
+              .querySelector<HTMLTextAreaElement>('[data-rl-capture] textarea')
+              ?.focus();
+          }
+          return;
+        }
         if (button.dataset.rlTab) {
           if (!(await savePending())) {
             return;
           }
-          tab = button.dataset.rlTab;
+          const nextTab = button.dataset.rlTab;
+          if (
+            nextTab === 'library' ||
+            nextTab === 'sources' ||
+            nextTab === 'browser'
+          ) {
+            tab = nextTab;
+          }
           render();
           return;
         }
@@ -1236,7 +1582,9 @@ declare global {
           await call('browser-command', {
             sourceAccount: browserSlot,
             command: button.dataset.rlBrowserCommand as
-              'back' | 'forward' | 'reload',
+              | 'back'
+              | 'forward'
+              | 'reload',
           });
           return;
         }
@@ -1268,16 +1616,10 @@ declare global {
           }
           return;
         }
-        if (button.dataset.rlFilter) {
-          filter = button.dataset.rlFilter;
-          host
-            .querySelectorAll<HTMLElement>('[data-rl-filter]')
-            .forEach(item =>
-              item.setAttribute(
-                'aria-pressed',
-                String(item.dataset.rlFilter === filter),
-              ),
-            );
+        if (button.dataset.rlGoal !== undefined) {
+          const nextGoal = button.dataset.rlGoal;
+          activeGoalId = activeGoalId === nextGoal ? '' : nextGoal;
+          renderGoalStrip();
           renderList();
           return;
         }
@@ -1321,6 +1663,7 @@ declare global {
           selected = '';
           mediaScope = 'bookmarks';
           filter = 'all';
+          lens = 'all';
           render();
           await refresh();
           return;
@@ -1352,12 +1695,7 @@ declare global {
           status(t('Saving source text and media…', '正在保存原文和媒体…'));
           await call('capture-source', {id: item.id});
           await refresh();
-          status(
-            t(
-              'Capture returned. The saved content and any gaps are shown here.',
-              '提取已返回，已保存的内容与缺口显示在这里。',
-            ),
-          );
+          status(t('Capture updated.', '正文与媒体已更新。'));
           return;
         }
         if (action === 'copy-post' && displayedPost) {
@@ -1370,6 +1708,7 @@ declare global {
         if (action === 'clear-search') {
           if (!query) {
             filter = 'all';
+            lens = 'all';
           }
           query = '';
           searchEpoch++;
@@ -1380,14 +1719,12 @@ declare global {
             search.value = '';
             search.focus();
           }
-          host
-            .querySelectorAll<HTMLElement>('[data-rl-filter]')
-            .forEach(item =>
-              item.setAttribute(
-                'aria-pressed',
-                String(item.dataset.rlFilter === filter),
-              ),
-            );
+          const filterSelect = host.querySelector<HTMLSelectElement>(
+            '[data-rl-view-filter]',
+          );
+          if (filterSelect) {
+            filterSelect.value = viewFilterValue();
+          }
           renderList();
           return;
         }
@@ -1435,7 +1772,7 @@ declare global {
           selected = result.entry?.id || '';
           status(
             result.entry?.collection?.captureError ||
-              t('Saved to your inbox.', '已收进待整理。'),
+              t('Saved to inbox.', '已收进待整理。'),
             Boolean(result.entry?.collection?.captureError),
           );
           await refresh();
@@ -1448,16 +1785,69 @@ declare global {
               await refresh();
             }
             sourceNotice(
-              t(
-                'Source check finished. See its status below.',
-                '来源检查已返回，实际状态见下方。',
-              ),
+              t('Source check finished.', '来源检查已返回。'),
             );
           }
           return;
         }
+        if (action === 'open-vault') {
+          options.openVaultNote?.();
+          return;
+        }
         const item = current();
         if (!item) {
+          return;
+        }
+        if (action === 'learn-distill') {
+          button.setAttribute('disabled', '');
+          try {
+            const res = await call('distill', {id: item.id});
+            if (res.distilledPrompt && options.startLearnChat) {
+              options.startLearnChat(res.distilledPrompt);
+            }
+          } finally {
+            button.removeAttribute('disabled');
+          }
+          return;
+        }
+        if (action === 'save-to-vault') {
+          button.setAttribute('disabled', '');
+          try {
+            const res = await call('save-to-vault', {id: item.id});
+            if (res.ok) {
+              savedToVaultIds.add(item.id);
+              options.onVaultUpdated?.();
+              status(t('Saved to Knowledge Vault.', '已存入知识库。'));
+              renderDetail();
+            }
+          } finally {
+            button.removeAttribute('disabled');
+          }
+          return;
+        }
+        if (action === 'add-vault-todo') {
+          button.setAttribute('disabled', '');
+          try {
+            const res = await call('add-vault-todo', {id: item.id});
+            if (res.ok) {
+              savedTodoIds.add(item.id);
+              options.onVaultUpdated?.();
+              status(
+                res.vaultResult?.appended === false
+                  ? t(
+                      'This study todo already exists in Vault.',
+                      '该学习待办已在知识库清单中。',
+                    )
+                  : t(
+                      'Added study todo to Knowledge Vault.',
+                      '已加入知识库学习待办。',
+                    ),
+              );
+              renderDetail();
+            }
+          } finally {
+            button.removeAttribute('disabled');
+          }
           return;
         }
         if (action === 'preview' || action === 'paper') {
@@ -1555,14 +1945,8 @@ declare global {
             await refresh();
             status(
               action === 'process'
-                ? t(
-                    'Organized. Review the reading coverage and next step.',
-                    '已整理。可以查看阅读范围和下一步建议。',
-                  )
-                : t(
-                    'Saved and attached to the project for the next task.',
-                    '已保存并加入项目资料，下次任务可读取。',
-                  ),
+                ? t('Organized.', '已整理。')
+                : t('Saved to project.', '已加入项目资料。'),
             );
           } catch (error) {
             await refresh();
@@ -1633,15 +2017,6 @@ declare global {
       }
     });
     host.addEventListener(
-      'load',
-      event => {
-        if ((event.target as HTMLElement).closest?.('.rl-thumbnail')) {
-          scheduleMasonry();
-        }
-      },
-      true,
-    );
-    host.addEventListener(
       'error',
       event => {
         const image = event.target;
@@ -1659,10 +2034,6 @@ declare global {
     return {
       show() {
         visible = true;
-        const grid = host.querySelector('.rl-grid');
-        if (grid) {
-          masonryObserver.observe(grid);
-        }
         const navigationLabel = document.querySelector(
           '#nav-resources .mp-nav-label',
         );
@@ -1689,8 +2060,6 @@ declare global {
         }
         cancelAnimationFrame(browserResizeFrame);
         browserObserver.disconnect();
-        masonryObserver.disconnect();
-        cancelAnimationFrame(masonryFrame);
         void api.request('browser-command', {command: 'hide'});
         preview.close();
       },

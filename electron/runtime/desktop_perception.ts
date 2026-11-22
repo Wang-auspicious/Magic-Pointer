@@ -748,20 +748,29 @@ export async function perceiveFrozenFrame(
   ) {
     throw new Error('artifact_hash_mismatch');
   }
+  const rawProcessName = String(
+    frame.targetWindow.process_name || frame.targetWindow.processName || '',
+  ).trim();
+  const isDisplayFallback =
+    /display/i.test(String(frame.source || '')) ||
+    rawProcessName.toLowerCase() === 'desktop' ||
+    !Number(frame.targetWindow.hwnd) ||
+    !(frame.targetWindow.pid || frame.targetWindow.processId);
   const window = {
     ...frame.targetWindow,
-    hwnd: Number(frame.targetWindow.hwnd),
-    title: String(frame.targetWindow.title || ''),
-    pid: frame.targetWindow.pid || frame.targetWindow.processId,
-    process_name:
-      frame.targetWindow.process_name || frame.targetWindow.processName,
-    bbox: frame.targetWindow.bbox,
+    hwnd: Number(frame.targetWindow.hwnd || 0),
+    title:
+      String(frame.targetWindow.title || '').trim() ||
+      (isDisplayFallback ? 'Screen' : ''),
+    pid: Number(frame.targetWindow.pid || frame.targetWindow.processId || 0),
+    process_name: rawProcessName || (isDisplayFallback ? 'desktop' : ''),
+    bbox: frame.targetWindow.bbox || frame.surfaceBoundsPx,
   } as DesktopWindow;
   const gesture = request.gesture || frame.gesture || {};
   const point = request.point || gesture.semanticPoint;
   const strokes = gestureStrokes(gesture);
   const allPoints = strokes.flat();
-  if (!window.hwnd || !window.pid || !window.process_name) {
+  if (!isDisplayFallback && (!window.hwnd || !window.pid || !window.process_name)) {
     throw new Error('target_identity_incomplete');
   }
   if (
@@ -790,6 +799,7 @@ export async function perceiveFrozenFrame(
   const source = request.sourceWindow || request.source_window;
   if (
     source &&
+    !isDisplayFallback &&
     (Number(source.hwnd) !== window.hwnd ||
       Number(source.pid || source.processId) !== window.pid ||
       String(source.process_name || source.processName || '')
@@ -817,12 +827,29 @@ export async function perceiveFrozenFrame(
         ),
       ]
     : undefined;
-  const identityPromise = runPerceptionProviders<DesktopWindow>([{
-    id: 'window-identity', softDeadlineMs: 300, hardDeadlineMs: 4000,
-    read: signal => providers.nativeWindow
-      ? providers.nativeWindow(window.hwnd, signal)
-      : nativeRequest<DesktopWindow>('window', {hwnd: window.hwnd}, signal),
-  }], {signal, onProgress});
+  const identityPromise =
+    !isDisplayFallback && window.hwnd > 0
+      ? runPerceptionProviders<DesktopWindow>(
+          [
+            {
+              id: 'window-identity',
+              softDeadlineMs: 300,
+              hardDeadlineMs: 4000,
+              read: signal =>
+                providers.nativeWindow
+                  ? providers.nativeWindow(window.hwnd, signal)
+                  : nativeRequest<DesktopWindow>(
+                      'window',
+                      {hwnd: window.hwnd},
+                      signal,
+                    ),
+            },
+          ],
+          {signal, onProgress},
+        )
+      : Promise.resolve([
+          {status: 'error' as const, value: undefined, error: undefined, latencyMs: 0},
+        ]);
   const region = mark
     ? {x: mark[0], y: mark[1], width: mark[2], height: mark[3]}
     : undefined;
@@ -851,7 +878,7 @@ export async function perceiveFrozenFrame(
   );
   const [identity] = await identityPromise;
   const live = identity.value;
-  const sameWindow = !!live && live.pid === window.pid &&
+  const sameWindow = !isDisplayFallback && !!live && live.pid === window.pid &&
     (!window.processStartTime || live.processStartTime === window.processStartTime) &&
     JSON.stringify(live.bbox) === JSON.stringify(window.bbox);
   const results = await Promise.allSettled([
@@ -1926,6 +1953,7 @@ export interface PerceptionToolOptions {
    * frozen detail stay allowed and stay labelled historical.
    */
   freshness?: () => {stale: boolean; detail?: string};
+  fallbackImagePaths?: string[];
 }
 function frozenEvidence(snapshot: DesktopRecord, value: string): Evidence {
   const frame: FrozenFrame | undefined =
@@ -2278,9 +2306,9 @@ export function registerLookTool(
     is_concurrency_safe: true,
     timeout_ms: 35000,
     execute: async (args, context) => {
-      if (!frame || !vision) {
+      if (!vision) {
         return evidence(null, 'unsupported', 'vision', 0, {
-          note: !frame ? 'frozen_frame_unavailable' : 'vision_not_configured',
+          note: 'vision_not_configured',
         });
       }
       if (options.uploadScreenshots === false) {
@@ -2292,6 +2320,78 @@ export function registerLookTool(
         return evidence(null, 'unsupported', 'vision', 0, {
           note: 'look_quota_exhausted',
         });
+      }
+      if (!frame) {
+        const fallbackPaths = (options.fallbackImagePaths || [])
+          .map(item => String(item || '').trim())
+          .filter(Boolean);
+        let fallbackPath = '';
+        let fallbackBytes: Buffer | null = null;
+        for (const candidate of fallbackPaths) {
+          try {
+            const meta = await sharp(candidate).metadata();
+            if (meta.width && meta.height) {
+              fallbackPath = candidate;
+              let pipeline = sharp(candidate);
+              const rawBox = args.box_ltrb as Rect | undefined;
+              if (rawBox && rawBox.length === 4) {
+                const left = Math.max(0, Math.round(rawBox[0]));
+                const top = Math.max(0, Math.round(rawBox[1]));
+                const right = Math.min(meta.width, Math.round(rawBox[2]));
+                const bottom = Math.min(meta.height, Math.round(rawBox[3]));
+                if (right > left && bottom > top) {
+                  pipeline = pipeline.extract({
+                    left,
+                    top,
+                    width: right - left,
+                    height: bottom - top,
+                  });
+                }
+              }
+              fallbackBytes = await pipeline.png().toBuffer();
+              break;
+            }
+          } catch {
+            // Try next attached screenshot candidate.
+          }
+        }
+        if (!fallbackBytes || !fallbackPath) {
+          return evidence(null, 'unsupported', 'vision', 0, {
+            note: 'frozen_frame_unavailable',
+          });
+        }
+        lookCalls++;
+        if (isAgentModelVision(vision)) {
+          return {
+            ...frozenEvidence(
+              snapshot,
+              'Captured fallback screenshot attached; read it directly.',
+            ),
+            source: 'pixels',
+            usedBackend: 'fallback_attachment_pixels',
+            image: fallbackBytes.toString('base64'),
+            mimeType: 'image/png',
+            imageLabel: 'Attached capture screenshot',
+          };
+        }
+        const result = await vision(
+          [
+            {
+              dataUrl: `data:image/png;base64,${fallbackBytes.toString('base64')}`,
+              label: 'Attached capture screenshot',
+            },
+          ],
+          String(
+            args.prompt || args.question || 'Describe the attached screenshot.',
+          ),
+          context.signal,
+        );
+        return {
+          ...frozenEvidence(snapshot, String(result.text || '')),
+          source: 'vision',
+          usedBackend: result.usedBackend,
+          latency_ms: result.latencyMs,
+        };
       }
       let box = args.box_ltrb as Rect | undefined;
       const anchor = String(args.anchor || args.reference || '');

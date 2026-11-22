@@ -11,6 +11,7 @@ interface CaptureSnapshot {
   source_window?: SourceWindow | null;
   source_kind?: unknown;
   capture_path?: unknown;
+  frame_lease?: {localArtifact?: {path?: unknown}} | null;
 }
 
 interface CaptureSummary {
@@ -103,18 +104,35 @@ function captureEligibility({
       autoDismissMs: null,
     };
   }
-  const commandReady =
-    state === 'ready' &&
-    safeSnapshot.status === 'ready' &&
-    (safeSummary.hasContent === true ||
-      (safeSummary.hasVisual === true &&
-        safeSnapshot.source_kind === 'screen_region' &&
-        typeof safeSnapshot.capture_path === 'string' &&
-        safeSnapshot.capture_path.length > 0));
+  const leasePath = safeSnapshot.frame_lease?.localArtifact?.path;
+  const capturePath =
+    typeof safeSnapshot.capture_path === 'string' && safeSnapshot.capture_path
+      ? safeSnapshot.capture_path
+      : typeof leasePath === 'string' && leasePath
+        ? leasePath
+        : '';
+  const snapshotStatus = String(safeSnapshot.status || '');
+  const snapshotReady = ['ready', 'ok', 'degraded', 'empty_confirmed'].includes(
+    snapshotStatus,
+  );
+  const stateReady = ['ready', 'ok', 'visual', 'degraded'].includes(state);
+  const hasVisualCapture = Boolean(
+    safeSummary.hasVisual === true && capturePath.length > 0,
+  );
+  const commandReady = Boolean(
+    stateReady &&
+      snapshotReady &&
+      (safeSummary.hasContent === true || hasVisualCapture),
+  );
   if (commandReady) {
     return {
       commandReady: true,
-      state: safeSummary.hasVisual === true ? 'visual-ready' : 'ready',
+      state:
+        safeSummary.hasContent === true
+          ? 'ready'
+          : safeSummary.hasVisual === true
+            ? 'visual-ready'
+            : 'ready',
       message: '',
       autoDismissMs: null,
     };

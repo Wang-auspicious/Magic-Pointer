@@ -60,6 +60,8 @@ import {
   DEVELOPMENT_APP_ID,
   DESKTOP_TOAST_CLSID,
 } from './desktop_notifications';
+import {CuDesktopDaemon} from './cu_desktop_daemon';
+import {LiveBrowserDaemon} from './live_browser_daemon';
 
 const {
   app,
@@ -95,7 +97,36 @@ const {
   runDashboard,
   dashboardTrace,
   dashboardTraceCsv,
+  exportDashboardHtml,
+  loadDashboard,
+  loadDashboardSource,
+  saveDashboard,
 } = require('./runtime/dashboard');
+import {executeDashboardSql} from './runtime/dashboard_sql';
+import {DesignStore, validateDesignRelativePath} from './runtime/design_store';
+import {checkDesignCanvas, lintDesignMarkup} from './runtime/design_check';
+import {
+  compileBrandSystem,
+  defaultSeedToken,
+  installBrandSystemToCanvas,
+} from './runtime/design_brand_engine';
+import {ProjectChannelStore} from './project_channel_store';
+import {ProjectWorktreeManager} from './project_worktree_manager';
+import {
+  computeProjectSidebarBadge,
+  sortThreadsByAttention,
+} from './project_thread_state';
+import {
+  computeWorkerStaggerDelayMs,
+  enqueuePendingProjectRun,
+  formatRateLimitExceededError,
+  isRetryableRateLimitError,
+  MAX_PROJECT_RATE_LIMIT_RETRIES,
+  PROJECT_RATE_LIMIT_RETRY_DELAYS_MS,
+  projectRunKey,
+  validateAutoModeRules,
+  WORKER_DISPATCH_STAGGER_MS,
+} from './runtime/project_coordinator_tools';
 const {installEnvironmentProxy} = require('./runtime/proxy');
 
 // This process lists models directly, and undici chooses its dispatcher on the
@@ -104,8 +135,9 @@ const {installEnvironmentProxy} = require('./runtime/proxy');
 installEnvironmentProxy();
 const {handleSession, handleSessionRead} = require('./runtime/session');
 const {PersonalActivityService} = require('./personal_activity_service');
-const {configureDesktop} = require('./runtime/desktop');
+const {configureDesktop, executeGuidedClickStep} = require('./runtime/desktop');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 
 if (process.platform === 'win32') {
@@ -222,17 +254,66 @@ const {CaptureCommitCoordinator} = require('./capture_commit_coordinator');
 const {nativeShapeRegions} = require('./stage_hit_regions');
 const {isSurfaceSender} = require('./ipc_surface_policy');
 const {AgentCursorSurfaces} = require('./agent_cursor_window');
-const {denormalizeTourPoint} = require('./guided_tour');
+const {
+  denormalizeTourPoint,
+  formatCursorCaption,
+} = require('./guided_tour');
+const {
+  resolveSelectionTargetSource,
+  extractSnapshotImagePath,
+  shouldQueueEarlyGesture,
+} = require('./selection_target_policy');
 const {
   CuOverlayController,
   CuLiveOverlayWindow,
   formatRecordedTourMarkdown,
 } = require('./cu_live_overlay');
 const {
+  readVaultNote,
   scanKnowledgeVault,
   saveVaultNote,
   toggleVaultTodo,
+  appendVaultTodo,
 } = require('./knowledge_vault');
+const {
+  ensureRoadshowCs336Course,
+  listLearnCourses,
+  getLearnCourse,
+  setActiveLearnCourse,
+  recordAnnotationFeedback,
+  promoteSideChatLemma,
+  recordCourseCheckin,
+  buildLearnNeuralGraph,
+  summarizeCourseForPrompt,
+} = require('./learn_course_store') as typeof import('./learn_course_store');
+const {
+  runLearnDreamConsolidation,
+} = require('./learn_dream') as typeof import('./learn_dream');
+
+function safeActiveLearnCourseMemory(
+  persistenceDir?: string,
+  athenaeumDir?: string,
+) {
+  try {
+    const storeOpts = {
+      ...(persistenceDir ? {persistenceDir} : {}),
+      ...(athenaeumDir ? {athenaeumDir} : {}),
+    };
+    const listed = listLearnCourses(FABRIC_DATA_DIR, storeOpts);
+    const active =
+      getLearnCourse(FABRIC_DATA_DIR, listed.activeCourseId, storeOpts) ||
+      ensureRoadshowCs336Course(FABRIC_DATA_DIR, storeOpts);
+    return summarizeCourseForPrompt(active);
+  } catch {
+    return undefined;
+  }
+}
+const {
+  buildLearningGoalContext,
+  enrichResourceForLearning,
+  rankResourcesForLearning,
+  buildResourceVaultMarkdown,
+} = require('./resource_learning_bridge');
 const {
   buildGoogleMapsDirectionsUrl,
   isAllowedGoogleMapsDirectionsUrl,
@@ -353,6 +434,7 @@ let selectionGestureArm: {
   timeoutMs: number;
   captureReady: boolean;
   earlyPointerDown?: boolean;
+  pendingCompletePayload?: any;
   displayBounds: {x: number; y: number; width: number; height: number};
   source: {
     foregroundApp: string;
@@ -716,7 +798,10 @@ function startPointerInputStateStream() {
         if (firstSample) {
           publishDesktopPerceptionStatus();
         }
-        if (!isTransientShell(pointerInputState.foregroundApp)) {
+        if (
+          pointerInputState.foregroundProcessId !== process.pid &&
+          !isTransientShell(pointerInputState.foregroundApp)
+        ) {
           lastStableForegroundApp = pointerInputState.foregroundApp;
           lastStableForegroundWindow = {
             app: pointerInputState.foregroundApp,
@@ -1181,6 +1266,47 @@ function sendAgentCursorCommand(payload: unknown): boolean {
   return agentCursorSurfaces ? agentCursorSurfaces.command(payload) : false;
 }
 
+function decodeB64Utf8(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) {
+    return '';
+  }
+  try {
+    return Buffer.from(raw, 'base64').toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+function clearActiveAutopilotOverlay(): void {
+  if (cuOverlayController.getState().mode === 'autopilot') {
+    const stopped = cuOverlayController.stop();
+    cuOverlayWindow.sync(stopped);
+    sendAgentCursorCommand({kind: 'clear'});
+  }
+}
+
+let stageClickThroughYielded = false;
+let stageClickThroughTimer: NodeJS.Timeout | null = null;
+
+function restoreStageMouseCapture() {
+  if (stageClickThroughTimer) {
+    clearTimeout(stageClickThroughTimer);
+    stageClickThroughTimer = null;
+  }
+  if (!stageClickThroughYielded) {
+    return;
+  }
+  stageClickThroughYielded = false;
+  if (
+    stageWindow &&
+    !stageWindow.isDestroyed() &&
+    stageWindow.isVisible() &&
+    stageHitRegions.length > 0
+  ) {
+    stageWindow.setIgnoreMouseEvents(false);
+  }
+}
+
 function handleAgentCursorProgress(record: any): void {
   if (!record || record.phase !== 'agent_cursor') {
     return;
@@ -1188,6 +1314,12 @@ function handleAgentCursorProgress(record: any): void {
   const fields = record.fields || {};
   const kind = String(fields.action || '').trim();
   if (!kind) {
+    return;
+  }
+  if (kind === 'clear' || kind === 'idle') {
+    restoreStageMouseCapture();
+    clearActiveAutopilotOverlay();
+    sendAgentCursorCommand({kind: 'clear'});
     return;
   }
   const x = Number(fields.x);
@@ -1200,9 +1332,49 @@ function handleAgentCursorProgress(record: any): void {
   const ttlMs = Number(fields.ttlMs);
   const point =
     process.platform === 'win32' ? screen.screenToDipPoint({x, y}) : {x, y};
-  const caption = fields.captionB64
-    ? Buffer.from(String(fields.captionB64), 'base64').toString('utf8')
-    : '';
+  const caption = formatCursorCaption(decodeB64Utf8(fields.captionB64), 24);
+  const nextStep = formatCursorCaption(decodeB64Utf8(fields.nextB64), 32);
+  const windowTitle = decodeB64Utf8(fields.windowTitleB64).trim();
+  const phase = fields.phase === 'thinking' ? 'thinking' : 'acting';
+
+  if (
+    ['approach', 'click', 'move'].includes(kind) &&
+    phase === 'acting' &&
+    stageWindow &&
+    !stageWindow.isDestroyed() &&
+    stageWindow.isVisible()
+  ) {
+    const sb = stageWindow.getBounds();
+    const insideStage =
+      point.x >= sb.x - 24 &&
+      point.x <= sb.x + sb.width + 24 &&
+      point.y >= sb.y - 24 &&
+      point.y <= sb.y + sb.height + 24;
+    if (insideStage) {
+      stageClickThroughYielded = true;
+      stageWindow.setIgnoreMouseEvents(true, {forward: true});
+      if (stageClickThroughTimer) {
+        clearTimeout(stageClickThroughTimer);
+      }
+      stageClickThroughTimer = setTimeout(restoreStageMouseCapture, 900);
+    }
+  }
+
+  const curState = cuOverlayController.getState();
+  if (
+    ['approach', 'click', 'move'].includes(kind) &&
+    (curState.mode === 'idle' || curState.mode === 'autopilot')
+  ) {
+    const stepText = caption || (kind === 'click' ? '执行桌面点击' : '执行桌面操作');
+    const nextState = cuOverlayController.startAutopilot({
+      windowTitle: windowTitle || curState.windowTitle || 'Desktop',
+      actionLabel: stepText,
+      nextStep,
+      phase,
+      stepIndex: (curState.stepIndex || 0) + (kind === 'click' ? 1 : 0),
+    });
+    cuOverlayWindow.sync(nextState);
+  }
   sendAgentCursorCommand({
     kind,
     id: String(fields.id || 'agent'),
@@ -1771,11 +1943,18 @@ async function resumeInterruptedConversations(): Promise<void> {
           status.cancelRequested ||
           status.lastTurnReason === 'user_interrupt'
         ) {
+          const cleanAnswer = /^user interrupted$/i.test(
+            String(terminal.answer || '').trim(),
+          )
+            ? ''
+            : terminal.answer;
           settle({
             ...terminal,
+            answer: cleanAnswer,
             ok: false,
             outcome: '已停止',
-            failed: true,
+            interrupted: true,
+            failed: false,
             error: '',
             hasPendingWork: true,
           });
@@ -2412,6 +2591,113 @@ ipcMain.handle('dashboard:list', async (event: Electron.IpcMainInvokeEvent) => {
   }));
 });
 ipcMain.handle(
+  'dashboard:create-sample',
+  async (event: Electron.IpcMainInvokeEvent) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const root = dashboardRoot();
+      const dashboardId = 'sample-q4-revenue';
+      const csvPath = path.join(root, 'sample-q4-revenue.csv');
+      await fs.promises.mkdir(root, {recursive: true});
+      if (!fs.existsSync(csvPath)) {
+        const sampleCsv = [
+          'month,tier,region,account,arr,expansion_pct,seats,pipeline',
+          '2026-10,Enterprise,NA,Acme Corp,180000,122,420,95000',
+          '2026-10,Growth,EMEA,Northwind,64000,114,140,42000',
+          '2026-10,Starter,APAC,Solstice Labs,22000,104,40,16000',
+          '2026-11,Enterprise,EMEA,Globex,210000,126,510,120000',
+          '2026-11,Growth,NA,Umbrella Health,82000,119,190,61000',
+          '2026-11,Starter,APAC,Kestrel AI,24000,105,45,18000',
+          '2026-12,Enterprise,NA,Initech,245000,130,600,145000',
+          '2026-12,Growth,APAC,Vanguard,78000,118,185,54000',
+          '2026-12,Enterprise,EMEA,Stark Bio,195000,124,475,112000',
+        ].join('\n');
+        await fs.promises.writeFile(csvPath, `${sampleCsv}\n`, 'utf8');
+      }
+      const existing: Array<import('./runtime/dashboard').DashboardSpec> =
+        await listDashboards(root);
+      if (existing.some(item => item.dashboardId === dashboardId)) {
+        return {ok: true, dashboardId, created: false};
+      }
+      await saveDashboard(root, {
+        schemaVersion: 1,
+        dashboardId,
+        title: 'Q4 Revenue & Telemetry',
+        updatedAt: new Date().toISOString(),
+        sources: [{sourceId: 'q4', kind: 'csv', path: csvPath}],
+        charts: [
+          {
+            chartId: 'total-arr',
+            title: 'Total ARR',
+            type: 'kpi',
+            queryText: 'SELECT SUM(arr) AS total_arr FROM q4 WHERE $filters',
+            querySql: 'SELECT SUM(arr) AS total_arr FROM q4 WHERE $filters',
+            yField: 'total_arr',
+            format: 'money',
+            currency: 'USD',
+          },
+          {
+            chartId: 'net-retention',
+            title: 'Net Retention',
+            type: 'kpi',
+            queryText:
+              'SELECT AVG(expansion_pct) AS net_retention FROM q4 WHERE $filters',
+            querySql:
+              'SELECT AVG(expansion_pct) AS net_retention FROM q4 WHERE $filters',
+            yField: 'net_retention',
+            format: 'percent',
+          },
+          {
+            chartId: 'monthly-revenue-by-tier',
+            title: 'Monthly Revenue by Tier',
+            type: 'line',
+            queryText:
+              'SELECT month, tier, SUM(arr) AS revenue FROM q4 WHERE $filters GROUP BY month, tier ORDER BY month ASC, tier ASC',
+            querySql:
+              'SELECT month, tier, SUM(arr) AS revenue FROM q4 WHERE $filters GROUP BY month, tier ORDER BY month ASC, tier ASC',
+            xField: 'month',
+            seriesField: 'tier',
+            yField: 'revenue',
+            format: 'money',
+            currency: 'USD',
+          },
+          {
+            chartId: 'pipeline-by-region',
+            title: 'Pipeline by Region',
+            type: 'bar',
+            queryText:
+              'SELECT region, SUM(pipeline) AS pipeline_total FROM q4 WHERE $filters GROUP BY region ORDER BY pipeline_total DESC',
+            querySql:
+              'SELECT region, SUM(pipeline) AS pipeline_total FROM q4 WHERE $filters GROUP BY region ORDER BY pipeline_total DESC',
+            xField: 'region',
+            yField: 'pipeline_total',
+            format: 'money',
+            currency: 'USD',
+          },
+          {
+            chartId: 'top-accounts',
+            title: 'Top Accounts',
+            type: 'table',
+            queryText:
+              'SELECT account, SUM(arr) AS arr, AVG(expansion_pct) AS expansion_pct, SUM(seats) AS seats, SUM(pipeline) AS pipeline FROM q4 WHERE $filters GROUP BY account ORDER BY arr DESC',
+            querySql:
+              'SELECT account, SUM(arr) AS arr, AVG(expansion_pct) AS expansion_pct, SUM(seats) AS seats, SUM(pipeline) AS pipeline FROM q4 WHERE $filters GROUP BY account ORDER BY arr DESC',
+            xField: 'account',
+          },
+        ],
+      });
+      return {ok: true, dashboardId, created: true};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
   'dashboard:open',
   async (event: Electron.IpcMainInvokeEvent, dashboardId: unknown) => {
     if (!isDashboardSender(event)) {
@@ -2537,6 +2823,2469 @@ ipcMain.handle(
     const doc = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${safeTitle}</title><style>${String(payload?.css || '')}</style></head><body>${String(payload?.html || '')}</body></html>`;
     await fs.promises.writeFile(picked.filePath, doc, 'utf8');
     return {ok: true, path: picked.filePath};
+  },
+);
+
+function designStore(): DesignStore {
+  return new DesignStore(FABRIC_DATA_DIR);
+}
+
+function groupFindingsByFile(
+  findings: Array<{file?: string}>,
+): Record<string, unknown[]> {
+  const grouped: Record<string, unknown[]> = {};
+  for (const item of findings) {
+    const key = String(item.file || 'canvas.json');
+    if (!grouped[key]) {
+      grouped[key] = [];
+    }
+    grouped[key].push(item);
+  }
+  return grouped;
+}
+
+function autoDesignSlug(title: string): string {
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return base || `design-${Date.now().toString(36)}`;
+}
+
+ipcMain.handle('design:list', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, canvases: [], error: 'unauthorized_dashboard_sender'};
+  }
+  try {
+    const store = designStore();
+    const summaries = await store.listCanvases();
+    const canvases = await Promise.all(
+      summaries.map(async summary => {
+        const snap = await store.readCanvas(summary.slug).catch(() => null);
+        return {
+          slug: summary.slug,
+          title: summary.title,
+          updatedAt: Date.parse(summary.updatedAt) || Date.now(),
+          boardCount: summary.boardCount,
+          ...(snap?.canvas.pages ? {pages: snap.canvas.pages} : {}),
+        };
+      }),
+    );
+    return {ok: true, canvases};
+  } catch (error) {
+    return {
+      ok: false,
+      canvases: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+ipcMain.handle(
+  'design:read',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {slug?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const slug = String(payload?.slug || '').trim();
+      const snap = await designStore().readCanvas(slug);
+      const files: Record<string, string> = {...snap.boardsContent};
+      let themeTokens: Record<string, unknown> | undefined;
+      for (const extra of ['theme.json', 'tokens.json']) {
+        const extraPath = path.join(snap.dir, extra);
+        try {
+          const text = await fs.promises.readFile(extraPath, 'utf8');
+          files[extra] = text;
+          if (extra === 'tokens.json' || !themeTokens) {
+            themeTokens = JSON.parse(text) as Record<string, unknown>;
+          }
+        } catch {
+          // Optional theme/token file not present.
+        }
+      }
+      if (!themeTokens && snap.canvas.designSystems?.length) {
+        const firstDs = snap.canvas.designSystems[0];
+        const dsTokensPath = path.join(
+          snap.dir,
+          'ds',
+          firstDs.namespace,
+          'tokens.json',
+        );
+        try {
+          const text = await fs.promises.readFile(dsTokensPath, 'utf8');
+          files[`ds/${firstDs.namespace}/tokens.json`] = text;
+          themeTokens = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          // Optional ds tokens.json not present.
+        }
+      }
+      const checked = await checkDesignCanvas(snap.dir).catch(() => null);
+      const lintFindings = checked
+        ? groupFindingsByFile([...checked.issues, ...checked.lintFindings])
+        : Object.fromEntries(
+            Object.entries(snap.boardsContent).map(([file, html]) => [
+              file,
+              lintDesignMarkup(html, file),
+            ]),
+          );
+      return {
+        ok: true,
+        slug: snap.slug,
+        manifest: snap.canvas,
+        files,
+        ...(themeTokens ? {themeTokens} : {}),
+        lintFindings,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:init',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      slug?: unknown;
+      title?: unknown;
+      pages?: Array<{id: string; name: string}>;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const title =
+        String(payload?.title || 'Untitled Design').trim() ||
+        'Untitled Design';
+      const rawSlug = String(payload?.slug || '').trim();
+      const slug = rawSlug || autoDesignSlug(title);
+      const snap = await designStore().initCanvas({
+        slug,
+        title,
+        pages: Array.isArray(payload?.pages) ? payload.pages : undefined,
+      });
+      dashboardWindow?.webContents.send('design:changed', {slug: snap.slug});
+      return {
+        ok: true,
+        slug: snap.slug,
+        manifest: snap.canvas,
+        files: snap.boardsContent,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:upsert-board',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      slug?: unknown;
+      file?: unknown;
+      html?: unknown;
+      title?: unknown;
+      w?: unknown;
+      h?: unknown;
+      x?: unknown;
+      y?: unknown;
+      page?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const store = designStore();
+      const slug = String(payload?.slug || '').trim();
+      const file = String(payload?.file || '').trim();
+      const html = String(payload?.html ?? '');
+      const existing = await store.readCanvas(slug).catch(() => null);
+      const prev = existing?.canvas.boards[file];
+      const snap = await store.upsertBoard({
+        slug,
+        file,
+        html,
+        board: {
+          x: typeof payload?.x === 'number' ? payload.x : (prev?.x ?? 0),
+          y: typeof payload?.y === 'number' ? payload.y : (prev?.y ?? 0),
+          w: typeof payload?.w === 'number' ? payload.w : (prev?.w ?? 1440),
+          h: typeof payload?.h === 'number' ? payload.h : (prev?.h ?? 900),
+          ...(payload?.title !== undefined
+            ? {title: String(payload.title)}
+            : prev?.title
+              ? {title: prev.title}
+              : {}),
+          ...(payload?.page !== undefined
+            ? {page: String(payload.page)}
+            : prev?.page
+              ? {page: prev.page}
+              : {}),
+        },
+      });
+      dashboardWindow?.webContents.send('design:changed', {slug: snap.slug});
+      return {
+        ok: true,
+        manifest: snap.canvas,
+        files: snap.boardsContent,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:save-file',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {slug?: unknown; file?: unknown; content?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const slug = String(payload?.slug || '').trim();
+      const rel = validateDesignRelativePath(String(payload?.file || '').trim());
+      const content = String(payload?.content ?? '');
+      const snap = await designStore().readCanvas(slug);
+      const targetPath = path.join(snap.dir, rel);
+      await fs.promises.mkdir(path.dirname(targetPath), {recursive: true});
+      await fs.promises.writeFile(targetPath, content, 'utf8');
+      const sha256 = crypto.createHash('sha256').update(content).digest('hex');
+      const lintFindings =
+        rel.endsWith('.html') || rel.endsWith('.dc.html')
+          ? {[rel]: lintDesignMarkup(content, rel)}
+          : {};
+      dashboardWindow?.webContents.send('design:changed', {slug: snap.slug});
+      return {ok: true, sha256, lintFindings};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:import-asset',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {slug?: unknown; sourcePath?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const slug = String(payload?.slug || '').trim();
+      let sourcePath =
+        typeof payload?.sourcePath === 'string' && payload.sourcePath.trim()
+          ? payload.sourcePath.trim()
+          : '';
+      if (!sourcePath) {
+        const parent =
+          BrowserWindow.fromWebContents(event.sender) ||
+          dashboardWindow ||
+          undefined;
+        const picked = await dialog.showOpenDialog(parent, {
+          title: 'Import Design Asset',
+          properties: ['openFile'],
+          filters: [
+            {
+              name: 'Design Assets',
+              extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'woff2'],
+            },
+          ],
+        });
+        if (picked.canceled || !picked.filePaths?.length) {
+          return {ok: false, canceled: true};
+        }
+        sourcePath = picked.filePaths[0];
+      }
+      const imported = await designStore().importAsset({slug, sourcePath});
+      dashboardWindow?.webContents.send('design:changed', {slug});
+      return {ok: true, relPath: imported.relativePath, blobUrl: imported.blobUrl};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:check',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {slug?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const slug = String(payload?.slug || '').trim();
+      const snap = await designStore().readCanvas(slug);
+      const checked = await checkDesignCanvas(snap.dir);
+      return {
+        ok: checked.ok,
+        findings: groupFindingsByFile([
+          ...checked.issues,
+          ...checked.lintFindings,
+        ]),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:generate-brand',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      slug?: unknown;
+      seed?: Record<string, unknown>;
+      install?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const slug = String(payload?.slug || '').trim();
+      const seed = defaultSeedToken((payload?.seed || {}) as Record<string, unknown>);
+      const compiled = compileBrandSystem(seed);
+      if (payload?.install !== false && slug) {
+        const store = designStore();
+        const snap = await store.readCanvas(slug);
+        const nextCanvas = await installBrandSystemToCanvas(
+          snap.dir,
+          compiled,
+          snap.canvas,
+        );
+        await store.writeCanvasJson(slug, nextCanvas);
+        dashboardWindow?.webContents.send('design:changed', {slug});
+      }
+      return {
+        ok: true,
+        themeTokens: compiled.themes.light as unknown as Record<string, unknown>,
+        files: {
+          'tokens.css': compiled.tokensCss,
+          'tokens.json': JSON.stringify(compiled.tokensJson, null, 2),
+          'DESIGN.md': compiled.designMd,
+          'design-system.json': JSON.stringify(compiled.designSystemJson, null, 2),
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'design:export',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {slug?: unknown; format?: unknown; boardFile?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const slug = String(payload?.slug || '').trim();
+      const format = String(payload?.format || 'html') as
+        | 'html'
+        | 'png'
+        | 'pdf'
+        | 'zip';
+      const boardFile =
+        typeof payload?.boardFile === 'string' && payload.boardFile.trim()
+          ? payload.boardFile.trim()
+          : undefined;
+      const store = designStore();
+      const parent =
+        BrowserWindow.fromWebContents(event.sender) ||
+        dashboardWindow ||
+        undefined;
+      const extMap: Record<string, {name: string; ext: string}> = {
+        html: {name: 'HTML', ext: 'html'},
+        png: {name: 'PNG Image', ext: 'png'},
+        pdf: {name: 'PDF Document', ext: 'pdf'},
+        zip: {name: 'ZIP Archive', ext: 'zip'},
+      };
+      const meta = extMap[format] ?? extMap.html;
+      const picked = await dialog.showSaveDialog(parent, {
+        title: `Export Design (${meta.ext.toUpperCase()})`,
+        defaultPath: `${slug || 'design'}.${meta.ext}`,
+        filters: [{name: meta.name, extensions: [meta.ext]}],
+      });
+      if (picked.canceled || !picked.filePath) {
+        return {ok: false, canceled: true};
+      }
+      if (format === 'html') {
+        const exported = await store.exportStandaloneHtml(slug, {boardFile});
+        await fs.promises.writeFile(picked.filePath, exported.html, 'utf8');
+        return {ok: true, path: picked.filePath};
+      }
+      if (format === 'zip') {
+        await store.exportHandoffZip(slug, {outputPath: picked.filePath});
+        return {ok: true, path: picked.filePath};
+      }
+      if (format === 'pdf') {
+        const standalone = await store.exportStandaloneHtml(slug, {boardFile});
+        const win = new BrowserWindow({
+          show: false,
+          width: 1440,
+          height: 900,
+          webPreferences: {sandbox: true, contextIsolation: true},
+        });
+        try {
+          await win.loadURL(
+            `data:text/html;charset=utf-8,${encodeURIComponent(standalone.html)}`,
+          );
+          const pdfBytes = await win.webContents.printToPDF({
+            printBackground: true,
+          });
+          await fs.promises.writeFile(picked.filePath, pdfBytes);
+          return {ok: true, path: picked.filePath};
+        } catch {
+          await store.exportPdf(slug, {
+            ...(boardFile ? {boards: [boardFile]} : {}),
+            outputPath: picked.filePath,
+          });
+          return {ok: true, path: picked.filePath};
+        } finally {
+          win.destroy();
+        }
+      }
+      if (format === 'png') {
+        const snap = await store.readCanvas(slug);
+        const targetFile = boardFile || snap.canvas.order[0];
+        const board = targetFile ? snap.canvas.boards[targetFile] : undefined;
+        const standalone = await store.exportStandaloneHtml(slug, {
+          boardFile: targetFile,
+        });
+        const win = new BrowserWindow({
+          show: false,
+          width: Math.max(320, Math.min(2400, board?.w ?? 1440)),
+          height: Math.max(240, Math.min(2400, board?.h ?? 900)),
+          webPreferences: {sandbox: true, contextIsolation: true},
+        });
+        try {
+          await win.loadURL(
+            `data:text/html;charset=utf-8,${encodeURIComponent(standalone.html)}`,
+          );
+          const image = await win.webContents.capturePage();
+          await fs.promises.writeFile(picked.filePath, image.toPNG());
+          return {ok: true, path: picked.filePath};
+        } finally {
+          win.destroy();
+        }
+      }
+      return {ok: false, error: `Unsupported export format: ${format}`};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'dashboard:run-sql',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {dashboardId?: unknown; chartId?: unknown; sql?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const dashboardId = String(payload?.dashboardId || '').trim();
+      const chartId = String(payload?.chartId || '').trim();
+      const sql = String(payload?.sql || '');
+      const spec = await loadDashboard(dashboardRoot(), dashboardId);
+      const tables = new Map<
+        string,
+        import('./runtime/dashboard').DashboardSourceData
+      >();
+      for (const source of spec.sources) {
+        const loaded = await loadDashboardSource(dashboardRoot(), source);
+        tables.set(source.sourceId, loaded);
+      }
+      const sqlResult = executeDashboardSql(sql, tables);
+      const baseRun = await runDashboard(dashboardRoot(), dashboardId);
+      const updatedCharts = baseRun.snapshot.charts.map(
+        (chart: Record<string, unknown>) => {
+          if (chart.chartId !== chartId) {
+            return chart;
+          }
+          return {
+            ...chart,
+            rows: sqlResult.rows as Array<Record<string, unknown>>,
+            rowCount: sqlResult.rows.length,
+            sqlQuery: sql,
+          };
+        },
+      );
+      const snapshot = {
+        ...baseRun.snapshot,
+        charts: updatedCharts,
+      };
+      return {ok: true, snapshot};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'dashboard:export-interactive',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {dashboardId?: unknown; title?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const dashboardId = String(payload?.dashboardId || '').trim();
+      const run = await runDashboard(dashboardRoot(), dashboardId);
+      const html = exportDashboardHtml(run, {
+        ...(typeof payload?.title === 'string' && payload.title.trim()
+          ? {title: payload.title.trim()}
+          : {}),
+      });
+      const parent =
+        BrowserWindow.fromWebContents(event.sender) ||
+        dashboardWindow ||
+        undefined;
+      const safeTitle = String(
+        payload?.title || run.spec.title || dashboardId || 'dashboard',
+      )
+        .replace(/[<>:"/\\|?*]/g, '-')
+        .slice(0, 80);
+      const picked = await dialog.showSaveDialog(parent, {
+        title: 'Export Interactive Dashboard HTML',
+        defaultPath: `${safeTitle}.html`,
+        filters: [{name: 'HTML', extensions: ['html']}],
+      });
+      if (picked.canceled || !picked.filePath) {
+        return {ok: false, canceled: true};
+      }
+      await fs.promises.writeFile(picked.filePath, html, 'utf8');
+      return {ok: true, path: picked.filePath};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'dashboard:export-chart-csv',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {dashboardId?: unknown; chartId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const dashboardId = String(payload?.dashboardId || '').trim();
+      const chartId = String(payload?.chartId || '').trim();
+      const run = await runDashboard(dashboardRoot(), dashboardId);
+      const chart = run.snapshot.charts.find(
+        (c: {chartId: string}) => c.chartId === chartId,
+      );
+      if (!chart) {
+        return {ok: false, error: `Unknown chart: ${chartId}`};
+      }
+      const rows: Array<Record<string, unknown>> = Array.isArray(chart.rows)
+        ? chart.rows
+        : [];
+      const columns = rows.length
+        ? Object.keys(rows[0]).filter(k => !k.startsWith('__'))
+        : [];
+      const escapeCsv = (val: unknown): string => {
+        const raw =
+          val && typeof val === 'object' && 'value' in (val as object)
+            ? (val as {value: unknown}).value
+            : val;
+        const text = raw === null || raw === undefined ? '' : String(raw);
+        return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      };
+      const lines = [
+        columns.map(escapeCsv).join(','),
+        ...rows.map(row => columns.map(col => escapeCsv(row[col])).join(',')),
+      ];
+      const parent =
+        BrowserWindow.fromWebContents(event.sender) ||
+        dashboardWindow ||
+        undefined;
+      const picked = await dialog.showSaveDialog(parent, {
+        title: 'Export Chart CSV',
+        defaultPath: `${chartId || 'chart'}.csv`,
+        filters: [{name: 'CSV', extensions: ['csv']}],
+      });
+      if (picked.canceled || !picked.filePath) {
+        return {ok: false, canceled: true};
+      }
+      await fs.promises.writeFile(picked.filePath, lines.join('\n'), 'utf8');
+      return {ok: true, path: picked.filePath};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'dashboard:remix',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      dashboardId?: unknown;
+      format?: 'design_canvas' | 'markdown_memo' | 'slides';
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const dashboardId = String(payload?.dashboardId || '').trim();
+      const format = payload?.format ?? 'design_canvas';
+      const run = await runDashboard(dashboardRoot(), dashboardId);
+      const charts = run.snapshot.charts as Array<{
+        chartId: string;
+        title?: string;
+        type?: string;
+        rows?: Array<Record<string, unknown>>;
+      }>;
+      if (format === 'markdown_memo') {
+        const lines: string[] = [`# ${run.spec.title || dashboardId}`, ''];
+        for (const chart of charts) {
+          lines.push(`## ${chart.title || chart.chartId}`);
+          const rows = Array.isArray(chart.rows) ? chart.rows.slice(0, 12) : [];
+          for (const row of rows) {
+            const entries = Object.entries(row)
+              .filter(([k]) => !k.startsWith('__'))
+              .map(([k, v]) => {
+                const val =
+                  v && typeof v === 'object' && 'value' in (v as object)
+                    ? (v as {value: unknown}).value
+                    : v;
+                return `${k}: ${String(val ?? '')}`;
+              });
+            lines.push(`- ${entries.join(' | ')}`);
+          }
+          lines.push('');
+        }
+        return {ok: true, markdown: lines.join('\n')};
+      }
+      const slug = autoDesignSlug(
+        `${run.spec.title || dashboardId}-${format === 'slides' ? 'slides' : 'canvas'}-${Date.now().toString(36)}`,
+      );
+      const store = designStore();
+      await store.initCanvas({
+        slug,
+        title: `${run.spec.title || dashboardId} (${format === 'slides' ? 'Slides' : 'Canvas'})`,
+      });
+      const boardWidth = format === 'slides' ? 1920 : 1440;
+      const boardHeight = format === 'slides' ? 1080 : 900;
+      const cardsHtml = charts
+        .map(chart => {
+          const rows = Array.isArray(chart.rows) ? chart.rows.slice(0, 6) : [];
+          const items = rows
+            .map(row => {
+              const summary = Object.entries(row)
+                .filter(([k]) => !k.startsWith('__'))
+                .map(([k, v]) => {
+                  const val =
+                    v && typeof v === 'object' && 'value' in (v as object)
+                      ? (v as {value: unknown}).value
+                      : v;
+                  return `<span><strong>${k}:</strong> ${String(val ?? '')}</span>`;
+                })
+                .join(' &middot; ');
+              return `<li>${summary}</li>`;
+            })
+            .join('');
+          return `<article class="card"><h3>${chart.title || chart.chartId}</h3><ul>${items || '<li>No rows</li>'}</ul></article>`;
+        })
+        .join('\n');
+      const boardHtml = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:48px;font-family:system-ui,sans-serif;background:#fafaf9;color:#141413;}h1{margin:0 0 24px;font-size:32px;}section.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;}.card{background:#fff;border:1px solid #e5e5e3;border-radius:12px;padding:20px;}ul{margin:8px 0 0;padding-left:18px;}</style></head><body><h1>${run.spec.title || dashboardId}</h1><section class="grid">${cardsHtml}</section></body></html>`;
+      await store.upsertBoard({
+        slug,
+        file: format === 'slides' ? 'Slide01.dc.html' : 'Overview.dc.html',
+        html: boardHtml,
+        board: {
+          x: 0,
+          y: 0,
+          w: boardWidth,
+          h: boardHeight,
+          title: run.spec.title || dashboardId,
+        },
+      });
+      dashboardWindow?.webContents.send('design:changed', {slug});
+      return {ok: true, canvasSlug: slug};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+function projectChannelDataDir(projectId: string): string {
+  const safeId =
+    projectId.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 96) || 'default';
+  return path.join(FABRIC_DATA_DIR, 'projects', safeId);
+}
+
+function projectChannelStoreFor(
+  projectId: string,
+  project?: ProjectRecord | null,
+): ProjectChannelStore {
+  return new ProjectChannelStore({
+    projectDataDir: projectChannelDataDir(projectId),
+    projectId,
+    paused: project?.paused,
+    archived: project?.archived,
+  });
+}
+
+function projectWorktreeManager(): ProjectWorktreeManager {
+  return new ProjectWorktreeManager();
+}
+
+function emitProjectMaEvent(payload: Record<string, unknown>): void {
+  dashboardWindow?.webContents.send('projects:ma:event', payload);
+}
+
+const MAX_ACTIVE_PROJECT_WORKER_RUNS = 6;
+const activeProjectWorkerRuns = new Map<string, number>();
+
+interface SpawnProjectRunInput {
+  project: ProjectRecord;
+  question: string;
+  workMode: 'project_coordinator' | 'code';
+  threadId?: string;
+  workspaceRoot?: string;
+  store: ProjectChannelStore;
+}
+
+interface ActiveProjectRunEntry {
+  child: ReturnType<typeof runRuntimeBridge>;
+  projectId: string;
+  threadId?: string;
+  startedAt: number;
+  stopped?: boolean;
+  releaseSlot?: () => void;
+  getProgress: () => {
+    answer: string;
+    thinking: string;
+    trajectory: unknown[];
+    retryNotice?: string;
+  };
+}
+
+const activeProjectRuns = new Map<string, ActiveProjectRunEntry>();
+const pendingProjectRuns = new Map<string, SpawnProjectRunInput[]>();
+const lastWorkerDispatchAtByProject = new Map<string, number>();
+const pendingWorkerTimersByRunKey = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+const pendingRetryTimersByRunKey = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+
+function resolveProjectModelSelection(
+  overrideModel: string,
+): ConversationModelSelection | undefined {
+  const name = String(overrideModel || '').trim();
+  if (!name) {
+    return undefined;
+  }
+  const profiles = Array.isArray(fabricSettings?.models?.profiles)
+    ? fabricSettings.models.profiles.filter(
+        (item: any) => item && item.enabled !== false,
+      )
+    : [];
+  const defaultProfileId = String(
+    fabricSettings?.models?.defaultProfileId || '',
+  ).trim();
+  const orderedProfiles = defaultProfileId
+    ? [
+        ...profiles.filter((p: any) => String(p.id || '') === defaultProfileId),
+        ...profiles.filter((p: any) => String(p.id || '') !== defaultProfileId),
+      ]
+    : profiles;
+  for (const profile of orderedProfiles) {
+    const profileId = String(profile?.id || '').trim();
+    if (!profileId) {
+      continue;
+    }
+    const profileModel = String(profile?.model || '').trim();
+    const profileModels = Array.isArray(profile?.models) ? profile.models : [];
+    const discoveredModels =
+      discoveredModelCatalogs.get(profileId)?.models || [];
+    const matches =
+      profileModel === name ||
+      profileModels.some(
+        (entry: any) => String(entry?.id ?? entry ?? '').trim() === name,
+      ) ||
+      discoveredModels.some(
+        (entry: any) => String(entry?.id ?? entry ?? '').trim() === name,
+      );
+    if (matches) {
+      return {model: name, profileId};
+    }
+  }
+  return {model: name};
+}
+
+function collectProjectModelContext(project: ProjectRecord): {
+  defaultModel: string;
+  coordinatorModel: string;
+  coordinatorEffort: string;
+  workerModel: string;
+  workerEffort: string;
+  availableModels: Array<{
+    model: string;
+    label: string;
+    provider?: string;
+    profileId?: string;
+    active?: boolean;
+  }>;
+} {
+  let activeRuntime: any = null;
+  try {
+    activeRuntime = activeModelRuntimeConfig();
+  } catch {
+    activeRuntime = null;
+  }
+  let resolvedDefaultModel = '';
+  try {
+    resolvedDefaultModel = String(
+      resolveModelConfig(activeRuntime || {}, ROOT, FABRIC_DATA_DIR)?.model ||
+        '',
+    ).trim();
+  } catch {
+    resolvedDefaultModel = String(activeRuntime?.model || '').trim();
+  }
+  const defaultModel =
+    resolvedDefaultModel ||
+    String(activeRuntime?.model || '').trim() ||
+    'gpt-4o-mini';
+  const coordinatorModel = String(
+    project.multiAgentConfig?.coordinatorModel || '',
+  ).trim();
+  const coordinatorEffort = String(
+    project.multiAgentConfig?.coordinatorEffort || 'high',
+  ).trim();
+  const workerModel = String(
+    project.multiAgentConfig?.workerModel || '',
+  ).trim();
+  const workerEffort = String(
+    project.multiAgentConfig?.workerEffort || 'high',
+  ).trim();
+
+  const modelMap = new Map<
+    string,
+    {
+      model: string;
+      label: string;
+      provider?: string;
+      profileId?: string;
+      active?: boolean;
+    }
+  >();
+  const addModelOption = (
+    rawModel: unknown,
+    meta?: {label?: unknown; provider?: unknown; profileId?: unknown},
+  ) => {
+    const id = String(rawModel || '').trim();
+    if (!id) {
+      return;
+    }
+    const existing = modelMap.get(id);
+    if (existing) {
+      if (id === defaultModel) {
+        existing.active = true;
+      }
+      if (!existing.provider && meta?.provider) {
+        existing.provider = String(meta.provider);
+      }
+      if (!existing.profileId && meta?.profileId) {
+        existing.profileId = String(meta.profileId);
+      }
+      return;
+    }
+    modelMap.set(id, {
+      model: id,
+      label: String(meta?.label || '').trim() || id,
+      ...(meta?.provider ? {provider: String(meta.provider)} : {}),
+      ...(meta?.profileId ? {profileId: String(meta.profileId)} : {}),
+      ...(id === defaultModel ? {active: true} : {}),
+    });
+  };
+
+  try {
+    const cfgCatalog = configuredModelCatalog(activeRuntime);
+    for (const group of cfgCatalog?.groups || []) {
+      const groupProvider =
+        (group as {provider?: unknown})?.provider ?? cfgCatalog?.provider;
+      for (const entry of group?.models || []) {
+        addModelOption(entry?.id ?? entry, {
+          label: entry?.label || entry?.name,
+          provider: groupProvider,
+          profileId: activeRuntime?.profileId,
+        });
+      }
+    }
+  } catch {
+    // Ignore catalog read errors and collect from fallback sources.
+  }
+
+  if (activeRuntime) {
+    addModelOption(activeRuntime.model, {
+      provider: activeRuntime.provider,
+      profileId: activeRuntime.profileId,
+    });
+    for (const entry of activeRuntime.models || []) {
+      addModelOption(entry?.id ?? entry, {
+        label: entry?.label || entry?.name,
+        provider: activeRuntime.provider,
+        profileId: activeRuntime.profileId,
+      });
+    }
+  }
+
+  const profiles = Array.isArray(fabricSettings?.models?.profiles)
+    ? fabricSettings.models.profiles
+    : [];
+  for (const profile of profiles) {
+    if (!profile || profile.enabled === false) {
+      continue;
+    }
+    const profileId = String(profile.id || '').trim() || undefined;
+    const provider = String(profile.provider || '').trim() || undefined;
+    addModelOption(profile.model, {provider, profileId});
+    for (const entry of profile.models || []) {
+      addModelOption(entry?.id ?? entry, {
+        label: entry?.label || entry?.name,
+        provider,
+        profileId,
+      });
+    }
+    if (profileId) {
+      const discovered = discoveredModelCatalogs.get(profileId);
+      for (const entry of discovered?.models || []) {
+        addModelOption(entry?.id ?? entry, {
+          label: entry?.label || entry?.name,
+          provider,
+          profileId,
+        });
+      }
+    }
+  }
+
+  for (const [profileId, discovered] of discoveredModelCatalogs.entries()) {
+    for (const entry of discovered?.models || []) {
+      addModelOption(entry?.id ?? entry, {
+        label: entry?.label || entry?.name,
+        profileId,
+      });
+    }
+  }
+
+  for (const entry of legacyModelCatalog || []) {
+    addModelOption(entry?.id ?? entry, {
+      label: entry?.label || entry?.name,
+    });
+  }
+
+  addModelOption(defaultModel);
+  addModelOption(coordinatorModel);
+  addModelOption(workerModel);
+
+  return {
+    defaultModel,
+    coordinatorModel,
+    coordinatorEffort,
+    workerModel,
+    workerEffort,
+    availableModels: Array.from(modelMap.values()),
+  };
+}
+
+function summarizeProjectRunTools(
+  trajectory: Array<Record<string, unknown>>,
+): Array<{name: string; status: string; state: string; summary?: string}> {
+  return trajectory
+    .filter(
+      item => item.kind === 'tool' && typeof item.name === 'string' && item.name,
+    )
+    .map(item => {
+      const status = String(item.state || 'done');
+      const rawSummary = String(item.text || item.result || '').trim();
+      const summary =
+        rawSummary.length > 160 ? `${rawSummary.slice(0, 157)}...` : rawSummary;
+      return {
+        name: String(item.name),
+        status,
+        state: status,
+        ...(summary ? {summary} : {}),
+      };
+    });
+}
+
+function parseProjectProgressFields(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const rawFields =
+    record.fields && typeof record.fields === 'object'
+      ? (record.fields as Record<string, unknown>)
+      : record;
+  if (typeof rawFields.b64 === 'string' && rawFields.b64) {
+    try {
+      const decoded = JSON.parse(
+        Buffer.from(rawFields.b64, 'base64').toString('utf8'),
+      );
+      if (decoded && typeof decoded === 'object') {
+        return {...rawFields, ...(decoded as Record<string, unknown>)};
+      }
+    } catch {
+      // Ignore malformed base64 progress payload and fall back to rawFields.
+    }
+  }
+  return rawFields;
+}
+
+function spawnProjectAgentRun(input: SpawnProjectRunInput): void {
+  const runKey = projectRunKey(input.project.id, input.threadId);
+  if (activeProjectRuns.has(runKey)) {
+    const queue = pendingProjectRuns.get(runKey) ?? [];
+    const queued = enqueuePendingProjectRun(queue, input);
+    pendingProjectRuns.set(runKey, queue);
+    if (queued.queued) {
+      emitProjectMaEvent({
+        projectId: input.project.id,
+        threadId: input.threadId,
+        type: 'run_queued',
+        queuedCount: queued.queuedCount,
+      });
+    }
+    return;
+  }
+
+  const isWorkerRun = input.workMode === 'code' || Boolean(input.threadId);
+  let countedWorkerSlot = false;
+  if (isWorkerRun) {
+    const activeCount = activeProjectWorkerRuns.get(input.project.id) ?? 0;
+    if (activeCount >= MAX_ACTIVE_PROJECT_WORKER_RUNS) {
+      return;
+    }
+    activeProjectWorkerRuns.set(input.project.id, activeCount + 1);
+    countedWorkerSlot = true;
+  }
+  const releaseWorkerSlot = () => {
+    if (!countedWorkerSlot) {
+      return;
+    }
+    countedWorkerSlot = false;
+    const next = (activeProjectWorkerRuns.get(input.project.id) ?? 1) - 1;
+    if (next <= 0) {
+      activeProjectWorkerRuns.delete(input.project.id);
+    } else {
+      activeProjectWorkerRuns.set(input.project.id, next);
+    }
+  };
+
+  const overrideModel = String(
+    (input.workMode === 'project_coordinator'
+      ? input.project.multiAgentConfig?.coordinatorModel
+      : input.project.multiAgentConfig?.workerModel) || '',
+  ).trim();
+  let activeRuntime: any = null;
+  try {
+    activeRuntime = activeModelRuntimeConfig(
+      overrideModel ? resolveProjectModelSelection(overrideModel) : undefined,
+    );
+  } catch {
+    activeRuntime = activeModelRuntimeConfig();
+  }
+  const modelRuntime = resolveModelConfig(
+    activeRuntime || (overrideModel ? {model: overrideModel} : {}),
+    ROOT,
+    FABRIC_DATA_DIR,
+  );
+  const agentSessionId = input.threadId
+    ? `proj-${input.project.id}-thr-${input.threadId}`
+    : `proj-${input.project.id}-coordinator`;
+  const channelRoot = path.join(
+    FABRIC_DATA_DIR,
+    'projects',
+    input.project.id.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 96) ||
+      'default',
+  );
+  const payload = {
+    question: input.question,
+    workMode: input.workMode,
+    projectId: input.project.id,
+    projectContext: input.project,
+    projectChannelRoot: channelRoot,
+    workspaceRoot: input.workspaceRoot || input.project.root || '',
+    agentSessionId,
+    conversationId: agentSessionId,
+    modelRuntime,
+    permissionPreset: 'auto',
+    effort:
+      input.workMode === 'project_coordinator'
+        ? input.project.multiAgentConfig?.coordinatorEffort || 'high'
+        : input.project.multiAgentConfig?.workerEffort || 'high',
+    ...(Array.isArray(input.project.multiAgentConfig?.autoModeRules)
+      ? {projectAutoModeRules: input.project.multiAgentConfig.autoModeRules}
+      : {}),
+  };
+  const startedAt = Date.now();
+  const progress: {
+    answer: string;
+    thinking: string;
+    trajectory: Array<Record<string, unknown>>;
+    agentSessionId: string;
+    retryNotice?: string;
+  } = {
+    answer: '',
+    thinking: '',
+    trajectory: [],
+    agentSessionId,
+  };
+  let streamTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearStreamTimer = () => {
+    if (streamTimer !== null) {
+      clearTimeout(streamTimer);
+      streamTimer = null;
+    }
+  };
+  const flushStreamProgress = () => {
+    streamTimer = null;
+    emitProjectMaEvent({
+      projectId: input.project.id,
+      threadId: input.threadId,
+      type: 'stream_progress',
+      running: true,
+      answer: progress.answer,
+      thinking: progress.thinking,
+      trajectory: progress.trajectory.slice(-24),
+      ...(progress.retryNotice ? {retryNotice: progress.retryNotice} : {}),
+    });
+  };
+
+  let retryAttempt = 0;
+  const runEntry: ActiveProjectRunEntry = {
+    child: undefined,
+    projectId: input.project.id,
+    threadId: input.threadId,
+    startedAt,
+    releaseSlot: releaseWorkerSlot,
+    getProgress: () => ({
+      answer: progress.answer,
+      thinking: progress.thinking,
+      trajectory: progress.trajectory.slice(-24),
+      ...(progress.retryNotice ? {retryNotice: progress.retryNotice} : {}),
+    }),
+  };
+  activeProjectRuns.set(runKey, runEntry);
+  emitProjectMaEvent({
+    projectId: input.project.id,
+    threadId: input.threadId,
+    type: 'run_started',
+    startedAt,
+  });
+
+  const drainPendingQueue = () => {
+    const queue = pendingProjectRuns.get(runKey);
+    if (!queue || queue.length === 0) {
+      return;
+    }
+    const nextRun = queue.shift()!;
+    if (queue.length === 0) {
+      pendingProjectRuns.delete(runKey);
+    }
+    spawnProjectAgentRun(nextRun);
+  };
+
+  const onProgress = (record: Record<string, unknown>) => {
+    if (record?.phase === 'project_worker_dispatch') {
+      const fields = parseProjectProgressFields(record);
+      const threadId = String(fields.threadId || '').trim();
+      const prompt = String(fields.prompt || '').trim();
+      if (threadId && prompt) {
+        const project =
+          conversations().getProject(input.project.id) || input.project;
+        try {
+          if (input.store.getThread(threadId)) {
+            input.store.updateThread(threadId, {
+              threadStatus: 'working',
+              taskStatus: 'in_progress',
+            });
+          }
+        } catch {
+          // Ignore if project became read-only or thread is absent.
+        }
+        emitProjectMaEvent({
+          projectId: input.project.id,
+          threadId,
+          type: 'worker_dispatched',
+        });
+        const dispatchRunKey = projectRunKey(project.id, threadId);
+        if (
+          activeProjectRuns.has(dispatchRunKey) ||
+          (activeProjectWorkerRuns.get(input.project.id) ?? 0) <
+            MAX_ACTIVE_PROJECT_WORKER_RUNS
+        ) {
+          spawnProjectAgentRun({
+            project,
+            question: prompt,
+            workMode: 'code',
+            threadId,
+            workspaceRoot: String(fields.worktreePath || project.root || ''),
+            store: input.store,
+          });
+        }
+      }
+      return;
+    }
+    if (record?.phase === 'project_channel_updated') {
+      const fields = parseProjectProgressFields(record);
+      emitProjectMaEvent({
+        projectId: input.project.id,
+        threadId: input.threadId,
+        type: 'channel_updated',
+        tool: fields.tool,
+      });
+    }
+    if (appendTranscript(progress, record) && streamTimer === null) {
+      streamTimer = setTimeout(flushStreamProgress, 120);
+    }
+  };
+
+  const startAttempt = () => {
+    if (runEntry.stopped || activeProjectRuns.get(runKey) !== runEntry) {
+      releaseWorkerSlot();
+      return;
+    }
+    if (retryAttempt > 0) {
+      progress.retryNotice = undefined;
+      emitProjectMaEvent({
+        projectId: input.project.id,
+        threadId: input.threadId,
+        type: 'stream_progress',
+        running: true,
+        answer: progress.answer,
+        thinking: progress.thinking,
+        trajectory: progress.trajectory.slice(-24),
+        retryNotice: '',
+      });
+    }
+    let attemptCompleted = false;
+    const child = runRuntimeBridge(payload, 'conversation', 'dashboard', {
+      allowWithoutSurface: true,
+      timeoutMs: 120_000,
+      onProgress,
+      onComplete: (result: {ok?: boolean; answer?: string; error?: string}) => {
+        attemptCompleted = true;
+        clearStreamTimer();
+        const wasStopped = Boolean(runEntry.stopped);
+        if (wasStopped) {
+          if (activeProjectRuns.get(runKey) === runEntry) {
+            activeProjectRuns.delete(runKey);
+          }
+          pendingProjectRuns.delete(runKey);
+          releaseWorkerSlot();
+          if (input.threadId) {
+            try {
+              input.store.updateThread(input.threadId, {
+                threadStatus: 'idle',
+              });
+            } catch {
+              // Ignore if project became read-only or thread was discarded.
+            }
+          }
+          return;
+        }
+
+        const modelName = String(
+          modelRuntime?.model || overrideModel || 'current model',
+        );
+        if (
+          result?.ok === false &&
+          isRetryableRateLimitError(result?.error) &&
+          retryAttempt < MAX_PROJECT_RATE_LIMIT_RETRIES
+        ) {
+          retryAttempt += 1;
+          const delayMs =
+            PROJECT_RATE_LIMIT_RETRY_DELAYS_MS[retryAttempt - 1] ?? 6000;
+          progress.retryNotice = `Rate limited on ${modelName} · retrying in ${Math.round(delayMs / 1000)}s (attempt ${retryAttempt}/${MAX_PROJECT_RATE_LIMIT_RETRIES})…`;
+          emitProjectMaEvent({
+            projectId: input.project.id,
+            threadId: input.threadId,
+            type: 'stream_progress',
+            running: true,
+            answer: progress.answer,
+            thinking: progress.thinking,
+            trajectory: progress.trajectory.slice(-24),
+            retryNotice: progress.retryNotice,
+          });
+          const retryTimer = setTimeout(() => {
+            pendingRetryTimersByRunKey.delete(runKey);
+            startAttempt();
+          }, delayMs);
+          pendingRetryTimersByRunKey.set(runKey, retryTimer);
+          return;
+        }
+
+        if (activeProjectRuns.get(runKey) === runEntry) {
+          activeProjectRuns.delete(runKey);
+        }
+        releaseWorkerSlot();
+
+        const effectiveError =
+          result?.ok === false && isRetryableRateLimitError(result?.error)
+            ? formatRateLimitExceededError(modelName, result?.error)
+            : result?.error;
+
+        const tools = summarizeProjectRunTools(progress.trajectory);
+        if (input.threadId) {
+          const text = String(
+            result?.answer ||
+              progress.answer ||
+              (result?.ok === false
+                ? `Worker error: ${effectiveError || 'failed'}`
+                : 'Completed.'),
+          ).trim();
+          try {
+            input.store.appendThreadMessage(input.threadId, {
+              author: 'worker',
+              text,
+            });
+            input.store.updateThread(input.threadId, {
+              threadStatus: result?.ok === false ? 'failed' : 'idle',
+              taskStatus: result?.ok === false ? 'blocked' : 'done',
+            });
+          } catch {
+            // Ignore if project became read-only or thread was discarded.
+          }
+        } else {
+          const finalAnswer = String(
+            result?.answer || progress.answer || '',
+          ).trim();
+          if (finalAnswer) {
+            try {
+              input.store.appendTimeline({
+                type: 'coordinator_post',
+                author: 'coordinator',
+                text: finalAnswer,
+                payload: {
+                  ...(progress.thinking ? {thinking: progress.thinking} : {}),
+                  ...(tools.length ? {tools} : {}),
+                  ...(result?.ok === false
+                    ? {error: true, failedPrompt: input.question}
+                    : {}),
+                },
+              });
+            } catch {
+              // Ignore if read-only.
+            }
+          } else if (result?.ok === false) {
+            try {
+              input.store.appendTimeline({
+                type: 'activity',
+                author: 'system',
+                text: `Coordinator error: ${effectiveError || 'failed'}`,
+                payload: {
+                  error: true,
+                  failedPrompt: input.question,
+                },
+              });
+            } catch {
+              // Ignore if read-only.
+            }
+          }
+        }
+        emitProjectMaEvent({
+          projectId: input.project.id,
+          threadId: input.threadId,
+          type: 'run_completed',
+          ok: result?.ok !== false,
+          error: effectiveError,
+        });
+        drainPendingQueue();
+      },
+    });
+    runEntry.child = child;
+    if (!child && !attemptCompleted) {
+      if (activeProjectRuns.get(runKey) === runEntry) {
+        activeProjectRuns.delete(runKey);
+      }
+      releaseWorkerSlot();
+      drainPendingQueue();
+    }
+  };
+
+  if (isWorkerRun) {
+    const stagger = computeWorkerStaggerDelayMs(
+      lastWorkerDispatchAtByProject.get(input.project.id),
+      Date.now(),
+      WORKER_DISPATCH_STAGGER_MS,
+    );
+    lastWorkerDispatchAtByProject.set(input.project.id, stagger.scheduledAt);
+    if (stagger.delayMs > 0) {
+      const staggerTimer = setTimeout(() => {
+        pendingWorkerTimersByRunKey.delete(runKey);
+        startAttempt();
+      }, stagger.delayMs);
+      pendingWorkerTimersByRunKey.set(runKey, staggerTimer);
+      return;
+    }
+  }
+  startAttempt();
+}
+
+ipcMain.handle(
+  'projects:ma:overview',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; projectRoot?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project =
+        conversations().getProject(projectId) ||
+        (payload?.projectRoot
+          ? conversations().getProject(String(payload.projectRoot))
+          : null);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const store = projectChannelStoreFor(project.id, project);
+      const threads = sortThreadsByAttention(store.listThreads());
+      const timeline = store.readTimeline({limit: 200});
+      const decisions = store.listDecisions();
+      const artifacts = store.listArtifacts({});
+      const recap = store.getRecap();
+      const statusPageHtml = store.getStatusPage();
+      const sections = store.getSections();
+      const files = store.listFiles();
+      const memory = {
+        ...store.readMemory('/MEMORY.md'),
+        topicPaths: store.listMemoryFiles(),
+      };
+      const workers = threads
+        .filter(t => t.threadStatus === 'working')
+        .map((t, idx) => ({
+          step: idx + 1,
+          names: [t.displayName || t.title],
+          threadId: t.id,
+          status: 'running',
+        }));
+      const activeCoordinator = activeProjectRuns.get(`${project.id}:coordinator`);
+      const activeProgress = activeCoordinator?.getProgress();
+      const activeRun = activeCoordinator
+        ? {
+            running: true,
+            startedAt: activeCoordinator.startedAt,
+            answer: activeProgress?.answer || '',
+            thinking: activeProgress?.thinking || '',
+            trajectory: (activeProgress?.trajectory || []).slice(-24),
+            ...(activeProgress?.retryNotice
+              ? {retryNotice: activeProgress.retryNotice}
+              : {}),
+          }
+        : null;
+      const activeRuns: Record<
+        string,
+        {
+          running: boolean;
+          startedAt: number;
+          answer: string;
+          thinking: string;
+          trajectory: Array<Record<string, unknown>>;
+          retryNotice?: string;
+          queuedCount?: number;
+        }
+      > = {};
+      for (const [key, entry] of activeProjectRuns.entries()) {
+        if (entry.projectId !== project.id) {
+          continue;
+        }
+        const runIdKey = entry.threadId || 'coordinator';
+        const prog = entry.getProgress();
+        const queuedCount = pendingProjectRuns.get(key)?.length ?? 0;
+        activeRuns[runIdKey] = {
+          running: true,
+          startedAt: entry.startedAt,
+          answer: prog.answer || '',
+          thinking: prog.thinking || '',
+          trajectory: (prog.trajectory || []).slice(-24) as Array<
+            Record<string, unknown>
+          >,
+          ...(prog.retryNotice ? {retryNotice: prog.retryNotice} : {}),
+          ...(queuedCount > 0 ? {queuedCount} : {}),
+        };
+      }
+      let userName = 'there';
+      try {
+        userName = String(os.userInfo().username || '').trim() || 'there';
+      } catch {
+        userName = 'there';
+      }
+      const modelContext = collectProjectModelContext(project);
+      return {
+        ok: true,
+        state: {
+          project,
+          threads,
+          timeline,
+          decisions,
+          artifacts,
+          recap,
+          statusPageHtml,
+          sections,
+          files,
+          memory,
+          workers,
+          activeRun,
+          activeRuns,
+          userName,
+          modelContext,
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:sidebar-badges',
+  (event: Electron.IpcMainInvokeEvent) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, badges: {}};
+    }
+    try {
+      const badges: Record<
+        string,
+        {
+          badge: ReturnType<typeof computeProjectSidebarBadge>;
+          threads: Array<{
+            id: string;
+            title: string;
+            status: string;
+            hasUnread: boolean;
+          }>;
+        }
+      > = {};
+      for (const project of conversations().listProjects()) {
+        const store = projectChannelStoreFor(project.id, project);
+        const threads = sortThreadsByAttention(store.listThreads());
+        const badge = computeProjectSidebarBadge(threads, {
+          waitingCount: project.multiAgentConfig?.waitingCount,
+        });
+        badges[project.id] = {
+          badge,
+          threads: threads.slice(0, 6).map(t => ({
+            id: t.id,
+            title: t.title,
+            status: t.threadStatus || 'idle',
+            hasUnread: t.hasUnread,
+          })),
+        };
+      }
+      return {ok: true, badges};
+    } catch {
+      return {ok: false, badges: {}};
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:send-goal',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      projectRoot?: unknown;
+      goal?: unknown;
+      text?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const goal = String(payload?.goal || payload?.text || '').trim();
+      const project =
+        conversations().getProject(projectId) ||
+        (payload?.projectRoot
+          ? conversations().getProject(String(payload.projectRoot))
+          : null);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const store = projectChannelStoreFor(project.id, project);
+      const entry = store.appendTimeline({
+        type: 'goal',
+        author: 'user',
+        text: goal,
+      });
+      emitProjectMaEvent({projectId: project.id, type: 'goal', entry});
+      spawnProjectAgentRun({
+        project,
+        question: goal,
+        workMode: 'project_coordinator',
+        store,
+      });
+      return {ok: true, entry};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:start-thread',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      projectRoot?: unknown;
+      title?: unknown;
+      prompt?: unknown;
+      body?: unknown;
+      useWorktree?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const prompt = String(payload?.prompt || payload?.body || '').trim();
+      const project =
+        conversations().getProject(projectId) ||
+        (payload?.projectRoot
+          ? conversations().getProject(String(payload.projectRoot))
+          : null);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const store = projectChannelStoreFor(project.id, project);
+      const threadId = `thr_${crypto.randomUUID().slice(0, 8)}`;
+      const useWorktree = payload?.useWorktree !== false;
+      const workspace = useWorktree
+        ? await projectWorktreeManager()
+            .createThreadWorkspace({
+              projectRoot: project.root,
+              projectDataDir: projectChannelDataDir(project.id),
+              threadId,
+            })
+            .catch(() => null)
+        : null;
+      const thread = store.createThread({
+        id: threadId,
+        title: String(payload?.title || '').trim() || undefined,
+        body: prompt,
+        worktreePath: workspace?.worktreePath,
+        worktreeBranch: workspace?.branch,
+        lastPromptText: prompt,
+      });
+      store.updateThread(thread.id, {
+        threadStatus: 'working',
+        taskStatus: 'in_progress',
+      });
+      emitProjectMaEvent({
+        projectId: project.id,
+        threadId: thread.id,
+        type: 'thread_started',
+      });
+      if (prompt) {
+        spawnProjectAgentRun({
+          project,
+          question: prompt,
+          workMode: 'code',
+          threadId: thread.id,
+          workspaceRoot: workspace?.worktreePath || project.root,
+          store,
+        });
+      }
+      return {ok: true, thread};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:message-thread',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; threadId?: unknown; text?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const threadId = String(payload?.threadId || '').trim();
+      const text = String(payload?.text || '').trim();
+      const project = conversations().getProject(projectId);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const store = projectChannelStoreFor(project.id, project);
+      const thread = store.getThread(threadId);
+      const updatedThread = store.appendThreadMessage(threadId, {
+        author: 'user',
+        text,
+      });
+      store.updateThread(threadId, {
+        threadStatus: 'working',
+        taskStatus: 'in_progress',
+      });
+      emitProjectMaEvent({
+        projectId: project.id,
+        threadId,
+        type: 'message_routed',
+      });
+      if (text) {
+        spawnProjectAgentRun({
+          project,
+          question: text,
+          workMode: 'code',
+          threadId,
+          workspaceRoot: thread?.worktreePath || project.root,
+          store,
+        });
+      }
+      return {ok: true, thread: updatedThread};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:resolve-thread',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      threadId?: unknown;
+      resolved?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const thread = store.resolveThread(
+        String(payload?.threadId || ''),
+        payload?.resolved !== false,
+      );
+      emitProjectMaEvent({
+        projectId,
+        threadId: thread.id,
+        type: 'thread_resolved',
+      });
+      return {ok: true, thread};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:remind-thread',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      threadId?: unknown;
+      remindAt?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const remindAt =
+        payload?.remindAt === null
+          ? undefined
+          : typeof payload?.remindAt === 'number'
+            ? payload.remindAt
+            : Date.now() + 3600_000;
+      const thread = store.setThreadRemindLater(
+        String(payload?.threadId || ''),
+        remindAt,
+      );
+      emitProjectMaEvent({
+        projectId,
+        threadId: thread.id,
+        type: 'thread_remind',
+      });
+      return {ok: true, thread};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:answer-decision',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      decisionId?: unknown;
+      optionIndex?: unknown;
+      chosenIndex?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const card = store.decide(String(payload?.decisionId || ''), {
+        optionIndex: Number(payload?.optionIndex ?? payload?.chosenIndex ?? 0),
+        chosenBy: 'user',
+        close: 'answered',
+      });
+      emitProjectMaEvent({
+        projectId,
+        decisionId: card.id,
+        type: 'decision_answered',
+      });
+      return {ok: true, card};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:withdraw-decision',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; decisionId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const card = store.decide(String(payload?.decisionId || ''), {
+        chosenBy: 'user',
+        close: 'withdrawn',
+      });
+      emitProjectMaEvent({
+        projectId,
+        decisionId: card.id,
+        type: 'decision_withdrawn',
+      });
+      return {ok: true, card};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:read-file',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; path?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      return {
+        ok: true,
+        ...store.readFile(String(payload?.path || '')),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:write-file',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      path?: unknown;
+      content?: unknown;
+      overwrite?: unknown;
+      keepBoth?: unknown;
+      expectedSha256?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const result = store.writeFile({
+        path: String(payload?.path || ''),
+        content: String(payload?.content ?? ''),
+        overwrite: Boolean(payload?.overwrite),
+        keepBoth: Boolean(payload?.keepBoth),
+      });
+      emitProjectMaEvent({projectId, type: 'file_written'});
+      return result;
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:delete-file',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; path?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const deleted = store.deleteFile(String(payload?.path || ''));
+      emitProjectMaEvent({projectId, type: 'file_deleted'});
+      return {ok: deleted};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:read-memory',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; path?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      return {
+        ok: true,
+        ...store.readMemory(String(payload?.path || '/MEMORY.md')),
+        topicPaths: store.listMemoryFiles(),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:write-memory',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      path?: unknown;
+      content?: unknown;
+      expectedSha256?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const memPath = String(payload?.path || '/MEMORY.md');
+      const content = String(payload?.content ?? '');
+      const result =
+        typeof payload?.expectedSha256 === 'string' && payload.expectedSha256
+          ? store.updateMemory(memPath, content, payload.expectedSha256)
+          : store.createMemory(memPath, content);
+      emitProjectMaEvent({projectId, type: 'memory_updated'});
+      return result;
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:update-sections',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      hiddenIds?: unknown;
+      order?: unknown;
+      expectedVersion?: unknown;
+      version?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const result = store.updateSections({
+        ...(Array.isArray(payload?.hiddenIds)
+          ? {hiddenIds: payload.hiddenIds.map(String)}
+          : {}),
+        ...(Array.isArray(payload?.order)
+          ? {order: payload.order.map(String)}
+          : {}),
+        expectedVersion:
+          typeof payload?.expectedVersion === 'number'
+            ? payload.expectedVersion
+            : typeof payload?.version === 'number'
+              ? payload.version
+              : store.getSections().version,
+      });
+      emitProjectMaEvent({projectId, type: 'sections_updated'});
+      return result;
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:dismiss-recap',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; dismissed?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const recap = store.dismissRecap(payload?.dismissed !== false);
+      emitProjectMaEvent({projectId, type: 'recap_dismissed'});
+      return {ok: true, recap};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:pin-artifact',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      artifactId?: unknown;
+      pinned?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const artifact = store.setArtifactPinned(
+        String(payload?.artifactId || ''),
+        Boolean(payload?.pinned),
+      );
+      emitProjectMaEvent({projectId, type: 'artifact_pinned'});
+      return {ok: true, artifact};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:inspect-diff',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; threadId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const threadId = String(payload?.threadId || '').trim();
+      const project = conversations().getProject(projectId);
+      const store = projectChannelStoreFor(projectId, project);
+      const thread = store.getThread(threadId);
+      if (!thread?.worktreePath) {
+        return {ok: true, diff: '', summary: 'No isolated worktree', files: []};
+      }
+      const diff = await projectWorktreeManager().getWorktreeDiff({
+        worktreePath: thread.worktreePath,
+      });
+      return {ok: true, ...diff};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:merge-worktree',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; threadId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const threadId = String(payload?.threadId || '').trim();
+      const project = conversations().getProject(projectId);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const store = projectChannelStoreFor(project.id, project);
+      const thread = store.getThread(threadId);
+      if (!thread) {
+        return {ok: false, error: `Unknown thread: ${threadId}`};
+      }
+      if (thread.worktreePath && thread.worktreeBranch) {
+        const merged = await projectWorktreeManager().mergeWorktree({
+          projectRoot: project.root,
+          worktreePath: thread.worktreePath,
+          branch: thread.worktreeBranch,
+        });
+        if (!merged.ok) {
+          return merged;
+        }
+      }
+      const updated = store.resolveThread(threadId, true);
+      emitProjectMaEvent({
+        projectId: project.id,
+        threadId,
+        type: 'worktree_merged',
+      });
+      return {ok: true, thread: updated};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:discard-thread',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; threadId?: unknown; force?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const threadId = String(payload?.threadId || '').trim();
+      const project = conversations().getProject(projectId);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const store = projectChannelStoreFor(project.id, project);
+      const thread = store.getThread(threadId);
+      if (thread?.worktreePath) {
+        await projectWorktreeManager()
+          .discardWorktree({
+            projectRoot: project.root,
+            worktreePath: thread.worktreePath,
+            branch: thread.worktreeBranch,
+            force: Boolean(payload?.force),
+          })
+          .catch(() => null);
+      }
+      const updated = store.updateThread(threadId, {
+        threadStatus: 'archived',
+        taskStatus: 'cancelled',
+      });
+      emitProjectMaEvent({
+        projectId: project.id,
+        threadId,
+        type: 'thread_discarded',
+      });
+      return {ok: true, thread: updated};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'projects:ma:update-config',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      projectId?: unknown;
+      projectRoot?: unknown;
+      patch?: Record<string, unknown>;
+      config?: Record<string, unknown>;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    try {
+      const projectId = String(payload?.projectId || '').trim();
+      const project =
+        conversations().getProject(projectId) ||
+        (payload?.projectRoot
+          ? conversations().getProject(String(payload.projectRoot))
+          : null);
+      if (!project) {
+        return {ok: false, error: `Unknown project: ${projectId}`};
+      }
+      const patch = (
+        payload?.patch && typeof payload.patch === 'object'
+          ? payload.patch
+          : payload?.config && typeof payload.config === 'object'
+            ? {multiAgentConfig: payload.config}
+            : {}
+      ) as Record<string, unknown>;
+      const multiAgentConfig = patch.multiAgentConfig as
+        | {autoModeRules?: string[]}
+        | undefined;
+      if (Array.isArray(multiAgentConfig?.autoModeRules)) {
+        const validation = validateAutoModeRules(
+          multiAgentConfig.autoModeRules,
+        );
+        if (!validation.ok) {
+          return {ok: false, error: validation.error};
+        }
+      }
+      const updated = conversations().updateProject(
+        project.root || project.id,
+        patch,
+      );
+      if (updated && updated.ok === false) {
+        return {
+          ok: false,
+          error: updated.error || 'Failed to update project config.',
+        };
+      }
+      if (
+        typeof patch.paused === 'boolean' ||
+        typeof patch.archived === 'boolean'
+      ) {
+        projectChannelStoreFor(project.id, project).setReadOnlyState({
+          ...(typeof patch.paused === 'boolean'
+            ? {paused: patch.paused}
+            : {}),
+          ...(typeof patch.archived === 'boolean'
+            ? {archived: patch.archived}
+            : {}),
+        });
+      }
+      emitProjectMaEvent({projectId: project.id, type: 'config_updated'});
+      return {ok: true, project: updated?.project ?? updated};
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+ipcMain.handle(
+  'projects:ma:stop-run',
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {projectId?: unknown; threadId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_dashboard_sender'};
+    }
+    const projectId = String(payload?.projectId || '').trim();
+    const threadId = payload?.threadId
+      ? String(payload.threadId).trim()
+      : undefined;
+    const key = projectRunKey(projectId, threadId);
+    const hadPendingQueue = pendingProjectRuns.delete(key);
+    const staggerTimer = pendingWorkerTimersByRunKey.get(key);
+    if (staggerTimer) {
+      clearTimeout(staggerTimer);
+      pendingWorkerTimersByRunKey.delete(key);
+    }
+    const retryTimer = pendingRetryTimersByRunKey.get(key);
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      pendingRetryTimersByRunKey.delete(key);
+    }
+    const entry = activeProjectRuns.get(key);
+    if (!entry && !hadPendingQueue && !staggerTimer && !retryTimer) {
+      return {ok: true, stopped: false};
+    }
+    if (entry) {
+      entry.stopped = true;
+      try {
+        entry.child?.kill?.();
+      } catch {
+        // Ignore if child already exited.
+      }
+      activeProjectRuns.delete(key);
+      entry.releaseSlot?.();
+    }
+    if (threadId && projectId) {
+      try {
+        const project = conversations().getProject(projectId);
+        const store = projectChannelStoreFor(projectId, project);
+        if (store.getThread(threadId)) {
+          store.updateThread(threadId, {threadStatus: 'idle'});
+        }
+      } catch {
+        // Ignore if project became read-only or thread is absent.
+      }
+    }
+    emitProjectMaEvent({
+      projectId,
+      threadId,
+      type: 'run_completed',
+      stopped: true,
+    });
+    return {ok: true, stopped: true};
   },
 );
 ipcMain.handle(
@@ -3834,7 +6583,10 @@ async function restoreConversationContext(conversation: any) {
   } catch {
     /* Retain the last known state if the runtime cannot be read. */
   }
-  if (typeof turn.modelUsage?.contextTokens === 'number') {
+  if (
+    typeof turn.modelUsage?.contextTokens === 'number' &&
+    typeof turn.modelUsage?.systemTokensEstimate === 'number'
+  ) {
     return conversation;
   }
   let cached = restoredContextUsage.get(sessionId);
@@ -3858,7 +6610,22 @@ async function restoreConversationContext(conversation: any) {
       ...conversation.turns.slice(0, -1),
       {
         ...turn,
-        modelUsage: {...turn.modelUsage, ...usage},
+        modelUsage: {...usage, ...turn.modelUsage,
+          ...(typeof turn.modelUsage?.systemTokensEstimate !== 'number'
+            ? {
+                systemTokensEstimate: usage.systemTokensEstimate,
+                toolSchemaTokensEstimate: usage.toolSchemaTokensEstimate,
+                messageTokensEstimate: usage.messageTokensEstimate,
+                toolResultTokensEstimate: usage.toolResultTokensEstimate,
+                ...(usage.memoryTokensEstimate ? {memoryTokensEstimate: usage.memoryTokensEstimate} : {}),
+                ...(usage.skillTokensEstimate ? {skillTokensEstimate: usage.skillTokensEstimate} : {}),
+                ...(usage.mcpToolTokensEstimate ? {mcpToolTokensEstimate: usage.mcpToolTokensEstimate} : {}),
+                ...(Array.isArray(usage.memoryFiles) && usage.memoryFiles.length ? {memoryFiles: usage.memoryFiles} : {}),
+                ...(Array.isArray(usage.mcpTools) && usage.mcpTools.length ? {mcpTools: usage.mcpTools} : {}),
+                ...(Array.isArray(usage.skills) && usage.skills.length ? {skills: usage.skills} : {}),
+              }
+            : {}),
+        },
       },
     ],
   };
@@ -4328,22 +7095,14 @@ ipcMain.handle(
     const anchorLabel = String(anchorRaw.label || '').trim().slice(0, 200);
     const anchorSnippet = String(anchorRaw.snippet || '').trim().slice(0, 1000);
     const anchorKind = String(anchorRaw.kind || 'selection');
-    const kindTag =
-      anchorKind === 'term'
-        ? '概念/跳步锚点'
-        : anchorKind === 'math'
-          ? '数学公式锚点'
-          : anchorKind === 'card'
-            ? '卡片分块锚点'
-            : '局部划选锚点';
     const isFirstBranchTurn = !existingBranch;
+    const anchorQuoteText =
+      anchorSnippet && anchorSnippet !== anchorLabel
+        ? `${anchorLabel}\n${anchorSnippet}`
+        : anchorLabel;
     const effectivePrompt =
-      isFirstBranchTurn && anchorLabel
-        ? `[局部深入 · ${kindTag}：「${anchorLabel}」${
-            anchorSnippet && anchorSnippet !== anchorLabel
-              ? `\n上下文摘录：${anchorSnippet}`
-              : ''
-          }]\n\n${question}${lemmaTail}`
+      isFirstBranchTurn && anchorQuoteText
+        ? `<quoted_reply kind="${anchorKind}">${anchorQuoteText}</quoted_reply>\n\n${question}${lemmaTail}`
         : `${question}${lemmaTail}`;
 
     let permissionPreset: PermissionPreset;
@@ -4370,6 +7129,11 @@ ipcMain.handle(
       kindRaw === 'socratic'
         ? (kindRaw as 'ask' | 'quiz' | 'feynman' | 'inquiry' | 'socratic')
         : undefined;
+    const surfaceRaw = String(raw?.surface || '').trim();
+    const branchSurface =
+      surfaceRaw === 'side' || surfaceRaw === 'inline'
+        ? (surfaceRaw as 'side' | 'inline')
+        : undefined;
     const appended = conversations().appendBranchTurn({
       conversationId,
       branchId: existingBranch?.id,
@@ -4377,6 +7141,7 @@ ipcMain.handle(
       parentTurnIndex,
       anchor: raw?.anchor,
       ...(branchKind ? {kind: branchKind} : {}),
+      ...(branchSurface ? {surface: branchSurface} : {}),
       agentSessionId: branchSessionId,
       forkMessageCount,
       question,
@@ -4394,11 +7159,18 @@ ipcMain.handle(
     const effort = ['low', 'medium', 'high', 'max'].includes(rawEffort)
       ? rawEffort
       : 'high';
+    const bridgeWorkMode =
+      source.workMode === 'code' ? 'code' : source.workMode || 'learn';
+    const bridgeLearnCourseMemory =
+      bridgeWorkMode === 'learn' ? safeActiveLearnCourseMemory() : undefined;
     const bridgePayload = {
       question: effectivePrompt,
-      workMode:
-        source.workMode === 'code' ? 'code' : source.workMode || 'learn',
+      workMode: bridgeWorkMode,
       knowledgeIndexPath: path.join(stashBaseDir(), 'index.json'),
+      knowledgeVaultDir: activeKnowledgeVaultDir(),
+      ...(bridgeLearnCourseMemory
+        ? {learnCourseMemory: bridgeLearnCourseMemory}
+        : {}),
       ...(fallbackAncestorTurns ? {turns: fallbackAncestorTurns} : {}),
       object: source.object || {},
       modelRuntime,
@@ -4469,11 +7241,17 @@ ipcMain.handle(
         }
         activeLearnBranchRuns.delete(branch.id);
         const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
+        const stripInterruptedText = (value: unknown): string => {
+          const text = String(value || '');
+          return /^user interrupted$/i.test(text.trim()) ? '' : text;
+        };
+        const rawCombinedAnswer = stripInterruptedText(
+          parsed?.answer || progress.answer || '',
+        );
         const failed =
-          parsed?.ok !== true ||
-          !String(parsed?.answer || progress.answer || '').trim();
+          !stopped && (parsed?.ok !== true || !rawCombinedAnswer.trim());
         const error = failed ? conversationFailureMessage(parsed) : '';
-        const finalAnswer = String(parsed?.answer || progress.answer || '');
+        const finalAnswer = rawCombinedAnswer;
         const finalThinking = String(
           parsed?.thinking || progress.thinking || '',
         );
@@ -4484,6 +7262,7 @@ ipcMain.handle(
           answer: finalAnswer,
           thinking: finalThinking,
           outcome: stopped ? '已停止' : failed ? '失败' : '已完成',
+          interrupted: stopped,
           failed,
           error,
           runtimeTurn: parsed?.runtimeTurn,
@@ -4808,17 +7587,164 @@ ipcMain.handle(
 
 ipcMain.handle(
   'stage:open-task',
-  (event: Electron.IpcMainInvokeEvent, payload: {selectionSessionToken?: unknown} = {}) => {
+  (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {selectionSessionToken?: unknown; fallbackToStudio?: unknown} = {},
+  ) => {
     if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
       return {ok: false, error: 'unauthorized_renderer'};
     }
-    const conversation = conversationForSelection(String(payload.selectionSessionToken || ''));
+    const conversation = conversationForSelection(
+      String(payload.selectionSessionToken || ''),
+    );
     if (!conversation) {
+      if (payload.fallbackToStudio) {
+        showDashboard({view: 'chat'}, {activate: true});
+        hideStage();
+        return {ok: true, conversationId: null};
+      }
       return {ok: false, error: 'unknown_selection_task'};
     }
     showDashboard({view: 'chat', conversationId: conversation.id}, {activate: true});
     hideStage();
     return {ok: true, conversationId: conversation.id};
+  },
+);
+
+ipcMain.handle(
+  'stage:save-to-learn-note',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {
+      selectionSessionToken?: unknown;
+      quote?: unknown;
+      note?: unknown;
+      section?: unknown;
+      saveToVault?: unknown;
+    } = {},
+  ) => {
+    if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    try {
+      const listed = listLearnCourses(FABRIC_DATA_DIR);
+      const course =
+        getLearnCourse(FABRIC_DATA_DIR, listed.activeCourseId) ||
+        ensureRoadshowCs336Course(FABRIC_DATA_DIR);
+      const session = selectionSessions.get(
+        String(raw.selectionSessionToken || ''),
+      );
+      const quote = String(
+        raw.quote || session?.snapshot?.selection_text || session?.snapshot?.title || '桌面划选要点',
+      ).trim();
+      const note = String(raw.note || '').trim();
+      const section = String(
+        raw.section || session?.snapshot?.source_app || '桌面速记',
+      ).trim();
+      recordAnnotationFeedback(FABRIC_DATA_DIR, course.id, {
+        type: note ? 'note' : 'hl',
+        quote,
+        section,
+        ...(note ? {note} : {}),
+      });
+      let vaultPath: string | undefined;
+      if (raw.saveToVault !== false) {
+        const vaultDir = activeKnowledgeVaultDir();
+        if (vaultDir) {
+          const saved = saveVaultNote(vaultDir, {
+            title: `${section} - ${quote.slice(0, 28)}`,
+            folder: 'Learn',
+            tags: ['magic-pointer', 'learn'],
+            source: session?.snapshot?.source_app || 'Magic Pointer Stage',
+            body: `## ${section}\n\n> ${quote}\n\n${note || ''}`.trim(),
+          });
+          vaultPath = saved.relativePath;
+        }
+      }
+      return {
+        ok: true,
+        courseId: course.id,
+        courseTitle: course.title,
+        ...(vaultPath ? {vaultPath} : {}),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'stage:handoff-to-learn',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    raw: {
+      selectionSessionToken?: unknown;
+      quote?: unknown;
+      note?: unknown;
+      section?: unknown;
+      question?: unknown;
+    } = {},
+  ) => {
+    if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+      return {ok: false, error: 'unauthorized_renderer'};
+    }
+    try {
+      const token = String(raw.selectionSessionToken || '');
+      const session = selectionSessions.get(token);
+      const conversation = token ? conversationForSelection(token) : null;
+      const listed = listLearnCourses(FABRIC_DATA_DIR);
+      const course =
+        getLearnCourse(FABRIC_DATA_DIR, listed.activeCourseId) ||
+        ensureRoadshowCs336Course(FABRIC_DATA_DIR);
+      const quote = String(
+        raw.quote || session?.snapshot?.selection_text || raw.question || '',
+      ).trim();
+      const note = String(raw.note || '').trim();
+      const section = String(
+        raw.section || session?.snapshot?.source_app || 'Magic Pointer 带入',
+      ).trim();
+      if (quote) {
+        recordAnnotationFeedback(FABRIC_DATA_DIR, course.id, {
+          type: note ? 'note' : 'hl',
+          quote,
+          section,
+          ...(note ? {note} : {}),
+        });
+      }
+      const handoffPrompt = [
+        raw.question ? `我在外部窗口提问：「${String(raw.question).trim()}」` : '',
+        quote ? `原内容：${quote.slice(0, 400)}` : '',
+        note ? `已有讲解摘要：${note.slice(0, 600)}` : '',
+        '请把它放进当前课程脉络里，带我用具体小数字把底层直觉和公式推导彻底讲透，并留一道交互小题。',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+      showDashboard(
+        {
+          view: 'chat',
+          productMode: 'learn',
+          openLearnInspector: true,
+          courseId: course.id,
+          handoffPrompt,
+          ...(conversation ? {conversationId: conversation.id} : {}),
+        },
+        {activate: true},
+      );
+      hideStage();
+      return {
+        ok: true,
+        courseId: course.id,
+        courseTitle: course.title,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   },
 );
 
@@ -5346,17 +8272,52 @@ async function sendConversation(
   }
   const hadPendingWork = existing?.hasPendingWork === true;
   const normalizedRawWorkMode =
-    raw.workMode === 'learn'
-      ? 'learn'
-      : raw.workMode === 'work'
-        ? 'work'
-        : 'code';
+    raw.workMode === 'learn' ||
+    raw.workMode === 'design' ||
+    raw.workMode === 'work' ||
+    raw.workMode === 'project_coordinator'
+      ? raw.workMode
+      : 'code';
+  const selectionEntry = raw.selectionSessionToken
+    ? selectionSessions.get(String(raw.selectionSessionToken))
+    : null;
+  const chatWorkMode = existing?.workMode || normalizedRawWorkMode;
+  const chatLearnCourseMemory =
+    chatWorkMode === 'learn' ? safeActiveLearnCourseMemory() : undefined;
   const payload = {
     question,
-    workMode: existing?.workMode || normalizedRawWorkMode,
+    workMode: chatWorkMode,
+    ...(typeof raw.designCanvasSlug === 'string' && raw.designCanvasSlug.trim()
+      ? {designCanvasSlug: raw.designCanvasSlug.trim().slice(0, 120)}
+      : {}),
+    ...(typeof raw.designViewContextXml === 'string' &&
+    raw.designViewContextXml.trim()
+      ? {designViewContextXml: raw.designViewContextXml.slice(0, 64 * 1024)}
+      : {}),
+    ...(typeof raw.designAnnotationsXml === 'string' &&
+    raw.designAnnotationsXml.trim()
+      ? {designAnnotationsXml: raw.designAnnotationsXml.slice(0, 64 * 1024)}
+      : {}),
+    ...(Array.isArray(raw.projectAutoModeRules)
+      ? {
+          projectAutoModeRules: raw.projectAutoModeRules
+            .filter((rule: unknown): rule is string => typeof rule === 'string')
+            .slice(0, 50),
+        }
+      : Array.isArray(projectContext?.multiAgentConfig?.autoModeRules)
+        ? {
+            projectAutoModeRules:
+              projectContext.multiAgentConfig.autoModeRules.slice(0, 50),
+          }
+        : {}),
     knowledgeIndexPath: path.join(stashBaseDir(), 'index.json'),
+    knowledgeVaultDir: activeKnowledgeVaultDir(),
+    ...(chatLearnCourseMemory ? {learnCourseMemory: chatLearnCourseMemory} : {}),
     turns: bridgeHistoryTurns(existing?.turns),
     object: existing?.object || {},
+    ...(selectionEntry?.snapshot
+      ? {selectionSnapshot: safeClone(selectionEntry.snapshot)}
+      : {}),
     modelRuntime,
     permissionPreset,
     effort,
@@ -5364,6 +8325,13 @@ async function sendConversation(
     attachments: taskAttachments,
     ...(raw.outputArtifact !== undefined
       ? {outputArtifact: raw.outputArtifact}
+      : {}),
+    ...(typeof raw.coachMode === 'boolean' ? {coachMode: raw.coachMode} : {}),
+    ...(raw.computerUseMode === 'autopilot' || raw.computerUseMode === 'coach'
+      ? {computerUseMode: raw.computerUseMode}
+      : {}),
+    ...(Array.isArray(raw.guidedTourSteps) && raw.guidedTourSteps.length
+      ? {guidedTourSteps: raw.guidedTourSteps.slice(0, 40)}
       : {}),
     projectContext: projectContext ?? null,
     additionalFolders,
@@ -5594,13 +8562,21 @@ async function sendConversation(
       const awaitingInput = Boolean(
         parsed?.pendingInput || parsed?.awaitingUserInput,
       );
+      const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
+      const stripInterruptedText = (value: unknown): string => {
+        const text = String(value || '');
+        return /^user interrupted$/i.test(text.trim()) ? '' : text;
+      };
+      const cleanParsedAnswer = stripInterruptedText(
+        parsed?.answer || progress.answer || previousTurn?.answer || '',
+      );
       const failed =
-        parsed?.ok !== true ||
-        (!awaitingInput && !String(parsed?.answer || '').trim());
+        !stopped &&
+        (parsed?.ok !== true ||
+          (!awaitingInput && !cleanParsedAnswer.trim()));
       const terminated =
         parsed?.loopTerminated === true ||
         Boolean(parsed?.loopTerminatedReason);
-      const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
       const verificationPending =
         Array.isArray(parsed?.receipts) &&
         parsed.receipts.some(
@@ -5624,7 +8600,7 @@ async function sendConversation(
                 : {}),
             }
           : {}),
-        ok: !failed,
+        ok: !failed && !stopped,
         conversationId: conversation.id,
         turnIndex,
         ...(inputResponse ? {accepted: inputAccepted} : {}),
@@ -5634,9 +8610,7 @@ async function sendConversation(
           (typeof parsed?.hasPendingWork === 'boolean'
             ? parsed.hasPendingWork
             : failed || terminated || Boolean(parsed?.pendingInput)),
-        answer: String(
-          parsed?.answer || progress.answer || previousTurn?.answer || '',
-        ),
+        answer: cleanParsedAnswer,
         thinking: String(
           parsed?.thinking || progress.thinking || previousTurn?.thinking || '',
         ),
@@ -5665,14 +8639,31 @@ async function sendConversation(
               : verificationPending
                 ? '待核对'
                 : '已完成',
-        failed: failed || terminated,
-        error:
-          error ||
-          (terminated ? String(parsed?.loopTerminatedReason || '') : ''),
+        interrupted: stopped,
+        failed: stopped ? false : failed || terminated,
+        error: stopped
+          ? ''
+          : error ||
+            (terminated ? String(parsed?.loopTerminatedReason || '') : ''),
         pendingInput: parsed?.pendingInput || null,
       });
       conversations().flush();
       notifyConversationChanged(conversation.id);
+      if (
+        turnIndex === 0 &&
+        !stopped &&
+        !failed &&
+        !awaitingInput &&
+        !conversation.titleCustom &&
+        cleanParsedAnswer.trim()
+      ) {
+        void generateAutoConversationTitle(
+          conversation.id,
+          question,
+          cleanParsedAnswer,
+          modelRuntime,
+        );
+      }
       try {
         contextTrackerRuntime?.reconcileConversation(settled);
       } catch (error) {
@@ -5713,6 +8704,14 @@ async function sendConversation(
           });
           conversations().flush();
           handoffsAccepted = true;
+        }
+        if (record?.phase === 'design_changed') {
+          dashboardWindow?.webContents.send('design:changed', {
+            slug:
+              typeof record.fields?.slug === 'string'
+                ? record.fields.slug
+                : undefined,
+          });
         }
         if (record?.phase === 'user_input_accepted') {
           let answer;
@@ -6970,7 +9969,11 @@ ipcMain.handle(
   },
 );
 
+let activeStagePhase = 'hidden';
+
 function hideStage() {
+  restoreStageMouseCapture();
+  activeStagePhase = 'hidden';
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
     stageWindow.hide();
   }
@@ -7073,7 +10076,7 @@ function setStageMouseCapture(
   if (requestFocus) {
     stageWindow.focus();
   }
-  if (enabled && regions.length) {
+  if (!stageClickThroughYielded && enabled && regions.length) {
     stageWindow.setIgnoreMouseEvents(false);
   } else {
     stageWindow.setIgnoreMouseEvents(true, {forward: true});
@@ -7682,28 +10685,48 @@ ipcMain.handle(
               );
           }
         }
-        const recent: Array<{title: string; projectId: string}> =
-          conversations().list(5);
+        const recent: Array<{title: string; projectId: string; summary?: string}> =
+          conversations().list(12);
         const focus = input.focus || recent.map(item => item.title).join(' · ');
+        const vaultOverview = scanKnowledgeVault(activeKnowledgeVaultDir());
+        const learningContext = buildLearningGoalContext({
+          threads: recent,
+          vault: vaultOverview,
+        });
         const items =
           raw.action === 'search'
             ? service.search(String(input.text || ''))
             : service.list();
         const ordered =
           input.sort === 'importance'
-            ? prioritizeResources(
-                items,
-                focus,
-                recent.map(item => item.projectId).filter(Boolean),
+            ? rankResourcesForLearning(
+                prioritizeResources(
+                  items,
+                  focus,
+                  recent.map(item => item.projectId).filter(Boolean),
+                ),
+                learningContext,
               )
             : chronologicalResources(items);
+        const learningBridge: Record<
+          string,
+          ReturnType<typeof enrichResourceForLearning>
+        > = {};
+        const enrichedItems = ordered.map((item: any) => {
+          const bridge = enrichResourceForLearning(item, learningContext);
+          learningBridge[item.id] = bridge;
+          return {
+            ...item,
+            previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
+            learningBridge: bridge,
+          };
+        });
         return {
           ok: true,
           focus,
-          items: ordered.map(item => ({
-            ...item,
-            previewUrl: resourceThumbnailUrl(stashBaseDir(), item),
-          })),
+          learningGoals: learningContext.goals,
+          learningBridge,
+          items: enrichedItems,
           projects: conversations()
             .listProjects()
             .map((project: ProjectRecord) => ({
@@ -7900,6 +10923,142 @@ ipcMain.handle(
           .drain()
           .catch(error => log(`resource processing: ${String(error)}`));
         return {ok: true, entry};
+      }
+      if (raw.action === 'save-to-vault') {
+        const id = String(input.id || '');
+        const entry = service.list().find((item: any) => item.id === id);
+        if (!entry) {
+          return {ok: false, error: 'resource_not_found'};
+        }
+        let postText = '';
+        let postUrl = '';
+        let postTitle = '';
+        let postAuthor = '';
+        try {
+          const post = service.post(id);
+          postText = String(post?.text || '');
+          postUrl = String(post?.url || '');
+          postTitle = String(post?.title || '');
+          postAuthor = String(post?.author?.name || '');
+        } catch {
+          /* Retained entry may rely on snippet/summary when post file absent */
+        }
+        const recent: Array<{title: string; summary?: string}> =
+          conversations().list(6);
+        const vaultDir = activeKnowledgeVaultDir();
+        const learningContext = buildLearningGoalContext({
+          threads: recent,
+          vault: scanKnowledgeVault(vaultDir),
+        });
+        const enrichment = enrichResourceForLearning(
+          {
+            ...entry,
+            title: postTitle || entry.collection?.title || entry.desc,
+            url: postUrl || entry.collection?.url,
+            author: postAuthor || entry.collection?.authorName,
+            postText: postText || entry.text || entry.summary,
+          },
+          learningContext,
+        );
+        const built = buildResourceVaultMarkdown(
+          {
+            ...entry,
+            title: postTitle || entry.collection?.title || entry.desc,
+            url: postUrl || entry.collection?.url,
+            author: postAuthor || entry.collection?.authorName,
+          },
+          enrichment,
+        );
+        const saved = saveVaultNote(vaultDir, {
+          title: built.title,
+          content: built.markdown,
+          source: postUrl || entry.collection?.url || 'resources',
+          tags: built.tags,
+        });
+        return {
+          ok: saved.ok,
+          vaultResult: saved,
+          ...(saved.ok ? {} : {error: saved.error || 'save_to_vault_failed'}),
+        };
+      }
+      if (raw.action === 'add-vault-todo') {
+        const id = String(input.id || '');
+        const entry = service.list().find((item: any) => item.id === id);
+        const recent: Array<{title: string; summary?: string}> =
+          conversations().list(6);
+        const vaultDir = activeKnowledgeVaultDir();
+        const learningContext = buildLearningGoalContext({
+          threads: recent,
+          vault: scanKnowledgeVault(vaultDir),
+        });
+        const enrichment = entry
+          ? enrichResourceForLearning(entry, learningContext)
+          : null;
+        const entryTitle = String(
+          input.title ||
+            entry?.collection?.title ||
+            entry?.desc ||
+            enrichment?.lead ||
+            '消化这条学习资料',
+        ).trim();
+        const todoText =
+          String(input.todoText || '').trim() ||
+          (enrichment?.intent === 'practice'
+            ? `动手复现：${entryTitle}`
+            : `精读整理：${entryTitle}`);
+        const relatedLink =
+          enrichment?.relatedNoteTitles[0] || enrichment?.goalMatch?.label;
+        const savedTodo = appendVaultTodo(vaultDir, {
+          text: todoText,
+          title: entryTitle,
+          sourceUrl: String(entry?.collection?.url || input.url || ''),
+          ...(relatedLink ? {relatedLink} : {}),
+        });
+        return {
+          ok: savedTodo.ok,
+          vaultResult: savedTodo,
+          ...(savedTodo.ok ? {} : {error: savedTodo.error || 'append_todo_failed'}),
+        };
+      }
+      if (raw.action === 'distill') {
+        const id = String(input.id || '');
+        const entry = service.list().find((item: any) => item.id === id);
+        if (!entry) {
+          return {ok: false, error: 'resource_not_found'};
+        }
+        let postText = '';
+        let postUrl = '';
+        let postTitle = '';
+        try {
+          const post = service.post(id);
+          postText = String(post?.text || '');
+          postUrl = String(post?.url || '');
+          postTitle = String(post?.title || '');
+        } catch {
+          /* Fall back to stored entry fields */
+        }
+        const recent: Array<{title: string; summary?: string}> =
+          conversations().list(6);
+        const learningContext = buildLearningGoalContext({
+          threads: recent,
+          vault: scanKnowledgeVault(activeKnowledgeVaultDir()),
+        });
+        const enrichment = enrichResourceForLearning(
+          {
+            ...entry,
+            title: postTitle || entry.collection?.title || entry.desc,
+            url: postUrl || entry.collection?.url,
+            postText: postText || entry.text || entry.summary,
+          },
+          learningContext,
+        );
+        const goalLine = enrichment.goalMatch
+          ? `关联我当前的学习目标「${enrichment.goalMatch.label}」（${enrichment.goalMatch.reason}）`
+          : '结合我近期的学习脉络';
+        const excerpt = enrichment.paragraphs.slice(0, 6).join('\n\n').slice(0, 1800);
+        const url = String(postUrl || entry.collection?.url || '').trim();
+        const distilledPrompt = `请帮我把下面这条收藏资料讲透，${goalLine}，重点挑出能立刻用上的底层直觉和动手验证步骤，不要空泛总结：\n\n标题：${postTitle || entry.collection?.title || entry.desc || '学习资料'}\n${url ? `链接：${url}\n` : ''}\n正文：\n${excerpt}`;
+        return {ok: true, distilledPrompt};
       }
       if (raw.action === 'read-post') {
         const post = service.post(String(input.id || ''));
@@ -9067,6 +12226,12 @@ function armSelectionGesture(reason = 'wiggle') {
   const runtime = gestureRuntimeContract(fabricSettings);
   const armDelayMs = runtime.armDelayMs;
   const timeoutMs = runtime.timeoutMs;
+  const resolvedSource = resolveSelectionTargetSource({
+    live: pointerInputState,
+    lastStable: lastStableForegroundWindow,
+    selfPid: process.pid,
+    isTransient: isTransientShell,
+  });
   selectionGestureArm = {
     token,
     reason,
@@ -9078,11 +12243,7 @@ function armSelectionGesture(reason = 'wiggle') {
     timeoutMs,
     captureReady: false,
     displayBounds: {...display.bounds},
-    source: {
-      foregroundApp: String(pointerInputState.foregroundApp || ''),
-      foregroundHwnd: Number(pointerInputState.foregroundHwnd || 0),
-      foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
-    },
+    source: resolvedSource,
   };
   getCaptureCommitCoordinator()
     .arm({
@@ -9097,7 +12258,7 @@ function armSelectionGesture(reason = 'wiggle') {
       targetWindow: {
         hwnd: selectionGestureArm.source.foregroundHwnd,
         processId: selectionGestureArm.source.foregroundProcessId,
-        processName: selectionGestureArm.source.foregroundApp || '',
+        processName: selectionGestureArm.source.foregroundApp?.trim() || 'desktop',
         title: '',
       },
       overlayExcluded: overlayCaptureExcluded,
@@ -9108,6 +12269,12 @@ function armSelectionGesture(reason = 'wiggle') {
         return;
       }
       arm.captureReady = true;
+      if (arm.pendingCompletePayload) {
+        const queued = arm.pendingCompletePayload;
+        arm.pendingCompletePayload = undefined;
+        completeSelectionGesture(queued);
+        return;
+      }
       reveal();
     })
     .catch((error: any) => {
@@ -9267,6 +12434,14 @@ function completeSelectionGesture(payload: any) {
     return false;
   }
   if (!arm.captureReady || payload?.captureState === 'preparing') {
+    if (shouldQueueEarlyGesture(arm.captureReady, payload)) {
+      arm.pendingCompletePayload = {
+        ...payload,
+        captureState: 'ready',
+      };
+      log(`queued early gesture token=${arm.token} awaiting frame arm`);
+      return true;
+    }
     cancelSelectionGesture('capture_not_ready');
     reportFrameCommitFailure(new Error('capture_not_ready'));
     return false;
@@ -9560,6 +12735,7 @@ function startMouseShakePolling() {
       hasVisibleTemporarySurface: temporarySurfaceVisible,
       interactiveOverlayOwnsPointer:
         overlayOwnsPointerInput && Boolean(overlayWindow?.isVisible()),
+      stagePhase: activeStagePhase,
     });
     temporarySurfaceButtons = currentButtons;
     if (dismissFromGlobalPointer) {
@@ -9706,13 +12882,18 @@ async function activateDesktopPerception() {
     const beforeHideSequence = pointerStateSequence;
     window?.hide();
     // Let the native foreground sample move off Studio before arming capture.
-    for (let attempt = 0; attempt < 20; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 40));
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 30));
       if (inputPaused || isQuitting || onboardingRequired) {
         break;
       }
-      if (pointerStateReceived && pointerStateSequence > beforeHideSequence && pointerInputState.foregroundHwnd &&
-        pointerInputState.foregroundProcessId && pointerInputState.foregroundProcessId !== process.pid) {
+      if (
+        pointerStateReceived &&
+        pointerStateSequence > beforeHideSequence &&
+        pointerInputState.foregroundHwnd &&
+        pointerInputState.foregroundProcessId &&
+        pointerInputState.foregroundProcessId !== process.pid
+      ) {
         const state = requestActivation('studio-perception');
         if (['activate', 'continue', 'renderer_warming'].includes(state)) {
           return {ok: true, state};
@@ -9720,11 +12901,31 @@ async function activateDesktopPerception() {
         break;
       }
     }
+    if (!inputPaused && !isQuitting && !onboardingRequired) {
+      // Allow display-level selection even when focus sits on the desktop or an empty surface.
+      if (pointerInputState.foregroundProcessId === process.pid) {
+        pointerInputState = {
+          ...pointerInputState,
+          foregroundHwnd: 0,
+          foregroundProcessId: 0,
+          foregroundApp: 'desktop',
+        };
+      }
+      const fallbackState = requestActivation('studio-perception');
+      if (['activate', 'continue', 'renderer_warming'].includes(fallbackState)) {
+        return {ok: true, state: fallbackState};
+      }
+    }
     if (window && !window.isDestroyed() && !isQuitting) {
       window.show();
       window.focus();
     }
-    return {ok: false, error: 'No target window is ready. Open the target app, then use the wake shortcut.'};
+    return {
+      ok: false,
+      error: inputPaused
+        ? 'Pointer pointing is currently paused.'
+        : 'Could not activate screen pointer right now.',
+    };
   } catch (error) {
     if (window && !window.isDestroyed() && !isQuitting) {
       window.show();
@@ -9883,6 +13084,10 @@ function stageSessionPayload(entry: any) {
       (entry?.panelGeometry || panelGeometryForSession(entry))?.stageBounds,
     ),
     targetAppLabel: stageAppLabel(entry?.snapshot),
+    previewImageUrl: (() => {
+      const img = extractSnapshotImagePath(entry?.snapshot);
+      return img ? pathToFileURL(img).toString() : '';
+    })(),
     sessionExpiresAt: entry.expiresAt,
   };
 }
@@ -10201,13 +13406,7 @@ function beginSelectionSession(
         if (dashboardWindow && !dashboardWindow.isDestroyed()) {
           const snap = attached.snapshot || {};
           const sum = attached.summary || {};
-          const imagePath = String(
-            snap.selection_crop_path ||
-              snap.screenshot_path ||
-              snap.frame_lease?.framePath ||
-              snap.frameLease?.framePath ||
-              '',
-          ).trim();
+          const imagePath = extractSnapshotImagePath(snap);
           const ocrText = String(
             sum.selectedText ||
               sum.ocrText ||
@@ -10220,6 +13419,7 @@ function beginSelectionSession(
             .slice(0, 320);
           dashboardWindow.webContents.send('desktop-perception:captured', {
             token: entry.token,
+            selectionSessionToken: entry.token,
             app: String(sum.app || snap.app || 'Screen').trim(),
             windowTitle: String(sum.windowTitle || snap.window_title || '').trim(),
             ocrText,
@@ -10320,6 +13520,11 @@ if (gotLock) {
     } catch (_) {}
     log(`app ready pid=${process.pid}`);
     ensureResidentUiaHost();
+    void getFrameCaptureWorkerClient()
+      .start()
+      .catch((error: unknown) => {
+        log(`frame capture worker warmup deferred: ${String(error)}`);
+      });
     for (const eventName of [
       'display-added',
       'display-removed',
@@ -10717,8 +13922,33 @@ app.on('will-quit', () => {
   flushLog();
   observability.flushEvents();
 });
+let cuDesktopShutdown = false;
 app.on('before-quit', (event: Electron.Event) => {
   isQuitting = true;
+  if (!cuDesktopShutdown) {
+    event.preventDefault();
+    cuDesktopShutdown = true;
+    const tasks: Array<Promise<unknown>> = [
+      cuDesktopDaemon.shutdown().catch((error: unknown) =>
+        log(`cu desktop shutdown: ${String(error)}`),
+      ),
+      liveBrowserDaemon.shutdown().catch((error: unknown) =>
+        log(`live browser shutdown: ${String(error)}`),
+      ),
+    ];
+    if (personalActivityService && !personalActivityShutdown) {
+      personalActivityShutdown = true;
+      tasks.push(
+        personalActivityService
+          .stop()
+          .catch((error: unknown) =>
+            log(`personal activity shutdown: ${String(error)}`),
+          ),
+      );
+    }
+    void Promise.allSettled(tasks).finally(() => app.quit());
+    return;
+  }
   if (personalActivityService && !personalActivityShutdown) {
     event.preventDefault();
     personalActivityShutdown = true;
@@ -10831,6 +14061,7 @@ ipcMain.on('stage:state', (event: Electron.IpcMainEvent, payload: any) => {
     return;
   }
   const state = String(payload?.state || 'unknown');
+  activeStagePhase = state;
   log(`stage renderer state=${state}`);
   if (state === 'dismissing') {
     const token = String(payload?.selectionSessionToken || '');
@@ -10843,6 +14074,7 @@ ipcMain.on('stage:hidden', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return;
   }
+  activeStagePhase = 'hidden';
   setStageMouseCapture(false);
   hideStage();
 });
@@ -10851,6 +14083,17 @@ ipcMain.on('stage:dismiss', (event: Electron.IpcMainEvent) => {
     return;
   }
   dismissTemporarySurfaces({invalidateSession: true, hideObserver: true});
+});
+ipcMain.on('stage:retry-activation', (event: Electron.IpcMainEvent) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+    return;
+  }
+  dismissTemporarySurfaces({invalidateSession: true, hideObserver: true});
+  setTimeout(() => {
+    if (!inputPaused && !isQuitting && !onboardingRequired) {
+      requestActivation('stage-retry');
+    }
+  }, 60);
 });
 ipcMain.on(
   'stage:set-mouse-capture',
@@ -10992,6 +14235,7 @@ function runRuntimeBridge(
     }
   };
   const onComplete = (parsed: any) => {
+    clearActiveAutopilotOverlay();
     log(
       `bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}${parsed?.detail ? ` detail=${String(parsed.detail).slice(0, 300)}` : ''}`,
     );
@@ -11019,6 +14263,8 @@ function runRuntimeBridge(
       env: {
         ...process.env,
         ...runtimeBridgeProxyEnv(),
+        ...cuDesktopDaemon.rpcEnv(),
+        ...liveBrowserDaemon.rpcEnv(),
         ELECTRON_RUN_AS_NODE: '1',
         MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR,
       },
@@ -11844,6 +15090,7 @@ function submitSelectionCommandWhenGrounded(
     withKeptStrokes(session.snapshot, payload?.keptStrokeIndexes),
     payload?.pickedElement,
   );
+  const stageLearnMemory = safeActiveLearnCourseMemory();
   const enriched = {
     command: effectiveCommand,
     originalCommand: payload?.command,
@@ -11855,6 +15102,8 @@ function submitSelectionCommandWhenGrounded(
     screenBounds: display.bounds,
     scaleFactor: display.scaleFactor || 1,
     source: 'pointer_stage',
+    knowledgeVaultDir: activeKnowledgeVaultDir(),
+    ...(stageLearnMemory ? {learnCourseMemory: stageLearnMemory} : {}),
     interactionEpisode,
     targetPoint: safeClone(session.snapshot?.target_point || null),
     targetPointSpace: session.snapshot?.target_point_space || null,
@@ -12538,7 +15787,10 @@ ipcMain.handle(
       ttlMs?: unknown;
     } = {},
   ) => {
-    if (!isDashboardSender(event)) {
+    if (
+      !isDashboardSender(event) &&
+      !isSurfaceSender(event, 'stage', resultTargetWindow)
+    ) {
       return {ok: false, error: 'unauthorized_guided_tour_sender'};
     }
     const x = Number(payload.x);
@@ -12566,7 +15818,7 @@ ipcMain.handle(
     }
     syncAgentCursorSurfaces();
     const caption =
-      String(payload.caption || payload.label || '').trim().slice(0, 64) ||
+      formatCursorCaption(String(payload.caption || payload.label || ''), 18) ||
       undefined;
     const sent = sendAgentCursorCommand({
       kind: 'guide',
@@ -12581,10 +15833,105 @@ ipcMain.handle(
   },
 );
 ipcMain.handle('guided-tour:clear', async (event: Electron.IpcMainInvokeEvent) => {
-  if (!isDashboardSender(event)) {
+  if (
+    !isDashboardSender(event) &&
+    !isSurfaceSender(event, 'stage', resultTargetWindow)
+  ) {
     return {ok: false, error: 'unauthorized_guided_tour_sender'};
   }
   return {ok: sendAgentCursorCommand({kind: 'clear'})};
+});
+
+function sendDashboardEvent(channel: string, payload: unknown): void {
+  const win = typeof dashboardWindow !== 'undefined' ? dashboardWindow : null;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, payload);
+  }
+}
+
+const cuDesktopDaemon = new CuDesktopDaemon({
+  onFrame: frame => sendDashboardEvent('cu-desktop:frame', frame),
+  onState: state => sendDashboardEvent('cu-desktop:state', state),
+  onCursor: cursors => sendDashboardEvent('cu-desktop:cursor', cursors),
+  onOpenViewport: reason => sendDashboardEvent('cu-desktop:open-viewport', reason),
+  onLog: line => log(line),
+});
+void cuDesktopDaemon.startRpcServer().catch(error => {
+  log(`cu desktop rpc start error: ${String(error)}`);
+});
+
+const liveBrowserDaemon = new LiveBrowserDaemon({
+  currentTab: () => {
+    const wc = dashboardBrowserRegistry.active?.view.webContents;
+    if (!wc || wc.isDestroyed()) {
+      return {url: '', title: '', active: false};
+    }
+    return {
+      url: wc.getURL() || '',
+      title: wc.getTitle() || '',
+      active: true,
+    };
+  },
+  openUrl: async rawUrl => {
+    const normalized = normalizeBrowserUrl(rawUrl);
+    sendDashboardEvent('live-browser:open-panel', {url: normalized});
+    const fallbackBounds = {x: 820, y: 90, width: 460, height: 700};
+    await openDashboardBrowser(normalized, {
+      root: '',
+      bounds: dashboardBrowserBounds || fallbackBounds,
+    });
+    const wc = dashboardBrowserRegistry.active?.view.webContents;
+    if (wc && !wc.isDestroyed() && wc.isLoading()) {
+      await new Promise<void>(resolve => {
+        let settled = false;
+        const done = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          wc.removeListener('did-stop-loading', done);
+          wc.removeListener('did-fail-load', done);
+          resolve();
+        };
+        const timer = setTimeout(done, 4000);
+        wc.once('did-stop-loading', done);
+        wc.once('did-fail-load', done);
+      });
+    }
+    return {
+      url: wc && !wc.isDestroyed() ? wc.getURL() || normalized : normalized,
+      title: wc && !wc.isDestroyed() ? wc.getTitle() || normalized : normalized,
+    };
+  },
+  evalJs: async script => {
+    const wc = dashboardBrowserRegistry.active?.view.webContents;
+    if (!wc || wc.isDestroyed()) {
+      throw new Error(
+        'Studio Browser view is not open yet. Call LiveBrowser.open(url) first.',
+      );
+    }
+    return wc.executeJavaScript(script, true);
+  },
+  captureJpeg: async () => {
+    const wc = dashboardBrowserRegistry.active?.view.webContents;
+    if (!wc || wc.isDestroyed()) {
+      return null;
+    }
+    const image = await wc.capturePage();
+    const size = image.getSize();
+    return {
+      image: image.toJPEG(80).toString('base64'),
+      width: size.width,
+      height: size.height,
+    };
+  },
+  onOpenPanel: url => {
+    sendDashboardEvent('live-browser:open-panel', {url: url || ''});
+  },
+});
+void liveBrowserDaemon.startRpcServer().catch(error => {
+  log(`live browser rpc start error: ${String(error)}`);
 });
 
 const cuOverlayController = new CuOverlayController();
@@ -12628,11 +15975,196 @@ function pointAgentCursorForStep(step: {
     id: 'cu-live-teach',
     x: target.x,
     y: target.y,
-    caption: String(step.label || '').slice(0, 64) || undefined,
+    caption: formatCursorCaption(step.label || '', 18) || undefined,
     accent: '#D97757',
     ttlMs: 4000,
   });
 }
+
+function cancelActiveAutopilotConversations(): void {
+  for (const [reqId, entry] of activeConversations.entries()) {
+    const plan = planConversationStop({
+      requestId: reqId,
+      agentSessionId: entry?.agentSessionId,
+    });
+    if (plan.action === 'cancel') {
+      requestGracefulAgentCancel(plan.sessionId);
+    }
+    setTimeout(() => {
+      try {
+        if (
+          activeConversations.get(reqId) === entry &&
+          entry?.child &&
+          !entry.child.killed
+        ) {
+          entry.forcedStop = true;
+          entry.child.kill();
+        }
+      } catch (_) {}
+    }, GRACEFUL_CANCEL_GRACE_MS);
+  }
+}
+
+ipcMain.handle(
+  'cu-overlay:autopilot-start',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      windowTitle?: unknown;
+      actionLabel?: unknown;
+      steps?: Array<{label?: string}>;
+      keepStudioOpen?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_overlay_sender'};
+    }
+    const steps = Array.isArray(payload.steps) ? payload.steps : [];
+    const firstLabel = String(
+      payload.actionLabel || steps[0]?.label || '准备执行桌面操作',
+    ).trim();
+    const windowTitle =
+      String(payload.windowTitle || lastStableForegroundApp || '').trim() ||
+      'Desktop';
+    const state = cuOverlayController.startAutopilot({
+      windowTitle,
+      actionLabel: formatCursorCaption(firstLabel, 24) || '准备执行桌面操作',
+      nextStep: steps[1]?.label
+        ? formatCursorCaption(String(steps[1].label), 24)
+        : '',
+      phase: 'acting',
+      stepIndex: 1,
+    });
+    cuOverlayWindow.sync(state);
+    // Keep Studio visible so the user can continuously chat, steer, and monitor progress.
+    return {ok: true, state};
+  },
+);
+
+ipcMain.handle('cu-desktop:status', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+  }
+  await cuDesktopDaemon.startRpcServer();
+  return {
+    ok: true,
+    status: cuDesktopDaemon.status(),
+    frame: cuDesktopDaemon.latestFrame(),
+  };
+});
+
+ipcMain.handle(
+  'cu-desktop:open',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {width?: number; height?: number} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    await cuDesktopDaemon.startRpcServer();
+    return cuDesktopDaemon.open(payload);
+  },
+);
+
+ipcMain.handle(
+  'cu-desktop:resize',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {width?: number; height?: number} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    return cuDesktopDaemon.resize(payload);
+  },
+);
+
+ipcMain.handle('cu-desktop:close', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+  }
+  return cuDesktopDaemon.close();
+});
+
+ipcMain.handle(
+  'cu-desktop:launch',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {app?: unknown; args?: unknown; cwd?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    await cuDesktopDaemon.startRpcServer();
+    return cuDesktopDaemon.launch({
+      app: String(payload.app || ''),
+      ...(payload.args ? {args: String(payload.args)} : {}),
+      ...(payload.cwd ? {cwd: String(payload.cwd)} : {}),
+    });
+  },
+);
+
+ipcMain.handle(
+  'cu-desktop:pause',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {paused?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    const status = cuDesktopDaemon.setPaused(Boolean(payload.paused));
+    return {ok: true, status};
+  },
+);
+
+ipcMain.handle(
+  'cu-desktop:human-input',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: Record<string, unknown> = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    return cuDesktopDaemon.handleHumanInput(payload);
+  },
+);
+
+ipcMain.handle(
+  'cu-desktop:set-stream-visible',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {visible?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    cuDesktopDaemon.setViewportVisible(Boolean(payload.visible));
+    return {ok: true};
+  },
+);
+
+ipcMain.handle('cu-desktop:snapshot', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) {
+    return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+  }
+  return cuDesktopDaemon.screenshot({includeElements: false});
+});
+
+ipcMain.handle(
+  'cu-desktop:agent-act',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: Record<string, unknown> = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_cu_desktop_sender'};
+    }
+    return cuDesktopDaemon.actAgent(payload);
+  },
+);
 
 ipcMain.handle(
   'cu-overlay:autopilot-update',
@@ -12659,7 +16191,10 @@ ipcMain.handle(
     event: Electron.IpcMainInvokeEvent,
     payload: {steps?: unknown} = {},
   ) => {
-    if (!isDashboardSender(event)) {
+    if (
+      !isDashboardSender(event) &&
+      !isSurfaceSender(event, 'stage', resultTargetWindow)
+    ) {
       return {ok: false, error: 'unauthorized_cu_overlay_sender'};
     }
     const steps = Array.isArray(payload.steps) ? payload.steps : [];
@@ -12763,6 +16298,47 @@ function activeKnowledgeVaultDir(): string {
   return fallback;
 }
 
+async function generateAutoConversationTitle(
+  conversationId: string,
+  question: string,
+  answer: string,
+  config: ModelConfig,
+): Promise<void> {
+  try {
+    const cleanQ = String(question || '')
+      .replace(/<quoted_reply\b[^>]*>[\s\S]*?<\/quoted_reply>/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
+    const cleanA = String(answer || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (!cleanQ || !cleanA) {
+      return;
+    }
+    const result = await requestText(config, {
+      system:
+        '你是侧栏标题提炼助手。只输出一个简短干净的标题本身（中文 4–12 字，或英文 2–5 词）。禁止引号、禁止句号问号、禁止照抄原问句里的废话前缀/语气词。',
+      prompt: `用户问题：${cleanQ}\n\n回答摘要：${cleanA}\n\n请只输出标题：`,
+      maxTokens: 32,
+      timeoutMs: 8000,
+      attempts: 1,
+      fetch: net.fetch.bind(net),
+    });
+    const rawTitle = String(result?.text || '')
+      .split(/\r?\n/)[0]
+      .replace(/^[「『"'\s*#\-:：]+|[」』"'\s。！？!?.,;；*]+$/g, '')
+      .trim();
+    if (rawTitle.length >= 2 && rawTitle.length <= 28) {
+      const updated = conversations().setAutoTitle(conversationId, rawTitle);
+      if (updated?.ok) {
+        conversations().flush();
+        notifyConversationChanged(conversationId);
+      }
+    }
+  } catch {
+    // Non-critical background titling; fall back silently to titleFrom().
+  }
+}
+
 ipcMain.handle('vault:overview', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) {
     return {ok: false, error: 'unauthorized_vault_sender'};
@@ -12770,6 +16346,20 @@ ipcMain.handle('vault:overview', async (event: Electron.IpcMainInvokeEvent) => {
   const dir = activeKnowledgeVaultDir();
   return {ok: true, ...scanKnowledgeVault(dir)};
 });
+
+ipcMain.handle(
+  'vault:read-note',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {relativePath?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, error: 'unauthorized_vault_sender'};
+    }
+    const dir = activeKnowledgeVaultDir();
+    return readVaultNote(dir, String(payload.relativePath || ''));
+  },
+);
 
 ipcMain.handle('vault:select-dir', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) {
@@ -12842,12 +16432,276 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  'learn:courses:list',
+  async (event: Electron.IpcMainInvokeEvent) => {
+    if (!isDashboardSender(event)) {
+      return {
+        ok: false,
+        activeCourseId: '',
+        courses: [],
+        activeCourse: null,
+        error: 'unauthorized_learn_sender',
+      };
+    }
+    try {
+      const listed = listLearnCourses(FABRIC_DATA_DIR);
+      const activeCourse =
+        getLearnCourse(FABRIC_DATA_DIR, listed.activeCourseId) ||
+        ensureRoadshowCs336Course(FABRIC_DATA_DIR);
+      return {ok: true, ...listed, activeCourse};
+    } catch (error) {
+      return {
+        ok: false,
+        activeCourseId: '',
+        courses: [],
+        activeCourse: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'learn:course:get',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {courseId?: unknown; activate?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, course: null, error: 'unauthorized_learn_sender'};
+    }
+    try {
+      const rawId = String(payload.courseId || '').trim();
+      const targetId =
+        rawId || listLearnCourses(FABRIC_DATA_DIR).activeCourseId;
+      const course =
+        payload.activate === true
+          ? setActiveLearnCourse(FABRIC_DATA_DIR, targetId).course
+          : getLearnCourse(FABRIC_DATA_DIR, targetId) ||
+            ensureRoadshowCs336Course(FABRIC_DATA_DIR);
+      return {ok: Boolean(course), course};
+    } catch (error) {
+      return {
+        ok: false,
+        course: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'learn:course:annotate',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      courseId?: unknown;
+      mark?: Record<string, unknown>;
+      type?: unknown;
+      fb?: unknown;
+      quote?: unknown;
+      section?: unknown;
+      note?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, course: null, error: 'unauthorized_learn_sender'};
+    }
+    try {
+      const courseId =
+        String(payload.courseId || '').trim() ||
+        listLearnCourses(FABRIC_DATA_DIR).activeCourseId;
+      const rawMark: Record<string, unknown> =
+        payload.mark && typeof payload.mark === 'object'
+          ? payload.mark
+          : payload;
+      const rawType = String(rawMark.type || rawMark.kind || 'hl').trim();
+      const markType: 'hl' | 'note' | 'fb' =
+        rawType === 'note'
+          ? 'note'
+          : rawType === 'fb' ||
+              rawType === 'confused' ||
+              rawType === 'verbose' ||
+              rawType === 'known'
+            ? 'fb'
+            : 'hl';
+      const fbRaw = String(
+        rawMark.fb ||
+          (rawType === 'confused' ||
+          rawType === 'verbose' ||
+          rawType === 'known'
+            ? rawType
+            : ''),
+      ).trim();
+      const fb: 'confused' | 'verbose' | 'known' | undefined =
+        fbRaw === 'confused' || fbRaw === 'verbose' || fbRaw === 'known'
+          ? fbRaw
+          : undefined;
+      const course = recordAnnotationFeedback(FABRIC_DATA_DIR, courseId, {
+        type: markType,
+        ...(fb ? {fb} : {}),
+        quote: String(rawMark.quote || ''),
+        section: String(rawMark.section || ''),
+        ...(rawMark.note ? {note: String(rawMark.note)} : {}),
+      });
+      return {ok: Boolean(course), course};
+    } catch (error) {
+      return {
+        ok: false,
+        course: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'learn:course:promote-lemma',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      courseId?: unknown;
+      title?: unknown;
+      quote?: unknown;
+      insight?: unknown;
+      section?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, course: null, error: 'unauthorized_learn_sender'};
+    }
+    try {
+      const courseId =
+        String(payload.courseId || '').trim() ||
+        listLearnCourses(FABRIC_DATA_DIR).activeCourseId;
+      const course = promoteSideChatLemma(FABRIC_DATA_DIR, courseId, {
+        title: String(payload.title || 'Side Chat 引理'),
+        ...(payload.quote ? {quote: String(payload.quote)} : {}),
+        insight: String(payload.insight || ''),
+        ...(payload.section ? {section: String(payload.section)} : {}),
+      });
+      return {ok: Boolean(course), course};
+    } catch (error) {
+      return {
+        ok: false,
+        course: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'learn:course:checkin',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {
+      courseId?: unknown;
+      question?: unknown;
+      selectedIndex?: unknown;
+      selectedLabel?: unknown;
+      unsure?: unknown;
+      reasoningNote?: unknown;
+      nodeId?: unknown;
+    } = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, course: null, error: 'unauthorized_learn_sender'};
+    }
+    try {
+      const courseId =
+        String(payload.courseId || '').trim() ||
+        listLearnCourses(FABRIC_DATA_DIR).activeCourseId;
+      const selectedIndex =
+        typeof payload.selectedIndex === 'number' &&
+        Number.isFinite(payload.selectedIndex)
+          ? payload.selectedIndex
+          : null;
+      const course = recordCourseCheckin(FABRIC_DATA_DIR, courseId, {
+        question: String(payload.question || ''),
+        selectedIndex,
+        selectedLabel: String(payload.selectedLabel || ''),
+        unsure: Boolean(payload.unsure),
+        reasoningNote: String(payload.reasoningNote || ''),
+        ...(payload.nodeId ? {nodeId: String(payload.nodeId)} : {}),
+      });
+      return {ok: Boolean(course), course};
+    } catch (error) {
+      return {
+        ok: false,
+        course: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'learn:graph:get',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {courseId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {ok: false, graph: null, error: 'unauthorized_learn_sender'};
+    }
+    try {
+      const courseId = String(payload.courseId || '').trim() || undefined;
+      const graph = buildLearnNeuralGraph(FABRIC_DATA_DIR, {courseId});
+      return {ok: true, graph};
+    } catch (error) {
+      return {
+        ok: false,
+        graph: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'learn:dream:run',
+  async (
+    event: Electron.IpcMainInvokeEvent,
+    payload: {courseId?: unknown} = {},
+  ) => {
+    if (!isDashboardSender(event)) {
+      return {
+        ok: false,
+        dream: null,
+        course: null,
+        error: 'unauthorized_learn_sender',
+      };
+    }
+    try {
+      const courseId = String(payload.courseId || '').trim() || undefined;
+      const dream = runLearnDreamConsolidation({
+        userDataDir: FABRIC_DATA_DIR,
+        ...(courseId ? {courseId} : {}),
+      });
+      const resolvedId =
+        courseId || listLearnCourses(FABRIC_DATA_DIR).activeCourseId;
+      const course = getLearnCourse(FABRIC_DATA_DIR, resolvedId);
+      return {ok: true, dream, course};
+    } catch (error) {
+      return {
+        ok: false,
+        dream: null,
+        course: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
   'cu-overlay:action',
   async (_event: Electron.IpcMainInvokeEvent, rawAction: unknown) => {
     const action = String(rawAction || '');
     if (action === 'takeover') {
       const state = cuOverlayController.pauseForTakeover();
       cuOverlayWindow.sync(state);
+      cancelActiveAutopilotConversations();
       emitCuOverlayEvent({type: 'takeover'});
       return {ok: true, state};
     }
@@ -12866,6 +16720,7 @@ ipcMain.handle(
     if (action === 'stop') {
       const state = cuOverlayController.stop();
       cuOverlayWindow.sync(state);
+      cancelActiveAutopilotConversations();
       sendAgentCursorCommand({kind: 'clear'});
       emitCuOverlayEvent({type: 'stop'});
       return {ok: true, state};
@@ -12886,8 +16741,66 @@ ipcMain.handle(
     }
     if (action === 'teach-execute') {
       const step = cuOverlayController.currentTeachStep();
-      emitCuOverlayEvent({type: 'teach-execute', step});
-      return {ok: true, step};
+      if (!step) {
+        return {ok: false, error: 'no_active_teach_step'};
+      }
+      const displays = screen.getAllDisplays().map((d: Electron.Display) => ({
+        x: d.bounds.x,
+        y: d.bounds.y,
+        width: d.bounds.width,
+        height: d.bounds.height,
+      }));
+      const target = denormalizeTourPoint(
+        {x: step.x, y: step.y, screen: step.screen || 1, normalized: true},
+        displays,
+      );
+      if (!target) {
+        emitCuOverlayEvent({
+          type: 'teach-execute',
+          step,
+          executed: false,
+          error: 'no_display_for_step',
+        });
+        return {ok: false, step, error: 'no_display_for_step'};
+      }
+      const display = screen.getDisplayNearestPoint({x: target.x, y: target.y});
+      const displayBounds: [number, number, number, number] = [
+        display.bounds.x,
+        display.bounds.y,
+        display.bounds.x + display.bounds.width,
+        display.bounds.y + display.bounds.height,
+      ];
+      const execResult = await executeGuidedClickStep({
+        x: target.x,
+        y: target.y,
+        displayBounds,
+      });
+      emitCuOverlayEvent({
+        type: 'teach-execute',
+        step,
+        executed: execResult.ok,
+        visualDelta: execResult.visualDelta,
+        ...(execResult.error ? {error: execResult.error} : {}),
+      });
+      if (execResult.ok) {
+        const nextStep = cuOverlayController.nextTeachStep();
+        const nextState = cuOverlayController.getState();
+        cuOverlayWindow.sync(nextState);
+        pointAgentCursorForStep(nextStep);
+        return {
+          ok: true,
+          step,
+          nextStep,
+          state: nextState,
+          visualDelta: execResult.visualDelta,
+        };
+      }
+      return {
+        ok: false,
+        step,
+        visualDelta: execResult.visualDelta,
+        error: execResult.error || 'teach_execute_failed',
+      };
     }
     if (action === 'teach-exit') {
       const state = cuOverlayController.exitTeach();

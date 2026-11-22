@@ -2,6 +2,8 @@ import path from 'node:path';
 import type {ConversationModelSelection} from './conversation_model';
 import type {PermissionPreset} from './permission_mode';
 
+import type {ProjectMultiAgentConfig} from './project_multiagent_types';
+
 export interface ProjectRunEnvironment {
   id: string;
   name: string;
@@ -63,6 +65,12 @@ export interface ProjectContext {
   instructions?: string;
   sharedFiles?: string[];
   documents?: ProjectDocument[];
+  goal?: string;
+  color?: string;
+  projectIcon?: string;
+  paused?: boolean;
+  coordinatorSessionId?: string;
+  multiAgentConfig?: ProjectMultiAgentConfig;
 }
 
 export interface ProjectDetailsPatch {
@@ -74,6 +82,12 @@ export interface ProjectDetailsPatch {
   sharedFiles?: string[];
   starred?: boolean;
   archived?: boolean;
+  goal?: string;
+  color?: string;
+  projectIcon?: string;
+  paused?: boolean;
+  coordinatorSessionId?: string;
+  multiAgentConfig?: ProjectMultiAgentConfig;
 }
 
 export function projectAttachments(

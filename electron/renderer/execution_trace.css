@@ -124,8 +124,6 @@
   min-height: 80px;
   overflow: auto;
   border-top: 1px solid var(--mp-rule);
-  scrollbar-width: thin;
-  scrollbar-color: var(--mp-rule) transparent;
 }
 .mp-trace-list[data-empty='true']::after {
   content: 'No matching records';
@@ -322,7 +320,6 @@
   padding: 12px 15px 16px;
   overflow: auto;
   border-top: 1px solid var(--mp-rule);
-  scrollbar-width: thin;
 }
 .mp-trace-detail[hidden] {
   display: none;

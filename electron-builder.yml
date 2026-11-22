@@ -24,6 +24,7 @@ files:
   - build/figma/**
   - build/scripts/collect-diagnostics.js
   - scripts/desktop_host.cs
+  - scripts/cu_desktop_host.cs
   - scripts/personal_activity_host.cs
   - scripts/desktop_ocr.ps1
   - scripts/uia_draft_writer.cs

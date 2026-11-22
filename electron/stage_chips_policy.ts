@@ -9,6 +9,9 @@
     rewrite: '改写这段文字',
     translate: '把这段文字翻译成中文',
     summarize: '总结这段文字',
+    learn_explain: '按我的学习节奏拆解讲透这个概念并举个具体数字例子',
+    cu_operate: '帮我直接操作这个界面完成目标',
+    learn_save: '把这段要点沉淀到当前课程笔记和待办',
   });
 
   const CHIPS_BY_KIND: Readonly<Record<string, readonly Chip[]>> =
@@ -30,13 +33,24 @@
       : null;
   }
 
+  const WAKE_SELECTION_SOURCES = new Set([
+    'click',
+    'lasso',
+    'sweep',
+    'stroke',
+    'gesture',
+  ]);
+
   function shouldShowChips(input?: unknown): boolean {
     const candidate = recordOf(input);
     if (candidate === null) {
       return false;
     }
     const {selectionSource, capsuleText} = candidate;
-    if (selectionSource !== 'click') {
+    if (
+      typeof selectionSource !== 'string' ||
+      !WAKE_SELECTION_SOURCES.has(selectionSource)
+    ) {
       return false;
     }
     if (capsuleText == null) {

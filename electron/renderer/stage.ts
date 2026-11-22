@@ -46,7 +46,7 @@
   let renderedRefSignature = '';
   const capsuleInput = document.getElementById(
     'capsule-input',
-  ) as HTMLInputElement;
+  ) as HTMLTextAreaElement;
   const capsuleSend = document.getElementById(
     'capsule-send',
   ) as HTMLButtonElement;
@@ -86,6 +86,26 @@
   const threadStop = document.getElementById(
     'thread-stop',
   ) as HTMLButtonElement;
+  const threadSaveLearn = document.getElementById(
+    'thread-save-learn',
+  ) as HTMLButtonElement | null;
+  const threadHandoffLearn = document.getElementById(
+    'thread-handoff-learn',
+  ) as HTMLButtonElement | null;
+  const threadExpandStudio = document.getElementById(
+    'thread-expand-studio',
+  ) as HTMLButtonElement | null;
+  let workbenchCustomSize: {width: number; height: number} | null = null;
+  let workbenchScrolledUp = false;
+  let workbenchResizeDrag: {
+    edge: string;
+    startX: number;
+    startY: number;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null = null;
   const consentBox = document.getElementById('capsule-consent') as HTMLElement;
   const consentTarget = document.getElementById(
     'consent-target',
@@ -213,6 +233,7 @@
       height: number;
     } | null;
     targetAppLabel: string;
+    previewImageUrl: string;
     accentRgb: string;
     visualTuning: Record<keyof typeof DEFAULT_VISUAL_TUNING, number>;
   } = {
@@ -236,6 +257,7 @@
     selectionChars: 0,
     targetWindowRect: null,
     targetAppLabel: '',
+    previewImageUrl: '',
     accentRgb: '',
     visualTuning: {...DEFAULT_VISUAL_TUNING},
   };
@@ -457,6 +479,7 @@
     previousPointerButtons = 0;
     capsuleDrag = null;
     surfaceDrag = null;
+    workbenchResizeDrag = null;
   }
 
   async function pickElementAt(screenX: number, screenY: number) {
@@ -513,6 +536,9 @@
       return;
     }
     const stream = globalThis.StageTurnStream;
+    const previewUrl = /^(?:file:|data:image\/)/i.test(session.previewImageUrl)
+      ? session.previewImageUrl
+      : '';
     const pickSignature = pickedElement
       ? `pick:${pickedElement.label}:${pickedElement.rect?.x},${pickedElement.rect?.y}`
       : '';
@@ -521,28 +547,77 @@
         ref => `${ref.strokeIndex}:${ref.referenceId || ''}:${ref.label}`,
       ),
       pickSignature,
+      previewUrl ? `img:${previewUrl}` : '',
     ].join('|');
     if (signature === renderedRefSignature) {
-      capsuleRefs.hidden = strokeRefs.length === 0 && !pickedElement;
+      capsuleRefs.hidden =
+        strokeRefs.length === 0 && !pickedElement && !previewUrl;
       return;
     }
     renderedRefSignature = signature;
     capsuleRefs.replaceChildren();
-    if (strokeRefs.length === 0 && !pickedElement) {
+    if (strokeRefs.length === 0 && !pickedElement && !previewUrl) {
       capsuleRefs.hidden = true;
       return;
     }
-    strokeRefs.forEach(ref => {
+    if (previewUrl) {
+      const thumbChip = document.createElement('div');
+      thumbChip.className = 'capsule-ref capsule-ref--thumb';
+      thumbChip.dataset.noDrag = '1';
+      thumbChip.setAttribute('role', 'listitem');
+      const thumbImg = document.createElement('img');
+      thumbImg.className = 'capsule-ref-thumb';
+      thumbImg.src = previewUrl;
+      thumbImg.alt = '';
+      const thumbLabel = document.createElement('span');
+      thumbLabel.className = 'capsule-ref-label';
+      thumbLabel.textContent = session.targetAppLabel
+        ? `${session.targetAppLabel} 选区`
+        : '选区画面';
+      thumbChip.append(thumbImg, thumbLabel);
+      capsuleRefs.appendChild(thumbChip);
+    }
+    const referentLabels = ['THIS', 'THAT', 'THESE'];
+    strokeRefs.forEach((ref, idx) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'capsule-ref';
       chip.dataset.noDrag = '1';
+      chip.dataset.strokeIndex = String(ref.strokeIndex);
       chip.setAttribute('role', 'listitem');
+      const deictic = referentLabels[idx] || `#${idx + 1}`;
       const mark =
         stream?.referenceMark?.(ref.strokeIndex) || String(ref.strokeIndex + 1);
-      chip.textContent = ref.label ? `${mark} ${ref.label}` : mark;
-      chip.title = '点击移除这一处';
+      const textSpan = document.createElement('span');
+      textSpan.className = 'capsule-ref-label';
+      textSpan.textContent = ref.label
+        ? `${deictic} · ${ref.label}`
+        : `${deictic} ${mark}`;
+      const closeGlyph = document.createElement('span');
+      closeGlyph.className = 'capsule-ref-remove';
+      closeGlyph.setAttribute('aria-hidden', 'true');
+      closeGlyph.textContent = '×';
+      chip.append(textSpan, closeGlyph);
+      chip.title = '悬停高亮选区 · 点击移除';
       chip.setAttribute('aria-label', `移除第 ${ref.strokeIndex + 1} 处选中`);
+      chip.addEventListener('mouseenter', () => {
+        const bands = captureProofLayer?.querySelectorAll('.capture-proof-band');
+        if (!bands || !bands.length) {
+          return;
+        }
+        captureProofLayer.hidden = false;
+        bands.forEach((band, bandIdx) => {
+          band.classList.toggle(
+            'is-ref-hovered',
+            bandIdx === ref.strokeIndex || (bands.length === 1 && bandIdx === 0),
+          );
+        });
+      });
+      chip.addEventListener('mouseleave', () => {
+        captureProofLayer
+          ?.querySelectorAll('.capture-proof-band.is-ref-hovered')
+          .forEach(band => band.classList.remove('is-ref-hovered'));
+      });
       chip.addEventListener('click', () => {
         const removeLocally = () => {
           strokeRefs =
@@ -922,11 +997,13 @@
       hasInteractiveSurface,
       pointer: lastPointerPoint,
       interactiveRegions,
-      dragging: Boolean(capsuleDrag || surfaceDrag || selectionStretchDrag),
+      dragging: Boolean(
+        capsuleDrag || surfaceDrag || selectionStretchDrag || workbenchResizeDrag,
+      ),
     });
     const requestFocus = name === 'capsule-text';
     const regions =
-      capsuleDrag || surfaceDrag || selectionStretchDrag
+      capsuleDrag || surfaceDrag || selectionStretchDrag || workbenchResizeDrag
         ? [{x: 0, y: 0, width: window.innerWidth, height: window.innerHeight}]
         : visibleStageRegions();
     const nextHitRegionKey = JSON.stringify(regions);
@@ -1252,6 +1329,16 @@
   }
 
   function placeThreadSurface() {
+    if (workbenchCustomSize) {
+      threadPanel.style.setProperty(
+        '--stage-work-panel-width',
+        `${workbenchCustomSize.width}px`,
+      );
+      threadPanel.style.setProperty(
+        '--stage-work-panel-height',
+        `${workbenchCustomSize.height}px`,
+      );
+    }
     if (session.resultDragged && session.resultPlacement) {
       threadPanel.style.left = `${session.resultPlacement.x}px`;
       threadPanel.style.top = `${session.resultPlacement.y}px`;
@@ -1263,19 +1350,32 @@
       : session.pointer
         ? {...session.pointer, width: 0, height: 0}
         : null;
+    const dockSource = isUsableTargetRect(session.targetWindowRect)
+      ? session.targetWindowRect
+      : focus || session.capsulePlacement
+        ? {
+            x: Number(
+              focus?.x ?? session.capsulePlacement?.x ?? viewport.width / 2 - 240,
+            ),
+            y: Number(
+              focus?.y ?? session.capsulePlacement?.y ?? viewport.height / 2 - 28,
+            ),
+            width: Math.max(40, Number((focus as {width?: number})?.width || 480)),
+            height: Math.max(40, Number((focus as {height?: number})?.height || 56)),
+          }
+        : null;
     const placement = surfacePolicy.stableSurfacePlacement({
       previous: session.panelPlacement,
       sessionToken: session.token,
-      role: 'work-panel',
+      role: 'workbench',
       viewport,
       place: (size: {width: number; height: number}) => {
+        const panelSize = workbenchCustomSize || size;
         if (typeof anchor.chooseAdaptivePanelAnchor === 'function') {
           return anchor.chooseAdaptivePanelAnchor({
-            source: isUsableTargetRect(session.targetWindowRect)
-              ? session.targetWindowRect
-              : null,
+            source: dockSource,
             focus,
-            surface: size,
+            surface: panelSize,
             viewport,
             preferredSide: session.panelPlacement?.side,
           });
@@ -1283,30 +1383,53 @@
         const point = session.capsulePlacement ||
           session.pointer || {x: 8, y: 8};
         return {
-          x: Math.max(8, Math.min(point.x, window.innerWidth - size.width - 8)),
+          x: Math.max(
+            8,
+            Math.min(point.x, window.innerWidth - panelSize.width - 8),
+          ),
           y: Math.max(
             8,
-            Math.min(point.y, window.innerHeight - size.height - 8),
+            Math.min(point.y, window.innerHeight - panelSize.height - 8),
           ),
           side: 'right',
           mode: 'screen-edge',
         };
       },
     });
+    const effectiveWidth = workbenchCustomSize?.width || placement.width;
+    const effectiveHeight = workbenchCustomSize?.height || placement.height;
+    let adjustedY = placement.y;
+    const inLowerHalf =
+      placement.y + effectiveHeight / 2 > viewport.height * 0.52;
+    if (inLowerHalf) {
+      adjustedY = Math.max(
+        8,
+        Math.min(adjustedY, viewport.height - effectiveHeight - 10),
+      );
+    }
     session.panelPlacement = placement;
     threadPanel.style.setProperty(
       '--stage-work-panel-width',
-      `${placement.width}px`,
+      `${effectiveWidth}px`,
     );
     threadPanel.style.setProperty(
       '--stage-work-panel-height',
-      `${placement.height}px`,
+      `${effectiveHeight}px`,
     );
     threadPanel.style.left = `${placement.x}px`;
-    threadPanel.style.top = `${placement.y}px`;
+    threadPanel.style.top = `${adjustedY}px`;
     threadPanel.dataset.side = placement.side;
     threadPanel.dataset.quadrant = placement.side;
     threadPanel.dataset.placementMode = placement.mode;
+    if (typeof anchor.chooseAdaptivePanelTransformOrigin === 'function') {
+      threadPanel.style.transformOrigin =
+        anchor.chooseAdaptivePanelTransformOrigin(dockSource, {
+          x: placement.x,
+          y: adjustedY,
+          width: effectiveWidth,
+          height: effectiveHeight,
+        });
+    }
   }
 
   function anchorCapsuleToTarget(width: number) {
@@ -1385,21 +1508,57 @@
     }
   }
 
-  function renderFailure(container: HTMLElement, error: any) {
+  function renderFailedRow(container: HTMLElement, error: any) {
     const message =
       typeof error === 'string'
         ? error
         : String(error?.message || error?.answer || '这次没能完成。');
-    container.replaceChildren(
-      renderCard(
-        CardModel.normalizeCard({
-          kind: 'prose',
-          state: 'failed',
-          error: message,
-        }),
-        {density: 'capsule'},
-      ),
-    );
+    const row = document.createElement('div');
+    row.className = 'mp-stage-failed-row';
+
+    const status = document.createElement('div');
+    status.className = 'mp-stage-failed-status';
+    const dot = document.createElement('span');
+    dot.className = 'mp-stage-failed-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.className = 'mp-stage-failed-message';
+    text.textContent = message;
+    status.append(dot, text);
+
+    const actions = document.createElement('div');
+    actions.className = 'mp-stage-failed-actions';
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'mp-stage-failed-btn is-primary';
+    retryBtn.dataset.noDrag = '1';
+    retryBtn.textContent = '再选一次';
+    retryBtn.addEventListener('click', event => {
+      event.stopPropagation();
+      if (typeof api?.retryActivation === 'function') {
+        api.retryActivation();
+      } else {
+        api?.dismiss?.();
+      }
+    });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'mp-stage-failed-btn';
+    closeBtn.dataset.noDrag = '1';
+    closeBtn.textContent = '关闭 (Esc)';
+    closeBtn.addEventListener('click', event => {
+      event.stopPropagation();
+      api?.dismiss?.();
+    });
+
+    actions.append(retryBtn, closeBtn);
+    row.append(status, actions);
+    container.replaceChildren(row);
+  }
+
+  function renderFailure(container: HTMLElement, error: any) {
+    renderFailedRow(container, error);
   }
 
   function cloneTemplate(template: HTMLTemplateElement) {
@@ -1998,6 +2157,106 @@
     }
   }
 
+  const triggeredStageTourTurns = new Set<string>();
+
+  function extractStagePointSteps(text: string): Array<{
+    index: number;
+    x: number;
+    y: number;
+    label: string;
+  }> {
+    const steps: Array<{index: number; x: number; y: number; label: string}> = [];
+    const re = /\[POINT:(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?::([^\]]*))?\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text)) !== null) {
+      const x = Math.max(0, Math.min(1000, Number(match[1])));
+      const y = Math.max(0, Math.min(1000, Number(match[2])));
+      const label = String(match[3] || '').trim() || `步骤 ${steps.length + 1}`;
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        steps.push({index: steps.length + 1, x, y, label});
+      }
+    }
+    return steps;
+  }
+
+  function applyStageNarrationDecorations(
+    container: HTMLElement,
+    isStreaming: boolean,
+  ) {
+    const statusHeader = container.querySelector<HTMLElement>(
+      '.mp-chat-tool-group-title, .mp-chat-narration, .mp-turn-status-label',
+    );
+    if (statusHeader) {
+      statusHeader.classList.toggle('mp-narration-shimmer', isStreaming);
+    }
+    if (isStreaming) {
+      const blocks = container.querySelectorAll<HTMLElement>(
+        '.mp-chat-markdown > p, .mp-chat-markdown > ul > li, .mp-chat-markdown > ol > li, .mp-prose > p',
+      );
+      let hasProse = false;
+      blocks.forEach(block => {
+        if ((block.textContent || '').trim()) {
+          hasProse = true;
+        }
+        if (!block.dataset.narrated) {
+          block.dataset.narrated = '1';
+          block.classList.add('mp-narration-brush');
+        }
+      });
+      if (hasProse) {
+        container
+          .querySelectorAll<HTMLDetailsElement>(
+            'details.mp-chat-tool-group:not([data-settled-collapsed="1"])',
+          )
+          .forEach(group => {
+            if (!group.querySelector('[data-state="running"], .is-running')) {
+              group.open = false;
+              group.dataset.settledCollapsed = '1';
+            }
+          });
+      }
+    }
+  }
+
+  function hydrateStageRichContent(
+    container: HTMLElement,
+    answerText: string,
+    isStreaming: boolean,
+    scope?: string,
+  ) {
+    applyStageNarrationDecorations(container, isStreaming);
+    const intel = (
+      globalThis as {IntelligenceUI?: {hydrate?(el: HTMLElement): void}}
+    ).IntelligenceUI;
+    if (!isStreaming && intel && typeof intel.hydrate === 'function') {
+      try {
+        intel.hydrate(container);
+      } catch {
+        /* ignore optional hydration errors */
+      }
+    }
+    const learnLab = (
+      globalThis as {LearnLab?: {hydrate?(el: HTMLElement): void}}
+    ).LearnLab;
+    if (!isStreaming && learnLab && typeof learnLab.hydrate === 'function') {
+      try {
+        learnLab.hydrate(container);
+      } catch {
+        /* ignore optional learn lab errors */
+      }
+    }
+    if (!isStreaming && answerText) {
+      const steps = extractStagePointSteps(answerText);
+      const tourKey = `${scope || session.token || 'stage'}:${steps.length}`;
+      if (steps.length > 0 && !triggeredStageTourTurns.has(tourKey)) {
+        triggeredStageTourTurns.add(tourKey);
+        if (typeof api?.triggerTourSteps === 'function') {
+          void api.triggerTourSteps(steps);
+        }
+      }
+    }
+  }
+
   function renderStructured(
     container: HTMLElement,
     payload: any,
@@ -2017,6 +2276,7 @@
           : {answer: String(payload || '')};
       container.replaceChildren(...ChatView.assistantTurnNode(turn, scope));
       renderInteractiveEntries(container, false);
+      hydrateStageRichContent(container, String(turn.answer || ''), false, scope);
       container.dataset.answer = String(turn.answer || '');
       const actions = Array.isArray(payload?.actions) ? payload.actions : [];
       if (actions.length) {
@@ -2155,6 +2415,12 @@
     }
     card.renderer.update(card.snapshot);
     renderInteractiveEntries(container, true);
+    hydrateStageRichContent(
+      container,
+      String(card.snapshot?.answer || ''),
+      true,
+      stageTurnScope(turn),
+    );
   }
 
   function patchRunningCard(patch: any) {
@@ -2175,11 +2441,11 @@
       `.thread-turn[data-turn-id="${turn.id}"] .turn-answer`,
     );
     if (node) {
-      const follow =
+      const distanceFromBottom =
         workPanelScroller.scrollHeight -
-          workPanelScroller.scrollTop -
-          workPanelScroller.clientHeight <=
-        48;
+        workPanelScroller.scrollTop -
+        workPanelScroller.clientHeight;
+      const follow = !workbenchScrolledUp && distanceFromBottom <= 64;
       paintRunningCard(node, turn);
       if (follow) {
         workPanelScroller.scrollTop = workPanelScroller.scrollHeight;
@@ -2232,6 +2498,7 @@
           : buildTurn(turn);
       });
       resultCard.replaceChildren(...nodes);
+      workbenchScrolledUp = false;
       const newest = nodes[nodes.length - 1];
       if (newest) {
         newest.scrollIntoView({block: 'end'});
@@ -2250,6 +2517,8 @@
     threadTitle.textContent = surfaceTitle;
     threadTitle.title = surfaceTitle;
     const failed = turns[turns.length - 1]?.status === 'failed';
+    threadPanel.dataset.compact =
+      turns.length === 1 && failed ? 'true' : 'false';
     const awaiting = turns[turns.length - 1]?.status === 'awaiting';
     const verificationPending =
       turns[turns.length - 1]?.result?.receipts?.some(
@@ -2278,6 +2547,12 @@
             : '已完成';
     const settled = !pending && turns.some(turn => turn.status === 'done');
     threadCopy.disabled = !settled;
+    if (threadSaveLearn) {
+      threadSaveLearn.disabled = !settled;
+    }
+    if (threadHandoffLearn) {
+      threadHandoffLearn.disabled = !turns.length;
+    }
     threadFollowup.placeholder = firstAsk
       ? `继续问关于「${firstAsk.slice(0, 12)}${firstAsk.length > 12 ? '…' : ''}」的`
       : '继续问点什么…';
@@ -2652,6 +2927,10 @@
 
   function clearAll() {
     runningCards.clear();
+    workbenchCustomSize = null;
+    workbenchScrolledUp = false;
+    workbenchResizeDrag = null;
+    triggeredStageTourTurns.clear();
     clearTranscript();
     clearChips();
     resetDeliveryBox();
@@ -2747,11 +3026,19 @@
       frozenGlow.hidden = true;
     }
 
+    const isZeroTurnError =
+      name === 'error' &&
+      (state.turns.length === 0 ||
+        (state.turns.length === 1 &&
+          !String(state.turns[0]?.command || '').trim() &&
+          (state.turns[0]?.status === 'error' ||
+            state.turns[0]?.status === 'failed')));
+    const hasThreadTurns = state.turns.length > 0 && !isZeroTurnError;
     const resultOwnsComposer =
-      (name === 'result' || name === 'error') && state.turns.length > 0;
+      (name === 'result' || name === 'error') && hasThreadTurns;
     const capsuleOpen =
       name === 'capsule-text' ||
-      ((name === 'result' || name === 'error') && !resultOwnsComposer) ||
+      (name === 'result' && !resultOwnsComposer) ||
       (name === 'dismissing' && !capsule.hidden);
     if (
       (name === 'processing' || name === 'result' || name === 'error') &&
@@ -2784,6 +3071,7 @@
       if (name === 'result' || name === 'error') {
         capsuleInput.value = '';
       }
+      syncCapsuleAutosize();
       renderTranscript();
       const capsuleWidth = syncCapsuleWidth();
       anchorCapsuleToTarget(capsuleWidth);
@@ -2804,10 +3092,11 @@
       capsule.hidden = true;
       clearTranscript();
       capsuleInput.value = '';
+      syncCapsuleAutosize();
     }
     shimmer.hidden = name !== 'processing';
 
-    if (state.turns.length && name !== 'hidden') {
+    if (hasThreadTurns && name !== 'hidden') {
       renderThread(state.turns);
       renderStageDecision();
       threadPanel.hidden = false;
@@ -2820,10 +3109,10 @@
     }
     renderChips(name === 'capsule-text');
 
-    if (name === 'error' && !state.turns.length) {
+    if (isZeroTurnError) {
       errorCard.replaceChildren();
-      renderFailure(errorCard, state.error);
-      anchorNearPointer(errorCard, 300, 44);
+      renderFailedRow(errorCard, state.error || state.turns[0]?.error);
+      anchorNearPointer(errorCard, 360, 88);
       errorCard.hidden = false;
     } else {
       errorCard.hidden = true;
@@ -2877,7 +3166,17 @@
     noticeBox.style.top = `${top}px`;
   }
 
+  function syncCapsuleAutosize() {
+    capsuleInput.style.height = 'auto';
+    const rawHeight = Math.max(24, Math.min(124, capsuleInput.scrollHeight || 24));
+    capsuleInput.style.height = `${rawHeight}px`;
+    const isMultiline =
+      rawHeight > 32 || capsuleInput.value.includes('\n');
+    capsule.dataset.multiline = isMultiline ? 'true' : 'false';
+  }
+
   capsuleInput.addEventListener('input', () => {
+    syncCapsuleAutosize();
     dispatch({type: 'TRANSCRIPT', transcript: capsuleInput.value});
   });
   capsule.addEventListener('transitionend', syncHitRegions);
@@ -2901,11 +3200,201 @@
   });
 
   capsuleInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && capsuleInput.value.trim()) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      capsuleInput.value.trim()
+    ) {
+      event.preventDefault();
       submitCommand(capsuleInput.value);
     } else if (event.key === 'Escape') {
       requestDismiss();
     }
+  });
+
+  workPanelScroller?.addEventListener('scroll', () => {
+    const dist =
+      workPanelScroller.scrollHeight -
+      workPanelScroller.scrollTop -
+      workPanelScroller.clientHeight;
+    workbenchScrolledUp = dist > 24;
+  });
+
+  function collectStageLearnCapture() {
+    const turns = Array.isArray(state.turns) ? state.turns : [];
+    const latest = turns.at(-1);
+    const question = String(latest?.ask || '').trim();
+    const answerNodes = resultCard.querySelectorAll('.turn-answer');
+    const lastAnswerEl = answerNodes.length
+      ? answerNodes[answerNodes.length - 1]
+      : null;
+    const answerText = String(
+      latest?.result?.answer ||
+        lastAnswerEl?.textContent ||
+        resultCard.textContent ||
+        '',
+    ).trim();
+    const section =
+      String(threadTitle?.textContent || '').trim() || '桌面速记';
+    const quote = (question || answerText.slice(0, 120) || section).slice(
+      0,
+      360,
+    );
+    return {
+      selectionSessionToken: session.token || null,
+      question,
+      quote,
+      note: answerText.slice(0, 2000),
+      section,
+    };
+  }
+
+  threadSaveLearn?.addEventListener('click', async () => {
+    if (typeof api?.saveToLearnNote !== 'function' || threadSaveLearn.disabled) {
+      return;
+    }
+    const prevLabel = threadSaveLearn.textContent || '存笔记';
+    threadSaveLearn.disabled = true;
+    threadSaveLearn.textContent = '保存中…';
+    try {
+      const payload = collectStageLearnCapture();
+      const res = await api.saveToLearnNote({
+        selectionSessionToken: payload.selectionSessionToken,
+        quote: payload.quote,
+        note: payload.note,
+        section: payload.section,
+        saveToVault: true,
+      });
+      threadSaveLearn.textContent = res?.ok ? '已存笔记' : '保存失败';
+    } catch {
+      threadSaveLearn.textContent = '保存失败';
+    } finally {
+      setTimeout(() => {
+        if (threadSaveLearn) {
+          threadSaveLearn.textContent = prevLabel;
+          threadSaveLearn.disabled = false;
+        }
+      }, 1600);
+    }
+  });
+
+  threadHandoffLearn?.addEventListener('click', async () => {
+    if (
+      typeof api?.handoffToLearn !== 'function' ||
+      threadHandoffLearn.disabled
+    ) {
+      return;
+    }
+    const prevLabel = threadHandoffLearn.textContent || '带入深学';
+    threadHandoffLearn.disabled = true;
+    threadHandoffLearn.textContent = '转入中…';
+    try {
+      const payload = collectStageLearnCapture();
+      const res = await api.handoffToLearn(payload);
+      threadHandoffLearn.textContent = res?.ok ? '已转入' : '转入失败';
+    } catch {
+      threadHandoffLearn.textContent = '转入失败';
+    } finally {
+      setTimeout(() => {
+        if (threadHandoffLearn) {
+          threadHandoffLearn.textContent = prevLabel;
+          threadHandoffLearn.disabled = false;
+        }
+      }, 1200);
+    }
+  });
+
+  threadExpandStudio?.addEventListener('click', () => {
+    if (typeof api?.openTask === 'function') {
+      void api.openTask({
+        selectionSessionToken: session.token || '',
+        fallbackToStudio: true,
+      });
+    }
+  });
+
+  threadPanel
+    .querySelectorAll<HTMLElement>('[data-resize-edge]')
+    .forEach(handle => {
+      handle.addEventListener('mousedown', event => {
+        if (event.button !== 0) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = threadPanel.getBoundingClientRect();
+        workbenchResizeDrag = {
+          edge: String(handle.dataset.resizeEdge || 'se'),
+          startX: event.screenX,
+          startY: event.screenY,
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        };
+        threadPanel.classList.add('is-resizing');
+        syncHitRegions();
+      });
+    });
+
+  window.addEventListener('mousemove', event => {
+    if (!workbenchResizeDrag) {
+      return;
+    }
+    const drag = workbenchResizeDrag;
+    const dx = event.screenX - drag.startX;
+    const dy = event.screenY - drag.startY;
+    const minW = 380;
+    const maxW = Math.min(760, window.innerWidth - 16);
+    const minH = 320;
+    const maxH = Math.min(820, window.innerHeight - 16);
+
+    let left = drag.left;
+    let top = drag.top;
+    let width = drag.width;
+    let height = drag.height;
+
+    if (drag.edge.includes('e')) {
+      width = Math.max(minW, Math.min(maxW, drag.width + dx));
+    }
+    if (drag.edge.includes('w')) {
+      const nextWidth = Math.max(minW, Math.min(maxW, drag.width - dx));
+      left = Math.max(8, drag.left + (drag.width - nextWidth));
+      width = nextWidth;
+    }
+    if (drag.edge.includes('s')) {
+      height = Math.max(minH, Math.min(maxH, drag.height + dy));
+    }
+    if (drag.edge.includes('n')) {
+      const nextHeight = Math.max(minH, Math.min(maxH, drag.height - dy));
+      top = Math.max(8, drag.top + (drag.height - nextHeight));
+      height = nextHeight;
+    }
+
+    workbenchCustomSize = {width: Math.round(width), height: Math.round(height)};
+    session.resultDragged = true;
+    session.resultPlacement = {x: Math.round(left), y: Math.round(top)};
+    threadPanel.style.left = `${Math.round(left)}px`;
+    threadPanel.style.top = `${Math.round(top)}px`;
+    threadPanel.style.setProperty(
+      '--stage-work-panel-width',
+      `${Math.round(width)}px`,
+    );
+    threadPanel.style.setProperty(
+      '--stage-work-panel-height',
+      `${Math.round(height)}px`,
+    );
+    syncHitRegions();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!workbenchResizeDrag) {
+      return;
+    }
+    workbenchResizeDrag = null;
+    threadPanel.classList.remove('is-resizing');
+    syncHitRegions();
   });
 
   capsuleSend.addEventListener('mousedown', event => event.preventDefault());
@@ -3032,6 +3521,9 @@
         60,
       );
     }
+    if ('previewImageUrl' in payload) {
+      session.previewImageUrl = String(payload.previewImageUrl || '').trim();
+    }
     if ('selectionVisual' in payload) {
       const visual = String(payload.selectionVisual || 'sweep_band');
       session.selectionVisual = ['sweep_band', 'soft_glow', 'outline'].includes(
@@ -3153,6 +3645,7 @@
       session.resultDragged = false;
       session.consentDismissedForTurn = null;
       session.selectionCount = 1;
+      session.previewImageUrl = '';
       session.visualTuning = {...DEFAULT_VISUAL_TUNING};
       lastPointerPoint = null;
       if (targetSweepTimer) {

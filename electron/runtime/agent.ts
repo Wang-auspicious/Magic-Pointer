@@ -4,6 +4,11 @@ import {localActivityDate} from '../personal_activity';
 
 import {HookManager} from './hooks';
 export {HookManager, type ToolHook} from './hooks';
+import {buildDesignSystemPrompt} from './design_skills';
+import {
+  buildProjectCoordinatorPrompt,
+  evaluateAutoModeRule,
+} from './project_coordinator_tools';
 import {memoryPrompt} from './agent_memory';
 import {mergeModelUsage, recordModelCost} from './agent_model_usage';
 import {compactSession} from './agent_compaction';
@@ -61,6 +66,13 @@ import {
   relevantSkills,
 } from './agent_services';
 import {
+  CORE_LEARN_SYSTEM,
+  LEARN_PROMPT_VERSION,
+  buildLearnPrimingMessages,
+  buildLearnVoicePrompt,
+} from './learn_voice';
+export {LEARN_PROMPT_VERSION} from './learn_voice';
+import {
   operationOutcomes,
   receiptEffect,
   receiptMemoryEligible,
@@ -100,6 +112,8 @@ export interface ModelRequest {
   sessionId?: string;
   forkMessageCount?: number;
   maxTokens?: number;
+  temperature?: number;
+  presencePenalty?: number;
   timeoutMs?: number;
   onEvent?: (event: ModelEvent) => void;
 }
@@ -126,7 +140,7 @@ export interface AgentResult {
   receipt: Data;
 }
 export interface AgentOptions {
-  workMode?: 'learn' | 'work' | 'code';
+  workMode?: 'learn' | 'design' | 'code' | 'work' | 'project_coordinator';
   root: string;
   userDataDir: string;
   session: EventSession;
@@ -165,6 +179,14 @@ export interface AgentOptions {
   onSessionEnd?: () => void | Promise<void>;
   metadata?: Data;
   parentSessionId?: string;
+  coachMode?: boolean;
+  computerUseMode?: 'autopilot' | 'coach' | null;
+  guidedTourSteps?: Data[];
+  cuDesktopStatus?: {
+    active?: boolean;
+    desktopName?: string;
+    windows?: Array<{hwnd?: number; title?: string; process_name?: string}>;
+  };
 }
 export const asObject = (value: unknown): Data =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -242,7 +264,17 @@ function historyRecipeCall(call: ToolCall): boolean {
 }
 
 export function permissionFor(
-  options: Pick<AgentOptions, 'registry' | 'session' | 'permissionMode' | 'allowedEffects' | 'allowedTools' | 'deniedTools' | 'onceTools'>,
+  options: Pick<
+    AgentOptions,
+    | 'registry'
+    | 'session'
+    | 'permissionMode'
+    | 'allowedEffects'
+    | 'allowedTools'
+    | 'deniedTools'
+    | 'onceTools'
+    | 'metadata'
+  >,
   call: ToolCall,
   claimedOnce: Set<string>,
 ): 'allow' | 'ask' | 'deny' | 'review' {
@@ -334,6 +366,29 @@ export function permissionFor(
     if (once) {
       claimedOnce.add(once);
       return 'allow';
+    }
+    const autoRules = Array.isArray(options.metadata?.projectAutoModeRules)
+      ? options.metadata.projectAutoModeRules.filter(
+          (rule): rule is string =>
+            typeof rule === 'string' && rule.trim().length > 0,
+        )
+      : [];
+    if (autoRules.length > 0) {
+      const args = asObject(call.arguments);
+      const evaluation = evaluateAutoModeRule(autoRules, {
+        toolName: call.name,
+        command: typeof args.command === 'string' ? args.command : undefined,
+        path:
+          typeof args.path === 'string'
+            ? args.path
+            : typeof args.file_path === 'string'
+              ? args.file_path
+              : undefined,
+        url: typeof args.url === 'string' ? args.url : undefined,
+      });
+      if (evaluation.allowed) {
+        return 'allow';
+      }
     }
   }
   const decision = decidePermission(mode, effect);
@@ -515,30 +570,189 @@ export function isLearnWorkMode(mode?: string): boolean {
 
 const CODE_HARNESS_PROMPT = [
   '工作模式：Code（工程构建与自动化执行）。围绕项目源码定位、最小精确修改、调试排错与可复现验证组织工作；交付必须写明改动文件、关键符号与实际验证命令结果。',
-  '操作桌面或浏览器任务时默认以高效 Autopilot 闭环交付（先 Observe 再精确执行并核验结果），无需套用 Learn 的 :::card / :::prereq / :::lab 教学块格式。',
+  '操作任意桌面任务时默认走通用全局感知与直接控制闭环：先 `see_screen` 一次看清全屏画面、多显示器几何、所有窗口/Z 序、当前光标/前台与活跃弹窗/菜单，需要确认任意点位控件、菜单项或同级元素时用 `inspect_at(x, y)` 探测，再用 `desktop_batch` / `click` / `drag` / `type_text` / `press_key`（原生支持 `coordinate_space:"screen"` 与 `0..1000` `"normalized"` 全局屏幕坐标并默认真实滑移鼠标；托盘图标专项用 `inspect_tray`）。Windows UIPI 禁止非管理员进程点击以管理员权限运行的窗口（如 `Taskmgr.exe`：`target_elevated`），应直接操作普通权限目标本身。',
 ].join('\n');
 
-const LEARN_HARNESS_PROMPT = [
-  '工作模式：Learn（真人导师式认知学习与思辨伙伴）。你不是教科书复读机，也不是客服式“一、二、三”条目生成器——你是坐在白板前陪用户面对面拆解底层隐状态（Hidden State）的顶尖导师与科研搭子。',
-  '核心对话节奏与反八股硬约束（严禁使用 emoji）：',
-  '1) 短回合真人交流（默认 3~6 句、约 100~240 字）：绝不要一上来就倾倒上千字长文！禁止“这是一个非常好的问题”“一、二、三”“首先、其次、最后”“总而言之”等生硬 AI 八股与机械排比；用自然、有呼吸感的人话对话，每次只先打穿 **1 个最关键的底层直觉或隐状态**。',
-  '2) 先破局再展开（隐状态与思辨思维）：不要照本宣科背定义，先直指“如果不这样设计会出什么致命毛病”（反例、对称性塌缩、信息瓶颈等底层机制），讲完这 1 个核心点后，顺手抛 **1 个有思辨味的轻追问或挑刺** 让用户接茬，再一层层剥开下一步；若用户卡壳两次，立刻换更具体的几何/生活类比或给一个交互微件，绝不玩逼用户猜标准词的僵硬问答。只有用户明确说“全文展开 / 完整推导”时才长篇输出。',
-  '3) Intelligence UI（活体交互学习微件，强力鼓励）：只要某个机制“动一下滑块、点一下矩阵、切一下开关比看 500 字更容易瞬间开窍”（如 Q·Q^T 对称性热力图、RoPE 向量旋转、梯度下降、贝叶斯面积块、算法状态机），直接内联 1 个自包含的 HTML/CSS/JS 微件：\n:::ui 微件简明标题\n<div class="card">...简洁交互 DOM + 内联 <script>（可直接用 CSS 变量 --bg/--surface/--text/--muted/--border/--accent；可调用 window.mpWidget.ask("追问文本") 回传）...</div>\n:::\n微件保持克制紧凑（高度 180~380px，零外部 CDN 依赖），正文仍保持简短口语点拨。',
-  '4) 轻量标注（按需克制使用）：行内公式 `$...$`、独立推导 `$$...$$`；关键术语可用 `[[术语|15字内直觉微释义]]`；多概念递进时可在末尾或需要时给极简 `:::prereq\nA -> B -> C\n:::`；如用户需要保存笔记或整理 X/小红书收藏，可主动建议一键收入本地 Obsidian 知识库。',
-].join('\n');
+export const LEARN_HARNESS_PROMPT = CORE_LEARN_SYSTEM;
+
+function buildInteractionOverlayPrompt(options: {
+  coachMode?: boolean;
+  computerUseMode?: 'autopilot' | 'coach' | null;
+  guidedTourSteps?: Data[];
+  cuDesktopStatus?: AgentOptions['cuDesktopStatus'];
+  metadata?: Data;
+  hasSelection?: boolean;
+}): string {
+  const parts: string[] = [];
+  const metaSource = String(asObject(options.metadata).source || '').trim();
+  if (metaSource === 'pointer_stage' || options.hasSelection === true) {
+    parts.push(
+      [
+        '[Global Magic Pointer Wake & Self-Drawn CU + Learn Bridge]',
+        '- The user summoned Magic Pointer globally over any active app window. Their initial cropped/window evidence is pre-registered as `screenshot_id: "pointer_frozen_frame"`.',
+        '- Even on 0-UIA / self-drawn apps (Canvas, Electron/WebView, video players, games), act reliably using `screenshot_id` + `click` / `move` / `paste` (`format:"text"|"html"`) / `drag` / `desktop_batch`, or refresh screen evidence via `see_screen` / `zoom_screen` / `inspect_at` before clicking.',
+        '- Press/release of Esc stops automation immediately with full key release.',
+        '- When the user asks to understand, save, follow up on, or remember content from the screen for studying, call `Learn.capture_to_course` to persist the quote, intuitive explanation, confusion/mastery feedback, Obsidian vault note, and learning todo into their active Learn course.',
+      ].join('\n'),
+    );
+  }
+  if (options.coachMode) {
+    parts.push(
+      [
+        '[Coach Screen Tour Mode (Active)]',
+        '1. Only emit inline `[POINT:x,y:ShortLabel:screen1]` markers (0-1000 normalized display coordinates, ShortLabel <= 10 chars) for REAL external desktop GUI controls after inspecting the target window via `list_windows` / `get_app_state` / `observe_ui`.',
+        '2. NEVER fabricate `[POINT:...]` screen coordinates for source-code line numbers, prose paragraphs, or elements inside Magic Pointer Studio itself.',
+      ].join('\n'),
+    );
+  }
+  if (options.computerUseMode === 'autopilot') {
+    const stepSummary =
+      Array.isArray(options.guidedTourSteps) && options.guidedTourSteps.length
+        ? '\nRequested steps:\n' +
+          options.guidedTourSteps
+            .slice(0, 16)
+            .map((s, idx) => `${idx + 1}. ${String(s.label || s.caption || '')}`)
+            .join('\n')
+        : '';
+    parts.push(
+      [
+        '[Computer Use Autopilot Mode (Active)]',
+        'Operate directly on the user’s REAL Main Desktop (where their logged-in apps, browser tabs, clipboard, and files live) with global situational awareness:',
+        '- Start broad desktop tasks with `see_screen`: one call gives the scaled full-screen image, monitor/virtualScreen bounds, live cursor, window under cursor, foreground window, top-40 Z-order windows, active popups/menus/shell overlays (with UIA menu items), and optional clipboard summary.',
+        '- Whenever you see an unfamiliar area or popup/menu/tab bar on screen, call `inspect_at(x, y)` (accepts `screen` pixels or `0..1000` `normalized` coords mapped onto the active screen bounds) to read the exact control, parent, and up to 24 visible siblings/menu items.',
+        '- Visible foreground mouse gliding (`delivery: "foreground"`) is the default so the user sees every mouse move/click live on screen. `click`, `move`, `scroll`, `drag`, `type_text`, `press_key`, and `desktop_batch` (up to 12 steps + post-action screenshot) work directly in `coordinate_space: "screen"` or `"normalized"` without waiting for a single-window `snapshot_id`.',
+        '- Windows UIPI blocks input to elevated windows (`target_elevated`, e.g., Task Manager). Operate normal-privilege UI directly instead (for system-tray/overflow icons & Quit/退出 menus, `inspect_tray` gives fast tray/chevron/menu coordinates, gliding to `taskbar.revealPoint` first if `autoHide: true`).',
+        '- For web pages & browser tasks, prefer `LiveBrowser.open` / `LiveBrowser.read_page` / `LiveBrowser.act` / `LiveBrowser.list_tabs` for instant, silky DOM-ref (`[b1]`) control directly inside Studio’s right-pane browser or attached Chrome/Edge CDP tabs.',
+        '- Never fall back to pasting prompt strings or dodging a GUI request; verify post-action state (`see_screen` / `list_windows` / `inspect_at`) and stop cleanly without internal receipt footers.' +
+          stepSummary,
+      ].join('\n'),
+    );
+  }
+  if (options.cuDesktopStatus?.active) {
+    const winList = Array.isArray(options.cuDesktopStatus.windows)
+      ? options.cuDesktopStatus.windows
+          .slice(0, 8)
+          .map(w => `${w.title || w.process_name || 'Window'} (hwnd:${w.hwnd})`)
+          .join(', ')
+      : '';
+    parts.push(
+      `[Isolated Second Desktop Active: ${options.cuDesktopStatus.desktopName || 'AgentDesktop'}${winList ? ` | Open windows: ${winList}` : ''}] Use DesktopWorkspace.inspect_ui / DesktopWorkspace.batch / DesktopWorkspace.screenshot / DesktopWorkspace.act / DesktopWorkspace.launch to continue working there without touching the user’s physical mouse.`,
+    );
+  }
+  return parts.join('\n\n');
+}
 
 export async function buildSystemPrompt(
   options: Pick<
     AgentOptions,
-    'workspace' | 'userDataDir' | 'evidence' | 'hasSelection' | 'permissionMode' | 'workMode'
+    | 'workspace'
+    | 'userDataDir'
+    | 'evidence'
+    | 'hasSelection'
+    | 'permissionMode'
+    | 'workMode'
+    | 'instruction'
+    | 'coachMode'
+    | 'computerUseMode'
+    | 'guidedTourSteps'
+    | 'metadata'
   >,
 ): Promise<string> {
   const memory = await memoryPrompt(options);
+  const overlaySection = buildInteractionOverlayPrompt(options);
+  if (isLearnWorkMode(options.workMode)) {
+    const meta = asObject(options.metadata);
+    const courseMemory =
+      meta.learnCourseMemory && typeof meta.learnCourseMemory === 'object'
+        ? (meta.learnCourseMemory as Parameters<
+            typeof buildLearnVoicePrompt
+          >[0]['courseMemory'])
+        : null;
+    const learnBase = buildLearnVoicePrompt({
+      topicText: options.instruction,
+      hasSelection: options.hasSelection,
+      localDate: localActivityDate(),
+      platform: process.platform,
+      workspace: options.workspace,
+      memory,
+      courseMemory,
+    });
+    return overlaySection ? `${learnBase}\n\n${overlaySection}` : learnBase;
+  }
+  if (options.workMode === 'design') {
+    const meta = asObject(options.metadata);
+    const designParts = [
+      buildDesignSystemPrompt({
+        direction:
+          typeof meta.designDirection === 'string'
+            ? meta.designDirection
+            : undefined,
+        includeSlides: meta.includeSlides === true,
+      }),
+    ];
+    if (typeof meta.designCanvasSlug === 'string' && meta.designCanvasSlug.trim()) {
+      designParts.push(`Active Design Canvas Slug: \`${meta.designCanvasSlug.trim()}\``);
+    }
+    if (
+      typeof meta.designViewContextXml === 'string' &&
+      meta.designViewContextXml.trim()
+    ) {
+      designParts.push(meta.designViewContextXml.trim());
+    }
+    if (
+      typeof meta.designAnnotationsXml === 'string' &&
+      meta.designAnnotationsXml.trim()
+    ) {
+      designParts.push(meta.designAnnotationsXml.trim());
+    }
+    if (overlaySection) {
+      designParts.push(overlaySection);
+    }
+    designParts.push(
+      `本机日期 ${localActivityDate()}；平台 ${process.platform}；工作区 ${options.workspace || '未绑定项目目录'}。`,
+      memory,
+      '使用用户的语言回答。',
+    );
+    return designParts.filter(Boolean).join('\n\n');
+  }
+  if (options.workMode === 'project_coordinator') {
+    const meta = asObject(options.metadata);
+    const coordProject = meta.projectCoordinatorProject as
+      | Parameters<typeof buildProjectCoordinatorPrompt>[0]['project']
+      | undefined;
+    const coordThreads = Array.isArray(meta.projectCoordinatorThreads)
+      ? (meta.projectCoordinatorThreads as Parameters<
+          typeof buildProjectCoordinatorPrompt
+        >[0]['threads'])
+      : [];
+    const coordPrompt = coordProject
+      ? buildProjectCoordinatorPrompt({
+          project: coordProject,
+          threads: coordThreads,
+          memoryPreview:
+            typeof meta.projectMemoryPreview === 'string'
+              ? meta.projectMemoryPreview
+              : undefined,
+        })
+      : [
+          '# Project Coordinator',
+          'You are the local Project Coordinator for Magic Pointer Multi-Agent Projects.',
+          'Use `Project.start_thread`, `Project.message_thread`, `Project.list_threads`, `Project.read_thread`, `Project.ask_decision`, `Project.update_memory`, `Project.write_file`, `Project.read_file`, `Project.publish_artifact`, `Project.refresh_status_page`, and `Project.inspect_worktree_diff` to coordinate worker threads.',
+        ].join('\n');
+    return [
+      coordPrompt,
+      overlaySection,
+      `本机日期 ${localActivityDate()}；平台 ${process.platform}；工作区 ${options.workspace || '未绑定项目目录'}。`,
+      memory,
+      '使用用户的语言回答。',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
   return [
     '你是 Magic Pointer 的桌面助手，负责独立完成用户的科研学习、编程、办公与桌面任务。短任务与跨会话长任务都由你执行。',
-    isLearnWorkMode(options.workMode)
-      ? LEARN_HARNESS_PROMPT
-      : CODE_HARNESS_PROMPT,
+    CODE_HARNESS_PROMPT,
+    overlaySection,
     options.hasSelection
       ? '用户圈选了对象。Look/Around/Tree 是历史冻结证据；Observe 是当前状态。历史坐标不能用于现在的点击。判断应用身份依据窗口事实。'
       : '根据本任务实际加入的材料工作，不要寻找不存在的屏幕对象。后续加入的指向以新的任务材料为准。',
@@ -712,10 +926,17 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         'append',
       );
     }
+    const learnMode = isLearnWorkMode(options.workMode);
     if (options.evidence?.trim()) {
+      const trimmedEvidence = options.evidence.trim();
+      const wrappedEvidence = trimmedEvidence.startsWith(
+        '<<<MAGIC_POINTER_EVIDENCE>>>',
+      )
+        ? trimmedEvidence
+        : `<<<MAGIC_POINTER_EVIDENCE>>>\n${trimmedEvidence}\n<<<END_MAGIC_POINTER_EVIDENCE>>>`;
       await session.appendMessage({
         role: 'user',
-        content: `<<<MAGIC_POINTER_EVIDENCE>>>\n${options.evidence}\n<<<MAGIC_POINTER_EVIDENCE>>>`,
+        content: wrappedEvidence,
         origin: 'data',
         injected: true,
       });
@@ -723,32 +944,57 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     const skills = options.instruction
       ? await relevantSkills(options.instruction, options.userDataDir)
       : '';
+    const baseSystemInput =
+      options.system ??
+      (await buildSystemPrompt({
+        ...options,
+        coachMode: undefined,
+        computerUseMode: undefined,
+        guidedTourSteps: undefined,
+      }));
     const system = await session.freezePrompt(
-      (options.system ?? (await buildSystemPrompt(options))) +
-        (skills ? '\n\n' + skills : ''),
+      baseSystemInput,
+      learnMode
+        ? {version: LEARN_PROMPT_VERSION, workMode: options.workMode}
+        : options.workMode
+          ? {workMode: options.workMode}
+          : undefined,
     );
+    const dynamicInteractionOverlay = buildInteractionOverlayPrompt({
+      coachMode: options.coachMode,
+      computerUseMode: options.computerUseMode,
+      guidedTourSteps: options.guidedTourSteps,
+      cuDesktopStatus: options.cuDesktopStatus,
+    });
     const modelMessages = (): AgentMessage[] => {
-      const messages = withWorkspaceSettings(
-        withProjectSettings(
-          pruneToolResults(
-            projectContextMessages(session.deriveMessages()),
-            path.join(options.userDataDir, 'agent-sessions', 'spills'),
-          ).messages,
-          projectSettings,
-        ),
-        workspaceSettings,
+      const baseMessages = withProjectSettings(
+        pruneToolResults(
+          projectContextMessages(session.deriveMessages()),
+          path.join(options.userDataDir, 'agent-sessions', 'spills'),
+        ).messages,
+        projectSettings,
       );
-      return outputArtifact
-        ? [
-            ...messages,
-            {
-              role: 'user',
-              origin: 'instruction',
-              injected: true,
-              content: `Deliver the requested content as an editable ${outputArtifact.kind} artifact titled ${JSON.stringify(outputArtifact.title)}. Use Artifact.create or Artifact.update when appropriate. If you finish with text only, that text will become the artifact: include only the deliverable, without status reports, introductions, or offers.`,
-            },
-          ]
-        : messages;
+      const messages = learnMode
+        ? baseMessages
+        : withWorkspaceSettings(baseMessages, workspaceSettings);
+      const trailing: AgentMessage[] = [];
+      if (dynamicInteractionOverlay) {
+        trailing.push({
+          role: 'user',
+          origin: 'instruction',
+          injected: true,
+          content: dynamicInteractionOverlay,
+        });
+      }
+      if (outputArtifact) {
+        trailing.push({
+          role: 'user',
+          origin: 'instruction',
+          injected: true,
+          content: `Deliver the requested content as an editable ${outputArtifact.kind} artifact titled ${JSON.stringify(outputArtifact.title)}. Use Artifact.create or Artifact.update when appropriate. If you finish with text only, that text will become the artifact: include only the deliverable, without status reports, introductions, or offers.`,
+        });
+      }
+      return trailing.length ? [...messages, ...trailing] : messages;
     };
     for (const event of session.events) {
       if (
@@ -815,20 +1061,48 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         break;
       }
       const schemas = registry.schemas() as Data[];
-      const requestSystem =
-        system.replace(
-          /^本机日期 \d{4}-\d{2}-\d{2}(?=；平台 )/mu,
-          `本机日期 ${localActivityDate()}`,
-        ) +
-        (system.includes(CHAT_IMAGE_DELIVERY)
-          ? ''
-          : '\n\n' + CHAT_IMAGE_DELIVERY) +
-        (registry.directory()
-          ? '\n\n可按名字用 Tools 加载的工具：\n' + registry.directory()
-          : '') +
-        `\n\n当前生效权限模式：${session.permissionMode(options.permissionMode ?? 'default')}。以本条运行状态为准，历史模式描述不代表当前权限。`;
+      const datedSystem = system.replace(
+        /^本机日期 \d{4}-\d{2}-\d{2}(?=；平台 )/mu,
+        `本机日期 ${localActivityDate()}`,
+      );
+      const requestSystem = learnMode
+        ? datedSystem +
+          (skills ? '\n\n' + skills : '') +
+          (registry.directory()
+            ? '\n\n按需可通过 Tools 加载更多工具（仅当用户明确提到本地项目或代码文件时：Read/Grep/Glob/Edit/Bash；记忆与产物：Memory.read/Memory.search/Recall/Artifact.create；后台研究：Agent）。'
+            : '')
+        : datedSystem +
+          (skills ? '\n\n' + skills : '') +
+          (system.includes(CHAT_IMAGE_DELIVERY)
+            ? ''
+            : '\n\n' + CHAT_IMAGE_DELIVERY) +
+          (registry.directory()
+            ? '\n\n可按名字用 Tools 加载的工具：\n' + registry.directory()
+            : '') +
+          `\n\n当前生效权限模式：${session.permissionMode(options.permissionMode ?? 'default')}。以本条运行状态为准，历史模式描述不代表当前权限。`;
       const contexts = await options.requestContext?.({sessionId: session.id, turn: turns, signal}) ?? [];
+      const learnPrimingMessages = (): AgentMessage[] => {
+        if (
+          !learnMode ||
+          session.events.some(event => event.type === 'compaction/summary')
+        ) {
+          return [];
+        }
+        const firstUser = session
+          .deriveMessages()
+          .find(
+            message =>
+              message.role === 'user' &&
+              !message.injected &&
+              message.origin !== 'data' &&
+              typeof message.content === 'string',
+          );
+        return buildLearnPrimingMessages(
+          String(firstUser?.content || options.instruction || ''),
+        );
+      };
       const projectRequestMessages = (): AgentMessage[] => [
+        ...learnPrimingMessages(),
         ...modelMessages(),
         ...contexts.map(context => ({
           role: 'user' as const,
@@ -883,13 +1157,21 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         if (contexts.length) {
           await session.append('module/request_context', {turn: session.openTurn, step: turns, contexts});
         }
-        await session.recordRequest(
+        const requestBreakdown = await session.recordRequest(
           turns,
           requestSystem,
           schemas,
           requestMessages,
+          skills ? {skillsText: skills} : undefined,
         );
+        const effectiveContextWindow =
+          options.contextTokens ??
+          options.config?.defaultContextWindow ??
+          contextWindowFor(options.config?.model);
+        const autocompactBufferTokens = Math.round(effectiveContextWindow * 0.2);
         const requestStartedAt = Date.now();
+        const baseForkCount = session.forkMessageCount();
+        const primingCount = learnPrimingMessages().length;
         try {
           reply = await options.model({
             root: options.root,
@@ -900,8 +1182,13 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             tools: schemas,
             signal,
             sessionId: session.id,
-            forkMessageCount: session.forkMessageCount() || undefined,
+            forkMessageCount: baseForkCount
+              ? baseForkCount + primingCount
+              : undefined,
             maxTokens: outputTokens,
+            ...(learnMode
+              ? {temperature: 1.1, presencePenalty: 0.15}
+              : {}),
             timeoutMs: timeout,
             onEvent: event => {
               if (event.type === 'text_delta') {
@@ -936,6 +1223,29 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         }
         backend = reply.usedBackend ?? backend;
         const reported = mergeModelUsage(usage, reply.usage);
+        usage.contextWindow = effectiveContextWindow;
+        usage.autocompactBufferTokens = autocompactBufferTokens;
+        usage.systemTokensEstimate = requestBreakdown.systemTokensEstimate;
+        usage.toolSchemaTokensEstimate =
+          requestBreakdown.toolSchemaTokensEstimate;
+        usage.messageTokensEstimate = requestBreakdown.messageTokensEstimate;
+        usage.toolResultTokensEstimate =
+          requestBreakdown.toolResultTokensEstimate;
+        if (requestBreakdown.memoryTokensEstimate > 0) {
+          usage.memoryTokensEstimate = requestBreakdown.memoryTokensEstimate;
+        } else {
+          delete usage.memoryTokensEstimate;
+        }
+        if (requestBreakdown.skillTokensEstimate > 0) {
+          usage.skillTokensEstimate = requestBreakdown.skillTokensEstimate;
+        } else {
+          delete usage.skillTokensEstimate;
+        }
+        if (requestBreakdown.mcpToolTokensEstimate > 0) {
+          usage.mcpToolTokensEstimate = requestBreakdown.mcpToolTokensEstimate;
+        } else {
+          delete usage.mcpToolTokensEstimate;
+        }
         const requestUsage: Record<string, number> = {};
         if (reported) {
           mergeModelUsage(requestUsage, reply.usage);
@@ -947,17 +1257,29 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             requestStartedAt,
           );
         }
+        const usagePayload: Data = {
+          ...usage,
+          ...(requestBreakdown.memoryFiles.length
+            ? {memoryFiles: requestBreakdown.memoryFiles}
+            : {}),
+          ...(requestBreakdown.mcpTools.length
+            ? {mcpTools: requestBreakdown.mcpTools}
+            : {}),
+          ...(requestBreakdown.skills.length
+            ? {skills: requestBreakdown.skills}
+            : {}),
+        };
         await session.append('model/response', {
           turn: session.openTurn,
           step: turns,
           outcome: reply.stop_reason ?? 'completed',
           usage: reply.usage ?? {},
-          modelUsage: {...usage},
+          modelUsage: usagePayload,
           outputTextChars: reply.text.length,
           toolCallCount: reply.tool_calls.length,
         });
         if (reported) {
-          emit({kind: 'model_usage', usage: {...usage}, requestUsage});
+          emit({kind: 'model_usage', usage: usagePayload, requestUsage});
         }
         if (
           reply.stop_reason === 'context_overflow' ||
@@ -1543,16 +1865,22 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       answer = 'Emergency execution fuse reached; task remains resumable.';
     }
   } catch (error) {
-    reason =
+    const rawMsg = (error as Error).message || '';
+    const abortedByUser =
       signal.aborted ||
       ((error as Error).name === 'AbortError' &&
-        (error as Error).message.includes('computer_use_interrupted'))
-        ? 'user_interrupt'
-        : 'provider_unavailable';
-    answer = (error as Error).message;
-    if (answer.includes('computer_use_interrupted')) {
+        (rawMsg.includes('computer_use_interrupted') ||
+          rawMsg.includes('computer_use_escape_stop')));
+    reason = abortedByUser ? 'user_interrupt' : 'provider_unavailable';
+    if (rawMsg.includes('computer_use_escape_stop')) {
+      answer = '你按下了 Esc，已立即停止桌面操作并释放按键。';
+    } else if (rawMsg.includes('computer_use_interrupted')) {
       answer =
         '你已接管桌面。刚才的动作可能只完成了一部分，继续前需要核对目标。';
+    } else if (abortedByUser) {
+      answer = /^user interrupted$/i.test(answer.trim()) ? '' : answer;
+    } else {
+      answer = rawMsg;
     }
   } finally {
     if (interval) {
@@ -1637,15 +1965,6 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     memoryEligible: false,
   };
   receipt.memoryEligible = receiptMemoryEligible(receipt);
-  if (reason === 'completed' && receipt.status !== 'succeeded') {
-    const incomplete = outcomes.targets
-      .filter(row => row.status !== 'verified')
-      .map(
-        row =>
-          `${row.target.startsWith('operation:') ? `${row.tool} 的目标` : row.target.replace(/^file:/, '')}：${row.status === 'unknown' ? '结果未知' : row.status === 'failed' ? '执行失败' : '已执行，待核对'}`,
-      );
-    answer += `\n\n任务尚未全部完成：\n${[...incomplete, ...outcomes.unfinished.map(item => `未完成：${item}`), ...(recoveryPending ? ['仍有中断动作需要核对，不能自动重做。'] : [])].join('\n')}`;
-  }
   try {
     await session.append('receipt/issued', receipt);
     await session.append('turn/result', {

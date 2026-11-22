@@ -6,6 +6,13 @@
 }
 
 @font-face {
+  font-family: Anthropicons-Animated;
+  src: url("./assets/fonts/Anthropicons-DFbvW9Cm.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-display: block;
+}
+
+@font-face {
   font-family: Anthropicons;
   src: url("./assets/fonts/Anthropicons-Variable.woff2") format("woff2-variations");
   font-weight: 400 700;
@@ -97,9 +104,14 @@
 .cds-icon[data-cds-anim] {
   --cds-anim: 0;
   --cds-anim2: 0;
-  /* c0f671921 has wght+opsz axes without ANIM/ANM2; extra variation tags are ignored safely. */
+  font-family: Anthropicons-Animated, var(--font-anthropicons, Anthropicons-Variable), Anthropicons, sans-serif;
   font-variation-settings: "opsz" var(--cds-opsz, 20), "wght" var(--cds-wght, 433.3), "ANIM" var(--cds-anim), "ANM2" var(--cds-anim2);
   transition: --cds-anim var(--cds-anim-dur-out, var(--cds-anim-dur, .3s)) var(--cds-anim-ease, cubic-bezier(.34, 1.3, .64, 1));
+}
+
+.mp-main-navigation .cds-icon,
+.mp-mode-segment .cds-icon {
+  font-family: Anthropicons-Animated, var(--font-anthropicons, Anthropicons-Variable), Anthropicons, sans-serif;
 }
 .cds-icon[data-glyph="\E0B8"] { --cds-anim-dur: .8s; --cds-anim-dur-out: 0s; --cds-anim-ease: ease-out; }
 @keyframes cds-anim-loop {

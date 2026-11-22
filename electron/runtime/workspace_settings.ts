@@ -46,7 +46,7 @@ export function withWorkspaceSettings(
   messages: AgentMessage[],
   settings: WorkspaceSettings | undefined,
 ): AgentMessage[] {
-  if (!settings) {
+  if (!settings || (!settings.root && !settings.additionalFolders.length)) {
     return messages;
   }
   const content = [
@@ -55,17 +55,9 @@ export function withWorkspaceSettings(
     JSON.stringify(settings),
     '[/Workspace folders]',
   ].join('\n');
-  let index = messages.length;
-  for (let position = messages.length - 1; position >= 0; position--) {
-    const item = messages[position];
-    if (item.role === 'user' && !item.injected && item.origin !== 'data') {
-      index = position;
-      break;
-    }
-  }
+  // Keep workspace settings anchored at the prefix so multi-turn KV prompt cache stays intact.
   return [
-    ...messages.slice(0, index),
     {role: 'user', origin: 'instruction', injected: true, content},
-    ...messages.slice(index),
+    ...messages,
   ];
 }

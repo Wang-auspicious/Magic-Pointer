@@ -28,6 +28,7 @@ declare global {
         prereqLabels: string[];
         attempts: number;
         note?: string;
+        autoInferred?: boolean;
       }>;
       edges: Array<{fromId: string; toId: string; relation: string}>;
       prereqChains: string[][];
@@ -78,6 +79,7 @@ declare global {
     prereqLabels: string[];
     attempts: number;
     note?: string;
+    autoInferred?: boolean;
   }
 
   interface ConceptEdge {
@@ -538,6 +540,197 @@ declare global {
     return {prereqChains, units};
   }
 
+  const AUTO_GAP_RE =
+    /(没懂|不懂|看不懂|糊涂|卡住|困惑|不明白|为啥还是|哪里错|搞错|弄混|混淆|区别在哪|搞反|为什么不行|为什么不能|还是有点乱)/i;
+  const AUTO_VERIFIED_RE =
+    /(懂了|明白了|清楚了|原来如此|搞懂|通了|没问题了|理解了|谢谢|get了)/i;
+
+  const GENERIC_TOPIC_TOKENS = new Set([
+    '概念',
+    '要点',
+    '模块',
+    '机制',
+    '原理',
+    '部分',
+    '补充',
+    '总结',
+    '结论',
+    '步骤',
+    '问题',
+    '例子',
+    '示例',
+    '基础',
+  ]);
+
+  function inferAutoMasteryStatus(options: {
+    turnIndex: number;
+    totalTurns: number;
+    title: string;
+    rawBody: string;
+    matchingBranches: MagicPointerLearnBranch[];
+    turns: NonNullable<MagicPointerConversation['turns']>;
+  }): MasteryStatus {
+    const {turnIndex, totalTurns, title, rawBody, matchingBranches, turns} =
+      options;
+    const branchQuestions = matchingBranches
+      .flatMap(br => (br.turns || []).map(t => String(t.question || '')))
+      .join('\n');
+    if (AUTO_GAP_RE.test(branchQuestions)) {
+      return 'gap';
+    }
+    const laterTurns = turns.slice(turnIndex + 1);
+    const laterQuestions = laterTurns
+      .map(t => String(t.question || ''))
+      .join('\n');
+    const normTitle = title.trim().toLowerCase();
+    const laterLower = laterQuestions.toLowerCase();
+    const rawTokens = normTitle
+      .split(/[\s·\-:：,/()（）]+/)
+      .filter(tok => tok.length >= 2 && !GENERIC_TOPIC_TOKENS.has(tok));
+    const hasSpecificDigits = /\d/.test(normTitle);
+    const laterMentionsNode =
+      laterLower.trim().length > 0 &&
+      (hasSpecificDigits
+        ? laterLower.includes(normTitle)
+        : normTitle.length >= 2 &&
+          (laterLower.includes(normTitle) ||
+            rawTokens.some(tok => laterLower.includes(tok))));
+    if (laterMentionsNode && AUTO_GAP_RE.test(laterQuestions)) {
+      return 'gap';
+    }
+    if (matchingBranches.length > 0) {
+      const hasMultiTurnOrSettled = matchingBranches.some(
+        br => (br.turns?.length || 0) >= 2 && AUTO_VERIFIED_RE.test(branchQuestions),
+      );
+      if (hasMultiTurnOrSettled || AUTO_VERIFIED_RE.test(laterQuestions)) {
+        return 'verified';
+      }
+      if (turnIndex < totalTurns - 1 && !laterMentionsNode) {
+        return 'verified';
+      }
+      return 'questioned';
+    }
+    if (
+      (laterMentionsNode && AUTO_VERIFIED_RE.test(laterQuestions)) ||
+      (turnIndex < totalTurns - 1 && !laterMentionsNode)
+    ) {
+      return 'verified';
+    }
+    void rawBody;
+    return 'explored';
+  }
+
+  function consolidateTopology(
+    rawNodes: ConceptNode[],
+    rawEdges: ConceptEdge[],
+    maxNodes = 8,
+  ): {nodes: ConceptNode[]; edges: ConceptEdge[]} {
+    if (rawNodes.length <= maxNodes) {
+      return {nodes: rawNodes, edges: rawEdges};
+    }
+    const nodes = rawNodes.map(n => ({
+      ...n,
+      terms: [...n.terms],
+      highlights: [...n.highlights],
+      branchIds: [...n.branchIds],
+      prereqLabels: [...n.prereqLabels],
+    }));
+    const remap = new Map<string, string>();
+    const roleKeepScore = (n: ConceptNode): number => {
+      let score = 0;
+      if (n.role === 'formula') {
+        score += 5;
+      } else if (n.role === 'trap') {
+        score += 4;
+      } else if (n.role === 'conclusion') {
+        score += 4;
+      } else if (n.role === 'compare') {
+        score += 3;
+      } else if (n.role === 'prerequisite') {
+        score += 2;
+      }
+      if (n.branchIds.length > 0) {
+        score += 4;
+      }
+      if (n.status === 'gap' || n.status === 'questioned') {
+        score += 3;
+      }
+      if (n.highlights.length > 0) {
+        score += 2;
+      }
+      return score;
+    };
+
+    while (nodes.length > maxNodes) {
+      let mergeIdx = -1;
+      let lowestScore = Infinity;
+      for (let i = 1; i < nodes.length; i++) {
+        const s = roleKeepScore(nodes[i]!);
+        if (s < lowestScore) {
+          lowestScore = s;
+          mergeIdx = i;
+        }
+      }
+      if (mergeIdx <= 0) {
+        break;
+      }
+      const victim = nodes[mergeIdx]!;
+      let target = nodes[mergeIdx - 1]!;
+      for (let j = mergeIdx - 1; j >= 0; j--) {
+        if (nodes[j]!.turnIndex === victim.turnIndex) {
+          target = nodes[j]!;
+          break;
+        }
+      }
+      for (const bid of victim.branchIds) {
+        if (!target.branchIds.includes(bid)) {
+          target.branchIds.push(bid);
+        }
+      }
+      for (const hl of victim.highlights) {
+        if (!target.highlights.includes(hl) && target.highlights.length < 3) {
+          target.highlights.push(hl);
+        }
+      }
+      if (victim.status === 'gap') {
+        target.status = 'gap';
+      } else if (
+        victim.status === 'questioned' &&
+        target.status !== 'gap'
+      ) {
+        target.status = 'questioned';
+      }
+      remap.set(victim.id, target.id);
+      nodes.splice(mergeIdx, 1);
+    }
+
+    const resolveId = (id: string): string => {
+      let cur = id;
+      const seen = new Set<string>();
+      while (remap.has(cur) && !seen.has(cur)) {
+        seen.add(cur);
+        cur = remap.get(cur)!;
+      }
+      return cur;
+    };
+
+    const edgeKeys = new Set<string>();
+    const edges: ConceptEdge[] = [];
+    for (const e of rawEdges) {
+      const fromId = resolveId(e.fromId);
+      const toId = resolveId(e.toId);
+      if (fromId === toId) {
+        continue;
+      }
+      const k = `${fromId}->${toId}:${e.relation}`;
+      if (!edgeKeys.has(k)) {
+        edgeKeys.add(k);
+        edges.push({fromId, toId, relation: e.relation});
+      }
+    }
+    return {nodes, edges};
+  }
+
   function extractTopology(
     conversation: MagicPointerConversation | null | undefined,
   ): ConceptTopology {
@@ -653,9 +846,15 @@ declare global {
         const savedMastery = masteryMap[nodeId];
         const status: MasteryStatus = savedMastery?.status
           ? savedMastery.status
-          : matchingBranches.length > 0
-            ? 'questioned'
-            : 'explored';
+          : inferAutoMasteryStatus({
+              turnIndex,
+              totalTurns: turns.length,
+              title: cleanFormulaText(unit.title) || unit.title,
+              rawBody: unit.rawBody,
+              matchingBranches,
+              turns,
+            });
+        const autoInferred = !savedMastery?.status;
 
         const prereqLabels: string[] = [];
         for (const chain of parsed.prereqChains) {
@@ -691,6 +890,7 @@ declare global {
           prereqLabels,
           attempts: Number(savedMastery?.attempts || 0),
           note: savedMastery?.note,
+          autoInferred,
         });
 
         if (prevUnitNodeId) {
@@ -711,15 +911,21 @@ declare global {
       }
     });
 
+    const consolidated = consolidateTopology(nodes, edges, 8);
     const summary = {
-      total: nodes.length,
-      verified: nodes.filter(n => n.status === 'verified').length,
-      questioned: nodes.filter(n => n.status === 'questioned').length,
-      gap: nodes.filter(n => n.status === 'gap').length,
-      explored: nodes.filter(n => n.status === 'explored').length,
+      total: consolidated.nodes.length,
+      verified: consolidated.nodes.filter(n => n.status === 'verified').length,
+      questioned: consolidated.nodes.filter(n => n.status === 'questioned').length,
+      gap: consolidated.nodes.filter(n => n.status === 'gap').length,
+      explored: consolidated.nodes.filter(n => n.status === 'explored').length,
     };
 
-    return {nodes, edges, prereqChains, summary};
+    return {
+      nodes: consolidated.nodes,
+      edges: consolidated.edges,
+      prereqChains,
+      summary,
+    };
   }
 
   const ConceptGraphApi = {

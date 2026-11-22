@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob: file: http: https:; font-src data: blob: file:;" />
+  <title>Magic Pointer Design Sandbox</title>
+  <style id="mp-design-theme"></style>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 100%;
+      background: #ffffff;
+      color: #1f1f1d;
+      font-family: "anthropic-sans", "PingFang SC", "Microsoft YaHei UI", system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    x-dc { display: none !important; }
+    #mp-design-stage {
+      position: relative;
+      width: 100%;
+      min-height: 100%;
+    }
+    #mp-design-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2147483640;
+    }
+    .mp-hover-box {
+      position: fixed;
+      border: 1.5px dashed #2566d0;
+      background: rgba(37, 102, 208, 0.05);
+      pointer-events: none;
+    }
+    .mp-select-box {
+      position: fixed;
+      border: 2px solid #d97757;
+      background: rgba(217, 119, 87, 0.06);
+      pointer-events: none;
+    }
+    .mp-marquee-box {
+      position: fixed;
+      border: 1.5px solid #2566d0;
+      background: rgba(37, 102, 208, 0.12);
+      pointer-events: none;
+    }
+    .mp-guide-line {
+      position: fixed;
+      background: #d97757;
+      pointer-events: none;
+    }
+    .mp-guide-badge {
+      position: fixed;
+      background: #d97757;
+      color: #ffffff;
+      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      padding: 2px 4px;
+      border-radius: 3px;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .mp-redirect-blocked {
+      padding: 24px;
+      font-family: system-ui, sans-serif;
+      color: #b42318;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      margin: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="mp-design-stage"></div>
+  <div id="mp-design-overlay"></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // 1. Opaque-origin localStorage / sessionStorage in-memory shim
+      function installStorageShim(name) {
+        try {
+          var testKey = '__mp_test__';
+          window[name].setItem(testKey, '1');
+          window[name].removeItem(testKey);
+          return;
+        } catch (_err) {
+          var mem = new Map();
+          var shim = {
+            get length() { return mem.size; },
+            key: function (i) { return Array.from(mem.keys())[i] || null; },
+            getItem: function (k) { return mem.has(String(k)) ? mem.get(String(k)) : null; },
+            setItem: function (k, v) { mem.set(String(k), String(v)); },
+            removeItem: function (k) { mem.delete(String(k)); },
+            clear: function () { mem.clear(); }
+          };
+          try {
+            Object.defineProperty(window, name, { value: shim, configurable: true });
+          } catch (_e) {
+            // Ignore if non-configurable
+          }
+        }
+      }
+      installStorageShim('localStorage');
+      installStorageShim('sessionStorage');
+
+      var state = {
+        frameId: '',
+        file: '',
+        mode: 'select',
+        isInteractive: false,
+        redirectCount: 0,
+        selectedEl: null,
+        editingEl: null,
+        dragState: null,
+        marqueeState: null
+      };
+
+      var stage = document.getElementById('mp-design-stage');
+      var overlay = document.getElementById('mp-design-overlay');
+      var themeStyleEl = document.getElementById('mp-design-theme');
+
+      // 2. Focus-steal guard (suppresses .focus() unless interactive Play mode)
+      var origFocus = HTMLElement.prototype.focus;
+      HTMLElement.prototype.focus = function (opts) {
+        if (state.mode !== 'play' && state.editingEl !== this) {
+          return;
+        }
+        return origFocus.call(this, opts);
+      };
+
+      // 3. Redirect-loop guard
+      function guardRedirect(url) {
+        state.redirectCount += 1;
+        if (state.redirectCount > 3) {
+          if (stage) {
+            stage.innerHTML = '<div class="mp-redirect-blocked">Blocked redirect loop to ' + String(url || '') + '</div>';
+          }
+          return false;
+        }
+        return true;
+      }
+      try {
+        var origAssign = window.location.assign.bind(window.location);
+        window.location.assign = function (u) { if (guardRedirect(u)) origAssign(u); };
+        var origReplace = window.location.replace.bind(window.location);
+        window.location.replace = function (u) { if (guardRedirect(u)) origReplace(u); };
+      } catch (_e) {
+        // Location may be locked in some environments
+      }
+
+      // 4. Runtime error telemetry
+      function reportError(err) {
+        var msg = err && err.message ? err.message : String(err || 'Unknown runtime error');
+        var stack = err && err.stack ? String(err.stack) : '';
+        parent.postMessage({
+          type: 'mp-design-error',
+          frameId: state.frameId,
+          file: state.file,
+          message: msg,
+          stack: stack
+        }, '*');
+      }
+
+      window.addEventListener('error', function (ev) {
+        reportError(ev.error || ev.message || 'Script error');
+      });
+      window.addEventListener('unhandledrejection', function (ev) {
+        reportError(ev.reason || 'Unhandled promise rejection');
+      });
+
+      // 5. Element tid:path & selector helpers
+      function computeElementCoord(el) {
+        if (!el || el === stage || !stage || !stage.contains(el)) {
+          return null;
+        }
+        var root = stage.querySelector('.mp-dc-root') || stage;
+        var all = Array.prototype.slice.call(root.querySelectorAll('*'));
+        var tid = Math.max(0, all.indexOf(el));
+        var parts = [];
+        var cur = el;
+        while (cur && cur !== root && cur.parentElement) {
+          var siblings = Array.prototype.slice.call(cur.parentElement.children);
+          parts.unshift(String(Math.max(0, siblings.indexOf(cur))));
+          cur = cur.parentElement;
+        }
+        if (parts.length === 0) parts.push('0');
+        var pathStr = parts.join('/');
+        var tag = el.tagName.toLowerCase();
+        var selector = el.id
+          ? '#' + el.id
+          : el.classList && el.classList.length
+            ? tag + '.' + el.classList[0]
+            : tag;
+        var clone = el.cloneNode(false);
+        var htmlHint = clone && clone.outerHTML ? clone.outerHTML.slice(0, 140) : '<' + tag + '>';
+        var rect = el.getBoundingClientRect();
+        return {
+          tid: tid,
+          path: pathStr,
+          anchor: state.file ? state.file + '#' + tid + ':' + pathStr : '#' + tid + ':' + pathStr,
+          selector: selector,
+          htmlHint: htmlHint,
+          text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 140),
+          rect: { x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) }
+        };
+      }
+
+      function clearOverlay() {
+        if (overlay) overlay.innerHTML = '';
+      }
+
+      function drawBox(cls, rect) {
+        if (!overlay || !rect) return;
+        var div = document.createElement('div');
+        div.className = cls;
+        div.style.left = rect.left + 'px';
+        div.style.top = rect.top + 'px';
+        div.style.width = rect.width + 'px';
+        div.style.height = rect.height + 'px';
+        overlay.appendChild(div);
+      }
+
+      function drawSmartGuides(targetEl) {
+        if (!overlay || !targetEl || !targetEl.parentElement) return;
+        var r = targetEl.getBoundingClientRect();
+        var p = targetEl.parentElement.getBoundingClientRect();
+        var cx = r.left + r.width / 2;
+        var pcx = p.left + p.width / 2;
+        if (Math.abs(cx - pcx) <= 4) {
+          var vLine = document.createElement('div');
+          vLine.className = 'mp-guide-line';
+          vLine.style.left = pcx + 'px';
+          vLine.style.top = p.top + 'px';
+          vLine.style.width = '1px';
+          vLine.style.height = p.height + 'px';
+          overlay.appendChild(vLine);
+        }
+        var topGap = Math.round(r.top - p.top);
+        var leftGap = Math.round(r.left - p.left);
+        if (topGap >= 0) {
+          var badgeTop = document.createElement('div');
+          badgeTop.className = 'mp-guide-badge';
+          badgeTop.style.left = Math.round(r.left + r.width / 2 - 14) + 'px';
+          badgeTop.style.top = Math.round(p.top + topGap / 2 - 8) + 'px';
+          badgeTop.textContent = topGap + 'px';
+          overlay.appendChild(badgeTop);
+        }
+        if (leftGap >= 0) {
+          var badgeLeft = document.createElement('div');
+          badgeLeft.className = 'mp-guide-badge';
+          badgeLeft.style.left = Math.round(p.left + leftGap / 2 - 14) + 'px';
+          badgeLeft.style.top = Math.round(r.top + r.height / 2 - 8) + 'px';
+          badgeLeft.textContent = leftGap + 'px';
+          overlay.appendChild(badgeLeft);
+        }
+      }
+
+      function renderGuidesAndSelection(hoverEl) {
+        clearOverlay();
+        if (hoverEl && hoverEl !== state.selectedEl && state.mode !== 'play') {
+          drawBox('mp-hover-box', hoverEl.getBoundingClientRect());
+        }
+        if (state.selectedEl && state.mode !== 'play') {
+          drawBox('mp-select-box', state.selectedEl.getBoundingClientRect());
+          if (state.mode === 'edit') {
+            drawSmartGuides(state.selectedEl);
+          }
+        }
+      }
+
+      function commitInlineEdit(cancel) {
+        var el = state.editingEl;
+        if (!el) return;
+        if (cancel && el.dataset.mpOrigText !== undefined) {
+          el.textContent = el.dataset.mpOrigText;
+        }
+        delete el.dataset.mpOrigText;
+        el.removeAttribute('contenteditable');
+        state.editingEl = null;
+        if (!cancel) {
+          var coord = computeElementCoord(el);
+          if (coord) {
+            parent.postMessage({
+              type: 'mp-design-dom-delta',
+              frameId: state.frameId,
+              file: state.file,
+              tid: coord.tid,
+              path: coord.path,
+              anchor: coord.anchor,
+              text: coord.text
+            }, '*');
+          }
+        }
+      }
+
+      function injectContent(renderedHtml, themeCss) {
+        if (themeStyleEl && typeof themeCss === 'string') {
+          themeStyleEl.textContent = themeCss;
+        }
+        if (!stage) return;
+        try {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(String(renderedHtml || ''), 'text/html');
+          // Strip autofocus outside play mode
+          if (state.mode !== 'play') {
+            doc.querySelectorAll('[autofocus]').forEach(function (n) { n.removeAttribute('autofocus'); });
+          }
+          // Strip meta refresh redirects
+          doc.querySelectorAll('meta[http-equiv="refresh"]').forEach(function (n) { n.remove(); });
+          // Apply head styles into stage
+          var styleHtml = '';
+          doc.head.querySelectorAll('style, link[rel="stylesheet"]').forEach(function (n) {
+            styleHtml += n.outerHTML;
+          });
+          stage.innerHTML = styleHtml + doc.body.innerHTML;
+          // Execute inline scripts cleanly
+          stage.querySelectorAll('script').forEach(function (oldScript) {
+            if (oldScript.getAttribute('type') === 'text/x-dc') return;
+            var s = document.createElement('script');
+            if (oldScript.textContent) s.textContent = oldScript.textContent;
+            oldScript.parentNode.replaceChild(s, oldScript);
+          });
+        } catch (err) {
+          reportError(err);
+        }
+      }
+
+      // Pointer & keyboard handlers for Edit / Comment / Play modes
+      document.addEventListener('mousemove', function (ev) {
+        if (state.mode === 'play') return;
+        if (state.dragState) {
+          var dx = ev.clientX - state.dragState.startX;
+          var dy = ev.clientY - state.dragState.startY;
+          if (Math.hypot(dx, dy) >= 4 || state.dragState.active) {
+            state.dragState.active = true;
+            var tx = state.dragState.baseX + Math.round(dx);
+            var ty = state.dragState.baseY + Math.round(dy);
+            state.dragState.el.style.transform = 'translate(' + tx + 'px, ' + ty + 'px)';
+            renderGuidesAndSelection(null);
+          }
+          return;
+        }
+        if (state.marqueeState) {
+          clearOverlay();
+          var x = Math.min(state.marqueeState.startX, ev.clientX);
+          var y = Math.min(state.marqueeState.startY, ev.clientY);
+          var w = Math.abs(ev.clientX - state.marqueeState.startX);
+          var h = Math.abs(ev.clientY - state.marqueeState.startY);
+          drawBox('mp-marquee-box', { left: x, top: y, width: w, height: h });
+          return;
+        }
+        var target = document.elementFromPoint(ev.clientX, ev.clientY);
+        if (target && stage && stage.contains(target) && target !== stage) {
+          renderGuidesAndSelection(target);
+        }
+      });
+
+      document.addEventListener('mousedown', function (ev) {
+        if (state.mode === 'play') return;
+        var target = ev.target;
+        if (!(target instanceof HTMLElement) || !stage || !stage.contains(target) || target === stage) {
+          return;
+        }
+        if (state.mode === 'comment') {
+          state.marqueeState = { startX: ev.clientX, startY: ev.clientY, target: target };
+          return;
+        }
+        state.selectedEl = target;
+        renderGuidesAndSelection(null);
+        var coord = computeElementCoord(target);
+        if (coord) {
+          parent.postMessage({
+            type: 'mp-design-element-selected',
+            frameId: state.frameId,
+            file: state.file,
+            coord: coord,
+            style: target.getAttribute('style') || ''
+          }, '*');
+        }
+        if (state.mode === 'edit' && state.editingEl !== target) {
+          state.dragState = {
+            el: target,
+            startX: ev.clientX,
+            startY: ev.clientY,
+            baseX: 0,
+            baseY: 0,
+            active: false
+          };
+        }
+      });
+
+      document.addEventListener('mouseup', function (ev) {
+        if (state.dragState) {
+          var ds = state.dragState;
+          state.dragState = null;
+          if (ds.active) {
+            var coord = computeElementCoord(ds.el);
+            if (coord) {
+              parent.postMessage({
+                type: 'mp-design-dom-delta',
+                frameId: state.frameId,
+                file: state.file,
+                tid: coord.tid,
+                path: coord.path,
+                anchor: coord.anchor,
+                styleDelta: { transform: ds.el.style.transform }
+              }, '*');
+            }
+          }
+        }
+        if (state.marqueeState) {
+          var ms = state.marqueeState;
+          state.marqueeState = null;
+          clearOverlay();
+          var w = Math.abs(ev.clientX - ms.startX);
+          var h = Math.abs(ev.clientY - ms.startY);
+          if (w > 8 && h > 8) {
+            var rect = {
+              x: Math.round(Math.min(ms.startX, ev.clientX)),
+              y: Math.round(Math.min(ms.startY, ev.clientY)),
+              w: Math.round(w),
+              h: Math.round(h)
+            };
+            parent.postMessage({
+              type: 'mp-design-comment-area',
+              frameId: state.frameId,
+              file: state.file,
+              area: 'Area over ' + state.file + ' (part): x=' + rect.x + ',y=' + rect.y + ',w=' + rect.w + ',h=' + rect.h,
+              rect: rect
+            }, '*');
+          } else {
+            var c = computeElementCoord(ms.target);
+            if (c) {
+              parent.postMessage({
+                type: 'mp-design-comment-target',
+                frameId: state.frameId,
+                file: state.file,
+                coord: c
+              }, '*');
+            }
+          }
+        }
+      });
+
+      document.addEventListener('dblclick', function (ev) {
+        if (state.mode !== 'edit') return;
+        var target = ev.target;
+        if (!(target instanceof HTMLElement) || !stage || !stage.contains(target) || target === stage) {
+          return;
+        }
+        if (state.editingEl && state.editingEl !== target) {
+          commitInlineEdit(false);
+        }
+        state.editingEl = target;
+        target.dataset.mpOrigText = target.textContent || '';
+        target.setAttribute('contenteditable', 'true');
+        origFocus.call(target);
+      });
+
+      // Deliberately blur-safe: iframe blur does NOT discard inline edits!
+      document.addEventListener('keydown', function (ev) {
+        if (!state.editingEl) return;
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          commitInlineEdit(true);
+        } else if (ev.key === 'Enter' && !ev.shiftKey) {
+          ev.preventDefault();
+          commitInlineEdit(false);
+        }
+      });
+
+      document.addEventListener('click', function (ev) {
+        if (state.mode !== 'play') {
+          ev.preventDefault();
+          return;
+        }
+        var link = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+        if (link) {
+          var href = link.getAttribute('href') || '';
+          if (/\.dc\.html$/i.test(href) || /\.html$/i.test(href)) {
+            ev.preventDefault();
+            parent.postMessage({
+              type: 'mp-design-navigate',
+              frameId: state.frameId,
+              targetFile: href
+            }, '*');
+          }
+        }
+      });
+
+      window.addEventListener('message', function (ev) {
+        var data = ev.data;
+        if (!data || typeof data !== 'object') return;
+        if (data.type === 'mp-design-init') {
+          state.frameId = String(data.frameId || state.frameId || '');
+          state.file = String(data.file || '');
+          state.mode = String(data.mode || 'select');
+          state.isInteractive = Boolean(data.isInteractive);
+          injectContent(data.renderedHtml || data.html || '', data.themeCss || '');
+        } else if (data.type === 'mp-design-set-props') {
+          injectContent(data.renderedHtml || '', data.themeCss);
+        } else if (data.type === 'mp-design-mode') {
+          state.mode = String(data.mode || 'select');
+          clearOverlay();
+          renderGuidesAndSelection(null);
+        } else if (data.type === 'mp-design-apply-style' && state.selectedEl) {
+          var styleMap = data.styles || {};
+          Object.keys(styleMap).forEach(function (k) {
+            state.selectedEl.style[k] = styleMap[k];
+          });
+          renderGuidesAndSelection(null);
+        } else if (data.type === 'mp-design-commit-edit') {
+          commitInlineEdit(false);
+        } else if (data.type === 'mp-design-capture-state') {
+          parent.postMessage({
+            type: 'mp-design-state-captured',
+            frameId: state.frameId,
+            file: state.file,
+            scrollWidth: document.documentElement.scrollWidth,
+            scrollHeight: document.documentElement.scrollHeight,
+            html: stage ? stage.innerHTML : ''
+          }, '*');
+        }
+      });
+
+      parent.postMessage({ type: 'mp-design-ready' }, '*');
+    })();
+  </script>
+</body>
+</html>

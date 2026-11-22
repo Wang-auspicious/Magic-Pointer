@@ -196,23 +196,14 @@ export class FrameCaptureService {
       throw new Error('no_frame_buffered');
     }
     const resolved = await windowAtArm;
-    const targetWindow = epoch.targetWindow;
-    const sameTarget =
-      resolved &&
-      Number(resolved.hwnd) === Number(targetWindow?.hwnd) &&
-      Number(resolved.pid) === Number(targetWindow?.processId);
-    const window =
-      sameTarget &&
-      Array.isArray(resolved.bbox) &&
-      resolved.bbox.length === 4 &&
-      resolved.bbox.every(Number.isFinite)
-        ? {
-            ...targetWindow,
-            bbox: resolved.bbox,
-            processStartTime: resolved.processStartTime,
-            title: resolved.title || targetWindow.title,
-          }
-        : targetWindow;
+    const window = resolveCommitTargetWindow(
+      epoch.targetWindow ?? null,
+      resolved ?? null,
+      extractEpochDisplayBounds(
+        epoch as unknown as Record<string, unknown>,
+        frame,
+      ),
+    );
     const directory = join(this.outputRoot, 'frame-leases');
     await mkdir(directory, {recursive: true});
     const id = `frame-${randomUUID()}`;
@@ -289,6 +280,115 @@ export class FrameCaptureService {
       };
     }
   }
+}
+
+export interface CommitTargetWindowInput {
+  hwnd: number;
+  processId: number;
+  processName: string;
+  title: string;
+  bbox?: [number, number, number, number];
+  processStartTime?: string;
+}
+
+export interface ResolvedArmWindowInput {
+  hwnd?: number;
+  pid?: number;
+  processId?: number;
+  processName?: string;
+  processStartTime?: string;
+  title?: string;
+  bbox?: [number, number, number, number];
+}
+
+function hasPositiveAreaBbox(
+  bbox: unknown,
+): bbox is [number, number, number, number] {
+  return (
+    Array.isArray(bbox) &&
+    bbox.length === 4 &&
+    bbox.every(value => typeof value === 'number' && Number.isFinite(value)) &&
+    bbox[2] > bbox[0] &&
+    bbox[3] > bbox[1]
+  );
+}
+
+function extractEpochDisplayBounds(
+  epoch: Record<string, unknown>,
+  frame?: {width?: number; height?: number},
+): [number, number, number, number] {
+  if (hasPositiveAreaBbox(epoch.surfaceBoundsPx)) {
+    return epoch.surfaceBoundsPx;
+  }
+  const frameW = Number(frame?.width ?? 0);
+  const frameH = Number(frame?.height ?? 0);
+  if (Number.isFinite(frameW) && Number.isFinite(frameH) && frameW > 0 && frameH > 0) {
+    return [0, 0, frameW, frameH];
+  }
+  return [0, 0, 1920, 1080];
+}
+
+export function resolveCommitTargetWindow(
+  targetWindow: CommitTargetWindowInput | null | undefined,
+  resolved: ResolvedArmWindowInput | null | undefined,
+  fallbackBounds: [number, number, number, number] = [0, 0, 1920, 1080],
+  excludedPid?: number,
+): CommitTargetWindowInput & {bbox: [number, number, number, number]} {
+  const targetHwnd = Number(targetWindow?.hwnd ?? 0);
+  const targetPid = Number(targetWindow?.processId ?? 0);
+  const resolvedPid = Number(resolved?.pid ?? resolved?.processId ?? 0);
+  const resolvedHwnd = Number(resolved?.hwnd ?? 0);
+  const resolvedIsExcluded =
+    (excludedPid && resolvedPid === excludedPid) ||
+    /magic ?pointer/i.test(String(resolved?.processName || resolved?.title || ''));
+  const targetIsExcluded =
+    (excludedPid && targetPid === excludedPid) ||
+    /magic ?pointer/i.test(String(targetWindow?.processName || targetWindow?.title || ''));
+  if (resolvedIsExcluded || targetIsExcluded) {
+    const cleanBounds = hasPositiveAreaBbox(fallbackBounds)
+      ? fallbackBounds
+      : [0, 0, 1920, 1080];
+    return {
+      hwnd: 0,
+      processId: 0,
+      processName: 'desktop',
+      title: 'Screen',
+      bbox: cleanBounds as [number, number, number, number],
+    };
+  }
+  const sameTarget = Boolean(
+    resolved &&
+      ((targetHwnd === 0 && targetPid === 0) ||
+        (resolvedHwnd === targetHwnd && resolvedPid === targetPid)),
+  );
+  const bbox: [number, number, number, number] =
+    sameTarget && hasPositiveAreaBbox(resolved?.bbox)
+      ? resolved.bbox
+      : hasPositiveAreaBbox(targetWindow?.bbox)
+        ? targetWindow.bbox
+        : hasPositiveAreaBbox(fallbackBounds)
+          ? fallbackBounds
+          : [0, 0, 1920, 1080];
+  const processName =
+    (sameTarget ? String(resolved?.processName || '').trim() : '') ||
+    String(targetWindow?.processName || '').trim() ||
+    (sameTarget ? String(resolved?.title || '').trim() : '') ||
+    String(targetWindow?.title || '').trim() ||
+    'desktop';
+  const title =
+    (sameTarget ? String(resolved?.title || '').trim() : '') ||
+    String(targetWindow?.title || '').trim();
+  const processStartTime =
+    (sameTarget ? resolved?.processStartTime : undefined) ??
+    targetWindow?.processStartTime;
+  return {
+    hwnd: sameTarget && resolvedHwnd > 0 ? resolvedHwnd : targetHwnd,
+    processId: sameTarget && resolvedPid > 0 ? resolvedPid : targetPid,
+    processName,
+    title,
+    bbox,
+    ...(processStartTime ? {processStartTime} : {}),
+  };
 }
 
 if (require.main === module) {

@@ -52,6 +52,16 @@ function onPayload(channel: string, callback: PayloadCallback): void {
   );
 }
 
+function onSubscribedPayload(
+  channel: string,
+  callback: PayloadCallback,
+): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, payload: unknown) =>
+    callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
 function onSignal(channel: string, callback: SignalCallback): void {
   ipcRenderer.on(channel, () => callback());
 }
@@ -109,13 +119,22 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     onPayload('conversations:progress', callback),
   openArtifact: (payload: unknown) =>
     ipcRenderer.invoke('stage:open-artifact', payload),
-  openTask: (payload: {selectionSessionToken: string}) =>
-    ipcRenderer.invoke('stage:open-task', payload),
+  openTask: (payload: {
+    selectionSessionToken: string;
+    fallbackToStudio?: boolean;
+  }) => ipcRenderer.invoke('stage:open-task', payload),
+  saveToLearnNote: (payload: unknown) =>
+    ipcRenderer.invoke('stage:save-to-learn-note', payload),
+  handoffToLearn: (payload: unknown) =>
+    ipcRenderer.invoke('stage:handoff-to-learn', payload),
   ready: () => ipcRenderer.send('stage:renderer-ready'),
   show: () => ipcRenderer.send('stage:show'),
   reportState: (payload: unknown) => ipcRenderer.send('stage:state', payload),
   hidden: () => ipcRenderer.send('stage:hidden'),
   dismiss: () => ipcRenderer.send('stage:dismiss'),
+  retryActivation: () => ipcRenderer.send('stage:retry-activation'),
+  triggerTourSteps: (steps: unknown[]) =>
+    ipcRenderer.invoke('cu-overlay:teach-start', {steps}),
   submitSelectionCommand: (payload: StageCommandPayload) =>
     ipcRenderer.send('stage:submit-selection-command', {
       selectionSessionToken: payload?.selectionSessionToken || null,
@@ -267,6 +286,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     clear: () => ipcRenderer.invoke('guided-tour:clear'),
   },
   cuOverlay: {
+    startAutopilot: (payload: {
+      windowTitle?: unknown;
+      actionLabel?: unknown;
+      steps?: unknown[];
+    }) => ipcRenderer.invoke('cu-overlay:autopilot-start', payload),
     autopilotUpdate: (payload: {
       windowTitle?: unknown;
       actionLabel?: unknown;
@@ -286,9 +310,38 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     onEvent: (cb: (event: unknown) => void) =>
       onPayload('cu-overlay:event', cb),
   },
+  cuDesktop: {
+    status: () => ipcRenderer.invoke('cu-desktop:status'),
+    open: (payload: {width?: number; height?: number} = {}) =>
+      ipcRenderer.invoke('cu-desktop:open', payload),
+    resize: (payload: {width?: number; height?: number} = {}) =>
+      ipcRenderer.invoke('cu-desktop:resize', payload),
+    close: () => ipcRenderer.invoke('cu-desktop:close'),
+    launch: (payload: {app: string; args?: string; cwd?: string}) =>
+      ipcRenderer.invoke('cu-desktop:launch', payload),
+    pause: (paused: boolean) =>
+      ipcRenderer.invoke('cu-desktop:pause', {paused}),
+    humanInput: (payload: UnknownRecord) =>
+      ipcRenderer.invoke('cu-desktop:human-input', payload),
+    setStreamVisible: (visible: boolean) =>
+      ipcRenderer.invoke('cu-desktop:set-stream-visible', {visible}),
+    snapshot: () => ipcRenderer.invoke('cu-desktop:snapshot'),
+    agentAct: (payload: UnknownRecord) =>
+      ipcRenderer.invoke('cu-desktop:agent-act', payload),
+    onFrame: (cb: (frame: unknown) => void) =>
+      onPayload('cu-desktop:frame', cb),
+    onState: (cb: (state: unknown) => void) =>
+      onPayload('cu-desktop:state', cb),
+    onCursor: (cb: (cursors: unknown) => void) =>
+      onPayload('cu-desktop:cursor', cb),
+    onOpenViewport: (cb: (reason: unknown) => void) =>
+      onPayload('cu-desktop:open-viewport', cb),
+  },
   vault: {
     overview: () => ipcRenderer.invoke('vault:overview'),
     selectDir: () => ipcRenderer.invoke('vault:select-dir'),
+    readNote: (relativePath: string) =>
+      ipcRenderer.invoke('vault:read-note', {relativePath}),
     saveNote: (payload: {
       title?: unknown;
       folder?: unknown;
@@ -301,6 +354,40 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       lineIndex?: unknown;
       done?: unknown;
     }) => ipcRenderer.invoke('vault:toggle-todo', payload),
+  },
+  learn: {
+    listCourses: () => ipcRenderer.invoke('learn:courses:list'),
+    getCourse: (payload?: {courseId?: unknown; activate?: unknown}) =>
+      ipcRenderer.invoke('learn:course:get', payload || {}),
+    annotate: (payload: {
+      courseId?: unknown;
+      mark?: Record<string, unknown>;
+      type?: unknown;
+      fb?: unknown;
+      quote?: unknown;
+      section?: unknown;
+      note?: unknown;
+    }) => ipcRenderer.invoke('learn:course:annotate', payload),
+    promoteLemma: (payload: {
+      courseId?: unknown;
+      title?: unknown;
+      quote?: unknown;
+      insight?: unknown;
+      section?: unknown;
+    }) => ipcRenderer.invoke('learn:course:promote-lemma', payload),
+    recordCheckin: (payload: {
+      courseId?: unknown;
+      question?: unknown;
+      selectedIndex?: unknown;
+      selectedLabel?: unknown;
+      unsure?: unknown;
+      reasoningNote?: unknown;
+      nodeId?: unknown;
+    }) => ipcRenderer.invoke('learn:course:checkin', payload),
+    getGraph: (payload?: {courseId?: unknown}) =>
+      ipcRenderer.invoke('learn:graph:get', payload || {}),
+    runDream: (payload?: {courseId?: unknown}) =>
+      ipcRenderer.invoke('learn:dream:run', payload || {}),
   },
   hide: () => ipcRenderer.send('dashboard:hide'),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', {theme}),
@@ -628,6 +715,14 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       permissionGrant?: unknown;
       permissionDeny?: unknown;
       permissionGrantOnce?: unknown;
+      coachMode?: unknown;
+      computerUseMode?: unknown;
+      guidedTourSteps?: unknown;
+      selectionSessionToken?: unknown;
+      designCanvasSlug?: unknown;
+      designViewContextXml?: unknown;
+      designAnnotationsXml?: unknown;
+      projectAutoModeRules?: unknown;
     }) =>
       ipcRenderer.invoke('conversations:send', {
         ...(typeof payload.branch === 'string'
@@ -640,11 +735,31 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
           ? {resume: payload.resume}
           : {}),
         workMode:
-          payload.workMode === 'learn'
-            ? 'learn'
-            : payload.workMode === 'work'
-              ? 'work'
-              : 'code',
+          payload.workMode === 'learn' ||
+          payload.workMode === 'design' ||
+          payload.workMode === 'work' ||
+          payload.workMode === 'project_coordinator'
+            ? payload.workMode
+            : 'code',
+        ...(typeof payload.designCanvasSlug === 'string' &&
+        payload.designCanvasSlug.trim()
+          ? {designCanvasSlug: payload.designCanvasSlug.trim().slice(0, 120)}
+          : {}),
+        ...(typeof payload.designViewContextXml === 'string' &&
+        payload.designViewContextXml.trim()
+          ? {designViewContextXml: payload.designViewContextXml.slice(0, 64 * 1024)}
+          : {}),
+        ...(typeof payload.designAnnotationsXml === 'string' &&
+        payload.designAnnotationsXml.trim()
+          ? {designAnnotationsXml: payload.designAnnotationsXml.slice(0, 64 * 1024)}
+          : {}),
+        ...(Array.isArray(payload.projectAutoModeRules)
+          ? {
+              projectAutoModeRules: payload.projectAutoModeRules
+                .filter((rule): rule is string => typeof rule === 'string')
+                .slice(0, 50),
+            }
+          : {}),
         conversationId: String(payload?.conversationId || '').slice(0, 120),
         ...(typeof payload?.projectId === 'string'
           ? {projectId: payload.projectId}
@@ -711,6 +826,24 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
                 .trim()
                 .slice(0, 200),
             }
+          : {}),
+        ...(typeof payload?.coachMode === 'boolean'
+          ? {coachMode: payload.coachMode}
+          : {}),
+        ...(payload?.computerUseMode === 'autopilot' ||
+        payload?.computerUseMode === 'coach'
+          ? {computerUseMode: payload.computerUseMode}
+          : {}),
+        ...(Array.isArray(payload?.guidedTourSteps)
+          ? {
+              guidedTourSteps: payload.guidedTourSteps
+                .slice(0, 40)
+                .map(step => ({...(step && typeof step === 'object' ? step : {})})),
+            }
+          : {}),
+        ...(typeof payload?.selectionSessionToken === 'string' &&
+        payload.selectionSessionToken.trim()
+          ? {selectionSessionToken: payload.selectionSessionToken.trim().slice(0, 120)}
           : {}),
       }),
     respond: (payload: unknown) =>
@@ -812,6 +945,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
             : undefined,
         ...(typeof payload.kind === 'string' && payload.kind
           ? {kind: String(payload.kind).slice(0, 32)}
+          : {}),
+        ...(payload.surface === 'side' || payload.surface === 'inline'
+          ? {surface: payload.surface}
           : {}),
         question: String(payload.question || '').slice(0, 12000),
         lemmaRefs: Array.isArray(payload.lemmaRefs)
@@ -946,8 +1082,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   dashboard: {
     list: () => ipcRenderer.invoke('dashboard:list'),
-    trace: (payload: {snapshotId: string; traceId: string; offset?: number}) => ipcRenderer.invoke('dashboard:trace', payload),
-    exportCsv: (payload: {snapshotId: string; traceId: string}) => ipcRenderer.invoke('dashboard:export-csv', payload),
+    createSample: () => ipcRenderer.invoke('dashboard:create-sample'),
+    trace: (payload: {snapshotId: string; traceId: string; offset?: number}) =>
+      ipcRenderer.invoke('dashboard:trace', payload),
+    exportCsv: (payload: {snapshotId: string; traceId: string}) =>
+      ipcRenderer.invoke('dashboard:export-csv', payload),
     open: (dashboardId: unknown) =>
       ipcRenderer.invoke('dashboard:open', String(dashboardId || '')),
     exportHtml: (payload: {title?: unknown; html?: unknown; css?: unknown}) =>
@@ -956,6 +1095,100 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         html: String(payload?.html ?? ''),
         css: String(payload?.css ?? ''),
       }),
+    runSql: (payload: {dashboardId: string; chartId: string; sql: string}) =>
+      ipcRenderer.invoke('dashboard:run-sql', payload),
+    exportInteractiveHtml: (payload: {dashboardId: string; title?: string}) =>
+      ipcRenderer.invoke('dashboard:export-interactive', payload),
+    exportChartCsv: (payload: {dashboardId: string; chartId: string}) =>
+      ipcRenderer.invoke('dashboard:export-chart-csv', payload),
+    remix: (payload: {
+      dashboardId: string;
+      format: 'design_canvas' | 'markdown_memo' | 'slides';
+    }) => ipcRenderer.invoke('dashboard:remix', payload),
+  },
+  design: {
+    list: () => ipcRenderer.invoke('design:list'),
+    read: (slug: string) => ipcRenderer.invoke('design:read', {slug}),
+    init: (payload: {
+      slug?: string;
+      title: string;
+      pages?: Array<{id: string; name: string}>;
+    }) => ipcRenderer.invoke('design:init', payload),
+    upsertBoard: (payload: {
+      slug: string;
+      file: string;
+      html: string;
+      title?: string;
+      w?: number;
+      h?: number;
+      x?: number;
+      y?: number;
+      page?: string;
+    }) => ipcRenderer.invoke('design:upsert-board', payload),
+    saveFile: (payload: {slug: string; file: string; content: string}) =>
+      ipcRenderer.invoke('design:save-file', payload),
+    importAsset: (payload: {slug: string; sourcePath?: string}) =>
+      ipcRenderer.invoke('design:import-asset', payload),
+    check: (slug: string) => ipcRenderer.invoke('design:check', {slug}),
+    generateBrand: (payload: {
+      slug: string;
+      seed: Record<string, unknown>;
+      install?: boolean;
+    }) => ipcRenderer.invoke('design:generate-brand', payload),
+    export: (payload: {
+      slug: string;
+      format: 'html' | 'png' | 'pdf' | 'zip';
+      boardFile?: string;
+    }) => ipcRenderer.invoke('design:export', payload),
+    onChanged: (cb: (payload: {slug?: string}) => void) =>
+      onSubscribedPayload('design:changed', cb as PayloadCallback),
+  },
+  projectsMa: {
+    getOverviewState: (payload: {projectId: string; projectRoot?: string}) =>
+      ipcRenderer.invoke('projects:ma:overview', payload),
+    getSidebarBadges: () => ipcRenderer.invoke('projects:ma:sidebar-badges'),
+    sendGoal: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:send-goal', payload),
+    startThread: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:start-thread', payload),
+    messageThread: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:message-thread', payload),
+    resolveThread: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:resolve-thread', payload),
+    remindThread: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:remind-thread', payload),
+    answerDecision: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:answer-decision', payload),
+    withdrawDecision: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:withdraw-decision', payload),
+    readFile: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:read-file', payload),
+    writeFile: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:write-file', payload),
+    deleteFile: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:delete-file', payload),
+    readMemory: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:read-memory', payload),
+    writeMemory: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:write-memory', payload),
+    updateSections: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:update-sections', payload),
+    dismissRecap: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:dismiss-recap', payload),
+    togglePinArtifact: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:pin-artifact', payload),
+    inspectDiff: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:inspect-diff', payload),
+    mergeWorktree: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:merge-worktree', payload),
+    discardThread: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:discard-thread', payload),
+    updateConfig: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:update-config', payload),
+    stopRun: (payload: unknown) =>
+      ipcRenderer.invoke('projects:ma:stop-run', payload),
+    onEvent: (cb: (payload: unknown) => void) =>
+      onSubscribedPayload('projects:ma:event', cb),
   },
   figma: {
     pair: (conversationId: unknown) =>
@@ -993,6 +1226,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   onCardPatch: (callback: PayloadCallback) =>
     onPayload('stage:card-patch', callback),
+  onLiveBrowserOpenPanel: (callback: PayloadCallback) =>
+    onPayload('live-browser:open-panel', callback),
 });
 
 contextBridge.exposeInMainWorld('magicPointerCompanion', {

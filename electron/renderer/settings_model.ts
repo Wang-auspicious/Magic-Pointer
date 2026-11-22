@@ -304,7 +304,7 @@
     {
       id: 'account',
       group: 'Customize',
-      icon: 'ic-spark',
+      icon: 'ic-user',
       ref: null,
       title: 'Account',
       description:

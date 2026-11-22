@@ -218,6 +218,19 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
     zh: '导出全部源数据行 CSV',
   },
   'dashboard.saved': {en: 'Saved to {path}', zh: '已保存到 {path}'},
+  'design.studio.eyebrow': {en: 'DESIGN STUDIO', zh: '设计工作室'},
+  'design.studio.new_canvas': {en: 'New canvas', zh: '新建画布'},
+  'design.studio.brand_system': {en: 'Brand system', zh: '品牌系统'},
+  'design.studio.check': {en: 'Craft check', zh: '工艺检查'},
+  'design.studio.export': {en: 'Export', zh: '导出'},
+  'design.studio.prompt_placeholder': {
+    en: 'Describe a design, layout change, or critique…',
+    zh: '描述设计需求、布局修改或评审意见…',
+  },
+  'design.studio.send': {en: 'Send', zh: '发送'},
+  'design.studio.chat_toggle': {en: 'Toggle agent prompt', zh: '切换设计对话'},
+  'projects.ma.show_more': {en: 'Show {count} more', zh: '展开其余 {count} 个'},
+  'projects.ma.show_less': {en: 'Show less', zh: '收起'},
   'routine.new': {en: 'New routine', zh: '新建例行任务'},
   'routine.edit': {en: 'Edit routine', zh: '编辑例行任务'},
   'routine.task': {en: 'Instructions', zh: '任务说明'},
@@ -770,6 +783,7 @@ const STUDIO_STRINGS: Record<string, StudioStringEntry> = {
   'inspector.materials': {en: 'Materials', zh: '资料'},
   'inspector.files': {en: 'Files', zh: '文件'},
   'inspector.browser': {en: 'Browser', zh: '浏览器'},
+  'inspector.cu_desktop': {en: 'Agent Desktop', zh: '协同桌面'},
   'inspector.terminal': {en: 'Terminal', zh: '终端'},
   'inspector.changes': {en: 'Changes', zh: '变更'},
   'inspector.background_tasks': {en: 'Background tasks', zh: '后台任务'},
@@ -1177,8 +1191,12 @@ function studioTCount(
 function applyStudioLanguage(language: StudioLanguage): void {
   const changed = studioLanguage !== language;
   studioLanguage = language;
-  document.documentElement.lang = language;
-  document.documentElement.dataset.language = language;
+  if (typeof document !== 'undefined' && document.documentElement) {
+    document.documentElement.lang = language;
+    if (document.documentElement.dataset) {
+      document.documentElement.dataset.language = language;
+    }
+  }
   try {
     localStorage.setItem('mp:language:v1', language);
   } catch {

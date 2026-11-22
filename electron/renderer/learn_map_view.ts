@@ -48,6 +48,7 @@ interface LearnMapRenderOptions {
   onAskNode?: (node: ConceptMapNode) => void;
   onQuizNode?: (node: ConceptMapNode) => void;
   onSetMastery?: (node: ConceptMapNode, status: 'verified' | 'gap') => void;
+  onBatchVerify?: (nodes: ConceptMapNode[]) => void;
 }
 
 interface LearnMapApi {
@@ -365,18 +366,15 @@ declare global {
       }
 
       const bar = el('div', 'mp-learn-map-toolbar');
+      const unmasteredCount = allNodes.filter(n => n.status !== 'verified').length;
       const filters: ReadonlyArray<{
-        id: 'all' | 'unmastered' | 'p1';
+        id: 'all' | 'unmastered';
         label: string;
       }> = [
         {id: 'all', label: `全部 (${allNodes.length})`},
         {
           id: 'unmastered',
-          label: `未掌握 (${allNodes.filter(n => n.status !== 'verified').length})`,
-        },
-        {
-          id: 'p1',
-          label: `P1 优先 (${allNodes.filter(n => n.priority === 'P1' || n.status === 'gap').length})`,
+          label: `待巩固 (${unmasteredCount})`,
         },
       ];
       for (const f of filters) {
@@ -391,6 +389,16 @@ declare global {
           paint();
         });
         bar.appendChild(btn);
+      }
+      const autoHint = el('span', 'mp-learn-map-auto', '自动追踪掌握度');
+      bar.appendChild(autoHint);
+      if (unmasteredCount > 0 && typeof options.onBatchVerify === 'function') {
+        const batchBtn = el('button', 'mp-learn-map-filter is-ok', '全部标为已掌握');
+        batchBtn.type = 'button';
+        batchBtn.addEventListener('click', () => {
+          options.onBatchVerify?.(allNodes.filter(n => n.status !== 'verified'));
+        });
+        bar.appendChild(batchBtn);
       }
       wrap.appendChild(bar);
 
@@ -534,31 +542,25 @@ declare global {
           options.onJumpToBlock?.(selectedNode),
         );
 
-        const askBtn = el('button', 'mp-learn-map-act', '追问');
+        const askBtn = el('button', 'mp-learn-map-act', '深入追问');
         askBtn.type = 'button';
         askBtn.addEventListener('click', () =>
           options.onAskNode?.(selectedNode),
         );
 
-        const quizBtn = el('button', 'mp-learn-map-act', '防错测验');
-        quizBtn.type = 'button';
-        quizBtn.addEventListener('click', () =>
-          options.onQuizNode?.(selectedNode),
+        const nextStatus: 'verified' | 'gap' =
+          selectedNode.status === 'verified' ? 'gap' : 'verified';
+        const toggleBtn = el(
+          'button',
+          `mp-learn-map-act ${nextStatus === 'verified' ? 'is-ok' : 'is-gap'}`,
+          nextStatus === 'verified' ? '标为已掌握' : '标为需巩固',
+        );
+        toggleBtn.type = 'button';
+        toggleBtn.addEventListener('click', () =>
+          options.onSetMastery?.(selectedNode, nextStatus),
         );
 
-        const verifyBtn = el('button', 'mp-learn-map-act is-ok', '已掌握');
-        verifyBtn.type = 'button';
-        verifyBtn.addEventListener('click', () =>
-          options.onSetMastery?.(selectedNode, 'verified'),
-        );
-
-        const gapBtn = el('button', 'mp-learn-map-act is-gap', '标为盲区');
-        gapBtn.type = 'button';
-        gapBtn.addEventListener('click', () =>
-          options.onSetMastery?.(selectedNode, 'gap'),
-        );
-
-        actions.append(jumpBtn, askBtn, quizBtn, verifyBtn, gapBtn);
+        actions.append(jumpBtn, askBtn, toggleBtn);
         detail.appendChild(actions);
         wrap.appendChild(detail);
       }

@@ -25,8 +25,10 @@ export interface RecordedDemoStep {
 
 export interface CuOverlayState {
   mode: CuOverlayMode;
+  phase: 'thinking' | 'acting' | 'paused';
   windowTitle: string;
   actionLabel: string;
+  nextStep: string;
   stepIndex: number;
   paused: boolean;
   teachSteps: readonly CuTeachStep[];
@@ -39,8 +41,10 @@ export interface CuOverlayState {
 export class CuOverlayController {
   private state: CuOverlayState = {
     mode: 'idle',
+    phase: 'acting',
     windowTitle: '',
     actionLabel: '',
+    nextStep: '',
     stepIndex: 0,
     paused: false,
     teachSteps: [],
@@ -57,13 +61,17 @@ export class CuOverlayController {
   startAutopilot(input: {
     windowTitle?: string;
     actionLabel?: string;
+    nextStep?: string;
+    phase?: 'thinking' | 'acting';
     stepIndex?: number;
   }): CuOverlayState {
     this.state = {
       ...this.state,
       mode: 'autopilot',
+      phase: input.phase === 'thinking' ? 'thinking' : 'acting',
       windowTitle: String(input.windowTitle || '').trim().slice(0, 80),
       actionLabel: String(input.actionLabel || '执行桌面操作').trim().slice(0, 120),
+      nextStep: String(input.nextStep || '').trim().slice(0, 120),
       stepIndex: Math.max(1, Math.floor(Number(input.stepIndex) || 1)),
       paused: false,
     };
@@ -72,14 +80,14 @@ export class CuOverlayController {
 
   pauseForTakeover(): CuOverlayState {
     if (this.state.mode === 'autopilot') {
-      this.state = {...this.state, paused: true};
+      this.state = {...this.state, paused: true, phase: 'paused'};
     }
     return this.getState();
   }
 
   resumeAutopilot(): CuOverlayState {
     if (this.state.mode === 'autopilot') {
-      this.state = {...this.state, paused: false};
+      this.state = {...this.state, paused: false, phase: 'acting'};
     }
     return this.getState();
   }
@@ -209,8 +217,10 @@ export class CuOverlayController {
     this.state = {
       ...this.state,
       mode: 'idle',
+      phase: 'acting',
       paused: false,
       actionLabel: '',
+      nextStep: '',
       windowTitle: '',
     };
     return this.getState();

@@ -6,6 +6,9 @@
     revision: number;
     content: string;
     kind: string;
+    title?: string;
+    language?: string;
+    filename?: string;
     state: string;
     acceptedRevision: number | null;
     patchPayload: Record<string, unknown> | null;
@@ -38,6 +41,9 @@
     content: string;
     savedContent: string;
     kind: string;
+    title: string;
+    language: string;
+    filename: string;
     patchPayload: Record<string, unknown> | null;
     acceptedRevision: number | null;
     dirty: boolean;
@@ -65,6 +71,9 @@
     content: '',
     savedContent: '',
     kind: '',
+    title: '',
+    language: '',
+    filename: '',
     patchPayload: null,
     acceptedRevision: null,
     dirty: false,
@@ -95,6 +104,9 @@
       revision,
       content: String(item.content || ''),
       kind: String(item.kind || 'text'),
+      title: typeof item.title === 'string' ? item.title : '',
+      language: typeof item.language === 'string' ? item.language : '',
+      filename: typeof item.filename === 'string' ? item.filename : '',
       state: String(item.state || 'generated'),
       acceptedRevision:
         typeof item.acceptedRevision === 'number' &&
@@ -282,6 +294,9 @@
         content: options.keepContent ? priorContent : artifact.content,
         savedContent: artifact.content,
         kind: artifact.kind,
+        title: String(artifact.title || ''),
+        language: String(artifact.language || ''),
+        filename: String(artifact.filename || ''),
         patchPayload: options.keepPatch ? priorPatch : artifact.patchPayload,
         patchError: options.keepPatch ? priorPatchError : '',
         acceptedRevision: artifact.acceptedRevision,

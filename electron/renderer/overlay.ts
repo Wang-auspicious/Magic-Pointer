@@ -95,7 +95,6 @@ function onGuidePoint(payload: Record<string, unknown> | null | undefined) {
 
 const AGENT_OFFSET_X = 35;
 const AGENT_OFFSET_Y = 25;
-const AGENT_TRIANGLE_SIZE = 16;
 const AGENT_REST_DEGREES = -35;
 const AGENT_ACCENT = '#3380FF';
 const AGENT_RIGHT_CLICK_ACCENT = '#E8563F';
@@ -106,8 +105,8 @@ const AGENT_RETURN_MS = 1400;
 const AGENT_ARC_FRACTION = 0.2;
 const AGENT_ARC_MAX_PX = 80;
 const AGENT_SCALE_PULSE = 0.3;
-const AGENT_RING_BASE_RADIUS = 26;
-const AGENT_RING_PULSE_PX = 6;
+const AGENT_RING_BASE_RADIUS = 13;
+const AGENT_RING_PULSE_PX = 3;
 const AGENT_RING_PHASE_STEP = 0.08;
 const AGENT_CANCEL_DISTANCE_PX = 100;
 
@@ -345,15 +344,15 @@ function drawAgentCursor(cursor: AgentCursor) {
     ctx.save();
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(cursor.ring.x, cursor.ring.y, radius + 3, 0, Math.PI * 2);
+    ctx.arc(cursor.ring.x, cursor.ring.y, radius + 2, 0, Math.PI * 2);
     ctx.strokeStyle = cursor.accent;
-    ctx.globalAlpha = 60 / 255;
-    ctx.lineWidth = 4;
+    ctx.globalAlpha = 46 / 255;
+    ctx.lineWidth = 2;
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(cursor.ring.x, cursor.ring.y, radius, 0, Math.PI * 2);
-    ctx.globalAlpha = 190 / 255;
-    ctx.lineWidth = 2;
+    ctx.globalAlpha = 180 / 255;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.restore();
   }
@@ -367,18 +366,18 @@ function drawAgentCursor(cursor: AgentCursor) {
       0,
       cursor.x,
       cursor.y,
-      34,
+      24,
     );
     halo.addColorStop(0, cursor.accent);
     halo.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.globalAlpha = 0.34 * strength;
+    ctx.globalAlpha = 0.3 * strength;
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(cursor.x, cursor.y, 34, 0, Math.PI * 2);
+    ctx.arc(cursor.x, cursor.y, 24, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
-  const size = AGENT_TRIANGLE_SIZE * cursor.scale;
+  const size = 14 * cursor.scale;
   const height = (size * Math.sqrt(3)) / 2;
   ctx.save();
   ctx.translate(cursor.x, cursor.y);
@@ -394,24 +393,37 @@ function drawAgentCursor(cursor: AgentCursor) {
   if (cursor.guide && cursor.mode === 'dwelling' && cursor.caption) {
     ctx.save();
     ctx.font =
-      '500 12px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif';
-    let text = cursor.caption;
-    while (text.length > 1 && ctx.measureText(text).width > 280) {
+      '500 11.5px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif';
+    let text = cursor.caption
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(/[：:。；;\n]/)[0]
+      .trim();
+    if (text.length > 18) {
+      text = `${text.slice(0, 18)}…`;
+    }
+    while (text.length > 1 && ctx.measureText(text).width > 160) {
       text = text.slice(0, -2) + '…';
     }
-    const width = ctx.measureText(text).width + 16;
-    const left = Math.max(
-      8,
-      Math.min(cursor.x + 14, window.innerWidth - width - 8),
-    );
-    const top = Math.max(8, Math.min(cursor.y + 16, window.innerHeight - 34));
-    ctx.fillStyle = 'rgba(37, 37, 36, 0.96)';
-    ctx.beginPath();
-    ctx.roundRect(left, top, width, 26, 6);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, left + 8, top + 13);
+    if (text) {
+      const width = ctx.measureText(text).width + 14;
+      const left = Math.max(
+        8,
+        Math.min(cursor.x + 12, window.innerWidth - width - 8),
+      );
+      const top = Math.max(8, Math.min(cursor.y + 12, window.innerHeight - 30));
+      ctx.fillStyle = 'rgba(28, 28, 27, 0.88)';
+      ctx.beginPath();
+      ctx.roundRect(left, top, width, 22, 6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 0.75;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, left + 7, top + 11);
+    }
     ctx.restore();
   }
 }

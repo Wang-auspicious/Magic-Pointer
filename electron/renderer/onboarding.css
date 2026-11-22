@@ -227,8 +227,6 @@ button {
   overflow: auto;
   padding: 20px 34px 12px;
   border-top: 1px solid var(--onboarding-line);
-  scrollbar-color: #c2c7d2 transparent;
-  scrollbar-width: thin;
 }
 
 .stage-scroll::-webkit-scrollbar {

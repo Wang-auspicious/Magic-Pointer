@@ -105,6 +105,8 @@ export interface StreamRequest {
   sessionId?: string;
   forkMessageCount?: number;
   maxTokens?: number;
+  temperature?: number;
+  presencePenalty?: number;
   timeoutMs?: number;
   fetch?: typeof fetch;
   healthFile?: string;
@@ -531,6 +533,8 @@ function stripOptional(body: Json): Json {
     thinking: _thinking,
     reasoning: _reasoning,
     reasoning_effort: _effort,
+    temperature: _temperature,
+    presence_penalty: _presencePenalty,
     output_config: output,
     ...required
   } = body;
@@ -583,7 +587,13 @@ export function modelPayload(
   config: ModelConfig,
   request: Pick<
     StreamRequest,
-    'system' | 'messages' | 'tools' | 'maxTokens' | 'forkMessageCount'
+    | 'system'
+    | 'messages'
+    | 'tools'
+    | 'maxTokens'
+    | 'temperature'
+    | 'presencePenalty'
+    | 'forkMessageCount'
   >,
 ): Json {
   const mode = modelMode(config);
@@ -838,11 +848,19 @@ export function modelPayload(
       }
     }
   } else {
+    const modelLower = String(config.model || '').toLowerCase();
+    const rejectsTemperature = /^(o1|o3|o4|gpt-5)\b/.test(modelLower);
     Object.assign(body, {
       messages: request.system
         ? [{role: 'system', content: request.system}, ...messages]
         : messages,
       max_tokens: maxTokens,
+      ...(typeof request.temperature === 'number' && !rejectsTemperature
+        ? {temperature: request.temperature}
+        : {}),
+      ...(typeof request.presencePenalty === 'number' && !rejectsTemperature
+        ? {presence_penalty: request.presencePenalty}
+        : {}),
       ...(tools.length ? {tool_choice: 'auto'} : {}),
     });
   }

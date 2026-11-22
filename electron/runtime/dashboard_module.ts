@@ -161,6 +161,15 @@ export function createDashboardModule(
               value: `${current.sourceRows} included · ${current.excludedRows ?? 0} excluded`,
             });
           }
+          const diags = rows(chart.diagnostics);
+          if (diags.length) {
+            queriedRows.push({
+              id: `diag-${id}`,
+              label: `${title} QA`,
+              value: diags.map(d => `${String(d.code)}: ${String(d.message)}`).join('; '),
+              tone: 'neutral',
+            });
+          }
         }
         actions['refresh-values'] = {
           commandId: 'open',

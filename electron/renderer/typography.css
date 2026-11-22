@@ -4,6 +4,6 @@
 
 html,
 body,
-html * {
+html *:not(.cds-icon):not(.katex):not(.katex *):not(code):not(pre):not(kbd) {
   font-family: var(--mp-font-ui) !important;
 }

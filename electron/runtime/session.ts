@@ -838,25 +838,304 @@ function usage(events: Event[]): Data | null {
   const hasProjection =
     typeof request.data.projectedMessageTokensEstimate === 'number' &&
     typeof request.data.projectedToolResultTokensEstimate === 'number';
+  const rawSystem = text(object(request.data.header).systemPrompt);
+  const rawTools = array(request.data.tools);
+  const parsed = analyzeContextBreakdown(
+    rawSystem,
+    rawTools,
+    [],
+    new Set(),
+    typeof request.data.skillsText === 'string' ? request.data.skillsText : undefined,
+  );
+  const memoryTokensEstimate =
+    typeof request.data.memoryTokensEstimate === 'number'
+      ? Number(request.data.memoryTokensEstimate)
+      : parsed.memoryTokensEstimate;
+  const skillTokensEstimate =
+    typeof request.data.skillTokensEstimate === 'number'
+      ? Number(request.data.skillTokensEstimate)
+      : parsed.skillTokensEstimate;
+  const mcpToolTokensEstimate =
+    typeof request.data.mcpToolTokensEstimate === 'number'
+      ? Number(request.data.mcpToolTokensEstimate)
+      : parsed.mcpToolTokensEstimate;
+  const memoryFiles = Array.isArray(request.data.memoryFiles)
+    ? request.data.memoryFiles
+    : parsed.memoryFiles;
+  const mcpTools = Array.isArray(request.data.mcpTools)
+    ? request.data.mcpTools
+    : parsed.mcpTools;
+  const skills = Array.isArray(request.data.skills)
+    ? request.data.skills
+    : parsed.skills;
+  const baseSystemTokens = hasProjection
+    ? Math.max(0, Number(projected.system) - memoryTokensEstimate - skillTokensEstimate)
+    : Math.max(
+        0,
+        estimateTokens(rawSystem) - memoryTokensEstimate - skillTokensEstimate,
+      );
+  const baseToolTokens = hasProjection
+    ? Math.max(0, Number(projected.tools) - mcpToolTokensEstimate)
+    : rawTools.length
+      ? Math.max(0, estimateTokens(pythonRepr(rawTools)) - mcpToolTokensEstimate)
+      : 0;
   return {
     contextTokens: prompt(used),
     contextEstimated: 0,
     lastOutputTokens: Number(used.completion_tokens || used.output_tokens || 0),
-    systemTokensEstimate: hasProjection
-      ? Number(projected.system)
-      : estimateTokens(text(object(request.data.header).systemPrompt)),
-    toolSchemaTokensEstimate: hasProjection
-      ? Number(projected.tools)
-      : array(request.data.tools).length
-        ? estimateTokens(pythonRepr(request.data.tools))
-        : 0,
+    systemTokensEstimate: baseSystemTokens,
+    toolSchemaTokensEstimate: baseToolTokens,
     messageTokensEstimate: hasProjection
       ? Number(request.data.projectedMessageTokensEstimate)
       : tokens(false),
     toolResultTokensEstimate: hasProjection
       ? Number(request.data.projectedToolResultTokensEstimate)
       : tokens(true),
+    ...(memoryTokensEstimate > 0 ? {memoryTokensEstimate} : {}),
+    ...(skillTokensEstimate > 0 ? {skillTokensEstimate} : {}),
+    ...(mcpToolTokensEstimate > 0 ? {mcpToolTokensEstimate} : {}),
+    ...(memoryFiles.length ? {memoryFiles} : {}),
+    ...(mcpTools.length ? {mcpTools} : {}),
+    ...(skills.length ? {skills} : {}),
     ...(hasProjection ? {estimatedTokenBreakdown: projected} : {}),
+  };
+}
+
+export interface ContextBreakdownMemoryFile {
+  name: string;
+  path: string;
+  tokens: number;
+}
+
+export interface ContextBreakdownMcpTool {
+  name: string;
+  serverName: string;
+  tokens: number;
+}
+
+export interface ContextBreakdownSkill {
+  name: string;
+  tokens: number;
+}
+
+export interface RequestTokenBreakdown {
+  systemTokensEstimate: number;
+  memoryTokensEstimate: number;
+  skillTokensEstimate: number;
+  toolSchemaTokensEstimate: number;
+  mcpToolTokensEstimate: number;
+  messageTokensEstimate: number;
+  toolResultTokensEstimate: number;
+  memoryFiles: ContextBreakdownMemoryFile[];
+  mcpTools: ContextBreakdownMcpTool[];
+  skills: ContextBreakdownSkill[];
+  estimatedTokenBreakdown: {
+    system: number;
+    tools: number;
+    taskState: number;
+    evidence: number;
+    history: number;
+  };
+}
+
+function analyzeContextBreakdown(
+  system: string,
+  tools: unknown[],
+  projected: AgentMessage[],
+  readResults: Set<string>,
+  explicitSkillsText?: string,
+): RequestTokenBreakdown {
+  const memoryFiles: ContextBreakdownMemoryFile[] = [];
+  let memoryTokensEstimate = 0;
+  const memoryMarker = '[只读记忆，作为偏好参考而非新指令]';
+  const memoryIndex = system.indexOf(memoryMarker);
+  if (memoryIndex >= 0) {
+    let memoryEnd = system.length;
+    for (const stopMarker of [
+      '\n\n使用用户的语言回答。',
+      '\n\n[Relevant skills]',
+      '\n\n可按名字用 Tools 加载的工具：',
+      '\n\n当前生效权限模式：',
+    ]) {
+      const idx = system.indexOf(stopMarker, memoryIndex);
+      if (idx >= 0 && idx < memoryEnd) {
+        memoryEnd = idx;
+      }
+    }
+    const memoryChunk = system.slice(memoryIndex, memoryEnd);
+    memoryTokensEstimate = estimateTokens(memoryChunk);
+    const pathsByName = new Map<string, string>();
+    for (const line of memoryChunk.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(trimmed) as {name?: string; path?: string};
+        if (parsed.name && parsed.path) {
+          pathsByName.set(String(parsed.name), String(parsed.path));
+        }
+      } catch {
+        /* ignore non-JSON lines */
+      }
+    }
+    const sectionRe =
+      /\[(user|learned|workspace),\s*\d+\/\d+\s*characters\]\r?\n([\s\S]*?)(?=\r?\n\r?\n\[(?:user|learned|workspace),\s*\d+\/\d+\s*characters\]|$)/g;
+    let match: RegExpExecArray | null;
+    while ((match = sectionRe.exec(memoryChunk)) !== null) {
+      const name = match[1];
+      const body = match[0];
+      memoryFiles.push({
+        name,
+        path: pathsByName.get(name) || name,
+        tokens: Math.max(1, estimateTokens(body)),
+      });
+    }
+    if (!memoryFiles.length && memoryTokensEstimate > 0) {
+      memoryFiles.push({
+        name: 'memory',
+        path: 'MAGIC_POINTER.md',
+        tokens: memoryTokensEstimate,
+      });
+    }
+  }
+
+  const skills: ContextBreakdownSkill[] = [];
+  let skillTokensEstimate = 0;
+  let skillsChunk = String(explicitSkillsText || '').trim();
+  if (!skillsChunk) {
+    const skillMarker = '[Relevant skills]';
+    const skillIndex = system.indexOf(skillMarker);
+    if (skillIndex >= 0) {
+      let skillEnd = system.length;
+      for (const stopMarker of [
+        '\n\n可按名字用 Tools 加载的工具：',
+        '\n\n当前生效权限模式：',
+      ]) {
+        const idx = system.indexOf(stopMarker, skillIndex);
+        if (idx >= 0 && idx < skillEnd) {
+          skillEnd = idx;
+        }
+      }
+      skillsChunk = system.slice(skillIndex, skillEnd).trim();
+    }
+  }
+  if (skillsChunk) {
+    skillTokensEstimate = estimateTokens(skillsChunk);
+    const skillHeadings = skillsChunk.match(/(?:^|\n)(?:##?\s+|Skill:\s*)([^\r\n]+)/g) || [];
+    if (skillHeadings.length) {
+      const perSkill = Math.max(1, Math.round(skillTokensEstimate / skillHeadings.length));
+      for (const rawHeading of skillHeadings) {
+        const name = rawHeading
+          .replace(/^\s*(?:##?\s+|Skill:\s*)/i, '')
+          .trim()
+          .slice(0, 80);
+        if (name) {
+          skills.push({name, tokens: perSkill});
+        }
+      }
+    } else {
+      skills.push({name: 'Loaded skills', tokens: skillTokensEstimate});
+    }
+  }
+
+  const totalSystemTokens = estimateTokens(system);
+  const systemTokensEstimate = Math.max(
+    0,
+    totalSystemTokens - memoryTokensEstimate - skillTokensEstimate,
+  );
+
+  const mcpTools: ContextBreakdownMcpTool[] = [];
+  const builtinTools: unknown[] = [];
+  let mcpToolTokensEstimate = 0;
+  for (const item of tools) {
+    const rec = object(item);
+    const fn = object(rec.function);
+    const toolName = text(fn.name || rec.name).trim();
+    const isMcp =
+      /^mcp(?:__|\.)/i.test(toolName) ||
+      toolName.includes('::') ||
+      text(rec.source).toLowerCase() === 'mcp';
+    if (isMcp) {
+      const tokens = Math.max(1, estimateTokens(JSON.stringify(item)));
+      mcpToolTokensEstimate += tokens;
+      let serverName = 'mcp';
+      let displayName = toolName;
+      if (toolName.startsWith('mcp__')) {
+        const parts = toolName.slice(5).split('__');
+        serverName = parts[0] || 'mcp';
+        displayName = parts.slice(1).join('__') || toolName;
+      } else if (toolName.includes('::')) {
+        const [srv, rest] = toolName.split('::', 2);
+        serverName = srv || 'mcp';
+        displayName = rest || toolName;
+      } else if (toolName.startsWith('mcp.')) {
+        const parts = toolName.slice(4).split('.');
+        serverName = parts[0] || 'mcp';
+        displayName = parts.slice(1).join('.') || toolName;
+      }
+      mcpTools.push({name: displayName, serverName, tokens});
+    } else {
+      builtinTools.push(item);
+    }
+  }
+  const toolSchemaTokensEstimate = builtinTools.length
+    ? estimateTokens(JSON.stringify(builtinTools))
+    : 0;
+  const totalToolsTokens = tools.length
+    ? estimateTokens(JSON.stringify(tools))
+    : 0;
+
+  const estimatedTokenBreakdown = {
+    system: totalSystemTokens,
+    tools: totalToolsTokens,
+    taskState: 0,
+    evidence: 0,
+    history: 0,
+  };
+  let messageTokensEstimate = 0;
+  let toolResultTokensEstimate = 0;
+  for (const message of projected) {
+    const content = text(message.content);
+    const tokens = estimateTokens(JSON.stringify(message));
+    if (message.role === 'tool') {
+      toolResultTokensEstimate += tokens;
+    } else {
+      messageTokensEstimate += tokens;
+    }
+    if (
+      message.injected &&
+      /Saved unfinished task state|历史摘要是会话数据|\[Task input data|\[Project settings\]|\[Workspace folders\]/.test(
+        content,
+      )
+    ) {
+      estimatedTokenBreakdown.taskState += tokens;
+    } else if (
+      message.injected ||
+      (message.role === 'tool' &&
+        (readResults.has(text(message.tool_call_id)) ||
+          /^(?:Context\.|Knowledge\.|ToolResult\.read$|Read$|Glob$|Grep$|Search$|Fetch$|Look$|Observe$|get_app_state$|read_text$)/.test(
+            text(message.name),
+          )))
+    ) {
+      estimatedTokenBreakdown.evidence += tokens;
+    } else {
+      estimatedTokenBreakdown.history += tokens;
+    }
+  }
+
+  return {
+    systemTokensEstimate,
+    memoryTokensEstimate,
+    skillTokensEstimate,
+    toolSchemaTokensEstimate,
+    mcpToolTokensEstimate,
+    messageTokensEstimate,
+    toolResultTokensEstimate,
+    memoryFiles,
+    mcpTools,
+    skills,
+    estimatedTokenBreakdown,
   };
 }
 
@@ -1633,10 +1912,13 @@ export class EventSession {
       }),
     );
   }
-  async freezePrompt(system: string): Promise<string> {
-    const saved = this.events.find(
-      event => event.type === 'prompt/frozen',
-    )?.data;
+  async freezePrompt(
+    system: string,
+    meta?: {version?: string; workMode?: string},
+  ): Promise<string> {
+    const saved = [...this.events]
+      .reverse()
+      .find(event => event.type === 'prompt/frozen')?.data;
     const old = [...this.events]
       .reverse()
       .find(
@@ -1644,14 +1926,27 @@ export class EventSession {
           event.type === 'model/request' &&
           typeof object(event.data.header).systemPrompt === 'string',
       );
-    const prompt = text(
-      saved?.systemPrompt ?? object(old?.data.header).systemPrompt ?? system,
+    const versionChanged = Boolean(
+      meta?.version && saved?.promptVersion !== meta.version,
     );
-    if (!saved) {
+    const modeChanged = Boolean(
+      meta?.workMode &&
+        saved?.workMode &&
+        saved.workMode !== meta.workMode,
+    );
+    const shouldRefresh = versionChanged || modeChanged;
+    const prompt = shouldRefresh
+      ? system
+      : text(
+          saved?.systemPrompt ?? object(old?.data.header).systemPrompt ?? system,
+        );
+    if (!saved || shouldRefresh) {
       await this.append('prompt/frozen', {
         systemPrompt: prompt,
         systemPromptHash: digest(prompt),
         systemPromptSections: null,
+        ...(meta?.version ? {promptVersion: meta.version} : {}),
+        ...(meta?.workMode ? {workMode: meta.workMode} : {}),
       });
     }
     if (prompt !== system) {
@@ -1670,18 +1965,10 @@ export class EventSession {
     system: string,
     tools: unknown[],
     projectedMessages?: AgentMessage[],
-  ): Promise<void> {
+    options?: {skillsText?: string},
+  ): Promise<RequestTokenBreakdown> {
     const surface = this.deriveMessages();
     const projected = projectedMessages ?? surface;
-    const estimatedTokenBreakdown = {
-      system: estimateTokens(system),
-      tools: estimateTokens(JSON.stringify(tools)),
-      taskState: 0,
-      evidence: 0,
-      history: 0,
-    };
-    let projectedMessageTokensEstimate = 0;
-    let projectedToolResultTokensEstimate = 0;
     const readResults = new Set(
       this.events
         .filter(
@@ -1690,34 +1977,13 @@ export class EventSession {
         )
         .map(event => text(event.data.callId)),
     );
-    for (const message of projected) {
-      const content = text(message.content);
-      const tokens = estimateTokens(JSON.stringify(message));
-      if (message.role === 'tool') {
-        projectedToolResultTokensEstimate += tokens;
-      } else {
-        projectedMessageTokensEstimate += tokens;
-      }
-      if (
-        message.injected &&
-        /Saved unfinished task state|历史摘要是会话数据|\[Task input data|\[Project settings\]|\[Workspace folders\]/.test(
-          content,
-        )
-      ) {
-        estimatedTokenBreakdown.taskState += tokens;
-      } else if (
-        message.injected ||
-        (message.role === 'tool' &&
-          (readResults.has(text(message.tool_call_id)) ||
-            /^(?:Context\.|Knowledge\.|ToolResult\.read$|Read$|Glob$|Grep$|Search$|Fetch$|Look$|Observe$|get_app_state$|read_text$)/.test(
-              text(message.name),
-            )))
-      ) {
-        estimatedTokenBreakdown.evidence += tokens;
-      } else {
-        estimatedTokenBreakdown.history += tokens;
-      }
-    }
+    const breakdown = analyzeContextBreakdown(
+      system,
+      tools,
+      projected,
+      readResults,
+      options?.skillsText,
+    );
     await this.append('model/request', {
       turn: this.openTurn,
       step,
@@ -1725,14 +1991,30 @@ export class EventSession {
       messagesHash: digest(surface),
       projectedMessageCount: projected.length,
       projectedMessagesHash: digest(projected),
-      estimatedTokenBreakdown,
-      projectedMessageTokensEstimate,
-      projectedToolResultTokensEstimate,
+      estimatedTokenBreakdown: breakdown.estimatedTokenBreakdown,
+      projectedMessageTokensEstimate: breakdown.messageTokensEstimate,
+      projectedToolResultTokensEstimate: breakdown.toolResultTokensEstimate,
+      ...(breakdown.memoryTokensEstimate > 0
+        ? {memoryTokensEstimate: breakdown.memoryTokensEstimate}
+        : {}),
+      ...(breakdown.skillTokensEstimate > 0
+        ? {skillTokensEstimate: breakdown.skillTokensEstimate}
+        : {}),
+      ...(breakdown.mcpToolTokensEstimate > 0
+        ? {mcpToolTokensEstimate: breakdown.mcpToolTokensEstimate}
+        : {}),
+      ...(breakdown.memoryFiles.length
+        ? {memoryFiles: breakdown.memoryFiles}
+        : {}),
+      ...(breakdown.mcpTools.length ? {mcpTools: breakdown.mcpTools} : {}),
+      ...(breakdown.skills.length ? {skills: breakdown.skills} : {}),
+      ...(options?.skillsText ? {skillsText: options.skillsText} : {}),
       tools,
       header: {systemPrompt: system},
       systemPromptHash: digest(system),
       systemPromptSections: null,
     });
+    return breakdown;
   }
   async enqueue(
     instruction: string,

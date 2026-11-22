@@ -43,18 +43,34 @@
     }
     .dot.is-rec { background: #ef4444; }
     .dot.is-paused { background: #f59e0b; animation: none; }
+    .dot.is-thinking { background: #60a5fa; }
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.45; transform: scale(0.85); }
     }
+    .text-col {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
     .label {
       font-size: 12.5px;
-      line-height: 1.3;
+      line-height: 1.25;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 240px;
+      max-width: 260px;
     }
+    .sub {
+      font-size: 11px;
+      line-height: 1.2;
+      color: rgba(247, 246, 243, 0.7);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 260px;
+    }
+    .sub[hidden] { display: none; }
     .muted { color: rgba(247, 246, 243, 0.65); }
     .actions {
       display: inline-flex;
@@ -92,12 +108,16 @@
 <body>
   <div class="pill" id="pill">
     <span class="dot" id="dot"></span>
-    <span class="label" id="label">准备就绪</span>
+    <div class="text-col">
+      <span class="label" id="label">准备就绪</span>
+      <span class="sub" id="sub" hidden></span>
+    </div>
     <div class="actions" id="actions"></div>
   </div>
   <script>
     const dotEl = document.getElementById('dot');
     const labelEl = document.getElementById('label');
+    const subEl = document.getElementById('sub');
     const actionsEl = document.getElementById('actions');
     const bridge = window.magicPointerDashboard && window.magicPointerDashboard.cuOverlay;
 
@@ -119,11 +139,24 @@
     function render(state) {
       if (!state) return;
       dotEl.className = 'dot';
+      subEl.hidden = true;
+      subEl.textContent = '';
       actionsEl.replaceChildren();
       if (state.mode === 'autopilot') {
+        const isThinking = state.phase === 'thinking';
         if (state.paused) dotEl.classList.add('is-paused');
+        else if (isThinking) dotEl.classList.add('is-thinking');
         const win = state.windowTitle ? state.windowTitle + ' · ' : '';
-        labelEl.textContent = (state.paused ? '已接管 · ' : 'AI 操作中 · ') + win + (state.actionLabel || '');
+        const prefix = state.paused
+          ? '已接管 · '
+          : isThinking
+            ? 'AI 思考中 · '
+            : 'AI 操作中 · ';
+        labelEl.textContent = prefix + win + (state.actionLabel || '');
+        if (state.nextStep) {
+          subEl.textContent = '下一步：' + state.nextStep;
+          subEl.hidden = false;
+        }
         actionsEl.append(
           btn(state.paused ? '继续 AI' : '暂停/接管', state.paused ? 'resume' : 'takeover', 'is-primary'),
           btn('切为指点', 'coach'),

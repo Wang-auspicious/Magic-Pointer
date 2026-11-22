@@ -57,6 +57,7 @@ function settingIcon(id: string) {
   const iconName: Record<string, string> = {
     'ic-window': 'computer',
     'ic-cursor': 'cursor',
+    'ic-user': 'user-circle',
     'ic-spark': 'agent',
     'ic-plug': 'plugin',
     'ic-globe': 'connectors',
@@ -68,7 +69,7 @@ function settingIcon(id: string) {
     'ic-refresh': 'arrow-clockwise',
     'ic-term': 'command-line',
     'ic-search': 'search',
-    'ic-chev': 'caret-down',
+    'ic-chev': 'caret-down-small',
     'ic-dots-vertical': 'dots-vertical',
     'ic-sliders': 'filter',
     'ic-sort': 'sort',
@@ -76,7 +77,11 @@ function settingIcon(id: string) {
   const name = iconName[id] || id;
   const icons = (globalThis as any).CdsIcons;
   if (icons && typeof icons.html === 'function') {
-    return icons.html(name, id === 'ic-search' ? 'small' : 'large');
+    const size =
+      id === 'ic-chev'
+        ? 'xs'
+        : 'small';
+    return icons.html(name, size);
   }
   return `<svg aria-hidden="true"><use href="#${escSetting(id)}"/></svg>`;
 }

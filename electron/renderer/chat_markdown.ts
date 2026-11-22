@@ -207,6 +207,23 @@ const ChatMarkdown = (() => {
     return null;
   }
 
+  function decodeFileHref(raw: string): string {
+    const stripped = raw
+      .trim()
+      .replace(/^file:\/\//i, '')
+      .replace(/#.*$/, '');
+    let decoded = stripped;
+    try {
+      decoded = decodeURIComponent(stripped);
+    } catch {
+      decoded = stripped;
+    }
+    if (/^\/[a-zA-Z]:[\\/]/.test(decoded)) {
+      decoded = decoded.slice(1);
+    }
+    return decoded;
+  }
+
   function safeImageSource(raw: string): string | null {
     const value = raw.trim();
     if (/^(https?:\/\/|file:\/\/)/i.test(value)) {
@@ -370,19 +387,53 @@ const ChatMarkdown = (() => {
 
     match = /\[([^\]]+)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/.exec(text);
     if (match) {
-      const href = safeHref(match[2]);
-      add(
-        match,
-        href
-          ? [
-              h(
-                'a',
-                {href, target: '_blank', rel: 'noreferrer'},
-                ...inlineNodes(match[1]),
-              ),
-            ]
-          : [match[1], ` (${match[2]})`],
-      );
+      const target = match[2].trim();
+      if (/^artifact:([^\s#?]+)/i.test(target)) {
+        const artifactId = target.replace(/^artifact:/i, '').split(/[?#]/)[0].trim();
+        add(match, [
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'mp-chat-artifact-link',
+              'data-mp-chat-act': 'open-artifact',
+              'data-artifact-id': artifactId,
+              title: target,
+            },
+            ...inlineNodes(match[1]),
+          ),
+        ]);
+      } else if (/^file:\/\//i.test(target)) {
+        const filePath = decodeFileHref(target);
+        add(match, [
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'mp-chat-artifact-link mp-chat-file-link',
+              'data-mp-chat-act': 'open-file',
+              'data-file-path': filePath,
+              'data-file-absolute-path': filePath,
+              title: filePath,
+            },
+            ...inlineNodes(match[1]),
+          ),
+        ]);
+      } else {
+        const href = safeHref(target);
+        add(
+          match,
+          href
+            ? [
+                h(
+                  'a',
+                  {href, target: '_blank', rel: 'noreferrer'},
+                  ...inlineNodes(match[1]),
+                ),
+              ]
+            : [match[1], ` (${match[2]})`],
+        );
+      }
     }
 
     match = /\*\*([^*\n]+)\*\*/.exec(text);
@@ -501,6 +552,79 @@ const ChatMarkdown = (() => {
     return {category: 'concept', tagLabel: lower};
   }
 
+  function extractVisualTitle(rawCode: string, fallback: string): string {
+    const titleMatch =
+      /<title[^>]*>([^<]{1,80})<\/title>/i.exec(rawCode) ||
+      /<h[12][^>]*>([^<]{1,80})<\/h[12]>/i.exec(rawCode) ||
+      /aria-label=["']([^"']{1,60})["']/i.exec(rawCode);
+    return titleMatch ? titleMatch[1].trim() : fallback;
+  }
+
+  function wrapSvgFragmentForPreview(rawCode: string): string {
+    return (
+      '<div class="mp-svg-stage">' +
+      '<svg class="mp-svg-auto-fit" xmlns="http://www.w3.org/2000/svg" ' +
+      'style="color:var(--accent,#d97757)" fill="currentColor">' +
+      rawCode.trim() +
+      '</svg></div>'
+    );
+  }
+
+  function classifyVisualFence(
+    lang: string,
+    rawCode: string,
+  ): {kind: 'html' | 'svg' | 'svg-snippet'; title: string; src: string; rawSource?: string} | null {
+    const normalizedLang = lang.trim().toLowerCase();
+    const trimmed = rawCode.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if ((normalizedLang === 'svg' || normalizedLang === 'xml') && /<svg\b/i.test(trimmed)) {
+      return {
+        kind: 'svg',
+        title: extractVisualTitle(trimmed, 'SVG 图解'),
+        src: trimmed,
+        rawSource: trimmed,
+      };
+    }
+    const isSvgPrimitiveSnippet =
+      (normalizedLang === 'html' || normalizedLang === 'svg' || normalizedLang === 'xml') &&
+      !/<svg\b|<html\b|<!doctype\b/i.test(trimmed) &&
+      /^\s*(?:<(?:path|circle|ellipse|rect|polygon|polyline|line|g)\b[\s\S]*?>\s*)+$/i.test(
+        trimmed,
+      ) &&
+      /\b(?:d|points|cx|cy|rx|ry|x1|x2|width|height)=/i.test(trimmed);
+    if (isSvgPrimitiveSnippet) {
+      return {
+        kind: 'svg-snippet',
+        title: 'SVG 图形预览',
+        src: wrapSvgFragmentForPreview(trimmed),
+        rawSource: trimmed,
+      };
+    }
+    if (normalizedLang === 'html') {
+      const hasFullOrCanvasOrSvg = /(<!doctype\s+html|<html\b|<svg\b|<canvas\b)/i.test(
+        trimmed,
+      );
+      const hasRichInteractive =
+        /(<style\b|<script\b|<input\b|<button\b)/i.test(trimmed) &&
+        /(<div\b|<section\b|<main\b|<figure\b|<svg\b|<canvas\b|<button\b|<input\b|<table\b)/i.test(
+          trimmed,
+        );
+      const hasInlineStyledBlock =
+        /<(?:div|section|figure)\b[^>]*\bstyle=["'][^"']{24,}["']/i.test(trimmed);
+      if (hasFullOrCanvasOrSvg || hasRichInteractive || hasInlineStyledBlock) {
+        return {
+          kind: 'html',
+          title: extractVisualTitle(trimmed, '交互式可视化'),
+          src: trimmed,
+          rawSource: trimmed,
+        };
+      }
+    }
+    return null;
+  }
+
   function isBlockStart(lines: string[], index: number): boolean {
     const line = lines[index] || '';
     return (
@@ -509,6 +633,7 @@ const ChatMarkdown = (() => {
       /^\s*:::card\b/i.test(line) ||
       /^\s*:::prereq\b/i.test(line) ||
       /^\s*:::lab\b/i.test(line) ||
+      /^\s*:::checkin\b/i.test(line) ||
       /^\s*:::(?:ui|widget)\b/i.test(line) ||
       /^\s*\$\$/.test(line) ||
       /^\s*\\\[/.test(line) ||
@@ -639,6 +764,32 @@ const ChatMarkdown = (() => {
         continue;
       }
 
+      // Inline pedagogical understanding check-in block: :::checkin\n...\n:::
+      if (/^\s*:::checkin\b/i.test(line)) {
+        const checkinLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          checkinLines.push(lines[index++]);
+        }
+        const complete = index < lines.length && /^\s*:::\s*$/.test(lines[index]);
+        if (complete) {
+          index += 1;
+        }
+        const rawSpec = checkinLines.join('\n').trim();
+        blocks.push(
+          h(
+            'section',
+            {
+              class: 'mp-checkin-host',
+              'data-checkin-complete': complete ? 'true' : 'false',
+              'data-checkin-raw': rawSpec,
+            },
+            complete ? '正在加载思考节点…' : '正在组织理解校验卡…',
+          ),
+        );
+        continue;
+      }
+
       // Same-layer Learn editorial divider: :::card [concept|mechanism|compare|trap|formula] Title ... :::
       const cardMatch = /^\s*:::card(?:\s+\[([^\]]+)\])?\s*(.*?)\s*$/i.exec(line);
       if (cardMatch) {
@@ -762,12 +913,35 @@ const ChatMarkdown = (() => {
           index += 1;
         }
         const lang = fence[1] || '';
+        const rawCode = body.join('\n');
         if (lang.toLowerCase() === 'openui') {
           blocks.push(h('section', {
             class: 'mp-openui-block',
-            'data-openui-source': body.join('\n'),
+            'data-openui-source': rawCode,
             'data-openui-complete': String(complete),
-          }, h('pre', {}, h('code', {}, body.join('\n')))));
+          }, h('pre', {}, h('code', {}, rawCode))));
+          continue;
+        }
+        const visual = classifyVisualFence(lang, rawCode);
+        if (visual) {
+          const cardAttrs: Record<string, string> = {
+            class: 'mp-iui-card',
+            'data-iui-complete': complete ? 'true' : 'false',
+            'data-iui-kind': visual.kind,
+            'data-iui-title': visual.title,
+            'data-iui-src': complete ? visual.src : '',
+            'data-iui-allow-source': 'true',
+          };
+          if (complete && visual.rawSource && visual.rawSource !== visual.src) {
+            cardAttrs['data-iui-raw-source'] = visual.rawSource;
+          }
+          blocks.push(
+            h(
+              'section',
+              cardAttrs,
+              complete ? '正在挂载交互视图…' : '正在生成交互可视化…',
+            ),
+          );
           continue;
         }
         const attrs: Record<string, string> = lang
@@ -784,11 +958,10 @@ const ChatMarkdown = (() => {
           class: 'mp-chat-action mp-chat-code-copy',
           'aria-label': '复制代码',
           'data-mp-chat-act': 'copy',
-          'data-mp-chat-copy': body.join('\n'),
+          'data-mp-chat-copy': rawCode,
         };
         append(head, h('button', copyAttrs, codeCopyIcon()));
         append(card, head);
-        const rawCode = body.join('\n');
         const codeNode = h('code', attrs);
         const highlighter = (
           globalThis as typeof globalThis & {
@@ -998,15 +1171,32 @@ const ChatMarkdown = (() => {
     return steps;
   }
 
+  function currentMarkdownLocale(): 'en' | 'zh-CN' {
+    if (typeof (globalThis as {getStudioLanguage?: () => string}).getStudioLanguage === 'function') {
+      return (globalThis as {getStudioLanguage: () => string}).getStudioLanguage() === 'zh-CN'
+        ? 'zh-CN'
+        : 'en';
+    }
+    if (DOC?.documentElement?.lang === 'zh-CN') {
+      return 'zh-CN';
+    }
+    return 'en';
+  }
+
   function buildGuidedTourCard(steps: InlineTourStep[]): MdNode {
+    const isZh = currentMarkdownLocale() === 'zh-CN';
     const card = h('section', {
       class: 'mp-tour-card',
-      'aria-label': '屏幕指点导览',
+      'aria-label': isZh ? '屏幕指点导览' : 'Guided screen tour',
     });
     const head = h('header', {class: 'mp-tour-card-head'});
     append(
       head,
-      h('span', {class: 'mp-tour-card-title'}, `屏幕指点导览 · ${steps.length} 步`),
+      h(
+        'span',
+        {class: 'mp-tour-card-title'},
+        isZh ? `屏幕指点导览 · ${steps.length} 步` : `Guided Screen Tour · ${steps.length} steps`,
+      ),
     );
     const controls = h('div', {class: 'mp-tour-card-controls'});
     append(
@@ -1017,9 +1207,11 @@ const ChatMarkdown = (() => {
           type: 'button',
           class: 'mp-tour-ctrl-btn',
           'data-tour-act': 'live-teach',
-          title: '打开始终置顶的桌面悬浮带练条（下一步 / 帮我点这步 / 退出）',
+          title: isZh
+            ? '打开始终置顶的桌面悬浮带练条（下一步 / 帮我点这步 / 退出）'
+            : 'Open floating desktop coach bar (Next / Click for me / Exit)',
         },
-        '悬浮带练',
+        isZh ? '悬浮带练' : 'Floating guide',
       ),
     );
     append(
@@ -1030,9 +1222,11 @@ const ChatMarkdown = (() => {
           type: 'button',
           class: 'mp-tour-ctrl-btn',
           'data-tour-act': 'autopilot',
-          title: '切换由 Magic Pointer 代为执行这些步骤',
+          title: isZh
+            ? '直接启动桌面 Computer Use 自动代为执行这些步骤'
+            : 'Run these steps directly using Computer Use Autopilot',
         },
-        '由 AI 代操作',
+        isZh ? 'AI 代操作' : 'Run with Computer Use',
       ),
     );
     append(
@@ -1043,9 +1237,9 @@ const ChatMarkdown = (() => {
           type: 'button',
           class: 'mp-tour-ctrl-btn',
           'data-tour-act': 'clear',
-          title: '隐藏屏幕光标',
+          title: isZh ? '隐藏屏幕光标' : 'Hide screen cursor',
         },
-        '隐藏光标',
+        isZh ? '隐藏光标' : 'Hide cursor',
       ),
     );
     append(head, controls);
@@ -1065,7 +1259,7 @@ const ChatMarkdown = (() => {
           'data-tour-screen': String(step.screen),
           'data-tour-normalized': step.normalized ? 'true' : 'false',
           'data-tour-label': step.label,
-          'data-tour-caption': step.sentence || step.label,
+          'data-tour-caption': step.label || step.sentence,
         },
         h('span', {class: 'mp-tour-step-num'}, String(idx + 1)),
         h('span', {class: 'mp-tour-step-label'}, step.label),
@@ -1104,6 +1298,9 @@ const ChatMarkdown = (() => {
   };
 })();
 
+if (typeof globalThis !== 'undefined' && !(globalThis as Record<string, unknown>).ChatMarkdown) {
+  (globalThis as Record<string, unknown>).ChatMarkdown = ChatMarkdown;
+}
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ChatMarkdown;
 }

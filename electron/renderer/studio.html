@@ -31,7 +31,10 @@
   <link rel="stylesheet" href="mods_workspace.css" />
   <link rel="stylesheet" href="vendor/katex/katex.css" />
   <link rel="stylesheet" href="learn_tree.css" />
+  <link rel="stylesheet" href="learn_studio.css?v=1" />
   <link rel="stylesheet" href="text_saliency.css?v=1" />
+  <link rel="stylesheet" href="design_studio.css?v=1" />
+  <link rel="stylesheet" href="project_overview.css?v=1" />
 </head>
 <body class="studio">
   <div class="mpw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -61,11 +64,11 @@
       <div class="mpw-sidebar">
         <div class="mpw-logo-row">
           <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="Mode">
-            <button type="button" id="mode-design" data-product-mode="design" role="tab" aria-selected="false">
+            <button type="button" id="mode-learn" data-product-mode="learn" role="tab" aria-selected="true">
               <span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span><span>Learn</span>
             </button>
-            <button type="button" id="mode-work" data-product-mode="walker" role="tab" aria-selected="true">
-              <span class="cds-icon" data-size="small" data-cds-anim="ANIM ANM2" data-glyph="&#xE048;" aria-hidden="true"></span><span>Code</span>
+            <button type="button" id="mode-design" data-product-mode="design" role="tab" aria-selected="false">
+              <span class="cds-icon" data-size="small" data-glyph="&#xE0B8;" aria-hidden="true"></span><span>Design</span>
             </button>
           </div>
         </div>
@@ -77,14 +80,14 @@
         <button class="mpw-customize" id="nav-projects" data-goto="projects" data-library-nav="projects">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE0C9;" aria-hidden="true"></span></span><span class="mp-nav-label">Projects</span>
         </button>
-        <button class="mpw-customize" id="nav-resources" data-goto="resources">
+        <button class="mpw-customize" id="nav-resources" data-goto="resources" data-library-nav="resources">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE01F;" aria-hidden="true"></span></span><span class="mp-nav-label">Resources</span>
         </button>
         <div class="mp-nav-row"><button class="mpw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
         </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="Create artifact" title="Create artifact"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
         <button class="mpw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
-          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Routines</span>
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Routines</span>
         </button>
         <button class="mpw-customize" id="nav-customize" data-goto="customize" data-library-nav="customize">
           <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE100;" aria-hidden="true"></span></span><span class="mp-nav-label">Customize</span>
@@ -132,14 +135,14 @@
           </button>
           <div class="mp-account-menu" id="account-menu" hidden role="menu" aria-label="Magic Pointer menu">
             <p class="mp-account-menu-header">zjz65 · Gateway</p>
-            <button type="button" role="menuitem" data-account-command="settings"><span class="cds-icon" data-size="large" data-glyph="&#xE0D6;" aria-hidden="true"></span><span>Settings</span><kbd>Ctrl+,</kbd></button>
-            <button type="button" role="menuitem" data-account-command="usage"><span class="cds-icon" data-size="large" data-glyph="&#xE130;" aria-hidden="true"></span><span>Usage</span></button>
-            <button type="button" role="menuitem" data-account-command="language" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="large" data-glyph="&#xE082;" aria-hidden="true"></span><span>Language</span></button>
-            <button type="button" role="menuitem" data-account-command="models"><span class="cds-icon" data-size="large" data-glyph="&#xE10D;" aria-hidden="true"></span><span>Inference configuration</span></button>
-            <button type="button" role="menuitem" data-account-command="help"><span class="cds-icon" data-size="large" data-glyph="&#xE088;" aria-hidden="true"></span><span>Get help</span></button>
+            <button type="button" role="menuitem" data-account-command="settings"><span class="cds-icon" data-size="small" data-glyph="&#xE0D6;" aria-hidden="true"></span><span>Settings</span><kbd>Ctrl+,</kbd></button>
+            <button type="button" role="menuitem" data-account-command="usage"><span class="cds-icon" data-size="small" data-glyph="&#xE130;" aria-hidden="true"></span><span>Usage</span></button>
+            <button type="button" role="menuitem" data-account-command="language" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="small" data-glyph="&#xE082;" aria-hidden="true"></span><span>Language</span></button>
+            <button type="button" role="menuitem" data-account-command="models"><span class="cds-icon" data-size="small" data-glyph="&#xE10D;" aria-hidden="true"></span><span>Inference configuration</span></button>
+            <button type="button" role="menuitem" data-account-command="help"><span class="cds-icon" data-size="small" data-glyph="&#xE088;" aria-hidden="true"></span><span>Get help</span></button>
             <hr />
-            <button type="button" role="menuitem" data-account-command="changelog"><span class="cds-icon" data-size="large" data-glyph="&#xE0D2;" aria-hidden="true"></span><span>View changelog</span></button>
-            <button type="button" role="menuitem" data-account-command="learn-more" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="large" data-glyph="&#xE08F;" aria-hidden="true"></span><span>Learn more</span><span class="cds-icon" data-size="small" data-glyph="&#xE02A;" aria-hidden="true"></span></button>
+            <button type="button" role="menuitem" data-account-command="changelog"><span class="cds-icon" data-size="small" data-glyph="&#xE0D2;" aria-hidden="true"></span><span>View changelog</span></button>
+            <button type="button" role="menuitem" data-account-command="learn-more" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="small" data-glyph="&#xE08F;" aria-hidden="true"></span><span>Learn more</span><span class="cds-icon" data-size="xs" data-glyph="&#xE02A;" aria-hidden="true"></span></button>
             <div class="mp-compact-menu mp-account-submenu" id="account-submenu" hidden role="menu"></div>
           </div>
           <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Toggle theme">
@@ -178,12 +181,16 @@
                   <img id="peek-image" class="peek-img" alt="Selected region preview" />
                 </span>
               </div>
-              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-vault-toggle" data-workspace-mode="design" data-inspector-target="vault" aria-label="Knowledge Vault" title="Knowledge Vault (知识库)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE01E;</span></button>
-              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-sidechat-toggle" data-workspace-mode="design" data-inspector-target="side-chat" aria-label="Side Chat" title="Side Chat (并排探讨)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE012;</span></button>
-              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-files-toggle" data-inspector-target="files" aria-label="Files" title="Files" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE072;</span></button>
-              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-changes-toggle" data-workspace-mode="walker" data-inspector-target="changes" aria-label="Changes" title="Changes" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE02D;</span></button>
-              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-terminal-toggle" data-workspace-mode="walker" data-inspector-target="terminal" aria-label="Terminal" title="Terminal" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE051;</span></button>
+              <button type="button" class="mp-thread-action" id="header-learn-course-pill" data-workspace-mode="learn" aria-label="当前课程与 Dream" title="切换课程或查看总览"><span class="mp-course-dot" aria-hidden="true"></span><span id="header-learn-course-label">CS336 · 学习工作台</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-study-toggle" data-workspace-mode="learn" data-inspector-target="learn" aria-label="学习工作台" title="学习工作台 (精读笔记 / 课程总览 / 神经图谱)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE083;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-vault-toggle" data-workspace-mode="learn" data-inspector-target="vault" aria-label="Knowledge Vault" title="Knowledge Vault (知识库)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE01E;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-sidechat-toggle" data-workspace-mode="learn" data-inspector-target="side-chat" aria-label="Side Chat" title="Side Chat (并排探讨)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE012;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-files-toggle" data-workspace-mode="code" data-inspector-target="files" aria-label="Files" title="Files" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE072;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-changes-toggle" data-workspace-mode="code" data-inspector-target="changes" aria-label="Changes" title="Changes" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE02D;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-terminal-toggle" data-workspace-mode="code" data-inspector-target="terminal" aria-label="Terminal" title="Terminal" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE051;</span></button>
               <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-browser-toggle" data-inspector-target="browser" aria-label="Browser" title="Browser" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE082;</span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-cu-desktop-toggle" data-inspector-target="cu-desktop" aria-label="Agent Desktop" title="Agent Desktop (协同第二桌面)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE059;</span><span class="mp-cu-live-dot" id="header-cu-desktop-dot" hidden></span></button>
+              <button type="button" class="mp-thread-action mp-workspace-toggle" id="header-rail-toggle" data-inspector-target="rail" aria-label="Session rail" title="Session details &amp; context" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE113;</span></button>
               <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-skim-toggle" aria-label="Skim highlights" title="Skim highlights (Hold Alt to reveal full ink)" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE069;" aria-hidden="true"></span></button>
               <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-learn-toggle" aria-label="Learning controls and workbench" title="Learning controls &amp; side chat" aria-pressed="false"><span class="cds-icon" data-size="small" data-glyph="&#xE083;" aria-hidden="true"></span></button>
               <button type="button" class="mp-thread-action mp-header-legacy-action" id="chat-tour-toggle" aria-label="Guided screen tour" title="Guided screen tour (Clicky Coach)" aria-pressed="false"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE059;</span></button>
@@ -221,6 +228,7 @@
 
         <div class="mpw-scrollbody">
           <div class="mp-learn-hud" id="learn-hud" hidden></div>
+          <div class="mp-conversation-dispatch-tags" id="conversation-dispatch-tags" hidden aria-label="Session status and dispatch"></div>
           <section class="mp-studio-home" id="studio-home" aria-label="Studio home" hidden>
             <header class="mp-home-heading">
               <span class="mp-home-mark" aria-hidden="true"></span>
@@ -320,16 +328,19 @@
                 <div class="mpw-input-root">
                   <div class="mpw-card">
                     <div class="mpw-scroll">
-                      <div class="mpw-grow">
-                        <div class="mpw-input-history" id="composer-history" hidden></div>
-                        <textarea class="mpw-input" rows="1" maxlength="12000"
-                          placeholder="Describe a task or ask a question" aria-label="Continue conversation"></textarea>
+                      <div class="mp-composer-reply-bar" id="composer-reply-bar" hidden aria-label="Quoted replies"></div>
+                      <div class="mp-learn-lemma-strip" id="composer-lemma-strip"></div>
+                      <div class="mpw-input-line">
+                        <div class="mpw-grow">
+                          <div class="mpw-input-history" id="composer-history" hidden></div>
+                          <textarea class="mpw-input" rows="1" maxlength="12000"
+                            placeholder="Describe a task or ask a question" aria-label="Continue conversation"></textarea>
+                        </div>
+                        <button type="submit" class="mpw-primary" title="Send" aria-label="Send" disabled>
+                          <span class="cds-icon" data-size="small" data-weight="strong" data-glyph="&#xE00F;" aria-hidden="true"></span>
+                        </button>
                       </div>
-                      <button type="submit" class="mpw-primary" title="Send" aria-label="Send" disabled>
-                        <span class="cds-icon" data-size="small" data-weight="strong" data-glyph="&#xE00F;" aria-hidden="true"></span>
-                      </button>
                     </div>
-                    <div class="mp-learn-lemma-strip" id="composer-lemma-strip"></div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="Attachments"></div>
                     <div class="mp-composer-attachments mp-composer-materials" id="composer-materials" hidden aria-label="Task materials for the next step"></div>
                     <div class="mpw-row">
@@ -384,32 +395,45 @@
         </div>
       </section>
 
-      <section class="mpw-view mp-design-home" id="view-design" hidden>
-        <div class="mp-design-intro">
-          <h1>Cowork</h1>
-          <span>Work with files, visual references, and generated artifacts in the same local workspace.</span>
+      <section class="mpw-view mp-design-studio-view" id="view-design" hidden>
+        <div class="mp-design-workspace-bar" id="design-workspace-bar">
+          <div class="mp-design-workspace-left">
+            <select id="design-canvas-select" aria-label="Select design canvas"></select>
+            <button type="button" class="mp-toolbar-button" id="design-canvas-new">
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE001;</span>
+              <span>New canvas</span>
+            </button>
+          </div>
+          <div class="mp-design-workspace-right">
+            <button type="button" class="mp-toolbar-button" id="design-brand-btn">
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0B8;</span>
+              <span>Brand system</span>
+            </button>
+            <button type="button" class="mp-toolbar-button" id="design-check-btn">
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE03B;</span>
+              <span>Craft check</span>
+            </button>
+            <button type="button" class="mp-toolbar-button" id="design-export-btn">
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE0E2;</span>
+              <span>Export</span>
+            </button>
+            <button type="button" class="mp-toolbar-button" id="design-chat-toggle" aria-pressed="true">
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE012;</span>
+              <span>Prompt</span>
+            </button>
+          </div>
         </div>
-        <div class="mp-design-actions" id="design-actions">
-          <button type="button" class="mp-design-action-row" data-design-action="canvas">
-            <span class="mp-design-card-icon"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE06E;</span></span>
-            <span class="mp-design-card-copy"><strong>Canvas</strong><small>Arrange captures, references, and visual notes</small></span>
-            <span class="cds-icon mp-design-card-arrow" data-size="small" aria-hidden="true">&#xE010;</span>
-          </button>
-          <button type="button" class="mp-design-action-row" data-design-action="list">
-            <span class="mp-design-card-icon"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE06C;</span></span>
-            <span class="mp-design-card-copy"><strong>Assets</strong><small>Browse local material by type, source, and time</small></span>
-            <span class="cds-icon mp-design-card-arrow" data-size="small" aria-hidden="true">&#xE010;</span>
-          </button>
-          <button type="button" class="mp-design-action-row" data-design-action="files">
-            <span class="mp-design-card-icon"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE073;</span></span>
-            <span class="mp-design-card-copy"><strong>Files</strong><small>Open the real file browser and preview local files</small></span>
-            <span class="cds-icon mp-design-card-arrow" data-size="small" aria-hidden="true">&#xE010;</span>
-          </button>
-          <button type="button" class="mp-design-action-row" data-design-action="artifacts">
-            <span class="mp-design-card-icon"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE017;</span></span>
-            <span class="mp-design-card-copy"><strong>Artifacts</strong><small>Review images, documents, and code written by the Agent</small></span>
-            <span class="cds-icon mp-design-card-arrow" data-size="small" aria-hidden="true">&#xE010;</span>
-          </button>
+        <div class="mp-design-studio-host" id="design-studio-host"></div>
+        <div class="mp-design-prompt-dock" id="design-prompt-dock">
+          <div class="mp-design-prompt-status" id="design-prompt-status" hidden></div>
+          <div class="mp-design-prompt-reply" id="design-prompt-reply" hidden></div>
+          <form class="mp-design-prompt-form" id="design-prompt-form">
+            <textarea id="design-prompt-input" rows="2" placeholder="Describe a design, layout change, or critique…"></textarea>
+            <button type="submit" class="mp-design-prompt-send" id="design-prompt-send">
+              <span class="cds-icon" data-size="small" aria-hidden="true">&#xE010;</span>
+              <span>Send</span>
+            </button>
+          </form>
         </div>
       </section>
 
@@ -527,6 +551,16 @@
       </section>
     </main>
 
+    <aside class="mp-learn-sidechat-dock" id="learn-sidechat-dock" hidden aria-label="并排探讨">
+      <header class="mp-learn-sidechat-dock-head">
+        <span>并排探讨 · Side Chat</span>
+        <button type="button" class="mp-icon-btn" id="learn-sidechat-dock-close" aria-label="收起并排探讨" title="收起并排探讨">
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE10F;</span>
+        </button>
+      </header>
+      <div id="learn-sidechat-dock-host"></div>
+    </aside>
+
     <aside class="mp-inspector" id="project-inspector" hidden aria-label="Task materials and project panel">
         <div class="mp-inspector-resize-handle" id="inspector-resize-handle" role="separator" tabindex="0" aria-controls="project-inspector" aria-orientation="vertical" aria-label="Resize task panel width"></div>
       <header class="mp-inspector-header">
@@ -538,6 +572,7 @@
         </div>
       </header>
       <nav class="mp-inspector-tabs" aria-label="Task and project tools">
+        <button type="button" data-inspector-tab="rail" aria-selected="false">Session</button>
         <button type="button" data-inspector-tab="side-chat" aria-selected="false">并排探讨</button>
         <button type="button" data-inspector-tab="vault" aria-selected="false">知识库</button>
         <button type="button" data-inspector-tab="learn" aria-selected="false">学习台</button>
@@ -545,11 +580,15 @@
         <button type="button" data-inspector-tab="materials" aria-selected="false">Materials</button>
         <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">Files</button>
         <button type="button" data-inspector-tab="browser" aria-selected="false">Browser</button>
+        <button type="button" data-inspector-tab="cu-desktop" aria-selected="false">协同桌面</button>
         <button type="button" data-inspector-tab="terminal" aria-selected="false">Terminal</button>
         <button type="button" data-inspector-tab="changes" aria-selected="false">Changes</button>
         <button type="button" data-inspector-tab="tasks" aria-selected="false">Background tasks</button>
         <button type="button" data-inspector-tab="modules" aria-selected="false">Mods</button>
       </nav>
+      <section class="mp-inspector-panel" id="inspector-rail" data-inspector-panel="rail" hidden>
+        <div id="session-rail-host" class="mp-session-rail"></div>
+      </section>
       <section class="mp-inspector-panel" id="inspector-side-chat" data-inspector-panel="side-chat" hidden>
         <div id="side-chat-pane-host"></div>
       </section>
@@ -615,6 +654,9 @@
           <div class="mp-browser-empty" id="project-browser-empty"><span class="cds-icon" data-size="small" aria-hidden="true">&#xE082;</span><strong>ego lite</strong><p data-browser-message="browser.empty">Open websites in ego lite. Local documents and previews appear here.</p></div>
         </div>
       </section>
+      <section class="mp-inspector-panel" id="inspector-cu-desktop" data-inspector-panel="cu-desktop" hidden>
+        <div id="cu-desktop-host" class="mp-cu-desktop-root"></div>
+      </section>
       <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>
         <div class="mp-preview-sheet-tabs"><span>PowerShell</span><button type="button" data-terminal-stop>Stop terminal</button></div>
         <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span class="mp-terminal-label">PowerShell · Current project</span><pre class="mp-terminal-log"></pre></div>
@@ -625,10 +667,24 @@
       <section class="mp-inspector-panel" id="inspector-modules" data-inspector-panel="modules" hidden><div id="modules-workspace"></div></section>
       <section class="mp-inspector-panel" id="inspector-artifact" data-inspector-panel="artifact" hidden>
         <div class="mp-artifact-editor" id="artifact-editor">
+          <div class="mp-artifact-switcher" id="artifact-switcher-list" hidden role="tablist" aria-label="Conversation artifacts"></div>
           <header class="mp-artifact-editor-meta">
-            <strong id="artifact-editor-kind">Draft</strong>
-            <span id="artifact-editor-revision">revision —</span>
-            <select
+            <div class="mp-artifact-meta-title">
+              <strong id="artifact-editor-kind">Draft</strong>
+              <span id="artifact-editor-revision">revision —</span>
+            </div>
+            <div class="mp-artifact-meta-controls">
+              <div class="mp-artifact-mode-switch" role="group" aria-label="Artifact view mode">
+                <button type="button" id="artifact-mode-preview" class="is-active" aria-pressed="true">Preview</button>
+                <button type="button" id="artifact-mode-source" aria-pressed="false">Source</button>
+              </div>
+              <div class="mp-artifact-toolbar-actions">
+                <button type="button" id="artifact-svg-bg-toggle" hidden title="Toggle SVG backdrop">Light</button>
+                <button type="button" id="artifact-copy-btn" title="Copy content">Copy</button>
+                <button type="button" id="artifact-download-btn" title="Download artifact">Download</button>
+                <button type="button" id="artifact-save-vault-btn" title="Save to Knowledge Vault">Vault</button>
+              </div>
+              <select
                 id="artifact-version-select"
                 aria-label="Version history"
                 disabled
@@ -636,6 +692,7 @@
               <button type="button" id="artifact-version-restore" hidden>
                 Restore this version
               </button>
+            </div>
           </header>
           <section
               id="artifact-version-preview"
@@ -645,6 +702,7 @@
               <strong>Historical preview · read only</strong>
               <pre></pre>
             </section>
+          <div id="artifact-preview-host" class="mp-artifact-preview-host" hidden></div>
           <textarea id="artifact-editor-content" spellcheck="true" aria-label="Editable artifact body" placeholder="Select an artifact to edit it here."></textarea>
           <section class="mp-artifact-patch-preview" aria-labelledby="artifact-patch-title">
             <h3 id="artifact-patch-title">Patch preview</h3>
@@ -756,6 +814,8 @@
   <script defer src="cds_svg_icons.js?v=1"></script>
   <script defer src="chat_highlight.js?v=1"></script>
   <script defer src="locale.js?v=1"></script>
+  <script defer src="dashboard_store.js?v=1"></script>
+  <script defer src="dashboard_charts.js?v=1"></script>
   <script defer src="dashboard_view.js?v=1"></script>
   <script defer src="compaction_status.js?v=1"></script>
   <script defer src="chat_diff_rows.js"></script>
@@ -812,6 +872,13 @@
   <script defer src="side_chat_pane.js?v=1"></script>
   <script defer src="intelligence_ui.js?v=1"></script>
   <script defer src="learn_tree.js?v=1"></script>
+  <script defer src="cu_desktop_view.js?v=1"></script>
+  <script defer src="design_dc_runtime.js?v=1"></script>
+  <script defer src="design_studio.js?v=1"></script>
+  <script defer src="project_overview.js?v=1"></script>
+  <script defer src="learn_checkin_card.js?v=1"></script>
+  <script defer src="learn_neural_graph.js?v=1"></script>
+  <script defer src="learn_study_artifact.js?v=1"></script>
   <script defer src="studio.js?v=28"></script>
 </body>
 </html>

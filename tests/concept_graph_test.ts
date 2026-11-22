@@ -139,7 +139,7 @@ test('conversation_store persists learnMastery state across reload', () => {
   }
 });
 
-test('LEARN_HARNESS_PROMPT teaches non-linear prereq/lab scaffolding while remaining strictly static', async () => {
+test('LEARN_HARNESS_PROMPT remains static across equivalent options and preserves conversational Learn voice', async () => {
   const p1 = await buildSystemPrompt({
     workspace: ROOT,
     userDataDir: ROOT,
@@ -155,6 +155,6 @@ test('LEARN_HARNESS_PROMPT teaches non-linear prereq/lab scaffolding while remai
     hasSelection: false,
   });
   assert.equal(p1, p2);
-  assert.match(p1, /:::prereq/);
-  assert.match(p1, /:::lab/);
+  assert.match(p1, /发消息聊天/);
+  assert.match(p1, /工具纪律/);
 });

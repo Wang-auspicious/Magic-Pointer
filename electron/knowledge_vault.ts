@@ -327,3 +327,226 @@ export function toggleVaultTodo(
   fs.writeFileSync(resolvedFile, lines.join(eol), 'utf8');
   return {ok: true};
 }
+
+export interface VaultSearchHit {
+  entryId: string;
+  title: string;
+  relativePath: string;
+  folder: string;
+  tags: string[];
+  backlinks: string[];
+  excerpt: string;
+  score: number;
+  source: 'knowledge_vault';
+}
+
+export function searchKnowledgeVault(
+  vaultDir: string,
+  query: string,
+  limit = 10,
+): VaultSearchHit[] {
+  const overview = scanKnowledgeVault(vaultDir);
+  const notes = overview.notes;
+  if (!notes.length) {
+    return [];
+  }
+  const rawQuery = String(query || '').trim().toLowerCase();
+  const terms = Array.from(
+    new Set(
+      rawQuery
+        .split(/[\s,，。；;、()（）《》「」"'/]+/)
+        .map(t => t.trim())
+        .filter(t => t.length >= 2),
+    ),
+  );
+  // Extract substrings/pairs from longer CJK chunks for resilient fuzzy matching
+  const subTerms = new Set<string>(terms);
+  for (const term of terms) {
+    if (/^[\u4e00-\u9fff]{3,}$/.test(term)) {
+      for (let i = 0; i <= term.length - 2; i++) {
+        subTerms.add(term.slice(i, i + 2));
+      }
+    }
+  }
+  const normalizedRoot = overview.vaultDir;
+  const maxResults = Math.max(1, Math.min(50, Math.floor(Number(limit) || 10)));
+  const scored: VaultSearchHit[] = [];
+  for (const note of notes) {
+    const titleLower = note.title.toLowerCase();
+    const tagsLower = note.tags.map(t => t.toLowerCase()).join(' ');
+    let contentLower = '';
+    try {
+      contentLower = fs.readFileSync(note.filePath, 'utf8').toLowerCase();
+    } catch {
+      contentLower = note.excerpt.toLowerCase();
+    }
+    let score = 0;
+    if (!rawQuery) {
+      score = 1;
+    } else {
+      if (titleLower.includes(rawQuery)) {
+        score += 40;
+      }
+      if (contentLower.includes(rawQuery)) {
+        score += 20;
+      }
+      for (const term of terms) {
+        if (titleLower.includes(term)) {
+          score += 18;
+        }
+        if (tagsLower.includes(term)) {
+          score += 10;
+        }
+        if (contentLower.includes(term)) {
+          score += 6;
+        }
+      }
+      if (score === 0) {
+        for (const sub of subTerms) {
+          if (titleLower.includes(sub)) {
+            score += 5;
+          } else if (contentLower.includes(sub)) {
+            score += 2;
+          }
+        }
+      }
+    }
+    if (score > 0 && note.filePath.startsWith(normalizedRoot)) {
+      scored.push({
+        entryId: `vault:${note.relativePath}`,
+        title: note.title,
+        relativePath: note.relativePath,
+        folder: note.folder,
+        tags: note.tags,
+        backlinks: note.backlinks,
+        excerpt: note.excerpt,
+        score,
+        source: 'knowledge_vault',
+      });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+  return scored.slice(0, maxResults);
+}
+
+export function readVaultNote(
+  vaultDir: string,
+  relativeOrFilePath: string,
+): {
+  ok: boolean;
+  error?: string;
+  title?: string;
+  relativePath?: string;
+  filePath?: string;
+  content?: string;
+  source?: string;
+  tags?: string[];
+  links?: string[];
+  backlinks?: string[];
+} {
+  const normalizedRoot = path.resolve(String(vaultDir || ''));
+  const rawTarget = String(relativeOrFilePath || '').trim();
+  if (!normalizedRoot || !rawTarget) {
+    return {ok: false, error: 'vault_target_missing'};
+  }
+  const overview = scanKnowledgeVault(normalizedRoot);
+  const candidate = path.isAbsolute(rawTarget)
+    ? path.resolve(rawTarget)
+    : path.resolve(normalizedRoot, rawTarget.replace(/^[/\\]+/, ''));
+  const resolved =
+    candidate === normalizedRoot || candidate.startsWith(normalizedRoot + path.sep)
+      ? candidate
+      : '';
+  const matched =
+    (resolved
+      ? overview.notes.find(n => path.resolve(n.filePath) === resolved)
+      : undefined) ??
+    overview.notes.find(
+      n =>
+        n.relativePath.toLowerCase() === rawTarget.toLowerCase() ||
+        n.title.toLowerCase() === rawTarget.toLowerCase(),
+    );
+  const filePath = matched?.filePath || (resolved && fs.existsSync(resolved) ? resolved : '');
+  if (!filePath || !filePath.startsWith(normalizedRoot + path.sep)) {
+    return {ok: false, error: 'vault_note_not_found'};
+  }
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const {body} = parseFrontmatter(raw);
+    const relativePath =
+      matched?.relativePath ||
+      path.relative(normalizedRoot, filePath).replace(/\\/g, '/');
+    return {
+      ok: true,
+      title: matched?.title || path.basename(filePath, path.extname(filePath)),
+      relativePath,
+      filePath,
+      content: body.trim() || raw.trim(),
+      source: matched?.source || '',
+      tags: matched?.tags || [],
+      links: matched?.links || extractWikilinks(body),
+      backlinks: matched?.backlinks || [],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function appendVaultTodo(
+  vaultDir: string,
+  input: {
+    text: string;
+    title?: string;
+    sourceUrl?: string;
+    relatedLink?: string;
+  },
+): {ok: boolean; filePath: string; appended: boolean; error?: string} {
+  const normalizedRoot = path.resolve(String(vaultDir || ''));
+  const cleanText = String(input.text || '')
+    .replace(/\r?\n/g, ' ')
+    .trim();
+  if (!normalizedRoot || !cleanText) {
+    return {
+      ok: false,
+      filePath: '',
+      appended: false,
+      error: 'todo_text_missing',
+    };
+  }
+  fs.mkdirSync(normalizedRoot, {recursive: true});
+  const filePath = path.join(normalizedRoot, 'LEARNING_TODOS.md');
+  const existing = fs.existsSync(filePath)
+    ? fs.readFileSync(filePath, 'utf8')
+    : '# 学习待办\n\n';
+  const existingOpenNormalized = new Set(
+    existing
+      .split(/\r?\n/)
+      .map(
+        line => line.match(/^\s*[-*]\s+\[\s\]\s+(.+)$/)?.[1]?.trim() || '',
+      )
+      .filter(Boolean)
+      .map(entry => entry.replace(/\s*·\s*(?:\[\[|https?:).*$/, '').trim()),
+  );
+  if (existingOpenNormalized.has(cleanText)) {
+    return {ok: true, filePath, appended: false};
+  }
+  const suffixParts: string[] = [];
+  if (input.relatedLink?.trim()) {
+    suffixParts.push(`[[${input.relatedLink.trim()}]]`);
+  } else if (input.title?.trim()) {
+    suffixParts.push(`[[${input.title.trim()}]]`);
+  }
+  if (input.sourceUrl?.trim()) {
+    suffixParts.push(input.sourceUrl.trim());
+  }
+  const line = `- [ ] ${cleanText}${
+    suffixParts.length ? ` · ${suffixParts.join(' · ')}` : ''
+  }`;
+  const prefix =
+    existing.endsWith('\n') || existing.length === 0 ? existing : `${existing}\n`;
+  fs.writeFileSync(filePath, `${prefix}${line}\n`, 'utf8');
+  return {ok: true, filePath, appended: true};
+}

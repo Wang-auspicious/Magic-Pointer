@@ -376,8 +376,6 @@ export class RuntimeActivitySink {
     };
     if (phases[kind]) {
       this.mark(phases[kind], event);
-    } else if (kind === 'tool_warning') {
-      this.add({kind: 'notice', state: 'done', text: event.message});
     }
   };
 }

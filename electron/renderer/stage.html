@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="typography.css" />
     <link rel="stylesheet" href="vendor/katex/katex.css" />
     <link rel="stylesheet" href="learn_tree.css" />
+    <link rel="stylesheet" href="text_saliency.css" />
   </head>
   <body>
     <main id="stage" class="stage-root" data-state="hidden" hidden aria-label="Magic Pointer 舞台">
@@ -38,15 +39,15 @@
           <span id="capsule-refs" class="capsule-refs" role="list" aria-label="已选中的对象" hidden></span>
         </div>
         <div class="composer-input-row">
-          <input
+          <textarea
             id="capsule-input"
             class="capsule-input"
-            type="text"
+            rows="1"
             autocomplete="off"
             spellcheck="false"
             data-no-drag="1"
             aria-label="对锁定对象下达命令"
-          />
+          ></textarea>
           <p id="transcript" class="capsule-transcript" aria-live="polite"></p>
           <button type="button" id="capsule-send" class="capsule-send" data-no-drag="1" aria-label="提交">
             <span class="cds-icon capsule-send-icon" data-size="small" aria-hidden="true">&#xE013;</span>
@@ -62,6 +63,12 @@
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
       <div id="stage-notice" class="stage-notice" role="status" hidden><span id="stage-notice-text"></span></div>
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
+        <div class="workbench-resize-handle is-n" data-resize-edge="n" data-no-drag="1" aria-hidden="true"></div>
+        <div class="workbench-resize-handle is-s" data-resize-edge="s" data-no-drag="1" aria-hidden="true"></div>
+        <div class="workbench-resize-handle is-e" data-resize-edge="e" data-no-drag="1" aria-hidden="true"></div>
+        <div class="workbench-resize-handle is-w" data-resize-edge="w" data-no-drag="1" aria-hidden="true"></div>
+        <div class="workbench-resize-handle is-se" data-resize-edge="se" data-no-drag="1" aria-hidden="true"></div>
+        <div class="workbench-resize-handle is-sw" data-resize-edge="sw" data-no-drag="1" aria-hidden="true"></div>
         <header class="thread-head" data-drag-handle="1">
           <div class="thread-head-row">
             <b id="thread-title" class="thread-title"></b>
@@ -69,6 +76,14 @@
               <span class="cds-icon" data-size="small" aria-hidden="true">&#xE03B;</span><em id="thread-eyebrow-text">已完成</em>
             </span>
             <span class="thread-head-spacer"></span>
+            <button type="button" id="thread-save-learn" class="thread-pill-btn" data-no-drag="1"
+                    aria-label="存到当前课程笔记" title="存到当前课程笔记">存笔记</button>
+            <button type="button" id="thread-handoff-learn" class="thread-pill-btn is-accent" data-no-drag="1"
+                    aria-label="带入 Learn 深学" title="带入 Learn 深学">带入深学</button>
+            <button type="button" id="thread-expand-studio" class="thread-icon" data-no-drag="1"
+                    aria-label="在 Studio 中打开" title="在 Studio 中打开">
+              <span class="cds-icon thread-expand-icon" data-size="small" aria-hidden="true">&#xE067;</span>
+            </button>
             <button type="button" id="thread-stop" class="thread-icon" data-no-drag="1"
                     aria-label="停止任务" title="停止任务" hidden>
               <span class="cds-icon thread-stop-icon" data-size="small" aria-hidden="true">&#xE0EC;</span>
@@ -179,6 +194,8 @@
     <script src="../cards.js"></script>
     <script src="card_render.js"></script>
     <script src="chat_icons.js"></script>
+    <script src="cds_icons.js"></script>
+    <script src="cds_svg_icons.js"></script>
     <script src="vendor/katex/katex.js"></script>
     <script src="chat_markdown.js"></script>
     <script src="activity_marks.js"></script>
@@ -186,7 +203,13 @@
     <script src="chat_diff_rows.js"></script>
     <script src="chat_file_icons.js"></script>
     <script src="chat_tool_summary.js"></script>
+    <script src="workflow_card.js"></script>
+    <script src="stream_smoother.js"></script>
+    <script src="text_saliency.js"></script>
     <script src="chat_view.js"></script>
+    <script src="learn_lab.js"></script>
+    <script src="learn_tree.js"></script>
+    <script src="intelligence_ui.js"></script>
     <script src="decision_card.js"></script>
     <script src="stage.js"></script>
   </body>

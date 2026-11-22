@@ -5,15 +5,28 @@ type PointerDismissInput = {
   previousButtons?: number;
   hasVisibleTemporarySurface?: boolean;
   interactiveOverlayOwnsPointer?: boolean;
+  stagePhase?: string;
 };
+
+function shouldDismissStageOnOutsideClick(phase: unknown): boolean {
+  return phase === 'capsule-text';
+}
 
 function shouldDismissFromGlobalPointer({
   currentButtons = 0,
   previousButtons = 0,
   hasVisibleTemporarySurface = false,
   interactiveOverlayOwnsPointer = false,
+  stagePhase,
 }: PointerDismissInput = {}): boolean {
   if (!hasVisibleTemporarySurface || interactiveOverlayOwnsPointer) {
+    return false;
+  }
+  if (
+    typeof stagePhase === 'string' &&
+    stagePhase &&
+    !shouldDismissStageOnOutsideClick(stagePhase)
+  ) {
     return false;
   }
   const rightButtonPressed = (Number(currentButtons) & 2) !== 0;
@@ -21,4 +34,7 @@ function shouldDismissFromGlobalPointer({
   return rightButtonPressed && !rightButtonWasPressed;
 }
 
-module.exports = {shouldDismissFromGlobalPointer};
+module.exports = {
+  shouldDismissFromGlobalPointer,
+  shouldDismissStageOnOutsideClick,
+};

@@ -819,6 +819,7 @@
   interface ControllerOptions {
     data: MagicPointerDataApi;
     show(view: string, projectKey?: string): void;
+    open?(id: string): void;
     compose(prompt: string): void;
     startProjectChat(project: MagicPointerProject, prompt: string): void;
     openProject(): Promise<void>;
@@ -854,7 +855,18 @@
     const selectedChats = new Set<string>();
     let bulkBusy = false;
     let designArtifacts: any[] = [];
+    let designCanvases: Array<Record<string, any>> = [];
     const designContents = new Map<string, string>();
+    let unmountProjectOverview: (() => void) | null = null;
+    let projectOverviewHandle: {
+      unmount: () => void;
+      update: (
+        nextState: Omit<ProjectOverviewState, 'actions'> & {
+          actions?: ProjectOverviewActions;
+        },
+      ) => void;
+    } | null = null;
+    let unsubProjectMa: (() => void) | null = null;
     let conversations: Row[] = [];
     let projects: MagicPointerProject[] = [];
     let selectedProjectKey = '';
@@ -1145,10 +1157,10 @@
     function openSidebarEditor(button: HTMLElement) {
       root.innerHTML =
         '<div class="mp-library-menu-heading">Sidebar</div>' +
-        ['projects', 'artifacts', 'scheduled', 'designs', 'customize']
+        ['projects', 'resources', 'artifacts', 'scheduled', 'designs', 'customize']
           .map(
             id =>
-              `<label class="mp-library-nav-option"><input type="checkbox" data-nav-visibility="${id}" ${preferences.hiddenNavigation.includes(id) ? '' : 'checked'} /><span>${id === 'designs' ? 'Design' : id[0].toUpperCase() + id.slice(1)}</span></label>`,
+              `<label class="mp-library-nav-option"><input type="checkbox" data-nav-visibility="${id}" ${preferences.hiddenNavigation.includes(id) ? '' : 'checked'} /><span>${id === 'designs' ? 'Design' : id === 'scheduled' ? 'Routines' : id[0].toUpperCase() + id.slice(1)}</span></label>`,
           )
           .join('');
       positionMenu(button, 'dialog');
@@ -1465,16 +1477,37 @@
     }
     function designPage() {
       const rows = designRows(designArtifacts, designTab, query);
-      const list = rows.length
-        ? `<div class="mp-design-results" data-layout="${designLayout}">${artifactDateGroups(
-            rows,
-          )
+      const filteredCanvases = designCanvases.filter(canvas => {
+        const needle = query.trim().toLocaleLowerCase();
+        if (!needle) {
+          return true;
+        }
+        return `${canvas.title || ''} ${canvas.slug || ''}`
+          .toLocaleLowerCase()
+          .includes(needle);
+      });
+      const canvasSection = filteredCanvases.length
+        ? `<section class="mp-design-date-group"><h2>Design Canvases</h2><div class="mp-design-group-items">${filteredCanvases
             .map(
-              group =>
-                `<section class="mp-design-date-group"><h2>${escape(group.label)}</h2><div class="mp-design-group-items">${group.items.map(item => `<button type="button" class="mp-library-list-row" ${item.artifactId ? `data-artifact-id="${escape(item.artifactId)}" data-artifact-conversation="${escape(item.conversationId)}"` : `data-open="${escape(item.conversationId)}"`}>${designLayout === 'grid' ? `<span class="mp-artifact-preview">${artifactPreviewMarkup(item, designContents.get(`${item.artifactId}:${item.revision || 0}`))}</span>` : glyph(item.kind === 'image' ? 'image' : 'design', 'large')}<span><strong>${escape(item.name || item.summary || 'Untitled design')}</strong><small>${escape(item.from || '')}</small></span><small>${item.at ? new Date(Number(item.at)).toLocaleDateString() : ''}</small></button>`).join('')}</div></section>`,
+              canvas =>
+                `<button type="button" class="mp-library-list-row" data-open-design-canvas="${escape(canvas.slug || '')}">${glyph('design', 'large')}<span><strong>${escape(canvas.title || canvas.slug || 'Untitled canvas')}</strong><small>${escape(String(canvas.boardCount ?? 0))} boards</small></span><small>${canvas.updatedAt ? new Date(Number(canvas.updatedAt)).toLocaleDateString() : ''}</small></button>`,
             )
-            .join('')}</div>`
-        : '<p class="mp-library-note">还没有符合条件的设计产物。已生成的图像、设计文件和设计系统会显示在这里。</p>';
+            .join('')}</div></section>`
+        : '';
+      const list =
+        canvasSection +
+        (rows.length
+          ? `<div class="mp-design-results" data-layout="${designLayout}">${artifactDateGroups(
+              rows,
+            )
+              .map(
+                group =>
+                  `<section class="mp-design-date-group"><h2>${escape(group.label)}</h2><div class="mp-design-group-items">${group.items.map(item => `<button type="button" class="mp-library-list-row" ${item.artifactId ? `data-artifact-id="${escape(item.artifactId)}" data-artifact-conversation="${escape(item.conversationId)}"` : `data-open="${escape(item.conversationId)}"`}>${designLayout === 'grid' ? `<span class="mp-artifact-preview">${artifactPreviewMarkup(item, designContents.get(`${item.artifactId}:${item.revision || 0}`))}</span>` : glyph(item.kind === 'image' ? 'image' : 'design', 'large')}<span><strong>${escape(item.name || item.summary || 'Untitled design')}</strong><small>${escape(item.from || '')}</small></span><small>${item.at ? new Date(Number(item.at)).toLocaleDateString() : ''}</small></button>`).join('')}</div></section>`,
+              )
+              .join('')}</div>`
+          : filteredCanvases.length
+            ? ''
+            : '<p class="mp-library-note">还没有符合条件的设计产物。已生成的图像、设计文件和设计系统会显示在这里。</p>');
       return (
         toolbar(
           `<button type="button" data-design-layout aria-label="${designLayout === 'grid' ? 'List view' : 'Grid view'}">${glyph(designLayout === 'grid' ? 'layout-list' : 'layout-grid')}</button>`,
@@ -1532,36 +1565,120 @@
         paint();
       }
     }
-    function paint() {
-      const host = document.getElementById(`library-${activeView}`);
-      if (!host) {
-        return;
+    function cleanupProjectOverview() {
+      projectOverviewHandle = null;
+      if (unmountProjectOverview) {
+        unmountProjectOverview();
+        unmountProjectOverview = null;
       }
-      host.innerHTML =
-        (error
-          ? `<p class="mp-library-error" role="status">${escape(error)}</p>`
-          : '') +
-        (activeView === 'projects'
-          ? projectPage()
-          : activeView === 'scheduled'
-            ? scheduledPage()
-            : activeView === 'customize'
-              ? customizePage()
-              : activeView === 'chats'
-                ? chatsPage()
-                : designPage());
-      mountPreviews(host);
-      const projectHost = host.querySelector<HTMLElement>(
-        '.mp-project-detail-host',
-      );
-      const project = ProjectScope.find(projects, selectedProjectKey);
-      document
-        .querySelector<HTMLElement>('.mp-shell')
-        ?.setAttribute(
-          'data-project-detail',
-          String(Boolean(projectHost && project)),
-        );
-      if (projectHost && project) {
+      if (unsubProjectMa) {
+        unsubProjectMa();
+        unsubProjectMa = null;
+      }
+    }
+    function mountProjectDetail(
+      projectHost: HTMLElement,
+      project: MagicPointerProject,
+    ) {
+      cleanupProjectOverview();
+      const projectId = String(project.id || ProjectScope.key(project));
+      let disposed = false;
+      let loadGeneration = 0;
+      let latestOverviewState: Omit<ProjectOverviewState, 'actions'> | null =
+        null;
+      type CachedModelOption = {
+        model: string;
+        label?: string;
+        provider?: string;
+        profileId?: string;
+        active?: boolean;
+      };
+      const mergeAvailableModels = (
+        primary: readonly CachedModelOption[] | undefined,
+        secondary: readonly CachedModelOption[] | undefined,
+      ): CachedModelOption[] => {
+        const merged: CachedModelOption[] = [];
+        const seen = new Set<string>();
+        for (const list of [primary || [], secondary || []]) {
+          for (const item of list) {
+            const id = String(item?.model || '').trim();
+            if (!id || seen.has(id)) {
+              continue;
+            }
+            seen.add(id);
+            merged.push({...item, model: id});
+          }
+        }
+        return merged;
+      };
+      let cachedAvailableModels: CachedModelOption[] = [];
+      let cachedDefaultModel = '';
+      if (typeof options.data.models === 'function') {
+        void options.data
+          .models(true)
+          .then(catalog => {
+            if (disposed || !catalog) {
+              return;
+            }
+            cachedDefaultModel = String(catalog.current || '');
+            const collected: CachedModelOption[] = [];
+            for (const group of catalog.groups || []) {
+              for (const entry of group.models || []) {
+                const id = String(entry.id || '').trim();
+                if (!id) {
+                  continue;
+                }
+                collected.push({
+                  model: id,
+                  label: id,
+                  provider: group.provider || group.name,
+                  profileId: entry.profileId || group.profileId,
+                  active:
+                    id === catalog.current &&
+                    (entry.profileId || group.profileId || '') ===
+                      (catalog.currentProfileId || ''),
+                });
+              }
+            }
+            if (cachedDefaultModel) {
+              collected.unshift({
+                model: cachedDefaultModel,
+                label: cachedDefaultModel,
+                provider: catalog.provider,
+                profileId: catalog.currentProfileId,
+                active: true,
+              });
+            }
+            cachedAvailableModels = mergeAvailableModels(collected, []);
+            if (latestOverviewState && projectOverviewHandle) {
+              const existingCtx = latestOverviewState.modelContext || {};
+              const nextModels = mergeAvailableModels(
+                existingCtx.availableModels,
+                cachedAvailableModels,
+              );
+              if (
+                nextModels.length >
+                (existingCtx.availableModels?.length || 0)
+              ) {
+                latestOverviewState = {
+                  ...latestOverviewState,
+                  modelContext: {
+                    ...existingCtx,
+                    defaultModel:
+                      existingCtx.defaultModel || cachedDefaultModel,
+                    availableModels: nextModels,
+                  },
+                };
+                projectOverviewHandle.update({
+                  ...latestOverviewState,
+                  actions,
+                });
+              }
+            }
+          })
+          .catch(() => {});
+      }
+      const mountLegacy = () => {
         globalThis.ProjectWorkspace.mount(projectHost, project, conversations, {
           data: options.data,
           draft: options.projectDraft?.(ProjectScope.key(project)),
@@ -1594,6 +1711,525 @@
             void options.refreshSidebar();
           },
         });
+      };
+      if (
+        (typeof globalThis.ProjectOverview?.mountManaged !== 'function' &&
+          typeof globalThis.ProjectOverview?.mount !== 'function') ||
+        typeof options.data.projectsMaGetOverviewState !== 'function'
+      ) {
+        mountLegacy();
+        return;
+      }
+      const actions: ProjectOverviewActions = {
+        onBack: () => {
+          disposed = true;
+          cleanupProjectOverview();
+          options.show('projects');
+        },
+        onSendGoal: async text => {
+          await options.data.projectsMaSendGoal({
+            projectId,
+            projectRoot: project.root,
+            text,
+          });
+          await loadAndMount();
+          void options.refreshSidebar();
+        },
+        onStopRun: async threadId => {
+          const dataWithStop = options.data as MagicPointerDataApi & {
+            projectsMaStopRun?: (payload: {
+              projectId: string;
+              threadId?: string;
+            }) => Promise<Record<string, unknown>>;
+          };
+          if (typeof dataWithStop.projectsMaStopRun === 'function') {
+            await dataWithStop.projectsMaStopRun({projectId, threadId});
+          }
+          if (latestOverviewState && projectOverviewHandle) {
+            const runKey = threadId ? String(threadId) : 'coordinator';
+            const nextRuns = {...(latestOverviewState.activeRuns || {})};
+            delete nextRuns[runKey];
+            latestOverviewState = {
+              ...latestOverviewState,
+              activeRuns: nextRuns,
+              ...(threadId ? {} : {activeRun: null}),
+            };
+            projectOverviewHandle.update({...latestOverviewState, actions});
+          }
+          await loadAndMount();
+        },
+        onAnswerDecision: async (decisionId, optionIndex) => {
+          await options.data.projectsMaAnswerDecision({
+            projectId,
+            decisionId,
+            optionIndex,
+          });
+          await loadAndMount();
+          void options.refreshSidebar();
+        },
+        onWithdrawDecision: async decisionId => {
+          await options.data.projectsMaWithdrawDecision({
+            projectId,
+            decisionId,
+          });
+          await loadAndMount();
+        },
+        onSelectThread: async () => {},
+        onOpenSession: sessionId => {
+          if (sessionId) {
+            options.open?.(sessionId);
+          }
+        },
+        onStartThread: async input => {
+          const started = await options.data.projectsMaStartThread({
+            projectId,
+            projectRoot: project.root,
+            title: input.title,
+            prompt: input.prompt,
+            useWorktree: input.useWorktree,
+          });
+          if (started?.ok) {
+            await loadAndMount();
+            void options.refreshSidebar();
+          }
+          return {
+            ok: Boolean(started?.ok),
+            thread: started?.thread as ProjectOverviewThread | undefined,
+            error: started?.error ? String(started.error) : undefined,
+          };
+        },
+        onMessageThread: async (threadId, text) => {
+          const msgRes = await options.data.projectsMaMessageThread({
+            projectId,
+            threadId,
+            text,
+          });
+          if (msgRes?.ok) {
+            await loadAndMount();
+          }
+          return {
+            ok: Boolean(msgRes?.ok),
+            thread: msgRes?.thread as ProjectOverviewThread | undefined,
+            error: msgRes?.error ? String(msgRes.error) : undefined,
+          };
+        },
+        onResolveThread: async (threadId, resolved) => {
+          await options.data.projectsMaResolveThread({
+            projectId,
+            threadId,
+            resolved,
+          });
+          await loadAndMount();
+          void options.refreshSidebar();
+        },
+        onRemindThread: async (threadId, remindAt) => {
+          await options.data.projectsMaRemindThread({
+            projectId,
+            threadId,
+            remindAt,
+          });
+          await loadAndMount();
+        },
+        onInspectDiff: async threadId => {
+          const diffRes = await options.data.projectsMaInspectDiff({
+            projectId,
+            threadId,
+          });
+          const diff = typeof diffRes?.diff === 'string' ? diffRes.diff : '';
+          const files = Array.isArray(diffRes?.files)
+            ? diffRes.files.map(String)
+            : undefined;
+          const summary =
+            typeof diffRes?.summary === 'string' && diffRes.summary
+              ? diffRes.summary
+              : typeof diffRes?.changedFiles === 'number'
+                ? `${diffRes.changedFiles} file(s) changed (+${Number(diffRes.addedLines ?? 0)} / -${Number(diffRes.deletedLines ?? 0)})`
+                : typeof diffRes?.stat === 'string' && diffRes.stat
+                  ? diffRes.stat
+                  : undefined;
+          return {
+            ok: diffRes?.ok !== false,
+            diff,
+            summary,
+            files,
+            error: diffRes?.error ? String(diffRes.error) : undefined,
+          };
+        },
+        onMergeWorktree: async threadId => {
+          const mergeRes = await options.data.projectsMaMergeWorktree({
+            projectId,
+            threadId,
+          });
+          if (mergeRes?.ok) {
+            await loadAndMount();
+            void options.refreshSidebar();
+          }
+          return {
+            ok: Boolean(mergeRes?.ok),
+            error: mergeRes?.error ? String(mergeRes.error) : undefined,
+          };
+        },
+        onDiscardThread: async threadId => {
+          await options.data.projectsMaDiscardThread({
+            projectId,
+            threadId,
+          });
+          await loadAndMount();
+          void options.refreshSidebar();
+        },
+        onRefresh: async () => {
+          await loadAndMount();
+        },
+        onReadFile: async filePath => {
+          const fileRes = await options.data.projectsMaReadFile({
+            projectId,
+            path: filePath,
+          });
+          return {
+            content: String(fileRes?.content || ''),
+            sha256: fileRes?.sha256 ? String(fileRes.sha256) : undefined,
+          };
+        },
+        onSaveFile: async input => {
+          const writeRes = await options.data.projectsMaWriteFile({
+            projectId,
+            ...input,
+          });
+          return {
+            ok: Boolean(writeRes?.ok),
+            code: writeRes?.code ? String(writeRes.code) : undefined,
+            error: writeRes?.error ? String(writeRes.error) : undefined,
+          };
+        },
+        onReadMemory: async memPath => {
+          const memRes = await options.data.projectsMaReadMemory({
+            projectId,
+            path: memPath,
+          });
+          return {
+            path: String(memRes?.path || memPath),
+            content: String(memRes?.content || ''),
+            sha256: String(memRes?.sha256 || ''),
+            topicPaths: Array.isArray(memRes?.topicPaths)
+              ? memRes.topicPaths
+              : [],
+          };
+        },
+        onSaveMemory: async input => {
+          const memRes = await options.data.projectsMaWriteMemory({
+            projectId,
+            ...input,
+          });
+          return {
+            ok: Boolean(memRes?.ok),
+            sha256: memRes?.sha256 ? String(memRes.sha256) : undefined,
+            currentSha256: memRes?.currentSha256
+              ? String(memRes.currentSha256)
+              : undefined,
+            code: memRes?.code ? String(memRes.code) : undefined,
+            error: memRes?.error ? String(memRes.error) : undefined,
+          };
+        },
+        onSaveSettings: async patch => {
+          const cfgRes = await options.data.projectsMaUpdateConfig({
+            projectId,
+            projectRoot: project.root,
+            patch,
+          });
+          if (cfgRes?.ok) {
+            void loadAndMount();
+            void options.refreshSidebar();
+          }
+          return {
+            ok: Boolean(cfgRes?.ok),
+            error: cfgRes?.error ? String(cfgRes.error) : undefined,
+          };
+        },
+        onTogglePinArtifact: async (artifactId, pinned) => {
+          await options.data.projectsMaTogglePinArtifact({
+            projectId,
+            artifactId,
+            pinned,
+          });
+          await loadAndMount();
+        },
+        onDismissRecap: async () => {
+          await options.data.projectsMaDismissRecap({projectId});
+          await loadAndMount();
+        },
+        onUpdateSections: async patch => {
+          await options.data.projectsMaUpdateSections({
+            projectId,
+            ...patch,
+          });
+          await loadAndMount();
+        },
+        onTogglePause: async paused => {
+          await options.data.projectsMaUpdateConfig({
+            projectId,
+            projectRoot: project.root,
+            patch: {paused},
+          });
+          await loadAndMount();
+          void options.refreshSidebar();
+        },
+        onToggleArchive: async archived => {
+          await options.data.updateProject(project.root, {archived});
+          disposed = true;
+          cleanupProjectOverview();
+          options.show('projects');
+          void options.refreshSidebar();
+        },
+      };
+      const normalizeOverviewState = (
+        rawState: Omit<ProjectOverviewState, 'actions'>,
+      ): Omit<ProjectOverviewState, 'actions'> => {
+        const prevRuns = latestOverviewState?.activeRuns || {};
+        const incomingRuns = rawState.activeRuns
+          ? {...rawState.activeRuns}
+          : {...prevRuns};
+        if (rawState.activeRun && !incomingRuns.coordinator) {
+          incomingRuns.coordinator = rawState.activeRun;
+        } else if (
+          rawState.activeRun === null &&
+          !rawState.activeRuns &&
+          incomingRuns.coordinator
+        ) {
+          delete incomingRuns.coordinator;
+        }
+        const rawModelCtx = rawState.modelContext || {};
+        const mergedModels = mergeAvailableModels(
+          rawModelCtx.availableModels,
+          cachedAvailableModels,
+        );
+        const mergedModelCtx =
+          mergedModels.length ||
+          rawModelCtx.defaultModel ||
+          cachedDefaultModel ||
+          rawModelCtx.coordinatorModel ||
+          rawModelCtx.workerModel
+            ? {
+                ...rawModelCtx,
+                defaultModel: rawModelCtx.defaultModel || cachedDefaultModel,
+                availableModels: mergedModels,
+              }
+            : undefined;
+        return {
+          ...rawState,
+          activeRuns: incomingRuns,
+          ...(mergedModelCtx ? {modelContext: mergedModelCtx} : {}),
+        };
+      };
+      const loadAndMount = async () => {
+        const myGen = ++loadGeneration;
+        try {
+          const res = await options.data.projectsMaGetOverviewState({
+            projectId,
+            projectRoot: project.root,
+          });
+          if (
+            disposed ||
+            myGen !== loadGeneration ||
+            !res?.ok ||
+            !res.state ||
+            !projectHost.isConnected
+          ) {
+            if (
+              !disposed &&
+              projectHost.isConnected &&
+              !unmountProjectOverview &&
+              (!res?.ok || !res.state)
+            ) {
+              mountLegacy();
+            }
+            return;
+          }
+          const nextState = normalizeOverviewState(
+            res.state as Omit<ProjectOverviewState, 'actions'>,
+          );
+          latestOverviewState = nextState;
+          if (projectOverviewHandle) {
+            projectOverviewHandle.update({...nextState, actions});
+            return;
+          }
+          if (typeof globalThis.ProjectOverview?.mountManaged === 'function') {
+            const handle = globalThis.ProjectOverview.mountManaged(projectHost, {
+              ...nextState,
+              actions,
+            });
+            projectOverviewHandle = handle;
+            unmountProjectOverview = () => {
+              disposed = true;
+              latestOverviewState = null;
+              handle.unmount();
+            };
+          } else {
+            if (unmountProjectOverview) {
+              unmountProjectOverview();
+              unmountProjectOverview = null;
+            }
+            const rawUnmount = globalThis.ProjectOverview.mount(projectHost, {
+              ...nextState,
+              actions,
+            });
+            unmountProjectOverview = () => {
+              disposed = true;
+              latestOverviewState = null;
+              rawUnmount();
+            };
+          }
+        } catch (error) {
+          console.warn('[Projects] ProjectOverview mount failed:', error);
+          if (!disposed && projectHost.isConnected && !unmountProjectOverview) {
+            mountLegacy();
+          }
+        }
+      };
+      void loadAndMount();
+      if (typeof options.data.onProjectsMaEvent === 'function') {
+        unsubProjectMa = options.data.onProjectsMaEvent(evt => {
+          if (evt && evt.projectId && evt.projectId !== projectId) {
+            return;
+          }
+          const evtType = String(evt?.type || '');
+          const runKey = evt?.threadId ? String(evt.threadId) : 'coordinator';
+          if (
+            evtType === 'run_started' ||
+            evtType === 'stream_progress' ||
+            evtType === 'run_queued'
+          ) {
+            if (latestOverviewState && projectOverviewHandle) {
+              const prevRuns = latestOverviewState.activeRuns || {};
+              const prevRun = prevRuns[runKey];
+              const nextRun: ProjectOverviewActiveRun =
+                evtType === 'run_started'
+                  ? {
+                      running: true,
+                      startedAt:
+                        typeof evt?.startedAt === 'number'
+                          ? evt.startedAt
+                          : Date.now(),
+                      answer: '',
+                      thinking: '',
+                      trajectory: [],
+                      ...(typeof evt?.retryNotice === 'string' &&
+                      evt.retryNotice
+                        ? {retryNotice: evt.retryNotice}
+                        : {}),
+                      ...(typeof evt?.queuedCount === 'number'
+                        ? {queuedCount: evt.queuedCount}
+                        : {}),
+                    }
+                  : evtType === 'run_queued'
+                    ? {
+                        running: prevRun?.running ?? true,
+                        startedAt: prevRun?.startedAt ?? Date.now(),
+                        answer: prevRun?.answer || '',
+                        thinking: prevRun?.thinking || '',
+                        trajectory: prevRun?.trajectory || [],
+                        ...(prevRun?.retryNotice
+                          ? {retryNotice: prevRun.retryNotice}
+                          : {}),
+                        queuedCount:
+                          typeof evt?.queuedCount === 'number'
+                            ? evt.queuedCount
+                            : (prevRun?.queuedCount ?? 0) + 1,
+                      }
+                    : {
+                        running: evt?.running !== false,
+                        startedAt:
+                          prevRun?.startedAt ??
+                          (typeof evt?.startedAt === 'number'
+                            ? evt.startedAt
+                            : Date.now()),
+                        answer:
+                          typeof evt?.answer === 'string'
+                            ? evt.answer
+                            : prevRun?.answer || '',
+                        thinking:
+                          typeof evt?.thinking === 'string'
+                            ? evt.thinking
+                            : prevRun?.thinking || '',
+                        trajectory: Array.isArray(evt?.trajectory)
+                          ? (evt.trajectory as Array<Record<string, unknown>>)
+                          : prevRun?.trajectory || [],
+                        ...(typeof evt?.retryNotice === 'string' &&
+                        evt.retryNotice
+                          ? {retryNotice: evt.retryNotice}
+                          : {}),
+                        ...(typeof evt?.queuedCount === 'number'
+                          ? {queuedCount: evt.queuedCount}
+                          : prevRun?.queuedCount !== undefined
+                            ? {queuedCount: prevRun.queuedCount}
+                            : {}),
+                      };
+              const nextRuns = {...prevRuns, [runKey]: nextRun};
+              latestOverviewState = {
+                ...latestOverviewState,
+                activeRuns: nextRuns,
+                ...(runKey === 'coordinator' ? {activeRun: nextRun} : {}),
+              };
+              projectOverviewHandle.update({...latestOverviewState, actions});
+            }
+            return;
+          }
+          if (evtType === 'run_completed' && latestOverviewState) {
+            const nextRuns = {...(latestOverviewState.activeRuns || {})};
+            delete nextRuns[runKey];
+            latestOverviewState = {
+              ...latestOverviewState,
+              activeRuns: nextRuns,
+              ...(runKey === 'coordinator' ? {activeRun: null} : {}),
+            };
+            if (projectOverviewHandle) {
+              projectOverviewHandle.update({...latestOverviewState, actions});
+            }
+          }
+          if (
+            evtType === 'thread_started' ||
+            evtType === 'run_completed' ||
+            evtType === 'worktree_merged' ||
+            evtType === 'thread_discarded' ||
+            evtType.startsWith('decision_')
+          ) {
+            void options.refreshSidebar();
+          }
+          void loadAndMount();
+        });
+      }
+    }
+    function paint() {
+      cleanupProjectOverview();
+      const host = document.getElementById(`library-${activeView}`);
+      if (!host) {
+        return;
+      }
+      host.innerHTML =
+        (error
+          ? `<p class="mp-library-error" role="status">${escape(error)}</p>`
+          : '') +
+        (activeView === 'projects'
+          ? projectPage()
+          : activeView === 'scheduled'
+            ? scheduledPage()
+            : activeView === 'customize'
+              ? customizePage()
+              : activeView === 'chats'
+                ? chatsPage()
+                : designPage());
+      mountPreviews(host);
+      const projectHost = host.querySelector<HTMLElement>(
+        '.mp-project-detail-host',
+      );
+      const project = ProjectScope.find(projects, selectedProjectKey);
+      document
+        .querySelector<HTMLElement>('.mp-shell')
+        ?.setAttribute(
+          'data-project-detail',
+          String(Boolean(projectHost && project)),
+        );
+      if (projectHost && project) {
+        mountProjectDetail(projectHost, project);
       }
     }
     async function render(view: string, projectKey?: string) {
@@ -1602,6 +2238,7 @@
         selectedProjectKey = projectKey;
       }
       if (!hosts.includes(view)) {
+        cleanupProjectOverview();
         activeView = '';
         document
           .querySelector<HTMLElement>('.mp-shell')
@@ -1626,7 +2263,16 @@
         conversations = nextConversations;
         projects = nextProjects;
         if (view === 'designs') {
-          designArtifacts = await options.data.artifacts();
+          const [artifactsRes, canvasesRes] = await Promise.all([
+            options.data.artifacts(),
+            typeof options.data.designList === 'function'
+              ? options.data.designList()
+              : Promise.resolve({ok: true, canvases: []}),
+          ]);
+          designArtifacts = artifactsRes;
+          designCanvases = Array.isArray(canvasesRes?.canvases)
+            ? canvasesRes.canvases
+            : [];
           if (designLayout === 'grid') {
             void loadDesignContents();
           }
@@ -1925,6 +2571,14 @@
             },
             query,
           );
+        }
+        if (d.openDesignCanvas) {
+          (
+            globalThis as typeof globalThis & {
+              __mpPendingDesignCanvasSlug?: string;
+            }
+          ).__mpPendingDesignCanvasSlug = d.openDesignCanvas;
+          options.show('design');
         }
         if (d.libraryProject) {
           options.show('projects', d.libraryProject);

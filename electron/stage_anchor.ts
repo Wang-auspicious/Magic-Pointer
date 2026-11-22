@@ -266,8 +266,69 @@
     });
   }
 
+  function rectBox(value: unknown): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const r = value as Record<string, unknown>;
+    const x = Number(r.x);
+    const y = Number(r.y);
+    const width = Number(r.width);
+    const height = Number(r.height);
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      width <= 0 ||
+      height <= 0
+    ) {
+      return null;
+    }
+    return {x, y, width, height};
+  }
+
+  function chooseAdaptivePanelTransformOrigin(
+    source: unknown,
+    panel: unknown,
+  ): string {
+    const src = rectBox(source);
+    const pnl = rectBox(panel);
+    if (!src || !pnl) {
+      return 'center center';
+    }
+    if (pnl.x >= src.x + src.width - 8) {
+      return 'left center';
+    }
+    if (pnl.x + pnl.width <= src.x + 8) {
+      return 'right center';
+    }
+    if (pnl.y >= src.y + src.height - 8) {
+      return 'center top';
+    }
+    if (pnl.y + pnl.height <= src.y + 8) {
+      return 'center bottom';
+    }
+    const srcCx = src.x + src.width / 2;
+    const srcCy = src.y + src.height / 2;
+    const pnlCx = pnl.x + pnl.width / 2;
+    const pnlCy = pnl.y + pnl.height / 2;
+    const dx = pnlCx - srcCx;
+    const dy = pnlCy - srcCy;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx >= 0 ? 'left center' : 'right center';
+    }
+    return dy >= 0 ? 'center top' : 'center bottom';
+  }
+
   const StageAnchor = {
     chooseAdaptivePanelAnchor,
+    chooseAdaptivePanelTransformOrigin,
     choosePointerAnchor,
     chooseTargetInlineAnchor,
     chooseStableCapsuleAnchor,

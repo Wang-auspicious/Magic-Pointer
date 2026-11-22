@@ -1,5 +1,5 @@
 (() => {
-  type SurfaceRole = 'composer' | 'work-panel';
+  type SurfaceRole = 'composer' | 'work-panel' | 'workbench';
   type SurfaceSize = Readonly<{width: number; height: number}>;
   type UnknownRecord = Record<string, unknown>;
 
@@ -13,6 +13,7 @@
 
   const COMPOSER_SIZE = Object.freeze({width: 480, height: 56});
   const WORK_PANEL_SIZE = Object.freeze({width: 440, height: 533});
+  const WORKBENCH_SIZE = Object.freeze({width: 520, height: 600});
 
   function recordOf(value: unknown): UnknownRecord | null {
     return value !== null && typeof value === 'object'
@@ -26,7 +27,12 @@
   }
 
   function surfaceSize(role: SurfaceRole, viewport: unknown): SurfaceSize {
-    const desired = role === 'composer' ? COMPOSER_SIZE : WORK_PANEL_SIZE;
+    const desired =
+      role === 'composer'
+        ? COMPOSER_SIZE
+        : role === 'workbench'
+          ? WORKBENCH_SIZE
+          : WORK_PANEL_SIZE;
     const view = recordOf(viewport);
     const availableWidth = Math.max(0, finite(view?.width) - 16);
     const availableHeight = Math.max(0, finite(view?.height) - 16);
@@ -72,6 +78,7 @@
   const StageSurfacePolicy = {
     COMPOSER_SIZE,
     WORK_PANEL_SIZE,
+    WORKBENCH_SIZE,
     surfaceSize,
     stableSurfacePlacement,
   };

@@ -42,6 +42,7 @@ interface TurnEntry {
   facts: unknown[];
   artifacts: Artifact[];
   outcome: string;
+  interrupted?: boolean;
   failed?: boolean;
   error?: string;
   events?: unknown[];
@@ -155,6 +156,7 @@ export interface LearnBranch {
   parentTurnIndex: number;
   anchor: LearnAnchor;
   kind?: 'ask' | 'quiz' | 'feynman' | 'inquiry' | 'socratic';
+  surface?: 'side' | 'inline';
   title: string;
   agentSessionId: string;
   forkMessageCount?: number;
@@ -324,44 +326,79 @@ function isSubstantiveQuestion(title: unknown = ''): boolean {
 }
 
 function titleFrom(question: unknown = ''): string {
-  const clean = String(question).replace(/\s+/g, ' ').trim();
+  const raw = String(question || '');
+  let clean = raw
+    .replace(/<quoted_reply\b[^>]*>[\s\S]*?<\/quoted_reply>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) {
+    const commentMatch = /<quoted_reply\b[^>]*\bcomment="([^"]+)"/i.exec(raw);
+    if (commentMatch) {
+      clean = commentMatch[1]
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+  }
   if (!clean) {
     return '未命名';
   }
 
   let t = clean;
-  t = t.replace(/([？?])$/, '');
+  const firstSentence = t.split(/[。！？!?\n]/)[0]?.trim() || '';
+  if (firstSentence.length >= 4) {
+    t = firstSentence;
+  }
+  t = t.replace(/([？?。！!]+)$/, '').trim();
   for (const tail of [
+    '到底需要掌握什么',
+    '需要掌握什么',
+    '到底是咋回事',
+    '到底怎么回事',
     '是什么意思',
+    '是啥意思',
     '是干什么的',
     '是怎么回事',
+    '怎么办',
+    '咋办',
     '在干嘛',
     '在做什么',
     '怎么用',
     '怎么做',
+    '咋样',
     '为什么',
   ]) {
     if (t.endsWith(tail)) {
       t = t.slice(0, -tail.length).trim();
       break;
     }
+    const bare = t.replace(/[啊呀呢吗吧]+$/u, '').trim();
+    if (bare.endsWith(tail)) {
+      t = bare.slice(0, -tail.length).trim();
+      break;
+    }
   }
-  t = t.replace(/^(请|帮我|麻烦|能不能|可以|怎么|如何|为什么)/, '');
-  t = t.replace(/^(请问|我想问|问一下)/, '');
-  t = t.replace(/^(这个|这段|这行|这里|那边)/, '');
+  t = t.replace(/[啊呀呢吗吧]+$/u, '').trim();
+  t = t.replace(/^(?:请问一下|麻烦帮我|请帮我|帮我|能不能|可以|解释一下|介绍一下|讲一下|说一下|问一下|请问|我想问|为什么|怎么|如何|请|麻烦)/, '');
+  t = t.replace(/^(?:这个|这段|这行|这里|那边)/, '');
   t = t.trim();
   if (!t) {
     t = clean;
   }
 
-  if (t.length > TITLE_MAX) {
+  const cjkCount = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+  const maxLen = cjkCount >= 4 ? 18 : TITLE_MAX;
+  if (t.length > maxLen) {
     const cut = t.search(/[，。；,;:：]/);
-    if (cut > 0 && cut < TITLE_MAX) {
+    if (cut > 0 && cut < maxLen) {
       t = t.slice(0, cut).trim();
     }
   }
-  if (t.length > TITLE_MAX) {
-    t = `${t.slice(0, TITLE_MAX - 1)}…`;
+  if (t.length > maxLen) {
+    t = `${t.slice(0, maxLen - 1)}…`;
   }
   return t;
 }
@@ -952,6 +989,7 @@ function createConversationStore(
     answer?: unknown;
     taskContext?: unknown;
     outcome?: unknown;
+    interrupted?: unknown;
     failed?: unknown;
     error?: unknown;
     events?: unknown;
@@ -1020,6 +1058,9 @@ function createConversationStore(
     }
     if (input.outcome !== undefined) {
       turn.outcome = String(input.outcome || '').slice(0, 40);
+    }
+    if (typeof input.interrupted === 'boolean') {
+      turn.interrupted = input.interrupted;
     }
     if (typeof input.failed === 'boolean') {
       turn.failed = input.failed;
@@ -1509,6 +1550,24 @@ function createConversationStore(
     }
   }
 
+  function setAutoTitle(
+    id: unknown,
+    title: unknown,
+  ): {ok: boolean; conversation?: Conversation; error?: string} {
+    const clean = String(title || '')
+      .replace(/[\r\n]+/g, ' ')
+      .trim()
+      .slice(0, 36);
+    if (!clean) {
+      return {ok: false};
+    }
+    const target = load().find(conversation => conversation.id === id);
+    if (!target || target.titleCustom) {
+      return {ok: false};
+    }
+    return commitMetadata(target, {title: clean}, 'auto-title');
+  }
+
   function rename(
     id: unknown,
     title: unknown,
@@ -1666,6 +1725,7 @@ function createConversationStore(
     parentTurnIndex?: number;
     anchor?: unknown;
     kind?: LearnBranch['kind'];
+    surface?: LearnBranch['surface'];
     title?: string;
     agentSessionId: string;
     forkMessageCount?: number;
@@ -1704,6 +1764,7 @@ function createConversationStore(
         parentTurnIndex: Math.max(0, Math.floor(Number(input.parentTurnIndex) || 0)),
         anchor,
         ...(input.kind ? {kind: input.kind} : {}),
+        ...(input.surface ? {surface: input.surface} : {}),
         title: String(input.title || anchor.label).trim().slice(0, 120) || anchor.label,
         agentSessionId: String(input.agentSessionId || '').trim(),
         ...(Number.isInteger(input.forkMessageCount) &&
@@ -1760,6 +1821,7 @@ function createConversationStore(
     answer?: unknown;
     thinking?: unknown;
     outcome?: unknown;
+    interrupted?: unknown;
     failed?: unknown;
     error?: unknown;
     runtimeTurn?: unknown;
@@ -1793,6 +1855,9 @@ function createConversationStore(
       if (isTurnSettled(turn.outcome)) {
         turn.completedAt = updatedAt;
       }
+    }
+    if (typeof input.interrupted === 'boolean') {
+      turn.interrupted = input.interrupted;
     }
     if (typeof input.failed === 'boolean') {
       turn.failed = input.failed;
@@ -2157,6 +2222,7 @@ function createConversationStore(
     get,
     branch,
     rename,
+    setAutoTitle,
     remove,
     setProject,
     setWorkspace,

@@ -27,8 +27,8 @@ declare global {
   function themeCssVars(): string {
     const dark = document.documentElement.dataset.theme === 'dark';
     return dark
-      ? `:root{--bg:#191919;--surface:#20201f;--text:#ecebe6;--muted:#a4a29a;--border:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.20);--hover:rgba(255,255,255,.075);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--blue:#6da7ec;--green:#86efac;--danger:#ec7e7e;}`
-      : `:root{--bg:#ffffff;--surface:#f7f7f5;--text:#1f1f1d;--muted:#6e6d68;--border:rgba(11,11,11,.09);--border-strong:rgba(11,11,11,.18);--hover:rgba(11,11,11,.05);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--blue:#184f95;--green:#166534;--danger:#8e2626;}`;
+      ? `:root{--bg:#181817;--surface:#222220;--surface-2:#2c2c29;--text:#ecebe6;--ink:#ecebe6;--ink-2:#c7c5bc;--muted:#9b9990;--border:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.20);--hover:rgba(255,255,255,.075);--slider-track:rgba(255,255,255,.14);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--blue:#6da7ec;--teal:#5eead4;--purple:#c4b5fd;--amber:#fbbf24;--green:#86efac;--danger:#ec7e7e;--in:#6da7ec;--in-bg:rgba(109,167,236,.15);--out:#e89275;--out-bg:rgba(232,146,117,.16);--op:#6ee7b7;--op-bg:rgba(110,231,183,.14);--norm:#fcd34d;--norm-bg:rgba(252,211,77,.14);--loss:#f87171;--loss-bg:rgba(248,113,113,.15);--alt:#c4b5fd;--alt-bg:rgba(196,181,253,.15);--param:#f9a8d4;--wire:#8b8a82;--radius:8px;--radius-lg:12px;}`
+      : `:root{--bg:#ffffff;--surface:#f7f7f5;--surface-2:#ffffff;--text:#1f1f1d;--ink:#1f1f1d;--ink-2:#4a4945;--muted:#6e6d68;--border:rgba(11,11,11,.09);--border-strong:rgba(11,11,11,.18);--hover:rgba(11,11,11,.05);--slider-track:rgba(11,11,11,.10);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--blue:#2563eb;--teal:#0f766e;--purple:#7c3aed;--amber:#d97706;--green:#16a34a;--danger:#b42318;--in:#2563eb;--in-bg:rgba(37,99,235,.09);--out:#d97757;--out-bg:rgba(217,119,87,.11);--op:#15803d;--op-bg:rgba(21,128,61,.09);--norm:#b45309;--norm-bg:rgba(180,83,9,.10);--loss:#dc2626;--loss-bg:rgba(220,38,38,.09);--alt:#7c3aed;--alt-bg:rgba(124,58,237,.10);--param:#db2777;--wire:#71717a;--radius:8px;--radius-lg:12px;}`;
   }
 
   function ensureMessageListener(): void {
@@ -53,14 +53,107 @@ declare global {
       if (data.type === 'mp-iui-resize') {
         const frame = frameById.get(id);
         const h = Number(data.height);
-        if (frame && Number.isFinite(h) && h >= 100) {
-          frame.style.height = `${Math.min(720, Math.round(h) + 6)}px`;
+        if (frame && Number.isFinite(h) && h >= 80) {
+          const next = `${Math.max(88, Math.min(680, Math.ceil(h)))}px`;
+          if (frame.style.height !== next) {
+            frame.style.height = next;
+          }
         }
       } else if (data.type === 'mp-iui-ask' && typeof data.prompt === 'string') {
         const prompt = data.prompt.trim();
         if (prompt && activeAskHandler) {
           activeAskHandler(prompt);
         }
+      }
+    });
+  }
+
+  function portalExpandCard(
+    card: HTMLElement,
+    frame: HTMLIFrameElement,
+    expandBtn: HTMLButtonElement,
+  ): void {
+    const body = document.body;
+    let backdrop: HTMLElement | null = null;
+    let placeholder: HTMLElement | null = null;
+    let savedHeight = '';
+    let keyHandler: ((ev: KeyboardEvent) => void) | null = null;
+
+    const close = () => {
+      if (!backdrop) {
+        return;
+      }
+      if (keyHandler) {
+        document.removeEventListener('keydown', keyHandler);
+        keyHandler = null;
+      }
+      card.classList.remove('is-expanded');
+      frame.setAttribute('scrolling', 'no');
+      if (savedHeight) {
+        frame.style.height = savedHeight;
+      }
+      frame.contentWindow?.postMessage({type: 'mp-iui-expanded', expanded: false}, '*');
+      if (placeholder && placeholder.parentNode) {
+        placeholder.replaceWith(card);
+      } else if (backdrop.parentNode) {
+        backdrop.remove();
+      }
+      if (backdrop.parentNode) {
+        backdrop.remove();
+      }
+      backdrop = null;
+      placeholder = null;
+      expandBtn.title = '放大查看';
+      expandBtn.setAttribute('aria-label', '放大查看');
+      expandBtn.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE016;</span>';
+    };
+
+    const open = () => {
+      if (backdrop || !body) {
+        return;
+      }
+      savedHeight = frame.style.height || '180px';
+      placeholder = document.createElement('div');
+      placeholder.className = 'mp-iui-placeholder';
+      const measured = card.offsetHeight;
+      if (measured > 0) {
+        placeholder.style.height = `${measured}px`;
+      }
+      if (card.parentNode) {
+        card.parentNode.insertBefore(placeholder, card);
+      }
+      backdrop = document.createElement('div');
+      backdrop.className = 'mp-iui-lightbox-backdrop';
+      backdrop.setAttribute('role', 'dialog');
+      backdrop.setAttribute('aria-modal', 'true');
+      backdrop.addEventListener('click', event => {
+        if (event.target === backdrop) {
+          close();
+        }
+      });
+      keyHandler = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          close();
+        }
+      };
+      document.addEventListener('keydown', keyHandler);
+      card.classList.add('is-expanded');
+      frame.setAttribute('scrolling', 'yes');
+      backdrop.appendChild(card);
+      body.appendChild(backdrop);
+      frame.contentWindow?.postMessage({type: 'mp-iui-expanded', expanded: true}, '*');
+      expandBtn.title = '还原';
+      expandBtn.setAttribute('aria-label', '还原');
+      expandBtn.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE10F;</span>';
+    };
+
+    expandBtn.addEventListener('click', () => {
+      if (card.classList.contains('is-expanded')) {
+        close();
+      } else {
+        open();
       }
     });
   }
@@ -83,12 +176,22 @@ declare global {
       root.querySelectorAll<HTMLElement>('.mp-iui-card[data-iui-src]'),
     );
     for (const card of cards) {
-      if (card.dataset.iuiHydrated === 'true') {
+      const complete = card.dataset.iuiComplete !== 'false';
+      const rawSrc = (card.dataset.iuiSrc || '').trim();
+      if (!complete || !rawSrc) {
+        continue;
+      }
+      if (
+        card.dataset.iuiHydrated === 'true' &&
+        card.dataset.iuiHydratedSrc === rawSrc
+      ) {
         continue;
       }
       card.dataset.iuiHydrated = 'true';
-      const rawSrc = card.dataset.iuiSrc || '';
-      const title = card.dataset.iuiTitle || '交互式认知微件';
+      card.dataset.iuiHydratedSrc = rawSrc;
+      const sourceText = (card.dataset.iuiRawSource || rawSrc).trim();
+      const title = (card.dataset.iuiTitle || '').trim();
+      const kind = (card.dataset.iuiKind || 'html').trim();
       const widgetId = `iui-${++widgetSeq}`;
 
       card.replaceChildren();
@@ -97,69 +200,135 @@ declare global {
 
       const left = document.createElement('div');
       left.className = 'mp-iui-title-wrap';
-      const icon = document.createElement('span');
-      icon.className = 'cds-icon mp-iui-icon';
-      icon.dataset.size = 'small';
-      icon.setAttribute('aria-hidden', 'true');
-      icon.textContent = '\uE018';
-      const titleEl = document.createElement('strong');
-      titleEl.className = 'mp-iui-title';
-      titleEl.textContent = title;
-      left.append(icon, titleEl);
+      if (title) {
+        const titleEl = document.createElement('span');
+        titleEl.className = 'mp-iui-title';
+        titleEl.textContent = title;
+        left.append(titleEl);
+      }
 
       const actions = document.createElement('div');
       actions.className = 'mp-iui-actions';
 
-      const askBtn = document.createElement('button');
-      askBtn.type = 'button';
-      askBtn.className = 'mp-iui-btn';
-      askBtn.textContent = '就这个图追问';
-      askBtn.addEventListener('click', () => {
-        handlers?.onAskMentor?.(`结合「${title}」这个交互演示，我有一个疑问：`);
-      });
+      const reloadBtn = document.createElement('button');
+      reloadBtn.type = 'button';
+      reloadBtn.className = 'mp-iui-icon-btn';
+      reloadBtn.title = '重置演示';
+      reloadBtn.setAttribute('aria-label', '重置演示');
+      reloadBtn.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE11D;</span>';
 
       const vaultBtn = document.createElement('button');
       vaultBtn.type = 'button';
-      vaultBtn.className = 'mp-iui-btn';
-      vaultBtn.textContent = '存入知识库';
+      vaultBtn.className = 'mp-iui-icon-btn';
+      vaultBtn.title = '存入知识库';
+      vaultBtn.setAttribute('aria-label', '存入知识库');
+      vaultBtn.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE01E;</span>';
       vaultBtn.addEventListener('click', () => {
+        const noteTitle = title || '交互式演示';
         handlers?.onSaveToVault?.(
-          title,
-          `交互式学习微件「${title}」笔记：\n\n- [ ] 动手复盘该微件中的关键直觉与边界反例`,
+          noteTitle,
+          `交互式演示「${noteTitle}」笔记：\n\n- [ ] 复盘其中的关键直觉与边界情况`,
         );
-        vaultBtn.textContent = '已存入 ✓';
+        vaultBtn.classList.add('is-saved');
+        vaultBtn.innerHTML =
+          '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE03B;</span>';
+      });
+
+      const splitBtn = document.createElement('button');
+      splitBtn.type = 'button';
+      splitBtn.className = 'mp-iui-icon-btn';
+      splitBtn.title = '在右侧面板打开';
+      splitBtn.setAttribute('aria-label', '在右侧面板打开');
+      splitBtn.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE017;</span>';
+      splitBtn.addEventListener('click', () => {
+        if (typeof CustomEvent === 'function') {
+          card.dispatchEvent(
+            new CustomEvent('mp:open-inline-artifact', {
+              bubbles: true,
+              detail: {
+                id: widgetId,
+                title: title || (kind.startsWith('svg') ? 'SVG 图解' : '交互式可视化'),
+                kind: kind === 'svg-snippet' ? 'svg' : kind,
+                content: sourceText,
+                previewHtml: rawSrc,
+              },
+            }),
+          );
+        }
       });
 
       const expandBtn = document.createElement('button');
       expandBtn.type = 'button';
-      expandBtn.className = 'mp-iui-btn';
-      expandBtn.textContent = '放大';
-      expandBtn.addEventListener('click', () => {
-        const expanded = card.classList.toggle('is-expanded');
-        expandBtn.textContent = expanded ? '还原' : '放大';
-      });
-
-      actions.append(askBtn, vaultBtn, expandBtn);
-      head.append(left, actions);
+      expandBtn.className = 'mp-iui-icon-btn';
+      expandBtn.title = '放大查看';
+      expandBtn.setAttribute('aria-label', '放大查看');
+      expandBtn.innerHTML =
+        '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE016;</span>';
 
       const frame = document.createElement('iframe');
       frame.className = 'mp-iui-frame';
       frame.setAttribute('sandbox', 'allow-scripts');
       frame.setAttribute('referrerpolicy', 'no-referrer');
-      frame.title = title;
-      frame.style.height = '260px';
-      const payload = {id: widgetId, themeCss: themeCssVars(), html: rawSrc};
-      frame.addEventListener('load', () => {
+      frame.setAttribute('scrolling', 'no');
+      frame.title = title || 'Interactive visual';
+      frame.style.height = '180px';
+      const sendInit = () => {
+        const nextPayload = {
+          id: widgetId,
+          themeCss: themeCssVars(),
+          html: rawSrc,
+        };
         if (frame.contentWindow) {
-          pendingPayloadByWindow.set(frame.contentWindow, payload);
-          frame.contentWindow.postMessage({type: 'mp-iui-init', ...payload}, '*');
+          pendingPayloadByWindow.set(frame.contentWindow, nextPayload);
+          frame.contentWindow.postMessage(
+            {type: 'mp-iui-init', ...nextPayload},
+            '*',
+          );
         }
-      });
+      };
+      reloadBtn.addEventListener('click', sendInit);
+      frame.addEventListener('load', sendInit);
       frame.src = 'iui_sandbox.html';
       frameById.set(widgetId, frame);
+      portalExpandCard(card, frame, expandBtn);
+
+      if (card.dataset.iuiAllowSource === 'true') {
+        const sourceBtn = document.createElement('button');
+        sourceBtn.type = 'button';
+        sourceBtn.className = 'mp-iui-icon-btn mp-iui-code-btn';
+        sourceBtn.title = '查看源码';
+        sourceBtn.setAttribute('aria-label', '查看源码');
+        sourceBtn.textContent = '</>';
+        let sourcePre: HTMLPreElement | null = null;
+        sourceBtn.addEventListener('click', () => {
+          const showingSource = Boolean(sourcePre && !sourcePre.hidden);
+          if (!sourcePre) {
+            sourcePre = document.createElement('pre');
+            sourcePre.className = 'mp-iui-source';
+            sourcePre.textContent = sourceText;
+            card.appendChild(sourcePre);
+          }
+          sourcePre.hidden = showingSource;
+          frame.hidden = !showingSource;
+          sourceBtn.textContent = showingSource ? '</>' : '预览';
+          sourceBtn.title = showingSource ? '查看源码' : '返回可视化预览';
+          sourceBtn.setAttribute('aria-label', sourceBtn.title);
+        });
+        actions.append(sourceBtn, reloadBtn, vaultBtn, splitBtn, expandBtn);
+      } else {
+        actions.append(reloadBtn, vaultBtn, splitBtn, expandBtn);
+      }
+      head.append(left, actions);
       card.append(head, frame);
       if (frame.contentWindow) {
-        pendingPayloadByWindow.set(frame.contentWindow, payload);
+        pendingPayloadByWindow.set(frame.contentWindow, {
+          id: widgetId,
+          themeCss: themeCssVars(),
+          html: rawSrc,
+        });
       }
     }
   }

@@ -211,9 +211,88 @@ export function initialToolNames(context: {
   selectionSnapshot?: unknown;
   object?: Data;
   permissionMode?: string;
+  workMode?: string;
+  source?: string;
+  coachMode?: boolean;
+  computerUseMode?: 'autopilot' | 'coach' | null;
+  cuDesktopActive?: boolean;
+  cuDaemonAvailable?: boolean;
+  liveBrowserAvailable?: boolean;
 }): string[] {
-  const names = ['Tools', 'AskUser', 'ToolResult.read', 'Todo'];
-  if (context.workspace) {
+  const isLearn = context.workMode === 'learn' || context.workMode === 'work';
+  if (context.workMode === 'design') {
+    return [
+      'Tools',
+      'AskUser',
+      'ToolResult.read',
+      'Todo',
+      'Design.init_canvas',
+      'Design.upsert_board',
+      'Design.read_canvas',
+      'Design.list_canvases',
+      'Design.import_asset',
+      'Design.check',
+      'Design.generate_brand_system',
+      'Design.install_design_system',
+      'Design.export',
+      'Dashboard.list',
+      'Dashboard.inspect_source',
+      'Dashboard.create',
+      'Dashboard.open',
+      'Dashboard.update',
+      'Dashboard.trace',
+      'Artifact.create',
+      'Artifact.read',
+      'Artifact.update',
+      'Search',
+      'Fetch',
+    ];
+  }
+  if (context.workMode === 'project_coordinator') {
+    const coordinatorTools = [
+      'Tools',
+      'AskUser',
+      'ToolResult.read',
+      'Todo',
+      'Project.start_thread',
+      'Project.message_thread',
+      'Project.list_threads',
+      'Project.read_thread',
+      'Project.ask_decision',
+      'Project.set_thread_resolved',
+      'Project.update_memory',
+      'Project.write_file',
+      'Project.read_file',
+      'Project.publish_artifact',
+      'Project.refresh_status_page',
+      'Project.inspect_worktree_diff',
+      'Read',
+      'Grep',
+      'Glob',
+    ];
+    if (context.permissionMode !== 'safe') {
+      coordinatorTools.push(
+        'Artifact.create',
+        'Artifact.read',
+        'Artifact.update',
+      );
+    }
+    return coordinatorTools;
+  }
+  const names = isLearn
+    ? [
+        'Tools',
+        'AskUser',
+        'Search',
+        'Fetch',
+        'Knowledge.search',
+        'Knowledge.read',
+        'Artifact.create',
+        'Artifact.read',
+        'Artifact.update',
+      ]
+    : ['Tools', 'AskUser', 'ToolResult.read', 'Todo'];
+  if (!isLearn && context.workspace) {
     names.push('Read');
     if (
       context.permissionMode !== 'safe' &&
@@ -222,9 +301,13 @@ export function initialToolNames(context: {
       names.push('Write', 'Edit', 'Patch', 'Bash', 'Grep', 'Glob', 'BashRead');
     }
   }
+  if (!isLearn && context.permissionMode !== 'safe') {
+    names.push('Artifact.create', 'Artifact.read', 'Artifact.update');
+  }
   if (context.taskContext?.sources?.length) {
     names.push('Context.read', 'Context.search');
     if (
+      !isLearn &&
       context.taskContext.sources.some(source => {
         const capabilities = asObject(source).capabilities;
         return (
@@ -243,7 +326,137 @@ export function initialToolNames(context: {
     context.object?.hwnd ||
     context.object?.windowHwnd
   ) {
-    names.push('look', 'read_around', 'get_app_state');
+    names.push('look', 'read_around', 'get_app_state', 'Pointer.guide');
+  }
+  if (context.coachMode) {
+    for (const toolName of [
+      'list_windows',
+      'get_focused',
+      'get_app_state',
+      'observe_ui',
+      'search_ui',
+      'Pointer.guide',
+    ]) {
+      if (!names.includes(toolName)) {
+        names.push(toolName);
+      }
+    }
+  }
+  if (context.computerUseMode === 'autopilot') {
+    for (const toolName of [
+      'see_screen',
+      'inspect_at',
+      'list_apps',
+      'list_windows',
+      'inspect_tray',
+      'window_manage',
+      'get_focused',
+      'launch_app',
+      'activate_window',
+      'get_app_state',
+      'observe_ui',
+      'zoom_screen',
+      'search_ui',
+      'click',
+      'type_text',
+      'press_key',
+      'scroll',
+      'drag',
+      'desktop_batch',
+      'LiveBrowser.open',
+      'LiveBrowser.read_page',
+      'LiveBrowser.act',
+      'LiveBrowser.list_tabs',
+      'LiveBrowser.screenshot',
+      'Pointer.guide',
+      'DesktopWorkspace.open',
+      'DesktopWorkspace.launch',
+      'DesktopWorkspace.list_windows',
+      'DesktopWorkspace.inspect_ui',
+      'DesktopWorkspace.screenshot',
+      'DesktopWorkspace.act',
+      'DesktopWorkspace.batch',
+      'DesktopWorkspace.close',
+    ]) {
+      if (!names.includes(toolName)) {
+        names.push(toolName);
+      }
+    }
+  }
+  if (
+    context.permissionMode !== 'safe' &&
+    context.permissionMode !== 'plan' &&
+    (context.cuDesktopActive || (!isLearn && context.cuDaemonAvailable))
+  ) {
+    for (const toolName of [
+      'see_screen',
+      'inspect_at',
+      'list_windows',
+      'inspect_tray',
+      'window_manage',
+      'desktop_batch',
+      'zoom_screen',
+      'DesktopWorkspace.open',
+      'DesktopWorkspace.launch',
+      'DesktopWorkspace.list_windows',
+      'DesktopWorkspace.inspect_ui',
+      'DesktopWorkspace.screenshot',
+      'DesktopWorkspace.act',
+      'DesktopWorkspace.batch',
+      'DesktopWorkspace.close',
+    ]) {
+      if (!names.includes(toolName)) {
+        names.push(toolName);
+      }
+    }
+  }
+  if (
+    context.permissionMode !== 'safe' &&
+    context.permissionMode !== 'plan' &&
+    !isLearn &&
+    context.liveBrowserAvailable
+  ) {
+    for (const toolName of [
+      'LiveBrowser.open',
+      'LiveBrowser.read_page',
+      'LiveBrowser.act',
+      'LiveBrowser.list_tabs',
+      'LiveBrowser.screenshot',
+    ]) {
+      if (!names.includes(toolName)) {
+        names.push(toolName);
+      }
+    }
+  }
+  const hasSelectionSnapshot =
+    Boolean(context.selectionSnapshot) &&
+    typeof context.selectionSnapshot === 'object' &&
+    Object.keys(asObject(context.selectionSnapshot)).length > 0;
+  if (
+    (context.source === 'pointer_stage' || hasSelectionSnapshot) &&
+    context.permissionMode !== 'safe' &&
+    context.permissionMode !== 'plan'
+  ) {
+    for (const toolName of [
+      'see_screen',
+      'inspect_at',
+      'inspect_tray',
+      'zoom_screen',
+      'click',
+      'move',
+      'paste',
+      'type_text',
+      'press_key',
+      'scroll',
+      'drag',
+      'desktop_batch',
+      'Learn.capture_to_course',
+      'Pointer.guide',
+    ]) {
+      if (!names.includes(toolName)) {
+        names.push(toolName);
+      }
+    }
   }
   if (context.permissionMode === 'plan') {
     names.push('ExitPlanMode');
@@ -811,7 +1024,17 @@ export function registerWebTools(registry: ToolRegistry): void {
     name: 'Search',
     description:
       'Search the internet for titles, URLs and cited excerpts. Configured Exa returns at most five results with reported request cost; otherwise uses DuckDuckGo. Partition broad research into distinct entities or domains and use Fetch to verify selected sources.',
-    input_schema: schema({query: string, limit: integer}, ['query']),
+    input_schema: schema(
+      {
+        query: string,
+        limit: integer,
+        description: {
+          type: 'string',
+          description: 'Short 3-6 word summary of what this search looks up.',
+        },
+      },
+      ['query'],
+    ),
     is_concurrency_safe: true,
     timeout_ms: 30000,
     used_backend: exaKey ? 'exa_search' : 'duckduckgo_html',
@@ -878,7 +1101,17 @@ export function registerWebTools(registry: ToolRegistry): void {
     name: 'Fetch',
     description:
       'Fetch page text without running JavaScript. Redirects and unavailable content are reported explicitly.',
-    input_schema: schema({url: string, char_limit: integer}, ['url']),
+    input_schema: schema(
+      {
+        url: string,
+        char_limit: integer,
+        description: {
+          type: 'string',
+          description: 'Short 3-6 word summary of what this page read checks.',
+        },
+      },
+      ['url'],
+    ),
     is_concurrency_safe: true,
     timeout_ms: 40000,
     used_backend: 'native_fetch',

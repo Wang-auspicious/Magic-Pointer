@@ -353,8 +353,25 @@ export async function runPowerShellJson(
   return JSON.parse(lines.at(-1) || '{}') as DesktopRecord;
 }
 
-let compileTask: Promise<string> | undefined;
+const compileTasks = new Map<string, Promise<string>>();
 export async function ensureNativeTool(
+  name = 'desktop_host',
+  defines?: string,
+): Promise<string> {
+  const key = `${name}:${defines || ''}`;
+  const existing = compileTasks.get(key);
+  if (existing) {
+    return existing;
+  }
+  const task = compileNativeToolUncached(name, defines).catch(error => {
+    compileTasks.delete(key);
+    throw error;
+  });
+  compileTasks.set(key, task);
+  return task;
+}
+
+async function compileNativeToolUncached(
   name = 'desktop_host',
   defines?: string,
 ): Promise<string> {
@@ -451,11 +468,7 @@ class NativeDesktopHost {
       return this.startup;
     }
     this.startup = (async () => {
-      compileTask ??= ensureNativeTool().catch(error => {
-        compileTask = undefined;
-        throw error;
-      });
-      const executable = await compileTask;
+      const executable = await ensureNativeTool('desktop_host');
       const child = spawn(executable, [], {
         cwd: desktopRoot,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -654,6 +667,13 @@ function interruptedDesktopInput(): Error {
   error.name = 'AbortError';
   return error;
 }
+function escapedDesktopInput(): Error {
+  const error = new Error(
+    'computer_use_escape_stop: user pressed Escape to stop desktop automation',
+  );
+  error.name = 'AbortError';
+  return error;
+}
 async function desktopInput(
   params: DesktopRecord,
   signal?: AbortSignal,
@@ -664,6 +684,13 @@ async function desktopInput(
       ? waitForDesktop(() => nativeRequest('input', params, signal), signal)
       : nativeRequest('input', params, signal));
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'computer_use_escape_stop'
+    ) {
+      nativeRequest('release_input', {}).catch(() => {});
+      throw escapedDesktopInput();
+    }
     if (
       error instanceof Error &&
       error.message === 'computer_use_interrupted'
@@ -683,6 +710,77 @@ async function desktopInput(
     throw error;
   }
 }
+async function runInputWithObstructionRetry(
+  params: DesktopRecord,
+  signal?: AbortSignal,
+  allowWait = true,
+): Promise<DesktopRecord> {
+  try {
+    return await nonDisruptiveInput(params, signal, allowWait);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (
+      params.window?.hwnd &&
+      params.delivery !== 'background' &&
+      !params.screen_direct &&
+      (msg.startsWith('target_obscured') || msg === 'focus_lost')
+    ) {
+      await desktopInput(
+        {action: 'activate_window', window: params.window},
+        signal,
+      ).catch(() => {});
+      await delay(80, signal);
+      return nonDisruptiveInput(params, signal, allowWait);
+    }
+    throw error;
+  }
+}
+async function nonDisruptiveInput(
+  params: DesktopRecord,
+  signal?: AbortSignal,
+  allowWait = true,
+): Promise<DesktopRecord> {
+  const delivery = String(params.delivery || 'foreground');
+  const action = String(params.action || '');
+  const canTryBackground =
+    delivery === 'background' &&
+    ['click', 'type_text', 'press_key', 'scroll'].includes(action) &&
+    Number(params.window?.hwnd || 0) > 0;
+  if (canTryBackground) {
+    try {
+      const bg = await nativeRequest<DesktopRecord>('bg_input', params, signal);
+      if (bg && bg.ok && !bg.needsForeground) {
+        return {
+          ...bg,
+          delivery:
+            bg.usedBackend === 'win32_bg_uia'
+              ? 'background_uia'
+              : 'background_message',
+          disruptedUser: false,
+        };
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'target_elevated') {
+        throw elevatedTarget();
+      }
+      signal?.throwIfAborted();
+    }
+    if (delivery === 'background') {
+      return {
+        ok: false,
+        needsForeground: true,
+        delivery: 'background_unavailable',
+        disruptedUser: false,
+        usedBackend: 'native_desktop',
+      };
+    }
+  }
+  const fg = await desktopInput(params, signal, allowWait);
+  return {
+    ...fg,
+    delivery: fg.waitingForDesktop ? 'waiting' : 'cooperative_foreground',
+  };
+}
 export function closeDesktop(): void {
   host.close();
   selectionHost?.kill();
@@ -692,6 +790,65 @@ export async function listWindows(
   signal?: AbortSignal,
 ): Promise<DesktopWindow[]> {
   return nativeRequest<DesktopWindow[]>('windows', {}, signal);
+}
+export async function inspectTrayIcons(
+  signal?: AbortSignal,
+): Promise<DesktopRecord> {
+  return nativeRequest<DesktopRecord>('tray_icons', {}, signal);
+}
+export async function desktopOverview(
+  options: {includeClipboard?: boolean} = {},
+  signal?: AbortSignal,
+): Promise<DesktopRecord> {
+  return nativeRequest<DesktopRecord>(
+    'desktop_overview',
+    {includeClipboard: options.includeClipboard === true},
+    signal,
+  );
+}
+export async function inspectAtPoint(
+  x: number,
+  y: number,
+  signal?: AbortSignal,
+): Promise<DesktopRecord> {
+  return nativeRequest<DesktopRecord>(
+    'element_at',
+    {x: Math.round(x), y: Math.round(y)},
+    signal,
+  );
+}
+async function captureScaledScreenFrame(
+  bounds: Rect,
+  signal?: AbortSignal,
+): Promise<{
+  image: string;
+  mimeType: string;
+  width: number;
+  height: number;
+} | null> {
+  try {
+    const frame = await captureSurface(bounds, signal);
+    const sharp = (await import('sharp')).default;
+    const maxW = Math.min(MAX_OBSERVATION_EDGE, Math.max(1, frame.width));
+    const maxH = Math.min(MAX_OBSERVATION_EDGE, Math.max(1, frame.height));
+    const jpg = await sharp(frame.bytes)
+      .resize({
+        width: maxW,
+        height: maxH,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({quality: 84})
+      .toBuffer({resolveWithObject: true});
+    return {
+      image: jpg.data.toString('base64'),
+      mimeType: 'image/jpeg',
+      width: jpg.info.width,
+      height: jpg.info.height,
+    };
+  } catch {
+    return null;
+  }
 }
 /** The whole UIA tree of a window; `truncated` says the walk stopped early (row limit, deadline on a hung target, or a mid-walk error) so a missing element is not read as absent. */
 export type ElementList = DesktopElement[] & {
@@ -713,11 +870,149 @@ export async function listElements(
   return elements;
 }
 /** One observed element as it is now, found by runtime id; a vanished element rejects with `stale_element`. */
-export async function readElement(
+export function readElement(
   element: DesktopElement,
   signal?: AbortSignal,
 ): Promise<DesktopElement> {
   return nativeRequest<DesktopElement>('element', {element}, signal);
+}
+
+export async function executeGuidedClickStep(input: {
+  x: number;
+  y: number;
+  displayBounds?: [number, number, number, number];
+}): Promise<{
+  ok: boolean;
+  clicked: {x: number; y: number};
+  snappedControl?: SnappedDesktopControl;
+  visualDelta: {screenChanged: boolean; method: string; elapsedMs: number};
+  error?: string;
+}> {
+  const started = Date.now();
+  let targetX = Math.round(Number(input.x));
+  let targetY = Math.round(Number(input.y));
+  let snappedControl: SnappedDesktopControl | undefined;
+  let targetWindow: DesktopWindow | undefined;
+  try {
+    const windows = await listWindows();
+    targetWindow = windows.find(
+      w =>
+        w.pid !== process.pid &&
+        Array.isArray(w.bbox) &&
+        w.bbox.length === 4 &&
+        targetX >= w.bbox[0] &&
+        targetX <= w.bbox[2] &&
+        targetY >= w.bbox[1] &&
+        targetY <= w.bbox[3],
+    );
+    if (targetWindow) {
+      const elements = await listElements(targetWindow.hwnd).catch(() => []);
+      const snapped = snapDesktopPointToElement(
+        targetX,
+        targetY,
+        elements,
+        targetWindow,
+      );
+      if (snapped.snappedControl) {
+        targetX = snapped.x;
+        targetY = snapped.y;
+        snappedControl = snapped.snappedControl;
+      }
+    }
+  } catch {
+    /* Fall back to raw target coordinates if window/UIA inspection fails. */
+  }
+  const bbox: [number, number, number, number] = targetWindow?.bbox ??
+    input.displayBounds ?? [
+      Math.max(0, targetX - 160),
+      Math.max(0, targetY - 120),
+      targetX + 160,
+      targetY + 120,
+    ];
+  let beforeBytes: Buffer | null = null;
+  try {
+    const beforeFrame = await captureSurface(
+      bbox,
+      undefined,
+      targetWindow?.hwnd,
+    );
+    beforeBytes = beforeFrame.bytes;
+  } catch {
+    beforeBytes = null;
+  }
+  try {
+    const clickRes = await desktopInput({
+      action: 'click',
+      button: 'left',
+      count: 1,
+      x: targetX,
+      y: targetY,
+      ...(targetWindow ? {window: targetWindow} : {}),
+    });
+    if (clickRes.waitingForDesktop) {
+      return {
+        ok: false,
+        clicked: {x: targetX, y: targetY},
+        ...(snappedControl ? {snappedControl} : {}),
+        visualDelta: {
+          screenChanged: false,
+          method: 'desktop_busy',
+          elapsedMs: Date.now() - started,
+        },
+        error: 'desktop_busy',
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      clicked: {x: targetX, y: targetY},
+      ...(snappedControl ? {snappedControl} : {}),
+      visualDelta: {
+        screenChanged: false,
+        method: 'click_failed',
+        elapsedMs: Date.now() - started,
+      },
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  let screenChanged = false;
+  let method = 'capture_unavailable';
+  if (beforeBytes) {
+    try {
+      await delay(140);
+      const afterFrame = await captureSurface(
+        bbox,
+        undefined,
+        targetWindow?.hwnd,
+      );
+      const sharp = (await import('sharp')).default;
+      const [beforeRaw, afterRaw] = await Promise.all([
+        sharp(beforeBytes)
+          .resize(320, 180, {fit: 'fill'})
+          .raw()
+          .toBuffer({resolveWithObject: true}),
+        sharp(afterFrame.bytes)
+          .resize(320, 180, {fit: 'fill'})
+          .raw()
+          .toBuffer(),
+      ]);
+      screenChanged = patchesDiffer(
+        beforeRaw.data,
+        afterRaw,
+        beforeRaw.info.channels,
+      );
+      method = 'guided_step_pixel_diff';
+    } catch {
+      screenChanged = true;
+      method = 'window_closed_or_resized';
+    }
+  }
+  return {
+    ok: true,
+    clicked: {x: targetX, y: targetY},
+    ...(snappedControl ? {snappedControl} : {}),
+    visualDelta: {screenChanged, method, elapsedMs: Date.now() - started},
+  };
 }
 export async function captureSurface(
   bounds: Rect,
@@ -892,6 +1187,19 @@ function requireWindowRead(hwnd: number, scope?: WindowReadScope): void {
     throw new ActionFailure('permission_denied', access.reason);
   }
 }
+export function isWindowProcessAlive(pid: unknown): boolean {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) {
+    return false;
+  }
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === 'EPERM';
+  }
+}
+
 const effectRank: Effect[] = [
   'read',
   'reversible_write',
@@ -903,6 +1211,9 @@ const effectRank: Effect[] = [
 function strongerEffect(left: Effect, right: Effect): Effect {
   return effectRank.indexOf(left) >= effectRank.indexOf(right) ? left : right;
 }
+const MESSAGING_PROCESS_RE =
+  /(wechat|weixin|qq|dingtalk|feishu|lark|slack|teams|discord|telegram|outlook|thunderbird|foxmail|whatsapp)/i;
+
 function actionEffect(
   name: string,
   args: DesktopRecord,
@@ -911,6 +1222,7 @@ function actionEffect(
   if (
     [
       'list_apps',
+      'list_windows',
       'get_app_state',
       'find_roots',
       'observe_ui',
@@ -958,8 +1270,22 @@ function actionEffect(
     }, declared);
   }
   let observed: Effect = 'reversible_write';
-  if (name === 'type_text' && args.submit) {
-    observed = 'external_send';
+  if (name === 'window_manage' && args.action === 'close') {
+    observed = 'local_irreversible';
+  }
+  if ((name === 'type_text' || name === 'paste') && args.submit) {
+    const snap = session?.snapshots.get(
+      String(args.snapshot_id || args.state_id || ''),
+    );
+    if (
+      args.intent === 'send' ||
+      args.intent === 'submit' ||
+      (snap?.window &&
+        snap.window.desktop !== 'agent' &&
+        MESSAGING_PROCESS_RE.test(String(snap.window.process_name || '')))
+    ) {
+      observed = 'external_send';
+    }
   }
   if (name === 'press_key') {
     const keys = String(args.keys || '')
@@ -972,7 +1298,16 @@ function actionEffect(
       keys.some(key => ['enter', 'return'].includes(key)) &&
       !keys.includes('shift')
     ) {
-      observed = 'external_send';
+      const snap = session?.snapshots.get(
+        String(args.snapshot_id || args.state_id || ''),
+      );
+      if (
+        snap?.window &&
+        snap.window.desktop !== 'agent' &&
+        MESSAGING_PROCESS_RE.test(String(snap.window.process_name || ''))
+      ) {
+        observed = 'external_send';
+      }
     }
   }
   if (['click', 'perform_secondary_action'].includes(name)) {
@@ -1016,9 +1351,37 @@ function actionEffect(
   return strongerEffect(declared, observed);
 }
 
+export interface DesktopCursorEvent {
+  action: 'approach' | 'click' | 'move' | 'guide' | 'clear';
+  x: number;
+  y: number;
+  caption?: string;
+  nextStep?: string;
+  windowTitle?: string;
+  phase?: 'thinking' | 'acting';
+  button?: string;
+  count?: number;
+  ttlMs?: number;
+}
+
+export interface CachedScreenshotRegion {
+  id: string;
+  bounds: Rect;
+  width: number;
+  height: number;
+  scale: number;
+  hwnd?: number;
+  kind: 'screen' | 'zoom' | 'window' | 'frozen_frame';
+  createdAt: number;
+}
+
 export class DesktopActionSession {
   readonly snapshots = new Map<string, DesktopSnapshot>();
+  readonly screenshotCache = new Map<string, CachedScreenshotRegion>();
+  private screenshotSeq = 0;
   readonly roots = new Map<string, number>();
+  lastScreenBounds: Rect = [0, 0, 1920, 1080];
+  onCursorEvent?: (event: DesktopCursorEvent) => void;
   readonly observation = {
     windows: listWindows,
     elements: listElements,
@@ -1028,6 +1391,198 @@ export class DesktopActionSession {
     readonly sessionId: string = randomUUID(),
     readonly originWindowHwnd?: number,
   ) {}
+  registerScreenshot(meta: {
+    id?: string;
+    bounds: Rect;
+    width: number;
+    height: number;
+    scale?: number;
+    hwnd?: number;
+    kind: 'screen' | 'zoom' | 'window' | 'frozen_frame';
+  }): string {
+    const id = String(meta.id || `shot-${++this.screenshotSeq}`);
+    const [left, top, right, bottom] = meta.bounds;
+    const spanW = Math.max(1, right - left);
+    const width = Math.max(1, Math.round(meta.width));
+    const height = Math.max(1, Math.round(meta.height));
+    const scale =
+      typeof meta.scale === 'number' &&
+      Number.isFinite(meta.scale) &&
+      meta.scale > 0
+        ? meta.scale
+        : width / spanW;
+    this.screenshotCache.set(id, {
+      id,
+      bounds: [
+        Math.round(left),
+        Math.round(top),
+        Math.round(right),
+        Math.round(bottom),
+      ],
+      width,
+      height,
+      scale,
+      ...(meta.hwnd ? {hwnd: meta.hwnd} : {}),
+      kind: meta.kind,
+      createdAt: Date.now(),
+    });
+    while (this.screenshotCache.size > 32) {
+      let evictKey: string | undefined;
+      for (const k of this.screenshotCache.keys()) {
+        if (k !== 'pointer_frozen_frame') {
+          evictKey = k;
+          break;
+        }
+      }
+      if (!evictKey) {
+        break;
+      }
+      this.screenshotCache.delete(evictKey);
+    }
+    return id;
+  }
+  resolveScreenshotPoint(
+    screenshotId: string,
+    x: number,
+    y: number,
+  ): {x: number; y: number; bounds: Rect; hwnd?: number} {
+    const entry = this.screenshotCache.get(String(screenshotId || '').trim());
+    if (!entry) {
+      throw new ActionFailure(
+        'stale_snapshot',
+        `screenshot_id '${String(screenshotId)}' not found; call see_screen, zoom_screen, or get_app_state again`,
+      );
+    }
+    const rawX = Number(x);
+    const rawY = Number(y);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
+      throw new Error('pass finite x and y coordinates for screenshot_id');
+    }
+    const [left, top, right, bottom] = entry.bounds;
+    const bw = Math.max(1, right - left);
+    const bh = Math.max(1, bottom - top);
+    const sx =
+      entry.width > 0
+        ? Math.round(left + (rawX / entry.width) * bw)
+        : Math.round(left + rawX / (entry.scale || 1));
+    const sy =
+      entry.height > 0
+        ? Math.round(top + (rawY / entry.height) * bh)
+        : Math.round(top + rawY / (entry.scale || 1));
+    return {
+      x: sx,
+      y: sy,
+      bounds: entry.bounds,
+      ...(entry.hwnd ? {hwnd: entry.hwnd} : {}),
+    };
+  }
+  seedFrozenFrame(snapshot: Record<string, unknown>): string | null {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return null;
+    }
+    const tw =
+      snapshot.target_window && typeof snapshot.target_window === 'object'
+        ? (snapshot.target_window as DesktopRecord)
+        : undefined;
+    const rawBounds = Array.isArray(snapshot.selection_crop_bounds)
+      ? snapshot.selection_crop_bounds
+      : Array.isArray(snapshot.crop_bounds)
+        ? snapshot.crop_bounds
+        : Array.isArray(tw?.bbox)
+          ? tw.bbox
+          : null;
+    if (!rawBounds || rawBounds.length !== 4) {
+      return null;
+    }
+    const nums = rawBounds.map(v => Number(v));
+    if (nums.some(v => !Number.isFinite(v))) {
+      return null;
+    }
+    const [l, t, r, b] = nums as Rect;
+    if (r <= l || b <= t) {
+      return null;
+    }
+    const width = Number(snapshot.selection_crop_width) || r - l;
+    const height = Number(snapshot.selection_crop_height) || b - t;
+    const hwndVal = Number(
+      tw?.hwnd || snapshot.target_window_hwnd || snapshot.hwnd || 0,
+    );
+    return this.registerScreenshot({
+      id: 'pointer_frozen_frame',
+      bounds: [l, t, r, b],
+      width,
+      height,
+      ...(Number.isFinite(hwndVal) && hwndVal > 0 ? {hwnd: hwndVal} : {}),
+      kind: 'frozen_frame',
+    });
+  }
+  emitCursor(event: DesktopCursorEvent): void {
+    try {
+      this.onCursorEvent?.(event);
+    } catch {
+      /* Visual cursor overlay failures must never abort CU actions. */
+    }
+  }
+  windowCenter(window: DesktopWindow): {x: number; y: number} {
+    const [l, t, r, b] = window.bbox;
+    return {
+      x: Math.round((l + r) / 2),
+      y: Math.round((t + b) / 2),
+    };
+  }
+  cursorCaption(
+    name: string,
+    args: DesktopRecord,
+    window?: DesktopWindow,
+    element?: DesktopElement,
+  ): string {
+    const custom = String(args.label || '').trim();
+    if (custom) {
+      return custom.slice(0, 32);
+    }
+    const winLabel = String(
+      window?.title || window?.process_name || '窗口',
+    ).slice(0, 14);
+    switch (name) {
+      case 'click':
+        return element?.name
+          ? `点击「${String(element.name).slice(0, 14)}」`
+          : args.button === 'right'
+            ? '右键点击'
+            : Number(args.count) === 2
+              ? '双击'
+              : '点击';
+      case 'type_text':
+        return `输入「${String(args.text || '').slice(0, 12)}」`;
+      case 'paste':
+        return `粘贴「${String(args.text || '').slice(0, 12)}」`;
+      case 'move':
+        return '移动光标';
+      case 'press_key':
+        return `按键 ${String(args.keys || '').slice(0, 14)}`;
+      case 'scroll':
+        return '滚动浏览';
+      case 'drag':
+        return '拖拽操作';
+      case 'set_value':
+        return element?.name
+          ? `填写「${String(element.name).slice(0, 12)}」`
+          : '填写内容';
+      case 'perform_secondary_action':
+        return `执行 ${String(args.action || '操作').slice(0, 12)}`;
+      case 'observe_ui':
+      case 'get_app_state':
+        return `查看「${winLabel}」`;
+      case 'activate_window':
+        return `切换「${winLabel}」`;
+      case 'launch_app':
+        return `打开 ${String(args.app || '应用').slice(0, 14)}`;
+      case 'window_manage':
+        return `调整「${winLabel}」`;
+      default:
+        return name;
+    }
+  }
   rootRef(hwnd: number): string {
     for (const [ref, value] of this.roots) {
       if (value === hwnd) {
@@ -1037,6 +1592,28 @@ export class DesktopActionSession {
     const ref = `@r${this.roots.size + 1}`;
     this.roots.set(ref, hwnd);
     return ref;
+  }
+  resolveScreenPoint(
+    args: DesktopRecord,
+    keys: [string, string] = ['x', 'y'],
+  ): {x: number; y: number} {
+    const rawX = Number(args[keys[0]]);
+    const rawY = Number(args[keys[1]]);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
+      throw new Error(`pass numeric ${keys[0]} and ${keys[1]}`);
+    }
+    if (args.coordinate_space === 'normalized') {
+      const [left, top, right, bottom] = this.lastScreenBounds;
+      const width = Math.max(1, right - left);
+      const height = Math.max(1, bottom - top);
+      const nx = Math.max(0, Math.min(1000, rawX));
+      const ny = Math.max(0, Math.min(1000, rawY));
+      return {
+        x: Math.round(left + (nx / 1000) * width),
+        y: Math.round(top + (ny / 1000) * height),
+      };
+    }
+    return {x: Math.round(rawX), y: Math.round(rawY)};
   }
   toScreen(
     snapshot: DesktopSnapshot,
@@ -1074,13 +1651,16 @@ export class DesktopActionSession {
     args: DesktopRecord = {},
     signal?: AbortSignal,
   ): Promise<DesktopWindow> {
-    const windows = (await this.observation.windows(signal)).filter(
-      row => !/^Magic Pointer(?: |$)/i.test(row.title),
-    );
+    const allWindows = await this.observation.windows(signal);
+    const appQuery = String(args.app || '').trim().toLowerCase();
+    const windows = appQuery.includes('magic pointer')
+      ? allWindows
+      : allWindows.filter(row => !/^Magic Pointer(?: |$)/i.test(row.title));
     const id =
       args.hwnd ||
       (args.root ? this.roots.get(args.root) : undefined) ||
       Number(String(args.window_id || '').replace(/^w-/, ''));
+    const titleQuery = String(args.title || '').trim().toLowerCase();
     const candidates = windows
       .filter(window => !id || window.hwnd === Number(id))
       .filter(
@@ -1088,17 +1668,73 @@ export class DesktopActionSession {
       )
       .filter(
         window =>
-          !args.app ||
+          !appQuery ||
           `${window.process_name} ${window.title}`
             .toLowerCase()
-            .includes(String(args.app).toLowerCase()),
+            .includes(appQuery),
+      )
+      .filter(
+        window =>
+          !titleQuery ||
+          String(window.title || '')
+            .toLowerCase()
+            .includes(titleQuery),
       );
     const window =
-      candidates.find(row => !id && row.hwnd === this.originWindowHwnd) ||
+      candidates.find(
+        row =>
+          !id &&
+          !appQuery &&
+          !titleQuery &&
+          row.hwnd === this.originWindowHwnd &&
+          isWindowProcessAlive(row.pid),
+      ) ||
       candidates.find(row => row.focused) ||
       candidates[0];
+    if (!window && id && !appQuery && !titleQuery) {
+      const priorSnap = [...this.snapshots.values()]
+        .reverse()
+        .find(s => s.window.hwnd === Number(id));
+      if (priorSnap) {
+        const procLower = String(
+          priorSnap.window.process_name || '',
+        ).toLowerCase();
+        const titleLower = String(priorSnap.window.title || '').toLowerCase();
+        const sameProc = windows.filter(
+          w =>
+            (args.pid === undefined || w.pid === Number(args.pid)) &&
+            String(w.process_name || '').toLowerCase() === procLower &&
+            isWindowProcessAlive(w.pid),
+        );
+        const rehydrated =
+          (titleLower
+            ? sameProc.find(w =>
+                String(w.title || '')
+                  .toLowerCase()
+                  .includes(titleLower.slice(0, 24)),
+              )
+            : undefined) ||
+          sameProc.find(w => w.focused) ||
+          sameProc[0];
+        if (rehydrated) {
+          return rehydrated;
+        }
+      }
+    }
     if (!window) {
-      throw new ActionFailure('tool_error', 'window not found');
+      const availableSummary = windows
+        .slice(0, 12)
+        .map(
+          w =>
+            `"${w.title || '(untitled)'}" [${w.process_name || 'app'} hwnd:${w.hwnd} pid:${w.pid}]`,
+        )
+        .join('; ');
+      throw new ActionFailure(
+        'tool_error',
+        availableSummary
+          ? `window not found. Available windows: ${availableSummary}`
+          : 'window not found (no visible windows)',
+      );
     }
     return window;
   }
@@ -1107,8 +1743,12 @@ export class DesktopActionSession {
     signal?: AbortSignal,
     readScope?: WindowReadScope,
     capture: SurfaceCapture = captureSurface,
+    autoBindTarget?: (window: DesktopWindow) => unknown | Promise<unknown>,
   ): Promise<DesktopSnapshot> {
     const window = await this.resolveWindow(args, signal);
+    if (autoBindTarget && readScope?.(window.hwnd).allowed === false) {
+      await autoBindTarget(window);
+    }
     requireWindowRead(window.hwnd, readScope);
     const mode = String(args.mode || 'ax');
     if (mode === 'all') {
@@ -1264,6 +1904,7 @@ export class DesktopActionSession {
     y: number;
     element?: DesktopElement;
     snappedControl?: SnappedDesktopControl;
+    pixelDriftDetected?: boolean;
   }> {
     const element = this.element(snapshot, args);
     if (element && (args.x !== undefined || args.y !== undefined)) {
@@ -1273,6 +1914,7 @@ export class DesktopActionSession {
     let y: number;
     let resolvedElement = element;
     let snappedControl: SnappedDesktopControl | undefined;
+    let pixelDriftDetected = false;
     if (resolvedElement) {
       await this.requireSnapshot(snapshot.snapshot_id, signal, [
         resolvedElement.index,
@@ -1280,7 +1922,20 @@ export class DesktopActionSession {
       x = Math.round((resolvedElement.rect[0] + resolvedElement.rect[2]) / 2);
       y = Math.round((resolvedElement.rect[1] + resolvedElement.rect[3]) / 2);
     } else {
-      ({x, y} = this.toScreen(snapshot, args));
+      if (
+        typeof args.screenshot_id === 'string' &&
+        args.screenshot_id.trim() &&
+        Number.isFinite(Number(args.x)) &&
+        Number.isFinite(Number(args.y))
+      ) {
+        ({x, y} = this.resolveScreenshotPoint(
+          String(args.screenshot_id),
+          Number(args.x),
+          Number(args.y),
+        ));
+      } else {
+        ({x, y} = this.toScreen(snapshot, args));
+      }
       if (!Number.isFinite(x) || !Number.isFinite(y)) {
         throw new Error('pass index/ref or both x and y');
       }
@@ -1331,29 +1986,79 @@ export class DesktopActionSession {
         sharp(live.bytes).extract(region).raw().toBuffer(),
       ]);
       if (patchesDiffer(before.data, after, before.info.channels)) {
-        throw new ActionFailure(
-          'stale_snapshot',
-          'target pixels changed since snapshot; call Observe again',
-        );
+        if (args.strict_pixel_guard === true) {
+          throw new ActionFailure(
+            'stale_snapshot',
+            'target pixels changed since snapshot; call Observe again',
+          );
+        }
+        // Self-drawn players/canvases/animations continuously mutate pixels; log drift without blocking interaction.
+        pixelDriftDetected = true;
       }
     }
-    return {x, y, element: resolvedElement, snappedControl};
+    return {
+      x,
+      y,
+      element: resolvedElement,
+      snappedControl,
+      ...(pixelDriftDetected ? {pixelDriftDetected} : {}),
+    };
   }
   async call(
     name: string,
     args: DesktopRecord = {},
     signal?: AbortSignal,
     readScope?: WindowReadScope,
+    autoBindTarget?: (window: DesktopWindow) => unknown | Promise<unknown>,
   ): Promise<DesktopRecord> {
     signal?.throwIfAborted();
     const discoverable = (window: DesktopWindow) =>
-      readScope?.(window.hwnd).allowed === false
+      !autoBindTarget && readScope?.(window.hwnd).allowed === false
         ? {...window, title: ''}
         : window;
-    if (name === 'list_apps') {
+    if (name === 'list_apps' || name === 'list_windows') {
+      const rows = (await this.observation.windows(signal))
+        .map(discoverable)
+        .map(row => ({
+          ...row,
+          window_id: row.window_id || `w-${row.hwnd}`,
+          desktop: row.desktop || 'default',
+        }));
+      return name === 'list_windows'
+        ? {windows: rows, count: rows.length, usedBackend: 'win32_windows'}
+        : {apps: rows, usedBackend: 'win32_windows'};
+    }
+    if (name === 'window_manage') {
+      const window = await this.resolveWindow(args, signal);
+      if (autoBindTarget) {
+        await autoBindTarget(window);
+      }
+      requireWindowRead(window.hwnd, readScope);
+      const center = this.windowCenter(window);
+      this.emitCursor({
+        action: 'move',
+        ...center,
+        caption: this.cursorCaption(name, args, window),
+        nextStep: String(args.next_step || '').trim() || undefined,
+        windowTitle: window.title || window.process_name,
+        phase: 'acting',
+      });
+      const res = await nativeRequest<DesktopRecord>(
+        'window_manage',
+        {
+          hwnd: window.hwnd,
+          action: String(args.action || 'restore'),
+          ...(args.x !== undefined ? {x: Number(args.x)} : {}),
+          ...(args.y !== undefined ? {y: Number(args.y)} : {}),
+          ...(args.width !== undefined ? {width: Number(args.width)} : {}),
+          ...(args.height !== undefined ? {height: Number(args.height)} : {}),
+        },
+        signal,
+      );
       return {
-        apps: (await this.observation.windows(signal)).map(discoverable),
-        usedBackend: 'win32_windows',
+        ...res,
+        window,
+        usedBackend: 'win32_window_manage',
       };
     }
     if (name === 'find_roots') {
@@ -1386,22 +2091,55 @@ export class DesktopActionSession {
       };
     }
     if (name === 'get_app_state' || name === 'observe_ui') {
-      const snapshot = await this.observe(args, signal, readScope);
+      const snapshot = await this.observe(
+        args,
+        signal,
+        readScope,
+        captureSurface,
+        autoBindTarget,
+      );
+      const center = this.windowCenter(snapshot.window);
+      this.emitCursor({
+        action: 'move',
+        ...center,
+        caption: this.cursorCaption(name, args, snapshot.window),
+        nextStep: String(args.next_step || '').trim() || undefined,
+        windowTitle: snapshot.window.title || snapshot.window.process_name,
+        phase: 'thinking',
+      });
       const {
         surface: _surface,
         markedImage,
         marks: _marks,
         ...publicSnapshot
       } = snapshot;
+      const [winLeft, winTop, winRight, winBottom] = snapshot.window.bbox;
+      const screenshotId = markedImage
+        ? this.registerScreenshot({
+            bounds: snapshot.window.bbox,
+            width: Math.max(
+              1,
+              Math.round((winRight - winLeft) * (snapshot.imageScale || 1)),
+            ),
+            height: Math.max(
+              1,
+              Math.round((winBottom - winTop) * (snapshot.imageScale || 1)),
+            ),
+            scale: snapshot.imageScale || 1,
+            hwnd: snapshot.window.hwnd,
+            kind: 'window',
+          })
+        : undefined;
       const image = markedImage
         ? {
             image: markedImage.toString('base64'),
             mimeType: 'image/png',
+            ...(screenshotId ? {screenshot_id: screenshotId} : {}),
             imageLabel: `${snapshot.window.title || snapshot.window.process_name} (state ${snapshot.state_id}); boxes are labelled with element refs`,
             imageSpace: {
               scale: snapshot.imageScale,
               origin: snapshot.window.bbox.slice(0, 2),
-              hint: "click by ref when a box covers the target; otherwise pass the image x/y with coordinate_space:'image'",
+              hint: "click by ref when a box covers the target; otherwise pass the image x/y with coordinate_space:'image' or screenshot_id",
             },
           }
         : {};
@@ -1463,6 +2201,16 @@ export class DesktopActionSession {
         const window =
           windows.find(row => row.pid === result.pid) ||
           (matches.length === 1 ? matches[0] : undefined);
+        if (window) {
+          this.emitCursor({
+            action: 'move',
+            ...this.windowCenter(window),
+            caption: this.cursorCaption(name, args, window),
+            nextStep: String(args.next_step || '').trim() || undefined,
+            windowTitle: window.title || window.process_name,
+            phase: 'acting',
+          });
+        }
         return {
           ...result,
           ...(window ? {window} : {}),
@@ -1485,6 +2233,15 @@ export class DesktopActionSession {
     }
     if (name === 'activate_window') {
       const window = await this.resolveWindow(args, signal);
+      const center = this.windowCenter(window);
+      this.emitCursor({
+        action: 'move',
+        ...center,
+        caption: this.cursorCaption(name, args, window),
+        nextStep: String(args.next_step || '').trim() || undefined,
+        windowTitle: window.title || window.process_name,
+        phase: 'acting',
+      });
       const result = await desktopInput({action: name, window}, signal);
       if (result.waitingForDesktop) {
         return result;
@@ -1525,6 +2282,236 @@ export class DesktopActionSession {
       if (prior) {
         requireWindowRead(prior.window.hwnd, readScope);
       }
+    }
+    const hasScreenshotId =
+      typeof args.screenshot_id === 'string' &&
+      args.screenshot_id.trim().length > 0;
+    if (
+      ['click', 'move', 'scroll', 'drag'].includes(name) &&
+      (hasScreenshotId ||
+        args.coordinate_space === 'screen' ||
+        args.coordinate_space === 'normalized') &&
+      Number.isFinite(Number(args.x)) &&
+      Number.isFinite(Number(args.y)) &&
+      !args.snapshot_id &&
+      !args.state_id &&
+      !args.ref &&
+      args.index === undefined
+    ) {
+      const resolvedStart = hasScreenshotId
+        ? this.resolveScreenshotPoint(
+            String(args.screenshot_id),
+            Number(args.x),
+            Number(args.y),
+          )
+        : this.resolveScreenPoint(args);
+      const sx = resolvedStart.x;
+      const sy = resolvedStart.y;
+      const dragTo =
+        name === 'drag'
+          ? hasScreenshotId
+            ? this.resolveScreenshotPoint(
+                String(args.screenshot_id),
+                Number(args.to_x),
+                Number(args.to_y),
+              )
+            : this.resolveScreenPoint(args, ['to_x', 'to_y'])
+          : undefined;
+      const mappedPath =
+        name === 'drag' && Array.isArray(args.path)
+          ? (args.path as DesktopRecord[])
+              .map(pt =>
+                hasScreenshotId
+                  ? this.resolveScreenshotPoint(
+                      String(args.screenshot_id),
+                      Number(pt.x),
+                      Number(pt.y),
+                    )
+                  : this.resolveScreenPoint({
+                      ...pt,
+                      coordinate_space: args.coordinate_space,
+                    }),
+              )
+              .map(pt => ({x: pt.x, y: pt.y}))
+          : undefined;
+      const caption =
+        String(args.label || '').trim() ||
+        (name === 'click'
+          ? args.button === 'right'
+            ? '右键点击'
+            : Number(args.count) === 2
+              ? '双击'
+              : '点击屏幕'
+          : name === 'scroll'
+            ? '滚动画面'
+            : name === 'drag'
+              ? '拖拽操作'
+              : '移动光标');
+      const nextStep = String(args.next_step || '').trim() || undefined;
+      if (name === 'click') {
+        this.emitCursor({
+          action: 'approach',
+          x: sx,
+          y: sy,
+          caption,
+          nextStep,
+          phase: 'acting',
+        });
+        this.emitCursor({
+          action: 'click',
+          x: sx,
+          y: sy,
+          button: args.button === 'right' ? 'right' : 'left',
+          count: Number(args.count) || 1,
+          caption,
+          nextStep,
+          phase: 'acting',
+        });
+      } else {
+        this.emitCursor({
+          action: 'move',
+          x: sx,
+          y: sy,
+          caption,
+          nextStep,
+          phase: 'acting',
+        });
+      }
+      const result = await nonDisruptiveInput(
+        {
+          action: name,
+          x: sx,
+          y: sy,
+          ...(dragTo ? {to_x: dragTo.x, to_y: dragTo.y} : {}),
+          ...(mappedPath && mappedPath.length > 1 ? {path: mappedPath} : {}),
+          ...(args.button ? {button: args.button} : {}),
+          ...(args.count !== undefined ? {count: Number(args.count)} : {}),
+          ...(args.dx !== undefined ? {dx: Number(args.dx)} : {}),
+          ...(args.dy !== undefined ? {dy: Number(args.dy)} : {}),
+          ...(args.duration_ms !== undefined
+            ? {duration_ms: Number(args.duration_ms)}
+            : {}),
+          ...(args.restore_cursor !== undefined
+            ? {restore_cursor: Boolean(args.restore_cursor)}
+            : {}),
+          delivery: 'foreground',
+          screen_direct: true,
+        },
+        signal,
+      );
+      return {
+        ...result,
+        x: sx,
+        y: sy,
+        ...(dragTo ? {to_x: dragTo.x, to_y: dragTo.y} : {}),
+        ...(hasScreenshotId
+          ? {screenshot_id: String(args.screenshot_id)}
+          : {}),
+        coordinate_space: hasScreenshotId
+          ? 'screenshot'
+          : String(args.coordinate_space),
+        verification: {
+          matched: true,
+          method: 'win32_send_input',
+          scope: 'ui_action_readback',
+        },
+      };
+    }
+    if (
+      (['type_text', 'press_key'].includes(name) || name === 'paste') &&
+      !args.snapshot_id &&
+      !args.state_id &&
+      !args.ref &&
+      args.index === undefined &&
+      !args.hwnd &&
+      !args.window_id &&
+      !args.pid &&
+      !args.app
+    ) {
+      const hasPoint =
+        Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y));
+      const pt = hasPoint
+        ? hasScreenshotId
+          ? this.resolveScreenshotPoint(
+              String(args.screenshot_id),
+              Number(args.x),
+              Number(args.y),
+            )
+          : this.resolveScreenPoint(args)
+        : {
+            x: Math.round(
+              (this.lastScreenBounds[0] + this.lastScreenBounds[2]) / 2,
+            ),
+            y: Math.round(
+              (this.lastScreenBounds[1] + this.lastScreenBounds[3]) / 2,
+            ),
+          };
+      const caption = this.cursorCaption(name, args);
+      const nextStep = String(args.next_step || '').trim() || undefined;
+      this.emitCursor({
+        action: 'move',
+        x: pt.x,
+        y: pt.y,
+        caption,
+        nextStep,
+        phase: 'acting',
+      });
+      if (name === 'type_text' && hasPoint) {
+        const clicked = await nonDisruptiveInput(
+          {
+            action: 'click',
+            x: pt.x,
+            y: pt.y,
+            delivery: 'foreground',
+            screen_direct: true,
+          },
+          signal,
+        );
+        if (clicked.waitingForDesktop) {
+          return clicked;
+        }
+      }
+      const result = await nonDisruptiveInput(
+        {
+          ...args,
+          ...(hasPoint ? {x: pt.x, y: pt.y} : {}),
+          ...(name === 'paste' && args.format ? {format: String(args.format)} : {}),
+          action: name,
+          delivery: 'foreground',
+          screen_direct: true,
+        },
+        signal,
+      );
+      if (result.waitingForDesktop) {
+        return result;
+      }
+      if (name === 'type_text' && args.submit === true) {
+        await nonDisruptiveInput(
+          {
+            action: 'press_key',
+            keys: 'enter',
+            delivery: 'foreground',
+            screen_direct: true,
+          },
+          signal,
+          false,
+        );
+      }
+      return {
+        ...result,
+        ...(hasPoint ? {x: pt.x, y: pt.y} : {}),
+        ...(hasScreenshotId
+          ? {screenshot_id: String(args.screenshot_id)}
+          : {}),
+        submitted:
+          name === 'type_text' || name === 'paste' ? Boolean(args.submit) : false,
+        usedBackend: result.usedBackend || 'win32_send_input',
+        verification: {
+          matched: true,
+          method: 'win32_send_input',
+          scope: 'ui_action_readback',
+        },
+      };
     }
     const snapshot = await this.requireSnapshot(
       args.snapshot_id || args.state_id,
@@ -1736,6 +2723,17 @@ export class DesktopActionSession {
         throw new Error('element index/ref required');
       }
       await this.requireSnapshot(snapshot.snapshot_id, signal, [element.index]);
+      const elX = Math.round((element.rect[0] + element.rect[2]) / 2);
+      const elY = Math.round((element.rect[1] + element.rect[3]) / 2);
+      this.emitCursor({
+        action: 'move',
+        x: elX,
+        y: elY,
+        caption: this.cursorCaption(name, args, snapshot.window, element),
+        nextStep: String(args.next_step || '').trim() || undefined,
+        windowTitle: snapshot.window.title || snapshot.window.process_name,
+        phase: 'acting',
+      });
       let result: DesktopRecord;
       try {
         result = await nativeRequest(
@@ -1783,8 +2781,9 @@ export class DesktopActionSession {
     }
     let coordinates: DesktopRecord = {};
     if (
-      ['click', 'drag', 'scroll', 'select_text'].includes(name) ||
-      (name === 'type_text' && (element || args.x !== undefined))
+      ['click', 'move', 'drag', 'scroll', 'select_text'].includes(name) ||
+      ((name === 'type_text' || name === 'paste') &&
+        (element || args.x !== undefined))
     ) {
       coordinates = await this.point(snapshot, args, signal);
     }
@@ -1803,17 +2802,112 @@ export class DesktopActionSession {
           x: args.to_x,
           y: args.to_y,
           coordinate_space: args.coordinate_space,
+          ...(args.screenshot_id ? {screenshot_id: args.screenshot_id} : {}),
+          ...(args.strict_pixel_guard !== undefined
+            ? {strict_pixel_guard: args.strict_pixel_guard}
+            : {}),
         },
         signal,
       );
       coordinates.to_x = target.x;
       coordinates.to_y = target.y;
+      if (Array.isArray(args.path)) {
+        coordinates.path = (args.path as DesktopRecord[]).map(pt =>
+          typeof args.screenshot_id === 'string' && args.screenshot_id.trim()
+            ? (() => {
+                const mapped = this.resolveScreenshotPoint(
+                  String(args.screenshot_id),
+                  Number(pt.x),
+                  Number(pt.y),
+                );
+                return {x: mapped.x, y: mapped.y};
+              })()
+            : this.toScreen(snapshot, {
+                ...pt,
+                coordinate_space: args.coordinate_space,
+              }),
+        );
+      }
+    }
+    if (name === 'paste') {
+      const fallbackCenter = this.windowCenter(snapshot.window);
+      const px = Number.isFinite(Number(coordinates.x))
+        ? Number(coordinates.x)
+        : fallbackCenter.x;
+      const py = Number.isFinite(Number(coordinates.y))
+        ? Number(coordinates.y)
+        : fallbackCenter.y;
+      this.emitCursor({
+        action: 'move',
+        x: px,
+        y: py,
+        caption: this.cursorCaption(
+          name,
+          args,
+          snapshot.window,
+          coordinates.element || element,
+        ),
+        nextStep: String(args.next_step || '').trim() || undefined,
+        windowTitle: snapshot.window.title || snapshot.window.process_name,
+        phase: 'acting',
+      });
+      const result = await runInputWithObstructionRetry(
+        {
+          ...args,
+          ...coordinates,
+          action: 'paste',
+          format: args.format === 'html' ? 'html' : 'text',
+          window: snapshot.window,
+        },
+        signal,
+      );
+      if (result.waitingForDesktop) {
+        return result;
+      }
+      return {
+        ...result,
+        actionTarget: this.actionTarget(snapshot, args),
+        ...(coordinates.pixelDriftDetected ? {pixelDriftDetected: true} : {}),
+        submitted: Boolean(args.submit),
+        verification: {
+          matched: true,
+          method: 'win32_clipboard_paste',
+          scope: 'ui_action_readback',
+        },
+      };
     }
     if (name === 'type_text' || name === 'select_text') {
+      const fallbackCenter = this.windowCenter(snapshot.window);
+      const tx = Number.isFinite(Number(coordinates.x))
+        ? Number(coordinates.x)
+        : fallbackCenter.x;
+      const ty = Number.isFinite(Number(coordinates.y))
+        ? Number(coordinates.y)
+        : fallbackCenter.y;
+      this.emitCursor({
+        action: 'move',
+        x: tx,
+        y: ty,
+        caption: this.cursorCaption(
+          name,
+          args,
+          snapshot.window,
+          coordinates.element || element,
+        ),
+        nextStep: String(args.next_step || '').trim() || undefined,
+        windowTitle: snapshot.window.title || snapshot.window.process_name,
+        phase: 'acting',
+      });
       let acted = false;
       if ('x' in coordinates) {
-        const clicked = await desktopInput(
-          {action: 'click', ...coordinates, window: snapshot.window},
+        const clicked = await runInputWithObstructionRetry(
+          {
+            action: 'click',
+            ...coordinates,
+            ...(element ? {element} : {}),
+            ...(args.delivery ? {delivery: args.delivery} : {}),
+            window: snapshot.window,
+          },
           signal,
         );
         if (clicked.waitingForDesktop) {
@@ -1840,8 +2934,14 @@ export class DesktopActionSession {
           signal?.throwIfAborted();
         }
       }
-      const result = await desktopInput(
-        {...args, action: name, window: snapshot.window},
+      const result = await runInputWithObstructionRetry(
+        {
+          ...args,
+          ...coordinates,
+          ...(element ? {element} : {}),
+          action: name,
+          window: snapshot.window,
+        },
         signal,
         !acted,
       );
@@ -1874,24 +2974,86 @@ export class DesktopActionSession {
           signal?.throwIfAborted();
         }
       }
-      if (args.submit && matched) {
-        await desktopInput(
-          {action: 'press_key', keys: 'enter', window: snapshot.window},
+      if (args.submit && (matched || !element)) {
+        await runInputWithObstructionRetry(
+          {
+            action: 'press_key',
+            keys: 'enter',
+            ...(args.delivery ? {delivery: args.delivery} : {}),
+            window: snapshot.window,
+          },
           signal,
           false,
         );
       }
+      const submitted = !!args.submit && (matched || !element);
       return {
         ...result,
         actionTarget: this.actionTarget(snapshot, args),
+        ...(coordinates.pixelDriftDetected ? {pixelDriftDetected: true} : {}),
         verification: {matched, status: matched ? 'matched' : 'unavailable'},
-        submitted: !!args.submit && matched,
+        submitted,
         submit_skip_reason:
-          args.submit && !matched ? 'verification_unavailable' : null,
+          args.submit && element && !matched
+            ? 'verification_unavailable'
+            : null,
       };
     }
-    const result = await desktopInput(
-      {...args, ...coordinates, action: name, window: snapshot.window},
+    const center = this.windowCenter(snapshot.window);
+    const curX = Number.isFinite(Number(coordinates.x))
+      ? Number(coordinates.x)
+      : center.x;
+    const curY = Number.isFinite(Number(coordinates.y))
+      ? Number(coordinates.y)
+      : center.y;
+    const cursorCaption = this.cursorCaption(
+      name,
+      args,
+      snapshot.window,
+      coordinates.element || element,
+    );
+    const nextStep = String(args.next_step || '').trim() || undefined;
+    const windowTitle = snapshot.window.title || snapshot.window.process_name;
+    if (name === 'click') {
+      this.emitCursor({
+        action: 'approach',
+        x: curX,
+        y: curY,
+        caption: cursorCaption,
+        nextStep,
+        windowTitle,
+        phase: 'acting',
+      });
+      this.emitCursor({
+        action: 'click',
+        x: curX,
+        y: curY,
+        button: args.button === 'right' ? 'right' : 'left',
+        count: Number(args.count) || 1,
+        caption: cursorCaption,
+        nextStep,
+        windowTitle,
+        phase: 'acting',
+      });
+    } else if (['press_key', 'scroll', 'drag', 'move'].includes(name)) {
+      this.emitCursor({
+        action: 'move',
+        x: curX,
+        y: curY,
+        caption: cursorCaption,
+        nextStep,
+        windowTitle,
+        phase: 'acting',
+      });
+    }
+    const result = await runInputWithObstructionRetry(
+      {
+        ...args,
+        ...coordinates,
+        ...(element ? {element} : {}),
+        action: name,
+        window: snapshot.window,
+      },
       signal,
     );
     if (result.waitingForDesktop) {
@@ -1942,6 +3104,7 @@ export class DesktopActionSession {
     return {
       ...result,
       actionTarget: this.actionTarget(snapshot, args),
+      ...(coordinates.pixelDriftDetected ? {pixelDriftDetected: true} : {}),
       ...(coordinates.snappedControl
         ? {snappedControl: coordinates.snappedControl}
         : {}),
@@ -2024,7 +3187,18 @@ export function registerDesktopTools(
     caption: string;
     ttlMs: number;
   }) => void,
+  options?: {
+    eagerDesktopTools?: boolean;
+    autoBindWindows?: boolean;
+    onCursorEvent?: (event: DesktopCursorEvent) => void;
+  },
 ): void {
+  if (options?.onCursorEvent) {
+    session.onCursorEvent = options.onCursorEvent;
+  }
+  const autoBindTarget =
+    options?.autoBindWindows && acquireTarget ? acquireTarget : undefined;
+  const eagerTools = options?.eagerDesktopTools === true;
   const readScope: WindowReadScope | undefined = authorizeAccess
     ? hwnd => authorizeAccess({action: 'read', windowIds: [`w-${hwnd}`]})
     : undefined;
@@ -2074,6 +3248,8 @@ export function registerDesktopTools(
   const common = {
     snapshot_id: string,
     state_id: string,
+    screenshot_id: string,
+    strict_pixel_guard: boolean,
     index: integer,
     ref: string,
     x: number,
@@ -2149,18 +3325,127 @@ export function registerDesktopTools(
       },
     });
   }
+  registry.register({
+    name: 'Pointer.guide',
+    description:
+      'Fly Clicky visual guide pointer to an on-screen target (accepts element ref/state_id or normalized 0..1000 / pixel x,y coordinates) with a short teaching caption without sending OS input.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ...common,
+        normalized: boolean,
+        screen: integer,
+        label: string,
+        caption: string,
+        ttl_ms: {type: 'integer', minimum: 800, maximum: 4000},
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    effect: 'read',
+    deferred: false,
+    is_concurrency_safe: true,
+    used_backend: 'native_desktop_visual_guide',
+    timeout_ms: 10000,
+    execute: async (args: DesktopRecord, context) => {
+      const stateId = args.snapshot_id || args.state_id;
+      let gx = Number(args.x);
+      let gy = Number(args.y);
+      let elementName = '';
+      if (stateId) {
+        const prior = session.snapshots.get(String(stateId));
+        if (prior) {
+          requireWindowRead(prior.window.hwnd, readScope);
+        }
+        const snapshot = await session.requireSnapshot(stateId, context.signal);
+        requireWindowRead(snapshot.window.hwnd, readScope);
+        const pt = await session.point(snapshot, args, context.signal);
+        gx = pt.x;
+        gy = pt.y;
+        elementName = pt.element?.name || '';
+      } else {
+        if (!Number.isFinite(gx) || !Number.isFinite(gy)) {
+          throw new Error('pass state_id+ref or finite x and y coordinates');
+        }
+        const isNormalized =
+          args.normalized !== false &&
+          args.coordinate_space !== 'screen' &&
+          gx >= 0 &&
+          gx <= 1000 &&
+          gy >= 0 &&
+          gy <= 1000;
+        if (isNormalized) {
+          const latest = [...session.snapshots.values()].at(-1);
+          const bbox = latest?.window.bbox ?? [0, 0, 1920, 1080];
+          gx = Math.round(bbox[0] + (gx / 1000) * (bbox[2] - bbox[0]));
+          gy = Math.round(bbox[1] + (gy / 1000) * (bbox[3] - bbox[1]));
+        }
+      }
+      const caption = String(
+        args.caption || args.label || elementName || '这里',
+      )
+        .trim()
+        .slice(0, 64);
+      const ttlMs = Math.max(
+        800,
+        Math.min(4000, Number(args.ttl_ms) || 3200),
+      );
+      onGuide?.({x: Math.round(gx), y: Math.round(gy), caption, ttlMs});
+      return {
+        ok: true,
+        pointed: {x: Math.round(gx), y: Math.round(gy), label: caption},
+        usedBackend: 'native_desktop_visual_guide',
+        action: 'visual_guidance_only',
+        nativeInput: false,
+      };
+    },
+  });
   const schemas: Record<string, DesktopRecord> = {
     list_apps: {},
-    launch_app: {app: string},
-    activate_window: {window_id: string, pid: integer, app: string},
-    get_app_state: {
+    list_windows: {},
+    launch_app: {app: string, label: string, next_step: string},
+    activate_window: {
       window_id: string,
+      hwnd: integer,
       pid: integer,
       app: string,
+      label: string,
+      next_step: string,
+    },
+    window_manage: {
+      window_id: string,
+      hwnd: integer,
+      pid: integer,
+      app: string,
+      label: string,
+      next_step: string,
+      action: {
+        enum: ['minimize', 'maximize', 'restore', 'close', 'move_resize'],
+      },
+      x: integer,
+      y: integer,
+      width: integer,
+      height: integer,
+    },
+    get_app_state: {
+      window_id: string,
+      hwnd: integer,
+      pid: integer,
+      app: string,
+      pixels: boolean,
       mode: {enum: ['ax', 'text', 'image', 'full']},
+      label: string,
+      next_step: string,
     },
     find_roots: {text: string, app: string, pid: integer, kind: string},
-    observe_ui: {root: string, mode: {enum: ['fused', 'visual', 'ax', 'full']}},
+    observe_ui: {
+      root: string,
+      hwnd: integer,
+      pixels: boolean,
+      mode: {enum: ['fused', 'visual', 'ax', 'full']},
+      label: string,
+      next_step: string,
+    },
     search_ui: {...common, text: string, role: string, capability: string},
     inspect_ui: common,
     expand_ui: {...common, depth: integer},
@@ -2178,16 +3463,58 @@ export function registerDesktopTools(
       ...common,
       button: {enum: ['left', 'right', 'middle']},
       count: integer,
+      delivery: {enum: ['auto', 'background', 'foreground']},
+      label: string,
+      next_step: string,
     },
-    type_text: {...common, text: string, clear: boolean, submit: boolean},
-    press_key: {...common, keys: string},
-    scroll: {...common, dx: integer, dy: integer},
-    set_value: {...common, value: string},
+    move: {
+      ...common,
+      duration_ms: integer,
+      label: string,
+      next_step: string,
+    },
+    paste: {
+      ...common,
+      text: string,
+      format: {enum: ['text', 'html']},
+      clear: boolean,
+      submit: boolean,
+      delivery: {enum: ['auto', 'background', 'foreground']},
+      label: string,
+      next_step: string,
+    },
+    type_text: {
+      ...common,
+      text: string,
+      clear: boolean,
+      submit: boolean,
+      delivery: {enum: ['auto', 'background', 'foreground']},
+      label: string,
+      next_step: string,
+    },
+    press_key: {
+      ...common,
+      keys: string,
+      delivery: {enum: ['auto', 'background', 'foreground']},
+      label: string,
+      next_step: string,
+    },
+    scroll: {
+      ...common,
+      dx: integer,
+      dy: integer,
+      delivery: {enum: ['auto', 'background', 'foreground']},
+      label: string,
+      next_step: string,
+    },
+    set_value: {...common, value: string, label: string, next_step: string},
     perform_secondary_action: {
       ...common,
       action: {
         enum: ['invoke', 'toggle', 'expand', 'collapse', 'select', 'focus'],
       },
+      label: string,
+      next_step: string,
     },
     select_text: common,
     drag: {
@@ -2200,6 +3527,8 @@ export function registerDesktopTools(
         type: 'array',
         items: {type: 'object', properties: {x: number, y: number}},
       },
+      label: string,
+      next_step: string,
     },
     act_ui: {
       ...common,
@@ -2214,14 +3543,17 @@ export function registerDesktopTools(
     const targetAction = [
       'click',
       'type_text',
+      'paste',
       'press_key',
       'perform_secondary_action',
       'act_ui',
+      'window_manage',
     ].includes(name);
     if (
       [
         'click',
         'type_text',
+        'paste',
         'press_key',
         'perform_secondary_action',
         'act_ui',
@@ -2245,14 +3577,19 @@ export function registerDesktopTools(
       effect_for: args => actionEffect(name, args, session),
       access_for: targetAction
         ? args => {
+            if (autoBindTarget) {
+              return {action: 'patch'};
+            }
             const snapshot = session.snapshots.get(
               String(args.snapshot_id || args.state_id || ''),
             );
+            const explicitHwnd =
+              snapshot?.window.hwnd || Number(args.hwnd || 0) || undefined;
             return {
               action: 'patch',
               windowIds: [
-                snapshot?.window.hwnd
-                  ? `w-${snapshot.window.hwnd}`
+                explicitHwnd
+                  ? `w-${explicitHwnd}`
                   : 'unbound-live-surface',
               ],
             };
@@ -2262,19 +3599,24 @@ export function registerDesktopTools(
       resource_keys: effect === 'read' ? [] : ['desktop:input'],
       used_backend: 'native_desktop',
       timeout_ms: 65000,
-      deferred: !['list_apps', 'get_app_state'].includes(name),
+      deferred: eagerTools
+        ? false
+        : !['list_apps', 'list_windows', 'get_app_state', 'launch_app'].includes(
+            name,
+          ),
       execute: async (args, context) => {
         const result = await session.call(
           name,
           args,
           context.signal,
           readScope,
+          autoBindTarget,
         );
         if (
-          ['launch_app', 'activate_window'].includes(name) &&
+          ['launch_app', 'activate_window', 'window_manage'].includes(name) &&
           result.ok === true &&
           result.window &&
-          result.verification?.matched === true
+          (autoBindTarget || result.verification?.matched === true)
         ) {
           await acquireTarget?.(result.window);
         }
@@ -2282,4 +3624,476 @@ export function registerDesktopTools(
       },
     } as ToolSpec);
   }
+
+  registry.register({
+    name: 'see_screen',
+    description:
+      'Capture whole-computer situational awareness in one call: full-display screenshot (<=1600px), monitor/virtualScreen geometry, live cursor position, window under cursor, foreground window, top-40 Z-order windows (with minimized flag), active popup menus / tray overflow / shell overlays with UIA menu items, and optional clipboard preview.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        display_index: integer,
+        region: {type: 'array', items: integer, minItems: 4, maxItems: 4},
+        include_image: boolean,
+        include_clipboard: boolean,
+        label: string,
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    effect: 'read',
+    is_concurrency_safe: true,
+    used_backend: 'native_see_screen',
+    timeout_ms: 20000,
+    deferred: eagerTools ? false : true,
+    execute: async (args: DesktopRecord, context) => {
+      const overview = await desktopOverview(
+        {includeClipboard: args.include_clipboard === true},
+        context.signal,
+      );
+      const monitors = Array.isArray(overview.monitors)
+        ? (overview.monitors as Array<{
+            index?: number;
+            primary?: boolean;
+            bbox: Rect;
+          }>)
+        : [];
+      const chosenMonitor =
+        typeof args.display_index === 'number'
+          ? monitors.find(m => m.index === args.display_index) || monitors[0]
+          : monitors.find(m => m.primary) || monitors[0];
+      const screenBounds: Rect =
+        Array.isArray(args.region) && args.region.length === 4
+          ? [
+              Math.round(Number(args.region[0])),
+              Math.round(Number(args.region[1])),
+              Math.round(Number(args.region[2])),
+              Math.round(Number(args.region[3])),
+            ]
+          : chosenMonitor?.bbox ||
+            (Array.isArray(overview.virtualScreen) &&
+            overview.virtualScreen.length === 4
+              ? (overview.virtualScreen as Rect)
+              : [0, 0, 1920, 1080]);
+      session.lastScreenBounds = screenBounds;
+      const shot =
+        args.include_image === false
+          ? null
+          : await captureScaledScreenFrame(screenBounds, context.signal);
+      const screenshotId = shot
+        ? session.registerScreenshot({
+            bounds: screenBounds,
+            width: shot.width,
+            height: shot.height,
+            kind: 'screen',
+          })
+        : undefined;
+      return {
+        ...overview,
+        screenBounds,
+        screenWidth: Math.max(1, screenBounds[2] - screenBounds[0]),
+        screenHeight: Math.max(1, screenBounds[3] - screenBounds[1]),
+        ...(shot
+          ? {
+              screenshot_id: screenshotId,
+              image: shot.image,
+              mimeType: shot.mimeType,
+              imageWidth: shot.width,
+              imageHeight: shot.height,
+              imageLabel: `Screen Overview (${screenBounds[2] - screenBounds[0]}x${screenBounds[3] - screenBounds[1]})`,
+            }
+          : {}),
+        usedBackend: 'native_see_screen',
+      };
+    },
+  } as ToolSpec);
+
+  registry.register({
+    name: 'inspect_at',
+    description:
+      'Universal UIA hit-test at any physical screen (x, y) or 0..1000 normalized screen coordinate: returns the control under that point (name, role, value, bbox, center), its parent container, up to 24 visible sibling items (menus, tabs, buttons, list rows), and its hosting window.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        x: number,
+        y: number,
+        coordinate_space: {enum: ['screen', 'normalized']},
+      },
+      required: ['x', 'y'],
+      additionalProperties: false,
+    },
+    effect: 'read',
+    is_concurrency_safe: true,
+    used_backend: 'win32_element_at',
+    deferred: eagerTools ? false : true,
+    execute: async (args: DesktopRecord, context) => {
+      const {x, y} = session.resolveScreenPoint({
+        coordinate_space: args.coordinate_space || 'screen',
+        x: args.x,
+        y: args.y,
+      });
+      return inspectAtPoint(x, y, context.signal);
+    },
+  } as ToolSpec);
+
+  registry.register({
+    name: 'inspect_tray',
+    description:
+      'Inspect the Windows taskbar, notification chevron (Show hidden icons), visible/overflow system tray icons with screen (x, y) centers, and any open tray context-menu items.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+    effect: 'read',
+    is_concurrency_safe: true,
+    used_backend: 'win32_tray_uia',
+    deferred: eagerTools ? false : true,
+    execute: async (_args: DesktopRecord, context) =>
+      inspectTrayIcons(context.signal),
+  } as ToolSpec);
+
+  registry.register({
+    name: 'zoom_screen',
+    description:
+      'Capture a native-resolution zoomed crop of a specific screen region [x1, y1, x2, y2] (or a window-relative region inside hwnd) for reading small text, icons, or UI controls clearly.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bbox: {type: 'array', items: integer, minItems: 4, maxItems: 4},
+        region: {type: 'array', items: integer, minItems: 4, maxItems: 4},
+        hwnd: integer,
+        window_id: string,
+        label: string,
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    effect: 'read',
+    deferred: !eagerTools,
+    is_concurrency_safe: true,
+    used_backend: 'native_desktop_zoom',
+    timeout_ms: 20000,
+    execute: async (args: DesktopRecord, context) => {
+      let win: DesktopWindow | undefined;
+      if (args.hwnd || args.window_id || !Array.isArray(args.bbox)) {
+        win = await session.resolveWindow(args, context.signal);
+        if (autoBindTarget && readScope?.(win.hwnd).allowed === false) {
+          await autoBindTarget(win);
+        }
+        requireWindowRead(win.hwnd, readScope);
+      }
+      let targetBbox: Rect;
+      let cropInWindow:
+        | {left: number; top: number; width: number; height: number}
+        | undefined;
+      if (Array.isArray(args.region) && args.region.length === 4 && win) {
+        const [wl, wt, wr, wb] = win.bbox;
+        const ww = Math.max(1, wr - wl);
+        const wh = Math.max(1, wb - wt);
+        const rx1 = Math.max(0, Math.min(ww - 1, Math.round(Number(args.region[0]))));
+        const ry1 = Math.max(0, Math.min(wh - 1, Math.round(Number(args.region[1]))));
+        const rx2 = Math.max(rx1 + 16, Math.min(ww, Math.round(Number(args.region[2]))));
+        const ry2 = Math.max(ry1 + 16, Math.min(wh, Math.round(Number(args.region[3]))));
+        targetBbox = [wl + rx1, wt + ry1, wl + rx2, wt + ry2];
+        cropInWindow = {left: rx1, top: ry1, width: rx2 - rx1, height: ry2 - ry1};
+      } else if (Array.isArray(args.bbox) && args.bbox.length === 4) {
+        const x1 = Math.round(Number(args.bbox[0]));
+        const y1 = Math.round(Number(args.bbox[1]));
+        const x2 = Math.max(x1 + 16, Math.round(Number(args.bbox[2])));
+        const y2 = Math.max(y1 + 16, Math.round(Number(args.bbox[3])));
+        targetBbox = [x1, y1, x2, y2];
+      } else if (win) {
+        targetBbox = win.bbox;
+      } else {
+        throw new Error('pass bbox [x1,y1,x2,y2] or hwnd+region');
+      }
+      session.emitCursor({
+        action: 'move',
+        x: Math.round((targetBbox[0] + targetBbox[2]) / 2),
+        y: Math.round((targetBbox[1] + targetBbox[3]) / 2),
+        caption: String(args.label || '放大查看细节').slice(0, 24),
+        windowTitle: win?.title || win?.process_name,
+        phase: 'thinking',
+      });
+      const sharp = (await import('sharp')).default;
+      const frame = await captureSurface(
+        win && cropInWindow ? win.bbox : targetBbox,
+        context.signal,
+        win?.hwnd,
+      );
+      let pipeline = sharp(frame.bytes);
+      if (cropInWindow) {
+        const w = Math.min(cropInWindow.width, Math.max(1, frame.width - cropInWindow.left));
+        const h = Math.min(cropInWindow.height, Math.max(1, frame.height - cropInWindow.top));
+        pipeline = pipeline.extract({
+          left: Math.max(0, Math.min(frame.width - 1, cropInWindow.left)),
+          top: Math.max(0, Math.min(frame.height - 1, cropInWindow.top)),
+          width: Math.max(1, w),
+          height: Math.max(1, h),
+        });
+      }
+      const jpg = await pipeline.jpeg({quality: 90}).toBuffer({resolveWithObject: true});
+      const screenshotId = session.registerScreenshot({
+        bounds: targetBbox,
+        width: jpg.info.width,
+        height: jpg.info.height,
+        ...(win?.hwnd ? {hwnd: win.hwnd} : {}),
+        kind: 'zoom',
+      });
+      return {
+        ok: true,
+        screenshot_id: screenshotId,
+        image: jpg.data.toString('base64'),
+        mimeType: 'image/jpeg',
+        width: jpg.info.width,
+        height: jpg.info.height,
+        bbox: targetBbox,
+        imageLabel: `Zoomed Screen Region (${jpg.info.width}x${jpg.info.height})`,
+        usedBackend: 'native_desktop_zoom',
+      };
+    },
+  } as ToolSpec);
+
+  const batchStepProps = {
+    action: {
+      enum: [
+        'click',
+        'double_click',
+        'right_click',
+        'move',
+        'drag',
+        'type_text',
+        'paste',
+        'press_key',
+        'scroll',
+        'wait',
+        'activate_window',
+        'launch_app',
+      ],
+    },
+    ...common,
+    to_x: number,
+    to_y: number,
+    button: {enum: ['left', 'right', 'middle']},
+    count: integer,
+    text: string,
+    format: {enum: ['text', 'html']},
+    clear: boolean,
+    submit: boolean,
+    keys: string,
+    dx: integer,
+    dy: integer,
+    ms: integer,
+    app: string,
+    hwnd: integer,
+    window_id: string,
+    delivery: {enum: ['auto', 'background', 'foreground']},
+    label: string,
+    next_step: string,
+    intent: {
+      type: 'string',
+      enum: ['input', 'send', 'submit', 'delete', 'run', 'purchase'],
+    },
+  };
+
+  registry.register({
+    name: 'desktop_batch',
+    description:
+      'Execute up to 12 ordered GUI actions (click, type_text, press_key, scroll, wait, activate_window, launch_app) on the real desktop in a single turn with live animated cursor narration and an optional end screenshot.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 12,
+          items: {
+            type: 'object',
+            properties: batchStepProps,
+            required: ['action'],
+            additionalProperties: false,
+          },
+        },
+        hwnd: integer,
+        window_id: string,
+        snapshot_id: string,
+        state_id: string,
+        include_screenshot: boolean,
+      },
+      required: ['steps'],
+      additionalProperties: false,
+    },
+    effect: 'reversible_write',
+    effect_for: (args: DesktopRecord): Effect => {
+      const steps = Array.isArray(args.steps)
+        ? (args.steps as DesktopRecord[])
+        : [];
+      let strongest: Effect = 'reversible_write';
+      for (const step of steps) {
+        const rawAction = String(step?.action || '');
+        const mappedName =
+          rawAction === 'double_click' || rawAction === 'right_click'
+            ? 'click'
+            : rawAction;
+        strongest = strongerEffect(
+          strongest,
+          actionEffect(
+            mappedName,
+            {...step, snapshot_id: step.snapshot_id || args.snapshot_id || args.state_id},
+            session,
+          ),
+        );
+      }
+      return strongest;
+    },
+    deferred: !eagerTools,
+    resource_keys: ['desktop:input'],
+    used_backend: 'native_desktop_batch',
+    timeout_ms: 90000,
+    execute: async (args: DesktopRecord, context) => {
+      const rawSteps = Array.isArray(args.steps)
+        ? (args.steps as DesktopRecord[]).slice(0, 12)
+        : [];
+      let currentSnapshotId = String(args.snapshot_id || args.state_id || '');
+      let lastHwnd = Number(args.hwnd || 0) || undefined;
+      const results: DesktopRecord[] = [];
+      for (let i = 0; i < rawSteps.length; i++) {
+        context.signal.throwIfAborted();
+        const step = {...rawSteps[i]};
+        const rawAction = String(step.action || '');
+        if (rawAction === 'wait') {
+          const waitMs = Math.max(50, Math.min(3000, Number(step.ms) || 400));
+          await delay(waitMs, context.signal);
+          results.push({index: i, ok: true, action: 'wait', ms: waitMs});
+          continue;
+        }
+        let toolName = rawAction;
+        if (rawAction === 'double_click') {
+          toolName = 'click';
+          step.button = 'left';
+          step.count = 2;
+        } else if (rawAction === 'right_click') {
+          toolName = 'click';
+          step.button = 'right';
+          step.count = 1;
+        }
+        if (
+          ['click', 'right_click', 'double_click', 'move', 'scroll', 'drag', 'paste'].includes(
+            rawAction,
+          ) &&
+          Number.isFinite(Number(step.x)) &&
+          Number.isFinite(Number(step.y)) &&
+          !currentSnapshotId &&
+          !step.snapshot_id &&
+          !step.state_id &&
+          !step.screenshot_id &&
+          !step.ref &&
+          step.index === undefined &&
+          !step.coordinate_space
+        ) {
+          step.coordinate_space = 'screen';
+        }
+        const hasStepShot =
+          typeof step.screenshot_id === 'string' &&
+          step.screenshot_id.trim().length > 0;
+        const screenDirect =
+          (hasStepShot ||
+            step.coordinate_space === 'screen' ||
+            step.coordinate_space === 'normalized') &&
+          !step.hwnd;
+        const callArgs: DesktopRecord = {
+          ...step,
+          ...(lastHwnd && !step.hwnd && !screenDirect ? {hwnd: lastHwnd} : {}),
+          ...(args.window_id && !step.window_id && !screenDirect
+            ? {window_id: args.window_id}
+            : {}),
+          ...(currentSnapshotId &&
+          !step.snapshot_id &&
+          !step.state_id &&
+          !screenDirect
+            ? {snapshot_id: currentSnapshotId}
+            : {}),
+        };
+        const res = await session.call(
+          toolName,
+          callArgs,
+          context.signal,
+          readScope,
+          autoBindTarget,
+        );
+        results.push({index: i, action: rawAction, ...res});
+        if (res.waitingForDesktop) {
+          break;
+        }
+        if (typeof res.state_id === 'string') {
+          currentSnapshotId = res.state_id;
+        }
+        if (res.window?.hwnd) {
+          lastHwnd = Number(res.window.hwnd);
+        }
+      }
+      const stoppedEarly = results.some(r => Boolean(r.waitingForDesktop));
+      const finalState =
+        !stoppedEarly && args.include_screenshot !== false && (lastHwnd || currentSnapshotId)
+          ? await session
+              .call(
+                'get_app_state',
+                {
+                  ...(lastHwnd ? {hwnd: lastHwnd} : {}),
+                  mode: 'full',
+                  pixels: true,
+                },
+                context.signal,
+                readScope,
+                autoBindTarget,
+              )
+              .catch(() => null)
+          : null;
+      const finalScreenShot =
+        !stoppedEarly &&
+        args.include_screenshot !== false &&
+        !finalState?.image
+          ? await captureScaledScreenFrame(
+              session.lastScreenBounds,
+              context.signal,
+            )
+          : null;
+      const finalScreenShotId = finalScreenShot
+        ? session.registerScreenshot({
+            bounds: session.lastScreenBounds,
+            width: finalScreenShot.width,
+            height: finalScreenShot.height,
+            kind: 'screen',
+          })
+        : undefined;
+      return {
+        ok: results.length > 0 && !stoppedEarly,
+        completedCount: results.length,
+        results,
+        ...(finalState?.image
+          ? {
+              state_id: finalState.state_id,
+              ...(finalState.screenshot_id
+                ? {screenshot_id: finalState.screenshot_id}
+                : {}),
+              image: finalState.image,
+              mimeType: finalState.mimeType,
+              imageLabel: finalState.imageLabel,
+              imageSpace: finalState.imageSpace,
+            }
+          : finalScreenShot
+            ? {
+                screenshot_id: finalScreenShotId,
+                image: finalScreenShot.image,
+                mimeType: finalScreenShot.mimeType,
+                screenBounds: session.lastScreenBounds,
+                imageLabel: `Screen After Batch (${session.lastScreenBounds[2] - session.lastScreenBounds[0]}x${session.lastScreenBounds[3] - session.lastScreenBounds[1]})`,
+              }
+            : {}),
+        usedBackend: 'native_desktop_batch',
+      };
+    },
+  } as ToolSpec);
 }

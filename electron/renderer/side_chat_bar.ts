@@ -4,6 +4,7 @@ interface SideChatSelectionPayload {
   quote: string;
   rect: {left: number; right: number; top: number; bottom: number};
   anchorNode: Node | null;
+  range?: Range | null;
 }
 
 interface SideChatBarHooks {
@@ -185,7 +186,7 @@ declare global {
                 bottom: rangeRect.bottom,
               }
             : {left: 160, right: 320, top: 140, bottom: 164};
-        show({quote, rect, anchorNode: common});
+        show({quote, rect, anchorNode: common, range: range.cloneRange()});
       }, 15);
     });
 

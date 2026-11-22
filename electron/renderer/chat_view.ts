@@ -15,22 +15,39 @@ const ChatView = (() => {
         : null;
   const diffRows: typeof import('./chat_diff_rows') =
     typeof ChatDiffRows !== 'undefined'
-      ? ChatDiffRows : require('./chat_diff_rows');
+      ? ChatDiffRows
+      : typeof require === 'function'
+        ? require('./chat_diff_rows')
+        : ({} as typeof import('./chat_diff_rows'));
   const fileIcons: typeof import('./chat_file_icons') =
     typeof ChatFileIcons !== 'undefined'
-      ? ChatFileIcons : require('./chat_file_icons');
+      ? ChatFileIcons
+      : typeof require === 'function'
+        ? require('./chat_file_icons')
+        : ({} as typeof import('./chat_file_icons'));
   const toolSummary: typeof import('./chat_tool_summary') =
     typeof ChatToolSummary !== 'undefined'
-      ? ChatToolSummary : require('./chat_tool_summary');
+      ? ChatToolSummary
+      : typeof require === 'function'
+        ? require('./chat_tool_summary')
+        : ({} as typeof import('./chat_tool_summary'));
   const workflowCard: typeof import('./workflow_card') =
     typeof WorkflowCard !== 'undefined'
-      ? WorkflowCard : require('./workflow_card');
+      ? WorkflowCard
+      : typeof require === 'function'
+        ? require('./workflow_card')
+        : ({} as typeof import('./workflow_card'));
   const StudioLocaleApi =
-    typeof require === 'function' ? require('./locale') : null;
+    typeof require === 'function'
+      ? require('./locale')
+      : (globalThis as {StudioLocale?: typeof import('./locale')}).StudioLocale ??
+        null;
   const compaction: typeof import('../compaction_status') =
     typeof CompactionStatus !== 'undefined'
       ? CompactionStatus
-      : require('../compaction_status');
+      : typeof require === 'function'
+        ? require('../compaction_status')
+        : ({} as typeof import('../compaction_status'));
 
   type SparkAnimState =
     | 'idle'
@@ -110,12 +127,34 @@ const ChatView = (() => {
       : null;
   })();
 
+  function currentUiLocale(): 'en' | 'zh-CN' {
+    const globalLangFn = (
+      globalThis as {getStudioLanguage?: () => string}
+    ).getStudioLanguage;
+    if (typeof globalLangFn === 'function') {
+      return globalLangFn() === 'zh-CN' ? 'zh-CN' : 'en';
+    }
+    if (
+      StudioLocaleApi &&
+      typeof StudioLocaleApi.getStudioLanguage === 'function'
+    ) {
+      return StudioLocaleApi.getStudioLanguage() === 'zh-CN' ? 'zh-CN' : 'en';
+    }
+    if (DOC?.documentElement?.lang === 'zh-CN') {
+      return 'zh-CN';
+    }
+    return 'en';
+  }
+
   function lt(id: string, params?: Record<string, string | number>): string {
     if (typeof studioT === 'function') {
       return studioT(id, params);
     }
     if (StudioLocaleApi && typeof StudioLocaleApi.studioT === 'function') {
       return StudioLocaleApi.studioT(id, params);
+    }
+    if (id === 'chat.thought_process') {
+      return currentUiLocale() === 'zh-CN' ? '思考过程' : 'Thought process';
     }
     return id;
   }
@@ -718,6 +757,10 @@ const ChatView = (() => {
     search: 'Searched',
     list_dir: 'Listed files in working directory',
     Tools: 'Loaded tools',
+    'Knowledge.search': 'Searched notes',
+    'Knowledge.read': 'Read note',
+    'Context.search': 'Searched context',
+    'Context.read': 'Read context',
     'ToolResult.read': 'Read execution detail',
     'Browser.navigate': 'Opened page',
     list_apps: 'Found app windows',
@@ -846,12 +889,265 @@ const ChatView = (() => {
   const SUMMARY_KEYS: Record<ToolVariant, readonly string[]> = {
     bash: ['description', 'command'],
     read: ['path', 'file_path', 'url'],
-    search: ['query', 'pattern', 'url'],
+    search: ['description', 'toolSummary', 'query', 'pattern', 'url'],
     write: ['path', 'file_path'],
     edit: ['path', 'file_path'],
     code: ['description', 'app', 'url', 'text', 'keys', 'window_id', 'ref'],
     others: [],
   };
+
+  const CJK_CHAR_RE = /[\u3400-\u9fff]/;
+
+  const ZH_TOOL_TITLE_EXACT: Readonly<Record<string, string>> = {
+    // Running labels
+    Reading: '正在读取',
+    'Reading a file': '正在读取文件',
+    'Reading a file\u2026': '正在读取文件\u2026',
+    Creating: '正在创建',
+    'Creating a file': '正在创建文件',
+    'Creating a file\u2026': '正在创建文件\u2026',
+    Editing: '正在编辑',
+    'Editing a file': '正在编辑文件',
+    'Editing a file\u2026': '正在编辑文件\u2026',
+    'Editing files': '正在编辑文件',
+    'Editing files\u2026': '正在编辑文件\u2026',
+    'Editing a notebook': '正在编辑笔记本',
+    'Editing notebook\u2026': '正在编辑笔记本\u2026',
+    Running: '正在执行',
+    'Running a command': '正在执行命令',
+    'Running a command\u2026': '正在执行命令\u2026',
+    'Running code': '正在运行代码',
+    'Running code\u2026': '正在运行代码\u2026',
+    Searching: '正在搜索',
+    'Searching files': '正在搜索文件',
+    'Searching files\u2026': '正在搜索文件\u2026',
+    'Looking for files': '正在查找文件',
+    'Looking for files\u2026': '正在查找文件\u2026',
+    'Searching the web': '正在搜索网页',
+    'Searching the web\u2026': '正在搜索网页\u2026',
+    'Finding windows': '正在查找窗口',
+    'Searching controls': '正在搜索控件',
+    Recalling: '正在检索记忆',
+    Fetching: '正在获取',
+    'Reading a page': '正在读取网页',
+    'Reading a page\u2026': '正在读取网页\u2026',
+    'Listing files': '正在列出文件',
+    'Listing files\u2026': '正在列出文件\u2026',
+    'Loading tools': '正在加载工具',
+    'Loading tools\u2026': '正在加载工具\u2026',
+    Looking: '正在查看画面',
+    'Opening page': '正在打开页面',
+    'Finishing turn': '正在收尾操作',
+    Using: '正在使用',
+    'Running subagent': '正在运行子任务',
+    'Running an agent': '正在运行子任务',
+    'Asking a question': '正在提问',
+    'Asking a question\u2026': '正在提问\u2026',
+    'Checking command output': '正在查看命令输出',
+    'Checking command output\u2026': '正在查看命令输出\u2026',
+    'Starting a plan': '正在制定计划',
+    'Starting a plan\u2026': '正在制定计划\u2026',
+    'Proposing a plan': '正在提出计划',
+    'Proposing a plan\u2026': '正在提出计划\u2026',
+    'Updating the plan': '正在更新计划',
+    'Updating the plan\u2026': '正在更新计划\u2026',
+    'Updating tasks': '正在更新任务',
+    'Updating tasks\u2026': '正在更新任务\u2026',
+    'Deleting a file': '正在删除文件',
+    'Using artifacts': '正在操作产物',
+    'Creating artifact': '正在创建产物',
+    'Updating an artifact': '正在更新产物',
+    'Reading an artifact': '正在读取产物',
+    // Completed & settled labels
+    Read: '读取',
+    'Read a file': '读取了文件',
+    Created: '创建',
+    'Created a file': '创建了文件',
+    Edited: '编辑',
+    'Edited a file': '编辑了文件',
+    'Edited a notebook': '编辑了笔记本',
+    'Deleted a file': '删除了文件',
+    Updated: '更新',
+    Ran: '执行',
+    'Ran a command': '执行了命令',
+    'Ran code': '运行了代码',
+    Searched: '搜索',
+    'Searched files': '搜索了文件',
+    'Looked for files': '查找了文件',
+    'Searched the web': '搜索了网页',
+    'Read a page': '读取了网页',
+    'Listed files': '列出了文件',
+    'Listed files in working directory': '列出了工作目录文件',
+    'Loaded tools': '加载了工具',
+    'Updated plan': '更新了计划',
+    'Updated the plan': '更新了计划',
+    'Updated tasks': '更新了任务',
+    'Proposed a plan': '提出了计划',
+    'Started a plan': '开始了计划',
+    'Asked user': '询问了用户',
+    'Asked a question': '提出了问题',
+    Observed: '观察了画面',
+    'Observed window': '观察了窗口',
+    'Observed interface': '观察了界面',
+    'Listed windows': '列出了窗口',
+    'Found windows': '找到了窗口',
+    'Found app windows': '找到了应用窗口',
+    'Checked current window': '检查了当前窗口',
+    'Launched app': '启动了应用',
+    'Switched window': '切换了窗口',
+    'Searched controls': '搜索了控件',
+    'Inspected control': '检查了控件',
+    'Expanded control': '展开了控件',
+    'Read interface text': '读取了界面文字',
+    'Clicked control': '点击了控件',
+    'Typed text': '输入了文字',
+    'Pressed key': '按下了按键',
+    Scrolled: '滚动了页面',
+    Dragged: '拖拽了画面',
+    'Filled control': '填写了控件',
+    'Selected text': '选中了文字',
+    'Ran control action': '执行了控件操作',
+    'Ran desktop step': '执行了桌面步骤',
+    'Waited for interface': '等待了界面响应',
+    'Ended desktop turn': '结束了桌面操作',
+    'Opened page': '打开了页面',
+    'Searched notes': '搜索了知识库',
+    'Read note': '读取了笔记',
+    'Searched context': '搜索了上下文',
+    'Read context': '读取了上下文',
+    'Read execution detail': '读取了执行详情',
+    'Ran skill': '运行了技能',
+    'Loaded a skill': '加载了技能',
+    'Shared files': '分享了文件',
+    'Sent message': '发送了消息',
+    'Sent notification': '发送了通知',
+    'Searched past chats': '搜索了历史对话',
+    'Searched project knowledge': '搜索了项目知识',
+    'Checked command output': '查看了命令输出',
+    'Stopped a command': '停止了命令',
+    'Desktop screenshot': '截取了屏幕画面',
+    'Desktop screenshots': '截取了屏幕画面',
+    Used: '使用',
+    Subagent: '子任务',
+    'Tool call': '工具调用',
+    Blocked: '已拦截',
+    'Failed to fetch': '获取失败',
+    'Failed to write': '写入失败',
+    'Couldn\u2019t complete this search.': '无法完成此搜索。',
+    'Created artifact': '创建了产物',
+    'Updated an artifact': '更新了产物',
+    'Read an artifact': '读取了产物',
+    'Published an artifact': '发布了产物',
+    'Stopped reading file': '已停止读取文件',
+    'Stopped creating file': '已停止创建文件',
+    'Stopped running the command': '已停止运行命令',
+    'Stopped searching the web': '已停止搜索网页',
+    'Stopped loading tools': '已停止加载工具',
+  };
+
+  function translateToolTitle(title: string, locale: 'en' | 'zh-CN'): string {
+    if (locale !== 'zh-CN') {
+      return title;
+    }
+    const exact = ZH_TOOL_TITLE_EXACT[title];
+    if (exact) {
+      return exact;
+    }
+    const countMatch =
+      /^(Read|Created|Edited|Deleted|Stopped|Loaded|Used)\s+(\d+)\s+(\w+)/.exec(
+        title,
+      );
+    if (countMatch) {
+      const verb = countMatch[1];
+      const count = countMatch[2];
+      const map: Record<string, string> = {
+        Read: `读取了 ${count} 项`,
+        Created: `创建了 ${count} 项`,
+        Edited: `编辑了 ${count} 项`,
+        Deleted: `删除了 ${count} 项`,
+        Stopped: `停止了 ${count} 项`,
+        Loaded: `加载了 ${count} 项`,
+        Used: `使用了 ${count} 次`,
+      };
+      return map[verb] || title;
+    }
+    return title;
+  }
+
+  function sanitizeSummaryForLocale(
+    summary: string,
+    name: string,
+    variant: ToolVariant,
+    input: Record<string, unknown>,
+    locale: 'en' | 'zh-CN',
+  ): string {
+    if (locale !== 'en' || !CJK_CHAR_RE.test(summary)) {
+      return summary;
+    }
+    if (isCommandTool(name)) {
+      const cmd = firstLine(
+        inputString(input, 'command') ?? inputString(input, 'cmd') ?? '',
+      );
+      return cmd && !CJK_CHAR_RE.test(cmd) ? cmd : '';
+    }
+    if (variant === 'search') {
+      const candidate = humanizeSearchPattern(
+        inputString(input, 'pattern') ??
+          inputString(input, 'query') ??
+          inputString(input, 'glob') ??
+          inputString(input, 'path') ??
+          '',
+      );
+      return candidate && !CJK_CHAR_RE.test(candidate) ? candidate : '';
+    }
+    const filePath = pickString(input, ['path', 'file_path']);
+    if (filePath && !CJK_CHAR_RE.test(filePath)) {
+      return shortenPath(filePath);
+    }
+    return '';
+  }
+
+  function humanizeSearchPattern(raw: string): string {
+    const unescaped = String(raw || '')
+      .replace(/\[([A-Za-z])([A-Za-z])\]/g, (_m, a: string, b: string) =>
+        a.toLowerCase() === b.toLowerCase() ? b.toLowerCase() : `[${a}${b}]`,
+      )
+      .replace(/\\([()[\]{}.*+?^$|/])/g, '$1')
+      .replace(/^\*\*[/\\]/, '');
+    const parts = unescaped
+      .split('|')
+      .map(part =>
+        part
+          .replace(/[:(\s]+$/g, '')
+          .replace(/^[\s()]+/, '')
+          .trim(),
+      )
+      .filter(Boolean);
+    const cleaned = (parts.length > 1
+      ? [...new Set(parts)].slice(0, 4).join(', ')
+      : unescaped
+          .replace(/\s+/g, ' ')
+          .replace(/[(\s]+$/g, '')
+          .trim());
+    return cleaned.length > 64 ? `${cleaned.slice(0, 63)}…` : cleaned;
+  }
+
+  function isHiddenMetaTool(chip: TurnChip): boolean {
+    if (chip.result?.isError) {
+      return false;
+    }
+    return (
+      chip.name === 'Tools' ||
+      chip.name === 'tool_search' ||
+      toolCategory(chip.name) === 'tool_search'
+    );
+  }
+
+  function isInternalSteeringNotice(text: string): boolean {
+    return /^(?:The same evidence has already been read|The same successful action was repeated|Repeated input is not result verification)/i.test(
+      String(text || '').trim(),
+    );
+  }
 
   const FILE_PATH_VARIANTS: ReadonlySet<ToolVariant> = new Set([
     'read',
@@ -1202,6 +1498,10 @@ const ChatView = (() => {
     recent_chats: 'Searching past chats',
     conversation_search: 'Searching past chats',
     project_knowledge_search: 'Searching project knowledge',
+    'knowledge.search': 'Searching notes',
+    'knowledge.read': 'Reading note',
+    'context.search': 'Searching context',
+    'context.read': 'Reading context',
     drive_search: 'Searching Google Drive',
     web_fetch: 'Reading a page',
     web_search: 'Searching the web',
@@ -1964,7 +2264,8 @@ const ChatView = (() => {
         return shortenPath(path);
       }
     }
-    return deriveSummary(variant, argsRaw);
+    const base = deriveSummary(variant, argsRaw);
+    return variant === 'search' ? humanizeSearchPattern(base) : base;
   }
 
   function deriveFilePath(
@@ -2464,8 +2765,11 @@ const ChatView = (() => {
 
     // A stopped call previously rendered with the completed verb, which says
     // the opposite of what happened.
-    const title =
+    const locale = currentUiLocale();
+    const rawTitle =
       sentenceTitle ?? (phase === 'running' ? runningTitle : completedTitle);
+    const title = translateToolTitle(rawTitle, locale);
+    summary = sanitizeSummaryForLocale(summary, name, variant, input, locale);
     const shellResult =
       variant === 'bash' ? outputRecord(result?.text || '') : null;
     const terminal =
@@ -2498,7 +2802,10 @@ const ChatView = (() => {
       output = output
         .split(/\r?\n/)
         .filter(
-          line => !/的目标：(?:已执行，待核对|执行失败)\s*$/u.test(line.trim()),
+          line =>
+            !/^(?:desktop:\S+|[\w.]+ 的目标|\S.*?)：(已执行，待核对|执行失败|结果未知)\s*$/u.test(
+              line.trim(),
+            ),
         )
         .join('\n')
         .trim();
@@ -4547,6 +4854,14 @@ const ChatView = (() => {
         }
       }
     }
+    const viewport = node.querySelector<HTMLElement>('.mp-chat-think-viewport');
+    if (running && viewport) {
+      const nearBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48;
+      if (nearBottom) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    }
     const copy = node.querySelector('.mp-chat-think-copy');
     if (text.trim()) {
       node.removeAttribute('hidden');
@@ -4618,7 +4933,7 @@ const ChatView = (() => {
     message: string,
     branch?: BranchTarget,
     timeMs?: number,
-    options: {align?: 'user' | 'assistant'; retry?: boolean} = {},
+    options: {align?: 'user' | 'assistant'; retry?: boolean; showBranchAction?: boolean} = {},
   ): ChatNode {
     const actions = h('div', {class: 'mp-chat-actions'});
     actions.setAttribute(
@@ -4649,7 +4964,11 @@ const ChatView = (() => {
     attach(retry, icon('retry', 16));
     attach(actions, retry);
 
-    if (branch?.conversationId && Number.isInteger(branch.turnIndex)) {
+    if (
+      options.showBranchAction !== false &&
+      branch?.conversationId &&
+      Number.isInteger(branch.turnIndex)
+    ) {
       const fork = h('button', {
         type: 'button',
         class: 'mp-chat-action',
@@ -4670,47 +4989,139 @@ const ChatView = (() => {
     return actions;
   }
 
+  const STRUCTURED_REPLY_RE = new RegExp(
+    '^\\s*<quoted_reply([^>]*)>([\\s\\S]*?)</' + 'quoted_reply>\\s*',
+  );
+
+  function unescapeReplyAttr(raw: string): string {
+    return raw
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  }
+
+  function extractStructuredReplyQuotes(raw: string): {
+    quotes: Array<{text: string; turnIndex?: number; comment?: string}>;
+    body: string;
+  } {
+    const quotes: Array<{text: string; turnIndex?: number; comment?: string}> = [];
+    let rest = String(raw || '');
+    let match: RegExpExecArray | null;
+    while ((match = STRUCTURED_REPLY_RE.exec(rest)) !== null) {
+      const attrs = match[1] || '';
+      const turnMatch = /\bturn="(\d+)"/.exec(attrs);
+      const commentMatch = /\bcomment="([^"]*)"/.exec(attrs);
+      const text = String(match[2] || '').trim();
+      const comment = commentMatch?.[1]
+        ? unescapeReplyAttr(commentMatch[1]).trim()
+        : '';
+      if (text) {
+        quotes.push({
+          text,
+          ...(turnMatch ? {turnIndex: Number(turnMatch[1])} : {}),
+          ...(comment ? {comment} : {}),
+        });
+      }
+      rest = rest.slice(match[0].length);
+    }
+    return {quotes, body: rest.trimStart()};
+  }
+
   function userNode(
     question: string,
     timeMs?: number,
     branch?: BranchTarget,
+    options: {workMode?: 'learn' | 'work' | 'code'} = {},
   ): ChatNode {
     const root = h('div', {class: 'mp-chat-user'});
     const stack = h('div', {class: 'mp-chat-user-stack'});
-    const bubble = h('div', {class: 'mp-chat-bubble'});
-    const interactive =
-      /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(
-        question,
-      );
-    let values: unknown;
-    if (interactive) {
-      try {
-        values = JSON.parse(interactive[2]);
-      } catch {
-        // Keep an ordinary user message intact if it only resembles a receipt.
+    const parsed = extractStructuredReplyQuotes(question);
+    const cleanQuestion = parsed.quotes.length ? parsed.body : question;
+    if (parsed.quotes.length) {
+      const quoteList = h('div', {class: 'mp-chat-reply-quotes'});
+      for (const item of parsed.quotes) {
+        const chip = h('button', {
+          type: 'button',
+          class: 'mp-chat-reply-quote',
+          title: item.comment ? `${item.text} — ${item.comment}` : item.text,
+          'data-reply-jump-text': item.text,
+          ...(typeof item.turnIndex === 'number'
+            ? {'data-reply-jump-turn': String(item.turnIndex)}
+            : {}),
+        });
+        attach(
+          chip,
+          h('span', {
+            class: 'cds-icon mp-chat-reply-icon',
+            'data-size': 'xs',
+            'data-glyph': String.fromCodePoint(0xf087),
+            'aria-hidden': 'true',
+          }),
+        );
+        attach(
+          chip,
+          h(
+            'span',
+            {class: 'mp-chat-reply-text'},
+            item.text.length > 160 ? `${item.text.slice(0, 159)}…` : item.text,
+          ),
+        );
+        if (item.comment) {
+          attach(
+            chip,
+            h('span', {class: 'mp-chat-reply-comment'}, item.comment),
+          );
+        }
+        attach(quoteList, chip);
       }
+      attach(stack, quoteList);
     }
-    if (interactive && values && typeof values === 'object') {
-      attach(bubble, interactive[1]);
-      const details = h('details', {class: 'mp-chat-ui-receipt'});
-      attach(
-        details,
-        h(
-          'summary',
-          {},
-          DOC?.documentElement.lang.startsWith('zh')
-            ? '已提交的选项'
-            : 'Submitted values',
-        ),
-      );
-      attach(details, h('pre', {}, JSON.stringify(values, null, 2)));
-      attach(bubble, details);
-    } else {
-      attach(bubble, question);
+    if (cleanQuestion.trim() || !parsed.quotes.length) {
+      const bubble = h('div', {class: 'mp-chat-bubble'});
+      const interactive =
+        /^([\s\S]+)\n\n\[Interactive response: [^\n]+\]\n([\s\S]+)$/.exec(
+          cleanQuestion,
+        );
+      let values: unknown;
+      if (interactive) {
+        try {
+          values = JSON.parse(interactive[2]);
+        } catch {
+          // Keep an ordinary user message intact if it only resembles a receipt.
+        }
+      }
+      if (interactive && values && typeof values === 'object') {
+        attach(bubble, interactive[1]);
+        const details = h('details', {class: 'mp-chat-ui-receipt'});
+        attach(
+          details,
+          h(
+            'summary',
+            {},
+            DOC?.documentElement.lang.startsWith('zh')
+              ? '已提交的选项'
+              : 'Submitted values',
+          ),
+        );
+        attach(details, h('pre', {}, JSON.stringify(values, null, 2)));
+        attach(bubble, details);
+      } else {
+        attach(bubble, cleanQuestion);
+      }
+      attach(stack, bubble);
     }
-    attach(stack, bubble);
     attach(root, stack);
-    attach(root, messageActions(question, branch, timeMs, {align: 'user'}));
+    const copyText =
+      cleanQuestion.trim() ||
+      parsed.quotes.map(q => q.comment || q.text).join('\n');
+    attach(
+      root,
+      messageActions(copyText, branch, timeMs, {
+        align: 'user',
+        showBranchAction: options.workMode !== 'learn',
+      }),
+    );
     return root;
   }
 
@@ -4996,6 +5407,39 @@ const ChatView = (() => {
     return item;
   }
 
+  function artifactKindBadgeMeta(
+    kindRaw: unknown,
+    languageRaw?: unknown,
+  ): {label: string; kind: string} {
+    const kind = String(kindRaw || 'text').toLowerCase().trim() || 'text';
+    if (kind === 'markdown' || kind === 'md') {
+      return {label: 'MD', kind: 'markdown'};
+    }
+    if (kind === 'html') {
+      return {label: 'HTML', kind: 'html'};
+    }
+    if (kind === 'svg') {
+      return {label: 'SVG', kind: 'svg'};
+    }
+    if (kind === 'diagram' || kind === 'mermaid') {
+      return {label: 'DIAGRAM', kind: 'diagram'};
+    }
+    if (kind === 'csv') {
+      return {label: 'CSV', kind: 'csv'};
+    }
+    if (kind === 'document_patch') {
+      return {label: 'PATCH', kind: 'document_patch'};
+    }
+    if (kind === 'code') {
+      const lang = String(languageRaw || '').trim();
+      return {
+        label: lang ? lang.toUpperCase().slice(0, 6) : 'CODE',
+        kind: 'code',
+      };
+    }
+    return {label: 'TEXT', kind: 'text'};
+  }
+
   function fileResultsNode(
     files: DeliveredFile[],
     artifacts: Array<Record<string, unknown>>,
@@ -5003,26 +5447,21 @@ const ChatView = (() => {
     turnScope = conversationId,
     undo?: {conversationId: string; turnIndex: number},
   ): ChatNode | null {
-    const artifact = artifacts.find(
+    const validArtifacts = artifacts.filter(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
     );
-    if (!files.length && !artifact) {
+    const artifact = validArtifacts[0];
+    if (!files.length && !validArtifacts.length) {
       return null;
     }
     const card = h('div', {class: 'mp-chat-files'});
     const list = h('ul', {class: 'mp-chat-files-list', role: 'list'});
     attach(card, list);
-    const artifactPath =
-      typeof artifact?.path === 'string' ? artifact.path : '';
-    const artifactFile = artifactPath
-      ? files.find(
-          file =>
-            deliveredFileKey(file.path) === deliveredFileKey(artifactPath),
-        )
-      : undefined;
-    const label = artifact
-      ? String(artifact.title || artifact.name || '').trim()
-      : '';
+    const artifactPaths = new Set(
+      validArtifacts
+        .map(item => (typeof item.path === 'string' ? deliveredFileKey(item.path) : ''))
+        .filter(Boolean),
+    );
     const undoAction = !artifact && files.length && undo
       ? h('button', {
           type: 'button', class: 'mp-chat-files-undo',
@@ -5049,42 +5488,82 @@ const ChatView = (() => {
       attach(list, head);
     }
 
-    if (artifact) {
+    for (const itemArtifact of validArtifacts) {
+      const itemPath =
+        typeof itemArtifact.path === 'string' ? itemArtifact.path : '';
+      const itemFile = itemPath
+        ? files.find(
+            file =>
+              deliveredFileKey(file.path) === deliveredFileKey(itemPath),
+          )
+        : undefined;
+      const itemLabel = String(
+        itemArtifact.title || itemArtifact.name || '',
+      ).trim();
+      const itemName = String(
+        itemArtifact.name ||
+          itemArtifact.filename ||
+          itemArtifact.path ||
+          itemArtifact.artifactId ||
+          'artifact',
+      );
+      const badgeMeta = artifactKindBadgeMeta(
+        itemArtifact.kind,
+        itemArtifact.language,
+      );
+      const subtitle =
+        typeof itemArtifact.filename === 'string' &&
+        itemArtifact.filename &&
+        itemArtifact.filename !== itemLabel
+          ? itemArtifact.filename
+          : lt('chat.files_artifact');
       const row = h('button', {
         type: 'button',
-        class: 'mp-chat-file-row',
+        class: 'mp-chat-file-row mp-artifact-card-btn',
         'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': String(artifact.artifactId || ''),
+        'data-artifact-id': String(itemArtifact.artifactId || ''),
         'data-artifact-conversation': conversationId,
       });
-      const artifactName = String(
-        artifact.name || artifact.path || artifact.artifactId || 'artifact',
+      const added = itemFile
+        ? itemFile.added
+        : Number(itemArtifact.added || 0);
+      const removed = itemFile
+        ? itemFile.removed
+        : Number(itemArtifact.removed || 0);
+      const openBadge = h(
+        'span',
+        {
+          class: 'mp-chat-files-open mp-artifact-card-open',
+          'aria-hidden': 'true',
+        },
+        lt('chat.files_open'),
       );
-      const added = artifactFile
-        ? artifactFile.added
-        : Number(artifact.added || 0);
-      const removed = artifactFile
-        ? artifactFile.removed
-        : Number(artifact.removed || 0);
-      const open = h('button', {
-        type: 'button', class: 'mp-chat-files-open',
-        'aria-label': lt('chat.files_open_artifact', {label: label || artifactName}),
-        'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': String(artifact.artifactId || ''),
-        'data-artifact-conversation': conversationId,
-      }, lt('chat.files_open'));
-      const known = artifactFile ? artifactFile.statKnown
-        : typeof artifact.added === 'number' || typeof artifact.removed === 'number';
-      attach(list, fileResultRow({opener: row,
-        label: label || artifactName.split(/[\\/]/).pop() || artifactName,
-        mark: fileResultGlyph('\ue017'), detail: lt('chat.files_artifact'),
-        stat: known ? fileResultStat(added, removed) : null, action: open}));
+      const known = itemFile
+        ? itemFile.statKnown
+        : typeof itemArtifact.added === 'number' ||
+          typeof itemArtifact.removed === 'number';
+      const badgeNode = h(
+        'span',
+        {
+          class: 'mp-artifact-kind-badge',
+          'data-kind': badgeMeta.kind,
+        },
+        badgeMeta.label,
+      );
+      const rowNode = fileResultRow({
+        opener: row,
+        label: itemLabel || itemName.split(/[\\/]/).pop() || itemName,
+        mark: badgeNode,
+        detail: subtitle,
+        stat: known ? fileResultStat(added, removed) : null,
+        action: openBadge,
+      });
+      rowNode.setAttribute('class', 'mp-chat-file-item mp-artifact-card');
+      attach(list, rowNode);
     }
 
     const visibleFiles = files.filter(
-      item =>
-        !artifactPath ||
-        deliveredFileKey(item.path) !== deliveredFileKey(artifactPath),
+      item => !artifactPaths.has(deliveredFileKey(item.path)),
     );
     const hints = fileFolderHints(visibleFiles);
     const fileRow = (file: DeliveredFile): ChatNode => {
@@ -5149,13 +5628,13 @@ const ChatView = (() => {
     items: Array<Record<string, unknown>>,
     conversationId: string,
   ): ChatNode | null {
-    const artifact = items.find(
+    const valid = items.filter(
       item => item && typeof item === 'object' && String(item.artifactId || ''),
     );
-    if (!artifact) {
+    if (!valid.length) {
       return null;
     }
-    return fileResultsNode([], [artifact], conversationId);
+    return fileResultsNode([], valid, conversationId);
   }
 
   function resolveActivityMarks(): {
@@ -5384,6 +5863,8 @@ const ChatView = (() => {
     activities?: Array<Record<string, unknown>>;
     trajectory?: Array<Record<string, unknown>>;
     modelUsage?: Record<string, unknown> | null;
+    outcome?: string;
+    interrupted?: boolean;
     failed?: boolean;
     error?: string;
     running?: boolean;
@@ -5411,6 +5892,7 @@ const ChatView = (() => {
   interface TurnPresentation {
     taskPanel?: boolean;
     undoFileChanges?: boolean;
+    workMode?: 'learn' | 'work' | 'code';
     smooth?: boolean;
     animateWords?: boolean;
     onSaliency?: (host: HTMLElement) => void;
@@ -6079,18 +6561,22 @@ const ChatView = (() => {
   }
 
   function toolGroupLabel(chips: TurnChip[]): string {
+    const locale = currentUiLocale();
     const explicit = chips
       .find(chip => chip.groupLabel?.trim())
       ?.groupLabel?.trim();
     return (
       explicit ||
       toolSummary.summaryText(
-        toolSummary.summarizeToolCalls(groupSummaryCalls(chips)),
+        toolSummary.summarizeToolCalls(groupSummaryCalls(chips), locale),
+        locale,
       )
     );
   }
 
   function toolGroupSummaryNode(chips: TurnChip[]): ChatNode {
+    const locale = currentUiLocale();
+    const isZh = locale === 'zh-CN';
     const pending = chips.find(chip => chip.result === undefined);
     const busy = pending !== undefined;
     const explicit = chips
@@ -6107,7 +6593,7 @@ const ChatView = (() => {
       );
     }
     const calls = groupSummaryCalls(chips);
-    const parts = toolSummary.summarizeToolCalls(calls);
+    const parts = toolSummary.summarizeToolCalls(calls, locale);
     const files = parts.some(part => part.file)
       ? deliveredFiles(
           chips.map(chip => ({
@@ -6127,11 +6613,12 @@ const ChatView = (() => {
         class: 'mp-chat-group-phrase',
         ...(part.isError ? {'data-error': 'true'} : {}),
       });
-      const verb =
-        index === 0
+      const verb = isZh
+        ? part.verb
+        : index === 0
           ? part.verb.charAt(0).toUpperCase() + part.verb.slice(1)
           : part.verb;
-      attach(phrase, (index ? ', ' : '') + verb);
+      attach(phrase, (index ? (isZh ? '、' : ', ') : '') + verb);
       if (part.meta) {
         attach(phrase, ' ');
         const file =
@@ -6184,7 +6671,7 @@ const ChatView = (() => {
       content.push(phrase);
     });
     return shimmerText(
-      toolSummary.summaryText(parts),
+      toolSummary.summaryText(parts, locale),
       {shimmering: false},
       content,
     );
@@ -6204,6 +6691,8 @@ const ChatView = (() => {
   function cleanDeliveryText(value: string): string {
     let insideCode = false;
     const lines = value.split(/\r?\n/);
+    const legacyStatusLineRe =
+      /^(?:desktop:\S+|[\w.]+ 的目标|\S.*?)：(已执行，待核对|执行失败|结果未知)\s*$|^未完成：.+$|^仍有中断动作需要核对，不能自动重做。\s*$/u;
     const footer = lines.lastIndexOf('任务尚未全部完成：');
     if (
       footer >= 0 &&
@@ -6212,13 +6701,7 @@ const ChatView = (() => {
       lines.slice(footer + 1).some(line => line.trim()) &&
       lines
         .slice(footer + 1)
-        .every(
-          line =>
-            !line.trim() ||
-            /^[\w.]+ 的目标：(?:已执行，待核对|执行失败|结果未知)\s*$/u.test(
-              line.trim(),
-            ),
-        )
+        .every(line => !line.trim() || legacyStatusLineRe.test(line.trim()))
     ) {
       lines.splice(footer);
     }
@@ -6293,7 +6776,7 @@ const ChatView = (() => {
       }
       if (record.kind === 'notice') {
         const text = String(record.text || '').trim();
-        if (text) {
+        if (text && !isInternalSteeringNotice(text)) {
           items.push({
             type: 'notice',
             text,
@@ -6302,9 +6785,13 @@ const ChatView = (() => {
         }
         continue;
       }
+      const chip = trajectoryChip(record, index, true);
+      if (isHiddenMetaTool(chip)) {
+        continue;
+      }
       items.push({
         type: 'chip',
-        chip: trajectoryChip(record, index, true),
+        chip,
         turn,
       });
     }
@@ -6321,28 +6808,32 @@ const ChatView = (() => {
           : event.arguments !== undefined && event.arguments !== null
             ? JSON.stringify(event.arguments)
             : '';
+      const chip: TurnChip = {
+        name: String(event.name || event.tool || ''),
+        argsRaw,
+        callId: String(event.callId || event.id || ''),
+        groupLabel:
+          typeof event.groupLabel === 'string' ? event.groupLabel : undefined,
+        displayLabel:
+          typeof event.summary === 'string' ? event.summary : undefined,
+        startedAtMs:
+          Number(event.startedAt ?? event.at ?? event.time) || undefined,
+        result:
+          event.result !== undefined
+            ? {
+                text: String(event.result || ''),
+                isError: Boolean(event.isError),
+                interrupted: event.interrupted === true,
+                presentation: event.presentation,
+              }
+            : undefined,
+      };
+      if (isHiddenMetaTool(chip)) {
+        continue;
+      }
       items.push({
         type: 'chip',
-        chip: {
-          name: String(event.name || event.tool || ''),
-          argsRaw,
-          callId: String(event.callId || event.id || ''),
-          groupLabel:
-            typeof event.groupLabel === 'string' ? event.groupLabel : undefined,
-          displayLabel:
-            typeof event.summary === 'string' ? event.summary : undefined,
-          startedAtMs:
-            Number(event.startedAt ?? event.at ?? event.time) || undefined,
-          result:
-            event.result !== undefined
-              ? {
-                  text: String(event.result || ''),
-                  isError: Boolean(event.isError),
-                  interrupted: event.interrupted === true,
-                  presentation: event.presentation,
-                }
-              : undefined,
-        },
+        chip,
         turn:
           event.turn === undefined || event.turn === null
             ? undefined
@@ -6368,9 +6859,8 @@ const ChatView = (() => {
       }
       if (
         next.type === 'chip' &&
-        taskPanel &&
-        PLAN_TOOLS.has(next.chip.name) &&
-        !next.chip.result?.isError
+        (isHiddenMetaTool(next.chip) ||
+          (taskPanel && PLAN_TOOLS.has(next.chip.name) && !next.chip.result?.isError))
       ) {
         continue;
       }
@@ -6402,7 +6892,14 @@ const ChatView = (() => {
         continue;
       }
       if (next.kind === 'tool') {
-        if (taskPanel && PLAN_TOOLS.has(String(next.name)) && !next.isError) {
+        const nextName = String(next.name || '');
+        if (
+          (nextName === 'Tools' || nextName === 'tool_search') &&
+          !next.isError
+        ) {
+          continue;
+        }
+        if (taskPanel && PLAN_TOOLS.has(nextName) && !next.isError) {
           continue;
         }
         return true;
@@ -6410,7 +6907,7 @@ const ChatView = (() => {
       if (next.kind === 'message' && Boolean(String(next.text || '').trim())) {
         return true;
       }
-      if (next.kind === 'notice') {
+      if (next.kind === 'notice' && !isInternalSteeringNotice(String(next.text || ''))) {
         return true;
       }
     }
@@ -6425,7 +6922,16 @@ const ChatView = (() => {
     const items: ChatNode[] = [];
     const root = h('div', {class: 'mp-chat-assistant'});
     const bodyHost = h('div', {class: 'mp-chat-assistant-body'});
-    const deliveryText = cleanDeliveryText(String(turn.answer || ''));
+    const isUserInterrupted =
+      turn.interrupted === true ||
+      turn.outcome === '已停止' ||
+      (turn.failed === true &&
+        /^user interrupted$/i.test(String(turn.error || '').trim()));
+    const rawDeliveryText = cleanDeliveryText(String(turn.answer || ''));
+    const deliveryText =
+      isUserInterrupted && /^user interrupted$/i.test(rawDeliveryText.trim())
+        ? ''
+        : rawDeliveryText;
     const seenReasoningIds = new Set<string>();
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
     for (const item of flow) {
@@ -6581,7 +7087,29 @@ const ChatView = (() => {
       );
     }
 
-    if (turn.failed) {
+    if (isUserInterrupted) {
+      const interruptedRow = h('div', {
+        class: 'mp-chat-interrupted',
+        role: 'status',
+      });
+      const isZh =
+        typeof document !== 'undefined' &&
+        document.documentElement?.lang?.startsWith('zh');
+      attach(interruptedRow, h('span', {}, isZh ? '已停止' : 'Interrupted'));
+      const cleanRetry = String(turn.question || '').trim();
+      if (cleanRetry) {
+        const retryBtn = h('button', {
+          type: 'button',
+          class: 'mp-chat-interrupted-retry',
+          'data-mp-chat-act': 'retry',
+          'data-mp-chat-retry': cleanRetry,
+          'aria-label': lt('chat.resend'),
+        });
+        attach(retryBtn, isZh ? '重新发送' : lt('chat.resend'));
+        attach(interruptedRow, retryBtn);
+      }
+      attach(bodyHost, interruptedRow);
+    } else if (turn.failed) {
       attach(
         bodyHost,
         turnErrorNode(
@@ -6610,7 +7138,7 @@ const ChatView = (() => {
               }
             : undefined,
           turn.at,
-          {align: 'assistant'},
+          {align: 'assistant', showBranchAction: options.workMode !== 'learn'},
         ),
       );
     }
@@ -6896,14 +7424,19 @@ const ChatView = (() => {
         ).IntelligenceUI?.hydrate?.(node);
         return;
       }
+      const isEl = (value: unknown): value is HTMLElement =>
+        typeof HTMLElement !== 'undefined' && value instanceof HTMLElement;
       const blocks = Array.from(next.childNodes);
       blocks.forEach((block, index) => {
         const existing = current.childNodes[index];
         if (!existing) {
+          if (animateWords && isEl(block)) {
+            block.classList.add('mp-narration-brush');
+          }
           current.appendChild(block);
         } else if (
-          existing instanceof HTMLElement &&
-          block instanceof HTMLElement &&
+          isEl(existing) &&
+          isEl(block) &&
           existing.hasAttribute('data-iui-src') &&
           block.hasAttribute('data-iui-src')
         ) {
@@ -6913,16 +7446,16 @@ const ChatView = (() => {
             existing.dataset.iuiComplete = 'true';
           }
         } else if (
-          existing instanceof HTMLElement &&
-          block instanceof HTMLElement &&
+          isEl(existing) &&
+          isEl(block) &&
           existing.hasAttribute('data-learn-lab-spec') &&
           block.hasAttribute('data-learn-lab-spec')
         ) {
           existing.dataset.learnLabSpec = block.dataset.learnLabSpec;
           existing.dataset.learnLabComplete = block.dataset.learnLabComplete;
         } else if (
-          existing instanceof HTMLElement &&
-          block instanceof HTMLElement &&
+          isEl(existing) &&
+          isEl(block) &&
           existing.hasAttribute('data-openui-source') &&
           block.hasAttribute('data-openui-source')
         ) {
@@ -6937,7 +7470,7 @@ const ChatView = (() => {
             existingMarkup !== nextMarkup
           ) {
             current.insertBefore(block, existing);
-            if (existing instanceof HTMLElement) {
+            if (isEl(existing)) {
               globalThis.OpenUIHost?.dispose(existing);
             }
             existing.remove();
@@ -6946,7 +7479,7 @@ const ChatView = (() => {
       });
       while (current.childNodes.length > blocks.length) {
         const last = current.lastChild;
-        if (last instanceof HTMLElement) {
+        if (isEl(last)) {
           globalThis.OpenUIHost?.dispose(last);
         }
         last?.remove();
@@ -7108,6 +7641,271 @@ const ChatView = (() => {
       return textSmoother.step(nowMs).emitted;
     };
 
+    const TOOL_GROUP_HEADER_SIG = new WeakMap<HTMLElement, string>();
+    const TOOL_GROUP_BODY_ENTRIES = new WeakMap<
+      HTMLElement,
+      Map<string, {node: HTMLElement; sig: string}>
+    >();
+
+    const buildToolHeaderSignature = (
+      groupChips: TurnChip[],
+      single: boolean,
+      thoughtOnly: boolean,
+    ): string =>
+      JSON.stringify({
+        single,
+        thoughtOnly,
+        chips: groupChips.map(c => ({
+          id: c.callId,
+          name: c.name,
+          argsRaw: c.argsRaw,
+          displayLabel: c.displayLabel,
+          resState: c.result
+            ? c.result.interrupted
+              ? 'stop'
+              : c.result.isError
+                ? 'err'
+                : 'ok'
+            : 'run',
+        })),
+      });
+
+    const syncLiveToolGroupNode = (
+      existingRoot: HTMLElement,
+      groupChips: TurnChip[],
+      groupWork: FlowItem[],
+    ): void => {
+      const single = singleToolGroup(groupChips, groupWork);
+      const headerSig = buildToolHeaderSignature(groupChips, single, false);
+      const summaryEl = existingRoot.querySelector<HTMLElement>(
+        '.mp-chat-tool-group-header',
+      );
+      if (TOOL_GROUP_HEADER_SIG.get(existingRoot) !== headerSig) {
+        TOOL_GROUP_HEADER_SIG.set(existingRoot, headerSig);
+        if (single) {
+          existingRoot.setAttribute('data-single', 'true');
+        } else {
+          existingRoot.removeAttribute('data-single');
+        }
+        const singleModels = single ? groupChips.map(chipModel) : null;
+        const singleModel = singleModels
+          ? coalescedToolModel(groupChips, singleModels)
+          : null;
+        if (singleModel) {
+          existingRoot.setAttribute('data-state', singleModel.state);
+        } else {
+          existingRoot.removeAttribute('data-state');
+        }
+        const groupId = summaryEl?.getAttribute('data-group-id') || '';
+        const prevGroup = groupId ? GROUP_EXPANSION.get(groupId) : undefined;
+        if (groupId && (!prevGroup || prevGroup.autoOpened)) {
+          const nextOpen = Boolean(singleModel && defaultOpenForTool(singleModel));
+          GROUP_EXPANSION.set(groupId, {
+            open: nextOpen,
+            members: prevGroup?.members || [],
+            single,
+            autoOpened: nextOpen,
+          });
+          if (nextOpen) {
+            existingRoot.setAttribute('open', '');
+          } else {
+            existingRoot.removeAttribute('open');
+          }
+          summaryEl?.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+        }
+        if (singleModel?.errorTitle) {
+          existingRoot.setAttribute('data-error-title', 'true');
+        } else {
+          existingRoot.removeAttribute('data-error-title');
+        }
+        const titleEl = summaryEl?.querySelector<HTMLElement>(
+          '.mp-chat-tool-group-title',
+        );
+        if (titleEl) {
+          const freshLabel = h('span', {class: 'mp-chat-tool-group-title'});
+          if (singleModel) {
+            const displayLabel = groupChips[0].displayLabel?.trim();
+            if (displayLabel) {
+              attach(freshLabel, displayLabel);
+            } else {
+              attach(
+                freshLabel,
+                h('span', {class: 'mp-chat-title'}, singleModel.title),
+              );
+              if (singleModel.summary) {
+                attach(
+                  freshLabel,
+                  h('span', {class: 'mp-chat-tool-sep'}, ' '),
+                );
+                attach(freshLabel, toolFileSummaryNode(singleModel));
+              }
+            }
+            if (singleModel.state === 'running') {
+              const elapsed = runningElapsedNode(groupChips);
+              if (elapsed) {
+                attach(freshLabel, elapsed);
+              }
+            }
+          } else {
+            const inFlight = groupChips.some(chip => chip.result === undefined);
+            attach(freshLabel, toolGroupSummaryNode(groupChips));
+            if (inFlight) {
+              const elapsed = runningElapsedNode(groupChips);
+              if (elapsed) {
+                attach(freshLabel, elapsed);
+              }
+            }
+          }
+          const inFlight = singleModel
+            ? singleModel.state === 'running'
+            : groupChips.some(chip => chip.result === undefined);
+          titleEl.classList?.toggle('mp-narration-shimmer', inFlight);
+          titleEl.replaceChildren(...Array.from((freshLabel as HTMLElement).childNodes));
+        }
+      } else {
+        const elapsedEl = summaryEl?.querySelector<HTMLElement>(
+          '.mp-chat-tool-elapsed',
+        );
+        const inFlight = groupChips.some(chip => chip.result === undefined);
+        summaryEl
+          ?.querySelector<HTMLElement>('.mp-chat-tool-group-title')
+          ?.classList?.toggle('mp-narration-shimmer', inFlight);
+        if (elapsedEl && inFlight) {
+          const freshElapsed = runningElapsedNode(groupChips) as HTMLElement | null;
+          const nextWording =
+            freshElapsed?.querySelector<HTMLElement>('.mp-chat-tool-elapsed')
+              ?.textContent || '';
+          if (nextWording && elapsedEl.textContent !== nextWording) {
+            elapsedEl.textContent = nextWording;
+          }
+        }
+      }
+
+      const bodyEl = existingRoot.querySelector<HTMLElement>(
+        '.mp-chat-tool-group-body',
+      );
+      if (!bodyEl) {
+        return;
+      }
+      let bodyMap = TOOL_GROUP_BODY_ENTRIES.get(existingRoot);
+      if (!bodyMap) {
+        bodyMap = new Map();
+        for (const child of Array.from(bodyEl.children)) {
+          const rowEl = child as HTMLElement;
+          const thinkEl = isThinkNode(rowEl)
+            ? rowEl
+            : rowEl.querySelector<HTMLElement>('.mp-chat-think');
+          const rowId =
+            thinkEl?.getAttribute('data-row-id') ||
+            rowEl.getAttribute('data-call-id') ||
+            '';
+          if (rowId) {
+            bodyMap.set(rowId, {node: rowEl, sig: ''});
+          }
+        }
+        TOOL_GROUP_BODY_ENTRIES.set(existingRoot, bodyMap);
+      }
+
+      const entries: FlowItem[] = groupWork.length
+        ? groupWork
+        : groupChips.map(chip => ({type: 'chip', chip}));
+      const singleModels = single ? groupChips.map(chipModel) : null;
+      const desiredBody: HTMLElement[] = [];
+      const resolveBodyReasoningId = (entry: {id?: string}): string => {
+        if (entry.id && scope && entry.id.startsWith(`${scope}:`)) {
+          return entry.id;
+        }
+        return entry.id === 'head'
+          ? `${scope}:head`
+          : `${scope}:r${entry.id ?? '0'}`;
+      };
+
+      for (let i = 0; i < entries.length; i++) {
+        const item = entries[i];
+        if (item.type === 'reasoning') {
+          const rId = resolveBodyReasoningId(item);
+          const rowKey = `think:${rId}`;
+          const autoCollapsed = i < entries.length - 1;
+          const running = item.running === true && !autoCollapsed;
+          const sig = JSON.stringify({text: item.text, running, autoCollapsed});
+          let rec = bodyMap.get(rowKey);
+          if (!rec) {
+            rec = {
+              node: thinkNode(item.text, running, rId, autoCollapsed) as HTMLElement,
+              sig,
+            };
+            bodyMap.set(rowKey, rec);
+          } else if (rec.sig !== sig) {
+            updateThinkingState(rec.node, item.text, running);
+            if (autoCollapsed) {
+              collapseThinkIfUnpinned(rec.node, `thought:${rId}`);
+            }
+            rec.sig = sig;
+          }
+          desiredBody.push(rec.node);
+          continue;
+        }
+        if (item.type === 'narration') {
+          const nKey = `narration:${item.turn ?? i}:${i}`;
+          const sig = String(item.text);
+          let rec = bodyMap.get(nKey);
+          if (!rec || rec.sig !== sig) {
+            rec = {node: narrationNode(item.text) as HTMLElement, sig};
+            bodyMap.set(nKey, rec);
+          }
+          desiredBody.push(rec.node);
+          continue;
+        }
+        if (item.type !== 'chip') {
+          continue;
+        }
+        const chip = item.chip;
+        const grouped = [chip];
+        const fileKey = fileRowKey(chip);
+        while (fileKey !== null && entries[i + 1]?.type === 'chip') {
+          const next = entries[i + 1] as Extract<FlowItem, {type: 'chip'}>;
+          if (fileRowKey(next.chip) !== fileKey) {
+            break;
+          }
+          grouped.push(next.chip);
+          i++;
+        }
+        const itemKey = `tool:${scope ? `${scope}:` : ''}${grouped[0].callId || i}`;
+        const sig = JSON.stringify(grouped);
+        let rec = bodyMap.get(itemKey);
+        if (!rec || rec.sig !== sig) {
+          const groupedModels =
+            grouped.length > 1 ? (singleModels ?? grouped.map(chipModel)) : null;
+          const node = (groupedModels
+            ? toolRowNode(
+                coalescedToolModel(grouped, groupedModels),
+                scope,
+                groupedModels,
+              )
+            : chipNode(chip, scope)) as HTMLElement;
+          if (single) {
+            const disclosure = node.querySelector<HTMLElement>('.mp-chat-disclosure');
+            disclosure?.setAttribute('data-open', 'true');
+            disclosure?.removeAttribute('data-row-id');
+          }
+          rec = {node, sig};
+          bodyMap.set(itemKey, rec);
+        }
+        desiredBody.push(rec.node);
+      }
+
+      for (const child of Array.from(bodyEl.children)) {
+        if (!desiredBody.includes(child as HTMLElement)) {
+          child.remove();
+        }
+      }
+      desiredBody.forEach((node, idx) => {
+        if (bodyEl.children[idx] !== node) {
+          bodyEl.insertBefore(node, bodyEl.children[idx] || null);
+        }
+      });
+    };
+
     return {
       update(snapshot: LiveTurnSnapshot) {
         const snapshotElapsed =
@@ -7163,10 +7961,25 @@ const ChatView = (() => {
             const signature = JSON.stringify(value);
             let entry = traceNodes.get(key);
             if (!entry) {
-              entry = {node: make() as HTMLElement, signature};
+              const built = make() as HTMLElement;
+              if (key.startsWith('tools:')) {
+                const payload = value as {chips: TurnChip[]; work: FlowItem[]};
+                TOOL_GROUP_HEADER_SIG.set(
+                  built,
+                  buildToolHeaderSignature(
+                    payload.chips,
+                    singleToolGroup(payload.chips, payload.work),
+                    false,
+                  ),
+                );
+              }
+              entry = {node: built, signature};
               traceNodes.set(key, entry);
             } else if (entry.signature !== signature) {
-              if (key.startsWith('message:')) {
+              if (key.startsWith('tools:')) {
+                const payload = value as {chips: TurnChip[]; work: FlowItem[]};
+                syncLiveToolGroupNode(entry.node, payload.chips, payload.work);
+              } else if (key.startsWith('message:')) {
                 updateLiveMarkdown(
                   entry.node,
                   String(value),
@@ -7280,6 +8093,9 @@ const ChatView = (() => {
                 return;
               }
               const chip = trajectoryChip(record, index, false);
+              if (isHiddenMetaTool(chip)) {
+                return;
+              }
               if (SUBAGENT_TOOLS.has(chip.name)) {
                 flush();
                 const key = `agent:${chip.callId}`;
@@ -7341,6 +8157,9 @@ const ChatView = (() => {
                 );
               }
             } else if (record.kind === 'notice') {
+              if (isInternalSteeringNotice(String(record.text || ''))) {
+                return;
+              }
               flush();
               if (record.noticeType === 'compaction') {
                 const signature = {
@@ -7663,7 +8482,10 @@ const ChatView = (() => {
     };
   }
 
-  function createConversationView(flow: HTMLElement) {
+  function createConversationView(
+    flow: HTMLElement,
+    viewOptions: {workMode?: 'learn' | 'work' | 'code'} = {},
+  ) {
     const turns = new Map<
       number,
       {
@@ -7676,6 +8498,7 @@ const ChatView = (() => {
     return {
       update(conversation: {
         id: string;
+        workMode?: 'learn' | 'work' | 'code';
         agentSessionId?: string;
         hasPendingWork?: boolean;
         turns?: Array<
@@ -7687,6 +8510,7 @@ const ChatView = (() => {
           }
         >;
       }) {
+        const effectiveWorkMode = conversation.workMode || viewOptions.workMode;
         const undoFileChanges = Boolean(conversation.agentSessionId) &&
           !conversation.hasPendingWork &&
           !conversation.turns?.some(item => item.liveProgress || item.outcome === '进行中');
@@ -7699,17 +8523,26 @@ const ChatView = (() => {
               );
             } else if (turn.question) {
               flow.appendChild(
-                userNode(turn.question, turn.at, {
-                  conversationId: conversation.id,
-                  turnIndex,
-                }) as HTMLElement,
+                userNode(
+                  turn.question,
+                  turn.at,
+                  {
+                    conversationId: conversation.id,
+                    turnIndex,
+                  },
+                  {workMode: effectiveWorkMode},
+                ) as HTMLElement,
               );
             }
             const host = document.createElement('div');
             host.className = 'mp-chat-flow-item';
             host.dataset.turnIndex = String(turnIndex);
             flow.appendChild(host);
-            const presentation: TurnPresentation = {taskPanel: true, undoFileChanges};
+            const presentation: TurnPresentation = {
+              taskPanel: true,
+              undoFileChanges,
+              workMode: effectiveWorkMode,
+            };
             current = {
               host,
               live: createLiveTurn(host, `${conversation.id}#${turnIndex}`, presentation),
@@ -7719,6 +8552,7 @@ const ChatView = (() => {
             turns.set(turnIndex, current);
           }
           current.presentation.undoFileChanges = undoFileChanges;
+          current.presentation.workMode = effectiveWorkMode;
           if (turn.liveProgress || turn.outcome === '进行中') {
             current.live.update(
               turn.liveProgress || {

@@ -32,7 +32,11 @@ declare global {
     createLiveTurn(
       body: HTMLElement,
       scope?: string,
-      options?: {taskPanel?: boolean; smooth?: boolean},
+      options?: {
+        taskPanel?: boolean;
+        smooth?: boolean;
+        workMode?: 'learn' | 'work' | 'code';
+      },
     ): MagicPointerLiveTurn;
   }
 
@@ -1356,6 +1360,7 @@ const STUDIO_POPOVERS = [
   ['composer-workspace-menu', 'composer-workspace'],
   ['composer-branch-menu', 'composer-branch'],
   ['composer-usage-popover', 'composer-context'],
+  ['desktop-perception', 'composer-perception-toggle'],
   ['account-menu', 'account-footer'],
 ] as const;
 
@@ -1514,7 +1519,7 @@ function conversationNode(
     id?: string;
     title?: string;
     updatedAt?: number;
-    workMode?: 'learn' | 'work' | 'code';
+    workMode?: 'learn' | 'design' | 'code' | 'work' | 'project_coordinator';
     hasPendingWork?: boolean;
     failed?: boolean;
     lastOutcome?: string;
@@ -2693,17 +2698,43 @@ function emptySessionsPictogram() {
 }
 
 let sidebarRenderGeneration = 0;
+const expandedSidebarProjectThreads = new Set<string>();
+let projectsMaSidebarSubscribed = false;
+let projectsMaSidebarRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) {
     return;
   }
+  if (!projectsMaSidebarSubscribed && typeof Data.onProjectsMaEvent === 'function') {
+    projectsMaSidebarSubscribed = true;
+    Data.onProjectsMaEvent(() => {
+      if (projectsMaSidebarRefreshTimer !== null) {
+        clearTimeout(projectsMaSidebarRefreshTimer);
+      }
+      projectsMaSidebarRefreshTimer = setTimeout(() => {
+        projectsMaSidebarRefreshTimer = null;
+        void renderSidebar();
+      }, 80);
+    });
+  }
   const generation = ++sidebarRenderGeneration;
-  const [list, projects] = await Promise.all([
+  const [list, projects, badgesRes] = await Promise.all([
     Data.conversations(),
     Data.projects(),
+    typeof Data.projectsMaSidebarBadges === 'function'
+      ? Data.projectsMaSidebarBadges().catch(() => ({ok: false, badges: {}}))
+      : Promise.resolve({ok: false, badges: {}}),
   ]);
+  type SidebarBadgeShape = {
+    kind?: 'count' | 'working' | 'dot' | 'none';
+    count?: number;
+  };
+  const sidebarBadges = (badgesRes?.badges || {}) as Record<
+    string,
+    SidebarBadgeShape & {badge?: SidebarBadgeShape}
+  >;
   if (generation !== sidebarRenderGeneration) {
     return;
   }
@@ -2816,12 +2847,18 @@ async function renderSidebar() {
     toggle.setAttribute('aria-expanded', String(open));
     const chevron = document.createElement('span');
     chevron.className = 'mpw-project-chevron';
-    chevron.setAttribute('aria-hidden', 'true');
-    chevron.innerHTML = icon('ic-chev');
+    chevron.title = open ? 'Collapse sessions' : 'Expand sessions';
+    chevron.innerHTML =
+      '<span class="cds-icon" data-size="xs" data-glyph="&#xE02A;" aria-hidden="true"></span>';
     const projectName = document.createElement('span');
     projectName.className = 'mpw-project-name';
     projectName.textContent = group.label;
     toggle.append(projectName, chevron);
+    const isRealGroup = Boolean(group.key && !group.virtual);
+    if (isRealGroup) {
+      toggle.dataset.projectDirectOpen = group.key;
+      toggle.title = `Open project: ${group.label}`;
+    }
     toggle.setAttribute(
       'aria-label',
       studioT('sidebar.group_summary', {
@@ -2831,20 +2868,44 @@ async function renderSidebar() {
     );
     const actions = document.createElement('span');
     actions.className = 'mpw-project-actions';
-    const tools = document.createElement('button');
-    tools.type = 'button';
-    tools.dataset.projectTools = group.key;
-    tools.setAttribute('aria-label', studioT('sidebar.group_sort'));
-    tools.title = studioT('sidebar.group_sort');
-    tools.innerHTML = icon('ic-sliders');
-    actions.append(tools);
     if (group.key && !group.virtual) {
       const add = document.createElement('button');
       add.type = 'button';
       add.dataset.projectNew = group.key;
       add.setAttribute('aria-label', 'New session');
-      add.innerHTML = icon('ic-plus');
+      add.title = 'New session';
+      add.innerHTML =
+        '<span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span>';
       actions.append(add);
+    }
+    const tools = document.createElement('button');
+    tools.type = 'button';
+    tools.dataset.projectTools = group.key;
+    tools.setAttribute('aria-label', studioT('sidebar.group_sort'));
+    tools.title = studioT('sidebar.group_sort');
+    tools.innerHTML =
+      '<span class="cds-icon" data-size="small" data-glyph="&#xE070;" aria-hidden="true"></span>';
+    actions.append(tools);
+    const projectMatch = projects.find(
+      p => ProjectScope.key(p) === group.key || p.id === group.key,
+    );
+    const rawBadgeEntry =
+      (projectMatch?.id && sidebarBadges[projectMatch.id]) ||
+      sidebarBadges[group.key];
+    const badge = rawBadgeEntry?.badge ?? rawBadgeEntry;
+    if (badge && badge.kind && badge.kind !== 'none') {
+      const badgeEl = document.createElement('span');
+      if (badge.kind === 'count') {
+        badgeEl.className = 'mp-project-badge-count';
+        badgeEl.textContent = String(badge.count ?? 0);
+      } else if (badge.kind === 'working') {
+        badgeEl.className = 'mp-project-badge-working';
+        badgeEl.innerHTML =
+          '<span class="cds-icon" data-size="xs" data-glyph="&#xE0E5;" aria-hidden="true"></span>';
+      } else if (badge.kind === 'dot') {
+        badgeEl.className = 'mp-project-badge-dot';
+      }
+      toggle.append(badgeEl);
     }
     head.append(toggle, actions);
     const sessions = document.createElement('div');
@@ -2852,9 +2913,36 @@ async function renderSidebar() {
     const pinnedIds = group.key === '__pinned__'
       ? group.items.map(conversation => conversation.id)
       : [];
-    for (const c of group.items) {
+    const maxVisible = 5;
+    const isRealProject = Boolean(group.key && !group.virtual);
+    const isExpanded = expandedSidebarProjectThreads.has(group.key);
+    const visibleItems =
+      isRealProject && !isExpanded && group.items.length > maxVisible
+        ? group.items.slice(0, maxVisible)
+        : group.items;
+    for (const c of visibleItems) {
       const node = conversationNode(c, active, pinnedIds);
       sessions.appendChild(node);
+    }
+    if (isRealProject && group.items.length > maxVisible) {
+      const moreBtn = document.createElement('button');
+      moreBtn.type = 'button';
+      moreBtn.className = 'mp-project-threads-more';
+      moreBtn.textContent = isExpanded
+        ? studioT('projects.ma.show_less')
+        : studioT('projects.ma.show_more', {
+            count: group.items.length - maxVisible,
+          });
+      moreBtn.addEventListener('click', event => {
+        event.stopPropagation();
+        if (isExpanded) {
+          expandedSidebarProjectThreads.delete(group.key);
+        } else {
+          expandedSidebarProjectThreads.add(group.key);
+        }
+        void renderSidebar();
+      });
+      sessions.appendChild(moreBtn);
     }
     project.append(head, sessions);
     nodes.push(project);
@@ -3308,13 +3396,491 @@ function scheduleStreamRail(delay = 80) {
   }, delay);
 }
 
-function quotedSelection(text: string): string {
-  const lines = text
-    .split('\n')
-    .map(line => `> ${line}`)
-    .join('\n');
-  return `${lines}\n\n`;
+interface ComposerReplyQuote {
+  id: string;
+  text: string;
+  comment?: string;
+  sourceTurnIndex?: number;
+  sourceBlockIndex?: number;
 }
+
+let pendingReplyQuotes: ComposerReplyQuote[] = [];
+let replyQuoteSeq = 0;
+
+const replyHighlightCleanups = new Map<
+  'mp-reply-target' | 'mp-reply-draft',
+  () => void
+>();
+
+function clearReplyHighlight(name: 'mp-reply-target' | 'mp-reply-draft'): void {
+  const prev = replyHighlightCleanups.get(name);
+  if (prev) {
+    replyHighlightCleanups.delete(name);
+    prev();
+  }
+}
+
+function findTextRangeInContainer(
+  container: HTMLElement,
+  rawNeedle: string,
+): Range | null {
+  const needle = String(rawNeedle || '').replace(/\s+/g, ' ').trim();
+  if (!needle) {
+    return null;
+  }
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let flat = '';
+  const coords: Array<{node: Text; startOffset: number; endOffset: number}> = [];
+  let inSpace = false;
+  let current = walker.nextNode();
+  while (current) {
+    const textNode = current as Text;
+    const parentEl = textNode.parentElement;
+    if (
+      !parentEl?.closest('.katex-mathml') &&
+      !parentEl?.closest('.mp-chat-actions')
+    ) {
+      const value = textNode.nodeValue || '';
+      for (let i = 0; i < value.length; i++) {
+        const ch = value[i]!;
+        if (/\s/.test(ch)) {
+          if (flat.length > 0 && !inSpace) {
+            flat += ' ';
+            coords.push({node: textNode, startOffset: i, endOffset: i + 1});
+            inSpace = true;
+          }
+        } else {
+          flat += ch;
+          coords.push({node: textNode, startOffset: i, endOffset: i + 1});
+          inSpace = false;
+        }
+      }
+    }
+    current = walker.nextNode();
+  }
+  let pos = flat.indexOf(needle);
+  let matchLen = needle.length;
+  if (pos < 0 && needle.length > 48) {
+    const prefix = needle.slice(0, 48).trim();
+    pos = flat.indexOf(prefix);
+    matchLen = prefix.length;
+  }
+  if (pos < 0 && needle.length > 20) {
+    const shortPrefix = needle.slice(0, 20).trim();
+    pos = flat.indexOf(shortPrefix);
+    matchLen = shortPrefix.length;
+  }
+  if (pos < 0 || pos + matchLen - 1 >= coords.length) {
+    return null;
+  }
+  const startCoord = coords[pos];
+  const endCoord = coords[pos + matchLen - 1];
+  if (!startCoord || !endCoord) {
+    return null;
+  }
+  const range = document.createRange();
+  range.setStart(startCoord.node, startCoord.startOffset);
+  range.setEnd(endCoord.node, endCoord.endOffset);
+  return range;
+}
+
+function highlightTextRange(
+  range: Range,
+  name: 'mp-reply-target' | 'mp-reply-draft',
+  durationMs?: number,
+): void {
+  clearReplyHighlight(name);
+  const cssHighlights = (
+    globalThis as unknown as {CSS?: {highlights?: Map<string, unknown>}}
+  ).CSS?.highlights;
+  const HighlightCtor = (
+    globalThis as unknown as {Highlight?: new (...ranges: Range[]) => unknown}
+  ).Highlight;
+  let cleanup: () => void = () => {};
+  if (
+    cssHighlights &&
+    typeof cssHighlights.set === 'function' &&
+    typeof HighlightCtor === 'function'
+  ) {
+    cssHighlights.set(name, new HighlightCtor(range));
+    cleanup = () => {
+      cssHighlights.delete(name);
+    };
+  } else if (
+    range.startContainer === range.endContainer &&
+    range.startContainer.nodeType === Node.TEXT_NODE
+  ) {
+    const mark = document.createElement('mark');
+    mark.className = 'mp-reply-inline-mark';
+    mark.dataset.replyHighlight = name;
+    try {
+      range.surroundContents(mark);
+      cleanup = () => {
+        const parent = mark.parentNode;
+        if (!parent) {
+          return;
+        }
+        while (mark.firstChild) {
+          parent.insertBefore(mark.firstChild, mark);
+        }
+        parent.removeChild(mark);
+      };
+    } catch {
+      cleanup = () => {};
+    }
+  }
+  if (durationMs && durationMs > 0) {
+    const timer = window.setTimeout(() => {
+      clearReplyHighlight(name);
+    }, durationMs);
+    const inner = cleanup;
+    replyHighlightCleanups.set(name, () => {
+      window.clearTimeout(timer);
+      inner();
+    });
+    return;
+  }
+  replyHighlightCleanups.set(name, cleanup);
+}
+
+let activeInlineReplyPopover: HTMLElement | null = null;
+let activeInlineReplyDismiss: ((ev: Event) => void) | null = null;
+
+function closeInlineReplyPopover(): void {
+  clearReplyHighlight('mp-reply-draft');
+  if (activeInlineReplyDismiss) {
+    document.removeEventListener('mousedown', activeInlineReplyDismiss, true);
+    document.removeEventListener('keydown', activeInlineReplyDismiss, true);
+    activeInlineReplyDismiss = null;
+  }
+  activeInlineReplyPopover?.remove();
+  activeInlineReplyPopover = null;
+}
+
+function openInlineReplyPopover(payload: {
+  quote: string;
+  rect: {left: number; right: number; top: number; bottom: number};
+  anchorNode: Node | null;
+  range?: Range | null;
+}): void {
+  closeInlineReplyPopover();
+  const quote = String(payload.quote || '').replace(/\s+/g, ' ').trim();
+  if (!quote) {
+    return;
+  }
+  if (payload.range) {
+    highlightTextRange(payload.range, 'mp-reply-draft');
+  }
+
+  const pop = document.createElement('div');
+  pop.className = 'mp-inline-reply-popover';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', 'Reply feedback');
+
+  const head = document.createElement('div');
+  head.className = 'mp-inline-reply-head';
+  const qPreview = document.createElement('span');
+  qPreview.className = 'mp-inline-reply-quote';
+  qPreview.textContent = `↩ “${quote.length > 68 ? `${quote.slice(0, 67)}…` : quote}”`;
+  qPreview.title = quote;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'mp-inline-reply-close';
+  closeBtn.setAttribute('aria-label', '取消回复');
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => closeInlineReplyPopover());
+  head.append(qPreview, closeBtn);
+
+  const form = document.createElement('form');
+  form.className = 'mp-inline-reply-form';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'mp-inline-reply-input';
+  input.placeholder = '输入针对这句话的反馈或疑问…';
+  const doneBtn = document.createElement('button');
+  doneBtn.type = 'submit';
+  doneBtn.className = 'mp-inline-reply-submit';
+  doneBtn.textContent = '完成';
+
+  form.append(input, doneBtn);
+  form.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const comment = input.value.trim();
+    closeInlineReplyPopover();
+    window.getSelection()?.removeAllRanges?.();
+    addComposerReplyQuote(quote, payload.anchorNode, undefined, comment);
+  });
+
+  pop.append(head, form);
+  document.body.appendChild(pop);
+  const popW = pop.offsetWidth || 360;
+  const popH = pop.offsetHeight || 86;
+  const vw = window.innerWidth || 1280;
+  const vh = window.innerHeight || 800;
+  const centerX = (payload.rect.left + payload.rect.right) / 2;
+  const left = Math.max(12, Math.min(vw - popW - 12, Math.round(centerX - popW / 2)));
+  const top =
+    payload.rect.bottom + 8 + popH <= vh - 12
+      ? Math.round(payload.rect.bottom + 8)
+      : Math.max(12, Math.round(payload.rect.top - popH - 8));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+
+  activeInlineReplyPopover = pop;
+  const onDocDismiss = (ev: Event) => {
+    if (ev instanceof KeyboardEvent) {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        closeInlineReplyPopover();
+      }
+      return;
+    }
+    const target = ev.target as Node | null;
+    if (target && !pop.contains(target)) {
+      closeInlineReplyPopover();
+    }
+  };
+  activeInlineReplyDismiss = onDocDismiss;
+  document.addEventListener('mousedown', onDocDismiss, true);
+  document.addEventListener('keydown', onDocDismiss, true);
+  input.focus();
+}
+
+function jumpToReplyQuoteSource(quote: {text?: string; sourceTurnIndex?: number}): void {
+  const stream = document.getElementById('stream');
+  if (!stream) {
+    return;
+  }
+  const assistants = Array.from(
+    stream.querySelectorAll<HTMLElement>('.mp-chat-assistant'),
+  );
+  let target: HTMLElement | null = null;
+  if (
+    typeof quote.sourceTurnIndex === 'number' &&
+    quote.sourceTurnIndex >= 0 &&
+    assistants[quote.sourceTurnIndex]
+  ) {
+    target = assistants[quote.sourceTurnIndex];
+  } else if (quote.text) {
+    const needle = quote.text.slice(0, 60).trim();
+    if (needle) {
+      target =
+        Array.from(
+          stream.querySelectorAll<HTMLElement>(
+            '.mp-chat-assistant, .mp-chat-user',
+          ),
+        ).find(el => (el.textContent || '').includes(needle)) || null;
+    }
+  }
+  if (!target) {
+    return;
+  }
+  const range = findTextRangeInContainer(target, quote.text || '');
+  if (range) {
+    const scrollEl =
+      range.startContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.startContainer as HTMLElement)
+        : range.startContainer.parentElement || target;
+    scrollEl.scrollIntoView?.({block: 'center', behavior: 'smooth'});
+    highlightTextRange(range, 'mp-reply-target', 1800);
+    return;
+  }
+  const needleShort = String(quote.text || '').slice(0, 28).trim();
+  const blockTarget = needleShort
+    ? Array.from(
+        target.querySelectorAll<HTMLElement>(
+          '.mp-chat-markdown p, .mp-chat-markdown li, .mp-chat-markdown pre, .mp-math-block',
+        ),
+      ).find(node => (node.textContent || '').includes(needleShort)) || target
+    : target;
+  blockTarget.scrollIntoView({block: 'center', behavior: 'smooth'});
+  if (blockTarget !== target) {
+    blockTarget.classList.remove('mp-reply-jump-highlight');
+    void blockTarget.offsetWidth;
+    blockTarget.classList.add('mp-reply-jump-highlight');
+    window.setTimeout(
+      () => blockTarget.classList.remove('mp-reply-jump-highlight'),
+      1450,
+    );
+  }
+}
+
+function escapeReplyAttrValue(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderComposerReplyBar(): void {
+  const bar = document.getElementById('composer-reply-bar');
+  if (!bar) {
+    return;
+  }
+  bar.replaceChildren();
+  bar.hidden = pendingReplyQuotes.length === 0;
+  if (!pendingReplyQuotes.length) {
+    return;
+  }
+  for (const item of pendingReplyQuotes) {
+    const chip = document.createElement('div');
+    chip.className = 'mp-composer-reply-chip';
+    chip.dataset.replyQuoteId = item.id;
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'cds-icon';
+    iconEl.dataset.size = 'xs';
+    iconEl.dataset.glyph = String.fromCodePoint(0xf087);
+    iconEl.setAttribute('aria-hidden', 'true');
+
+    const jumpBtn = document.createElement('button');
+    jumpBtn.type = 'button';
+    jumpBtn.className = 'mp-composer-reply-jump';
+    jumpBtn.textContent = item.text;
+    jumpBtn.title = item.comment ? `${item.text} — ${item.comment}` : item.text;
+    jumpBtn.addEventListener('click', () => jumpToReplyQuoteSource(item));
+
+    chip.append(iconEl, jumpBtn);
+
+    if (item.comment) {
+      const commentSpan = document.createElement('span');
+      commentSpan.className = 'mp-composer-reply-comment';
+      commentSpan.textContent = item.comment;
+      commentSpan.title = item.comment;
+      chip.appendChild(commentSpan);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'mp-composer-reply-remove';
+    removeBtn.setAttribute('aria-label', 'Remove quoted reply');
+    removeBtn.title = 'Remove quote';
+    const xIcon = document.createElement('span');
+    xIcon.className = 'cds-icon';
+    xIcon.dataset.size = 'xs';
+    xIcon.dataset.glyph = String.fromCodePoint(0xe10f);
+    xIcon.setAttribute('aria-hidden', 'true');
+    removeBtn.appendChild(xIcon);
+    removeBtn.addEventListener('click', () => removeComposerReplyQuote(item.id));
+
+    chip.appendChild(removeBtn);
+    bar.appendChild(chip);
+  }
+}
+
+function addComposerReplyQuote(
+  rawQuote: string,
+  anchorNode?: Node | null,
+  explicitTurnIndex?: number,
+  comment?: string,
+): void {
+  const normalized = String(rawQuote || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1200);
+  if (!normalized) {
+    return;
+  }
+  const cleanComment = String(comment || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 800);
+  const loc =
+    anchorNode && typeof resolveAnchorTurnAndBlock === 'function'
+      ? resolveAnchorTurnAndBlock(anchorNode)
+      : undefined;
+  const sourceTurnIndex =
+    typeof explicitTurnIndex === 'number'
+      ? explicitTurnIndex
+      : loc?.parentTurnIndex;
+  const existing = pendingReplyQuotes.find(item => item.text === normalized);
+  if (!existing) {
+    pendingReplyQuotes = [
+      ...pendingReplyQuotes.slice(-3),
+      {
+        id: `rq-${++replyQuoteSeq}`,
+        text: normalized,
+        ...(cleanComment ? {comment: cleanComment} : {}),
+        ...(typeof sourceTurnIndex === 'number' ? {sourceTurnIndex} : {}),
+        ...(typeof loc?.blockIndex === 'number'
+          ? {sourceBlockIndex: loc.blockIndex}
+          : {}),
+      },
+    ];
+  } else if (cleanComment) {
+    existing.comment = cleanComment;
+  }
+  renderComposerReplyBar();
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea, .mpw-input',
+  );
+  if (textarea) {
+    fitComposer(textarea);
+    syncComposerSubmitState();
+    textarea.focus();
+  }
+}
+
+function removeComposerReplyQuote(id: string): void {
+  pendingReplyQuotes = pendingReplyQuotes.filter(item => item.id !== id);
+  renderComposerReplyBar();
+  syncComposerSubmitState();
+}
+
+function clearComposerReplyQuotes(): void {
+  if (!pendingReplyQuotes.length) {
+    return;
+  }
+  pendingReplyQuotes = [];
+  renderComposerReplyBar();
+}
+
+function formatQuestionWithReplyQuotes(
+  rawQuestion: string,
+  quotes: ComposerReplyQuote[],
+): string {
+  if (!quotes.length) {
+    return rawQuestion;
+  }
+  const openTag = '<' + 'quoted_reply';
+  const closeTag = '</' + 'quoted_reply>';
+  const blocks = quotes.map(item => {
+    const turnAttr =
+      typeof item.sourceTurnIndex === 'number'
+        ? ` turn="${item.sourceTurnIndex}"`
+        : '';
+    const commentAttr = item.comment
+      ? ` comment="${escapeReplyAttrValue(item.comment)}"`
+      : '';
+    return `${openTag}${turnAttr}${commentAttr}>${item.text}${closeTag}`;
+  });
+  const bodyParts = [blocks.join('\n')];
+  if (rawQuestion.trim()) {
+    bodyParts.push(rawQuestion);
+  }
+  return bodyParts.join('\n\n');
+}
+
+document.addEventListener('click', event => {
+  const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+    '[data-reply-jump-turn], .mp-chat-reply-quote',
+  );
+  if (!target) {
+    return;
+  }
+  const turnRaw = target.getAttribute('data-reply-jump-turn');
+  const turnIndex = turnRaw !== null ? Number(turnRaw) : undefined;
+  const quoteText =
+    target.dataset.replyJumpText ||
+    target.getAttribute('title') ||
+    target.textContent ||
+    '';
+  jumpToReplyQuoteSource({
+    text: quoteText,
+    ...(Number.isInteger(turnIndex) ? {sourceTurnIndex: turnIndex} : {}),
+  });
+});
 
 (function bindSelectionActions() {
   if (typeof SideChatBar !== 'undefined') {
@@ -3407,15 +3973,7 @@ function quotedSelection(text: string): string {
     const target = selectionTurn;
     hide();
     window.getSelection()?.removeAllRanges();
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      '#composer-form textarea',
-    );
-    if (textarea) {
-      textarea.value = quotedSelection(selected);
-      fitComposer(textarea);
-      syncComposerSubmitState();
-      textarea.focus();
-    }
+    addComposerReplyQuote(selected, null, target?.turnIndex);
     if (target?.conversationId) {
       document.dispatchEvent(
         new CustomEvent('mp:branch-conversation', {detail: target}),
@@ -3423,20 +3981,10 @@ function quotedSelection(text: string): string {
     }
   });
   reply.addEventListener('click', () => {
+    const target = selectionTurn;
     hide();
     window.getSelection()?.removeAllRanges();
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      '#composer-form textarea',
-    );
-    if (!textarea) {
-      return;
-    }
-    const quoted = quotedSelection(selected);
-    textarea.value = `${quoted}${textarea.value}`;
-    fitComposer(textarea);
-    syncComposerSubmitState();
-    textarea.focus();
-    textarea.setSelectionRange(quoted.length, quoted.length);
+    addComposerReplyQuote(selected, null, target?.turnIndex);
   });
 
   let timer = 0;
@@ -3689,22 +4237,37 @@ function contextCategoryRows(
     {
       kind: 'system',
       label: usageText('usage.system_prompt'),
-      value: usage.systemTokensEstimate || 0,
+      value: Number(usage.systemTokensEstimate) || 0,
     },
     {
       kind: 'tools',
       label: usageText('usage.tool_definitions'),
-      value: usage.toolSchemaTokensEstimate || 0,
+      value: Number(usage.toolSchemaTokensEstimate) || 0,
+    },
+    {
+      kind: 'mcp',
+      label: 'MCP tools',
+      value: Number(usage.mcpToolTokensEstimate) || 0,
+    },
+    {
+      kind: 'skills',
+      label: 'Skills',
+      value: Number(usage.skillTokensEstimate) || 0,
+    },
+    {
+      kind: 'memory',
+      label: 'Memory files',
+      value: Number(usage.memoryTokensEstimate) || 0,
     },
     {
       kind: 'messages',
       label: usageText('usage.messages'),
-      value: usage.messageTokensEstimate || 0,
+      value: Number(usage.messageTokensEstimate) || 0,
     },
     {
       kind: 'results',
       label: usageText('usage.tool_results'),
-      value: usage.toolResultTokensEstimate || 0,
+      value: Number(usage.toolResultTokensEstimate) || 0,
     },
   ].filter(row => row.value > 0);
   const sum = estimates.reduce((total, row) => total + row.value, 0);
@@ -3726,6 +4289,56 @@ function usageText(
   return typeof studioT === 'function' ? studioT(id, params) : id;
 }
 
+function inferModelContextWindow(modelId: unknown): number {
+  const name = String(modelId || '')
+    .toLowerCase()
+    .split('/')
+    .at(-1) || '';
+  if (!name) {
+    return 0;
+  }
+  const table: Array<[string, number]> = [
+    ['gpt-5.6', 1_050_000],
+    ['gpt-5.5', 1_050_000],
+    ['gpt-5.4-mini', 400_000],
+    ['gpt-5.4-nano', 400_000],
+    ['gpt-5.4', 1_050_000],
+    ['gpt-5', 400_000],
+    ['gemini-2', 1_000_000],
+    ['gemini-3', 1_000_000],
+    ['gpt-4.1', 1_000_000],
+    ['claude-opus-5', 1_000_000],
+    ['claude-sonnet-5', 1_000_000],
+    ['claude-fable-5', 1_000_000],
+    ['claude-mythos-5', 1_000_000],
+    ['claude-opus-4-8', 1_000_000],
+    ['claude-opus-4-7', 1_000_000],
+    ['claude-opus-4-6', 1_000_000],
+    ['claude-sonnet-4-6', 1_000_000],
+    ['claude-opus-4', 200_000],
+    ['claude-sonnet-4', 200_000],
+    ['claude-haiku-4', 200_000],
+    ['claude-3', 200_000],
+    ['kimi-k', 256_000],
+    ['qwen3-coder', 256_000],
+    ['qwen4', 256_000],
+    ['grok-4', 256_000],
+    ['glm-5', 200_000],
+    ['glm-4.6', 200_000],
+    ['minimax', 200_000],
+    ['deepseek', 128_000],
+    ['gpt-4o', 128_000],
+    ['qwen3', 128_000],
+    ['glm-4', 128_000],
+    ['mimo', 128_000],
+    ['llama4', 128_000],
+  ];
+  const hit = table
+    .filter(([prefix]) => name.startsWith(prefix))
+    .sort((a, b) => b[0].length - a[0].length)[0];
+  return hit ? hit[1] : 0;
+}
+
 function latestContextUsage(
   turns: MagicPointerTurn[],
 ): MagicPointerModelUsage | undefined {
@@ -3740,7 +4353,16 @@ function latestContextUsage(
             ?.contextTokens === 'number',
       )?.modelUsage as MagicPointerModelUsage | undefined;
     if (current) {
-      return current;
+      return turn.modelUsage
+        ? {
+            ...turn.modelUsage,
+            ...current,
+            contextWindow:
+              Number(current.contextWindow) ||
+              Number(turn.modelUsage.contextWindow) ||
+              0,
+          }
+        : current;
     }
     if (typeof turn.modelUsage?.contextTokens === 'number') {
       return turn.modelUsage;
@@ -3806,19 +4428,25 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     );
   }, 0);
   const catalog = activeComposerModelCatalog();
-  const currentModel = catalog?.groups
-    ?.flatMap(group => group.models || [])
-    .find(
+  const catalogModels = catalog?.groups?.flatMap(group => group.models || []) || [];
+  const currentModel =
+    catalogModels.find(
       entry =>
         entry.id === catalog?.current &&
         (!catalog?.currentProfileId ||
           entry.profileId === catalog.currentProfileId),
-    );
+    ) || catalogModels.find(entry => entry.id === catalog?.current);
   const latestUsage = latestContextUsage(turns);
+  const activeTurnModel = [...turns].reverse().find(t => t.modelId)?.modelId;
   const contextWindow = Math.max(
     0,
     Number(latestUsage?.contextWindow) ||
       Number(currentModel?.contextWindow) ||
+      inferModelContextWindow(
+        activeTurnModel ||
+          catalog?.current ||
+          activeConversationRecord?.modelSelection?.model,
+      ) ||
       0,
   );
   const contextTokens = Math.max(0, Number(latestUsage?.contextTokens) || 0);
@@ -3873,16 +4501,37 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       ? `${measured ? '' : '≈'}${compactTokenCount(contextTokens)} / ${compactTokenCount(contextWindow)} (${Math.round(contextRatio)}%)`
       : `${known ? compactTokenCount(contextTokens) : '—'} / ${contextWindow > 0 ? compactTokenCount(contextWindow) : '—'}`,
   );
-  const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const chev = document.createElement('span');
+  chev.className = 'cds-icon mp-usage-chev';
+  chev.dataset.size = 'xs';
+  chev.dataset.glyph = String.fromCodePoint(0xe02a);
   chev.setAttribute('aria-hidden', 'true');
-  chev.classList.add('mp-usage-chev');
-  const chevUse = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-  chevUse.setAttribute('href', '#ic-chev');
-  chev.appendChild(chevUse);
   head.append(headValue, chev);
   popover.append(head);
 
   const latestRows = contextCategoryRows(latestUsage);
+  const autocompactBuffer =
+    contextWindow > 0
+      ? Math.max(
+          0,
+          Math.min(
+            contextWindow,
+            Number(latestUsage?.autocompactBufferTokens) ||
+              Math.round(contextWindow * 0.2),
+          ),
+        )
+      : 0;
+  const freeSpace =
+    contextWindow > 0
+      ? Math.max(0, contextWindow - contextTokens - autocompactBuffer)
+      : 0;
+  const formatPct = (value: number): string => {
+    if (!(contextWindow > 0)) {
+      return '';
+    }
+    const pct = (value / contextWindow) * 100;
+    return pct > 0 && pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`;
+  };
   const bar = el('div', 'mp-usage-bar');
   if (contextWindow > 0) {
     for (const row of latestRows) {
@@ -3894,6 +4543,16 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       });
       segment.style.width = usageSegmentShare(row.value, contextWindow);
       bar.append(segment);
+    }
+    if (autocompactBuffer > 0) {
+      const spacer = el('span', 'mp-usage-seg is-spacer');
+      spacer.style.flex = '1 1 auto';
+      bar.append(spacer);
+      const bufferSeg = el('span', 'mp-usage-seg is-autocompact');
+      bufferSeg.setAttribute('data-kind', 'autocompact');
+      bufferSeg.title = `Autocompact buffer: ${autocompactBuffer.toLocaleString()} tokens`;
+      bufferSeg.style.width = usageSegmentShare(autocompactBuffer, contextWindow);
+      bar.append(bufferSeg);
     }
   }
   popover.append(bar);
@@ -3909,18 +4568,53 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     el('span', 'mp-usage-head-value', headValue.textContent || ''),
   );
   details.append(detailHead);
+  const detailBar = bar.cloneNode(true);
+  details.append(detailBar);
+
   const contextRows = [
     ...latestRows,
+    ...(autocompactBuffer > 0
+      ? [
+          {
+            kind: 'autocompact',
+            label: 'Autocompact buffer',
+            value: autocompactBuffer,
+          },
+        ]
+      : []),
     ...(contextWindow > 0
       ? [
           {
             kind: 'available',
-            label: studioT('usage.remaining'),
-            value: Math.max(0, contextWindow - contextTokens),
+            label: 'Free space',
+            value: freeSpace,
           },
         ]
       : []),
   ];
+  const subItemsByKind: Record<
+    string,
+    Array<{label: string; tokens: number}>
+  > = {
+    memory: Array.isArray(latestUsage?.memoryFiles)
+      ? latestUsage.memoryFiles.map(item => ({
+          label: item.name || item.path,
+          tokens: Number(item.tokens) || 0,
+        }))
+      : [],
+    mcp: Array.isArray(latestUsage?.mcpTools)
+      ? latestUsage.mcpTools.map(item => ({
+          label: item.serverName ? `${item.serverName} · ${item.name}` : item.name,
+          tokens: Number(item.tokens) || 0,
+        }))
+      : [],
+    skills: Array.isArray(latestUsage?.skills)
+      ? latestUsage.skills.map(item => ({
+          label: item.name,
+          tokens: Number(item.tokens) || 0,
+        }))
+      : [],
+  };
   for (const row of contextRows) {
     const node = el('div', 'mp-usage-row mp-usage-context-row');
     node.dataset.kind = row.kind;
@@ -3928,21 +4622,62 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     const swatch = el('span', 'mp-usage-swatch');
     swatch.dataset.kind = row.kind;
     rowLabel.append(swatch, document.createTextNode(row.label));
-    node.append(
-      rowLabel,
+    const valWrap = el('span', 'mp-usage-row-value');
+    valWrap.append(
       el(
         'span',
-        'mp-usage-row-value',
-        `${row.kind === 'available' ? '' : '≈'}${Math.round(row.value).toLocaleString()}`,
+        '',
+        `${row.kind === 'available' || row.kind === 'autocompact' ? '' : ''}${compactTokenCount(Math.round(row.value))}`,
       ),
     );
-    const track = el('div', 'mp-usage-row-track');
-    const fill = el('div', 'mp-usage-row-fill');
-    fill.dataset.kind = row.kind;
-    fill.style.width = usageSegmentShare(row.value, contextWindow);
-    track.append(fill);
-    node.append(track);
+    if (contextWindow > 0) {
+      valWrap.append(el('span', 'mp-usage-row-pct', formatPct(row.value)));
+    }
+    node.append(rowLabel, valWrap);
     details.append(node);
+
+    const subItems = subItemsByKind[row.kind];
+    if (subItems && subItems.length) {
+      const subList = el('div', 'mp-usage-sublist');
+      for (const item of subItems.slice(0, 6)) {
+        const subRow = el('div', 'mp-usage-subitem');
+        subRow.append(
+          el('span', 'mp-usage-subitem-name', item.label),
+          el(
+            'span',
+            'mp-usage-subitem-tokens',
+            compactTokenCount(Math.round(item.tokens)),
+          ),
+        );
+        subList.append(subRow);
+      }
+      details.append(subList);
+    }
+  }
+  if (turns.length > 0) {
+    const compactBtn = document.createElement('button');
+    compactBtn.type = 'button';
+    compactBtn.className = 'mp-usage-compact-btn';
+    compactBtn.disabled = studioComposerBusy;
+    compactBtn.textContent =
+      getStudioLanguage() === 'zh-CN' ? '压缩会话上下文' : 'Compact session';
+    compactBtn.addEventListener('click', event => {
+      event.stopPropagation();
+      setUsageDetailsOpen(false);
+      popover.hidden = true;
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '#composer-form textarea',
+      );
+      if (textarea && !studioComposerBusy) {
+        textarea.value = '/compact';
+        fitComposer(textarea);
+        syncComposerSubmitState();
+        document
+          .getElementById('composer-form')
+          ?.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+      }
+    });
+    details.append(compactBtn);
   }
   if (latestRows.length) {
     details.append(
@@ -3964,21 +4699,11 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       `Session total · ${totalTokens.toLocaleString()} tokens`,
     ),
   );
-  const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  arrow.setAttribute('viewBox', '0 0 20 20');
+  const arrow = document.createElement('span');
+  arrow.className = 'cds-icon mp-usage-arrow';
+  arrow.dataset.size = 'xs';
+  arrow.dataset.glyph = String.fromCodePoint(0xe010);
   arrow.setAttribute('aria-hidden', 'true');
-  arrow.classList.add('mp-usage-arrow');
-  const arrowPath = document.createElementNS(
-    'http://www.w3.org/2000/svg',
-    'path',
-  );
-  arrowPath.setAttribute('d', 'M4 10h12m0 0-5-5m5 5-5 5');
-  arrowPath.setAttribute('fill', 'none');
-  arrowPath.setAttribute('stroke', 'currentColor');
-  arrowPath.setAttribute('stroke-width', '1.5');
-  arrowPath.setAttribute('stroke-linecap', 'round');
-  arrowPath.setAttribute('stroke-linejoin', 'round');
-  arrow.appendChild(arrowPath);
   details.append(section);
 
   const sessionTotals: Record<string, number> = {};
@@ -4073,14 +4798,22 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     if (composerQuota.error) {
       popover.append(el('div', 'mp-usage-note', composerQuota.error));
     }
+    const cleanSource = /^https?:\/\//i.test(String(composerQuota.source || ''))
+      ? String(composerQuota.label || '').trim()
+      : String(composerQuota.source || composerQuota.label || '').trim();
+    const updatedTime = new Date(composerQuota.fetchedAt).toLocaleTimeString();
     details.append(
       el(
         'div',
         'mp-usage-note',
-        studioT('quota.updated', {
-          time: new Date(composerQuota.fetchedAt).toLocaleTimeString(),
-          source: composerQuota.source,
-        }),
+        cleanSource
+          ? studioT('quota.updated', {
+              time: updatedTime,
+              source: cleanSource,
+            })
+          : getStudioLanguage() === 'zh-CN'
+            ? `额度更新于 ${updatedTime}`
+            : `Quota updated at ${updatedTime}`,
       ),
     );
   } else if (composerQuotaError) {
@@ -4118,6 +4851,420 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     positionAnchoredPopover('composer-usage-popover', 'composer-context');
   }
   positionUsageBreakdown();
+  renderConversationDispatchTags();
+  if (inspectorState.open && activeInspectorTab === 'rail') {
+    renderSessionRail();
+  }
+}
+
+const sessionRailOpenSections = new Set<string>([
+  'dispatch',
+  'plan',
+  'artifacts',
+]);
+let selectedRailTaskId: string | null = null;
+
+function renderConversationDispatchTags(): void {
+  const host = document.getElementById('conversation-dispatch-tags');
+  if (!host) {
+    return;
+  }
+  host.replaceChildren();
+  const hasMessages =
+    usageMeterTurns.length > 0 ||
+    Boolean(activeConversationRecord?.turns?.length) ||
+    studioComposerBusy;
+  const tasks = typeof currentSubagentTasks === 'function' ? currentSubagentTasks() : [];
+  const runningTasks = tasks.filter(t => childActive(t.status));
+  const branchName = currentComposerBranch?.() || '';
+  const worktreeOn = Boolean(currentComposerWorktreeEnabled?.());
+
+  if (!hasMessages && !runningTasks.length) {
+    host.hidden = true;
+    return;
+  }
+
+  const addTag = (options: {
+    id: string;
+    label: string;
+    meta?: string;
+    glyph?: number;
+    tone?: 'running' | 'ok' | 'muted';
+    onClick: () => void;
+  }) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mp-dispatch-tag';
+    btn.dataset.dispatchTag = options.id;
+    if (options.tone) {
+      btn.dataset.tone = options.tone;
+    }
+    if (options.tone === 'running' || options.tone === 'ok') {
+      const dot = document.createElement('span');
+      dot.className = 'mp-dispatch-tag-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      btn.appendChild(dot);
+    } else if (options.glyph) {
+      const iconEl = document.createElement('span');
+      iconEl.className = 'cds-icon';
+      iconEl.dataset.size = 'xs';
+      iconEl.dataset.glyph = String.fromCodePoint(options.glyph);
+      iconEl.setAttribute('aria-hidden', 'true');
+      btn.appendChild(iconEl);
+    }
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'mp-dispatch-tag-label';
+    labelSpan.textContent = options.label;
+    btn.appendChild(labelSpan);
+    if (options.meta) {
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'mp-dispatch-tag-meta';
+      metaSpan.textContent = options.meta;
+      btn.appendChild(metaSpan);
+    }
+    btn.addEventListener('click', options.onClick);
+    host.appendChild(btn);
+  };
+
+  if (runningTasks.length > 0) {
+    addTag({
+      id: 'tasks',
+      label:
+        runningTasks.length === 1
+          ? runningTasks[0].description || 'Background task'
+          : `${runningTasks.length} tasks running`,
+      meta: `${runningTasks.length}`,
+      tone: 'running',
+      onClick: () => {
+        sessionRailOpenSections.add('dispatch');
+        setInspector(true, 'rail');
+      },
+    });
+  } else if (tasks.length > 0) {
+    addTag({
+      id: 'tasks',
+      label: 'Tasks',
+      meta: `${tasks.length}`,
+      glyph: 0xe0f1,
+      onClick: () => {
+        sessionRailOpenSections.add('dispatch');
+        setInspector(true, 'rail');
+      },
+    });
+  }
+
+  if (composerPlan && composerPlan.steps.length > 0) {
+    const doneCount = composerPlan.steps.filter(s => s.status === 'completed').length;
+    addTag({
+      id: 'plan',
+      label: 'Plan',
+      meta: `${doneCount}/${composerPlan.steps.length}`,
+      glyph: 0xe0f1,
+      tone: doneCount === composerPlan.steps.length ? 'ok' : 'running',
+      onClick: () => setInspector(true, 'tasks'),
+    });
+  }
+
+  if (activeConversationRecord?.workMode === 'code' && branchName && activeProjectRoot) {
+    addTag({
+      id: 'env',
+      label: worktreeOn ? `${branchName} · worktree` : branchName,
+      glyph: 0xe078,
+      onClick: () => setInspector(true, 'changes'),
+    });
+  }
+
+  host.hidden = host.childElementCount === 0 || inspectorState.open;
+}
+
+function renderSessionRail(): void {
+  const host = document.getElementById('session-rail-host');
+  if (!host) {
+    return;
+  }
+  host.replaceChildren();
+  const tasks = typeof currentSubagentTasks === 'function' ? currentSubagentTasks() : [];
+  const selectedTask = selectedRailTaskId
+    ? tasks.find(task => task.id === selectedRailTaskId) || null
+    : null;
+  if (!selectedTask) {
+    selectedRailTaskId = null;
+  }
+
+  const rail = document.createElement('div');
+  rail.className = `mp-session-rail${selectedTask ? ' has-detail' : ''}`;
+  const listCol = document.createElement('div');
+  listCol.className = 'mp-rail-list-col';
+
+  const makeCard = (
+    id: string,
+    title: string,
+    glyph: number,
+    meta: string,
+    buildBody: (body: HTMLElement) => void,
+  ) => {
+    const open = sessionRailOpenSections.has(id);
+    const card = document.createElement('section');
+    card.className = 'mp-rail-card';
+    card.dataset.railCard = id;
+    card.dataset.open = String(open);
+
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'mp-rail-card-head';
+    head.setAttribute('aria-expanded', String(open));
+    const left = document.createElement('span');
+    left.className = 'mp-rail-card-head-left';
+    const ic = document.createElement('span');
+    ic.className = 'cds-icon';
+    ic.dataset.size = 'small';
+    ic.dataset.glyph = String.fromCodePoint(glyph);
+    ic.setAttribute('aria-hidden', 'true');
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = title;
+    left.append(ic, titleSpan);
+
+    const right = document.createElement('span');
+    right.className = 'mp-rail-card-head-meta';
+    if (meta) {
+      const m = document.createElement('span');
+      m.textContent = meta;
+      right.appendChild(m);
+    }
+    const chev = document.createElement('span');
+    chev.className = 'cds-icon mp-rail-card-chev';
+    chev.dataset.size = 'xs';
+    chev.dataset.glyph = String.fromCodePoint(0xe02a);
+    chev.setAttribute('aria-hidden', 'true');
+    right.appendChild(chev);
+
+    head.append(left, right);
+    head.addEventListener('click', () => {
+      if (sessionRailOpenSections.has(id)) {
+        sessionRailOpenSections.delete(id);
+      } else {
+        sessionRailOpenSections.add(id);
+      }
+      renderSessionRail();
+    });
+
+    const body = document.createElement('div');
+    body.className = 'mp-rail-card-body';
+    buildBody(body);
+
+    card.append(head, body);
+    listCol.appendChild(card);
+  };
+
+  // 1. Subagents & background tasks (with click-to-open progressive parallel detail)
+  const runningCount = tasks.filter(t => childActive(t.status)).length;
+  makeCard(
+    'dispatch',
+    'Subagents & tasks',
+    0xe0f1,
+    runningCount > 0 ? `${runningCount} running` : `${tasks.length}`,
+    body => {
+      if (!tasks.length) {
+        const empty = document.createElement('div');
+        empty.className = 'mp-rail-empty';
+        empty.textContent = 'No running subagents or background tasks.';
+        body.appendChild(empty);
+        return;
+      }
+      for (const task of tasks.slice(0, 8)) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `mp-rail-task-row${selectedTask?.id === task.id ? ' is-selected' : ''}`;
+        row.dataset.taskId = task.id;
+        row.setAttribute('aria-pressed', String(selectedTask?.id === task.id));
+        const titleEl = document.createElement('span');
+        titleEl.className = 'mp-rail-task-title';
+        titleEl.textContent = task.description || task.id;
+        const badge = document.createElement('span');
+        badge.className = 'mp-rail-task-badge';
+        const active = childActive(task.status);
+        badge.dataset.status = active ? 'running' : 'done';
+        badge.textContent = active ? 'Running' : String(task.status || 'Done');
+        row.append(titleEl, badge);
+        row.addEventListener('click', () => {
+          selectedRailTaskId = selectedRailTaskId === task.id ? null : task.id;
+          renderSessionRail();
+        });
+        body.appendChild(row);
+      }
+    },
+  );
+
+  // 2. Conditional Plan card (only when an active multi-step plan exists)
+  const activePlan = composerPlan;
+  if (activePlan && activePlan.steps.length > 0) {
+    const doneSteps = activePlan.steps.filter(s => s.status === 'completed').length;
+    makeCard(
+      'plan',
+      'Plan',
+      0xe0f1,
+      `${doneSteps}/${activePlan.steps.length}`,
+      body => {
+        for (const step of activePlan.steps.slice(0, 12)) {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'mp-rail-task-row';
+          const titleEl = document.createElement('span');
+          titleEl.className = 'mp-rail-task-title';
+          titleEl.textContent = step.content;
+          const badge = document.createElement('span');
+          badge.className = 'mp-rail-task-badge';
+          badge.dataset.status =
+            step.status === 'in_progress'
+              ? 'running'
+              : step.status === 'completed'
+                ? 'done'
+                : 'muted';
+          badge.textContent =
+            step.status === 'in_progress'
+              ? 'Running'
+              : step.status === 'completed'
+                ? 'Done'
+                : 'Queued';
+          row.append(titleEl, badge);
+          row.addEventListener('click', () => setInspector(true, 'tasks'));
+          body.appendChild(row);
+        }
+      },
+    );
+  }
+
+  // 3. Conditional Session Artifacts card (only when current conversation has artifacts)
+  const convoArtifacts = activeConversationId
+    ? artifactCache.filter(
+        entry => entry.conversationId === activeConversationId && entry.artifactId,
+      )
+    : [];
+  if (convoArtifacts.length > 0) {
+    makeCard(
+      'artifacts',
+      'Artifacts',
+      0xe03b,
+      `${convoArtifacts.length}`,
+      body => {
+        for (const artifact of convoArtifacts.slice(0, 8)) {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'mp-rail-task-row';
+          const titleEl = document.createElement('span');
+          titleEl.className = 'mp-rail-task-title';
+          titleEl.textContent =
+            artifact.name || artifact.summary || artifact.artifactId || 'Artifact';
+          const badge = document.createElement('span');
+          badge.className = 'mp-rail-task-badge';
+          badge.dataset.status = 'done';
+          badge.textContent = ARTIFACT_KIND_LABELS[artifact.kind || ''] || 'File';
+          row.append(titleEl, badge);
+          row.addEventListener('click', () => {
+            if (activeConversationId && artifact.artifactId) {
+              void openArtifactEditor(activeConversationId, artifact.artifactId);
+            }
+          });
+          body.appendChild(row);
+        }
+      },
+    );
+  }
+
+  rail.appendChild(listCol);
+
+  if (selectedTask) {
+    const detail = document.createElement('aside');
+    detail.className = 'mp-rail-detail';
+    detail.setAttribute('aria-label', selectedTask.description || selectedTask.id);
+
+    const head = document.createElement('div');
+    head.className = 'mp-rail-detail-head';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'mp-rail-detail-title';
+    titleEl.textContent = selectedTask.description || selectedTask.id;
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'mp-rail-detail-close';
+    closeBtn.setAttribute('aria-label', 'Close task detail');
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', () => {
+      selectedRailTaskId = null;
+      renderSessionRail();
+    });
+    head.append(titleEl, closeBtn);
+    detail.appendChild(head);
+
+    const metaParts: string[] = [];
+    metaParts.push(
+      childActive(selectedTask.status)
+        ? 'Running'
+        : String(selectedTask.status || 'Done'),
+    );
+    if (selectedTask.model) {
+      metaParts.push(selectedTask.model);
+    }
+    if (selectedTask.elapsedMs) {
+      metaParts.push(ChatView.formatRunMeta(selectedTask.elapsedMs, null));
+    }
+    if (selectedTask.stepCount > 0) {
+      metaParts.push(`${selectedTask.stepCount} steps`);
+    }
+    if (selectedTask.currentTool) {
+      metaParts.push(selectedTask.currentTool);
+    }
+    const metaEl = document.createElement('div');
+    metaEl.className = 'mp-rail-detail-meta';
+    metaEl.textContent = metaParts.join(' · ');
+    detail.appendChild(metaEl);
+
+    const previewEl = document.createElement('pre');
+    previewEl.className = 'mp-rail-detail-preview';
+    const stepsText = selectedTask.steps
+      .slice(-6)
+      .map(s => `[${s.status}] ${s.tool}${s.output ? `: ${s.output.slice(0, 120)}` : ''}`)
+      .join('\n');
+    previewEl.textContent =
+      selectedTask.answer ||
+      selectedTask.summary ||
+      selectedTask.reasoning ||
+      stepsText ||
+      'Waiting for output…';
+    detail.appendChild(previewEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'mp-rail-detail-actions';
+    if (
+      childActive(selectedTask.status) &&
+      activeConversationId &&
+      !selectedTask.id.startsWith('parent:')
+    ) {
+      const stopBtn = document.createElement('button');
+      stopBtn.type = 'button';
+      stopBtn.className = 'mp-rail-detail-stop';
+      stopBtn.textContent = 'Stop task';
+      stopBtn.addEventListener('click', () => {
+        stopBtn.disabled = true;
+        stopBtn.textContent = 'Stopping…';
+        void Data.stopSubagent({
+          conversationId: activeConversationId!,
+          subagentId: selectedTask.id,
+        }).then(() => refreshBackgroundAgentTasks(activeConversationId!));
+      });
+      actions.appendChild(stopBtn);
+    }
+    const fullLogBtn = document.createElement('button');
+    fullLogBtn.type = 'button';
+    fullLogBtn.className = 'mp-vault-ask-btn';
+    fullLogBtn.textContent = 'Full tasks';
+    fullLogBtn.addEventListener('click', () => setInspector(true, 'tasks'));
+    actions.appendChild(fullLogBtn);
+    detail.appendChild(actions);
+
+    rail.appendChild(detail);
+  }
+
+  host.appendChild(rail);
 }
 
 document
@@ -4190,7 +5337,7 @@ function isSkimEnabled(conversation?: {workMode?: string} | null): boolean {
   if (conversation?.workMode === 'learn') {
     return true;
   }
-  return productMode === 'design';
+  return productMode === 'learn';
 }
 
 function syncSkimToggleUi(
@@ -4511,7 +5658,7 @@ function setStudioHomeVisible(visible: boolean) {
     }
   }
   if (header) {
-    header.hidden = visible;
+    header.hidden = visible && productMode !== 'learn';
   }
   if (stream) {
     stream.hidden = visible || activeConversationTab !== 'chat';
@@ -4834,6 +5981,7 @@ async function openConversation(id: string) {
     artifactEditor.state().conversationId &&
     artifactEditor.state().conversationId !== c.id
   ) {
+    inlineArtifactPreview = null;
     artifactEditor.clear();
     renderArtifactEditor();
     if (activeInspectorTab === 'artifact') {
@@ -4841,11 +5989,12 @@ async function openConversation(id: string) {
     }
   }
   if (activeConversationId !== c.id) {
+    inlineArtifactPreview = null;
     repositoryContextDismissedFor = '';
   }
   activeConversationId = c.id;
   setProductMode(
-    c.workMode === 'learn' || c.workMode === 'work' ? 'design' : 'walker',
+    c.workMode === 'design' ? 'design' : 'learn',
     false,
   );
   seedSessionPane(c.id);
@@ -4961,7 +6110,14 @@ async function openConversation(id: string) {
   }
   const flow = document.createElement('div');
   flow.className = 'mp-chat-flow';
-  activeConversationView = ChatView.createConversationView(flow);
+  activeConversationView = ChatView.createConversationView(flow, {
+    workMode:
+      c.workMode === 'learn' || c.workMode === 'code' || c.workMode === 'work'
+        ? c.workMode
+        : productMode === 'design'
+          ? 'work'
+          : 'learn',
+  });
   activeConversationView.update(c);
   for (const [turnIndex, t] of turns.entries()) {
     const host = flow.querySelector<HTMLElement>(
@@ -4990,18 +6146,23 @@ async function openConversation(id: string) {
   if (typeof TextSaliency !== 'undefined') {
     TextSaliency.clear(stream);
   }
+  hydrateStreamCheckins(stream);
   if (typeof LearnTree !== 'undefined') {
     LearnTree.mountConversation(stream, c);
     LearnTree.renderHud(document.getElementById('learn-hud'), c, stream);
-    if (inspectorState.open && activeInspectorTab === 'learn') {
+  }
+  if (inspectorState.open && activeInspectorTab === 'learn') {
+    if (typeof LearnStudyArtifact !== 'undefined') {
+      mountLearnStudyWorkbench();
+    } else if (typeof LearnTree !== 'undefined') {
       LearnTree.renderDeck(document.getElementById('learn-deck-host'), c);
     }
   }
   if (typeof SideChatPane !== 'undefined') {
     SideChatPane.renderMountedCards(stream, c, buildSideChatPaneHandlers());
-    if (inspectorState.open && activeInspectorTab === 'side-chat') {
+    if (isLearnSideChatOpen()) {
       SideChatPane.renderPane(
-        document.getElementById('side-chat-pane-host'),
+        sideChatHostEl(),
         c,
         buildSideChatPaneHandlers(),
       );
@@ -5195,6 +6356,7 @@ async function refreshOpenConversation(
       if (typeof TextSaliency !== 'undefined') {
         TextSaliency.clear(stream);
       }
+      hydrateStreamCheckins(stream);
       if (typeof LearnTree !== 'undefined') {
         LearnTree.mountConversation(stream, conversation!);
         LearnTree.renderHud(
@@ -5206,15 +6368,15 @@ async function refreshOpenConversation(
       applySkimSaliency(stream, conversation!);
     });
   }
-  if (
-    inspectorState.open &&
-    activeInspectorTab === 'learn' &&
-    typeof LearnTree !== 'undefined'
-  ) {
-    LearnTree.renderDeck(
-      document.getElementById('learn-deck-host'),
-      conversation,
-    );
+  if (inspectorState.open && activeInspectorTab === 'learn') {
+    if (typeof LearnStudyArtifact !== 'undefined') {
+      mountLearnStudyWorkbench();
+    } else if (typeof LearnTree !== 'undefined') {
+      LearnTree.renderDeck(
+        document.getElementById('learn-deck-host'),
+        conversation,
+      );
+    }
   }
   syncExternalConversationRun(conversation);
   if (
@@ -5292,6 +6454,13 @@ function artifactGlyph(name: string, size = 'small') {
 const ARTIFACT_KIND_LABELS: Record<string, string> = {
   file: 'File',
   text: 'Text',
+  markdown: 'Markdown',
+  md: 'Markdown',
+  html: 'HTML',
+  svg: 'SVG',
+  diagram: 'Diagram',
+  mermaid: 'Diagram',
+  csv: 'CSV',
   document_patch: 'Document patch',
   code: 'Code',
   image: 'Image',
@@ -5684,10 +6853,33 @@ async function renderDashboardView(): Promise<void> {
       activeDashboardId = specs[0]?.dashboardId ?? '';
     }
     if (!activeDashboardId) {
-      root.innerHTML = `<div class="mp-dash-empty"><h2>${studioT('dashboard.empty')}</h2><p>${studioT('dashboard.empty_hint')}</p><button type="button" data-dash-new>${studioT('dashboard.new')}</button></div>`;
+      root.innerHTML = `<div class="mp-dash-empty"><h2>${studioT('dashboard.empty')}</h2><p>${studioT('dashboard.empty_hint')}</p><div class="mp-dash-empty-actions"><button type="button" data-dash-new>+ ${studioT('dashboard.new')}</button><button type="button" data-dash-sample>Load Sample Dashboard</button></div></div>`;
       root
         .querySelector('[data-dash-new]')
         ?.addEventListener('click', () => void createDashboardWithAgent());
+      root
+        .querySelector('[data-dash-sample]')
+        ?.addEventListener('click', async event => {
+          const btn = event.currentTarget as HTMLButtonElement | null;
+          if (btn) {
+            btn.disabled = true;
+          }
+          try {
+            const res = await Data.dashboardCreateSample();
+            if (res?.ok !== false) {
+              activeDashboardId = String(
+                res?.dashboardId || 'sample-q4-revenue',
+              );
+              await renderDashboardView();
+              return;
+            }
+          } catch {
+            // Re-enable trigger below so user can retry.
+          }
+          if (btn) {
+            btn.disabled = false;
+          }
+        });
       return;
     }
     const opened = await Data.dashboardOpen(activeDashboardId);
@@ -5739,11 +6931,61 @@ async function renderDashboardView(): Promise<void> {
       opened.snapshot,
       spec.charts,
       {
-        onShare: () => void shareDashboard(spec.title, panel),
+        onShare: async () => {
+          const res = await Data.dashboardExportInteractive({
+            dashboardId: activeDashboardId,
+            title: spec.title,
+          });
+          if (!res?.ok) {
+            await shareDashboard(spec.title, panel);
+          }
+        },
         onClose: () => show('artifacts'),
         onInspect: (chartId, trace) =>
           void inspectDashboardTrace(chartId, trace),
         onRefresh: () => void renderDashboardView(),
+        onQueryRun: async (chartId, sql) => {
+          const res = await Data.dashboardRunSql({
+            dashboardId: activeDashboardId,
+            chartId,
+            sql,
+          });
+          if (res?.ok) {
+            await renderDashboardView();
+          }
+        },
+        onAskAgent: (prompt, chartId) => {
+          const prefix = chartId ? `[Chart: ${chartId}] ` : '';
+          composeLibraryPrompt(
+            `${prefix}${prompt}\n(Dashboard: ${spec.title} / ${activeDashboardId})`,
+          );
+          composerAttachments = spec.sources
+            .map(source => source.path)
+            .filter((file): file is string => Boolean(file));
+          renderComposerAttachments();
+          captureComposerDraft();
+        },
+        onUndo: () => void renderDashboardView(),
+        onRemix: async format => {
+          const res = await Data.dashboardRemix({
+            dashboardId: activeDashboardId,
+            format,
+          });
+          if (res?.ok && res.canvasSlug) {
+            (
+              globalThis as typeof globalThis & {
+                __mpPendingDesignCanvasSlug?: string;
+              }
+            ).__mpPendingDesignCanvasSlug = String(res.canvasSlug);
+            show('design');
+          }
+        },
+        onExportChartCsv: chartId =>
+          void Data.dashboardExportChartCsv({
+            dashboardId: activeDashboardId,
+            chartId,
+          }),
+        onExportPng: () => void shareDashboard(spec.title, panel),
         onEdit: () => {
           composeLibraryPrompt(
             studioT('dashboard.edit_prompt', {
@@ -6249,14 +7491,462 @@ function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
     .join('');
 }
 
+type ArtifactViewMode = 'preview' | 'source';
+type ArtifactSvgBackdrop = 'light' | 'checker' | 'dark';
+interface InlineArtifactPreview {
+  id: string;
+  title: string;
+  kind: string;
+  content: string;
+  previewHtml?: string;
+  language?: string;
+  filename?: string;
+}
+
+let artifactInspectorMode: ArtifactViewMode = 'preview';
+let artifactSvgBackdrop: ArtifactSvgBackdrop = 'light';
+let inlineArtifactPreview: InlineArtifactPreview | null = null;
+const artifactSandboxPayloads = new WeakMap<
+  Window,
+  {id: string; themeCss: string; html: string}
+>();
+let artifactSandboxSeq = 0;
+let artifactSandboxMessageBound = false;
+
+function ensureArtifactSandboxMessageBridge(): void {
+  if (artifactSandboxMessageBound || typeof window === 'undefined') {
+    return;
+  }
+  artifactSandboxMessageBound = true;
+  window.addEventListener('message', event => {
+    const data = event.data as Record<string, unknown> | null;
+    if (!data || typeof data !== 'object') {
+      return;
+    }
+    if (data.type === 'mp-iui-ready' && event.source) {
+      const payload = artifactSandboxPayloads.get(event.source as Window);
+      if (payload) {
+        (event.source as Window).postMessage({type: 'mp-iui-init', ...payload}, '*');
+      }
+      return;
+    }
+    if (data.type === 'mp-iui-resize') {
+      const id = String(data.id || '');
+      if (!id.startsWith('art-sbx-')) {
+        return;
+      }
+      const frame = document.querySelector<HTMLIFrameElement>(
+        `iframe[data-artifact-sandbox-id="${CSS.escape(id)}"]`,
+      );
+      const nextH = Number(data.height);
+      if (frame && Number.isFinite(nextH) && nextH >= 120) {
+        frame.style.height = `${Math.max(260, Math.min(860, Math.ceil(nextH)))}px`;
+      }
+    }
+  });
+}
+
+function artifactSandboxThemeVars(
+  kind: string,
+  backdrop: ArtifactSvgBackdrop,
+): string {
+  const isSvgBackdrop = kind === 'svg' || kind === 'diagram';
+  const dark =
+    isSvgBackdrop
+      ? backdrop === 'dark'
+      : document.documentElement.dataset.theme === 'dark';
+  const base = dark
+    ? `:root{--bg:#181817;--surface:#222220;--surface-2:#2c2c29;--text:#ecebe6;--ink:#ecebe6;--ink-2:#c7c5bc;--muted:#9b9990;--border:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.20);--hover:rgba(255,255,255,.075);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--in:#6da7ec;--in-bg:rgba(109,167,236,.15);--out:#e89275;--out-bg:rgba(232,146,117,.16);--op:#6ee7b7;--op-bg:rgba(110,231,183,.14);--norm:#fcd34d;--norm-bg:rgba(252,211,77,.14);--loss:#f87171;--loss-bg:rgba(248,113,113,.15);--alt:#c4b5fd;--alt-bg:rgba(196,181,253,.15);--param:#f9a8d4;--wire:#8b8a82;--radius:8px;--radius-lg:12px;}`
+    : `:root{--bg:#ffffff;--surface:#f7f7f5;--surface-2:#ffffff;--text:#1f1f1d;--ink:#1f1f1d;--ink-2:#4a4945;--muted:#6e6d68;--border:rgba(11,11,11,.09);--border-strong:rgba(11,11,11,.18);--hover:rgba(11,11,11,.05);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--in:#2563eb;--in-bg:rgba(37,99,235,.09);--out:#d97757;--out-bg:rgba(217,119,87,.11);--op:#15803d;--op-bg:rgba(21,128,61,.09);--norm:#b45309;--norm-bg:rgba(180,83,9,.10);--loss:#dc2626;--loss-bg:rgba(220,38,38,.09);--alt:#7c3aed;--alt-bg:rgba(124,58,237,.10);--param:#db2777;--wire:#71717a;--radius:8px;--radius-lg:12px;}`;
+  if (!isSvgBackdrop) {
+    return base;
+  }
+  if (backdrop === 'checker') {
+    return `${base} body,.mp-svg-stage{background:repeating-conic-gradient(#e7e6e1 0% 25%, #ffffff 0% 50%) 50% / 16px 16px !important;}`;
+  }
+  if (backdrop === 'dark') {
+    return `${base} body,.mp-svg-stage{background:#181817 !important;color:#ecebe6 !important;}`;
+  }
+  return `${base} body,.mp-svg-stage{background:#ffffff !important;color:#1f1f1d !important;}`;
+}
+
+function wrapSvgForArtifactSandbox(raw: string): string {
+  const trimmed = raw.trim();
+  if (/^<(?:svg|!doctype|html|div|section)/i.test(trimmed)) {
+    return `<div class="mp-svg-stage">${trimmed}</div>`;
+  }
+  if (/^<(?:path|circle|rect|line|polygon|polyline|ellipse|g|text)\b/i.test(trimmed)) {
+    return `<div class="mp-svg-stage"><svg class="mp-svg-auto-fit" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">${trimmed}</svg></div>`;
+  }
+  return trimmed;
+}
+
+function parseCsvRows(raw: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  const text = raw.replace(/\r\n?/g, '\n');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += ch;
+    }
+  }
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter(r => r.some(item => item.length > 0));
+}
+
+function conversationArtifactsList(): Array<{
+  artifactId: string;
+  title: string;
+  kind: string;
+  language?: string;
+  filename?: string;
+}> {
+  const byId = new Map<
+    string,
+    {
+      artifactId: string;
+      title: string;
+      kind: string;
+      language?: string;
+      filename?: string;
+    }
+  >();
+  for (const turn of activeConversationTurns) {
+    const turnArtifacts = Array.isArray((turn as {artifacts?: unknown[]})?.artifacts)
+      ? ((turn as {artifacts?: Array<Record<string, unknown>>}).artifacts ?? [])
+      : [];
+    for (const item of turnArtifacts) {
+      const id = String(item?.artifactId || '').trim();
+      if (!id) {
+        continue;
+      }
+      byId.set(id, {
+        artifactId: id,
+        title: String(item.title || item.name || item.filename || id),
+        kind: String(item.kind || 'text'),
+        ...(typeof item.language === 'string' && item.language
+          ? {language: item.language}
+          : {}),
+        ...(typeof item.filename === 'string' && item.filename
+          ? {filename: item.filename}
+          : {}),
+      });
+    }
+  }
+  if (activeConversationId) {
+    for (const entry of artifactCache) {
+      if (entry.conversationId !== activeConversationId || !entry.artifactId) {
+        continue;
+      }
+      if (!byId.has(entry.artifactId)) {
+        byId.set(entry.artifactId, {
+          artifactId: entry.artifactId,
+          title: String(entry.name || entry.summary || entry.artifactId),
+          kind: String(entry.kind || 'text'),
+        });
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+function renderArtifactSwitcher(activeId: string): void {
+  const host = document.getElementById('artifact-switcher-list');
+  if (!host) {
+    return;
+  }
+  const items = conversationArtifactsList();
+  host.replaceChildren();
+  if (items.length < 2 && !(inlineArtifactPreview && items.length >= 1)) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  for (const item of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mp-artifact-switch-pill';
+    btn.setAttribute('role', 'tab');
+    const selected = !inlineArtifactPreview && item.artifactId === activeId;
+    btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+    if (selected) {
+      btn.classList.add('is-active');
+    }
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = item.title;
+    const badgeEm = document.createElement('em');
+    badgeEm.textContent = item.kind === 'markdown' ? 'MD' : item.kind.toUpperCase().slice(0, 5);
+    btn.append(badgeEm, labelSpan);
+    btn.addEventListener('click', () => {
+      if (activeConversationId) {
+        void openArtifactEditor(activeConversationId, item.artifactId);
+      }
+    });
+    host.appendChild(btn);
+  }
+}
+
+function activeArtifactDescriptor(state: MagicPointerArtifactEditorState): {
+  title: string;
+  kind: string;
+  content: string;
+  previewHtml: string;
+  language: string;
+  filename: string;
+  isInline: boolean;
+  isPatch: boolean;
+  hasItem: boolean;
+} {
+  if (inlineArtifactPreview) {
+    return {
+      title: inlineArtifactPreview.title,
+      kind: inlineArtifactPreview.kind || 'html',
+      content: inlineArtifactPreview.content,
+      previewHtml: inlineArtifactPreview.previewHtml || '',
+      language: inlineArtifactPreview.language || '',
+      filename: inlineArtifactPreview.filename || '',
+      isInline: true,
+      isPatch: false,
+      hasItem: true,
+    };
+  }
+  const kind = String(state.kind || 'text');
+  return {
+    title: String(state.title || state.filename || artifactKindLabel(kind) || 'Draft'),
+    kind,
+    content: String(state.content || ''),
+    previewHtml: '',
+    language: String(state.language || ''),
+    filename: String(state.filename || ''),
+    isInline: false,
+    isPatch: kind === 'document_patch',
+    hasItem: Boolean(state.artifactId),
+  };
+}
+
+function suggestedArtifactFilename(desc: {
+  title: string;
+  kind: string;
+  language: string;
+  filename: string;
+}): string {
+  if (desc.filename) {
+    return desc.filename;
+  }
+  const slug =
+    desc.title
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .slice(0, 48) || 'artifact';
+  const kind = desc.kind.toLowerCase();
+  const extByLang: Record<string, string> = {
+    python: 'py',
+    py: 'py',
+    typescript: 'ts',
+    ts: 'ts',
+    javascript: 'js',
+    js: 'js',
+    rust: 'rs',
+    go: 'go',
+    css: 'css',
+    html: 'html',
+    json: 'json',
+    sql: 'sql',
+    bash: 'sh',
+    sh: 'sh',
+  };
+  const ext =
+    kind === 'markdown' || kind === 'md'
+      ? 'md'
+      : kind === 'html'
+        ? 'html'
+        : kind === 'svg' || kind === 'diagram'
+          ? 'svg'
+          : kind === 'csv'
+            ? 'csv'
+            : kind === 'code'
+              ? extByLang[desc.language.toLowerCase()] || 'txt'
+              : 'txt';
+  return slug.toLowerCase().endsWith(`.${ext}`) ? slug : `${slug}.${ext}`;
+}
+
+function renderArtifactPreviewSurface(
+  host: HTMLElement,
+  desc: {
+    title: string;
+    kind: string;
+    content: string;
+    previewHtml: string;
+    language: string;
+    filename: string;
+  },
+): void {
+  ensureArtifactSandboxMessageBridge();
+  host.replaceChildren();
+  const kind = desc.kind.toLowerCase();
+  const isSvgDiagram =
+    kind === 'svg' || (kind === 'diagram' && /<(?:svg|path|circle|rect|g)\b/i.test(desc.content));
+  if (kind === 'html' || isSvgDiagram) {
+    const sandboxId = `art-sbx-${++artifactSandboxSeq}`;
+    const htmlPayload = isSvgDiagram
+      ? wrapSvgForArtifactSandbox(desc.previewHtml || desc.content)
+      : desc.previewHtml || desc.content;
+    const frame = document.createElement('iframe');
+    frame.className = 'mp-artifact-sandbox-frame';
+    frame.dataset.artifactSandboxId = sandboxId;
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.title = desc.title || 'Artifact preview';
+    const sendInit = () => {
+      const payload = {
+        id: sandboxId,
+        themeCss: artifactSandboxThemeVars(kind, artifactSvgBackdrop),
+        html: htmlPayload,
+      };
+      if (frame.contentWindow) {
+        artifactSandboxPayloads.set(frame.contentWindow, payload);
+        frame.contentWindow.postMessage({type: 'mp-iui-init', ...payload}, '*');
+      }
+    };
+    frame.addEventListener('load', sendInit);
+    frame.src = 'iui_sandbox.html';
+    host.appendChild(frame);
+    return;
+  }
+  if (kind === 'markdown' || kind === 'md') {
+    const mdWrap = document.createElement('div');
+    mdWrap.className = 'mp-artifact-markdown-preview';
+    mdWrap.appendChild(ChatMarkdown.render(desc.content));
+    host.appendChild(mdWrap);
+    if (typeof IntelligenceUI !== 'undefined') {
+      IntelligenceUI.hydrate(mdWrap);
+    }
+    return;
+  }
+  if (kind === 'csv') {
+    const rows = parseCsvRows(desc.content);
+    const csvWrap = document.createElement('div');
+    csvWrap.className = 'mp-artifact-csv-wrap';
+    const table = document.createElement('table');
+    table.className = 'mp-artifact-csv-table';
+    if (rows.length) {
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      for (const cell of rows[0]) {
+        const th = document.createElement('th');
+        th.textContent = cell;
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      for (const bodyCells of rows.slice(1)) {
+        const tr = document.createElement('tr');
+        for (const cell of bodyCells) {
+          const td = document.createElement('td');
+          td.textContent = cell;
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+    }
+    csvWrap.appendChild(table);
+    host.appendChild(csvWrap);
+    return;
+  }
+  if (kind === 'code' || kind === 'mermaid' || kind === 'diagram') {
+    const codeWrap = document.createElement('div');
+    codeWrap.className = 'mp-artifact-code-wrap';
+    const head = document.createElement('div');
+    head.className = 'mp-artifact-code-head';
+    const langSpan = document.createElement('span');
+    langSpan.textContent = (desc.language || kind).toUpperCase();
+    const fileSpan = document.createElement('span');
+    fileSpan.textContent = desc.filename || desc.title || '';
+    head.append(langSpan, fileSpan);
+    const pre = document.createElement('pre');
+    pre.className = 'mp-artifact-code-pre';
+    const lines = desc.content.replace(/\r\n?/g, '\n').split('\n');
+    for (const [idx, lineText] of lines.entries()) {
+      const row = document.createElement('div');
+      row.className = 'mp-artifact-code-line';
+      const num = document.createElement('span');
+      num.className = 'mp-artifact-code-num';
+      num.textContent = String(idx + 1);
+      const text = document.createElement('span');
+      text.className = 'mp-artifact-code-text';
+      text.textContent = lineText || ' ';
+      row.append(num, text);
+      pre.appendChild(row);
+    }
+    codeWrap.append(head, pre);
+    host.appendChild(codeWrap);
+    return;
+  }
+  const textPre = document.createElement('pre');
+  textPre.className = 'mp-artifact-text-preview';
+  textPre.textContent = desc.content;
+  host.appendChild(textPre);
+}
+
 function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   const state = artifactEditor.state();
+  const desc = activeArtifactDescriptor(state);
   document
     .getElementById('artifact-editor')
-    ?.classList.toggle('is-document-patch', state.kind === 'document_patch');
+    ?.classList.toggle('is-document-patch', !desc.isInline && state.kind === 'document_patch');
   const content = document.getElementById(
     'artifact-editor-content',
   ) as HTMLTextAreaElement | null;
+  const previewHost = document.getElementById('artifact-preview-host');
+  const modePreviewBtn = document.getElementById(
+    'artifact-mode-preview',
+  ) as HTMLButtonElement | null;
+  const modeSourceBtn = document.getElementById(
+    'artifact-mode-source',
+  ) as HTMLButtonElement | null;
+  const svgBgBtn = document.getElementById(
+    'artifact-svg-bg-toggle',
+  ) as HTMLButtonElement | null;
+  const copyBtn = document.getElementById(
+    'artifact-copy-btn',
+  ) as HTMLButtonElement | null;
+  const downloadBtn = document.getElementById(
+    'artifact-download-btn',
+  ) as HTMLButtonElement | null;
+  const vaultBtn = document.getElementById(
+    'artifact-save-vault-btn',
+  ) as HTMLButtonElement | null;
   const kind = document.getElementById('artifact-editor-kind');
   const revision = document.getElementById('artifact-editor-revision');
   const status = document.getElementById('artifact-editor-status');
@@ -6272,33 +7962,92 @@ function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   const undo = document.getElementById(
     'artifact-editor-undo',
   ) as HTMLButtonElement | null;
-  if (content && (document.activeElement !== content || !state.dirty)) {
-    content.value = state.content;
+
+  renderArtifactSwitcher(state.artifactId);
+
+  const effectiveMode: ArtifactViewMode = desc.isPatch
+    ? 'source'
+    : artifactInspectorMode;
+  if (modePreviewBtn) {
+    modePreviewBtn.disabled = desc.isPatch || !desc.hasItem;
+    const isPreview = effectiveMode === 'preview';
+    modePreviewBtn.classList.toggle('is-active', isPreview);
+    modePreviewBtn.setAttribute('aria-pressed', String(isPreview));
+  }
+  if (modeSourceBtn) {
+    modeSourceBtn.disabled = !desc.hasItem;
+    const isSource = effectiveMode === 'source';
+    modeSourceBtn.classList.toggle('is-active', isSource);
+    modeSourceBtn.setAttribute('aria-pressed', String(isSource));
+  }
+  if (svgBgBtn) {
+    const showSvgBg =
+      effectiveMode === 'preview' &&
+      desc.hasItem &&
+      (desc.kind === 'svg' || desc.kind === 'diagram');
+    svgBgBtn.hidden = !showSvgBg;
+    svgBgBtn.textContent =
+      artifactSvgBackdrop === 'checker'
+        ? 'Grid'
+        : artifactSvgBackdrop === 'dark'
+          ? 'Dark'
+          : 'Light';
+  }
+  if (copyBtn) {
+    copyBtn.disabled = !desc.hasItem || !desc.content;
+  }
+  if (downloadBtn) {
+    downloadBtn.disabled = !desc.hasItem || !desc.content;
+  }
+  if (vaultBtn) {
+    vaultBtn.disabled = !desc.hasItem || !desc.content;
+  }
+
+  if (content && (desc.isInline || document.activeElement !== content || !state.dirty)) {
+    content.value = desc.content;
   }
   if (kind) {
-    kind.textContent =
-      state.kind === 'document_patch' ? 'Document patch' : 'Draft';
+    kind.textContent = desc.isInline
+      ? `${desc.title} · ${artifactKindLabel(desc.kind)}`
+      : state.kind === 'document_patch'
+        ? 'Document patch'
+        : desc.title || artifactKindLabel(desc.kind) || 'Draft';
   }
   if (revision) {
-    revision.textContent = state.revision
-      ? `revision ${state.revision}`
-      : 'revision —';
+    revision.textContent = desc.isInline
+      ? desc.language || desc.kind.toUpperCase()
+      : state.revision
+        ? `revision ${state.revision}`
+        : 'revision —';
   }
   const busy = ['loading', 'saving', 'accepting', 'applying'].includes(
     state.status,
   );
-  renderArtifactVersions(state, busy);
+  if (!desc.isInline) {
+    renderArtifactVersions(state, busy);
+  }
   if (undo) {
-    undo.hidden = !state.undoAvailable;
+    undo.hidden = desc.isInline || !state.undoAvailable;
     undo.disabled = busy || state.dirty || Boolean(state.preview);
   }
+  const showPreviewHost =
+    effectiveMode === 'preview' && desc.hasItem && !state.preview;
+  if (previewHost) {
+    previewHost.hidden = !showPreviewHost;
+    if (showPreviewHost) {
+      renderArtifactPreviewSurface(previewHost, desc);
+    } else {
+      previewHost.replaceChildren();
+    }
+  }
   if (content) {
-    content.disabled = busy || !state.artifactId;
-    content.hidden = Boolean(state.preview);
+    content.disabled = busy || desc.isInline || !state.artifactId;
+    content.hidden = Boolean(state.preview) || showPreviewHost;
   }
   if (save) {
     save.disabled =
       busy ||
+      desc.isInline ||
       Boolean(state.patchError) ||
       !state.dirty ||
       Boolean(state.preview);
@@ -6306,6 +8055,7 @@ function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   if (accept) {
     accept.disabled =
       busy ||
+      desc.isInline ||
       Boolean(state.preview) ||
       state.dirty ||
       !state.artifactId ||
@@ -6314,6 +8064,7 @@ function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   if (apply) {
     apply.disabled =
       busy ||
+      desc.isInline ||
       Boolean(state.preview) ||
       state.dirty ||
       state.kind !== 'document_patch' ||
@@ -6322,39 +8073,41 @@ function renderArtifactEditor(options: {preservePatchFields?: boolean} = {}) {
   }
   if (status) {
     const resultStatus = String(state.applyResult?.status || '');
-    status.textContent =
-      state.patchError ||
-      (state.error === 'stale_revision'
-        ? studioT('artifact.newer_version')
-        : state.error) ||
-      (state.status === 'loading'
-        ? studioT('artifact.reading_version')
-        : state.status === 'saving'
-          ? studioT('artifact.saving_version')
-          : state.status === 'accepting'
-            ? studioT('artifact.binding_version')
-            : state.status === 'applying'
-              ? studioT('artifact.writing_verify')
-              : resultStatus === 'succeeded'
-                ? state.applyResult?.undone
-                  ? studioT('artifact.reverted_verified')
-                  : studioT('artifact.written_verified')
-                : state.acceptedRevision === state.revision &&
-                    state.revision > 0
-                  ? studioT('artifact.version_accepted')
-                  : state.dirty
-                    ? studioT('artifact.unsaved_edits')
-                    : '');
-    status.dataset.tone = state.error || state.patchError ? 'error' : 'neutral';
+    status.textContent = desc.isInline
+      ? ''
+      : state.patchError ||
+        (state.error === 'stale_revision'
+          ? studioT('artifact.newer_version')
+          : state.error) ||
+        (state.status === 'loading'
+          ? studioT('artifact.reading_version')
+          : state.status === 'saving'
+            ? studioT('artifact.saving_version')
+            : state.status === 'accepting'
+              ? studioT('artifact.binding_version')
+              : state.status === 'applying'
+                ? studioT('artifact.writing_verify')
+                : resultStatus === 'succeeded'
+                  ? state.applyResult?.undone
+                    ? studioT('artifact.reverted_verified')
+                    : studioT('artifact.written_verified')
+                  : state.acceptedRevision === state.revision &&
+                      state.revision > 0
+                    ? studioT('artifact.version_accepted')
+                    : state.dirty
+                      ? studioT('artifact.unsaved_edits')
+                      : '');
+    status.dataset.tone =
+      !desc.isInline && (state.error || state.patchError) ? 'error' : 'neutral';
   }
-  if (!options.preservePatchFields && !state.patchError) {
+  if (!desc.isInline && !options.preservePatchFields && !state.patchError) {
     renderArtifactPatchPreview(state);
   }
   const patchPreview = document.querySelector<HTMLElement>(
     '#artifact-editor .mp-artifact-patch-preview',
   );
   if (patchPreview) {
-    patchPreview.hidden = Boolean(state.preview);
+    patchPreview.hidden = desc.isInline || Boolean(state.preview);
   }
 }
 
@@ -6438,6 +8191,7 @@ async function openArtifactEditor(
   if (!conversationId || !artifactId) {
     return;
   }
+  inlineArtifactPreview = null;
   if (activeConversationId !== conversationId) {
     await openConversation(conversationId);
   }
@@ -6459,9 +8213,112 @@ async function openArtifactEditor(
   setInspector(true, 'artifact');
   renderArtifactEditor();
   await artifactEditor.select(conversationId, artifactId);
+  const selectedState = artifactEditor.state();
+  artifactInspectorMode =
+    selectedState.kind === 'document_patch' ? 'source' : 'preview';
   renderArtifactEditor();
   void refreshFigmaArtifactPreviews();
 }
+
+document
+  .getElementById('artifact-mode-preview')
+  ?.addEventListener('click', () => {
+    artifactInspectorMode = 'preview';
+    renderArtifactEditor();
+  });
+document
+  .getElementById('artifact-mode-source')
+  ?.addEventListener('click', () => {
+    artifactInspectorMode = 'source';
+    renderArtifactEditor();
+  });
+document
+  .getElementById('artifact-svg-bg-toggle')
+  ?.addEventListener('click', () => {
+    artifactSvgBackdrop =
+      artifactSvgBackdrop === 'light'
+        ? 'checker'
+        : artifactSvgBackdrop === 'checker'
+          ? 'dark'
+          : 'light';
+    renderArtifactEditor();
+  });
+document
+  .getElementById('artifact-copy-btn')
+  ?.addEventListener('click', async event => {
+    const btn = event.currentTarget as HTMLButtonElement;
+    const desc = activeArtifactDescriptor(artifactEditor.state());
+    if (!desc.content || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(desc.content);
+      const prev = btn.textContent || 'Copy';
+      btn.textContent = 'Copied';
+      setTimeout(() => {
+        btn.textContent = prev;
+      }, 1400);
+    } catch {
+      // Clipboard write unavailable.
+    }
+  });
+document
+  .getElementById('artifact-download-btn')
+  ?.addEventListener('click', () => {
+    const desc = activeArtifactDescriptor(artifactEditor.state());
+    if (!desc.content) {
+      return;
+    }
+    const filename = suggestedArtifactFilename(desc);
+    const blob = new Blob([desc.content], {type: 'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 500);
+  });
+document
+  .getElementById('artifact-save-vault-btn')
+  ?.addEventListener('click', async event => {
+    const btn = event.currentTarget as HTMLButtonElement;
+    const desc = activeArtifactDescriptor(artifactEditor.state());
+    if (!desc.content) {
+      return;
+    }
+    const status = document.getElementById('artifact-editor-status');
+    const noteBody =
+      desc.kind === 'markdown' || desc.kind === 'md' || desc.kind === 'text'
+        ? desc.content
+        : `# ${desc.title}\n\n\`\`\`${desc.language || desc.kind}\n${desc.content}\n\`\`\`\n`;
+    try {
+      const saved = await window.magicPointerDashboard?.vault?.saveNote({
+        title: desc.title || 'Artifact',
+        folder: 'Artifacts',
+        tags: ['artifact', desc.kind],
+        source: activeConversationRecord?.title || 'Magic Pointer',
+        body: noteBody,
+      });
+      if (saved?.ok !== false) {
+        const prev = btn.textContent || 'Vault';
+        btn.textContent = 'Saved';
+        if (status) {
+          status.textContent = `Saved "${desc.title}" to Knowledge Vault.`;
+          status.dataset.tone = 'neutral';
+        }
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1600);
+      }
+    } catch {
+      if (status) {
+        status.textContent = 'Could not save to Knowledge Vault.';
+        status.dataset.tone = 'error';
+      }
+    }
+  });
 
 document
   .getElementById('artifact-editor-content')
@@ -6865,6 +8722,7 @@ const libraryUi = studioLibraries.createController({
     },
   },
   show,
+  open: (id: string) => void openConversation(id),
   compose: composeLibraryPrompt,
   startProjectChat: (project: MagicPointerProject, prompt: string) => {
     setActiveProject(project.root, project.id);
@@ -6925,7 +8783,27 @@ const personalActivityUi = globalThis.PersonalActivityView?.mount(
 const resourceLibraryUi = globalThis.ResourceLibrary?.mount(
   document.getElementById('resource-library')!,
   window.magicPointerDashboard?.resources,
-  {openTask: id => {void openConversation(id);}, openCanvas: () => show('stash')},
+  {
+    openTask: id => {
+      void openConversation(id);
+    },
+    openCanvas: () => show('stash'),
+    openRightBrowser: () => {
+      show('chat');
+      setInspector(true, 'browser');
+    },
+    startLearnChat: prompt => {
+      composeLibraryPrompt(prompt);
+    },
+    openVaultNote: () => {
+      show('chat');
+      setInspector(true, 'vault');
+      void renderVaultPanel();
+    },
+    onVaultUpdated: () => {
+      void renderVaultPanel();
+    },
+  },
 );
 document
   .getElementById('personal-activity')
@@ -6997,6 +8875,9 @@ function show(view: string, projectKey?: string) {
   }
   if (view === 'dashboard') {
     void renderDashboardView();
+  }
+  if (view === 'design') {
+    void mountDesignStudioView();
   }
   if (view === 'settings') {
     renderSettings();
@@ -7328,9 +9209,368 @@ document
   ?.addEventListener('click', () => moveWindowNavigation(1));
 syncWindowNavigation();
 
-type ProductMode = 'walker' | 'design';
-let productMode: ProductMode = 'walker';
+type ProductMode = 'learn' | 'design';
+type StudioLearnMountState = Parameters<
+  NonNullable<typeof LearnStudyArtifact>['mount']
+>[1];
+type StudioLearnCourse = NonNullable<StudioLearnMountState['activeCourse']>;
+type StudioLearnCourseSummary = StudioLearnMountState['courses'][number];
+type StudioLearnGraph = NonNullable<StudioLearnMountState['graph']>;
+
+let productMode: ProductMode = 'learn';
 let guidedTourCoachActive = false;
+let learnCoursesCache: StudioLearnCourseSummary[] = [];
+let activeLearnCourse: StudioLearnCourse | null = null;
+let activeLearnGraph: StudioLearnGraph | null = null;
+let learnCourseLoadingPromise: Promise<void> | null = null;
+let learnSideChatDockOpen = false;
+const answeredStreamCheckins = new Map<
+  string,
+  {
+    selectedIndex: number | null;
+    selectedLabel: string;
+    unsure: boolean;
+    reasoningNote: string;
+  }
+>();
+
+function sideChatHostEl(): HTMLElement | null {
+  if (productMode === 'learn') {
+    return (
+      document.getElementById('learn-sidechat-dock-host') ||
+      document.getElementById('side-chat-pane-host')
+    );
+  }
+  return document.getElementById('side-chat-pane-host');
+}
+
+function isLearnSideChatOpen(): boolean {
+  if (productMode === 'learn') {
+    return learnSideChatDockOpen;
+  }
+  return Boolean(inspectorState.open && activeInspectorTab === 'side-chat');
+}
+
+function setLearnSideChatDock(open: boolean): void {
+  const dock = document.getElementById('learn-sidechat-dock');
+  learnSideChatDockOpen = Boolean(open && productMode === 'learn' && dock);
+  shell.dataset.learnSidechat = learnSideChatDockOpen ? 'open' : 'closed';
+  if (dock) {
+    dock.hidden = !learnSideChatDockOpen;
+  }
+  if (
+    learnSideChatDockOpen &&
+    inspectorState.open &&
+    window.innerWidth < 1680 &&
+    sidebarState.layout() === 'docked'
+  ) {
+    toggleSidebar();
+  }
+  if (learnSideChatDockOpen && typeof SideChatPane !== 'undefined') {
+    SideChatPane.renderPane(
+      sideChatHostEl(),
+      activeConversationRecord,
+      buildSideChatPaneHandlers(),
+    );
+  }
+  syncHeaderWorkspaceToggles();
+}
+
+function openSideChatSurface(): void {
+  if (productMode === 'learn') {
+    setLearnSideChatDock(true);
+    return;
+  }
+  setInspector(true, 'side-chat');
+}
+
+function sendLearnPromptToChat(promptText: string, autoSubmit = false): void {
+  show('chat');
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea, .mpw-input',
+  );
+  if (!textarea) {
+    return;
+  }
+  textarea.value = promptText;
+  fitComposer(textarea);
+  textarea.dispatchEvent(new Event('input', {bubbles: true}));
+  syncComposerSubmitState();
+  textarea.focus();
+  if (autoSubmit && !studioComposerBusy) {
+    document
+      .getElementById('composer-form')
+      ?.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+  }
+}
+
+function updateLearnCourseHeaderPill(): void {
+  const labelEl = document.getElementById('header-learn-course-label');
+  if (!labelEl) {
+    return;
+  }
+  const title = String(activeLearnCourse?.title || '').trim();
+  labelEl.textContent = title ? `${title} · 学习工作台` : 'CS336 · 学习工作台';
+}
+
+function openQuotedInSideChat(quote: string, section?: string): void {
+  const cleanQuote = String(quote || '').trim();
+  if (!cleanQuote) {
+    openSideChatSurface();
+    return;
+  }
+  if (typeof SideChatPane !== 'undefined' && activeConversationRecord) {
+    SideChatPane.openDraft({
+      conversationId: activeConversationRecord.id,
+      parentTurnIndex: Math.max(
+        0,
+        (activeConversationRecord.turns?.length || 1) - 1,
+      ),
+      parentBranchId: null,
+      quote: cleanQuote,
+      snippet: section ? `[${section}] ${cleanQuote}` : cleanQuote,
+    });
+    openSideChatSurface();
+    return;
+  }
+  openSideChatSurface();
+  sendLearnPromptToChat(
+    `关于「${cleanQuote.slice(0, 140)}」，请用最小具体例子拆解一下：`,
+    false,
+  );
+}
+
+async function ensureLearnCourseLoaded(force = false): Promise<void> {
+  if (!force && activeLearnCourse) {
+    updateLearnCourseHeaderPill();
+    return;
+  }
+  if (learnCourseLoadingPromise) {
+    return learnCourseLoadingPromise;
+  }
+  learnCourseLoadingPromise = (async () => {
+    try {
+      const res = await Data.learn.listCourses();
+      if (Array.isArray(res?.courses)) {
+        learnCoursesCache = res.courses as StudioLearnCourseSummary[];
+      }
+      if (res?.activeCourse) {
+        activeLearnCourse = res.activeCourse as StudioLearnCourse;
+      }
+      updateLearnCourseHeaderPill();
+      if (inspectorState.open && activeInspectorTab === 'learn') {
+        mountLearnStudyWorkbench();
+      }
+    } catch {
+      /* course store may be unavailable in non-desktop browser tests */
+    } finally {
+      learnCourseLoadingPromise = null;
+    }
+  })();
+  return learnCourseLoadingPromise;
+}
+
+function mountLearnStudyWorkbench(
+  initialTab?: 'notes' | 'overview' | 'graph',
+): void {
+  const host = document.getElementById('learn-deck-host');
+  if (!host) {
+    return;
+  }
+  if (typeof LearnStudyArtifact === 'undefined') {
+    LearnTree?.renderDeck(host, activeConversationRecord);
+    return;
+  }
+  if (!activeLearnCourse && !learnCourseLoadingPromise) {
+    void ensureLearnCourseLoaded();
+  }
+  LearnStudyArtifact.mount(
+    host,
+    {
+      courses: learnCoursesCache,
+      activeCourse: activeLearnCourse,
+      graph: activeLearnGraph,
+      ...(initialTab ? {initialTab} : {}),
+    },
+    {
+      onSelectCourse: async courseId => {
+        const res = await Data.learn.getCourse({courseId, activate: true});
+        if (res?.course) {
+          activeLearnCourse = res.course as StudioLearnCourse;
+          activeLearnGraph = null;
+          updateLearnCourseHeaderPill();
+          LearnStudyArtifact?.updateCourse(activeLearnCourse, null);
+        }
+      },
+      onRunDream: async courseId => {
+        const res = await Data.learn.runDream({courseId});
+        if (res?.course) {
+          activeLearnCourse = res.course as StudioLearnCourse;
+        }
+        const graphRes = await Data.learn.getGraph({courseId});
+        if (graphRes?.graph) {
+          activeLearnGraph = graphRes.graph as StudioLearnGraph;
+        }
+        if (activeLearnCourse) {
+          LearnStudyArtifact?.updateCourse(activeLearnCourse, activeLearnGraph);
+        }
+      },
+      onStartNodeInChat: (node, course) => {
+        const prompt = `我们正在学习「${course.title}」的节点【${node.title}】${node.source ? `（参考材料：${node.source}）` : ''}。\n请先只出 1 个直觉边界校验（Check-in），确认我的当前理解后再用一个绝不省略的极小具体例子展开。`;
+        sendLearnPromptToChat(prompt, false);
+      },
+      onLaunchNudge: (nudge, course) => {
+        const prompt =
+          nudge.launchPrompt ||
+          `在课程「${course.title}」中继续这个主动回顾建议：${nudge.title}\n理由：${nudge.rationale || ''}`;
+        sendLearnPromptToChat(prompt, false);
+      },
+      onOpenMaterialInChat: (material, course) => {
+        const targetRef = material.relativePath || material.path;
+        const prompt = `请带我研读「${course.title}」的材料《${material.title}》（${targetRef}）：先给 1 句核心脉络，然后只讲第 1 个关键机制配一个最小无省略数值例子。`;
+        sendLearnPromptToChat(prompt, false);
+      },
+      onAskSelectionSideChat: payload => {
+        openQuotedInSideChat(payload.quote, payload.section);
+      },
+      onSubmitCheckin: payload => {
+        const courseId = payload.courseId || activeLearnCourse?.id || '';
+        void Data.learn
+          .recordCheckin({
+            courseId,
+            question: payload.prompt,
+            selectedIndex: payload.selectedIndex,
+            selectedLabel: payload.selectedLabel,
+            unsure: payload.unsure,
+            reasoningNote: payload.reasoningNote,
+          })
+            .then(res => {
+            if (res?.course) {
+              activeLearnCourse = res.course as StudioLearnCourse;
+              LearnStudyArtifact?.updateCourse(
+                activeLearnCourse,
+                activeLearnGraph,
+              );
+            }
+          });
+        const checkinGlobal = LearnCheckinCard;
+        const reply =
+          typeof checkinGlobal !== 'undefined'
+            ? checkinGlobal.formatReplyForAgent({
+                id: payload.id,
+                prompt: payload.prompt,
+                selectedIndex: payload.selectedIndex,
+                selectedLabel: payload.selectedLabel,
+                unsure: payload.unsure,
+                reasoningNote: payload.reasoningNote,
+              })
+            : payload.unsure
+              ? `这道题我不太确定：${payload.reasoningNote || '请从零拆解'}`
+              : `我选「${payload.selectedLabel}」${payload.reasoningNote ? `：${payload.reasoningNote}` : ''}`;
+        sendLearnPromptToChat(reply, Boolean(activeConversationRecord));
+      },
+      onAnnotationAdded: (mark, courseId) => {
+        void Data.learn
+          .annotate({
+            courseId,
+            mark: mark as unknown as Record<string, unknown>,
+          })
+          .then(res => {
+            if (res?.course) {
+              activeLearnCourse = res.course as StudioLearnCourse;
+            }
+          });
+      },
+      onFocusNodeInChat: node => {
+        const ref = node.sourcePath ? `（来源：${node.sourcePath}）` : '';
+        sendLearnPromptToChat(
+          `请结合课程上下文讲透知识节点「${node.label}」${ref}，给一个极小无省略的 worked trace。`,
+          false,
+        );
+      },
+      onAskNodeSideChat: node => {
+        openQuotedInSideChat(node.label);
+      },
+      onSaveToVault: async course => {
+        const artifactRecord = course.livingArtifact as
+          | {title?: string; markdown?: string}
+          | undefined;
+        await window.magicPointerDashboard?.vault?.saveNote({
+          title: artifactRecord?.title || course.title,
+          folder: 'Learn-Notes',
+          tags: ['learn', course.id],
+          source: course.title,
+          body: artifactRecord?.markdown || course.subtitle || course.title,
+        });
+      },
+      onRequestGraph: async courseId => {
+        const res = await Data.learn.getGraph({courseId});
+        const graph = (res?.graph as StudioLearnGraph | null) || null;
+        if (graph) {
+          activeLearnGraph = graph;
+        }
+        return graph;
+      },
+    },
+  );
+}
+
+function hydrateStreamCheckins(streamEl: HTMLElement | null): void {
+  if (!streamEl || typeof LearnCheckinCard === 'undefined') {
+    return;
+  }
+  const checkinCard = LearnCheckinCard;
+  const hosts = streamEl.querySelectorAll<HTMLElement>(
+    '.mp-checkin-host[data-checkin-complete="true"]',
+  );
+  hosts.forEach(host => {
+    if (host.dataset.checkinHydrated === 'true') {
+      return;
+    }
+    const raw = host.dataset.checkinRaw || '';
+    const parsed = checkinCard.parseBlock(raw);
+    if (!parsed) {
+      return;
+    }
+    host.dataset.checkinHydrated = 'true';
+    const priorAnswer = answeredStreamCheckins.get(parsed.id);
+    const card = checkinCard.render(
+      priorAnswer ? {...parsed, answered: priorAnswer} : parsed,
+      {
+        onSubmit: payload => {
+          const answerState = {
+            selectedIndex: payload.selectedIndex,
+            selectedLabel: payload.selectedLabel,
+            unsure: payload.unsure,
+            reasoningNote: payload.reasoningNote,
+          };
+          answeredStreamCheckins.set(parsed.id, answerState);
+          void Data.learn
+            .recordCheckin({
+              courseId: activeLearnCourse?.id,
+              question: payload.prompt,
+              selectedIndex: payload.selectedIndex,
+              selectedLabel: payload.selectedLabel,
+              unsure: payload.unsure,
+              reasoningNote: payload.reasoningNote,
+            })
+            .then(res => {
+              if (res?.course) {
+                activeLearnCourse = res.course as StudioLearnCourse;
+                LearnStudyArtifact?.updateCourse(
+                  activeLearnCourse,
+                  activeLearnGraph,
+                );
+              }
+            });
+          const reply = checkinCard.formatReplyForAgent(payload);
+          sendLearnPromptToChat(reply, Boolean(activeConversationRecord));
+        },
+      },
+    );
+    host.replaceChildren(card);
+  });
+}
 
 function setProductMode(mode: ProductMode, navigate = true) {
   const changed = productMode !== mode;
@@ -7338,7 +9578,7 @@ function setProductMode(mode: ProductMode, navigate = true) {
   shell.dataset.productMode = mode;
   const eyebrow = document.getElementById('workspace-eyebrow');
   if (eyebrow) {
-    eyebrow.textContent = mode === 'design' ? 'ACTIVE LEARN' : 'ACTIVE WORK';
+    eyebrow.textContent = mode === 'design' ? 'DESIGN STUDIO' : 'ACTIVE LEARN';
   }
   const designNav = document.querySelector<HTMLElement>('.mp-design-nav');
   const workNav = document.querySelector<HTMLElement>('.mp-main-navigation');
@@ -7357,22 +9597,34 @@ function setProductMode(mode: ProductMode, navigate = true) {
       button.tabIndex = selected ? 0 : -1;
     });
   try {
-    localStorage.setItem('mp:product-mode', mode);
+    localStorage.setItem('mp:product-mode-v2', mode);
   } catch {
     /* renderer storage unavailable */
+  }
+  if (mode !== 'learn' && learnSideChatDockOpen) {
+    setLearnSideChatDock(false);
+  }
+  if (mode === 'learn') {
+    updateLearnCourseHeaderPill();
+    void ensureLearnCourseLoaded();
   }
   syncSkimToggleUi(activeConversationRecord);
   if (changed && inspectorState.open) {
     if (
-      mode === 'walker' &&
-      activeInspectorTab === 'learn'
-    ) {
-      setInspector(true, 'files');
-    } else if (
       mode === 'design' &&
-      (activeInspectorTab === 'changes' || activeInspectorTab === 'terminal')
+      (activeInspectorTab === 'learn' ||
+        activeInspectorTab === 'vault' ||
+        activeInspectorTab === 'changes' ||
+        activeInspectorTab === 'terminal')
     ) {
-      setInspector(true, 'learn');
+      setInspector(false);
+    } else if (
+      mode === 'learn' &&
+      (activeInspectorTab === 'changes' ||
+        activeInspectorTab === 'terminal' ||
+        activeInspectorTab === 'files')
+    ) {
+      setInspector(false);
     }
   }
   const modeComposer = document.querySelector<HTMLTextAreaElement>(
@@ -7382,11 +9634,11 @@ function setProductMode(mode: ProductMode, navigate = true) {
     modeComposer.placeholder =
       mode === 'design'
         ? getStudioLanguage() === 'zh-CN'
-          ? '学习一个概念、贴入论文段落，或开启屏幕带练…'
-          : 'Explore a concept, paste a paper excerpt, or start a screen tour…'
+          ? '描述设计需求、布局修改或评审意见…'
+          : 'Describe a design, layout change, or critique…'
         : getStudioLanguage() === 'zh-CN'
-          ? '描述开发任务、调试报错或重构代码…'
-          : 'Describe a coding task, paste an error, or ask about this repo…';
+          ? '学习一个概念、贴入论文段落，或开启屏幕带练…'
+          : 'Explore a concept, paste a paper excerpt, or start a screen tour…';
   }
   if (typeof LearnTree !== 'undefined') {
     LearnTree.renderHud(
@@ -7396,26 +9648,30 @@ function setProductMode(mode: ProductMode, navigate = true) {
     );
   }
   if (navigate) {
-    if (changed && activeConversationId) {
-      startNewChat();
+    if (mode === 'design') {
+      show('design');
+    } else {
+      if (changed && activeConversationId) {
+        startNewChat();
+      }
+      show('chat');
     }
-    show('chat');
   }
 }
 
 (function bindProductMode() {
   try {
     productMode =
-      localStorage.getItem('mp:product-mode') === 'design'
+      localStorage.getItem('mp:product-mode-v2') === 'design'
         ? 'design'
-        : 'walker';
+        : 'learn';
   } catch {
-    productMode = 'walker';
+    productMode = 'learn';
   }
   setProductMode(productMode, false);
   document
-    .getElementById('mode-work')
-    ?.addEventListener('click', () => setProductMode('walker'));
+    .getElementById('mode-learn')
+    ?.addEventListener('click', () => setProductMode('learn'));
   document
     .getElementById('mode-design')
     ?.addEventListener('click', () => setProductMode('design'));
@@ -7429,47 +9685,831 @@ function setProductMode(mode: ProductMode, navigate = true) {
     }
     event.preventDefault();
     event.stopPropagation();
-    const mode =
+    const mode: ProductMode =
       event.key === 'Home'
-        ? 'design'
+        ? 'learn'
         : event.key === 'End'
-          ? 'walker'
-          : productMode === 'walker'
+          ? 'design'
+          : productMode === 'learn'
             ? 'design'
-            : 'walker';
+            : 'learn';
     setProductMode(mode);
     document
-      .getElementById(mode === 'walker' ? 'mode-work' : 'mode-design')
+      .getElementById(mode === 'learn' ? 'mode-learn' : 'mode-design')
       ?.focus();
   });
 })();
 
-(function bindDesignHome() {
-  document
-    .querySelectorAll<HTMLElement>('[data-design-action]')
-    .forEach(button => {
-      button.addEventListener('click', () => {
-        const action = button.dataset.designAction;
-        if (action === 'canvas' || action === 'list') {
-          show('stash');
-          requestAnimationFrame(() => {
-            document
-              .querySelector<HTMLElement>(`#stash-mode [data-mode="${action}"]`)
-              ?.click();
+let activeDesignCanvasSlug = '';
+let designStudioHandle: {
+  destroy(): void;
+  setFiles(files: Record<string, string>): void;
+  getViewContextXml(): string;
+  getAnnotations(): DesignCommentAnnotation[];
+  fitToScreen(): void;
+  setLintFindings(findings: Record<string, DesignLintFinding[]>): void;
+  focusBoard(file: string): void;
+} | null = null;
+let designChangeSubscribed = false;
+let designWorkspaceBound = false;
+
+function setDesignPromptStatus(message: string, isError = false): void {
+  const statusEl = document.getElementById('design-prompt-status');
+  if (!statusEl) {
+    return;
+  }
+  if (!message) {
+    statusEl.hidden = true;
+    statusEl.textContent = '';
+    return;
+  }
+  statusEl.hidden = false;
+  statusEl.textContent = message;
+  statusEl.classList.toggle('is-error', isError);
+}
+
+async function mountDesignStudioView(): Promise<void> {
+  const host = document.getElementById('design-studio-host');
+  if (!host) {
+    return;
+  }
+  bindDesignStudioWorkspace();
+  if (!designChangeSubscribed && typeof Data.onDesignChanged === 'function') {
+    designChangeSubscribed = true;
+    Data.onDesignChanged(() => {
+      if (shell.dataset.view === 'design') {
+        void mountDesignStudioView();
+      }
+    });
+  }
+  const pendingSlug = (
+    globalThis as typeof globalThis & {__mpPendingDesignCanvasSlug?: string}
+  ).__mpPendingDesignCanvasSlug;
+  if (pendingSlug) {
+    activeDesignCanvasSlug = pendingSlug;
+    delete (
+      globalThis as typeof globalThis & {__mpPendingDesignCanvasSlug?: string}
+    ).__mpPendingDesignCanvasSlug;
+  }
+  const listRes = await Data.designList();
+  let canvases = Array.isArray(listRes?.canvases)
+    ? (listRes.canvases as Array<{slug: string; title?: string}>)
+    : [];
+  if (canvases.length === 0) {
+    const initRes = await Data.designInit({
+      slug: 'welcome-canvas',
+      title: 'Welcome Canvas',
+      pages: [{id: 'page-1', name: 'Page 1'}],
+    });
+    if (initRes?.ok) {
+      await Data.designUpsertBoard({
+        slug: 'welcome-canvas',
+        file: 'welcome.dc.html',
+        title: 'Welcome Artboard',
+        w: 1280,
+        h: 800,
+        x: 0,
+        y: 0,
+        page: 'page-1',
+        html: '<x-dc title="Welcome Artboard"><main style="font-family:var(--cds-font-sans,sans-serif);padding:64px;background:#faf9f5;color:#141413;min-height:100%"><h1>Design Studio</h1><p>Start prompting below or add an artboard to iterate on layouts, brand systems, and interactive prototypes.</p></main></x-dc>',
+      });
+      const refreshed = await Data.designList();
+      canvases = Array.isArray(refreshed?.canvases)
+        ? (refreshed.canvases as Array<{slug: string; title?: string}>)
+        : [{slug: 'welcome-canvas', title: 'Welcome Canvas'}];
+    }
+  }
+  if (
+    !activeDesignCanvasSlug ||
+    !canvases.some(c => c.slug === activeDesignCanvasSlug)
+  ) {
+    activeDesignCanvasSlug = canvases[0]?.slug || 'welcome-canvas';
+  }
+  const select = document.getElementById(
+    'design-canvas-select',
+  ) as HTMLSelectElement | null;
+  if (select) {
+    select.innerHTML = canvases
+      .map(
+        c =>
+          `<option value="${esc(c.slug)}"${c.slug === activeDesignCanvasSlug ? ' selected' : ''}>${esc(c.title || c.slug)}</option>`,
+      )
+      .join('');
+  }
+  if (typeof DesignStudio === 'undefined' || !activeDesignCanvasSlug) {
+    return;
+  }
+  const readRes = await Data.designRead(activeDesignCanvasSlug);
+  const canvasData = (readRes?.canvas || readRes) as {
+    manifest?: DesignCanvasManifest;
+    files?: Record<string, string>;
+    themeTokens?: DesignThemeTokens;
+    lintFindings?: Record<string, DesignLintFinding[]>;
+  };
+  if (!canvasData?.manifest) {
+    return;
+  }
+  if (designStudioHandle) {
+    designStudioHandle.destroy();
+    designStudioHandle = null;
+  }
+  designStudioHandle = DesignStudio.mount(host, {
+    slug: activeDesignCanvasSlug,
+    manifest: canvasData.manifest,
+    files: canvasData.files || {},
+    themeTokens: canvasData.themeTokens,
+    lintFindings: canvasData.lintFindings,
+    onSaveFile: (file, content) => {
+      void Data.designSaveFile({
+        slug: activeDesignCanvasSlug,
+        file,
+        content,
+      });
+    },
+    onAddArtboard: preset => {
+      const file = `artboard-${Date.now()}.dc.html`;
+      void Data.designUpsertBoard({
+        slug: activeDesignCanvasSlug,
+        file,
+        title: `${preset.label} Artboard`,
+        w: preset.width,
+        h: preset.height,
+        html: `<x-dc title="${esc(preset.label)} Artboard"><main style="padding:48px;font-family:var(--cds-font-sans,sans-serif)"><h2>${esc(preset.label)}</h2><p>Edit this artboard directly or ask the Design Agent to generate a layout.</p></main></x-dc>`,
+      }).then(() => void mountDesignStudioView());
+    },
+    onAskAgentFix: (file, error) => {
+      const input = document.getElementById(
+        'design-prompt-input',
+      ) as HTMLTextAreaElement | null;
+      if (input) {
+        input.value = `Fix runtime error in ${file}: ${error}`;
+        input.focus();
+      }
+    },
+    onSubmitAnnotation: annotationsXml => {
+      const input = document.getElementById(
+        'design-prompt-input',
+      ) as HTMLTextAreaElement | null;
+      if (input) {
+        input.focus();
+      }
+      setDesignPromptStatus(
+        annotationsXml
+          ? 'Spatial annotations attached to next Design prompt.'
+          : '',
+      );
+    },
+    onExport: format => {
+      void Data.designExport({slug: activeDesignCanvasSlug, format}).then(
+        res => {
+          setDesignPromptStatus(
+            res?.ok
+              ? `Exported ${format.toUpperCase()}${res.path ? ` to ${res.path}` : ''}.`
+              : String(res?.error || `Export ${format} failed.`),
+            !res?.ok,
+          );
+        },
+      );
+    },
+  });
+}
+
+const DESIGN_BRAND_PRESETS = [
+  {
+    id: 'terracotta',
+    label: 'Terracotta Studio',
+    colorPrimary: '#d97757',
+    colorBgBase: '#faf9f5',
+    colorTextBase: '#141413',
+    fontDisplay: 'Newsreader, Georgia, serif',
+    fontBody: 'Anthropic Sans, system-ui, sans-serif',
+    borderRadius: 10,
+    density: 'comfortable' as const,
+  },
+  {
+    id: 'cobalt',
+    label: 'Cobalt Tech',
+    colorPrimary: '#2563eb',
+    colorBgBase: '#f8fafc',
+    colorTextBase: '#0f172a',
+    fontDisplay: 'Inter, system-ui, sans-serif',
+    fontBody: 'Inter, system-ui, sans-serif',
+    borderRadius: 8,
+    density: 'compact' as const,
+  },
+  {
+    id: 'forest',
+    label: 'Forest Editorial',
+    colorPrimary: '#15803d',
+    colorBgBase: '#f7f8f3',
+    colorTextBase: '#1c241b',
+    fontDisplay: 'Playfair Display, Georgia, serif',
+    fontBody: 'Source Sans 3, system-ui, sans-serif',
+    borderRadius: 6,
+    density: 'comfortable' as const,
+  },
+  {
+    id: 'obsidian',
+    label: 'Obsidian Dark',
+    colorPrimary: '#e07a5f',
+    colorBgBase: '#141413',
+    colorTextBase: '#f5f4ef',
+    fontDisplay: 'Space Grotesk, system-ui, sans-serif',
+    fontBody: 'Inter, system-ui, sans-serif',
+    borderRadius: 12,
+    density: 'comfortable' as const,
+  },
+];
+
+function normalizeDesignFindings(
+  rawFindings: unknown,
+): Record<string, DesignLintFinding[]> {
+  const map: Record<string, DesignLintFinding[]> = {};
+  if (Array.isArray(rawFindings)) {
+    for (const item of rawFindings) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const entry = item as DesignLintFinding & {file?: string};
+      const file = String(entry.file || 'canvas.json');
+      if (!map[file]) {
+        map[file] = [];
+      }
+      map[file].push({
+        severity: entry.severity || 'P2',
+        rule: String(entry.rule || 'craft'),
+        message: String(entry.message || ''),
+      });
+    }
+    return map;
+  }
+  if (rawFindings && typeof rawFindings === 'object') {
+    for (const [file, list] of Object.entries(
+      rawFindings as Record<string, unknown>,
+    )) {
+      if (!Array.isArray(list)) {
+        continue;
+      }
+      map[file] = list
+        .filter(item => Boolean(item && typeof item === 'object'))
+        .map(item => {
+          const entry = item as DesignLintFinding;
+          return {
+            severity: entry.severity || 'P2',
+            rule: String(entry.rule || 'craft'),
+            message: String(entry.message || ''),
+          };
+        });
+    }
+  }
+  return map;
+}
+
+function submitDesignPromptForm(): void {
+  const form = document.getElementById(
+    'design-prompt-form',
+  ) as HTMLFormElement | null;
+  if (!form) {
+    return;
+  }
+  if (typeof form.requestSubmit === 'function') {
+    form.requestSubmit();
+  } else {
+    form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+  }
+}
+
+function bindDesignStudioWorkspace(): void {
+  if (designWorkspaceBound) {
+    return;
+  }
+  designWorkspaceBound = true;
+
+  const workspaceBar = document.getElementById('design-workspace-bar');
+  const brandBtn = document.getElementById('design-brand-btn');
+  const checkBtn = document.getElementById('design-check-btn');
+  const exportBtn = document.getElementById('design-export-btn');
+
+  let brandPopover: HTMLDivElement | null = null;
+  let lintDrawer: HTMLDivElement | null = null;
+  let exportMenu: HTMLDivElement | null = null;
+
+  const closeOverlays = (except?: 'brand' | 'check' | 'export') => {
+    if (except !== 'brand' && brandPopover) {
+      brandPopover.hidden = true;
+      brandBtn?.setAttribute('aria-expanded', 'false');
+    }
+    if (except !== 'check' && lintDrawer) {
+      lintDrawer.hidden = true;
+      checkBtn?.setAttribute('aria-expanded', 'false');
+    }
+    if (except !== 'export' && exportMenu) {
+      exportMenu.hidden = true;
+      exportBtn?.setAttribute('aria-expanded', 'false');
+    }
+  };
+
+  const ensureBrandPopover = (): HTMLDivElement | null => {
+    if (brandPopover) {
+      return brandPopover;
+    }
+    if (!workspaceBar) {
+      return null;
+    }
+    const pop = document.createElement('div');
+    pop.className = 'mp-design-popover';
+    pop.id = 'design-brand-popover';
+    pop.hidden = true;
+    const def = DESIGN_BRAND_PRESETS[0];
+    pop.innerHTML = `
+      <div class="mp-design-popover-head">
+        <span class="mp-design-popover-title">Brand Design System</span>
+        <button type="button" class="mp-design-popover-close" data-brand-close aria-label="Close">×</button>
+      </div>
+      <div class="mp-design-brand-presets">
+        ${DESIGN_BRAND_PRESETS.map(
+          (p, i) =>
+            `<button type="button" class="mp-design-brand-preset-btn${i === 0 ? ' is-active' : ''}" data-brand-preset="${esc(p.id)}"><span class="mp-design-brand-preset-dot" style="background:${esc(p.colorPrimary)}"></span><span>${esc(p.label)}</span></button>`,
+        ).join('')}
+      </div>
+      <div class="mp-design-brand-colors">
+        <label class="mp-design-brand-field">Primary<input type="color" data-brand-field="colorPrimary" value="${esc(def.colorPrimary)}" /></label>
+        <label class="mp-design-brand-field">Background<input type="color" data-brand-field="colorBgBase" value="${esc(def.colorBgBase)}" /></label>
+        <label class="mp-design-brand-field">Text<input type="color" data-brand-field="colorTextBase" value="${esc(def.colorTextBase)}" /></label>
+      </div>
+      <div class="mp-design-brand-grid">
+        <label class="mp-design-brand-field">Display font<input type="text" data-brand-field="fontDisplay" value="${esc(def.fontDisplay)}" /></label>
+        <label class="mp-design-brand-field">Body font<input type="text" data-brand-field="fontBody" value="${esc(def.fontBody)}" /></label>
+      </div>
+      <div class="mp-design-brand-grid">
+        <label class="mp-design-brand-field"><span>Radius (<span data-brand-radius-val>${def.borderRadius}px</span>)</span><input type="range" min="0" max="20" step="1" data-brand-field="borderRadius" value="${def.borderRadius}" /></label>
+        <label class="mp-design-brand-field">Density<select data-brand-field="density"><option value="comfortable">comfortable</option><option value="compact">compact</option></select></label>
+      </div>
+      <button type="button" class="mp-design-btn is-primary" data-brand-submit>Generate &amp; Install</button>
+    `;
+    workspaceBar.appendChild(pop);
+
+    const primaryInput = pop.querySelector<HTMLInputElement>(
+      '[data-brand-field="colorPrimary"]',
+    );
+    const bgInput = pop.querySelector<HTMLInputElement>(
+      '[data-brand-field="colorBgBase"]',
+    );
+    const textInput = pop.querySelector<HTMLInputElement>(
+      '[data-brand-field="colorTextBase"]',
+    );
+    const displayInput = pop.querySelector<HTMLInputElement>(
+      '[data-brand-field="fontDisplay"]',
+    );
+    const bodyInput = pop.querySelector<HTMLInputElement>(
+      '[data-brand-field="fontBody"]',
+    );
+    const radiusInput = pop.querySelector<HTMLInputElement>(
+      '[data-brand-field="borderRadius"]',
+    );
+    const radiusLabel = pop.querySelector<HTMLElement>(
+      '[data-brand-radius-val]',
+    );
+    const densitySelect = pop.querySelector<HTMLSelectElement>(
+      '[data-brand-field="density"]',
+    );
+
+    radiusInput?.addEventListener('input', () => {
+      if (radiusLabel && radiusInput) {
+        radiusLabel.textContent = `${radiusInput.value}px`;
+      }
+    });
+
+    pop.querySelector('[data-brand-close]')?.addEventListener('click', () => {
+      closeOverlays();
+    });
+
+    pop.querySelectorAll<HTMLButtonElement>('[data-brand-preset]').forEach(
+      presetBtn => {
+        presetBtn.addEventListener('click', () => {
+          const preset = DESIGN_BRAND_PRESETS.find(
+            p => p.id === presetBtn.dataset.brandPreset,
+          );
+          if (!preset) {
+            return;
+          }
+          pop
+            .querySelectorAll('[data-brand-preset]')
+            .forEach(b => b.classList.toggle('is-active', b === presetBtn));
+          if (primaryInput) {
+            primaryInput.value = preset.colorPrimary;
+          }
+          if (bgInput) {
+            bgInput.value = preset.colorBgBase;
+          }
+          if (textInput) {
+            textInput.value = preset.colorTextBase;
+          }
+          if (displayInput) {
+            displayInput.value = preset.fontDisplay;
+          }
+          if (bodyInput) {
+            bodyInput.value = preset.fontBody;
+          }
+          if (radiusInput) {
+            radiusInput.value = String(preset.borderRadius);
+          }
+          if (radiusLabel) {
+            radiusLabel.textContent = `${preset.borderRadius}px`;
+          }
+          if (densitySelect) {
+            densitySelect.value = preset.density;
+          }
+        });
+      },
+    );
+
+    pop.querySelector('[data-brand-submit]')?.addEventListener('click', () => {
+      if (!activeDesignCanvasSlug) {
+        return;
+      }
+      const submitBtn = pop.querySelector<HTMLButtonElement>(
+        '[data-brand-submit]',
+      );
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
+      setDesignPromptStatus('Generating brand design system…');
+      void Data.designGenerateBrand({
+        slug: activeDesignCanvasSlug,
+        seed: {
+          colorPrimary: primaryInput?.value || def.colorPrimary,
+          colorBgBase: bgInput?.value || def.colorBgBase,
+          colorTextBase: textInput?.value || def.colorTextBase,
+          fontDisplay: displayInput?.value || def.fontDisplay,
+          fontBody: bodyInput?.value || def.fontBody,
+          borderRadius: Number(radiusInput?.value ?? def.borderRadius),
+          density: densitySelect?.value === 'compact' ? 'compact' : 'comfortable',
+        },
+        install: true,
+      })
+        .then(res => {
+          setDesignPromptStatus(
+            res?.ok
+              ? 'Brand design system generated and installed.'
+              : String(res?.error || 'Failed to generate brand system.'),
+            !res?.ok,
+          );
+          if (res?.ok) {
+            closeOverlays();
+            void mountDesignStudioView();
+          }
+        })
+        .finally(() => {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+          }
+        });
+    });
+
+    brandPopover = pop;
+    return brandPopover;
+  };
+
+  const ensureLintDrawer = (): HTMLDivElement | null => {
+    if (lintDrawer) {
+      return lintDrawer;
+    }
+    if (!workspaceBar) {
+      return null;
+    }
+    const drawer = document.createElement('div');
+    drawer.className = 'mp-design-lint-drawer';
+    drawer.id = 'design-lint-drawer';
+    drawer.hidden = true;
+    workspaceBar.appendChild(drawer);
+    lintDrawer = drawer;
+    return lintDrawer;
+  };
+
+  const renderLintDrawer = (
+    drawer: HTMLDivElement,
+    findingsMap: Record<string, DesignLintFinding[]>,
+  ): void => {
+    const flat: Array<DesignLintFinding & {file: string}> = [];
+    for (const [file, list] of Object.entries(findingsMap)) {
+      for (const f of list) {
+        flat.push({...f, file});
+      }
+    }
+    const groups: Array<'P0' | 'P1' | 'P2'> = ['P0', 'P1', 'P2'];
+    const sectionsHtml = groups
+      .map(sev => {
+        const items = flat.filter(f => f.severity === sev);
+        if (items.length === 0) {
+          return '';
+        }
+        return `<div class="mp-design-lint-group"><div class="mp-design-lint-group-title">${sev} (${items.length})</div>${items
+          .map(
+            item => `<div class="mp-design-lint-item"><div class="mp-design-lint-item-meta"><span class="mp-design-lint-badge is-${sev.toLowerCase()}">${sev}</span><span class="mp-design-lint-rule">${esc(item.rule)}</span><button type="button" class="mp-design-lint-file" data-lint-focus="${esc(item.file)}">${esc(item.file)}</button></div><div class="mp-design-lint-msg">${esc(item.message)}</div></div>`,
+          )
+          .join('')}</div>`;
+      })
+      .join('');
+
+    drawer.innerHTML = `
+      <div class="mp-design-lint-head">
+        <span class="mp-design-popover-title">Craft Check (${flat.length})</span>
+        <button type="button" class="mp-design-popover-close" data-lint-close aria-label="Close">×</button>
+      </div>
+      <div class="mp-design-lint-list">
+        ${flat.length > 0 ? sectionsHtml : '<div class="mp-design-lint-empty">Craft check passed with 0 issues.</div>'}
+      </div>
+      ${flat.length > 0 ? '<button type="button" class="mp-design-btn is-primary" data-design-lint-fix>Fix with Design Agent</button>' : ''}
+    `;
+
+    drawer.querySelector('[data-lint-close]')?.addEventListener('click', () => {
+      closeOverlays();
+    });
+    drawer.querySelectorAll<HTMLButtonElement>('[data-lint-focus]').forEach(
+      btn => {
+        btn.addEventListener('click', () => {
+          const targetFile = btn.dataset.lintFocus;
+          if (targetFile) {
+            designStudioHandle?.focusBoard?.(targetFile);
+          }
+        });
+      },
+    );
+    drawer
+      .querySelector('[data-design-lint-fix]')
+      ?.addEventListener('click', () => {
+        const dock = document.getElementById('design-prompt-dock');
+        const toggle = document.getElementById('design-chat-toggle');
+        const input = document.getElementById(
+          'design-prompt-input',
+        ) as HTMLTextAreaElement | null;
+        if (dock) {
+          dock.hidden = false;
+        }
+        toggle?.setAttribute('aria-pressed', 'true');
+        if (input) {
+          const summaryLines = flat
+            .slice(0, 12)
+            .map(
+              f => `- [${f.severity}] ${f.file} (${f.rule}): ${f.message}`,
+            )
+            .join('\n');
+          input.value = `Fix the following Craft Check findings:\n${summaryLines}`;
+          input.focus();
+        }
+        closeOverlays();
+        submitDesignPromptForm();
+      });
+  };
+
+  const ensureExportMenu = (): HTMLDivElement | null => {
+    if (exportMenu) {
+      return exportMenu;
+    }
+    if (!workspaceBar) {
+      return null;
+    }
+    const menu = document.createElement('div');
+    menu.className = 'mp-design-export-menu';
+    menu.id = 'design-export-menu';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    const formats: Array<{
+      format: 'html' | 'png' | 'pdf' | 'zip';
+      label: string;
+      ext: string;
+    }> = [
+      {format: 'html', label: 'Standalone HTML', ext: '.html'},
+      {format: 'png', label: 'PNG Snapshot', ext: '.png'},
+      {format: 'pdf', label: 'Multi-page PDF', ext: '.pdf'},
+      {format: 'zip', label: 'Handoff ZIP', ext: '.zip'},
+    ];
+    menu.innerHTML = formats
+      .map(
+        f =>
+          `<button type="button" class="mp-design-export-item" role="menuitem" data-design-export-format="${f.format}"><span>${f.label}</span><span class="mp-design-export-ext">${f.ext}</span></button>`,
+      )
+      .join('');
+    workspaceBar.appendChild(menu);
+
+    menu
+      .querySelectorAll<HTMLButtonElement>('[data-design-export-format]')
+      .forEach(item => {
+        item.addEventListener('click', () => {
+          const fmt = item.dataset.designExportFormat as
+            | 'html'
+            | 'png'
+            | 'pdf'
+            | 'zip'
+            | undefined;
+          closeOverlays();
+          if (!fmt || !activeDesignCanvasSlug) {
+            return;
+          }
+          setDesignPromptStatus(`Exporting ${fmt.toUpperCase()}…`);
+          void Data.designExport({
+            slug: activeDesignCanvasSlug,
+            format: fmt,
+          }).then(res => {
+            if (res?.ok) {
+              setDesignPromptStatus(
+                `Exported ${fmt.toUpperCase()}${res.path ? ` to ${res.path}` : ''}.`,
+              );
+            } else if (res?.canceled) {
+              setDesignPromptStatus('Export canceled.');
+            } else {
+              setDesignPromptStatus(
+                String(res?.error || `Export ${fmt} failed.`),
+                true,
+              );
+            }
           });
-          return;
-        }
-        if (action === 'files') {
-          show('design');
-          setInspector(true, 'files');
-          return;
-        }
-        if (action === 'artifacts') {
-          show('artifacts');
+        });
+      });
+
+    exportMenu = menu;
+    return exportMenu;
+  };
+
+  document.addEventListener('click', event => {
+    const target = event.target as Node | null;
+    if (target && workspaceBar?.contains(target)) {
+      return;
+    }
+    closeOverlays();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      closeOverlays();
+    }
+  });
+
+  document
+    .getElementById('design-canvas-select')
+    ?.addEventListener('change', event => {
+      const select = event.target as HTMLSelectElement;
+      if (select.value) {
+        activeDesignCanvasSlug = select.value;
+        closeOverlays();
+        void mountDesignStudioView();
+      }
+    });
+  document
+    .getElementById('design-canvas-new')
+    ?.addEventListener('click', () => {
+      closeOverlays();
+      const title = `Canvas ${new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
+      void Data.designInit({title}).then(res => {
+        if (res?.ok && res.slug) {
+          activeDesignCanvasSlug = String(res.slug);
+          void mountDesignStudioView();
         }
       });
     });
-})();
+  brandBtn?.addEventListener('click', event => {
+    event.stopPropagation();
+    const pop = ensureBrandPopover();
+    if (!pop) {
+      return;
+    }
+    const nextOpen = pop.hidden;
+    closeOverlays(nextOpen ? 'brand' : undefined);
+    pop.hidden = !nextOpen;
+    brandBtn.setAttribute('aria-expanded', String(nextOpen));
+  });
+  checkBtn?.addEventListener('click', event => {
+    event.stopPropagation();
+    if (!activeDesignCanvasSlug) {
+      return;
+    }
+    const drawer = ensureLintDrawer();
+    if (drawer && !drawer.hidden) {
+      closeOverlays();
+      return;
+    }
+    closeOverlays('check');
+    setDesignPromptStatus('Running Craft check…');
+    void Data.designCheck(activeDesignCanvasSlug).then(res => {
+      const findingsMap = normalizeDesignFindings(res?.findings);
+      designStudioHandle?.setLintFindings?.(findingsMap);
+      const count = Object.values(findingsMap).reduce<number>(
+        (sum, list) => sum + list.length,
+        0,
+      );
+      const checkCompleted = Boolean(
+        res && !res.error && (res.ok || res.findings !== undefined),
+      );
+      setDesignPromptStatus(
+        checkCompleted
+          ? count === 0
+            ? 'Craft check passed with 0 issues.'
+            : `Craft check found ${count} item(s).`
+          : String(res?.error || 'Craft check failed.'),
+        !checkCompleted,
+      );
+      if (drawer) {
+        renderLintDrawer(drawer, findingsMap);
+        drawer.hidden = false;
+        checkBtn.setAttribute('aria-expanded', 'true');
+      }
+    });
+  });
+  exportBtn?.addEventListener('click', event => {
+    event.stopPropagation();
+    const menu = ensureExportMenu();
+    if (!menu) {
+      return;
+    }
+    const nextOpen = menu.hidden;
+    closeOverlays(nextOpen ? 'export' : undefined);
+    menu.hidden = !nextOpen;
+    exportBtn.setAttribute('aria-expanded', String(nextOpen));
+  });
+  document
+    .getElementById('design-chat-toggle')
+    ?.addEventListener('click', event => {
+      const dock = document.getElementById('design-prompt-dock');
+      const btn = event.currentTarget as HTMLElement;
+      if (dock) {
+        dock.hidden = !dock.hidden;
+        btn.setAttribute('aria-pressed', String(!dock.hidden));
+      }
+    });
+  document
+    .getElementById('design-prompt-input')
+    ?.addEventListener('keydown', event => {
+      if (
+        event.key === 'Enter' &&
+        !event.shiftKey &&
+        !event.isComposing &&
+        event.keyCode !== 229
+      ) {
+        event.preventDefault();
+        submitDesignPromptForm();
+      }
+    });
+  document
+    .getElementById('design-prompt-form')
+    ?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const input = document.getElementById(
+        'design-prompt-input',
+      ) as HTMLTextAreaElement | null;
+      const sendBtn = document.getElementById(
+        'design-prompt-send',
+      ) as HTMLButtonElement | null;
+      const replyEl = document.getElementById('design-prompt-reply');
+      const question = input?.value.trim() || '';
+      if (!question || !activeDesignCanvasSlug) {
+        return;
+      }
+      if (sendBtn) {
+        sendBtn.disabled = true;
+      }
+      setDesignPromptStatus('Running Design Agent…');
+      try {
+        const annotations = designStudioHandle?.getAnnotations() || [];
+        const annotationsXml =
+          annotations.length && typeof DesignStudio !== 'undefined'
+            ? DesignStudio.serializeDesignAnnotations(
+                annotations,
+                activeDesignCanvasSlug,
+              )
+            : undefined;
+        const response = await Data.sendConversation({
+          workMode: 'design',
+          question,
+          designCanvasSlug: activeDesignCanvasSlug,
+          designViewContextXml: designStudioHandle?.getViewContextXml(),
+          designAnnotationsXml: annotationsXml,
+        });
+        if (input) {
+          input.value = '';
+        }
+        if (replyEl && response?.answer) {
+          replyEl.hidden = false;
+          replyEl.textContent = String(response.answer);
+        }
+        setDesignPromptStatus(
+          response?.ok === false
+            ? String(response?.error || 'Design Agent error.')
+            : 'Design updated.',
+          response?.ok === false,
+        );
+        await mountDesignStudioView();
+      } catch (err) {
+        setDesignPromptStatus(
+          err instanceof Error ? err.message : String(err),
+          true,
+        );
+      } finally {
+        if (sendBtn) {
+          sendBtn.disabled = false;
+        }
+      }
+    });
+}
 
 let windowMenuTrigger: HTMLElement | null = null;
 
@@ -7805,10 +10845,10 @@ function openAccountMenu() {
   const sidebarRect = sidebar.getBoundingClientRect();
   const footerRect = footer.getBoundingClientRect();
   const left = sidebarRect.left + 8;
-  const width = Math.min(272, window.innerWidth - 16);
+  const width = Math.min(220, window.innerWidth - 16);
   menu.style.width = `${width}px`;
   menu.style.left = `${Math.round(left)}px`;
-  menu.style.top = `${Math.max(36, Math.round(footerRect.top - 8 - menu.offsetHeight))}px`;
+  menu.style.top = `${Math.max(36, Math.round(footerRect.top - 6 - menu.offsetHeight))}px`;
   menu.style.removeProperty('visibility');
   footer.setAttribute('aria-expanded', 'true');
   requestAnimationFrame(() => enterStudioMenu(menu));
@@ -7909,7 +10949,7 @@ document.addEventListener('keydown', event => {
     void executeWindowMenuCommand('add-files');
     return;
   }
-  const target = event.target as HTMLElement;
+  const target = event.target instanceof Element ? event.target : null;
   const menu = target?.closest<HTMLElement>(
     '.mp-compact-menu, #account-menu, #window-menu-popover, .mp-thread-menu',
   );
@@ -7917,7 +10957,9 @@ document.addEventListener('keydown', event => {
     return;
   }
   const rows = studioMenuItems(menu);
-  const index = rows.indexOf(target.closest('button') as HTMLButtonElement);
+  const index = target
+    ? rows.indexOf(target.closest('button') as HTMLButtonElement)
+    : -1;
   if (event.key === 'ArrowRight' && menu.id === 'account-menu') {
     const command = rows[index]?.dataset.accountCommand;
     if (command === 'language' || command === 'learn-more') {
@@ -8111,6 +11153,35 @@ document.addEventListener('mp:retry-question', (event: Event) => {
   fitComposer(textarea);
   syncComposerSubmitState();
   form.requestSubmit();
+});
+
+document.addEventListener('mp:open-inline-artifact', (event: Event) => {
+  const detail = (
+    event as CustomEvent<{
+      id?: string;
+      title?: string;
+      kind?: string;
+      content?: string;
+      previewHtml?: string;
+      language?: string;
+      filename?: string;
+    }>
+  ).detail;
+  if (!detail || (!detail.content && !detail.previewHtml)) {
+    return;
+  }
+  inlineArtifactPreview = {
+    id: String(detail.id || `inline-${Date.now()}`),
+    title: String(detail.title || 'Preview'),
+    kind: String(detail.kind || 'html'),
+    content: String(detail.content || detail.previewHtml || ''),
+    ...(detail.previewHtml ? {previewHtml: String(detail.previewHtml)} : {}),
+    ...(detail.language ? {language: String(detail.language)} : {}),
+    ...(detail.filename ? {filename: String(detail.filename)} : {}),
+  };
+  artifactInspectorMode = 'preview';
+  setInspector(true, 'artifact');
+  renderArtifactEditor();
 });
 
 document.addEventListener('mp:open-artifact', (event: Event) => {
@@ -8585,28 +11656,6 @@ function openSidebarMenu(button: HTMLElement) {
   menu.className = 'mp-thread-menu';
   menu.setAttribute('role', 'menu');
   const addedViews = new Set<string>();
-  for (const [label, view, glyph] of [
-    ['Resources', 'resources', '\uE01F'],
-    ['Routines', 'scheduled', '\uE043'],
-  ] as Array<[string, string, string]>) {
-    addedViews.add(view);
-    const item = document.createElement('button');
-    item.type = 'button';
-    const gly = document.createElement('span');
-    gly.className = 'cds-icon';
-    gly.dataset.size = 'small';
-    gly.setAttribute('aria-hidden', 'true');
-    gly.textContent = glyph;
-    const text = document.createElement('span');
-    text.textContent = label;
-    item.append(gly, text);
-    item.addEventListener('click', event => {
-      event.stopPropagation();
-      closeSidebarMenu(true);
-      show(view);
-    });
-    menu.append(item);
-  }
   for (const view of studioLibraries.preferences.hiddenNavigation as string[]) {
     if (view === 'designs' || addedViews.has(view)) {
       continue;
@@ -9182,6 +12231,53 @@ function inspectorError(message: string) {
   }
 }
 
+function renderFileTreeTypeIcon(fileName: string): HTMLElement | null {
+  const fileIconsApi =
+    typeof ChatFileIcons !== 'undefined' ? ChatFileIcons : null;
+  if (!fileIconsApi || typeof fileIconsApi.fileIconFor !== 'function') {
+    return null;
+  }
+  const selected = fileIconsApi.fileIconFor(fileName);
+  if (selected.glyph) {
+    const span = document.createElement('span');
+    span.className = 'mp-file-tree-icon mp-file-tree-glyph';
+    span.setAttribute('aria-hidden', 'true');
+    span.dataset.fileTypeIcon = selected.id;
+    span.textContent = selected.glyph;
+    return span;
+  }
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'mp-file-tree-icon');
+  svg.setAttribute('data-file-type-icon', selected.id);
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  const appendNodes = (
+    parent: Element,
+    nodes: Array<[string, Record<string, string>, unknown[]?]>,
+  ) => {
+    for (const [tag, attrs, children] of nodes) {
+      const el = document.createElementNS(ns, tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        el.setAttribute(k, v);
+      }
+      if (Array.isArray(children) && children.length) {
+        appendNodes(
+          el,
+          children as Array<[string, Record<string, string>, unknown[]?]>,
+        );
+      }
+      parent.appendChild(el);
+    }
+  };
+  appendNodes(
+    svg,
+    selected.nodes as Array<[string, Record<string, string>, unknown[]?]>,
+  );
+  return svg as unknown as HTMLElement;
+}
+
 function renderProjectFileTree() {
   const host = document.getElementById('project-file-tree');
   if (!host) {
@@ -9216,18 +12312,33 @@ function renderProjectFileTree() {
       row.setAttribute('role', 'treeitem');
       row.setAttribute('aria-level', String(depth + 1));
       row.tabIndex = -1;
-      row.style.paddingLeft = `${8 + depth * 8}px`;
+      row.style.setProperty('--tree-depth', String(depth));
+      row.style.paddingLeft = `${8 + depth * 14}px`;
       const expanded =
         entry.kind === 'directory' &&
         expandedProjectDirectories.has(entry.path);
       if (entry.kind === 'directory') {
         row.setAttribute('aria-expanded', String(expanded));
+        row.innerHTML = `<span class="mp-file-tree-caret cds-icon" data-size="xs" aria-hidden="true">&#xE02A;</span><span class="mp-file-tree-folder-glyph">${icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')}</span><span class="mp-file-tree-name">${esc(entry.name)}</span>`;
+      } else {
+        const spacer = document.createElement('span');
+        spacer.className = 'mp-file-tree-caret-spacer';
+        spacer.setAttribute('aria-hidden', 'true');
+        row.appendChild(spacer);
+        const typeIcon = renderFileTreeTypeIcon(entry.name);
+        if (typeIcon) {
+          row.appendChild(typeIcon);
+        } else {
+          const fallback = document.createElement('span');
+          fallback.className = 'mp-file-tree-icon';
+          fallback.innerHTML = icon('ic-tree-file');
+          row.appendChild(fallback);
+        }
+        const label = document.createElement('span');
+        label.className = 'mp-file-tree-name';
+        label.textContent = entry.name;
+        row.appendChild(label);
       }
-      row.innerHTML = `${
-        entry.kind === 'directory'
-          ? icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')
-          : icon('ic-tree-file')
-      }<span>${esc(entry.name)}</span>`;
       nodes.push(row);
       if (!expanded) {
         continue;
@@ -10598,6 +13709,10 @@ function renderWorkflowRunBlocks(
 function renderProjectTasks() {
   renderPlanCard();
   scheduleBackgroundAgentRefresh();
+  renderConversationDispatchTags();
+  if (inspectorState.open && activeInspectorTab === 'rail') {
+    renderSessionRail();
+  }
   const host = document.getElementById('project-tasks');
   if (!host) {
     return;
@@ -11004,6 +14119,33 @@ function closeProjectBrowserView() {
 }
 
 Data.onBrowserViewState(state => renderBrowserViewState(state));
+const liveBrowserBridge = (
+  window as unknown as {
+    magicPointerDashboard?: {
+      onLiveBrowserOpenPanel?: (
+        callback: (payload: {url?: string}) => void,
+      ) => void;
+    };
+  }
+).magicPointerDashboard;
+liveBrowserBridge?.onLiveBrowserOpenPanel?.(payload => {
+  const rawUrl = String(payload?.url || '').trim();
+  setInspector(true, 'browser');
+  browserViewVisible = true;
+  const empty = document.getElementById('project-browser-empty');
+  if (empty) {
+    empty.hidden = true;
+  }
+  if (rawUrl) {
+    const urlInput = document.getElementById(
+      'project-browser-url',
+    ) as HTMLInputElement | null;
+    if (urlInput) {
+      urlInput.value = rawUrl;
+    }
+  }
+  scheduleProjectBrowserResize();
+});
 const projectBrowserHost = document.getElementById('project-browser-host');
 if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(() => scheduleProjectBrowserResize()).observe(
@@ -11043,6 +14185,7 @@ function renderInspectorTitle() {
     return;
   }
   const labels: Record<string, string> = {
+    rail: 'inspector.session',
     'side-chat': 'inspector.side_chat',
     vault: 'inspector.vault',
     learn: 'inspector.learn',
@@ -11050,6 +14193,7 @@ function renderInspectorTitle() {
     materials: 'inspector.materials',
     files: 'inspector.files',
     browser: 'inspector.browser',
+    'cu-desktop': 'inspector.cu_desktop',
     terminal: 'inspector.terminal',
     changes: 'inspector.changes',
     tasks:
@@ -11060,15 +14204,15 @@ function renderInspectorTitle() {
     modules: 'inspector.modules',
   };
   title.textContent =
-    inspectorState.tab === 'side-chat'
-      ? getStudioLanguage() === 'zh-CN'
-        ? '并排探讨'
-        : 'Side chat'
-      : inspectorState.tab === 'vault'
-        ? getStudioLanguage() === 'zh-CN'
-          ? '知识库 · Obsidian Vault'
-          : 'Knowledge Vault'
-        : studioT(labels[inspectorState.tab] || 'inspector.task');
+    inspectorState.tab === 'rail'
+      ? 'Session'
+      : inspectorState.tab === 'side-chat'
+        ? 'Side chat'
+        : inspectorState.tab === 'vault'
+          ? getStudioLanguage() === 'zh-CN'
+            ? '知识库 · Obsidian Vault'
+            : 'Knowledge Vault'
+          : studioT(labels[inspectorState.tab] || 'inspector.task');
 }
 
 function syncInspectorGeometry() {
@@ -11114,14 +14258,19 @@ function syncInspectorGeometry() {
   inspector.style.width =
     taskRail && !backgroundTasks
       ? `${rail.width}px`
-      : inspectorState.maximized
-        ? ''
-        : backgroundTasks
-          ? '416px'
-          : `${inspectorState.width}px`;
+      : inspectorState.tab === 'rail'
+        ? `${Math.max(296, Math.min(340, rail.width))}px`
+        : inspectorState.maximized
+          ? ''
+          : backgroundTasks
+            ? '416px'
+            : `${inspectorState.width}px`;
   renderInspectorTitle();
   if (maximize) {
-    maximize.hidden = taskRail && !backgroundTasks;
+    maximize.hidden =
+      (taskRail && !backgroundTasks) ||
+      inspectorState.tab === 'side-chat' ||
+      inspectorState.tab === 'rail';
   }
   const resizeHandle = document.getElementById('inspector-resize-handle');
   if (resizeHandle) {
@@ -11220,8 +14369,12 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       button.setAttribute('aria-selected', String(active));
     });
   syncHeaderWorkspaceToggles();
+  if (typeof CuDesktopView !== 'undefined') {
+    CuDesktopView.setVisible(Boolean(open && activeInspectorTab === 'cu-desktop'));
+  }
   if (!open) {
     closeProjectBrowserView();
+    renderConversationDispatchTags();
     return;
   }
   if (activeInspectorTab !== 'browser') {
@@ -11249,6 +14402,9 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   if (activeInspectorTab === 'artifact') {
     renderArtifactEditor();
   }
+  if (activeInspectorTab === 'rail') {
+    renderSessionRail();
+  }
   if (activeInspectorTab === 'side-chat' && typeof SideChatPane !== 'undefined') {
     SideChatPane.renderPane(
       document.getElementById('side-chat-pane-host'),
@@ -11256,14 +14412,19 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
       buildSideChatPaneHandlers(),
     );
   }
+  renderConversationDispatchTags();
   if (activeInspectorTab === 'vault') {
     void renderVaultPanel();
   }
-  if (activeInspectorTab === 'learn' && typeof LearnTree !== 'undefined') {
-    LearnTree.renderDeck(
-      document.getElementById('learn-deck-host'),
-      activeConversationRecord,
-    );
+  if (activeInspectorTab === 'learn') {
+    if (
+      learnSideChatDockOpen &&
+      window.innerWidth < 1680 &&
+      sidebarState.layout() === 'docked'
+    ) {
+      toggleSidebar();
+    }
+    mountLearnStudyWorkbench();
   }
   if (activeInspectorTab === 'browser') {
     const bounds = projectBrowserBounds();
@@ -11317,7 +14478,9 @@ function syncHeaderWorkspaceToggles(): void {
       const active =
         target === 'terminal'
           ? terminalOpen
-          : inspectorOpen && activeInspectorTab === target;
+          : target === 'side-chat' && productMode === 'learn'
+            ? learnSideChatDockOpen
+            : inspectorOpen && activeInspectorTab === target;
       btn.classList.toggle('is-on', active);
       btn.setAttribute('aria-pressed', String(active));
     });
@@ -11335,12 +14498,32 @@ document
         toggleTerminalPanel();
         return;
       }
+      if (target === 'side-chat' && productMode === 'learn') {
+        setLearnSideChatDock(!learnSideChatDockOpen);
+        return;
+      }
       if (shell.dataset.inspector === 'open' && activeInspectorTab === target) {
         setInspector(false);
       } else {
         setInspector(true, target);
       }
     });
+  });
+
+document
+  .getElementById('learn-sidechat-dock-close')
+  ?.addEventListener('click', () => {
+    setLearnSideChatDock(false);
+  });
+
+document
+  .getElementById('header-learn-course-pill')
+  ?.addEventListener('click', () => {
+    if (shell.dataset.inspector !== 'open' || activeInspectorTab !== 'learn') {
+      setInspector(true, 'learn');
+    }
+    mountLearnStudyWorkbench('overview');
+    LearnStudyArtifact?.setTab('overview');
   });
 
 document
@@ -12316,6 +15499,13 @@ document.addEventListener('click', e => {
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
   if (projectToggle) {
     const key = projectToggle.dataset.workspaceToggle || '';
+    const directKey = projectToggle.dataset.projectDirectOpen || '';
+    const clickedChevron = Boolean(target.closest('.mpw-project-chevron'));
+    if (directKey && !clickedChevron) {
+      const matched = ProjectScope.find(cachedProjects || [], directKey);
+      libraryUi.openProject(matched?.id || directKey);
+      return;
+    }
     const project = projectToggle.closest<HTMLElement>('.mpw-project');
     const expanded = sidebarState.toggleGroup(key);
     if (project) {
@@ -12592,13 +15782,18 @@ function slashRow(
   row.setAttribute('role', 'menuitem');
   row.dataset.slashName = entry.name;
   row.dataset.slashGroup = group;
+  const cleanDesc = String(entry.description || '')
+    .replace(/`+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  row.title = cleanDesc ? `/${entry.name} — ${cleanDesc}` : `/${entry.name}`;
   const head = document.createElement('span');
   head.className = 'mpw-slash-name';
   const slash = document.createElement('em');
   slash.textContent = `/${entry.name}`;
   head.appendChild(slash);
   const desc = document.createElement('small');
-  desc.textContent = entry.description;
+  desc.textContent = cleanDesc;
   const body = document.createElement('span');
   body.className = 'mpw-slash-text';
   body.append(head, desc);
@@ -13797,6 +16992,79 @@ function renderPermissionAsk() {
     dock.prepend(host);
   }
   host.dataset.mode = pendingPermissionAsk ? 'permission' : 'ask';
+  if (
+    productMode === 'learn' &&
+    !pendingPermissionAsk &&
+    pendingAskInput &&
+    pendingAskInput.kind !== 'artifact' &&
+    typeof LearnCheckinCard !== 'undefined'
+  ) {
+    const qs = pendingAskInput.questions || [];
+    const singleQ =
+      qs.length === 1
+        ? qs[0]
+        : qs.length === 0
+          ? {
+              question:
+                pendingAskInput.question || studioT('ask.default_question'),
+              options: (pendingAskInput.options || []).map(label => ({label})),
+              multiSelect: false,
+            }
+          : null;
+    if (singleQ && !singleQ.multiSelect && singleQ.options.length > 0) {
+      DecisionCard.clear(host);
+      host.hidden = false;
+      host.dataset.mode = 'ask';
+      const checkinNode = LearnCheckinCard.render(
+        {
+          id: key,
+          prompt: singleQ.question,
+          options: singleQ.options.map(opt => {
+            const desc =
+              'description' in opt && typeof opt.description === 'string'
+                ? opt.description
+                : '';
+            return {
+              label: opt.label,
+              ...(desc ? {description: desc} : {}),
+            };
+          }),
+          allowUnsure: true,
+          allowNote: true,
+        },
+        {
+          onSubmit: payload => {
+            void Data.learn
+              .recordCheckin({
+                courseId: activeLearnCourse?.id,
+                question: singleQ.question,
+                selectedIndex: payload.selectedIndex,
+                selectedLabel: payload.selectedLabel,
+                unsure: payload.unsure,
+                reasoningNote: payload.reasoningNote,
+              })
+              .then(res => {
+                if (res?.course) {
+                  activeLearnCourse = res.course as StudioLearnCourse;
+                  LearnStudyArtifact?.updateCourse(
+                    activeLearnCourse,
+                    activeLearnGraph,
+                  );
+                }
+              });
+            const answerText = payload.reasoningNote
+              ? `${payload.selectedLabel}（补充思路：${payload.reasoningNote}）`
+              : payload.selectedLabel;
+            void respondToPendingInput(conversationId, requestId, {
+              answers: {[singleQ.question]: answerText},
+            });
+          },
+        },
+      );
+      host.replaceChildren(checkinNode);
+      return;
+    }
+  }
   DecisionCard.render(
     host,
     {
@@ -14064,7 +17332,11 @@ function syncComposerSubmitState() {
   if (!textarea || !submit) {
     return;
   }
-  submit.disabled = !studioComposerBusy && !textarea.value.trim();
+  const hasReplyContent = pendingReplyQuotes.some(q =>
+    Boolean(q.comment?.trim()),
+  );
+  submit.disabled =
+    !studioComposerBusy && !textarea.value.trim() && !hasReplyContent;
 }
 
 let modelCatalog: MagicPointerModelCatalog | null = null;
@@ -14653,6 +17925,9 @@ window.addEventListener('mp:language-change', () => {
   if (inspectorState.open) {
     renderInspectorTitle();
   }
+  if ((shell.dataset.view || 'chat') === 'chat' && activeConversationId) {
+    void openConversation(activeConversationId);
+  }
 });
 
 renderTerminalLanguage();
@@ -14693,10 +17968,37 @@ if (typeof LearnTree !== 'undefined') {
         document.getElementById('composer-lemma-strip'),
       );
     },
+    sendToSideChat: async payload => {
+      if (typeof SideChatPane !== 'undefined') {
+        SideChatPane.openDraft({
+          conversationId: payload.conversationId,
+          parentTurnIndex: payload.parentTurnIndex,
+          parentBranchId: payload.parentBranchId,
+          ...(Number.isInteger(payload.blockIndex)
+            ? {blockIndex: payload.blockIndex}
+            : {}),
+          quote: payload.anchorSnippet || payload.anchorLabel,
+          snippet: payload.anchorSnippet || payload.anchorLabel,
+        });
+        openSideChatSurface();
+        await buildSideChatPaneHandlers().onSend({
+          conversationId: payload.conversationId,
+          parentBranchId: payload.parentBranchId,
+          parentTurnIndex: payload.parentTurnIndex,
+          ...(Number.isInteger(payload.blockIndex)
+            ? {blockIndex: payload.blockIndex}
+            : {}),
+          anchorLabel: payload.anchorLabel,
+          anchorSnippet: payload.anchorSnippet,
+          question: payload.question,
+        });
+      }
+    },
   });
 }
 let sideChatLiveRequestId = '';
 let sideChatLiveQuestion = '';
+let sideChatLiveQuote = '';
 
 function resolveAnchorTurnAndBlock(anchorNode: Node | null): {
   parentTurnIndex: number;
@@ -14737,24 +18039,27 @@ function buildSideChatPaneHandlers(): SideChatPaneHandlers {
       const requestId = `side-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       sideChatLiveRequestId = requestId;
       sideChatLiveQuestion = payload.question;
+      sideChatLiveQuote = payload.anchorSnippet || payload.anchorLabel || '';
       SideChatPane?.setLiveState({
         requestId,
         branchId: payload.branchId || '',
         question: payload.question,
+        quote: sideChatLiveQuote,
         answer: '',
         thinking: '',
       });
       SideChatPane?.renderPane(
-        document.getElementById('side-chat-pane-host'),
+        sideChatHostEl(),
         activeConversationRecord,
         buildSideChatPaneHandlers(),
       );
       try {
-        const res = await Data.learnSend({
+        const res = (await Data.learnSend({
           conversationId: payload.conversationId,
           ...(payload.branchId ? {branchId: payload.branchId} : {}),
-          parentBranchId: null,
+          parentBranchId: payload.parentBranchId ?? null,
           parentTurnIndex: payload.parentTurnIndex,
+          surface: 'side',
           anchor: {
             kind: 'selection',
             label: payload.anchorLabel,
@@ -14766,18 +18071,27 @@ function buildSideChatPaneHandlers(): SideChatPaneHandlers {
           kind: 'ask',
           question: payload.question,
           requestId,
-        });
+        })) as {
+          ok?: boolean;
+          branchId?: string;
+          branch?: {id?: string};
+          conversation?: MagicPointerConversation;
+        };
         sideChatLiveRequestId = '';
+        sideChatLiveQuote = '';
         SideChatPane?.setLiveState(null);
         if (res?.conversation) {
-          activeConversationRecord = res.conversation as MagicPointerConversation;
+          activeConversationRecord = res.conversation;
         }
-        if (res?.branch?.id) {
-          SideChatPane?.openBranch(String(res.branch.id));
+        const resolvedBranchId = String(
+          res?.branchId || res?.branch?.id || payload.branchId || '',
+        ).trim();
+        if (resolvedBranchId) {
+          SideChatPane?.openBranch(resolvedBranchId);
         }
         if (activeConversationRecord) {
           SideChatPane?.renderPane(
-            document.getElementById('side-chat-pane-host'),
+            sideChatHostEl(),
             activeConversationRecord,
             buildSideChatPaneHandlers(),
           );
@@ -14789,9 +18103,10 @@ function buildSideChatPaneHandlers(): SideChatPaneHandlers {
         }
       } catch {
         sideChatLiveRequestId = '';
+        sideChatLiveQuote = '';
         SideChatPane?.setLiveState(null);
         SideChatPane?.renderPane(
-          document.getElementById('side-chat-pane-host'),
+          sideChatHostEl(),
           activeConversationRecord,
           buildSideChatPaneHandlers(),
         );
@@ -14814,7 +18129,7 @@ function buildSideChatPaneHandlers(): SideChatPaneHandlers {
         activeConversationRecord = res.conversation as MagicPointerConversation;
       }
       SideChatPane?.renderPane(
-        document.getElementById('side-chat-pane-host'),
+        sideChatHostEl(),
         activeConversationRecord,
         buildSideChatPaneHandlers(),
       );
@@ -14843,9 +18158,31 @@ function buildSideChatPaneHandlers(): SideChatPaneHandlers {
       syncComposerSubmitState();
       textarea.focus();
     },
+    onPromoteToArtifact: async branch => {
+      const insight =
+        branch.mountNote ||
+        branch.insightSummary ||
+        branch.turns?.at(-1)?.answer?.slice(0, 600) ||
+        branch.title;
+      const res = await Data.learn.promoteLemma({
+        courseId: activeLearnCourse?.id || '',
+        title: branch.title || 'Side Chat 引理',
+        quote: branch.anchor?.snippet || branch.anchor?.label || '',
+        insight: String(insight).trim(),
+        section: branch.anchor?.label || '',
+      });
+      if (res?.course) {
+        activeLearnCourse = res.course as StudioLearnCourse;
+        LearnStudyArtifact?.updateCourse(activeLearnCourse, activeLearnGraph);
+        if (shell.dataset.inspector !== 'open' || activeInspectorTab !== 'learn') {
+          setInspector(true, 'learn');
+        }
+        LearnStudyArtifact?.setTab('notes');
+      }
+    },
     onOpenBranch: branchId => {
       SideChatPane?.openBranch(branchId);
-      setInspector(true, 'side-chat');
+      openSideChatSurface();
     },
   };
 }
@@ -14862,12 +18199,13 @@ Data.onLearnProgress(progress => {
     requestId: sideChatLiveRequestId,
     branchId: String(progress.branchId || ''),
     question: sideChatLiveQuestion,
+    quote: sideChatLiveQuote,
     answer: String(progress.answer || ''),
     thinking: String(progress.thinking || ''),
   });
-  if (inspectorState.open && activeInspectorTab === 'side-chat') {
+  if (isLearnSideChatOpen()) {
     SideChatPane.renderPane(
-      document.getElementById('side-chat-pane-host'),
+      sideChatHostEl(),
       activeConversationRecord,
       buildSideChatPaneHandlers(),
     );
@@ -14876,23 +18214,41 @@ Data.onLearnProgress(progress => {
 
 if (typeof SideChatBar !== 'undefined') {
   SideChatBar.init({
-    isSideChatOpen: () =>
-      Boolean(
-        inspectorState.open &&
-          activeInspectorTab === 'side-chat' &&
-          activeConversationRecord?.branches?.length,
-      ),
+    isSideChatOpen: () => isLearnSideChatOpen(),
     onStartSideChat: payload => {
       if (typeof SideChatPane !== 'undefined' && activeConversationRecord) {
+        const anchorEl =
+          payload.anchorNode?.nodeType === 1
+            ? (payload.anchorNode as Element)
+            : payload.anchorNode?.parentElement || null;
+        const sideBranchEl = anchorEl?.closest<HTMLElement>(
+          '#side-chat-pane-host [data-branch-id], #learn-sidechat-dock-host [data-branch-id]',
+        );
+        const sideParentBranchId = sideBranchEl?.dataset.branchId || null;
+        if (sideParentBranchId) {
+          const parentBranch = activeConversationRecord.branches?.find(
+            b => b.id === sideParentBranchId,
+          );
+          SideChatPane.openDraft({
+            conversationId: activeConversationRecord.id,
+            parentTurnIndex: parentBranch?.parentTurnIndex ?? 0,
+            parentBranchId: sideParentBranchId,
+            quote: payload.quote,
+            snippet: payload.quote,
+          });
+          openSideChatSurface();
+          return;
+        }
         const loc = resolveAnchorTurnAndBlock(payload.anchorNode);
         SideChatPane.openDraft({
           conversationId: activeConversationRecord.id,
           parentTurnIndex: loc.parentTurnIndex,
+          parentBranchId: null,
           ...(loc.blockIndex !== undefined ? {blockIndex: loc.blockIndex} : {}),
           quote: payload.quote,
           snippet: payload.quote,
         });
-        setInspector(true, 'side-chat');
+        openSideChatSurface();
         return;
       }
       const opened = LearnTree?.openSelectionInquiry?.(
@@ -14901,23 +18257,11 @@ if (typeof SideChatBar !== 'undefined') {
         payload.anchorNode,
       );
       if (!opened) {
-        setInspector(true, 'side-chat');
+        openSideChatSurface();
       }
     },
     onReply: payload => {
-      const textarea = document.querySelector<HTMLTextAreaElement>(
-        '#composer-form textarea, .mpw-input',
-      );
-      if (!textarea) {
-        return;
-      }
-      const prefix = quotedSelection(payload.quote);
-      textarea.value = textarea.value ? `${prefix}${textarea.value}` : prefix;
-      fitComposer(textarea);
-      textarea.dispatchEvent(new Event('input', {bubbles: true}));
-      syncComposerSubmitState();
-      textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      openInlineReplyPopover(payload);
     },
   });
 }
@@ -14938,37 +18282,115 @@ if (chatLearnToggle) {
         document.getElementById('stream'),
       );
       setInspector(true, 'learn');
-      LearnTree?.renderDeck(
-        document.getElementById('learn-deck-host'),
-        activeConversationRecord,
-      );
+      if (typeof LearnStudyArtifact === 'undefined') {
+        LearnTree?.renderDeck(
+          document.getElementById('learn-deck-host'),
+          activeConversationRecord,
+        );
+      }
     }
   });
 }
+function toggleClickyCoachMode(): boolean {
+  guidedTourCoachActive = !guidedTourCoachActive;
+  const toggleBtn = document.getElementById('chat-tour-toggle');
+  toggleBtn?.setAttribute('aria-pressed', String(guidedTourCoachActive));
+  const perceptionBtn = document.getElementById('composer-perception-toggle');
+  if (perceptionBtn) {
+    perceptionBtn.dataset.clickyActive = guidedTourCoachActive ? 'true' : 'false';
+  }
+  const viewChatEl = document.getElementById('view-chat');
+  if (viewChatEl) {
+    viewChatEl.dataset.tourCoach = guidedTourCoachActive ? 'true' : 'false';
+  }
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    '#composer-form textarea, .mpw-input',
+  );
+  if (guidedTourCoachActive && textarea && !textarea.value.trim()) {
+    textarea.placeholder =
+      getStudioLanguage() === 'zh-CN'
+        ? '屏幕教练已开启：描述你想学的操作，AI 将用 Clicky 飞指光标一步步带你点…'
+        : 'Coach Tour on: ask how to do anything on screen and AI will point step-by-step…';
+    textarea.focus();
+  } else if (!guidedTourCoachActive) {
+    void window.magicPointerDashboard?.guidedTour?.clear?.();
+    if (textarea) {
+      textarea.placeholder = 'Type / for commands';
+    }
+  }
+  return guidedTourCoachActive;
+}
+
+window.addEventListener('keydown', event => {
+  if (
+    !event.repeat &&
+    event.ctrlKey &&
+    event.altKey &&
+    event.key.toLowerCase() === 'g'
+  ) {
+    event.preventDefault();
+    toggleClickyCoachMode();
+  }
+});
+
+const chatHostForTour = document.getElementById('chat');
+if (chatHostForTour && typeof MutationObserver !== 'undefined') {
+  let tourConversationId = '';
+  const tourObserver = new MutationObserver(() => {
+    const convId = activeConversationRecord?.id || '';
+    if (convId !== tourConversationId) {
+      tourConversationId = convId;
+      chatHostForTour
+        .querySelectorAll<HTMLElement>('.mp-tour-card')
+        .forEach(card => {
+          card.dataset.autoFlown = '1';
+        });
+      return;
+    }
+    if (!guidedTourCoachActive) {
+      return;
+    }
+    const pendingCard = chatHostForTour.querySelector<HTMLElement>(
+      '.mp-tour-card:not([data-auto-flown="1"])',
+    );
+    if (!pendingCard) {
+      return;
+    }
+    pendingCard.dataset.autoFlown = '1';
+    if (document.hasFocus()) {
+      return;
+    }
+    const steps = Array.from(
+      pendingCard.querySelectorAll<HTMLElement>('.mp-tour-step'),
+    ).map((el, idx) => ({
+      index: idx + 1,
+      kind: 'POINT',
+      x: Number(el.dataset.tourX || 0),
+      y: Number(el.dataset.tourY || 0),
+      screen: Number(el.dataset.tourScreen || 1),
+      label: el.dataset.tourLabel || '',
+      caption: el.dataset.tourLabel || '',
+    }));
+    if (steps.length > 0) {
+      void window.magicPointerDashboard?.cuOverlay?.teachStart?.(steps);
+      void window.magicPointerDashboard?.guidedTour?.point?.({
+        x: steps[0].x,
+        y: steps[0].y,
+        screen: steps[0].screen,
+        normalized: true,
+        label: steps[0].label,
+        caption: steps[0].caption,
+        ttlMs: 3800,
+      });
+    }
+  });
+  tourObserver.observe(chatHostForTour, {childList: true, subtree: true});
+}
+
 const chatTourToggle = document.getElementById('chat-tour-toggle');
 if (chatTourToggle) {
   chatTourToggle.addEventListener('click', () => {
-    guidedTourCoachActive = !guidedTourCoachActive;
-    chatTourToggle.setAttribute('aria-pressed', String(guidedTourCoachActive));
-    const viewChatEl = document.getElementById('view-chat');
-    if (viewChatEl) {
-      viewChatEl.dataset.tourCoach = guidedTourCoachActive ? 'true' : 'false';
-    }
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      '#composer-form textarea, .mpw-input',
-    );
-    if (guidedTourCoachActive && textarea && !textarea.value.trim()) {
-      textarea.placeholder =
-        getStudioLanguage() === 'zh-CN'
-          ? '屏幕教练已开启：描述你想学的操作，AI 将用飞指光标一步步带你点…'
-          : 'Coach Tour on: ask how to do anything on screen and AI will point step-by-step…';
-      textarea.focus();
-    } else if (!guidedTourCoachActive) {
-      void window.magicPointerDashboard?.guidedTour?.clear?.();
-      if (textarea) {
-        textarea.placeholder = 'Type / for commands';
-      }
-    }
+    toggleClickyCoachMode();
   });
 }
 document.addEventListener('click', event => {
@@ -15019,27 +18441,62 @@ document.addEventListener('click', event => {
   }
   if (act === 'autopilot') {
     const card = tourBtn.closest('.mp-tour-card');
-    const stepLabels = Array.from(
+    const rawSteps = Array.from(
       card?.querySelectorAll<HTMLElement>('.mp-tour-step') || [],
-    )
-      .map((el, i) => `${i + 1}. ${el.dataset.tourLabel || ''}`)
-      .filter(Boolean);
-    const textarea = document.querySelector<HTMLTextAreaElement>(
-      '#composer-form textarea, .mpw-input',
-    );
-    if (textarea) {
-      const promptText =
-        getStudioLanguage() === 'zh-CN'
-          ? `请切换到代操作模式，按以下导览步骤帮我执行并展示进度：\n${stepLabels.join('\n')}`
-          : `Switch to Autopilot and execute these guided tour steps for me:\n${stepLabels.join('\n')}`;
-      textarea.value = promptText;
-      fitComposer(textarea);
-      textarea.dispatchEvent(new Event('input', {bubbles: true}));
-      syncComposerSubmitState();
-      textarea.focus();
-    }
+    ).map((el, idx) => ({
+      index: idx + 1,
+      x: Number(el.dataset.tourX || 0),
+      y: Number(el.dataset.tourY || 0),
+      screen: Number(el.dataset.tourScreen || 1),
+      label: (el.dataset.tourLabel || '').trim(),
+      caption: (el.dataset.tourCaption || el.dataset.tourLabel || '').trim(),
+    }));
+    void startRealComputerUseAutopilot(rawSteps);
   }
 });
+
+let pendingAutopilotDispatch: {
+  question: string;
+  computerUseMode: 'autopilot';
+  guidedTourSteps: Array<{
+    index: number;
+    x: number;
+    y: number;
+    screen: number;
+    label: string;
+    caption: string;
+  }>;
+} | null = null;
+
+async function startRealComputerUseAutopilot(
+  steps: Array<{
+    index: number;
+    x: number;
+    y: number;
+    screen: number;
+    label: string;
+    caption: string;
+  }>,
+): Promise<void> {
+  if (!steps.length || studioComposerBusy) {
+    return;
+  }
+  const isZh = getStudioLanguage() === 'zh-CN';
+  const summaryLabel = isZh
+    ? `执行屏幕导览（${steps.length} 步）`
+    : `Run guided steps (${steps.length})`;
+  void window.magicPointerDashboard?.cuOverlay?.startAutopilot?.({
+    actionLabel: steps[0]?.label || (isZh ? 'AI 代操作' : 'Computer Use'),
+    steps,
+  });
+  pendingAutopilotDispatch = {
+    question: summaryLabel,
+    computerUseMode: 'autopilot',
+    guidedTourSteps: steps,
+  };
+  const formEl = document.getElementById('composer-form') as HTMLFormElement | null;
+  formEl?.requestSubmit();
+}
 
 let latestCapturedScreenEvidence: {
   token: string;
@@ -15154,16 +18611,24 @@ function cleanVaultExcerpt(raw: string): string {
     .trim();
 }
 
+let vaultSearchQuery = '';
+let vaultActiveTag = '';
+let vaultOpenNotePath = '';
+let vaultOverflowOpen = false;
+let vaultRenderSeq = 0;
+
 async function renderVaultPanel() {
   const host = document.getElementById('vault-panel-host');
   if (!host) {
     return;
   }
-  const vaultApi = window.magicPointerDashboard?.vault;
-  if (!vaultApi) {
+  const vaultBridge = window.magicPointerDashboard?.vault;
+  if (!vaultBridge) {
     host.textContent = '知识库通道暂不可用。';
     return;
   }
+  const vaultApi = vaultBridge;
+  const seq = ++vaultRenderSeq;
   const data = (await vaultApi.overview()) as {
     ok?: boolean;
     vaultDir?: string;
@@ -15185,47 +18650,36 @@ async function renderVaultPanel() {
       done: boolean;
     }>;
   };
+  if (seq !== vaultRenderSeq) {
+    return;
+  }
+  const allNotes = Array.isArray(data.notes) ? data.notes : [];
+  const allTodos = Array.isArray(data.todos) ? data.todos : [];
+
+  const insertVaultAsk = (title: string, excerpt: string) => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea, .mpw-input',
+    );
+    if (!textarea) {
+      return;
+    }
+    const clean = cleanVaultExcerpt(excerpt || '');
+    textarea.value = clean
+      ? `结合我知识库里的笔记《${title}》（${clean.slice(0, 180)}），帮我深挖背后的底层机制：`
+      : `结合我知识库里的笔记《${title}》，帮我深挖背后的底层机制：`;
+    fitComposer(textarea);
+    textarea.dispatchEvent(new Event('input', {bubbles: true}));
+    syncComposerSubmitState();
+    textarea.focus();
+  };
+
   host.replaceChildren();
   const panel = document.createElement('div');
   panel.className = 'mp-vault-panel';
+  const bodyHost = document.createElement('div');
+  bodyHost.className = 'mp-vault-panel-body';
 
-  const head = document.createElement('div');
-  head.className = 'mp-vault-head';
-  const pathEl = document.createElement('div');
-  pathEl.className = 'mp-vault-path';
-  const vaultFullDir = String(data.vaultDir || '').trim();
-  const vaultFolderName =
-    vaultFullDir.split(/[\\/]/).filter(Boolean).pop() || '本地默认库';
-  if (vaultFullDir) {
-    pathEl.title = vaultFullDir;
-  }
-  const folderIcon = document.createElement('span');
-  folderIcon.className = 'cds-icon';
-  folderIcon.dataset.size = 'small';
-  folderIcon.setAttribute('aria-hidden', 'true');
-  folderIcon.textContent = '\uE072';
-  const pathText = document.createElement('span');
-  pathText.textContent = vaultFolderName;
-  pathEl.append(folderIcon, pathText);
-  head.appendChild(pathEl);
-
-  const actions = document.createElement('div');
-  actions.className = 'mp-vault-actions';
-
-  const bindBtn = document.createElement('button');
-  bindBtn.type = 'button';
-  bindBtn.className = 'mp-vault-btn';
-  bindBtn.textContent = '绑定我的 Obsidian 库';
-  bindBtn.addEventListener('click', async () => {
-    await vaultApi.selectDir();
-    void renderVaultPanel();
-  });
-
-  const saveConvBtn = document.createElement('button');
-  saveConvBtn.type = 'button';
-  saveConvBtn.className = 'mp-vault-btn is-primary';
-  saveConvBtn.textContent = '存入当前对话要点';
-  saveConvBtn.addEventListener('click', async () => {
+  const saveCurrentConversationNote = async () => {
     const conv = activeConversationRecord;
     if (!conv || !conv.turns?.length) {
       return;
@@ -15244,13 +18698,9 @@ async function renderVaultPanel() {
       body: `${body}\n\n- [ ] 回顾并提炼 1 条可迁移的核心直觉`,
     });
     void renderVaultPanel();
-  });
+  };
 
-  const syncSocialBtn = document.createElement('button');
-  syncSocialBtn.type = 'button';
-  syncSocialBtn.className = 'mp-vault-btn';
-  syncSocialBtn.textContent = '导入 X/小红书收藏';
-  syncSocialBtn.addEventListener('click', async () => {
+  const importSocialCollections = async () => {
     const resApi = window.magicPointerDashboard?.resources;
     if (!resApi?.request) {
       show('resources');
@@ -15265,7 +18715,14 @@ async function renderVaultPanel() {
     for (const item of items) {
       const col = item.collection;
       const title =
-        String(col?.title || item.desc || col?.summary || item.summary || col?.url || '社交媒体收藏')
+        String(
+          col?.title ||
+            item.desc ||
+            col?.summary ||
+            item.summary ||
+            col?.url ||
+            '社交媒体收藏',
+        )
           .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 56) || '社交媒体收藏';
@@ -15296,110 +18753,418 @@ async function renderVaultPanel() {
       });
     }
     void renderVaultPanel();
+  };
+
+  const head = document.createElement('div');
+  head.className = 'mp-vault-head';
+
+  const headRow = document.createElement('div');
+  headRow.className = 'mp-vault-head-row';
+  const vaultFullDir = String(data.vaultDir || '').trim();
+  const vaultFolderName =
+    vaultFullDir.split(/[\\/]/).filter(Boolean).pop() || '本地默认库';
+  const pathBtn = document.createElement('button');
+  pathBtn.type = 'button';
+  pathBtn.className = 'mp-vault-path';
+  pathBtn.title = vaultFullDir
+    ? `${vaultFullDir}（点击切换 Obsidian 目录）`
+    : '点击绑定 Obsidian 目录';
+  const folderIcon = document.createElement('span');
+  folderIcon.className = 'cds-icon';
+  folderIcon.dataset.size = 'small';
+  folderIcon.setAttribute('aria-hidden', 'true');
+  folderIcon.textContent = '\uE072';
+  const pathText = document.createElement('span');
+  pathText.textContent = vaultFolderName;
+  pathBtn.append(folderIcon, pathText);
+  pathBtn.addEventListener('click', async () => {
+    await vaultApi.selectDir();
+    vaultOpenNotePath = '';
+    void renderVaultPanel();
   });
 
-  actions.append(bindBtn, saveConvBtn, syncSocialBtn);
-  head.appendChild(actions);
-  panel.appendChild(head);
+  const actions = document.createElement('div');
+  actions.className = 'mp-vault-actions';
 
-  const todos = Array.isArray(data.todos) ? data.todos : [];
-  if (todos.length) {
-    const todoSec = document.createElement('section');
-    const h3 = document.createElement('h3');
-    h3.className = 'mp-vault-section-title';
-    h3.textContent = `学习待办 (${todos.filter(t => !t.done).length} 未完成 / ${todos.length})`;
-    todoSec.appendChild(h3);
-    const list = document.createElement('div');
-    list.className = 'mp-vault-todo-list';
-    for (const item of todos.slice(0, 20)) {
-      const row = document.createElement('label');
-      row.className = `mp-vault-todo${item.done ? ' is-done' : ''}`;
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = item.done;
-      cb.addEventListener('change', async () => {
-        await vaultApi.toggleTodo({
-          filePath: item.filePath,
-          lineIndex: item.lineIndex,
-          done: cb.checked,
-        });
-        void renderVaultPanel();
-      });
-      const txt = document.createElement('span');
-      txt.textContent = `${item.text} · 《${item.noteTitle}》`;
-      row.append(cb, txt);
-      list.appendChild(row);
+  const saveConvBtn = document.createElement('button');
+  saveConvBtn.type = 'button';
+  saveConvBtn.className = 'mp-vault-btn is-primary';
+  saveConvBtn.textContent = '存入要点';
+  saveConvBtn.addEventListener('click', () => {
+    void saveCurrentConversationNote();
+  });
+
+  const overflowBtn = document.createElement('button');
+  overflowBtn.type = 'button';
+  overflowBtn.className = 'mp-vault-btn mp-vault-overflow-btn';
+  overflowBtn.setAttribute('aria-label', '更多知识库操作');
+  overflowBtn.setAttribute('aria-expanded', String(vaultOverflowOpen));
+  overflowBtn.textContent = '···';
+
+  const overflowMenu = document.createElement('div');
+  overflowMenu.className = 'mp-vault-overflow-menu';
+  overflowMenu.hidden = !vaultOverflowOpen;
+
+  const bindMenuBtn = document.createElement('button');
+  bindMenuBtn.type = 'button';
+  bindMenuBtn.className = 'mp-vault-overflow-item';
+  bindMenuBtn.textContent = '绑定我的 Obsidian 库';
+  bindMenuBtn.addEventListener('click', async () => {
+    vaultOverflowOpen = false;
+    overflowMenu.hidden = true;
+    await vaultApi.selectDir();
+    vaultOpenNotePath = '';
+    void renderVaultPanel();
+  });
+
+  const importMenuBtn = document.createElement('button');
+  importMenuBtn.type = 'button';
+  importMenuBtn.className = 'mp-vault-overflow-item';
+  importMenuBtn.textContent = '导入 X / 小红书收藏';
+  importMenuBtn.addEventListener('click', () => {
+    vaultOverflowOpen = false;
+    overflowMenu.hidden = true;
+    void importSocialCollections();
+  });
+
+  overflowMenu.append(bindMenuBtn, importMenuBtn);
+  overflowBtn.addEventListener('click', event => {
+    event.stopPropagation();
+    vaultOverflowOpen = !vaultOverflowOpen;
+    overflowMenu.hidden = !vaultOverflowOpen;
+    overflowBtn.setAttribute('aria-expanded', String(vaultOverflowOpen));
+  });
+
+  actions.append(saveConvBtn, overflowBtn, overflowMenu);
+  headRow.append(pathBtn, actions);
+  head.appendChild(headRow);
+
+  const searchRow = document.createElement('div');
+  searchRow.className = 'mp-vault-search-row';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.className = 'mp-vault-search';
+  searchInput.placeholder = '搜索笔记、标签或待办…';
+  searchInput.value = vaultSearchQuery;
+  searchRow.appendChild(searchInput);
+  head.appendChild(searchRow);
+
+  const filterHost = document.createElement('div');
+  head.appendChild(filterHost);
+  panel.append(head, bodyHost);
+  host.appendChild(panel);
+
+  const renderFilterChip = () => {
+    filterHost.replaceChildren();
+    if (!vaultActiveTag) {
+      return;
     }
-    todoSec.appendChild(list);
-    panel.appendChild(todoSec);
-  }
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'mp-vault-active-filter';
+    chip.textContent = `#${vaultActiveTag} ×`;
+    chip.addEventListener('click', () => {
+      vaultActiveTag = '';
+      renderFilterChip();
+      void renderVaultBody();
+    });
+    filterHost.appendChild(chip);
+  };
 
-  const notes = Array.isArray(data.notes) ? data.notes : [];
-  const noteSec = document.createElement('section');
-  const noteTitle = document.createElement('h3');
-  noteTitle.className = 'mp-vault-section-title';
-  noteTitle.textContent = `知识笔记 (${notes.length})`;
-  noteSec.appendChild(noteTitle);
-  const noteList = document.createElement('div');
-  noteList.className = 'mp-vault-note-list';
-  if (!notes.length) {
-    const empty = document.createElement('div');
-    empty.className = 'mp-sidechat-empty';
-    empty.textContent =
-      '暂无笔记。点击上方「绑定我的 Obsidian 库」直接接管现有 Vault，或一键存入当前对话 / 导入 X 与小红书收藏。';
-    noteList.appendChild(empty);
-  } else {
-    for (const note of notes.slice(0, 30)) {
-      const card = document.createElement('article');
-      card.className = 'mp-vault-note';
-      const titleEl = document.createElement('div');
-      titleEl.className = 'mp-vault-note-title';
-      titleEl.textContent = note.title;
-      card.appendChild(titleEl);
-      if (note.excerpt) {
-        const ex = document.createElement('div');
-        ex.className = 'mp-captured-evidence-ocr';
-        ex.textContent = cleanVaultExcerpt(note.excerpt);
-        card.appendChild(ex);
+  const openNoteByRef = (ref: string) => {
+    const cleanRef = String(ref || '').trim();
+    if (!cleanRef) {
+      return;
+    }
+    const found = allNotes.find(
+      n =>
+        n.filePath === cleanRef ||
+        n.relativePath === cleanRef ||
+        n.title === cleanRef,
+    );
+    vaultOpenNotePath = found
+      ? found.filePath || found.relativePath
+      : cleanRef;
+    void renderVaultBody();
+  };
+
+  let readerLoadSeq = 0;
+  async function renderVaultBody() {
+    renderFilterChip();
+    bodyHost.replaceChildren();
+
+    if (vaultOpenNotePath) {
+      const loadId = ++readerLoadSeq;
+      const loading = document.createElement('div');
+      loading.className = 'mp-sidechat-empty';
+      loading.textContent = '正在读取笔记…';
+      bodyHost.appendChild(loading);
+      const res = (await vaultApi.readNote(vaultOpenNotePath)) as {
+        ok?: boolean;
+        error?: string;
+        title?: string;
+        relativePath?: string;
+        filePath?: string;
+        content?: string;
+        source?: string;
+        tags?: string[];
+        links?: string[];
+        backlinks?: string[];
+      };
+      if (loadId !== readerLoadSeq) {
+        return;
       }
-      const meta = document.createElement('div');
-      meta.className = 'mp-vault-note-meta';
-      for (const tag of note.tags.slice(0, 4)) {
-        const pill = document.createElement('span');
+      bodyHost.replaceChildren();
+      if (!res?.ok) {
+        const err = document.createElement('div');
+        err.className = 'mp-sidechat-empty';
+        err.textContent = '未能读取该笔记（可能已移动或删除）。';
+        const backBtn = document.createElement('button');
+        backBtn.type = 'button';
+        backBtn.className = 'mp-vault-btn';
+        backBtn.textContent = '← 返回列表';
+        backBtn.addEventListener('click', () => {
+          vaultOpenNotePath = '';
+          void renderVaultBody();
+        });
+        bodyHost.append(backBtn, err);
+        return;
+      }
+      const reader = document.createElement('article');
+      reader.className = 'mp-vault-reader';
+
+      const rHead = document.createElement('div');
+      rHead.className = 'mp-vault-reader-head';
+      const backBtn = document.createElement('button');
+      backBtn.type = 'button';
+      backBtn.className = 'mp-vault-btn';
+      backBtn.textContent = '← 返回列表';
+      backBtn.addEventListener('click', () => {
+        vaultOpenNotePath = '';
+        void renderVaultBody();
+      });
+      const askBtn = document.createElement('button');
+      askBtn.type = 'button';
+      askBtn.className = 'mp-vault-btn is-primary';
+      askBtn.textContent = '带入对话探讨';
+      askBtn.addEventListener('click', () => {
+        insertVaultAsk(
+          res.title || vaultOpenNotePath,
+          (res.content || '').slice(0, 220),
+        );
+      });
+      rHead.append(backBtn, askBtn);
+      reader.appendChild(rHead);
+
+      const rTitle = document.createElement('h3');
+      rTitle.className = 'mp-vault-reader-title';
+      rTitle.textContent = res.title || res.relativePath || '笔记';
+      reader.appendChild(rTitle);
+
+      const metaRow = document.createElement('div');
+      metaRow.className = 'mp-vault-note-meta';
+      for (const tag of res.tags || []) {
+        const pill = document.createElement('button');
+        pill.type = 'button';
         pill.className = 'mp-vault-pill';
         pill.textContent = `#${tag}`;
-        meta.appendChild(pill);
+        pill.addEventListener('click', () => {
+          vaultOpenNotePath = '';
+          vaultActiveTag = tag;
+          void renderVaultBody();
+        });
+        metaRow.appendChild(pill);
       }
-      if (note.backlinks.length) {
-        const bl = document.createElement('span');
-        bl.className = 'mp-vault-pill';
-        bl.textContent = `← ${note.backlinks.length} 条反链`;
-        meta.appendChild(bl);
+      for (const bl of (res.backlinks || []).slice(0, 4)) {
+        const blBtn = document.createElement('button');
+        blBtn.type = 'button';
+        blBtn.className = 'mp-vault-pill';
+        blBtn.textContent = `← ${bl}`;
+        blBtn.addEventListener('click', () => openNoteByRef(bl));
+        metaRow.appendChild(blBtn);
       }
-      const askNoteBtn = document.createElement('button');
-      askNoteBtn.type = 'button';
-      askNoteBtn.className = 'mp-captured-evidence-btn';
-      askNoteBtn.textContent = '带入对话探讨';
-      askNoteBtn.addEventListener('click', () => {
-        const textarea = document.querySelector<HTMLTextAreaElement>(
-          '#composer-form textarea, .mpw-input',
-        );
-        if (textarea) {
-          textarea.value = `结合我知识库里的笔记《${note.title}》（${note.excerpt}），帮我深挖背后的底层机制：`;
-          fitComposer(textarea);
-          textarea.dispatchEvent(new Event('input', {bubbles: true}));
-          syncComposerSubmitState();
-          textarea.focus();
-        }
-      });
-      meta.appendChild(askNoteBtn);
-      card.appendChild(meta);
-      noteList.appendChild(card);
+      if (metaRow.childElementCount > 0) {
+        reader.appendChild(metaRow);
+      }
+
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'mp-vault-reader-body';
+      if (typeof ChatMarkdown !== 'undefined' && typeof ChatMarkdown.render === 'function') {
+        bodyEl.appendChild(ChatMarkdown.render(String(res.content || '')));
+      } else {
+        bodyEl.textContent = String(res.content || '');
+      }
+      reader.appendChild(bodyEl);
+      bodyHost.appendChild(reader);
+      return;
     }
+
+    const q = vaultSearchQuery.trim().toLowerCase();
+    const tagFilter = vaultActiveTag.trim().toLowerCase();
+
+    const filteredTodos = allTodos.filter(item => {
+      if (q) {
+        const hay = `${item.text} ${item.noteTitle}`.toLowerCase();
+        if (!hay.includes(q)) {
+          return false;
+        }
+      }
+      if (tagFilter) {
+        const parentNote = allNotes.find(n => n.filePath === item.filePath);
+        if (!parentNote?.tags.some(t => t.toLowerCase() === tagFilter)) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (filteredTodos.length) {
+      const todoSec = document.createElement('section');
+      const h3 = document.createElement('h3');
+      h3.className = 'mp-vault-section-title';
+      h3.textContent = `学习待办 (${filteredTodos.filter(t => !t.done).length} 未完成 / ${filteredTodos.length})`;
+      todoSec.appendChild(h3);
+      const list = document.createElement('div');
+      list.className = 'mp-vault-todo-list';
+      for (const item of filteredTodos.slice(0, 20)) {
+        const row = document.createElement('div');
+        row.className = `mp-vault-todo${item.done ? ' is-done' : ''}`;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = item.done;
+        cb.setAttribute('aria-label', item.text);
+        cb.addEventListener('change', async () => {
+          await vaultApi.toggleTodo({
+            filePath: item.filePath,
+            lineIndex: item.lineIndex,
+            done: cb.checked,
+          });
+          void renderVaultPanel();
+        });
+        const txtWrap = document.createElement('span');
+        txtWrap.textContent = `${item.text} · `;
+        const noteBtn = document.createElement('button');
+        noteBtn.type = 'button';
+        noteBtn.className = 'mp-vault-todo-note-link';
+        noteBtn.textContent = `《${item.noteTitle}》`;
+        noteBtn.addEventListener('click', () => {
+          vaultOpenNotePath = item.filePath;
+          void renderVaultBody();
+        });
+        txtWrap.appendChild(noteBtn);
+        row.append(cb, txtWrap);
+        list.appendChild(row);
+      }
+      todoSec.appendChild(list);
+      bodyHost.appendChild(todoSec);
+    }
+
+    const filteredNotes = allNotes.filter(note => {
+      if (
+        tagFilter &&
+        !note.tags.some(tag => tag.toLowerCase() === tagFilter)
+      ) {
+        return false;
+      }
+      if (!q) {
+        return true;
+      }
+      const hay = `${note.title} ${note.excerpt} ${note.tags.join(' ')} ${note.relativePath}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    const noteSec = document.createElement('section');
+    const noteTitle = document.createElement('h3');
+    noteTitle.className = 'mp-vault-section-title';
+    noteTitle.textContent = `知识笔记 (${filteredNotes.length})`;
+    noteSec.appendChild(noteTitle);
+    const noteList = document.createElement('div');
+    noteList.className = 'mp-vault-note-list';
+    if (!filteredNotes.length) {
+      const empty = document.createElement('div');
+      empty.className = 'mp-sidechat-empty';
+      empty.textContent = allNotes.length
+        ? '没有匹配的笔记，试试换个关键词或清除标签筛选。'
+        : '暂无笔记。点击上方文件夹名称绑定 Obsidian 库，或「存入要点」沉淀当前对话。';
+      noteList.appendChild(empty);
+    } else {
+      for (const note of filteredNotes.slice(0, 30)) {
+        const card = document.createElement('article');
+        card.className = 'mp-vault-note';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        const openThisNote = () => {
+          vaultOpenNotePath = note.filePath || note.relativePath;
+          void renderVaultBody();
+        };
+        card.addEventListener('click', openThisNote);
+        card.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            openThisNote();
+          }
+        });
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'mp-vault-note-title';
+        titleEl.textContent = note.title;
+        card.appendChild(titleEl);
+        if (note.excerpt) {
+          const ex = document.createElement('div');
+          ex.className = 'mp-vault-note-excerpt';
+          ex.textContent = cleanVaultExcerpt(note.excerpt);
+          card.appendChild(ex);
+        }
+        const meta = document.createElement('div');
+        meta.className = 'mp-vault-note-meta';
+        for (const tag of note.tags.slice(0, 4)) {
+          const pill = document.createElement('button');
+          pill.type = 'button';
+          pill.className = 'mp-vault-pill';
+          pill.textContent = `#${tag}`;
+          pill.addEventListener('click', ev => {
+            ev.stopPropagation();
+            vaultActiveTag = vaultActiveTag === tag ? '' : tag;
+            void renderVaultBody();
+          });
+          meta.appendChild(pill);
+        }
+        if (note.backlinks.length) {
+          const bl = document.createElement('button');
+          bl.type = 'button';
+          bl.className = 'mp-vault-pill';
+          bl.textContent = `← ${note.backlinks.length} 条反链`;
+          bl.title = note.backlinks.slice(0, 5).join(', ');
+          bl.addEventListener('click', ev => {
+            ev.stopPropagation();
+            openNoteByRef(note.backlinks[0]);
+          });
+          meta.appendChild(bl);
+        }
+        const askNoteBtn = document.createElement('button');
+        askNoteBtn.type = 'button';
+        askNoteBtn.className = 'mp-vault-ask-btn';
+        askNoteBtn.textContent = '带入对话探讨';
+        askNoteBtn.addEventListener('click', ev => {
+          ev.stopPropagation();
+          insertVaultAsk(note.title, note.excerpt);
+        });
+        meta.appendChild(askNoteBtn);
+        card.appendChild(meta);
+        noteList.appendChild(card);
+      }
+    }
+    noteSec.appendChild(noteList);
+    bodyHost.appendChild(noteSec);
   }
-  noteSec.appendChild(noteList);
-  panel.appendChild(noteSec);
-  host.appendChild(panel);
+
+  searchInput.addEventListener('input', () => {
+    vaultSearchQuery = searchInput.value;
+    vaultOpenNotePath = '';
+    void renderVaultBody();
+  });
+
+  void renderVaultBody();
 }
 
 document
@@ -15426,33 +19191,43 @@ document
   });
 
 let demoRecordingActive = false;
+function toggleDemoRecordMode(): boolean {
+  demoRecordingActive = !demoRecordingActive;
+  const chatRecordDemoToggleEl = document.getElementById(
+    'chat-record-demo-toggle',
+  );
+  chatRecordDemoToggleEl?.setAttribute(
+    'aria-pressed',
+    String(demoRecordingActive),
+  );
+  if (demoRecordingActive) {
+    void window.magicPointerDashboard?.cuOverlay?.recordStart?.(
+      activeConversationRecord?.title || '桌面操作示范',
+    );
+  } else {
+    void window.magicPointerDashboard?.cuOverlay?.recordFinish?.().then(res => {
+      const md = typeof res?.markdown === 'string' ? res.markdown : '';
+      if (!md) {
+        return;
+      }
+      const textarea = document.querySelector<HTMLTextAreaElement>(
+        '#composer-form textarea, .mpw-input',
+      );
+      if (textarea) {
+        textarea.value = `请根据我刚才录制的示范操作整理成可复用的教学步骤或 Routine：\n\n${md}`;
+        fitComposer(textarea);
+        textarea.dispatchEvent(new Event('input', {bubbles: true}));
+        syncComposerSubmitState();
+        textarea.focus();
+      }
+    });
+  }
+  return demoRecordingActive;
+}
 const chatRecordDemoToggle = document.getElementById('chat-record-demo-toggle');
 if (chatRecordDemoToggle) {
   chatRecordDemoToggle.addEventListener('click', () => {
-    demoRecordingActive = !demoRecordingActive;
-    chatRecordDemoToggle.setAttribute('aria-pressed', String(demoRecordingActive));
-    if (demoRecordingActive) {
-      void window.magicPointerDashboard?.cuOverlay?.recordStart?.(
-        activeConversationRecord?.title || '桌面操作示范',
-      );
-    } else {
-      void window.magicPointerDashboard?.cuOverlay?.recordFinish?.().then(res => {
-        const md = typeof res?.markdown === 'string' ? res.markdown : '';
-        if (!md) {
-          return;
-        }
-        const textarea = document.querySelector<HTMLTextAreaElement>(
-          '#composer-form textarea, .mpw-input',
-        );
-        if (textarea) {
-          textarea.value = `请根据我刚才录制的示范操作整理成可复用的教学步骤或 Routine：\n\n${md}`;
-          fitComposer(textarea);
-          textarea.dispatchEvent(new Event('input', {bubbles: true}));
-          syncComposerSubmitState();
-          textarea.focus();
-        }
-      });
-    }
+    toggleDemoRecordMode();
   });
 }
 
@@ -15553,6 +19328,15 @@ if (modulesHost && globalThis.ModsWorkspace) {
   window.addEventListener('beforeunload', () => controller.dispose(), {once: true});
 }
 const desktopPerceptionBridge = window.magicPointerDashboard?.desktopPerception;
+const composerPerceptionToggle = document.getElementById('composer-perception-toggle');
+const closePerceptionPopover = () => {
+  if (desktopPerceptionHost) {
+    desktopPerceptionHost.hidden = true;
+  }
+  if (composerPerceptionToggle) {
+    composerPerceptionToggle.setAttribute('aria-expanded', 'false');
+  }
+};
 desktopPerceptionController = desktopPerceptionHost && globalThis.DesktopPerception
   ? DesktopPerception.create(desktopPerceptionHost, {
       readStatus: async () => {
@@ -15561,12 +19345,27 @@ desktopPerceptionController = desktopPerceptionHost && globalThis.DesktopPercept
         }
         return desktopPerceptionBridge.status();
       },
-      activate: async () => desktopPerceptionBridge
-        ? desktopPerceptionBridge.activate()
-        : {ok: false, error: 'Desktop pointing is unavailable in this window.'},
+      activate: async () => {
+        if (!desktopPerceptionBridge) {
+          return {ok: false, error: 'Desktop pointing is unavailable in this window.'};
+        }
+        const res = await desktopPerceptionBridge.activate();
+        if (res?.ok) {
+          closePerceptionPopover();
+        }
+        return res;
+      },
       setPaused: async paused => desktopPerceptionBridge
         ? desktopPerceptionBridge.setPaused(paused)
         : {ok: false, error: 'Desktop pointing is unavailable in this window.'},
+      toggleClickyCoach: () => toggleClickyCoachMode(),
+      isClickyCoachActive: () => guidedTourCoachActive,
+      toggleDemoRecord: () => {
+        const on = toggleDemoRecordMode();
+        closePerceptionPopover();
+        return on;
+      },
+      isDemoRecording: () => demoRecordingActive,
       openSettings: openSettingsPage,
       openMaterials: sourceId => {
         if (sourceId) {
@@ -15580,23 +19379,60 @@ desktopPerceptionController = desktopPerceptionHost && globalThis.DesktopPercept
       language: () => getStudioLanguage(),
     })
   : null;
-const composerPerceptionToggle = document.getElementById('composer-perception-toggle');
+function positionPerceptionPopover(popover: HTMLElement, trigger: HTMLElement) {
+  const gap = 6;
+  const padding = 10;
+  popover.style.removeProperty('bottom');
+  popover.style.removeProperty('right');
+  const triggerRect = trigger.getBoundingClientRect();
+  const rect = popover.getBoundingClientRect();
+  const width = Math.max(rect.width || 268, 220);
+  const height = rect.height || 260;
+  const maxLeft = Math.max(padding, window.innerWidth - width - padding);
+  const left = Math.max(padding, Math.min(triggerRect.left, maxLeft));
+  const spaceBelow = window.innerHeight - triggerRect.bottom - padding;
+  const spaceAbove = triggerRect.top - padding;
+  const openBelow = spaceBelow >= Math.min(height + gap, 220) || spaceBelow >= spaceAbove;
+  const top = openBelow
+    ? Math.min(triggerRect.bottom + gap, Math.max(padding, window.innerHeight - height - padding))
+    : Math.max(padding, triggerRect.top - height - gap);
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
 if (composerPerceptionToggle && desktopPerceptionHost) {
-  const closePerceptionPopover = () => {
-    desktopPerceptionHost.hidden = true;
-    composerPerceptionToggle.setAttribute('aria-expanded', 'false');
-  };
+  window.addEventListener('resize', () => {
+    if (!desktopPerceptionHost.hidden) {
+      positionPerceptionPopover(desktopPerceptionHost, composerPerceptionToggle);
+    }
+  });
   composerPerceptionToggle.addEventListener('click', event => {
     event.stopPropagation();
     const opening = desktopPerceptionHost.hidden;
+    if (opening) {
+      closeStudioPopovers('desktop-perception');
+    }
     desktopPerceptionHost.hidden = !opening;
     composerPerceptionToggle.setAttribute('aria-expanded', String(opening));
     if (opening) {
+      positionPerceptionPopover(desktopPerceptionHost, composerPerceptionToggle);
+      queueMicrotask(() => {
+        if (!desktopPerceptionHost.hidden) {
+          positionPerceptionPopover(desktopPerceptionHost, composerPerceptionToggle);
+        }
+      });
       const details = desktopPerceptionHost.querySelector('details');
       if (details) {
         details.open = true;
       }
-      void desktopPerceptionController?.refresh();
+      void desktopPerceptionController?.refresh()?.finally(() => {
+        if (!desktopPerceptionHost.hidden) {
+          positionPerceptionPopover(
+            desktopPerceptionHost,
+            composerPerceptionToggle,
+          );
+        }
+      });
     }
   });
   document.addEventListener('click', event => {
@@ -16331,23 +20167,18 @@ function setComposerRunningState(running: boolean) {
     submit.classList.toggle('is-stop', running);
     submit.title = running ? 'Stop' : 'Send';
     submit.setAttribute('aria-label', running ? 'Stop' : 'Send');
-    const hasStop = Boolean(submit.querySelector('use[href="#ic-stop"]'));
+    const hasStop = Boolean(
+      submit.querySelector('.cds-icon[data-stop-icon="true"]'),
+    );
     if (running !== hasStop) {
       submit.replaceChildren();
       if (running) {
-        const stop = document.createElementNS(
-          'http://www.w3.org/2000/svg',
-          'svg',
-        );
-        stop.setAttribute('width', '20');
-        stop.setAttribute('height', '20');
+        const stop = document.createElement('span');
+        stop.className = 'cds-icon';
+        stop.dataset.size = 'large';
+        stop.dataset.stopIcon = 'true';
+        stop.dataset.glyph = '\uE0EC';
         stop.setAttribute('aria-hidden', 'true');
-        const use = document.createElementNS(
-          'http://www.w3.org/2000/svg',
-          'use',
-        );
-        use.setAttribute('href', '#ic-stop');
-        stop.appendChild(use);
         submit.appendChild(stop);
       } else {
         const api = globalThis as unknown as {
@@ -16460,7 +20291,16 @@ Data.onConversationProgress(payload => {
     pendingConversation.renderer = ChatView.createLiveTurn(
       pendingConversation.body,
       pendingConversation.scope,
-      {taskPanel: true, smooth: true},
+      {
+        taskPanel: true,
+        smooth: true,
+        workMode:
+          activeConversationRecord?.workMode === 'code'
+            ? 'code'
+            : productMode === 'design'
+              ? 'work'
+              : 'learn',
+      },
     );
   }
   renderConversationProgress(payload.record);
@@ -16713,6 +20553,12 @@ async function submitConversationFollowup(request: {
     renderer: ChatView.createLiveTurn(body, undefined, {
       taskPanel: true,
       smooth: true,
+      workMode:
+        activeConversationRecord?.workMode === 'code'
+          ? 'code'
+          : productMode === 'design'
+            ? 'work'
+            : 'learn',
     }),
     agentSessionId: conversation.agentSessionId,
     streamText: '',
@@ -16977,24 +20823,38 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
   }
   form.addEventListener('submit', async e => {
     e.preventDefault();
+    const autopilotOverride = pendingAutopilotDispatch;
+    pendingAutopilotDispatch = null;
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
-    const rawQuestion = textarea?.value.trim() || '';
-    if (rawQuestion) {
+    const rawQuestion = autopilotOverride
+      ? autopilotOverride.question
+      : textarea?.value.trim() || '';
+    const hasReplyComment = pendingReplyQuotes.some(q =>
+      Boolean(q.comment?.trim()),
+    );
+    if (rawQuestion && !autopilotOverride) {
       composerSessionHistory.push(rawQuestion);
     }
     resetComposerHistory();
-    if (!textarea || !rawQuestion) {
+    if (!textarea || (!rawQuestion && !hasReplyComment)) {
       textarea?.focus();
       return;
     }
-    const question =
+    const baseQuestion =
       !studioComposerBusy && typeof LearnTree !== 'undefined'
         ? LearnTree.formatQuestionWithMainLemmas(rawQuestion)
         : rawQuestion;
+    const submittedReplyQuotes = [...pendingReplyQuotes];
+    const question = formatQuestionWithReplyQuotes(
+      baseQuestion,
+      submittedReplyQuotes,
+    );
     if (studioComposerBusy) {
+      clearComposerReplyQuotes();
       await steerActiveConversation(question, textarea);
       return;
     }
+    clearComposerReplyQuotes();
 
     captureComposerDraft();
     const navigationLocation = composerLocation();
@@ -17102,6 +20962,12 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       renderer: ChatView.createLiveTurn(pendingBody, liveTurnPrefix, {
         taskPanel: true,
         smooth: true,
+        workMode:
+          activeConversationRecord?.workMode === 'code'
+            ? 'code'
+            : productMode === 'design'
+              ? 'work'
+              : 'learn',
       }),
       agentSessionId: activeTaskContext?.taskId || null,
       streamText: '',
@@ -17138,9 +21004,7 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       ) {
         return;
       }
-      const outgoingQuestion = guidedTourCoachActive
-        ? `${question}\n\n[Coach Screen Tour Mode: Reply with concise step-by-step on-screen instructions. Before each step sentence, place an inline coordinate tag [POINT:x,y:ShortLabel:screen1] using 0-1000 normalized screen coordinates so the floating pointer guides the user directly on screen without clicking for them.]`
-        : question;
+      const capturedToken = latestCapturedScreenEvidence?.token || '';
       const mergedAttachments =
         latestCapturedScreenEvidence?.imagePath &&
         !attachmentPaths.includes(latestCapturedScreenEvidence.imagePath)
@@ -17152,8 +21016,14 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
       }
       const response = await Data.sendConversation({
         conversationId,
-        workMode: productMode === 'design' ? 'learn' : 'code',
-        question: outgoingQuestion,
+        workMode: autopilotOverride
+          ? 'code'
+          : activeConversationRecord?.workMode === 'code'
+            ? 'code'
+            : productMode === 'design'
+              ? 'design'
+              : 'learn',
+        question,
         permissionPreset,
         requestId,
         workspaceRoot: workspace.projectRoot,
@@ -17169,7 +21039,18 @@ document.querySelectorAll('form.mpw-input-form').forEach(form => {
         modelSelection: navigationDraft.modelSelection,
         branch: navigationDraft.branch,
         worktree: navigationDraft.worktree,
+        coachMode: guidedTourCoachActive,
+        ...(capturedToken ? {selectionSessionToken: capturedToken} : {}),
+        ...(autopilotOverride
+          ? {
+              computerUseMode: autopilotOverride.computerUseMode,
+              guidedTourSteps: autopilotOverride.guidedTourSteps,
+            }
+          : {}),
       });
+      if (autopilotOverride) {
+        void window.magicPointerDashboard?.cuOverlay?.stop?.();
+      }
       if (response?.conversationId) {
         acceptSubmissionNavigation(requestId, String(response.conversationId));
       }
@@ -17698,6 +21579,14 @@ window.magicPointerDashboard?.onShow?.(payload => {
   if (payload?.view === 'personal' && typeof payload.personalDate === 'string') {
     personalActivityUi?.setDate(payload.personalDate);
   }
+  if (payload?.productMode === 'learn') {
+    setProductMode('learn', false);
+    activeLearnCourse = null;
+    void ensureLearnCourseLoaded(true);
+    if (payload.openLearnInspector === true) {
+      setInspector(true, 'learn');
+    }
+  }
   if (payload?.view) {
     show(String(payload.view));
   }
@@ -17708,6 +21597,16 @@ window.magicPointerDashboard?.onShow?.(payload => {
         void openArtifactEditor(id, String(payload.artifactId));
       }
     });
+  }
+  if (typeof payload?.handoffPrompt === 'string' && payload.handoffPrompt.trim()) {
+    const composer = document.querySelector<HTMLTextAreaElement>(
+      '#composer-form textarea.mpw-input, #composer-form textarea',
+    );
+    if (composer) {
+      composer.value = payload.handoffPrompt.trim();
+      composer.dispatchEvent(new Event('input', {bubbles: true}));
+      composer.focus();
+    }
   }
 });
 
@@ -17725,3 +21624,44 @@ if (window.magicPointerDashboard?.onCardPatch) {
     }
   });
 }
+
+const scrollingTimers = new WeakMap<Element, number>();
+document.addEventListener(
+  'scroll',
+  event => {
+    const target = event.target;
+    const el =
+      target instanceof Element ? target : document.scrollingElement;
+    if (!el) {
+      return;
+    }
+    el.classList.add('is-scrolling');
+    const prev = scrollingTimers.get(el);
+    if (prev !== undefined) {
+      window.clearTimeout(prev);
+    }
+    scrollingTimers.set(
+      el,
+      window.setTimeout(() => {
+        el.classList.remove('is-scrolling');
+        scrollingTimers.delete(el);
+      }, 850),
+    );
+  },
+  {capture: true, passive: true},
+);
+
+if (typeof CuDesktopView !== 'undefined') {
+  CuDesktopView.mount(document.getElementById('cu-desktop-host'), {
+    language: getStudioLanguage,
+    onStateChange: state => {
+      const dot = document.getElementById('header-cu-desktop-dot');
+      if (dot) {
+        dot.hidden = !state.active;
+      }
+    },
+  });
+}
+window.magicPointerDashboard?.cuDesktop?.onOpenViewport?.(() => {
+  setInspector(true, 'cu-desktop');
+});

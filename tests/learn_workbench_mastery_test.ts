@@ -212,13 +212,14 @@ test('LearnMapView renders layered SVG+HTML DAG, supports filters, node mastery 
     const host = new MiniNode('div') as unknown as HTMLElement;
     const jumps: string[] = [];
     const masteries: Array<{nodeId: string; status: string}> = [];
-    const quizzes: string[] = [];
+    const batchVerified: string[][] = [];
 
     LearnMapView.renderMap(host, topology, {
       onJumpToBlock: (node: any) => jumps.push(node.id),
       onSetMastery: (node: any, status: string) =>
         masteries.push({nodeId: node.id, status}),
-      onQuizNode: (node: any) => quizzes.push(node.id),
+      onBatchVerify: (nodes: Array<{id: string}>) =>
+        batchVerified.push(nodes.map(n => n.id)),
     });
 
     const root = host as unknown as MiniNode;
@@ -230,24 +231,25 @@ test('LearnMapView renders layered SVG+HTML DAG, supports filters, node mastery 
     nodeBtns[0]!.click();
     assert.equal(jumps.length, 1);
 
-    const quizBtn = root
+    assert.match(root.allText, /自动追踪掌握度/);
+    const batchBtn = root
       .querySelectorAll('button')
-      .find(b => b.textContent.includes('防错测验'));
-    assert.ok(quizBtn, 'Expected node 防错测验 button in detail strip');
-    quizBtn.click();
-    assert.equal(quizzes.length, 1);
+      .find(b => b.textContent.includes('全部标为已掌握'));
+    assert.ok(batchBtn, 'Expected 1-click 全部标为已掌握 button');
+    batchBtn.click();
+    assert.ok(batchVerified[0]?.length >= 1);
 
-    const masterBtn = root
+    const toggleBtn = root
       .querySelectorAll('button')
-      .find(b => b.textContent.includes('已掌握'));
-    assert.ok(masterBtn, 'Expected node 已掌握 button in detail strip');
-    masterBtn.click();
-    assert.equal(masteries[0]?.status, 'verified');
+      .find(b => /^标为(已掌握|需巩固)$/.test(b.textContent));
+    assert.ok(toggleBtn, 'Expected single mastery toggle button in detail strip');
+    toggleBtn.click();
+    assert.ok(['verified', 'gap'].includes(masteries[0]?.status || ''));
 
-    // Filter to unmastered only hides the verified node
+    // Filter to unmastered (待巩固) hides the verified node
     const unmasteredFilter = root
       .querySelectorAll('button')
-      .find(b => b.textContent.includes('未掌握'));
+      .find(b => b.textContent.includes('待巩固'));
     assert.ok(unmasteredFilter);
     unmasteredFilter.click();
     assert.ok(
@@ -258,7 +260,7 @@ test('LearnMapView renders layered SVG+HTML DAG, supports filters, node mastery 
   }
 });
 
-test('LearnTree renders 4-tab Workbench (图谱/疑问队列/对照台/沉淀), Feynman Digest markdown, and 3-mode inquiry popover', async () => {
+test('LearnTree renders 3-tab Workbench (图谱/疑问队列/沉淀), Feynman Digest markdown, and sleek KaTeX inquiry popover', async () => {
   const ConceptGraph = require('../electron/renderer/concept_graph');
   const LearnLab = require('../electron/renderer/learn_lab');
   const LearnMapView = require('../electron/renderer/learn_map_view');
@@ -363,7 +365,7 @@ test('LearnTree renders 4-tab Workbench (图谱/疑问队列/对照台/沉淀), 
 
     const tabButtons = root.querySelectorAll('.mp-learn-wb-tab');
     const tabLabels = tabButtons.map(b => b.textContent);
-    assert.deepEqual(tabLabels, ['图谱', '疑问队列', '对照台', '沉淀']);
+    assert.deepEqual(tabLabels, ['图谱', '疑问队列', '沉淀']);
 
     // Queue tab orders P1 before P3
     tabButtons[1]!.click();
@@ -373,7 +375,7 @@ test('LearnTree renders 4-tab Workbench (图谱/疑问队列/对照台/沉淀), 
     assert.match(queueItems[1]!.allText, /P3.*Minor Note/);
 
     // Digest tab synthesizes Markdown & saves via learnPatch
-    tabButtons[3]!.click();
+    tabButtons[2]!.click();
     assert.match(root.allText, /Bayes Risk/);
     assert.match(root.allText, /Expected posterior loss/);
     const saveDigestBtn = root
@@ -383,7 +385,7 @@ test('LearnTree renders 4-tab Workbench (图谱/疑问队列/对照台/沉淀), 
     saveDigestBtn.click();
     assert.ok(patchCalls.some(p => p.action === 'save-digest'));
 
-    // Popover supports 追问 / 防错测验 / 费曼复述 modes
+    // Sleek formula inquiry popover has Copy LaTeX, zero P1-P3 / mode tabs, and routes to Side Chat surface
     assert.equal(typeof LearnTree.__test?.openPopoverForTest, 'function');
     LearnTree.__test.openPopoverForTest({
       conversationId: conv.id,
@@ -399,21 +401,20 @@ test('LearnTree renders 4-tab Workbench (图谱/疑问队列/对照台/沉淀), 
     });
     const pop = docBody.querySelector('.mp-learn-popover')!;
     assert.ok(pop, 'Expected inquiry popover on document.body');
-    const modeBtns = pop.querySelectorAll('.mp-learn-popover-mode');
-    assert.deepEqual(
-      modeBtns.map(b => b.textContent),
-      ['追问', '防错测验', '费曼复述'],
-    );
+    assert.equal(pop.querySelectorAll('.mp-learn-popover-mode').length, 0);
+    assert.equal(pop.querySelectorAll('.mp-learn-popover-priority').length, 0);
+    const copyLatexBtn = pop.querySelector('.mp-learn-popover-copy');
+    assert.ok(copyLatexBtn, 'Expected Copy LaTeX button');
+    assert.ok(pop.querySelector('.mp-learn-popover-formula'), 'Expected KaTeX formula container');
 
-    // Switch to 费曼复述 and submit explanation
-    modeBtns[2]!.click();
     const input = pop.querySelector('input')!;
-    input.input('后验风险越小，期望误判损失越低');
+    input.input('后验风险里的损失矩阵怎么理解？');
     const submitBtn = pop.querySelector('.mp-learn-popover-submit')!;
     submitBtn.click();
     await new Promise(r => setTimeout(r, 10));
-    assert.equal(sentCalls[0]?.kind, 'feynman');
-    assert.match(sentCalls[0]?.question || '', /费曼/);
+    assert.equal(sentCalls[0]?.kind, 'ask');
+    assert.equal(sentCalls[0]?.surface, 'side');
+    assert.match(sentCalls[0]?.question || '', /损失矩阵/);
   } finally {
     globalThis.document = prevDoc;
     (globalThis as Record<string, unknown>).Data = prevData;

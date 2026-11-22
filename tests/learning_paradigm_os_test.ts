@@ -18,21 +18,21 @@ test('Paradigm A: Learn removes rigid 3-button stance bar and uses human-paced a
     'rigid 3-mode radio bar (#learn-stance-bar) must be removed in favor of natural human-paced dialogue',
   );
 
-  const agentSrc = readRepo('electron/runtime/agent.ts');
+  const learnVoiceSrc = readRepo('electron/runtime/learn_voice.ts');
   assert.match(
-    agentSrc,
-    /短回合|3~6\s*句|禁止.*一、二、三|反八股/,
-    'LEARN_HARNESS_PROMPT must enforce short natural turns and ban robotic 1-2-3 walls of text',
+    learnVoiceSrc,
+    /发消息聊天|虚假捧场|模板考题/,
+    'CORE_LEARN_SYSTEM must use natural human conversation and ban robotic boilerplate or forced closing quiz templates',
   );
   assert.match(
-    agentSrc,
-    /隐状态|底层直觉|思辨/,
-    'LEARN_HARNESS_PROMPT must focus on hidden-state mental models and critical thinking',
+    learnVoiceSrc,
+    /直觉|被逼出来的瓶颈/,
+    'CORE_LEARN_SYSTEM must emphasize intuition and underlying mechanism',
   );
   assert.match(
-    agentSrc,
+    learnVoiceSrc,
     /:::ui/,
-    'LEARN_HARNESS_PROMPT must teach the model when and how to emit :::ui Intelligence UI widgets',
+    'CORE_LEARN_SYSTEM must document optional :::ui interactive visual syntax',
   );
 });
 

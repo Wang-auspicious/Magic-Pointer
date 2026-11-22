@@ -434,24 +434,33 @@ svg {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
+  background: transparent;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: var(--mp-r-pill);
-  background: var(--mp-rule-strong);
-  background-clip: content-box;
+  border-radius: 9999px;
+  background: transparent;
+  background-clip: padding-box;
+  transition: background-color 180ms ease;
 }
 
+.is-scrolling::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--mp-text-muted);
-  background-clip: content-box;
+  background: color-mix(in srgb, var(--mp-text) 20%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--mp-text) 34%, transparent);
+  background-clip: padding-box;
 }
 
 @media (prefers-reduced-motion: reduce) {

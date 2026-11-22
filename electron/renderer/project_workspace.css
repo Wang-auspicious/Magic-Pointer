@@ -498,8 +498,34 @@
 .mp-shell[data-project-detail='true'] .workspace-header {
   display: none;
 }
+.mp-shell[data-project-detail='true'] #view-projects:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .mp-shell[data-project-detail='true'] #library-projects {
-  padding-top: 24px;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+.mp-shell[data-project-detail='true'] .mp-project-detail-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.mp-shell[data-project-detail='true'] .mp-project-detail-host > .mp-project-workspace {
+  padding: 24px 40px 64px;
+  overflow: auto;
+  width: min(100%, 1040px);
 }
 
 @media (max-width: 1100px) {

@@ -51,11 +51,22 @@ import {bindDesktopWindow, prepareTaskContext} from './context_prepare';
 import {latestTurnArtifactSummaries} from './artifacts';
 import {dashboardModulePlugin} from './dashboard_module';
 import {generativeUiPlugin} from './generative_ui';
+import {createDesignTools} from './design_tools';
+import {createProjectCoordinatorTools} from './project_coordinator_tools';
+import {ProjectChannelStore} from '../project_channel_store';
+import {ProjectWorktreeManager} from '../project_worktree_manager';
+import type {ProjectRecord} from '../project_store';
 import {taskSources, taskReferences, referenceRevision} from './context';
 import {registerBrowserTools} from './desktop_browser';
 import {
+  callCuDesktopDaemonRpc,
+  registerCuDesktopTools,
+} from './cu_desktop_tools';
+import {registerLiveBrowserTools} from './live_browser_tools';
+import {
   configureDesktop,
   closeDesktop,
+  isWindowProcessAlive,
   registerDesktopTools,
   desktopSession,
   listWindows,
@@ -73,6 +84,7 @@ import {
   type VisionBackend,
 } from './desktop_perception';
 import {registerSelectionQuickTools} from './selection_quick_tools';
+import {registerLearnCaptureTool} from './learn_capture_tool';
 import {readMcpConfigs, registerMcpDiscovery} from './mcp';
 import {settingsStore} from './model_admin';
 import {Fabric, registerRecipeTools} from './fabric';
@@ -85,6 +97,104 @@ export interface RuntimeOptions {
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
   onProgress?: (phase: string, fields: Data) => void;
+}
+
+const MUTATING_PROJECT_TOOLS = new Set([
+  'Project.start_thread',
+  'Project.message_thread',
+  'Project.ask_decision',
+  'Project.resolve_decision',
+  'Project.publish_artifact',
+  'Project.refresh_status_page',
+  'Project.update_memory',
+  'Project.write_file',
+  'Project.merge_worktree',
+  'Project.resolve_thread',
+  'Project.set_thread_resolved',
+]);
+
+export function createProjectCoordinatorPlugin(
+  payload: Data,
+  workspace: string | undefined,
+  root: string,
+  userDataDir: string,
+  onProgress?: (phase: string, fields: Data) => void,
+): RuntimePlugin {
+  return {
+    name: 'project-coordinator-tools',
+    apply: ctx => {
+      const proj = (payload.projectContext || {
+        id: String(payload.projectId || 'default'),
+        name: String(payload.projectId || 'Project'),
+        root: workspace || root,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        documents: [],
+        resourceInbox: [],
+      }) as ProjectRecord;
+      const channelRoot =
+        typeof payload.projectChannelRoot === 'string' &&
+        payload.projectChannelRoot.trim()
+          ? payload.projectChannelRoot.trim()
+          : path.join(userDataDir, 'projects', proj.id);
+      const channelStore = new ProjectChannelStore({
+        projectDataDir: channelRoot,
+        projectId: proj.id,
+        paused: proj.paused,
+        archived: proj.archived,
+      });
+      const worktreeManager = new ProjectWorktreeManager();
+      const emitWorkerDispatch = (
+        action: 'start_thread' | 'message_thread',
+        thread: {id: string; worktreePath?: string},
+        prompt: string,
+      ) => {
+        const fields = {
+          action,
+          projectId: proj.id,
+          threadId: thread.id,
+          prompt,
+          worktreePath: thread.worktreePath || '',
+        };
+        onProgress?.('project_worker_dispatch', {
+          ...fields,
+          b64: Buffer.from(JSON.stringify(fields)).toString('base64'),
+        });
+      };
+      const toolRegistry = ctx.get<ToolRegistry>('tools');
+      for (const spec of createProjectCoordinatorTools({
+        project: proj,
+        channelStore,
+        worktreeManager,
+        onStartThread: (thread, prompt) => {
+          emitWorkerDispatch('start_thread', thread, prompt);
+        },
+        onMessageThread: (thread, message) => {
+          emitWorkerDispatch('message_thread', thread, message);
+        },
+      })) {
+        if (
+          MUTATING_PROJECT_TOOLS.has(spec.name) ||
+          (spec.effect !== undefined && spec.effect !== 'read')
+        ) {
+          const originalExecute = spec.execute;
+          toolRegistry.register({
+            ...spec,
+            execute: async (args, toolCtx) => {
+              const result = await originalExecute(args, toolCtx);
+              onProgress?.('project_channel_updated', {
+                projectId: proj.id,
+                tool: spec.name,
+              });
+              return result;
+            },
+          });
+        } else {
+          toolRegistry.register(spec);
+        }
+      }
+    },
+  };
 }
 
 export function resolveSessionId(payload: Data): string {
@@ -263,7 +373,14 @@ export async function runRuntime(
   const prepared = await prepareTaskContext(
     session,
     {...payload, workspacePath: workspace || '', additionalFolders},
-    {root, userDataDir, registry: contextTools},
+    {
+      root,
+      userDataDir,
+      registry: contextTools,
+      ...(payload.knowledgeVaultDir
+        ? {knowledgeVaultDir: String(payload.knowledgeVaultDir)}
+        : {}),
+    },
   );
   const settings = settingsStore(userDataDir).load();
   const extensions = extensionPaths(userDataDir);
@@ -281,14 +398,90 @@ export async function runRuntime(
   const vision: VisionBackend = agentModelVision((images, prompt, signal) =>
     requestVision(config, {images, prompt, signal, timeoutMs: 30000}),
   );
+  const fallbackImagePaths = [
+    selectionSnapshot.selection_crop_path,
+    selectionSnapshot.capture_path,
+    selectionSnapshot.screenshot_path,
+    selectionSnapshot.frame_lease?.localArtifact?.path,
+    ...(Array.isArray(payload.attachments) ? payload.attachments : [])
+      .filter(
+        (item: Data) =>
+          item?.kind === 'image' ||
+          String(item?.mimeType || item?.type || '').startsWith('image/') ||
+          /\.(png|jpe?g|webp|bmp|gif)$/i.test(
+            String(item?.path || item?.imagePath || item?.filePath || ''),
+          ),
+      )
+      .map((item: Data) => item?.path || item?.imagePath || item?.filePath),
+    ...(Array.isArray(prepared.taskContext.sources)
+      ? prepared.taskContext.sources
+      : []
+    )
+      .filter(
+        (source: Data) =>
+          source?.kind === 'image' ||
+          String(source?.mimeType || '').startsWith('image/') ||
+          /\.(png|jpe?g|webp|bmp|gif)$/i.test(
+            String(source?.locator?.path || source?.path || ''),
+          ),
+      )
+      .map((source: Data) => source?.locator?.path || source?.path),
+  ]
+    .map(item => String(item || '').trim())
+    .filter((item, index, list) => Boolean(item) && list.indexOf(item) === index);
+  const selectionObject = (payload.object || {}) as Data;
+  const selectionWinPid = Number(
+    selectionObject.pid ||
+      selectionObject.processId ||
+      selectionObject.process_id ||
+      selectionSnapshot?.source_window?.pid ||
+      selectionSnapshot?.context?.window?.pid ||
+      0,
+  );
+  const rawOriginHwnd = Number(
+    selectionObject.hwnd || selectionObject.windowHwnd || 0,
+  );
+  const originWindowHwnd =
+    rawOriginHwnd && (!selectionWinPid || isWindowProcessAlive(selectionWinPid))
+      ? rawOriginHwnd
+      : undefined;
+  const cuAutoGrant =
+    ['default', 'accept_reversible', 'bypass'].includes(permissionMode) ||
+    payload.computerUseMode === 'autopilot';
+  const liveBrowserAvailable = Boolean(
+    process.env.MAGIC_POINTER_BROWSER_DAEMON_URL &&
+    process.env.MAGIC_POINTER_BROWSER_DAEMON_TOKEN,
+  );
+  const hasSelectionSnapshot =
+    Boolean(selectionSnapshot) &&
+    typeof selectionSnapshot === 'object' &&
+    Object.keys(selectionSnapshot).length > 0;
+  const wakeSource = String(
+    payload.source || payload.metadata?.source || '',
+  ).trim();
+  const isPointerWake =
+    wakeSource === 'pointer_stage' || hasSelectionSnapshot;
+  const eagerDesktopTools =
+    payload.computerUseMode === 'autopilot' ||
+    permissionMode === 'bypass' ||
+    (isPointerWake && !['safe', 'plan'].includes(permissionMode)) ||
+    (payload.workMode !== 'learn' &&
+      !['safe', 'plan'].includes(permissionMode)) ||
+    Boolean(process.env.MAGIC_POINTER_CU_DAEMON_URL);
+  const eagerBrowserTools =
+    !['safe', 'plan'].includes(permissionMode) &&
+    (payload.computerUseMode === 'autopilot' ||
+      (liveBrowserAvailable && payload.workMode !== 'learn'));
   const perceptionOptions = {
     snapshot: selectionSnapshot,
+    fallbackImagePaths,
     uploadScreenshots: settings.privacy.upload_screenshots !== false,
     sources: (id: string) =>
       prepared.taskContext.sources?.find(
         (source: Data) => source.sourceId === id,
       ),
     windowReadScope: (hwnd: number) =>
+      cuAutoGrant ||
       prepared.authorizeAccess({action: 'read', windowIds: [`w-${hwnd}`]})
         .allowed,
   };
@@ -364,14 +557,16 @@ export async function runRuntime(
     },
     {
       name: 'desktop-action-tools',
-      apply: ctx =>
-        registerDesktopTools(
+      apply: ctx => {
+        const deskSession = desktopSession(session.id, originWindowHwnd);
+        if (hasSelectionSnapshot) {
+          deskSession.seedFrozenFrame(
+            selectionSnapshot as Record<string, unknown>,
+          );
+        }
+        return registerDesktopTools(
           ctx.get('tools'),
-          desktopSession(
-            session.id,
-            Number(payload.object?.hwnd || payload.object?.windowHwnd || 0) ||
-              undefined,
-          ),
+          deskSession,
           prepared.authorizeAccess,
           window => bindDesktopWindow(session, window),
           options.onProgress
@@ -387,7 +582,71 @@ export async function runRuntime(
                   ),
                 })
             : undefined,
-        ),
+          {
+            eagerDesktopTools,
+            autoBindWindows: cuAutoGrant,
+            onCursorEvent: options.onProgress
+              ? ev =>
+                  options.onProgress?.('agent_cursor', {
+                    action: ev.action,
+                    id: 'agent',
+                    x: ev.x,
+                    y: ev.y,
+                    ...(ev.phase ? {phase: ev.phase} : {}),
+                    ...(ev.button ? {button: ev.button} : {}),
+                    ...(ev.count ? {count: ev.count} : {}),
+                    ...(ev.ttlMs ? {ttlMs: ev.ttlMs} : {}),
+                    ...(ev.caption
+                      ? {
+                          captionB64: Buffer.from(ev.caption, 'utf8').toString(
+                            'base64',
+                          ),
+                        }
+                      : {}),
+                    ...(ev.nextStep
+                      ? {
+                          nextB64: Buffer.from(ev.nextStep, 'utf8').toString(
+                            'base64',
+                          ),
+                        }
+                      : {}),
+                    ...(ev.windowTitle
+                      ? {
+                          windowTitleB64: Buffer.from(
+                            ev.windowTitle,
+                            'utf8',
+                          ).toString('base64'),
+                        }
+                      : {}),
+                  })
+              : undefined,
+          },
+        );
+      },
+    },
+    {
+      name: 'learn-capture-tools',
+      apply: ctx =>
+        registerLearnCaptureTool(ctx.get('tools'), {
+          userDataDir,
+          ...(payload.knowledgeVaultDir
+            ? {vaultDir: String(payload.knowledgeVaultDir)}
+            : {}),
+        }),
+    },
+    {
+      name: 'cu-desktop-workspace-tools',
+      apply: ctx =>
+        registerCuDesktopTools(ctx.get('tools'), {
+          eager: eagerDesktopTools,
+        }),
+    },
+    {
+      name: 'live-browser-tools',
+      apply: ctx =>
+        registerLiveBrowserTools(ctx.get('tools'), {
+          eager: eagerBrowserTools,
+        }),
     },
     {
       name: 'browser-tools',
@@ -511,6 +770,53 @@ export async function runRuntime(
       },
     },
     generativeUiPlugin(),
+    {
+      name: 'design-tools',
+      apply: ctx => {
+        const toolRegistry = ctx.get<ToolRegistry>('tools');
+        const mutatingDesignTools = new Set([
+          'Design.init_canvas',
+          'Design.upsert_board',
+          'Design.import_asset',
+          'Design.generate_brand_system',
+          'Design.install_design_system',
+        ]);
+        for (const spec of createDesignTools({rootDir: userDataDir})) {
+          if (mutatingDesignTools.has(spec.name)) {
+            const originalExecute = spec.execute;
+            toolRegistry.register({
+              ...spec,
+              execute: async (args, toolCtx) => {
+                const result = await originalExecute(args, toolCtx);
+                const slug =
+                  typeof args?.slug === 'string'
+                    ? args.slug
+                    : result && typeof result === 'object' && 'slug' in result
+                      ? String((result as Record<string, unknown>).slug || '')
+                      : undefined;
+                options.onProgress?.('design_changed', {
+                  ...(slug ? {slug} : {}),
+                });
+                return result;
+              },
+            });
+          } else {
+            toolRegistry.register(spec);
+          }
+        }
+      },
+    },
+    ...(payload.workMode === 'project_coordinator'
+      ? [
+          createProjectCoordinatorPlugin(
+            payload,
+            workspace,
+            root,
+            userDataDir,
+            options.onProgress,
+          ),
+        ]
+      : []),
     ...modelPlugins(streamModel),
   ];
   const plugins = await bootPlugins({
@@ -521,6 +827,13 @@ export async function runRuntime(
     rows: builtins.map(plugin => ({id: plugin.name, plugin: plugin.name})),
     core: {tools: registry, session, hooks, prompt, runtime: options},
   });
+  const cuDaemonAvailable = Boolean(
+    process.env.MAGIC_POINTER_CU_DAEMON_URL &&
+    process.env.MAGIC_POINTER_CU_DAEMON_TOKEN,
+  );
+  const cuDesktopStatus = cuDaemonAvailable
+    ? await callCuDesktopDaemonRpc('status', {}, signal).catch(() => null)
+    : null;
   registry.setInitialTools(
     initialToolNames({
       workspace,
@@ -531,6 +844,17 @@ export async function runRuntime(
         payload.object?.selectionSnapshot,
       object: payload.object,
       permissionMode,
+      workMode: payload.workMode,
+      ...(wakeSource ? {source: wakeSource} : {}),
+      coachMode: payload.coachMode === true,
+      computerUseMode:
+        payload.computerUseMode === 'autopilot' ||
+        payload.computerUseMode === 'coach'
+          ? payload.computerUseMode
+          : null,
+      cuDesktopActive: cuDesktopStatus?.active === true,
+      cuDaemonAvailable,
+      liveBrowserAvailable,
     }),
   );
   let accepted: Data | null = null;
@@ -550,11 +874,12 @@ export async function runRuntime(
     }
     const common: AgentOptions = {
       workMode:
-        payload.workMode === 'learn'
-          ? 'learn'
-          : payload.workMode === 'work'
-            ? 'work'
-            : 'code',
+        payload.workMode === 'learn' ||
+        payload.workMode === 'design' ||
+        payload.workMode === 'work' ||
+        payload.workMode === 'project_coordinator'
+          ? payload.workMode
+          : 'code',
       root,
       userDataDir,
       session,
@@ -606,9 +931,58 @@ export async function runRuntime(
       metadata: {
         conversationId: payload.conversationId || '',
         object: payload.object || {},
+        ...(wakeSource ? {source: wakeSource} : {}),
+        ...(typeof payload.designCanvasSlug === 'string' &&
+        payload.designCanvasSlug.trim()
+          ? {designCanvasSlug: payload.designCanvasSlug.trim()}
+          : {}),
+        ...(typeof payload.designViewContextXml === 'string' &&
+        payload.designViewContextXml.trim()
+          ? {designViewContextXml: payload.designViewContextXml}
+          : {}),
+        ...(typeof payload.designAnnotationsXml === 'string' &&
+        payload.designAnnotationsXml.trim()
+          ? {designAnnotationsXml: payload.designAnnotationsXml}
+          : {}),
+        ...(Array.isArray(payload.projectAutoModeRules)
+          ? {projectAutoModeRules: payload.projectAutoModeRules}
+          : {}),
+        ...(payload.projectContext &&
+        payload.workMode === 'project_coordinator'
+          ? {projectCoordinatorProject: payload.projectContext}
+          : {}),
+        ...(payload.learnCourseMemory &&
+        typeof payload.learnCourseMemory === 'object'
+          ? {learnCourseMemory: payload.learnCourseMemory}
+          : {}),
       },
+      coachMode: payload.coachMode === true,
+      computerUseMode:
+        payload.computerUseMode === 'autopilot' ||
+        payload.computerUseMode === 'coach'
+          ? payload.computerUseMode
+          : null,
+      guidedTourSteps: Array.isArray(payload.guidedTourSteps)
+        ? payload.guidedTourSteps
+        : undefined,
+      cuDesktopStatus: cuDesktopStatus?.active
+        ? {
+            active: true,
+            desktopName: String(
+              cuDesktopStatus.desktopName || 'MagicPointer_AgentDesktop',
+            ),
+            windows: Array.isArray(cuDesktopStatus.windows)
+              ? cuDesktopStatus.windows
+              : [],
+          }
+        : undefined,
     };
-    common.system = await prompt.build(common);
+    common.system = await prompt.build({
+      ...common,
+      coachMode: false,
+      computerUseMode: null,
+      guidedTourSteps: undefined,
+    });
     const expandedWorkflow = expandWorkflowCommand(instruction);
     if (expandedWorkflow) {
       instruction = expandedWorkflow;

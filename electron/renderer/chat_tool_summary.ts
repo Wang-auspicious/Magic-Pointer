@@ -1,4 +1,5 @@
 export type SummaryOutcome = 'succeeded' | 'failed' | 'blocked' | 'pending';
+export type SummaryLocale = 'en' | 'zh-CN';
 
 export interface SummaryCall {
   category?: string;
@@ -59,6 +60,36 @@ const FILE_CATEGORIES = new Set<Category>([
 ]);
 const EDIT_CATEGORIES = new Set<Category>(['write', 'edit', 'notebook_edit']);
 
+type WordEntry = readonly [string, string, string?];
+
+const ZH_WORDS: Record<Category, WordEntry> = {
+  read: ['读取了', '1 个文件', '# 个文件'],
+  view: ['查看了', '1 个文件', '# 个文件'],
+  write: ['创建了', '1 个文件', '# 个文件'],
+  edit: ['编辑了', '1 个文件', '# 个文件'],
+  notebook_edit: ['编辑了', '1 个笔记本', '# 个笔记本'],
+  delete_file: ['删除了', '1 个文件', '# 个文件'],
+  bash: ['执行了', '1 条命令', '# 条命令'],
+  code: ['运行了', '代码'],
+  grep: ['搜索了', '代码'],
+  glob: ['查找了', '文件'],
+  web: ['搜索了', '网页'],
+  web_fetch: ['读取了', '1 个网页', '# 个网页'],
+  task: ['运行了', '1 个子任务', '# 个子任务'],
+  todo: ['更新了', '计划'],
+  plan: ['更新了', '计划'],
+  exit_plan_mode: ['提出了', '方案'],
+  artifact_read: ['读取了', '1 个产物', '# 个产物'],
+  artifact_write: ['更新了', '1 个产物', '# 个产物'],
+  worktree_enter: ['进入了', '1 个工作区', '# 个工作区'],
+  worktree_exit: ['离开了', '工作区', '# 个工作区'],
+  peer_message: ['联系了', '其他会话', '# 个其他会话'],
+  push_notification: ['发送了', '1 条通知', '# 条通知'],
+  started_session: ['启动了', '1 个会话', '# 个会话'],
+  slack_post: ['调用了', '1 个工具', '# 个工具'],
+  uncategorized: ['调用了', '1 个工具', '# 个工具'],
+};
+
 function categoryOf(value?: string): Category {
   return value && Object.hasOwn(WORDS, value)
     ? (value as Category)
@@ -73,12 +104,13 @@ function outcomeCount(entries: OutcomeMap, outcome: SummaryOutcome): number {
   return [...entries.values()].filter(value => value === outcome).length;
 }
 
-function words(category: Category, count: number): SummaryPart {
-  const [verb, one, many] = WORDS[category] as readonly [
-    string,
-    string,
-    string?,
-  ];
+function words(
+  category: Category,
+  count: number,
+  locale: SummaryLocale = 'en',
+): SummaryPart {
+  const table = locale === 'zh-CN' ? ZH_WORDS : WORDS;
+  const [verb, one, many] = table[category] as WordEntry;
   return {
     verb,
     meta: (count === 1 || !many ? one : many).replace('#', String(count)),
@@ -90,29 +122,45 @@ function withOutcomes(
   part: SummaryPart,
   failed: number,
   blocked: number,
+  locale: SummaryLocale = 'en',
 ): SummaryPart {
   if (!failed && !blocked) {
     return part;
   }
-  const annotation = [
-    ...(failed ? [failed + ' failed'] : []),
-    ...(blocked ? [blocked + ' blocked'] : []),
-  ].join(', ');
+  const annotation =
+    locale === 'zh-CN'
+      ? [
+          ...(failed ? [`${failed} 个失败`] : []),
+          ...(blocked ? [`${blocked} 个被拦截`] : []),
+        ].join('，')
+      : [
+          ...(failed ? [failed + ' failed'] : []),
+          ...(blocked ? [blocked + ' blocked'] : []),
+        ].join(', ');
+  const suffix =
+    locale === 'zh-CN' ? `（${annotation}）` : ` (${annotation})`;
   return {
     ...part,
-    meta: part.meta ? part.meta + ' (' + annotation + ')' : undefined,
+    meta: part.meta ? part.meta + suffix : undefined,
     ...(failed ? {failed} : {}),
     ...(blocked ? {blocked} : {}),
     ...(failed >= part.count ? {isError: true} : {}),
   };
 }
 
-function conjunction(values: string[]): string {
+function conjunction(values: string[], locale: SummaryLocale = 'en'): string {
+  if (locale === 'zh-CN') {
+    if (values.length <= 1) {
+      return values[0] ?? '';
+    }
+    return values.join('并');
+  }
   return new Intl.ListFormat('en', {type: 'conjunction'}).format(values);
 }
 
 export function summarizeToolCalls(
   calls: readonly SummaryCall[],
+  locale: SummaryLocale = 'en',
 ): SummaryPart[] {
   const artifactWrites = new Set(
     calls
@@ -176,7 +224,7 @@ export function summarizeToolCalls(
     if (!FILE_CATEGORIES.has(category)) {
       continue;
     }
-    const verb = words(category, 1).verb;
+    const verb = words(category, 1, locale).verb;
     verbs.set(verb, [...(verbs.get(verb) ?? []), category]);
   }
   for (const categories of verbs.values()) {
@@ -214,12 +262,13 @@ export function summarizeToolCalls(
     ).length;
     filePart = withOutcomes(
       {
-        verb: conjunction([...verbs.keys()]),
+        verb: conjunction([...verbs.keys()], locale),
         meta: path.split(/[\\/]/).pop(),
         count: verbs.size,
       },
       failed,
       blocked,
+      locale,
     );
     if (!filePart.isError && canLink) {
       filePart.file = {
@@ -240,9 +289,10 @@ export function summarizeToolCalls(
     } else {
       parts.push(
         withOutcomes(
-          words(category, entries.size),
+          words(category, entries.size, locale),
           outcomeCount(entries, 'failed'),
           outcomeCount(entries, 'blocked'),
+          locale,
         ),
       );
     }
@@ -250,9 +300,10 @@ export function summarizeToolCalls(
   if (unknownCount) {
     parts.push(
       withOutcomes(
-        words('uncategorized', unknownCount),
+        words('uncategorized', unknownCount, locale),
         unknownFailed,
         unknownBlocked,
+        locale,
       ),
     );
   }
@@ -272,11 +323,15 @@ export function summarizeToolCalls(
   const tail = withOutcomes(
     {
       verb: '',
-      meta: 'and ' + count + ' more action' + (count === 1 ? '' : 's'),
+      meta:
+        locale === 'zh-CN'
+          ? `等 ${count} 项操作`
+          : 'and ' + count + ' more action' + (count === 1 ? '' : 's'),
       count,
     },
     failed,
     blocked,
+    locale,
   );
   return [
     ...parts.slice(0, 3),
@@ -290,14 +345,20 @@ export function summarizeToolCalls(
   ];
 }
 
-export function summaryText(parts: readonly SummaryPart[]): string {
+export function summaryText(
+  parts: readonly SummaryPart[],
+  locale: SummaryLocale = 'en',
+): string {
+  const sep = locale === 'zh-CN' ? '、' : ', ';
   return parts
     .map((part, index) => {
       const verb =
-        index === 0
-          ? part.verb.charAt(0).toUpperCase() + part.verb.slice(1)
-          : part.verb;
+        locale === 'zh-CN'
+          ? part.verb
+          : index === 0
+            ? part.verb.charAt(0).toUpperCase() + part.verb.slice(1)
+            : part.verb;
       return verb + (part.meta ? ' ' + part.meta : '');
     })
-    .join(', ');
+    .join(sep);
 }

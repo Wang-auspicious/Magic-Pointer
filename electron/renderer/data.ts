@@ -67,7 +67,25 @@ declare global {
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
     reasoningTokens?: number;
-    [key: string]: number | undefined;
+    contextTokens?: number;
+    contextWindow?: number;
+    contextEstimated?: number;
+    lastOutputTokens?: number;
+    systemTokensEstimate?: number;
+    memoryTokensEstimate?: number;
+    skillTokensEstimate?: number;
+    toolSchemaTokensEstimate?: number;
+    mcpToolTokensEstimate?: number;
+    messageTokensEstimate?: number;
+    toolResultTokensEstimate?: number;
+    autocompactBufferTokens?: number;
+    estimatedCostUsd?: number;
+    pricedRequests?: number;
+    turnsReported?: number;
+    memoryFiles?: Array<{name: string; path: string; tokens: number}>;
+    mcpTools?: Array<{name: string; serverName: string; tokens: number}>;
+    skills?: Array<{name: string; tokens: number}>;
+    [key: string]: unknown;
   }
 
   interface MagicPointerTurn {
@@ -77,6 +95,8 @@ declare global {
     answer?: string;
     thinking?: string;
     liveProgress?: MagicPointerLiveProgress;
+    outcome?: string;
+    interrupted?: boolean;
     failed?: boolean;
     trace?: Array<string | {label: string; note?: string}>;
     facts?: Array<{label?: string; value?: string; tone?: string}>;
@@ -128,6 +148,82 @@ declare global {
     requestToken?: string;
     permissionPreset?: string;
     effort?: string;
+  }
+
+  interface ProjectsMaAvailableModel {
+    model: string;
+    label: string;
+    provider?: string;
+    profileId?: string;
+    active?: boolean;
+  }
+
+  interface ProjectsMaModelContext {
+    defaultModel: string;
+    coordinatorModel?: string;
+    coordinatorEffort?: string;
+    workerModel?: string;
+    workerEffort?: string;
+    availableModels: ProjectsMaAvailableModel[];
+  }
+
+  interface ProjectsMaActiveRun {
+    running: boolean;
+    startedAt?: number;
+    answer?: string;
+    thinking?: string;
+    trajectory?: Array<Record<string, unknown>>;
+    stopped?: boolean;
+    error?: string;
+    retryNotice?: string;
+    queuedCount?: number;
+  }
+
+  interface ProjectsMaThreadMessage {
+    id: string;
+    threadId?: string;
+    author: 'user' | 'coordinator' | 'worker' | 'system';
+    text: string;
+    timestamp: number;
+    sessionId?: string;
+    viewerMentioned?: boolean;
+    routeFromOverview?: boolean;
+  }
+
+  interface ProjectsMaEvent {
+    projectId?: string;
+    threadId?: string;
+    type?: string;
+    running?: boolean;
+    startedAt?: number;
+    answer?: string;
+    thinking?: string;
+    trajectory?: Array<Record<string, unknown>>;
+    retryNotice?: string;
+    queuedCount?: number;
+    ok?: boolean;
+    error?: string;
+    stopped?: boolean;
+    [key: string]: any;
+  }
+
+  interface ProjectsMaOverviewState {
+    project: Record<string, any>;
+    threads: Array<Record<string, any> & {messages?: ProjectsMaThreadMessage[]}>;
+    timeline: Array<Record<string, any>>;
+    decisions: Array<Record<string, any>>;
+    artifacts: Array<Record<string, any>>;
+    recap?: Record<string, any> | null;
+    statusPageHtml?: string;
+    sections?: Record<string, any>;
+    files?: Array<Record<string, any>>;
+    memory?: Record<string, any>;
+    workers?: Array<Record<string, any>>;
+    activeRun?: ProjectsMaActiveRun | null;
+    activeRuns?: Record<string, ProjectsMaActiveRun>;
+    userName?: string;
+    modelContext?: ProjectsMaModelContext;
+    [key: string]: any;
   }
 
   interface MagicPointerLiveProgress {
@@ -203,6 +299,7 @@ declare global {
     parentTurnIndex: number;
     anchor: MagicPointerLearnAnchor;
     kind?: 'ask' | 'quiz' | 'feynman' | 'inquiry' | 'socratic';
+    surface?: 'side' | 'inline';
     title: string;
     agentSessionId: string;
     forkMessageCount?: number;
@@ -236,7 +333,7 @@ declare global {
   }
 
   interface MagicPointerConversationInfo {
-    workMode?: 'learn' | 'work' | 'code';
+    workMode?: 'learn' | 'design' | 'code' | 'work' | 'project_coordinator';
     id: string;
     projectId?: string;
     title?: string;
@@ -280,7 +377,10 @@ declare global {
   interface MagicPointerConversationSend {
     branch?: string;
     worktree?: boolean;
-    workMode?: 'learn' | 'work' | 'code';
+    workMode?: 'learn' | 'design' | 'code' | 'work' | 'project_coordinator';
+    designCanvasSlug?: string;
+    designViewContextXml?: string;
+    designAnnotationsXml?: string;
     conversationId?: string | null;
     projectId?: string;
     modelSelection?: MagicPointerModelSelection;
@@ -296,6 +396,16 @@ declare global {
     permissionGrant?: string;
     permissionDeny?: string;
     permissionGrantOnce?: string;
+    coachMode?: boolean;
+    computerUseMode?: 'autopilot' | 'coach' | null;
+    guidedTourSteps?: Array<{
+      label?: string;
+      caption?: string;
+      x?: number;
+      y?: number;
+      screen?: number;
+    }>;
+    selectionSessionToken?: string;
   }
 
   type MagicPointerProjectMaterialRef = import('../project_context').ProjectMaterialRef;
@@ -522,9 +632,16 @@ declare global {
     createLiveTurn(
       host: HTMLElement,
       scope?: string,
-      options?: {taskPanel?: boolean},
+      options?: {
+        taskPanel?: boolean;
+        smooth?: boolean;
+        workMode?: 'learn' | 'work' | 'code';
+      },
     ): MagicPointerLiveTurn;
-    createConversationView(flow: HTMLElement): {
+    createConversationView(
+      flow: HTMLElement,
+      options?: {workMode?: 'learn' | 'work' | 'code'},
+    ): {
       update(conversation: MagicPointerConversation): void;
     };
     thinkNode(reasoning: string, running?: boolean): Element;
@@ -599,6 +716,9 @@ declare global {
     content: string;
     savedContent: string;
     kind: string;
+    title?: string;
+    language?: string;
+    filename?: string;
     patchPayload: Record<string, unknown> | null;
     acceptedRevision: number | null;
     dirty: boolean;
@@ -888,6 +1008,11 @@ declare global {
       clear(): Promise<{ok: boolean}>;
     };
     cuOverlay?: {
+      startAutopilot?(payload: {
+        windowTitle?: string;
+        actionLabel?: string;
+        steps?: Array<Record<string, unknown>>;
+      }): Promise<Record<string, unknown>>;
       autopilotUpdate?(payload: {
         windowTitle?: string;
         actionLabel?: string;
@@ -902,9 +1027,25 @@ declare global {
       onState?(cb: (state: Record<string, unknown>) => void): void;
       onEvent?(cb: (event: Record<string, unknown>) => void): void;
     };
+    cuDesktop?: {
+      status?(): Promise<Record<string, any>>;
+      open?(payload?: {width?: number; height?: number}): Promise<Record<string, any>>;
+      close?(): Promise<Record<string, any>>;
+      launch?(payload: {app: string; args?: string; cwd?: string}): Promise<Record<string, any>>;
+      pause?(paused: boolean): Promise<Record<string, any>>;
+      humanInput?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      setStreamVisible?(visible: boolean): Promise<Record<string, any>>;
+      snapshot?(): Promise<Record<string, any>>;
+      agentAct?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      onFrame?(cb: (frame: Record<string, any>) => void): () => void;
+      onState?(cb: (state: Record<string, any>) => void): () => void;
+      onCursor?(cb: (cursors: Record<string, any>) => void): () => void;
+      onOpenViewport?(cb: (reason: unknown) => void): () => void;
+    };
     vault?: {
       overview(): Promise<Record<string, unknown>>;
       selectDir(): Promise<Record<string, unknown>>;
+      readNote(relativePath: string): Promise<Record<string, unknown>>;
       saveNote(payload: {
         title: string;
         folder?: string;
@@ -917,6 +1058,40 @@ declare global {
         lineIndex: number;
         done: boolean;
       }): Promise<Record<string, unknown>>;
+    };
+    learn?: {
+      listCourses(): Promise<Record<string, any>>;
+      getCourse(payload?: {
+        courseId?: string;
+        activate?: boolean;
+      }): Promise<Record<string, any>>;
+      annotate(payload: {
+        courseId?: string;
+        mark?: Record<string, unknown>;
+        type?: string;
+        fb?: string;
+        quote?: string;
+        section?: string;
+        note?: string;
+      }): Promise<Record<string, any>>;
+      promoteLemma(payload: {
+        courseId?: string;
+        title?: string;
+        quote?: string;
+        insight?: string;
+        section?: string;
+      }): Promise<Record<string, any>>;
+      recordCheckin(payload: {
+        courseId?: string;
+        question?: string;
+        selectedIndex?: number | null;
+        selectedLabel?: string;
+        unsure?: boolean;
+        reasoningNote?: string;
+        nodeId?: string;
+      }): Promise<Record<string, any>>;
+      getGraph(payload?: {courseId?: string}): Promise<Record<string, any>>;
+      runDream(payload?: {courseId?: string}): Promise<Record<string, any>>;
     };
     personalActivity?: {
       read(date?: string): Promise<Record<string, any>>;
@@ -1304,6 +1479,173 @@ declare global {
         html: string;
         css: string;
       }): Promise<Record<string, any>>;
+      runSql?(payload: {
+        dashboardId: string;
+        chartId: string;
+        sql: string;
+      }): Promise<Record<string, any>>;
+      exportInteractiveHtml?(payload: {
+        dashboardId: string;
+        title?: string;
+      }): Promise<Record<string, any>>;
+      exportChartCsv?(payload: {
+        dashboardId: string;
+        chartId: string;
+      }): Promise<Record<string, any>>;
+      remix?(payload: {
+        dashboardId: string;
+        format: string;
+      }): Promise<Record<string, any>>;
+      createSample?(): Promise<Record<string, any>>;
+    };
+    design?: {
+      list(): Promise<Record<string, any>>;
+      read(slug: string): Promise<Record<string, any>>;
+      init(payload: {
+        slug?: string;
+        title: string;
+        pages?: Array<{id: string; name: string}>;
+      }): Promise<Record<string, any>>;
+      upsertBoard(payload: {
+        slug: string;
+        file: string;
+        html: string;
+        title?: string;
+        w?: number;
+        h?: number;
+        x?: number;
+        y?: number;
+        page?: string;
+      }): Promise<Record<string, any>>;
+      saveFile(payload: {
+        slug: string;
+        file: string;
+        content: string;
+      }): Promise<Record<string, any>>;
+      importAsset(payload: {
+        slug: string;
+        sourcePath?: string;
+      }): Promise<Record<string, any>>;
+      check(slug: string): Promise<Record<string, any>>;
+      generateBrand(payload: {
+        slug: string;
+        seed: Record<string, unknown>;
+        install?: boolean;
+      }): Promise<Record<string, any>>;
+      export(payload: {
+        slug: string;
+        format: string;
+        boardFile?: string;
+      }): Promise<Record<string, any>>;
+      onChanged?(cb: (payload?: Record<string, any>) => void): () => void;
+    };
+    projectsMa?: {
+      getOverviewState(payload: {
+        projectId: string;
+        projectRoot?: string;
+      }): Promise<{
+        ok?: boolean;
+        state?: ProjectsMaOverviewState;
+        error?: string;
+        [key: string]: any;
+      }>;
+      getSidebarBadges(): Promise<Record<string, any>>;
+      sendGoal(payload: {
+        projectId: string;
+        projectRoot?: string;
+        text: string;
+      }): Promise<Record<string, any>>;
+      startThread(payload: {
+        projectId: string;
+        projectRoot?: string;
+        title?: string;
+        prompt: string;
+        useWorktree?: boolean;
+      }): Promise<Record<string, any>>;
+      messageThread(payload: {
+        projectId: string;
+        threadId: string;
+        text: string;
+      }): Promise<Record<string, any>>;
+      resolveThread(payload: {
+        projectId: string;
+        threadId: string;
+        resolved: boolean;
+      }): Promise<Record<string, any>>;
+      remindThread(payload: {
+        projectId: string;
+        threadId: string;
+        remindAt: number;
+      }): Promise<Record<string, any>>;
+      answerDecision(payload: {
+        projectId: string;
+        decisionId: string;
+        optionIndex: number;
+      }): Promise<Record<string, any>>;
+      withdrawDecision(payload: {
+        projectId: string;
+        decisionId: string;
+      }): Promise<Record<string, any>>;
+      readFile(payload: {
+        projectId: string;
+        path: string;
+      }): Promise<Record<string, any>>;
+      writeFile(payload: {
+        projectId: string;
+        path: string;
+        content: string;
+        overwrite?: boolean;
+        keepBoth?: boolean;
+      }): Promise<Record<string, any>>;
+      deleteFile(payload: {
+        projectId: string;
+        path: string;
+      }): Promise<Record<string, any>>;
+      readMemory(payload: {
+        projectId: string;
+        path?: string;
+      }): Promise<Record<string, any>>;
+      writeMemory(payload: {
+        projectId: string;
+        path: string;
+        content: string;
+        expectedSha256: string;
+      }): Promise<Record<string, any>>;
+      updateSections(payload: {
+        projectId: string;
+        hiddenIds?: string[];
+        order?: string[];
+        expectedVersion: number;
+      }): Promise<Record<string, any>>;
+      dismissRecap(payload: {projectId: string}): Promise<Record<string, any>>;
+      togglePinArtifact(payload: {
+        projectId: string;
+        artifactId: string;
+        pinned: boolean;
+      }): Promise<Record<string, any>>;
+      inspectDiff(payload: {
+        projectId: string;
+        threadId: string;
+      }): Promise<Record<string, any>>;
+      mergeWorktree(payload: {
+        projectId: string;
+        threadId: string;
+      }): Promise<Record<string, any>>;
+      discardThread(payload: {
+        projectId: string;
+        threadId: string;
+      }): Promise<Record<string, any>>;
+      updateConfig(payload: {
+        projectId: string;
+        projectRoot?: string;
+        patch?: Record<string, unknown>;
+        config?: Record<string, unknown>;
+      }): Promise<Record<string, any>>;
+      stopRun?(payload: {
+        projectId: string;
+        threadId?: string;
+      }): Promise<Record<string, any>>;
+      onEvent?(cb: (payload?: ProjectsMaEvent) => void): () => void;
     };
     stash: {
       list(): Promise<MagicPointerStashBurst[]>;
@@ -1430,6 +1772,171 @@ declare global {
       html: string;
       css: string;
     }): Promise<Record<string, any>>;
+    dashboardRunSql(payload: {
+      dashboardId: string;
+      chartId: string;
+      sql: string;
+    }): Promise<Record<string, any>>;
+    dashboardExportInteractive(payload: {
+      dashboardId: string;
+      title?: string;
+    }): Promise<Record<string, any>>;
+    dashboardExportChartCsv(payload: {
+      dashboardId: string;
+      chartId: string;
+    }): Promise<Record<string, any>>;
+    dashboardRemix(payload: {
+      dashboardId: string;
+      format: string;
+    }): Promise<Record<string, any>>;
+    dashboardCreateSample(): Promise<Record<string, any>>;
+    designList(): Promise<Record<string, any>>;
+    designRead(slug: string): Promise<Record<string, any>>;
+    designInit(payload: {
+      slug?: string;
+      title: string;
+      pages?: Array<{id: string; name: string}>;
+    }): Promise<Record<string, any>>;
+    designUpsertBoard(payload: {
+      slug: string;
+      file: string;
+      html: string;
+      title?: string;
+      w?: number;
+      h?: number;
+      x?: number;
+      y?: number;
+      page?: string;
+    }): Promise<Record<string, any>>;
+    designSaveFile(payload: {
+      slug: string;
+      file: string;
+      content: string;
+    }): Promise<Record<string, any>>;
+    designImportAsset(payload: {
+      slug: string;
+      sourcePath?: string;
+    }): Promise<Record<string, any>>;
+    designCheck(slug: string): Promise<Record<string, any>>;
+    designGenerateBrand(payload: {
+      slug: string;
+      seed: Record<string, unknown>;
+      install?: boolean;
+    }): Promise<Record<string, any>>;
+    designExport(payload: {
+      slug: string;
+      format: string;
+      boardFile?: string;
+    }): Promise<Record<string, any>>;
+    onDesignChanged(cb: (payload?: Record<string, any>) => void): () => void;
+    projectsMaGetOverviewState(payload: {
+      projectId: string;
+      projectRoot?: string;
+    }): Promise<{
+      ok?: boolean;
+      state?: ProjectsMaOverviewState;
+      error?: string;
+      [key: string]: any;
+    }>;
+    projectsMaSidebarBadges(): Promise<Record<string, any>>;
+    projectsMaSendGoal(payload: {
+      projectId: string;
+      projectRoot?: string;
+      text: string;
+    }): Promise<Record<string, any>>;
+    projectsMaStartThread(payload: {
+      projectId: string;
+      projectRoot?: string;
+      title?: string;
+      prompt: string;
+      useWorktree?: boolean;
+    }): Promise<Record<string, any>>;
+    projectsMaMessageThread(payload: {
+      projectId: string;
+      threadId: string;
+      text: string;
+    }): Promise<Record<string, any>>;
+    projectsMaResolveThread(payload: {
+      projectId: string;
+      threadId: string;
+      resolved: boolean;
+    }): Promise<Record<string, any>>;
+    projectsMaRemindThread(payload: {
+      projectId: string;
+      threadId: string;
+      remindAt: number;
+    }): Promise<Record<string, any>>;
+    projectsMaAnswerDecision(payload: {
+      projectId: string;
+      decisionId: string;
+      optionIndex: number;
+    }): Promise<Record<string, any>>;
+    projectsMaWithdrawDecision(payload: {
+      projectId: string;
+      decisionId: string;
+    }): Promise<Record<string, any>>;
+    projectsMaReadFile(payload: {
+      projectId: string;
+      path: string;
+    }): Promise<Record<string, any>>;
+    projectsMaWriteFile(payload: {
+      projectId: string;
+      path: string;
+      content: string;
+      overwrite?: boolean;
+      keepBoth?: boolean;
+    }): Promise<Record<string, any>>;
+    projectsMaDeleteFile(payload: {
+      projectId: string;
+      path: string;
+    }): Promise<Record<string, any>>;
+    projectsMaReadMemory(payload: {
+      projectId: string;
+      path?: string;
+    }): Promise<Record<string, any>>;
+    projectsMaWriteMemory(payload: {
+      projectId: string;
+      path: string;
+      content: string;
+      expectedSha256: string;
+    }): Promise<Record<string, any>>;
+    projectsMaUpdateSections(payload: {
+      projectId: string;
+      hiddenIds?: string[];
+      order?: string[];
+      expectedVersion: number;
+    }): Promise<Record<string, any>>;
+    projectsMaDismissRecap(payload: {
+      projectId: string;
+    }): Promise<Record<string, any>>;
+    projectsMaTogglePinArtifact(payload: {
+      projectId: string;
+      artifactId: string;
+      pinned: boolean;
+    }): Promise<Record<string, any>>;
+    projectsMaInspectDiff(payload: {
+      projectId: string;
+      threadId: string;
+    }): Promise<Record<string, any>>;
+    projectsMaMergeWorktree(payload: {
+      projectId: string;
+      threadId: string;
+    }): Promise<Record<string, any>>;
+    projectsMaDiscardThread(payload: {
+      projectId: string;
+      threadId: string;
+    }): Promise<Record<string, any>>;
+    projectsMaUpdateConfig(payload: {
+      projectId: string;
+      projectRoot?: string;
+      patch?: Record<string, unknown>;
+      config?: Record<string, unknown>;
+    }): Promise<Record<string, any>>;
+    projectsMaStopRun(payload: {
+      projectId: string;
+      threadId?: string;
+    }): Promise<Record<string, any>>;
+    onProjectsMaEvent(cb: (payload?: ProjectsMaEvent) => void): () => void;
     updateProject(
       root: string,
       patch: MagicPointerProjectPatch,
@@ -1591,6 +2098,7 @@ declare global {
       branchId?: string;
       parentBranchId?: string | null;
       parentTurnIndex?: number;
+      surface?: 'side' | 'inline';
       anchor?: MagicPointerLearnAnchor;
       kind?: MagicPointerLearnBranch['kind'];
       question: string;
@@ -1753,6 +2261,40 @@ declare global {
     ): Promise<Record<string, any>>;
     removeStashEntry(id: string): Promise<Record<string, any>>;
     describeStashImage(src: string): Promise<string | null | undefined>;
+    learn: {
+      listCourses(): Promise<Record<string, any>>;
+      getCourse(payload?: {
+        courseId?: string;
+        activate?: boolean;
+      }): Promise<Record<string, any>>;
+      annotate(payload: {
+        courseId?: string;
+        mark?: Record<string, unknown>;
+        type?: string;
+        fb?: string;
+        quote?: string;
+        section?: string;
+        note?: string;
+      }): Promise<Record<string, any>>;
+      promoteLemma(payload: {
+        courseId?: string;
+        title?: string;
+        quote?: string;
+        insight?: string;
+        section?: string;
+      }): Promise<Record<string, any>>;
+      recordCheckin(payload: {
+        courseId?: string;
+        question: string;
+        selectedIndex?: number | null;
+        selectedLabel: string;
+        unsure?: boolean;
+        reasoningNote?: string;
+        nodeId?: string;
+      }): Promise<Record<string, any>>;
+      getGraph(payload?: {courseId?: string}): Promise<Record<string, any>>;
+      runDream(payload?: {courseId?: string}): Promise<Record<string, any>>;
+    };
     onChange(callback: (change?: MagicPointerConversationChange) => void): void;
   }
   const Data: MagicPointerDataApi;
@@ -1932,11 +2474,43 @@ declare global {
     }): Promise<Record<string, any>>;
     openTask?(payload: {
       selectionSessionToken: string;
-    }): Promise<{ok: boolean; error?: string; conversationId?: string}>;
+      fallbackToStudio?: boolean;
+    }): Promise<{
+      ok: boolean;
+      error?: string;
+      conversationId?: string | null;
+    }>;
+    saveToLearnNote?(payload: {
+      selectionSessionToken?: string | null;
+      quote?: string;
+      note?: string;
+      section?: string;
+      saveToVault?: boolean;
+    }): Promise<{
+      ok: boolean;
+      courseId?: string;
+      courseTitle?: string;
+      vaultPath?: string;
+      error?: string;
+    }>;
+    handoffToLearn?(payload: {
+      selectionSessionToken?: string | null;
+      quote?: string;
+      note?: string;
+      section?: string;
+      question?: string;
+    }): Promise<{
+      ok: boolean;
+      courseId?: string;
+      courseTitle?: string;
+      error?: string;
+    }>;
     ready(): void;
     reportState(payload: unknown): void;
     hidden(): void;
     dismiss(): void;
+    retryActivation?(): void;
+    triggerTourSteps?(steps: unknown[]): Promise<any>;
     submitSelectionCommand(payload: unknown): void;
     steerSelectionCommand(payload: unknown): Promise<any>;
     stopSelectionCommand(payload: unknown): Promise<any>;
@@ -2356,6 +2930,7 @@ const Data: MagicPointerDataApi = {
     branchId?: string;
     parentBranchId?: string | null;
     parentTurnIndex?: number;
+    surface?: 'side' | 'inline';
     anchor?: MagicPointerLearnAnchor;
     kind?: MagicPointerLearnBranch['kind'];
     question: string;
@@ -2970,6 +3545,514 @@ const Data: MagicPointerDataApi = {
     } catch (_error) {
       return null;
     }
+  },
+
+  async dashboardRunSql(payload: {
+    dashboardId: string;
+    chartId: string;
+    sql: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.dashboard?.runSql;
+    if (!fn) {
+      return {ok: false, error: 'Dashboard SQL bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async dashboardExportInteractive(payload: {
+    dashboardId: string;
+    title?: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.dashboard?.exportInteractiveHtml;
+    if (!fn) {
+      return {ok: false, error: 'Dashboard interactive export unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async dashboardExportChartCsv(payload: {
+    dashboardId: string;
+    chartId: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.dashboard?.exportChartCsv;
+    if (!fn) {
+      return {ok: false, error: 'Dashboard chart CSV export unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async dashboardRemix(payload: {
+    dashboardId: string;
+    format: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.dashboard?.remix;
+    if (!fn) {
+      return {ok: false, error: 'Dashboard remix unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async dashboardCreateSample(): Promise<Record<string, any>> {
+    const fn = bridge()?.dashboard?.createSample;
+    if (!fn) {
+      return {ok: false, error: 'Dashboard sample bridge unavailable.'};
+    }
+    return fn();
+  },
+
+  async designList(): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.list;
+    if (!fn) {
+      return {ok: true, canvases: []};
+    }
+    return fn();
+  },
+
+  async designRead(slug: string): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.read;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(slug);
+  },
+
+  async designInit(payload: {
+    slug?: string;
+    title: string;
+    pages?: Array<{id: string; name: string}>;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.init;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async designUpsertBoard(payload: {
+    slug: string;
+    file: string;
+    html: string;
+    title?: string;
+    w?: number;
+    h?: number;
+    x?: number;
+    y?: number;
+    page?: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.upsertBoard;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async designSaveFile(payload: {
+    slug: string;
+    file: string;
+    content: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.saveFile;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async designImportAsset(payload: {
+    slug: string;
+    sourcePath?: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.importAsset;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async designCheck(slug: string): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.check;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(slug);
+  },
+
+  async designGenerateBrand(payload: {
+    slug: string;
+    seed: Record<string, unknown>;
+    install?: boolean;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.generateBrand;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async designExport(payload: {
+    slug: string;
+    format: string;
+    boardFile?: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.design?.export;
+    if (!fn) {
+      return {ok: false, error: 'Design bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  onDesignChanged(cb: (payload?: Record<string, any>) => void): () => void {
+    const fn = bridge()?.design?.onChanged;
+    if (!fn) {
+      return () => {};
+    }
+    return fn(cb);
+  },
+
+  async projectsMaGetOverviewState(payload: {
+    projectId: string;
+    projectRoot?: string;
+  }): Promise<{
+    ok?: boolean;
+    state?: ProjectsMaOverviewState;
+    error?: string;
+    [key: string]: any;
+  }> {
+    const fn = bridge()?.projectsMa?.getOverviewState;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaSidebarBadges(): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.getSidebarBadges;
+    if (!fn) {
+      return {ok: true, badges: {}};
+    }
+    return fn();
+  },
+
+  async projectsMaSendGoal(payload: {
+    projectId: string;
+    projectRoot?: string;
+    text: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.sendGoal;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaStartThread(payload: {
+    projectId: string;
+    projectRoot?: string;
+    title?: string;
+    prompt: string;
+    useWorktree?: boolean;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.startThread;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaMessageThread(payload: {
+    projectId: string;
+    threadId: string;
+    text: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.messageThread;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaResolveThread(payload: {
+    projectId: string;
+    threadId: string;
+    resolved: boolean;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.resolveThread;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaRemindThread(payload: {
+    projectId: string;
+    threadId: string;
+    remindAt: number;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.remindThread;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaAnswerDecision(payload: {
+    projectId: string;
+    decisionId: string;
+    optionIndex: number;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.answerDecision;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaWithdrawDecision(payload: {
+    projectId: string;
+    decisionId: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.withdrawDecision;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaReadFile(payload: {
+    projectId: string;
+    path: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.readFile;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaWriteFile(payload: {
+    projectId: string;
+    path: string;
+    content: string;
+    overwrite?: boolean;
+    keepBoth?: boolean;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.writeFile;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaDeleteFile(payload: {
+    projectId: string;
+    path: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.deleteFile;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaReadMemory(payload: {
+    projectId: string;
+    path?: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.readMemory;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaWriteMemory(payload: {
+    projectId: string;
+    path: string;
+    content: string;
+    expectedSha256: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.writeMemory;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaUpdateSections(payload: {
+    projectId: string;
+    hiddenIds?: string[];
+    order?: string[];
+    expectedVersion: number;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.updateSections;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaDismissRecap(payload: {
+    projectId: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.dismissRecap;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaTogglePinArtifact(payload: {
+    projectId: string;
+    artifactId: string;
+    pinned: boolean;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.togglePinArtifact;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaInspectDiff(payload: {
+    projectId: string;
+    threadId: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.inspectDiff;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaMergeWorktree(payload: {
+    projectId: string;
+    threadId: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.mergeWorktree;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaDiscardThread(payload: {
+    projectId: string;
+    threadId: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.discardThread;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaUpdateConfig(payload: {
+    projectId: string;
+    projectRoot?: string;
+    patch?: Record<string, unknown>;
+    config?: Record<string, unknown>;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.updateConfig;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  async projectsMaStopRun(payload: {
+    projectId: string;
+    threadId?: string;
+  }): Promise<Record<string, any>> {
+    const fn = bridge()?.projectsMa?.stopRun;
+    if (!fn) {
+      return {ok: false, error: 'Projects multi-agent bridge unavailable.'};
+    }
+    return fn(payload);
+  },
+
+  onProjectsMaEvent(cb: (payload?: ProjectsMaEvent) => void): () => void {
+    const fn = bridge()?.projectsMa?.onEvent;
+    if (!fn) {
+      return () => {};
+    }
+    return fn(cb);
+  },
+
+  learn: {
+    async listCourses(): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.listCourses;
+      if (!fn) {
+        return {ok: false, courses: [], activeCourseId: '', activeCourse: null};
+      }
+      return fn();
+    },
+    async getCourse(payload?: {
+      courseId?: string;
+      activate?: boolean;
+    }): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.getCourse;
+      if (!fn) {
+        return {ok: false, course: null};
+      }
+      return fn(payload || {});
+    },
+    async annotate(payload: {
+      courseId?: string;
+      mark?: Record<string, unknown>;
+      type?: string;
+      fb?: string;
+      quote?: string;
+      section?: string;
+      note?: string;
+    }): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.annotate;
+      if (!fn) {
+        return {ok: false, course: null};
+      }
+      return fn(payload);
+    },
+    async promoteLemma(payload: {
+      courseId?: string;
+      title?: string;
+      quote?: string;
+      insight?: string;
+      section?: string;
+    }): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.promoteLemma;
+      if (!fn) {
+        return {ok: false, course: null};
+      }
+      return fn(payload);
+    },
+    async recordCheckin(payload: {
+      courseId?: string;
+      question: string;
+      selectedIndex?: number | null;
+      selectedLabel: string;
+      unsure?: boolean;
+      reasoningNote?: string;
+      nodeId?: string;
+    }): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.recordCheckin;
+      if (!fn) {
+        return {ok: false, course: null};
+      }
+      return fn(payload);
+    },
+    async getGraph(payload?: {courseId?: string}): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.getGraph;
+      if (!fn) {
+        return {ok: false, graph: null};
+      }
+      return fn(payload || {});
+    },
+    async runDream(payload?: {courseId?: string}): Promise<Record<string, any>> {
+      const fn = bridge()?.learn?.runDream;
+      if (!fn) {
+        return {ok: false, dream: null, course: null};
+      }
+      return fn(payload || {});
+    },
   },
 
   onChange(callback: (change?: MagicPointerConversationChange) => void) {

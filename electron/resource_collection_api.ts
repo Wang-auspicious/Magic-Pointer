@@ -11,14 +11,32 @@ import type {ResourcePreview} from './resource_preview';
 import type {ResourcePost} from './resource_post';
 import type {HistoryJob, HistoryList} from './resource_browser_history';
 import type {BookmarkAccount} from './resource_bookmark_sync';
+import type {
+  LearningGoalItem,
+  ResourceLearningMeta,
+} from './resource_learning_bridge';
 
 export interface ResourceResponse {
   ok: boolean;
   focus?: string;
   error?: string;
   items?: Array<
-    CollectedResource & {previewUrl?: string; relevanceReason?: string}
+    CollectedResource & {
+      previewUrl?: string;
+      relevanceReason?: string;
+      learningBridge?: ResourceLearningMeta;
+    }
   >;
+  learningGoals?: LearningGoalItem[];
+  learningBridge?: Record<string, ResourceLearningMeta>;
+  vaultResult?: {
+    ok: boolean;
+    filePath?: string;
+    relativePath?: string;
+    appended?: boolean;
+    error?: string;
+  };
+  distilledPrompt?: string;
   entry?: CollectedResource;
   projects?: Array<{id: string; name: string; root: string}>;
   source?: XSourceState;
@@ -52,6 +70,9 @@ export type ResourceAction =
   | 'handoff-state'
   | 'preview'
   | 'open-original'
+  | 'save-to-vault'
+  | 'add-vault-todo'
+  | 'distill'
   | 'browser-open'
   | 'capture'
   | 'capture-source'
@@ -78,6 +99,8 @@ export interface ResourceRequest {
   snoozedUntil?: number;
   id?: string;
   text?: string;
+  todoText?: string;
+  goalId?: string;
   url?: string;
   title?: string;
   note?: string;

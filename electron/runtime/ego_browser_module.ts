@@ -3,6 +3,41 @@ import type {RuntimeModule} from './runtime_modules';
 import type {Effect, JsonSchema} from './tools';
 
 const text = {type: 'string', minLength: 1};
+function egoBrowserActEffect(args: Record<string, unknown>): Effect {
+  const intent = String(args.intent || '').toLowerCase();
+  if (intent === 'send' || intent === 'submit') {
+    return 'external_send';
+  }
+  if (intent === 'delete') {
+    return 'destructive';
+  }
+  if (intent === 'purchase') {
+    return 'purchase';
+  }
+  const actions = Array.isArray(args.actions)
+    ? (args.actions as Array<Record<string, unknown>>)
+    : [];
+  for (const step of actions) {
+    const action = String(step?.action || '').toLowerCase();
+    const sel = `${String(step?.selector || '')} ${String(step?.description || '')} ${String(step?.value || '')}`.toLowerCase();
+    if (/(delete|remove|destroy|erase|trash|关闭账号|注销|删除)/i.test(sel)) {
+      return 'destructive';
+    }
+    if (/(purchase|checkout|pay|buy|order|下单|付款|支付|购买)/i.test(sel)) {
+      return 'purchase';
+    }
+    if (
+      action === 'click' &&
+      /(send|submit-message|post-comment|publish|发送|发布|群发|提交订单)/i.test(
+        sel,
+      )
+    ) {
+      return 'external_send';
+    }
+  }
+  return 'reversible_write';
+}
+
 export function egoBrowserModule(sessionId: string): RuntimeModule {
   const command = (
     id: string,
@@ -11,6 +46,7 @@ export function egoBrowserModule(sessionId: string): RuntimeModule {
     description: string,
     properties: Record<string, unknown> = {},
     required: string[] = [],
+    effectFor?: (args: Record<string, unknown>) => Effect,
   ) => ({
     id: id.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`),
     label: `ego lite · ${id}`,
@@ -24,6 +60,7 @@ export function egoBrowserModule(sessionId: string): RuntimeModule {
         additionalProperties: false,
       } as JsonSchema,
       effect,
+      ...(effectFor ? {effect_for: effectFor} : {}),
       resource_keys: [`ego:${sessionId}`],
       deferred: true,
       used_backend: 'ego-lite',
@@ -82,10 +119,13 @@ export function egoBrowserModule(sessionId: string): RuntimeModule {
       command(
         'act',
         'act',
-        'external_send',
+        'reversible_write',
         "Act on fresh ego lite snapshot refs or unambiguous semantic/CSS selectors. Batch related click/fill/press/select actions. Supply expected={selector,text} (exact text) or {selector,value} for a unique CSS result element to verify the actual application outcome; if already satisfied, no actions replay. Without expected, the result remains unverified. Sending/deleting/purchasing requires the current task's actual authorization. Stop if the user takes control; never create another space to bypass it.",
         {
           page: text,
+          intent: {
+            enum: ['input', 'send', 'submit', 'delete', 'purchase'],
+          },
           actions: {
             type: 'array',
             minItems: 1,
@@ -126,6 +166,7 @@ export function egoBrowserModule(sessionId: string): RuntimeModule {
           waitForUrl: text,
         },
         ['actions'],
+        egoBrowserActEffect,
       ),
       command(
         'handoff',

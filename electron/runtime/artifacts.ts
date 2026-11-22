@@ -34,6 +34,8 @@ export interface DraftArtifact {
     seq: number;
   }>;
   kind: string;
+  language?: string;
+  filename?: string;
   patchPayload: DocumentPatch | null;
   acceptedRevision: number | null;
   title: string;
@@ -206,6 +208,12 @@ export function projectArtifacts(
         contentHash: hash,
         state: generated ? 'generated' : 'edited',
         kind,
+        ...(data.language || current?.language
+          ? {language: String(data.language ?? current?.language)}
+          : {}),
+        ...(data.filename || current?.filename
+          ? {filename: String(data.filename ?? current?.filename)}
+          : {}),
         title: String(data.title ?? current?.title ?? ''),
         patchPayload: patch as DocumentPatch | null,
         acceptedRevision: null,
@@ -260,10 +268,14 @@ export function latestTurnArtifactSummaries(
       artifactId: draft.artifactId,
       revision: draft.revision,
       kind: draft.kind,
+      ...(draft.language ? {language: draft.language} : {}),
+      ...(draft.filename ? {filename: draft.filename} : {}),
       state: draft.state,
       title: draft.title,
       name:
-        draft.title || draft.content.split('\n').find(Boolean)?.slice(0, 120),
+        draft.title ||
+        draft.filename ||
+        draft.content.split('\n').find(Boolean)?.slice(0, 120),
       summary: draft.content.replace(/\s+/g, ' ').slice(0, 240),
     }));
 }
@@ -298,6 +310,7 @@ export async function createArtifact(
   title = '',
   kind = 'text',
   patchPayload: Json | null = null,
+  meta: {language?: string; filename?: string} = {},
 ): Promise<DraftArtifact> {
   requiredText(content, 'content');
   const artifactId = randomUUID();
@@ -310,6 +323,8 @@ export async function createArtifact(
     content,
     title,
     kind,
+    ...(meta.language ? {language: meta.language} : {}),
+    ...(meta.filename ? {filename: meta.filename} : {}),
     contentHash: contentHash(content),
     patchPayload: patch,
     author: 'agent',
@@ -328,6 +343,8 @@ export async function patchArtifact(
     author?: string;
     patchPayload?: unknown;
     kind?: string;
+    language?: string;
+    filename?: string;
   } = {},
 ): Promise<DraftArtifact> {
   const current = projectArtifacts(session.events).find(
@@ -356,6 +373,16 @@ export async function patchArtifact(
     contentHash: contentHash(content),
     title: options.title ?? current.title,
     kind: options.kind ?? current.kind,
+    ...(options.language !== undefined
+      ? {language: options.language}
+      : current.language
+        ? {language: current.language}
+        : {}),
+    ...(options.filename !== undefined
+      ? {filename: options.filename}
+      : current.filename
+        ? {filename: current.filename}
+        : {}),
     author: options.author ?? 'agent',
     patchPayload,
   });
@@ -642,15 +669,28 @@ export function registerArtifactTools(
   registry.register({
     name: 'Artifact.create',
     description:
-      'Create a complete independent deliverable the user wants to read, edit or reuse. Ordinary answers, progress and task plans stay in conversation. Creating does not publish.',
+      'Create a complete independent deliverable the user wants to read, edit or reuse (markdown note, html explainer, svg/diagram, code file, csv table, text). Ordinary answers, progress and task plans stay in conversation. Creating does not publish.',
     input_schema: schema(
       {
         title: string,
         kind: {
           type: 'string',
-          enum: ['text', 'markdown', 'code', 'html', 'svg', 'mermaid'],
+          enum: [
+            'text',
+            'markdown',
+            'code',
+            'html',
+            'svg',
+            'mermaid',
+            'diagram',
+            'csv',
+            'design-canvas',
+            'dashboard',
+          ],
         },
         content: string,
+        language: string,
+        filename: string,
       },
       ['title', 'kind', 'content'],
     ),
@@ -661,6 +701,15 @@ export function registerArtifactTools(
         String(args.content),
         requiredText(args.title, 'title'),
         String(args.kind),
+        null,
+        {
+          ...(typeof args.language === 'string' && args.language.trim()
+            ? {language: args.language.trim()}
+            : {}),
+          ...(typeof args.filename === 'string' && args.filename.trim()
+            ? {filename: args.filename.trim()}
+            : {}),
+        },
       ),
   });
   registry.register({
@@ -689,6 +738,23 @@ export function registerArtifactTools(
         expected_revision: {type: 'integer'},
         content: string,
         title: string,
+        kind: {
+          type: 'string',
+          enum: [
+            'text',
+            'markdown',
+            'code',
+            'html',
+            'svg',
+            'mermaid',
+            'diagram',
+            'csv',
+            'design-canvas',
+            'dashboard',
+          ],
+        },
+        language: string,
+        filename: string,
       },
       ['artifact_id', 'expected_revision', 'content'],
     ),
@@ -699,7 +765,18 @@ export function registerArtifactTools(
         String(args.artifact_id),
         Number(args.expected_revision),
         String(args.content),
-        {title: args.title as string | undefined},
+        {
+          title: args.title as string | undefined,
+          ...(typeof args.kind === 'string' && args.kind.trim()
+            ? {kind: args.kind.trim()}
+            : {}),
+          ...(typeof args.language === 'string' && args.language.trim()
+            ? {language: args.language.trim()}
+            : {}),
+          ...(typeof args.filename === 'string' && args.filename.trim()
+            ? {filename: args.filename.trim()}
+            : {}),
+        },
       ),
   });
   registry.register({

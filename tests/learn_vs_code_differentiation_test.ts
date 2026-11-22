@@ -9,29 +9,29 @@ function readRepo(relPath: string): string {
   return fs.readFileSync(path.join(ROOT, relPath), 'utf8');
 }
 
-test('Batch 2.1: CSS separates Learn vs Code header actions, inspector tabs, and Git composer chrome', () => {
+test('Batch 2.1: CSS separates Learn vs Design header actions, inspector tabs, and Git composer chrome', () => {
   const css =
     readRepo('electron/renderer/chat_styles.css') +
     '\n' +
     readRepo('electron/renderer/studio_layout.css');
   assert.match(
     css,
-    /\[data-product-mode="walker"\][^{]*#chat-skim-toggle/,
-    'Code mode must hide Learn-only #chat-skim-toggle from header',
+    /\[data-product-mode="design"\][^{]*#chat-skim-toggle/,
+    'Design mode must hide Learn-only #chat-skim-toggle from header',
   );
   assert.match(
     css,
-    /\[data-product-mode="walker"\][^{]*#chat-learn-toggle/,
-    'Code mode must hide Learn-only #chat-learn-toggle from header',
+    /\[data-product-mode="design"\][^{]*#chat-learn-toggle/,
+    'Design mode must hide Learn-only #chat-learn-toggle from header',
   );
   assert.match(
     css,
-    /\[data-product-mode="design"\][^{]*#composer-git-context/,
+    /\[data-product-mode="learn"\][^{]*#composer-git-context/,
     'Learn mode must hide Git branch/worktree composer chrome',
   );
   assert.match(
     css,
-    /\[data-product-mode="design"\][^{]*\[data-inspector-tab="changes"\]/,
+    /\[data-product-mode="learn"\][^{]*\[data-inspector-tab="changes"\]/,
     'Learn mode must hide Git Changes inspector tab',
   );
 });

@@ -177,6 +177,69 @@ buildSync({
   }
 })();
 
+// Opaque null-origin <iframe sandbox="allow-scripts"> documents cannot load
+// sibling file:// <script src> / <link href> resources in Chromium. Inline the
+// built styles, local KaTeX fonts/JS, and Learn Kit runtime into the built
+// iui_sandbox.html while keeping standalone source files intact.
+(function inlineIuiSandboxAssets(): void {
+  const rendererOut = path.join(outputRoot, 'renderer');
+  const sandboxPath = path.join(rendererOut, 'iui_sandbox.html');
+  let html = readFileSync(sandboxPath, 'utf8');
+
+  const escapeStyle = (css: string): string =>
+    css.replace(/<\/style/gi, '<\\/style');
+  const escapeScript = (js: string): string =>
+    js.replace(/<\/script/gi, '<\\/script');
+
+  const inlineStyleTag = (relHref: string, transformCss?: (css: string) => string): void => {
+    const cssPath = path.join(rendererOut, relHref);
+    const rawCss = readFileSync(cssPath, 'utf8');
+    const finalCss = transformCss ? transformCss(rawCss) : rawCss;
+    const tagRe = new RegExp(
+      `<link\\s+rel="stylesheet"\\s+href="${relHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*\\/?>`,
+    );
+    if (!tagRe.test(html)) {
+      throw new Error(`Expected stylesheet link ${relHref} in built iui_sandbox.html`);
+    }
+    html = html.replace(
+      tagRe,
+      () => `<style data-inlined-src="${relHref}">\n${escapeStyle(finalCss)}\n</style>`,
+    );
+  };
+
+  const inlineScriptTag = (relSrc: string): void => {
+    const jsPath = path.join(rendererOut, relSrc);
+    const js = readFileSync(jsPath, 'utf8');
+    const tagRe = new RegExp(
+      `<script\\s+src="${relSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*><\\/script>`,
+    );
+    if (!tagRe.test(html)) {
+      throw new Error(`Expected script tag ${relSrc} in built iui_sandbox.html`);
+    }
+    html = html.replace(
+      tagRe,
+      () => `<script data-inlined-src="${relSrc}">\n${escapeScript(js)}\n</script>`,
+    );
+  };
+
+  inlineStyleTag('theme_tokens.css');
+  inlineStyleTag('vendor/katex/katex.css', katexCss => {
+    const katexFontsDir = path.join(rendererOut, 'vendor', 'katex', 'fonts');
+    return katexCss.replace(
+      /url\(fonts\/([^)]+\.woff2)\)/g,
+      (_match, fontFile: string) => {
+        const fontData = readFileSync(path.join(katexFontsDir, fontFile)).toString('base64');
+        return `url(data:font/woff2;base64,${fontData})`;
+      },
+    );
+  });
+  inlineStyleTag('learn_kit_styles.css');
+  inlineScriptTag('vendor/katex/katex.js');
+  inlineScriptTag('learn_kit_runtime.js');
+
+  writeFileSync(sandboxPath, html, 'utf8');
+})();
+
 function verifyBrowserGlobalScripts(): void {
   const htmlRoot = path.join(sourceRoot, 'renderer');
   const referenced = new Set<string>();

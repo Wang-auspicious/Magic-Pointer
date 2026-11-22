@@ -4,6 +4,7 @@ declare global {
   interface SideChatDraft {
     conversationId: string;
     parentTurnIndex: number;
+    parentBranchId?: string | null;
     blockIndex?: number;
     quote: string;
     snippet: string;
@@ -13,6 +14,7 @@ declare global {
     requestId: string;
     branchId: string;
     question: string;
+    quote?: string;
     answer: string;
     thinking: string;
   }
@@ -21,6 +23,7 @@ declare global {
     onSend: (payload: {
       conversationId: string;
       branchId?: string;
+      parentBranchId?: string | null;
       parentTurnIndex: number;
       blockIndex?: number;
       anchorLabel: string;
@@ -35,6 +38,9 @@ declare global {
       mountNote?: string,
     ) => Promise<void>;
     onTailCite?: (branch: MagicPointerLearnBranch) => void;
+    onPromoteToArtifact?: (
+      branch: MagicPointerLearnBranch,
+    ) => void | Promise<void>;
     onOpenBranch?: (branchId: string) => void;
   }
 
@@ -63,6 +69,7 @@ declare global {
   let activeBranchId: string | null = null;
   let activeDraft: SideChatDraft | null = null;
   let liveState: SideChatLiveState | null = null;
+  let historyMenuOpen = false;
   const expandedMountedIds = new Set<string>();
 
   function el<K extends keyof HTMLElementTagNameMap>(
@@ -80,7 +87,44 @@ declare global {
     return node;
   }
 
-  function renderRichMarkdown(host: HTMLElement, text: string): void {
+  function hasCompleteInteractiveFences(source: string): boolean {
+    const htmlFences = (source.match(/```html\b/gi) || []).length;
+    const allFences = (source.match(/```/g) || []).length;
+    const uiOpens = (source.match(/^:::\s*ui\b/gim) || []).length;
+    const uiCloses = (source.match(/^:::\s*$/gim) || []).length;
+    if (htmlFences > 0 && allFences % 2 !== 0) {
+      return false;
+    }
+    if (uiOpens > uiCloses) {
+      return false;
+    }
+    return true;
+  }
+
+  function hydrateRichWidgets(
+    host: HTMLElement,
+    options: {allowInteractive?: boolean} = {},
+  ): void {
+    const g = globalThis as unknown as {
+      LearnLab?: {hydrate?: (el: Element) => void};
+      IntelligenceUI?: {hydrate?: (el: Element) => void};
+    };
+    if (typeof g.LearnLab?.hydrate === 'function') {
+      g.LearnLab.hydrate(host);
+    }
+    if (
+      options.allowInteractive !== false &&
+      typeof g.IntelligenceUI?.hydrate === 'function'
+    ) {
+      g.IntelligenceUI.hydrate(host);
+    }
+  }
+
+  function renderRichMarkdown(
+    host: HTMLElement,
+    text: string,
+    options: {streaming?: boolean} = {},
+  ): void {
     const source = String(text || '').trim();
     if (!source) {
       return;
@@ -90,6 +134,10 @@ declare global {
       typeof ChatMarkdown.render === 'function'
     ) {
       host.appendChild(ChatMarkdown.render(source));
+      hydrateRichWidgets(host, {
+        allowInteractive:
+          !options.streaming || hasCompleteInteractiveFences(source),
+      });
       return;
     }
     host.textContent = source;
@@ -106,16 +154,19 @@ declare global {
     activeDraft = {
       conversationId: draft.conversationId,
       parentTurnIndex: Math.max(0, Math.floor(Number(draft.parentTurnIndex) || 0)),
+      parentBranchId: draft.parentBranchId ?? null,
       ...(Number.isInteger(draft.blockIndex) ? {blockIndex: draft.blockIndex} : {}),
       quote: String(draft.quote || '').trim().slice(0, 220),
       snippet: String(draft.snippet || draft.quote || '').trim().slice(0, 800),
     };
     activeBranchId = null;
+    historyMenuOpen = false;
   }
 
   function openBranch(branchId: string): void {
     activeBranchId = String(branchId || '').trim() || null;
     activeDraft = null;
+    historyMenuOpen = false;
   }
 
   function setLiveState(next: SideChatLiveState | null): void {
@@ -126,6 +177,41 @@ declare global {
     return activeBranchId;
   }
 
+  function renderLiveThinkingRow(): HTMLElement {
+    const thinkingRow = el('div', 'mp-sidechat-thinking');
+    const sparkApi = (
+      globalThis as unknown as {
+        ActivityMarks?: {spark?: (state: string) => string};
+      }
+    ).ActivityMarks;
+    if (typeof sparkApi?.spark === 'function') {
+      const sparkWrap = el('span', 'mp-sidechat-spark');
+      sparkWrap.innerHTML = sparkApi.spark('thinking');
+      thinkingRow.appendChild(sparkWrap);
+    }
+    thinkingRow.appendChild(el('span', '', 'Thinking…'));
+    return thinkingRow;
+  }
+
+  function resolveBranchAncestors(
+    branches: MagicPointerLearnBranch[],
+    startParentId: string | null | undefined,
+  ): MagicPointerLearnBranch[] {
+    const chain: MagicPointerLearnBranch[] = [];
+    const seen = new Set<string>();
+    let cursor = startParentId ? String(startParentId) : '';
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      const found = branches.find(item => item.id === cursor);
+      if (!found) {
+        break;
+      }
+      chain.unshift(found);
+      cursor = found.parentBranchId ? String(found.parentBranchId) : '';
+    }
+    return chain;
+  }
+
   function renderPane(
     hostEl: HTMLElement | null,
     conversation: MagicPointerConversation | null | undefined,
@@ -134,6 +220,24 @@ declare global {
     if (!hostEl) {
       return;
     }
+
+    if (liveState) {
+      const liveBody = hostEl.querySelector<HTMLElement>(
+        `[data-sidechat-live-id="${liveState.requestId}"]`,
+      );
+      const streamNode = hostEl.querySelector<HTMLElement>('.mp-sidechat-stream');
+      if (liveBody && streamNode) {
+        liveBody.replaceChildren();
+        if (liveState.answer) {
+          renderRichMarkdown(liveBody, liveState.answer, {streaming: true});
+        } else {
+          liveBody.appendChild(renderLiveThinkingRow());
+        }
+        streamNode.scrollTop = streamNode.scrollHeight;
+        return;
+      }
+    }
+
     hostEl.replaceChildren();
     const pane = el('div', 'mp-sidechat-pane');
 
@@ -142,7 +246,9 @@ declare global {
         el(
           'div',
           'mp-sidechat-empty',
-          '在左侧对话中划选任意一句，点击 “Start a side chat” 即可在此并排深入讨论；结束后可一键外挂回主对话，且绝不污染父对话上下文与 Prompt Cache。',
+          document.documentElement.lang.startsWith('zh')
+            ? '顺手聊点相关的，不打断主线'
+            : 'Ask a quick question in parallel.',
         ),
       );
       hostEl.appendChild(pane);
@@ -162,108 +268,156 @@ declare global {
       ? branches.find(item => item.id === activeBranchId) || null
       : null;
 
-    // 1. Thread switcher strip
-    if (branches.length > 0 || activeDraft) {
-      const strip = el('div', 'mp-sidechat-tabs');
-      for (const branch of branches) {
-        const isCurrent = !activeDraft && currentBranch?.id === branch.id;
-        const tab = el(
-          'button',
-          `mp-sidechat-tab${isCurrent ? ' is-on' : ''}${branch.mountedToParent ? ' is-mounted' : ''}`,
-        );
-        tab.type = 'button';
-        tab.textContent = branchTitle(branch).slice(0, 22);
-        tab.title = branchTitle(branch);
-        tab.addEventListener('click', () => {
-          openBranch(branch.id);
-          renderPane(hostEl, conversation, handlers);
-        });
-        strip.appendChild(tab);
-      }
-      if (activeDraft) {
-        const draftTab = el('span', 'mp-sidechat-tab is-on is-draft', '新探讨');
-        strip.appendChild(draftTab);
-      }
-      pane.appendChild(strip);
-    }
-
-    // 2. Context & Cache Protection header
-    const head = el('div', 'mp-sidechat-head');
-    const quoteText = activeDraft
-      ? activeDraft.quote
-      : currentBranch?.anchor?.label || currentBranch?.title || '';
-    if (quoteText) {
-      const quoteBox = el('div', 'mp-sidechat-anchor');
-      quoteBox.appendChild(el('span', 'mp-sidechat-anchor-tag', '引出小点'));
-      quoteBox.appendChild(
-        el('span', 'mp-sidechat-anchor-text', `「${quoteText}」`),
-      );
-      head.appendChild(quoteBox);
-    }
-
-    const metaRow = el('div', 'mp-sidechat-meta');
-    const cacheBadge = el(
-      'span',
-      'mp-sidechat-cache-badge',
-      '独立分叉缓存 · 未注入父上下文',
+    // 1. Subtle breadcrumb / history switcher ONLY when multi-level nested or multiple threads exist
+    const ancestors = resolveBranchAncestors(
+      branches,
+      activeDraft ? activeDraft.parentBranchId : currentBranch?.parentBranchId,
     );
-    cacheBadge.title =
-      '此并排探讨在独立 Session 分叉运行，父对话消息历史保持逐字节不变，Prompt Cache 零失效。';
-    metaRow.appendChild(cacheBadge);
-
-    if (currentBranch) {
-      const isMounted = Boolean(currentBranch.mountedToParent);
-      const mountBtn = el(
-        'button',
-        `mp-sidechat-mount-btn${isMounted ? ' is-mounted' : ''}`,
-      );
-      mountBtn.type = 'button';
-      mountBtn.dataset.sidechatAction = 'toggle-mount';
-      const mountIcon = el('span', 'cds-icon');
-      mountIcon.dataset.size = 'xs';
-      mountIcon.setAttribute('aria-hidden', 'true');
-      mountIcon.textContent = isMounted ? '\uE03B' : '\uE012';
-      mountBtn.append(
-        mountIcon,
-        document.createTextNode(
-          isMounted
-            ? '已外挂到主对话（零上下文）'
-            : '外挂到主对话（不入上下文）',
-        ),
-      );
-      mountBtn.addEventListener('click', () => {
-        void handlers.onToggleMount(
-          conversation.id,
-          currentBranch.id,
-          !isMounted,
-          currentBranch.mountNote || currentBranch.insightSummary || '',
+    const hasNestedCrumbs = ancestors.length > 0;
+    const hasMultipleThreads = branches.length > 1;
+    if (hasNestedCrumbs || hasMultipleThreads) {
+      const topbar = el('div', 'mp-sidechat-topbar');
+      if (hasNestedCrumbs) {
+        const crumbs = el('nav', 'mp-sidechat-crumbs');
+        crumbs.setAttribute('aria-label', 'Side chat hierarchy');
+        for (let i = 0; i < ancestors.length; i++) {
+          const anc = ancestors[i];
+          if (i > 0) {
+            crumbs.appendChild(el('span', 'mp-sidechat-crumb-sep', '›'));
+          }
+          const crumbBtn = el(
+            'button',
+            'mp-sidechat-crumb',
+            branchTitle(anc).slice(0, 18),
+          );
+          crumbBtn.type = 'button';
+          crumbBtn.title = branchTitle(anc);
+          crumbBtn.addEventListener('click', () => {
+            openBranch(anc.id);
+            renderPane(hostEl, conversation, handlers);
+          });
+          crumbs.appendChild(crumbBtn);
+        }
+        crumbs.appendChild(el('span', 'mp-sidechat-crumb-sep', '›'));
+        const currLabel = activeDraft
+          ? activeDraft.quote || '深入探讨'
+          : currentBranch
+            ? branchTitle(currentBranch)
+            : '探讨';
+        crumbs.appendChild(
+          el('span', 'mp-sidechat-crumb is-current', currLabel.slice(0, 18)),
         );
-      });
-      metaRow.appendChild(mountBtn);
-    }
-    head.appendChild(metaRow);
-    pane.appendChild(head);
+        topbar.appendChild(crumbs);
+      } else if (currentBranch) {
+        const curLabel = el(
+          'span',
+          'mp-sidechat-crumb is-current',
+          branchTitle(currentBranch).slice(0, 24),
+        );
+        topbar.appendChild(curLabel);
+      }
 
-    // 3. Multi-turn side chat stream
+      const topActions = el('div', 'mp-sidechat-top-actions');
+      if (hasMultipleThreads) {
+        const histBtn = el(
+          'button',
+          'mp-sidechat-top-btn',
+          `全部探讨 (${branches.length}) ▾`,
+        );
+        histBtn.type = 'button';
+        histBtn.setAttribute('aria-expanded', String(historyMenuOpen));
+
+        const menu = el('div', 'mp-sidechat-history-menu');
+        menu.hidden = !historyMenuOpen;
+        for (const branch of branches) {
+          const isCurrent = !activeDraft && currentBranch?.id === branch.id;
+          const item = el(
+            'button',
+            `mp-sidechat-history-item${isCurrent ? ' is-on' : ''}`,
+          );
+          item.type = 'button';
+          item.appendChild(
+            el('span', 'mp-sidechat-history-title', branchTitle(branch)),
+          );
+          if (branch.mountedToParent) {
+            item.appendChild(el('span', 'mp-sidechat-crumb-sep', '已外挂'));
+          }
+          item.addEventListener('click', () => {
+            openBranch(branch.id);
+            renderPane(hostEl, conversation, handlers);
+          });
+          menu.appendChild(item);
+        }
+
+        histBtn.addEventListener('click', ev => {
+          ev.stopPropagation();
+          historyMenuOpen = !historyMenuOpen;
+          menu.hidden = !historyMenuOpen;
+          histBtn.setAttribute('aria-expanded', String(historyMenuOpen));
+        });
+        topActions.appendChild(histBtn);
+        topbar.appendChild(menu);
+      }
+
+      const newBtn = el('button', 'mp-sidechat-top-btn', '+ 新探讨');
+      newBtn.type = 'button';
+      newBtn.addEventListener('click', () => {
+        openDraft({
+          conversationId: conversation.id,
+          parentTurnIndex: Math.max(0, (conversation.turns?.length || 1) - 1),
+          parentBranchId: null,
+          quote: '',
+          snippet: '',
+        });
+        renderPane(hostEl, conversation, handlers);
+      });
+      topActions.appendChild(newBtn);
+      topbar.appendChild(topActions);
+      pane.appendChild(topbar);
+    }
+
+    // 2. Normal Claude conversation stream
     const stream = el('div', 'mp-sidechat-stream');
     const turns = currentBranch?.turns || [];
+    const persistedQuote =
+      currentBranch?.anchor?.snippet || currentBranch?.anchor?.label || '';
+    const renderQuoteChip = (text: string) => {
+      const quoteChip = el('div', 'mp-sidechat-msg-quote');
+      const qIcon = el('span', 'cds-icon');
+      qIcon.dataset.size = 'xs';
+      qIcon.dataset.glyph = '\uF087';
+      qIcon.setAttribute('aria-hidden', 'true');
+      const qText = el('span', 'mp-sidechat-msg-quote-text', text);
+      quoteChip.append(qIcon, qText);
+      return quoteChip;
+    };
+
     if (!turns.length && !liveState) {
-      const intro = el(
-        'div',
-        'mp-sidechat-empty',
-        activeDraft
-          ? '针对这个小点单独展开多轮追问；结束后可一键整段外挂回主对话，不占主对话上下文。'
-          : '在主对话中划选任意文本，点击 “Start a side chat” 开启并排探讨。',
-      );
-      stream.appendChild(intro);
+      const empty = el('div', 'mp-sidechat-empty');
+      empty.textContent = document.documentElement.lang.startsWith('zh')
+        ? '顺手聊点相关的，不打断主线'
+        : 'Ask a quick follow-up without interrupting the main chat.';
+      stream.appendChild(empty);
     } else {
-      for (const turn of turns) {
+      for (let idx = 0; idx < turns.length; idx++) {
+        const turn = turns[idx];
         if (turn.question) {
           const userRow = el('div', 'mp-sidechat-msg is-user');
-          userRow.appendChild(el('div', 'mp-sidechat-bubble', turn.question));
+          if (currentBranch) {
+            userRow.dataset.branchId = currentBranch.id;
+          }
+          const userStack = el('div', 'mp-sidechat-user-stack');
+          if (idx === 0 && persistedQuote) {
+            userStack.appendChild(renderQuoteChip(persistedQuote));
+          }
+          userStack.appendChild(el('div', 'mp-sidechat-bubble', turn.question));
+          userRow.appendChild(userStack);
           stream.appendChild(userRow);
         }
         const assistantRow = el('div', 'mp-sidechat-msg is-assistant');
+        if (currentBranch) {
+          assistantRow.dataset.branchId = currentBranch.id;
+        }
         const body = el('div', 'mp-chat-markdown');
         if (turn.answer) {
           renderRichMarkdown(body, turn.answer);
@@ -278,117 +432,206 @@ declare global {
     if (
       liveState &&
       ((currentBranch && liveState.branchId === currentBranch.id) ||
-        (!currentBranch && activeDraft))
+        !currentBranch ||
+        !liveState.branchId)
     ) {
       const liveUser = el('div', 'mp-sidechat-msg is-user');
-      liveUser.appendChild(el('div', 'mp-sidechat-bubble', liveState.question));
+      const liveUserStack = el('div', 'mp-sidechat-user-stack');
+      if (liveState.quote) {
+        liveUserStack.appendChild(renderQuoteChip(liveState.quote));
+      }
+      liveUserStack.appendChild(el('div', 'mp-sidechat-bubble', liveState.question));
+      liveUser.appendChild(liveUserStack);
       stream.appendChild(liveUser);
 
       const liveAssistant = el('div', 'mp-sidechat-msg is-assistant is-live');
+      if (currentBranch) {
+        liveAssistant.dataset.branchId = currentBranch.id;
+      }
       const body = el('div', 'mp-chat-markdown');
+      body.dataset.sidechatLiveId = liveState.requestId;
       if (liveState.answer) {
-        renderRichMarkdown(body, liveState.answer);
+        renderRichMarkdown(body, liveState.answer, {streaming: true});
       } else {
-        body.appendChild(
-          el(
-            'span',
-            'mp-sidechat-thinking',
-            liveState.thinking ? '正在推演…' : '思考中…',
-          ),
-        );
+        body.appendChild(renderLiveThinkingRow());
       }
       liveAssistant.appendChild(body);
       stream.appendChild(liveAssistant);
     }
 
+    if (currentBranch && turns.length > 0 && !liveState) {
+      const isMounted = Boolean(currentBranch.mountedToParent);
+      const footActions = el('div', 'mp-sidechat-foot-actions');
+      const mountBtn = el(
+        'button',
+        `mp-sidechat-mount-btn${isMounted ? ' is-mounted' : ''}`,
+      );
+      mountBtn.type = 'button';
+      mountBtn.dataset.sidechatAction = 'toggle-mount';
+      mountBtn.title = '零上下文外挂：仅作为主对话卡片保留，未注入上下文';
+      const mountIcon = el('span', 'cds-icon');
+      mountIcon.dataset.size = 'xs';
+      mountIcon.dataset.glyph = isMounted ? '\uE03B' : '\uE012';
+      mountIcon.setAttribute('aria-hidden', 'true');
+      mountBtn.append(
+        mountIcon,
+        document.createTextNode(isMounted ? '已外挂到主对话' : '外挂到主对话'),
+      );
+      mountBtn.addEventListener('click', () => {
+        void handlers.onToggleMount(
+          conversation.id,
+          currentBranch.id,
+          !isMounted,
+          currentBranch.mountNote || currentBranch.insightSummary || '',
+        );
+      });
+      footActions.appendChild(mountBtn);
+      if (handlers.onPromoteToArtifact) {
+        const promoteBtn = el(
+          'button',
+          'mp-sidechat-foot-btn mp-sidechat-promote-btn',
+          '收入笔记',
+        );
+        promoteBtn.type = 'button';
+        promoteBtn.title = '把此条引理收入右侧精读笔记';
+        promoteBtn.addEventListener('click', () => {
+          promoteBtn.disabled = true;
+          promoteBtn.textContent = '已收入笔记 ✓';
+          void Promise.resolve(handlers.onPromoteToArtifact?.(currentBranch))
+            .catch(() => {
+              promoteBtn.textContent = '收入笔记';
+              promoteBtn.disabled = false;
+            });
+        });
+        footActions.appendChild(promoteBtn);
+      }
+      stream.appendChild(footActions);
+    }
+
     pane.appendChild(stream);
 
-    // 4. Independent bottom composer
-    if (activeDraft || currentBranch) {
-      const composer = el('form', 'mp-sidechat-composer');
-      if (!turns.length && !liveState) {
-        const chips = el('div', 'mp-sidechat-chips');
-        const starters = [
-          '把这一点拆到底层原理讲透',
-          '举一个容易踩坑的反例或边界条件',
-          '用 2 句话提炼成可复用的核心结论',
-        ];
-        for (const starter of starters) {
-          const chip = el('button', 'mp-sidechat-chip', starter);
-          chip.type = 'button';
-          chip.addEventListener('click', () => {
-            textarea.value = starter;
-            textarea.focus();
-            composer.requestSubmit();
-          });
-          chips.appendChild(chip);
-        }
-        composer.appendChild(chips);
-      }
+    // 3. Clean Claude-style bottom composer
+    const composer = el('form', 'mp-sidechat-composer');
+    const card = el('div', 'mp-sidechat-card');
 
-      const row = el('div', 'mp-sidechat-input-row');
-      const textarea = el('textarea', 'mp-sidechat-input');
-      textarea.rows = 2;
-      textarea.placeholder = '单独深挖这个小点…（Enter 发送，Shift+Enter 换行）';
-      textarea.addEventListener('keydown', event => {
-        if (
-          event.key === 'Enter' &&
-          !event.shiftKey &&
-          !event.isComposing
-        ) {
-          event.preventDefault();
-          composer.requestSubmit();
+    if (activeDraft?.quote) {
+      const replyBar = el('div', 'mp-sidechat-reply-bar');
+      const replyIcon = el('span', 'cds-icon');
+      replyIcon.dataset.size = 'xs';
+      replyIcon.dataset.glyph = '\uF087';
+      replyIcon.setAttribute('aria-hidden', 'true');
+      const replyText = el('span', 'mp-sidechat-reply-text', activeDraft.quote);
+      replyText.title = activeDraft.quote;
+      const dismissBtn = el('button', 'mp-sidechat-reply-dismiss');
+      dismissBtn.type = 'button';
+      dismissBtn.setAttribute('aria-label', 'Remove quote');
+      const closeIcon = el('span', 'cds-icon');
+      closeIcon.dataset.size = 'xs';
+      closeIcon.dataset.glyph = '\uE10F';
+      closeIcon.setAttribute('aria-hidden', 'true');
+      dismissBtn.appendChild(closeIcon);
+      dismissBtn.addEventListener('click', () => {
+        if (activeDraft) {
+          activeDraft = {...activeDraft, quote: '', snippet: ''};
         }
+        renderPane(hostEl, conversation, handlers);
       });
-
-      const actionBtn = el(
-        'button',
-        'mp-sidechat-send',
-        liveState ? '停止' : '发送',
-      );
-      actionBtn.type = liveState ? 'button' : 'submit';
-      if (liveState && handlers.onStop) {
-        const reqId = liveState.requestId;
-        actionBtn.addEventListener('click', () => handlers.onStop?.(reqId));
-      }
-
-      row.append(textarea, actionBtn);
-      composer.appendChild(row);
-
-      composer.addEventListener('submit', event => {
-        event.preventDefault();
-        if (liveState) {
-          return;
-        }
-        const question = textarea.value.trim();
-        if (!question) {
-          return;
-        }
-        textarea.value = '';
-        const targetTurnIndex = currentBranch
-          ? currentBranch.parentTurnIndex
-          : activeDraft?.parentTurnIndex ??
-            Math.max(0, (conversation.turns?.length || 1) - 1);
-        const targetBlockIndex = currentBranch
-          ? currentBranch.anchor?.blockIndex
-          : activeDraft?.blockIndex;
-        void handlers.onSend({
-          conversationId: conversation.id,
-          ...(currentBranch ? {branchId: currentBranch.id} : {}),
-          parentTurnIndex: targetTurnIndex,
-          ...(Number.isInteger(targetBlockIndex)
-            ? {blockIndex: targetBlockIndex}
-            : {}),
-          anchorLabel:
-            currentBranch?.anchor?.label || activeDraft?.quote || question.slice(0, 40),
-          anchorSnippet:
-            currentBranch?.anchor?.snippet || activeDraft?.snippet || '',
-          question,
-        });
-      });
-
-      pane.appendChild(composer);
+      replyBar.append(replyIcon, replyText, dismissBtn);
+      card.appendChild(replyBar);
     }
+
+    const row = el('div', 'mp-sidechat-input-row');
+    const textarea = el('textarea', 'mp-sidechat-input');
+    textarea.rows = 1;
+    textarea.placeholder = document.documentElement.lang.startsWith('zh')
+      ? '顺手问一句…'
+      : 'Ask a quick question…';
+
+    const actionBtn = el(
+      'button',
+      `mp-sidechat-send${liveState ? ' is-stop' : ''}`,
+    );
+    actionBtn.type = liveState ? 'button' : 'submit';
+    actionBtn.title = liveState ? 'Stop' : 'Send';
+    actionBtn.setAttribute('aria-label', liveState ? 'Stop' : 'Send');
+    const actionGlyph = el('span', 'cds-icon');
+    actionGlyph.dataset.size = liveState ? 'large' : 'small';
+    if (!liveState) {
+      actionGlyph.dataset.weight = 'strong';
+    }
+    actionGlyph.dataset.glyph = liveState ? '\uE0EC' : '\uE013';
+    actionGlyph.setAttribute('aria-hidden', 'true');
+    actionBtn.appendChild(actionGlyph);
+    if (!liveState) {
+      actionBtn.disabled = true;
+    }
+
+    const syncSideComposer = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(140, Math.max(24, textarea.scrollHeight))}px`;
+      if (!liveState) {
+        actionBtn.disabled = !textarea.value.trim();
+      }
+    };
+    textarea.addEventListener('input', syncSideComposer);
+    textarea.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        composer.requestSubmit();
+      }
+    });
+
+    if (liveState && handlers.onStop) {
+      const reqId = liveState.requestId;
+      actionBtn.addEventListener('click', () => handlers.onStop?.(reqId));
+    }
+
+    row.append(textarea, actionBtn);
+    card.appendChild(row);
+    composer.appendChild(card);
+
+    composer.addEventListener('submit', event => {
+      event.preventDefault();
+      if (liveState) {
+        return;
+      }
+      const question = textarea.value.trim();
+      if (!question) {
+        return;
+      }
+      const sentQuote = activeDraft?.quote || '';
+      const sentSnippet = activeDraft?.snippet || sentQuote;
+      const sentParentBranchId = activeDraft?.parentBranchId ?? null;
+      if (activeDraft) {
+        activeDraft = {...activeDraft, quote: '', snippet: ''};
+      }
+      card.querySelector('.mp-sidechat-reply-bar')?.remove();
+      textarea.value = '';
+      syncSideComposer();
+      const targetTurnIndex = currentBranch
+        ? currentBranch.parentTurnIndex
+        : activeDraft?.parentTurnIndex ??
+          Math.max(0, (conversation.turns?.length || 1) - 1);
+      const targetBlockIndex = currentBranch
+        ? currentBranch.anchor?.blockIndex
+        : activeDraft?.blockIndex;
+      void handlers.onSend({
+        conversationId: conversation.id,
+        ...(currentBranch ? {branchId: currentBranch.id} : {}),
+        ...(currentBranch ? {} : {parentBranchId: sentParentBranchId}),
+        parentTurnIndex: targetTurnIndex,
+        ...(Number.isInteger(targetBlockIndex)
+          ? {blockIndex: targetBlockIndex}
+          : {}),
+        anchorLabel:
+          currentBranch?.anchor?.label || sentQuote || question.slice(0, 40),
+        anchorSnippet:
+          currentBranch?.anchor?.snippet || sentSnippet || '',
+        question,
+      });
+    });
+
+    pane.appendChild(composer);
 
     hostEl.appendChild(pane);
     stream.scrollTop = stream.scrollHeight;

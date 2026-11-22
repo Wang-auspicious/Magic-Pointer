@@ -3,12 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {normalizeModelSelection} from './conversation_model';
 import {normalizePermissionPreset} from './permission_mode';
+import {
+  DEFAULT_AUTO_RESOLVE_DAYS,
+  DEFAULT_QUIET_AFTER_DAYS,
+  validateThreadLifecycleConfig,
+} from './project_thread_state';
 import type {
   ProjectContext,
   ProjectDetailsPatch,
   ProjectDocument,
   ProjectTextInput,
 } from './project_context';
+import type {ProjectMultiAgentConfig} from './project_multiagent_types';
 
 export interface ProjectRecord extends ProjectContext {
   id: string;
@@ -48,9 +54,73 @@ function copy(project: ProjectRecord): ProjectRecord {
     ...(project.environments
       ? {environments: structuredClone(project.environments)}
       : {}),
+    ...(project.multiAgentConfig
+      ? {multiAgentConfig: structuredClone(project.multiAgentConfig)}
+      : {}),
     sharedFiles: [...(project.sharedFiles || [])],
     documents: (project.documents || []).map(document => ({...document})),
   };
+}
+
+const VALID_NOTIFY_LEVELS = new Set(['all', 'coordinator', 'mentions', 'none']);
+const VALID_WAITING_COUNTS = new Set(['read', 'answered']);
+const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+function normalizeMultiAgentConfig(
+  previous: ProjectMultiAgentConfig | undefined,
+  patch: ProjectMultiAgentConfig,
+): ProjectMultiAgentConfig {
+  const merged: ProjectMultiAgentConfig = {
+    ...(previous ? structuredClone(previous) : {}),
+    ...structuredClone(patch),
+  };
+  if (merged.autoModeRules !== undefined) {
+    if (!Array.isArray(merged.autoModeRules)) {
+      throw new Error('Auto-mode rules must be a list.');
+    }
+    if (merged.autoModeRules.length > 50) {
+      throw new Error('A project can have at most 50 auto-mode rules.');
+    }
+    merged.autoModeRules = merged.autoModeRules
+      .map(rule => String(rule).trim())
+      .filter(Boolean);
+  }
+  if (
+    merged.notifyLevel !== undefined &&
+    !VALID_NOTIFY_LEVELS.has(merged.notifyLevel)
+  ) {
+    throw new Error('Unknown project notification level.');
+  }
+  if (
+    merged.waitingCount !== undefined &&
+    !VALID_WAITING_COUNTS.has(merged.waitingCount)
+  ) {
+    throw new Error('Unknown waiting count mode.');
+  }
+  if (
+    merged.coordinatorEffort !== undefined &&
+    !VALID_EFFORTS.has(merged.coordinatorEffort)
+  ) {
+    throw new Error('Unknown coordinator reasoning effort.');
+  }
+  if (
+    merged.workerEffort !== undefined &&
+    !VALID_EFFORTS.has(merged.workerEffort)
+  ) {
+    throw new Error('Unknown worker reasoning effort.');
+  }
+  if (
+    patch.quietAfterDays !== undefined ||
+    patch.autoResolveDays !== undefined
+  ) {
+    const quiet = merged.quietAfterDays ?? DEFAULT_QUIET_AFTER_DAYS;
+    const autoResolve = merged.autoResolveDays ?? DEFAULT_AUTO_RESOLVE_DAYS;
+    const validation = validateThreadLifecycleConfig(quiet, autoResolve);
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Invalid thread lifecycle settings.');
+    }
+  }
+  return merged;
 }
 
 export function createProjectStore({
@@ -231,7 +301,15 @@ export function createProjectStore({
       return {ok: false, error: 'Enter a project name.'};
     }
     const next = {...previous, updatedAt: now()};
-    for (const field of ['name', 'description', 'instructions'] as const) {
+    for (const field of [
+      'name',
+      'description',
+      'instructions',
+      'goal',
+      'color',
+      'projectIcon',
+      'coordinatorSessionId',
+    ] as const) {
       if (patch[field] !== undefined) {
         next[field] = patch[field].trim();
       }
@@ -247,7 +325,16 @@ export function createProjectStore({
     if (patch.archived !== undefined) {
       next.archived = patch.archived;
     }
+    if (patch.paused !== undefined) {
+      next.paused = patch.paused;
+    }
     try {
+      if (patch.multiAgentConfig !== undefined) {
+        next.multiAgentConfig = normalizeMultiAgentConfig(
+          previous.multiAgentConfig,
+          patch.multiAgentConfig,
+        );
+      }
       if (patch.environments !== undefined) {
         const environments = structuredClone(patch.environments);
         const ids = new Set<string>();

@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import type {RuntimePlugin, PromptSections} from './agent_plugins';
+import {isLearnWorkMode} from './agent';
 
 export function generativeUiPlugin(): RuntimePlugin {
   return {
@@ -10,8 +11,10 @@ export function generativeUiPlugin(): RuntimePlugin {
       ctx.get<PromptSections>('prompt').add({
         id: 'generative-ui',
         order: 80,
-        render: () =>
-          'When interactive charts, diagrams, adjustable calculations, forms, or comparisons would help, discover and call UI.describe before producing an inline OpenUI interface. Use the task’s actual data. Ordinary answers remain Markdown.',
+        render: options =>
+          isLearnWorkMode(options.workMode)
+            ? ''
+            : 'When interactive charts, diagrams, adjustable calculations, forms, or comparisons would help, discover and call UI.describe before producing an inline OpenUI interface. Use the task’s actual data. Ordinary answers remain Markdown.',
       });
       ctx.registerTool({
         name: 'UI.describe',

@@ -50,6 +50,30 @@ internal static class DesktopHost
     [DllImport("user32.dll")] static extern short VkKeyScanW(char c);
     [DllImport("user32.dll")] static extern uint MapVirtualKeyW(uint code, uint type);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+    [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr h, ref Point p);
+    [DllImport("user32.dll")] static extern IntPtr ChildWindowFromPointEx(IntPtr parent, Point pt, uint flags);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeoutW(IntPtr h, uint msg, IntPtr w, IntPtr l, uint fuFlags, uint uTimeout, out IntPtr res);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr h);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr FindWindowW(string cls,string title);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int nIndex);
+    [StructLayout(LayoutKind.Sequential)] struct MonitorInfo { public int cbSize; public Rect monitor; public Rect work; public uint flags; }
+    delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref Rect lprcMonitor, IntPtr dwData);
+    [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MonitorInfo lpmi);
+    [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr hWndNewOwner);
+    [DllImport("user32.dll")] static extern bool CloseClipboard();
+    [DllImport("user32.dll")] static extern bool EmptyClipboard();
+    [DllImport("user32.dll")] static extern bool IsClipboardFormatAvailable(uint format);
+    [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint uFormat);
+    [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormatW(string lpszFormat);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalFree(IntPtr hMem);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr hMem);
+    [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr hMem);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h,int a,out int v,int n);
@@ -234,11 +258,105 @@ internal static class DesktopHost
     static uint LastInputTick(){var info=new LastInputInfo{cbSize=(uint)Marshal.SizeOf(typeof(LastInputInfo))};if(!GetLastInputInfo(ref info))throw new Exception("last_input_unavailable");return info.dwTime;}
     static uint RawIdleMs(){return unchecked((uint)Environment.TickCount)-LastInputTick();}
     static uint UserIdleMs(){uint last=LastInputTick();return LastAgentInputTick!=0&&last==LastAgentInputTick?UInt32.MaxValue:unchecked((uint)Environment.TickCount)-last;}
-    static void WaitForUserIdle(){var watch=Stopwatch.StartNew();while(UserIdleMs()<1200){CheckCancellation();if(watch.ElapsedMilliseconds>=2000)throw new Exception("computer_use_busy");Thread.Sleep(50);}CheckCancellation();}
+    static void WaitForUserIdle(){var watch=Stopwatch.StartNew();while(UserIdleMs()<350){CheckCancellation();if(watch.ElapsedMilliseconds>=2000)throw new Exception("computer_use_busy");Thread.Sleep(40);}CheckCancellation();}
     static T WithInputOwnership<T>(Func<T> action){using(var mutex=new Mutex(false,"Local\\MagicPointer.RealInput")){bool owned=false;try{try{owned=mutex.WaitOne(0);}catch(AbandonedMutexException){owned=true;}if(!owned)throw new Exception("computer_use_busy");WaitForUserIdle();return action();}finally{if(owned)mutex.ReleaseMutex();}}}
-    static void CheckUserInterference(){CheckCancellation();uint latest=LastInputTick();if(latest!=ActionStartInputTick&&latest!=LastAgentInputTick)throw new Exception("computer_use_interrupted");}
+    static IntPtr MakeLParam(int x,int y){return new IntPtr((y<<16)|(x&0xFFFF));}
+    static IntPtr DeepestChildAt(IntPtr rootHwnd,int sx,int sy){IntPtr cur=rootHwnd;for(int i=0;i<12;i++){var pt=new Point(sx,sy);if(!ScreenToClient(cur,ref pt))break;IntPtr child=ChildWindowFromPointEx(cur,pt,3);if(child==IntPtr.Zero||child==cur)break;cur=child;}return cur;}
+    static IntPtr BgEditableChild(IntPtr rootHwnd){IntPtr found=IntPtr.Zero;EnumChildWindows(rootHwnd,delegate(IntPtr child,IntPtr unused){if(!IsWindowVisible(child)||!IsWindowEnabled(child))return true;string cls=ClassOf(child).ToLowerInvariant();if(cls=="edit"||cls.Contains("richedit")||cls.Contains("scintilla")||cls.Contains("renderwidgethost")||cls.Contains("notepad")||cls.Contains("textbox")){found=child;return false;}return true;},IntPtr.Zero);return found==IntPtr.Zero?rootHwnd:found;}
+    static object BgInput(IDictionary<string,object> a){string action=Str(a,"action").ToLowerInvariant();if(action=="noop")return new{ok=true,action="noop",method="background_probe",disruptedUser=false};
+        var elem=Obj(Get(a,"element"));var winObj=Obj(Get(a,"window"));long hwndVal=Convert.ToInt64(Get(winObj,"hwnd",0));
+        if(elem.Count>0&&(action=="click"||action=="type_text")){try{var el=FindElement(elem);if(IsElevated((uint)el.Current.ProcessId))throw new Exception("target_elevated");object pat;
+            if(action=="click"){if(el.TryGetCurrentPattern(InvokePattern.Pattern,out pat)){((InvokePattern)pat).Invoke();return new{ok=true,usedBackend="win32_bg_uia",method="uia_invoke",disruptedUser=false};}
+                if(el.TryGetCurrentPattern(TogglePattern.Pattern,out pat)){((TogglePattern)pat).Toggle();return new{ok=true,usedBackend="win32_bg_uia",method="uia_toggle",disruptedUser=false};}
+                if(el.TryGetCurrentPattern(SelectionItemPattern.Pattern,out pat)){((SelectionItemPattern)pat).Select();return new{ok=true,usedBackend="win32_bg_uia",method="uia_select",disruptedUser=false};}}
+            if(action=="type_text"&&Get(a,"submit",false).Equals(false)&&Get(a,"clear",false).Equals(true)&&el.TryGetCurrentPattern(ValuePattern.Pattern,out pat)){var vp=(ValuePattern)pat;if(!vp.Current.IsReadOnly){vp.SetValue(Str(a,"text"));return new{ok=true,usedBackend="win32_bg_uia",method="uia_value",disruptedUser=false};}}
+        }catch(Exception ex){if(ex.Message=="target_elevated")throw;}}
+        IntPtr hwnd=new IntPtr(hwndVal);if(hwnd==IntPtr.Zero||!IsWindow(hwnd))throw new Exception("window_unavailable");if(IsElevated(Pid(hwnd)))throw new Exception("target_elevated");
+        int x=Num(a,"x"),y=Num(a,"y");
+        if(action=="click"){IntPtr child=DeepestChildAt(hwnd,x,y);var pt=new Point(x,y);ScreenToClient(child,ref pt);IntPtr lp=MakeLParam(pt.x,pt.y);int cnt=Math.Max(1,Math.Min(2,Num(a,"count",1)));
+            if(Str(a,"button","left")=="right"){PostMessageW(child,0x0204,new IntPtr(2),lp);Thread.Sleep(18);PostMessageW(child,0x0205,IntPtr.Zero,lp);}
+            else{for(int i=0;i<cnt;i++){PostMessageW(child,i==1?0x0203u:0x0201u,new IntPtr(1),lp);Thread.Sleep(18);PostMessageW(child,0x0202,IntPtr.Zero,lp);if(i+1<cnt)Thread.Sleep(35);}}
+            return new{ok=true,usedBackend="win32_bg_postmessage",targetHwnd=child.ToInt64(),disruptedUser=false};}
+        if(action=="scroll"){IntPtr child=DeepestChildAt(hwnd,x,y);int dy=Num(a,"dy",-120);PostMessageW(child,0x020A,new IntPtr((dy&0xFFFF)<<16),MakeLParam(x,y));return new{ok=true,usedBackend="win32_bg_postmessage",targetHwnd=child.ToInt64(),disruptedUser=false};}
+        if(action=="type_text"){IntPtr target=(Get(a,"x")!=null)?DeepestChildAt(hwnd,x,y):BgEditableChild(hwnd);if(Get(a,"clear",false).Equals(true)){PostMessageW(target,0x00B1,IntPtr.Zero,new IntPtr(-1));Thread.Sleep(10);}
+            foreach(char c in Str(a,"text")){if(c=='\r')continue;if(c=='\n'){PostMessageW(target,0x0100,new IntPtr(13),new IntPtr(1));PostMessageW(target,0x0101,new IntPtr(13),new IntPtr(unchecked((int)0xC0000001)));}else PostMessageW(target,0x0102,new IntPtr(c),new IntPtr(1));Thread.Sleep(2);}
+            return new{ok=true,usedBackend="win32_bg_postmessage",targetHwnd=target.ToInt64(),disruptedUser=false};}
+        if(action=="press_key"){var ks=KeyNames(Str(a,"keys")).SelectMany(KeyCodes).ToArray();if(ks.Any(k=>k==91||k==92))throw new Exception("windows_key_rejected");IntPtr target=BgEditableChild(hwnd);
+            if(ks.Length==1){PostMessageW(target,0x0100,new IntPtr(ks[0]),new IntPtr(1));Thread.Sleep(12);PostMessageW(target,0x0101,new IntPtr(ks[0]),new IntPtr(unchecked((int)0xC0000001)));return new{ok=true,usedBackend="win32_bg_postmessage",targetHwnd=target.ToInt64(),disruptedUser=false};}
+            return new{ok=false,needsForeground=true,usedBackend="win32_bg_unsupported_chord"};}
+        return new{ok=false,needsForeground=true,usedBackend="win32_bg_unsupported"};}
+    static object WindowManage(IDictionary<string,object> a){long hwndVal=Convert.ToInt64(Get(a,"hwnd",0));IntPtr hwnd=new IntPtr(hwndVal);if(hwnd==IntPtr.Zero||!IsWindow(hwnd))throw new Exception("window_unavailable");
+        if(IsElevated(Pid(hwnd)))throw new Exception("target_elevated");string act=Str(a,"action","restore").ToLowerInvariant();
+        if(act=="minimize")ShowWindow(hwnd,6);else if(act=="maximize")ShowWindow(hwnd,3);else if(act=="restore")ShowWindow(hwnd,9);
+        else if(act=="close")PostMessageW(hwnd,0x0010,IntPtr.Zero,IntPtr.Zero);
+        else if(act=="move_resize"){int[] b=Bounds(hwnd);int nx=Get(a,"x")==null?b[0]:Num(a,"x"),ny=Get(a,"y")==null?b[1]:Num(a,"y"),nw=Get(a,"width")==null?(b[2]-b[0]):Num(a,"width"),nh=Get(a,"height")==null?(b[3]-b[1]):Num(a,"height");SetWindowPos(hwnd,IntPtr.Zero,nx,ny,Math.Max(160,nw),Math.Max(120,nh),0x0004|0x0010);}
+        else throw new Exception("unknown_window_action:"+act);return new{ok=true,action=act,hwnd=hwndVal,usedBackend="win32_window_manage"};}
+    static void CheckUserInterference(){CheckCancellation();if((GetAsyncKeyState(0x1B)&0x8000)!=0)throw new Exception("computer_use_escape_stop");uint latest=LastInputTick();if(latest!=ActionStartInputTick&&latest!=LastAgentInputTick)throw new Exception("computer_use_interrupted");}
+    static string ProcessName(uint pid){try{return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName??"";}catch{return "";}}
+    static string BuildCfHtmlPayload(string html){
+        string body=html??"";
+        const string headerTpl="Version:0.9\r\nStartHTML:{0:D10}\r\nEndHTML:{1:D10}\r\nStartFragment:{2:D10}\r\nEndFragment:{3:D10}\r\n";
+        const string prefix="<html><body>\r\n<!--StartFragment-->";
+        const string suffix="<!--EndFragment-->\r\n</body></html>";
+        int headerLen=System.Text.Encoding.UTF8.GetByteCount(String.Format(headerTpl,0,0,0,0));
+        int prefixLen=System.Text.Encoding.UTF8.GetByteCount(prefix);
+        int bodyLen=System.Text.Encoding.UTF8.GetByteCount(body);
+        int suffixLen=System.Text.Encoding.UTF8.GetByteCount(suffix);
+        int startHtml=headerLen;
+        int startFrag=headerLen+prefixLen;
+        int endFrag=startFrag+bodyLen;
+        int endHtml=endFrag+suffixLen;
+        return String.Format(headerTpl,startHtml,endHtml,startFrag,endFrag)+prefix+body+suffix;
+    }
+    static void WriteClipboardBytes(uint fmt,byte[] payload){
+        IntPtr hMem=GlobalAlloc(0x0002,new UIntPtr((uint)payload.Length));
+        if(hMem==IntPtr.Zero)throw new Exception("clipboard_alloc_failed");
+        bool locked=false;
+        try{
+            IntPtr ptr=GlobalLock(hMem);
+            if(ptr==IntPtr.Zero)throw new Exception("clipboard_lock_failed");
+            locked=true;
+            Marshal.Copy(payload,0,ptr,payload.Length);
+        }finally{if(locked)GlobalUnlock(hMem);}
+        if(SetClipboardData(fmt,hMem)==IntPtr.Zero){GlobalFree(hMem);throw new Exception("clipboard_set_data_failed");}
+    }
+    static bool SetClipboardRich(string text,string format){
+        string plain=text??"";
+        if(format=="html"){
+            string stripped=System.Text.RegularExpressions.Regex.Replace(plain,"<[^>]+>","").Replace("&nbsp;"," ").Replace("&lt;","<").Replace("&gt;",">").Replace("&amp;","&");
+            if(!String.IsNullOrWhiteSpace(stripped))plain=stripped;
+        }
+        byte[] unicodeBytes=System.Text.Encoding.Unicode.GetBytes(plain+"\0");
+        byte[] htmlBytes=format=="html"?System.Text.Encoding.UTF8.GetBytes(BuildCfHtmlPayload(text??"")+"\0"):null;
+        bool opened=false;
+        for(int attempt=0;attempt<10;attempt++){if(OpenClipboard(IntPtr.Zero)){opened=true;break;}Thread.Sleep(15);}
+        if(!opened)return false;
+        try{
+            if(!EmptyClipboard())return false;
+            WriteClipboardBytes(13u,unicodeBytes);
+            if(htmlBytes!=null){uint cfHtml=RegisterClipboardFormatW("HTML Format");if(cfHtml!=0)WriteClipboardBytes(cfHtml,htmlBytes);}
+        }finally{CloseClipboard();}
+        if(plain.Length==0)return true;
+        for(int check=0;check<5;check++){
+            if(IsClipboardFormatAvailable(13u))return true;
+            Thread.Sleep(10);
+        }
+        return false;
+    }
     static void Send(params Input[] entries){if(SendInput((uint)entries.Length,entries,Marshal.SizeOf(typeof(Input)))!=entries.Length)throw new Exception("send_input_failed");LastAgentInputTick=LastInputTick();}
     static void MoveCursor(int x,int y){if(!SetCursorPos(x,y))throw new Exception("cursor_position_failed");LastAgentInputTick=LastInputTick();}
+    static void GlideCursor(int targetX,int targetY,int durationMs){
+        Point start;if(!GetCursorPos(out start)||durationMs<=0){MoveCursor(targetX,targetY);return;}
+        int dx=targetX-start.x,dy=targetY-start.y;double dist=Math.Sqrt(dx*dx+dy*dy);
+        if(dist<4.0){MoveCursor(targetX,targetY);return;}
+        int steps=Math.Max(6,Math.Min(20,durationMs/14));int stepDelay=Math.Max(6,durationMs/steps);
+        for(int s=1;s<=steps;s++){
+            if(s%3==1)CheckUserInterference();
+            double t=(double)s/steps,inv=1.0-t,eased=1.0-(inv*inv*inv);
+            MoveCursor(start.x+(int)Math.Round(dx*eased),start.y+(int)Math.Round(dy*eased));
+            if(s<steps)Thread.Sleep(stepDelay);
+        }
+    }
     static void MouseInput(uint flags,int value=0){Send(new Input{type=0,data=new InputUnion{mouse=new Mouse{flags=flags,data=unchecked((uint)value)}}});}
     static Input KeyEvent(ushort key,bool up){uint flags=(up?2u:0u)|(ExtendedKeys.Contains(key)?1u:0u);return new Input{type=1,data=new InputUnion{keyboard=new Keyboard{key=key,scan=(ushort)MapVirtualKeyW(key,0),flags=flags}}};}
     static void Key(ushort key,bool up){Send(KeyEvent(key,up));}
@@ -259,6 +377,9 @@ internal static class DesktopHost
     // Line breaks and tabs are keys, not characters: most editors ignore a Unicode U+000A.
     static void Type(string text){int index=0;for(int i=0;i<text.Length;i++){char c=text[i];if(index++%8==0)CheckUserInterference();
         if(c=='\r'){if(i+1<text.Length&&text[i+1]=='\n')continue;Chord("enter");}else if(c=='\n')Chord("enter");else if(c=='\t')Chord("tab");else UnicodeChar(c);}}
+    static readonly HashSet<string> ShellOverlayClasses = new HashSet<string>(StringComparer.OrdinalIgnoreCase){
+        "Shell_TrayWnd","NotifyIconOverflowWindow","TopLevelWindowForOverflowXamlIsland","#32768","Xaml_WindowedPopupClass"
+    };
     static IntPtr RootAt(int x,int y){return GetAncestor(WindowFromPoint(new Point(x,y)),2);}
     static void CheckTarget(IDictionary<string,object> a, bool foreground, int? x=null,int? y=null){var expected=Obj(Get(a,"window"));if(expected.Count==0)throw new Exception("missing_action_lease");long hwnd=Convert.ToInt64(Get(expected,"hwnd",0));var live=Window(new IntPtr(hwnd));
         if(Convert.ToInt64(live["pid"])!=Convert.ToInt64(Get(expected,"pid",Get(expected,"processId",0))))throw new Exception("stale_window_process");
@@ -267,33 +388,47 @@ internal static class DesktopHost
         uint pid=(uint)Convert.ToInt64(live["pid"]);
         if(foreground){var front=GetForegroundWindow();if(front.ToInt64()!=hwnd&&Pid(front)!=pid)throw new Exception("focus_lost");}
         if(x.HasValue){var root=RootAt(x.Value,y.Value);if(root.ToInt64()==hwnd)return;
+            if(ShellOverlayClasses.Contains(ClassOf(root))){if(root!=IntPtr.Zero&&IsElevated(Pid(root)))throw new Exception("target_elevated");return;}
             // A menu, dropdown or dialog of the same process is part of the target surface; anything else in the way is an obstruction.
-            if(Pid(root)!=pid)throw new Exception("target_obscured");}}
+            if(Pid(root)!=pid)throw new Exception("target_obscured:"+ProcessName(Pid(root))+"["+ClassOf(root)+"]");}}
     static bool Activate(IntPtr hwnd){if(IsIconic(hwnd))ShowWindow(hwnd,9);if(SetForegroundWindow(hwnd)&&GetForegroundWindow()==hwnd)return true;
         uint ignored;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out ignored),self=GetCurrentThreadId();bool attached=foregroundThread!=0&&foregroundThread!=self&&AttachThreadInput(self,foregroundThread,true);
         try{BringWindowToTop(hwnd);SetForegroundWindow(hwnd);}finally{if(attached)AttachThreadInput(self,foregroundThread,false);}
         if(GetForegroundWindow()!=hwnd){Key(18,false);Key(18,true);SetForegroundWindow(hwnd);}
         return GetForegroundWindow()==hwnd;}
     static object Act(IDictionary<string,object> a){string action=Str(a,"action");long hwnd=Convert.ToInt64(Get(Obj(Get(a,"window")),"hwnd",0));
-        bool pointer=new[]{"click","scroll","drag","move"}.Contains(action);int x=Num(a,"x"),y=Num(a,"y");
-        using(var mutex=new Mutex(false,"Local\\MagicPointer.RealInput")){bool owned=false;try{try{owned=mutex.WaitOne(0);}catch(AbandonedMutexException){owned=true;}if(!owned)throw new Exception("computer_use_busy");
+        bool pointer=new[]{"click","scroll","drag","move"}.Contains(action)||(action=="paste"&&Get(a,"x")!=null&&Get(a,"y")!=null);int x=Num(a,"x"),y=Num(a,"y");
+        bool screenDirect=Get(a,"screen_direct",false).Equals(true);
+        using(var mutex=new Mutex(false,"Local\\MagicPointer.RealInput")){bool owned=false;Point savedCursor=new Point(0,0);bool restoreCursor=false;try{try{owned=mutex.WaitOne(0);}catch(AbandonedMutexException){owned=true;}if(!owned)throw new Exception("computer_use_busy");
             WaitForUserIdle();ActionStartInputTick=LastInputTick();
             if(action=="activate_window"){CheckTarget(a,false);return new{ok=Activate(new IntPtr(hwnd)),usedBackend="win32_activate"};}
-            CheckTarget(a,!pointer,pointer?(int?)x:null,pointer?(int?)y:null);
+            if(pointer&&screenDirect){if(x<-32768||y<-32768)throw new Exception("invalid_coordinates");var hitRoot=RootAt(x,y);if(hitRoot!=IntPtr.Zero&&IsElevated(Pid(hitRoot)))throw new Exception("target_elevated");}
+            else if(!pointer&&screenDirect){var front=GetForegroundWindow();if(front!=IntPtr.Zero&&IsElevated(Pid(front)))throw new Exception("target_elevated");}
+            else{CheckTarget(a,!pointer,pointer?(int?)x:null,pointer?(int?)y:null);}
+            if(pointer&&action!="move"&&Get(a,"restore_cursor",false).Equals(true)&&GetCursorPos(out savedCursor)){restoreCursor=true;}
             object dropWindow=null;
-            if(pointer){int glide=Math.Max(0,Math.Min(10000,Num(a,"duration_ms",0)));if(action=="move"&&glide>0){Point start;GetCursorPos(out start);int steps=Math.Max(1,Math.Min(120,glide/16));for(int step=1;step<=steps;step++){CheckUserInterference();double t=(double)step/steps,eased=t*t*(3-2*t);MoveCursor(start.x+(int)Math.Round((x-start.x)*eased),start.y+(int)Math.Round((y-start.y)*eased));Thread.Sleep(glide/steps);}}else{CheckUserInterference();MoveCursor(x,y);}}
+            if(pointer){int glide=Get(a,"duration_ms")!=null?Math.Max(0,Math.Min(10000,Num(a,"duration_ms",0))):(action=="move"?220:160);GlideCursor(x,y,glide);}
             if(action=="click"){uint down=Str(a,"button","left")=="right"?8u:Str(a,"button","left")=="middle"?32u:2u;for(int i=0;i<Math.Min(3,Math.Max(1,Num(a,"count",1)));i++){CheckUserInterference();try{MouseInput(down);Thread.Sleep(35);}finally{MouseInput(down*2);}if(i+1<Num(a,"count",1))Thread.Sleep(60);}}
             else if(action=="scroll"){if(Num(a,"dy")!=0){CheckUserInterference();MouseInput(0x800,Num(a,"dy"));}if(Num(a,"dx")!=0){CheckUserInterference();MouseInput(0x1000,Num(a,"dx"));}}
             else if(action=="drag"){int tx=Num(a,"to_x"),ty=Num(a,"to_y");
                 // The drop may land in another application (file into a chat window); it only has to be a real, non-elevated window.
-                var drop=RootAt(tx,ty);if(drop==IntPtr.Zero)throw new Exception("drop_target_missing");if(IsElevated(Pid(drop)))throw new Exception("target_elevated");dropWindow=new{hwnd=drop.ToInt64(),pid=Pid(drop),class_name=ClassOf(drop)};
+                var drop=RootAt(tx,ty);if(drop==IntPtr.Zero&&!screenDirect)throw new Exception("drop_target_missing");if(drop!=IntPtr.Zero){if(IsElevated(Pid(drop)))throw new Exception("target_elevated");dropWindow=new{hwnd=drop.ToInt64(),pid=Pid(drop),class_name=ClassOf(drop)};}
                 int duration=Math.Max(0,Math.Min(3000,Num(a,"duration_ms",200)));var points=Arr(Get(a,"path")).Select(Obj).ToArray();try{MouseInput(2);if(points.Length>1){foreach(var point in points){CheckUserInterference();MoveCursor(Num(point,"x"),Num(point,"y"));Thread.Sleep(duration/points.Length);}}else for(int i=1;i<=20;i++){CheckUserInterference();MoveCursor(x+(tx-x)*i/20,y+(ty-y)*i/20);Thread.Sleep(duration/20);}}finally{MouseInput(4);}}
             else if(action=="type_text"){if(Get(a,"clear",false).Equals(true)){Chord("ctrl+a");Chord("backspace");}Type(Str(a,"text"));}
+            else if(action=="paste"){
+                if(Get(a,"x")!=null&&Get(a,"y")!=null){CheckUserInterference();try{MouseInput(2);Thread.Sleep(35);}finally{MouseInput(4);}Thread.Sleep(45);}
+                string pasteText=Str(a,"text");string pasteFmt=Str(a,"format","text").ToLowerInvariant();
+                if(pasteFmt!="html")pasteFmt="text";
+                if(!SetClipboardRich(pasteText,pasteFmt))throw new Exception("clipboard_set_failed");
+                if(Get(a,"clear",false).Equals(true)){CheckUserInterference();Chord("ctrl+a");Chord("backspace");Thread.Sleep(20);}
+                CheckUserInterference();Chord("ctrl+v");
+                if(Get(a,"submit",false).Equals(true)){Thread.Sleep(25);CheckUserInterference();Chord("enter");}
+            }
             else if(action=="press_key")Chord(Str(a,"keys"));
             else if(action=="key_down"||action=="key_up"){foreach(var code in KeyNames(Str(a,"keys")).SelectMany(KeyCodes)){if(code==91||code==92)throw new Exception("windows_key_rejected");Key(code,action=="key_up");if(action=="key_down")HeldKeys.Add(code);else HeldKeys.Remove(code);}}
             else if(action!="move")throw new Exception("unknown_input_action");
-            return new{ok=true,usedBackend="win32_send_input",dropWindow=dropWindow,verification=new{matched=false,status="unavailable"}};
-        }finally{if(owned)mutex.ReleaseMutex();}}}
+            return new{ok=true,usedBackend="win32_send_input",cursorRestored=restoreCursor,dropWindow=dropWindow,verification=new{matched=false,status="unavailable"}};
+        }catch(Exception ex){if(ex.Message=="computer_use_escape_stop"||ex.Message=="computer_use_interrupted"){try{ReleaseInput();}catch{}}throw;}finally{if(restoreCursor){try{MoveCursor(savedCursor.x,savedCursor.y);}catch{}}if(owned)mutex.ReleaseMutex();}}}
     // Recovery after a crash or timeout of an earlier host: nothing the agent pressed may stay down.
     static object ReleaseInput(){foreach(var key in HeldKeys.ToArray())Key(key,true);HeldKeys.Clear();var released=new List<int>();
         foreach(ushort key in new ushort[]{16,17,18,160,161,162,163,164,165}){if((GetAsyncKeyState(key)&0x8000)!=0){Key(key,true);released.Add(key);}}
@@ -316,7 +451,263 @@ internal static class DesktopHost
     static object ImageOperation(IDictionary<string,object> a){using(var image=Image.FromFile(Str(a,"path"))){var region=Arr(Get(a,"rect")).Select(Convert.ToInt32).ToArray();var r=region.Length==4?new Rectangle(region[0],region[1],region[2],region[3]):new Rectangle(0,0,image.Width,image.Height);r.Intersect(new Rectangle(0,0,image.Width,image.Height));if(r.Width<1||r.Height<1)throw new Exception("empty_image_region");
         using(var output=new Bitmap(r.Width,r.Height)){using(var graphics=Graphics.FromImage(output)){graphics.DrawImage(image,new Rectangle(0,0,r.Width,r.Height),r,GraphicsUnit.Pixel);foreach(var raw in Arr(Get(a,"strokes"))){var points=Arr(raw).Select(v=>Obj(v)).Select(v=>new PointF(Num(v,"x")-r.X,Num(v,"y")-r.Y)).ToArray();if(points.Length>1)using(var pen=new Pen(Color.FromArgb(230,60,140,255),3))graphics.DrawLines(pen,points);}}
             string target=Str(a,"output");if(target!=""){Directory.CreateDirectory(Path.GetDirectoryName(target));output.Save(target,ImageFormat.Png);}using(var stream=new MemoryStream()){output.Save(stream,ImageFormat.Png);return new{path=target,png=Convert.ToBase64String(stream.ToArray()),width=output.Width,height=output.Height,usedBackend="native_image"};}}}}
-    static object Dispatch(string method,Dictionary<string,object> a){if(method=="release_input")return ReleaseInput();if(method=="ping")return new{ok=true};if(method=="resolve_keys")return KeyNames(Str(a,"keys")).SelectMany(KeyCodes).Distinct().Select(k=>(int)k).ToArray();if(method=="input_idle")return new{idleMs=(long)RawIdleMs(),userIdleMs=(long)UserIdleMs(),usedBackend="win32_last_input"};if(method=="windows")return Windows();if(method=="window")return Window(new IntPtr(Convert.ToInt64(Get(a,"hwnd",0))));if(method=="elements")return Elements(Convert.ToInt64(Get(a,"hwnd",0)),Num(a,"limit",3000));if(method=="element")return ReadElement(Obj(Get(a,"element")));if(method=="surface_facts")return SurfaceFacts(new IntPtr(Convert.ToInt64(Get(a,"hwnd",0))));if(method=="uia")return Uia(a);if(method=="input")return Act(a);if(method=="capture")return Capture(a);if(method=="image")return ImageOperation(a);if(method=="cursor"){Point p;GetCursorPos(out p);return new{x=p.x,y=p.y,hwnd=RootAt(p.x,p.y).ToInt64(),foreground=GetForegroundWindow().ToInt64()};}if(method=="launch")return WithInputOwnership(()=>{var child=Process.Start(new ProcessStartInfo(Str(a,"app")){UseShellExecute=true});return new{ok=child!=null,pid=child==null?0:child.Id,usedBackend="shell_execute"};});throw new Exception("unknown_method:"+method);}
+    sealed class TrayWalk {
+        public readonly object Sync=new object();
+        public Dictionary<string,object> Chevron;
+        public readonly List<object> Icons=new List<object>();
+        public readonly List<object> MenuItems=new List<object>();
+        public readonly HashSet<string> Seen=new HashSet<string>();
+        public readonly Stopwatch Watch=Stopwatch.StartNew();
+        readonly int[] tbBox;
+        public TrayWalk(int[] tbBox){this.tbBox=tbBox;}
+        static string SafeStr(Func<string> getter){try{return getter()??"";}catch{return "";}}
+        static bool SafeOffscreen(AutomationElement el){try{return el.Current.IsOffscreen;}catch{return false;}}
+        static ControlType SafeCt(AutomationElement el){try{return el.Current.ControlType;}catch{return null;}}
+        static System.Windows.Rect SafeRect(AutomationElement el){try{return el.Current.BoundingRectangle;}catch{return System.Windows.Rect.Empty;}}
+        void WalkContainer(IntPtr hwnd,string container,bool onlyMenu,int maxNodes,int maxDepth,int budgetMs){
+            if(hwnd==IntPtr.Zero||!IsWindowVisible(hwnd))return;
+            AutomationElement root;try{root=AutomationElement.FromHandle(hwnd);}catch{return;}
+            if(root==null)return;
+            var queue=new Queue<Tuple<AutomationElement,int>>();
+            queue.Enqueue(Tuple.Create(root,0));
+            int visited=0;
+            int minTrayX=tbBox!=null&&tbBox.Length==4?(tbBox[0]+(int)((tbBox[2]-tbBox[0])*0.45)):0;
+            while(queue.Count>0&&visited<maxNodes&&Watch.ElapsedMilliseconds<budgetMs){
+                var pair=queue.Dequeue();visited++;
+                var el=pair.Item1;int depth=pair.Item2;
+                if(depth>0){
+                    var rect=SafeRect(el);
+                    if(!rect.IsEmpty&&rect.Width>=6&&rect.Height>=6&&rect.Width<=420&&rect.Height<=140&&!SafeOffscreen(el)){
+                        var ct=SafeCt(el);
+                        string nm=SafeStr(()=>el.Current.Name).Trim();
+                        string aid=SafeStr(()=>el.Current.AutomationId).Trim();
+                        int cx=(int)Math.Round(rect.Left+rect.Width/2.0);
+                        int cy=(int)Math.Round(rect.Top+rect.Height/2.0);
+                        int[] box=new[]{(int)Math.Round(rect.Left),(int)Math.Round(rect.Top),(int)Math.Round(rect.Right),(int)Math.Round(rect.Bottom)};
+                        if(onlyMenu){
+                            if((ct==ControlType.MenuItem||ct==ControlType.Button)&&nm!=""){
+                                lock(Sync){if(Seen.Add("m:"+nm+":"+cx+":"+cy))MenuItems.Add(new{name=nm,automationId=aid,x=cx,y=cy,bbox=box,container=container});}
+                            }
+                        }else if(container=="taskbar"){
+                            bool isChevron=ct==ControlType.Button&&(
+                                nm.IndexOf("显示隐藏的图标",StringComparison.OrdinalIgnoreCase)>=0||
+                                nm.IndexOf("Show hidden icons",StringComparison.OrdinalIgnoreCase)>=0||
+                                nm.IndexOf("Notification Chevron",StringComparison.OrdinalIgnoreCase)>=0||
+                                aid.IndexOf("OverflowButton",StringComparison.OrdinalIgnoreCase)>=0||
+                                aid.IndexOf("SystemTrayChevron",StringComparison.OrdinalIgnoreCase)>=0);
+                            if(isChevron){
+                                lock(Sync){Chevron=new Dictionary<string,object>{{"name",nm},{"automationId",aid},{"x",cx},{"y",cy},{"bbox",box}};}
+                            }else if((ct==ControlType.Button||ct==ControlType.MenuItem)&&nm!=""&&(cx>=minTrayX||aid.StartsWith("NotifyItemIcon")||aid.StartsWith("SystemTrayIcon"))){
+                                lock(Sync){if(Seen.Add("t:"+nm+":"+cx+":"+cy))Icons.Add(new{name=nm,automationId=aid,x=cx,y=cy,bbox=box,container="taskbar"});}
+                            }
+                        }else{
+                            if((ct==ControlType.Button||ct==ControlType.ListItem||ct==ControlType.MenuItem)&&nm!=""){
+                                lock(Sync){if(Seen.Add(container+":"+nm+":"+cx+":"+cy))Icons.Add(new{name=nm,automationId=aid,x=cx,y=cy,bbox=box,container=container});}
+                            }
+                        }
+                    }
+                }
+                if(depth<maxDepth){
+                    try{
+                        var children=el.FindAll(TreeScope.Children,Condition.TrueCondition);
+                        for(int i=0;i<children.Count;i++)queue.Enqueue(Tuple.Create(children[i],depth+1));
+                    }catch{}
+                }
+            }
+        }
+        public void Run(){
+            IntPtr tb=FindWindowW("Shell_TrayWnd",null);
+            WalkContainer(tb,"taskbar",false,220,10,450);
+            var overflow=new List<IntPtr>();
+            var menus=new List<IntPtr>();
+            EnumWindows(delegate(IntPtr h,IntPtr unused){
+                try{
+                    if(!IsWindowVisible(h)||Cloaked(h))return true;
+                    string cls=ClassOf(h);
+                    if(cls=="TopLevelWindowForOverflowXamlIsland"||cls=="NotifyIconOverflowWindow")overflow.Add(h);
+                    else if(cls=="#32768")menus.Add(h);
+                    else if(cls=="Xaml_WindowedPopupClass"){int[] b=Bounds(h);if(b[2]-b[0]>=40&&b[3]-b[1]>=30)menus.Add(h);}
+                }catch{}
+                return true;
+            },IntPtr.Zero);
+            foreach(var h in overflow)WalkContainer(h,"overflow",false,120,8,700);
+            foreach(var h in menus)WalkContainer(h,"menu",true,120,8,850);
+        }
+    }
+    static object InspectTray(){
+        IntPtr tb=FindWindowW("Shell_TrayWnd",null);
+        int[] tbBox=tb!=IntPtr.Zero?Bounds(tb):new[]{0,0,0,0};
+        int screenW=GetSystemMetrics(0),screenH=GetSystemMetrics(1);
+        bool autoHide=tb==IntPtr.Zero||tbBox[1]>=screenH-6||(tbBox[3]-tbBox[1]<=8);
+        var walk=new TrayWalk(tbBox);
+        var thread=new Thread(walk.Run){IsBackground=true};
+        thread.SetApartmentState(ApartmentState.MTA);
+        thread.Start();
+        thread.Join(900);
+        Dictionary<string,object> chevronSnap;object[] iconsSnap,menusSnap;
+        lock(walk.Sync){chevronSnap=walk.Chevron;iconsSnap=walk.Icons.ToArray();menusSnap=walk.MenuItems.ToArray();}
+        return new{
+            ok=true,
+            taskbar=new{hwnd=tb.ToInt64(),bbox=tbBox,autoHide=autoHide,screen=new{width=screenW,height=screenH},revealPoint=new{x=screenW/2,y=Math.Max(0,screenH-1)}},
+            chevron=chevronSnap,
+            icons=iconsSnap,
+            menuItems=menusSnap,
+            elapsedMs=walk.Watch.ElapsedMilliseconds,
+            usedBackend="win32_tray_uia"
+        };
+    }
+    static Dictionary<string,object> DescribeUiaNode(AutomationElement el){
+        if(el==null)return null;
+        try{
+            var r=el.Current.BoundingRectangle;
+            if(r.IsEmpty||r.Width<2||r.Height<2)return null;
+            if(el.Current.IsOffscreen)return null;
+            var ct=el.Current.ControlType;
+            string role=ct==null?"":ct.ProgrammaticName.Replace("ControlType.","").ToLowerInvariant();
+            string name=el.Current.Name??"";
+            string aid=el.Current.AutomationId??"";
+            string val="";
+            try{object pat;if(!el.Current.IsPassword&&el.TryGetCurrentPattern(ValuePattern.Pattern,out pat))val=((ValuePattern)pat).Current.Value??"";}catch{}
+            int cx=(int)Math.Round(r.Left+r.Width/2.0),cy=(int)Math.Round(r.Top+r.Height/2.0);
+            int[] box=new[]{(int)Math.Round(r.Left),(int)Math.Round(r.Top),(int)Math.Round(r.Right),(int)Math.Round(r.Bottom)};
+            return new Dictionary<string,object>{
+                {"name",name},{"role",role},{"automationId",aid},{"value",val},
+                {"enabled",el.Current.IsEnabled},{"x",cx},{"y",cy},{"bbox",box}
+            };
+        }catch{return null;}
+    }
+    static object[] Monitors(out int[] virtualBox){
+        var list=new List<object>();int idx=0;
+        int vx=GetSystemMetrics(76),vy=GetSystemMetrics(77),vw=GetSystemMetrics(78),vh=GetSystemMetrics(79);
+        if(vw<=0||vh<=0){vx=0;vy=0;vw=Math.Max(1,GetSystemMetrics(0));vh=Math.Max(1,GetSystemMetrics(1));}
+        virtualBox=new[]{vx,vy,vx+vw,vy+vh};
+        EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,delegate(IntPtr hMon,IntPtr hdc,ref Rect r,IntPtr data){
+            var info=new MonitorInfo{cbSize=Marshal.SizeOf(typeof(MonitorInfo))};
+            if(GetMonitorInfoW(hMon,ref info)){
+                int[] box=new[]{info.monitor.left,info.monitor.top,info.monitor.right,info.monitor.bottom};
+                int[] work=new[]{info.work.left,info.work.top,info.work.right,info.work.bottom};
+                list.Add(new{index=idx++,primary=(info.flags&1)!=0,bbox=box,workArea=work,width=box[2]-box[0],height=box[3]-box[1]});
+            }
+            return true;
+        },IntPtr.Zero);
+        if(list.Count==0)list.Add(new{index=0,primary=true,bbox=virtualBox,workArea=virtualBox,width=vw,height=vh});
+        return list.ToArray();
+    }
+    static object ReadClipboardSummary(){
+        bool hasText=IsClipboardFormatAvailable(13),hasFiles=IsClipboardFormatAvailable(15),hasImage=IsClipboardFormatAvailable(2);
+        string preview="";int textLength=0;
+        if(hasText&&OpenClipboard(IntPtr.Zero)){
+            try{
+                IntPtr h=GetClipboardData(13);
+                if(h!=IntPtr.Zero){
+                    IntPtr ptr=GlobalLock(h);
+                    if(ptr!=IntPtr.Zero){
+                        try{string raw=Marshal.PtrToStringUni(ptr)??"";textLength=raw.Length;preview=raw.Length>400?raw.Substring(0,400):raw;}
+                        finally{GlobalUnlock(h);}
+                    }
+                }
+            }catch{}finally{CloseClipboard();}
+        }
+        return new{hasText=hasText,hasFiles=hasFiles,hasImage=hasImage,textLength=textLength,textPreview=preview};
+    }
+    static List<Dictionary<string,object>> CollectOverlayItems(IntPtr hwnd,int limit,int budgetMs){
+        var outItems=new List<Dictionary<string,object>>();
+        if(hwnd==IntPtr.Zero||!IsWindowVisible(hwnd))return outItems;
+        object sync=new object();
+        var watch=Stopwatch.StartNew();
+        var thread=new Thread(()=>{
+            try{
+                var root=AutomationElement.FromHandle(hwnd);if(root==null)return;
+                var q=new Queue<Tuple<AutomationElement,int>>();q.Enqueue(Tuple.Create(root,0));
+                int visited=0;
+                while(q.Count>0&&visited<140&&watch.ElapsedMilliseconds<budgetMs){
+                    var pair=q.Dequeue();visited++;
+                    if(pair.Item2>0){
+                        var row=DescribeUiaNode(pair.Item1);
+                        if(row!=null&&!String.IsNullOrWhiteSpace((string)row["name"])){
+                            lock(sync){if(outItems.Count<limit)outItems.Add(row);}
+                        }
+                    }
+                    if(pair.Item2<8){
+                        try{
+                            var children=pair.Item1.FindAll(TreeScope.Children,Condition.TrueCondition);
+                            for(int i=0;i<children.Count;i++)q.Enqueue(Tuple.Create(children[i],pair.Item2+1));
+                        }catch{}
+                    }
+                }
+            }catch{}
+        }){IsBackground=true};
+        thread.SetApartmentState(ApartmentState.MTA);thread.Start();thread.Join(budgetMs);
+        lock(sync)return new List<Dictionary<string,object>>(outItems);
+    }
+    static object DesktopOverview(IDictionary<string,object> a){
+        int[] vBox;var monitors=Monitors(out vBox);
+        Point cp;GetCursorPos(out cp);
+        Dictionary<string,object> underCursor=null,fgObj=null;
+        IntPtr underH=RootAt(cp.x,cp.y);if(underH!=IntPtr.Zero){try{underCursor=Window(underH);}catch{}}
+        IntPtr fgH=GetForegroundWindow();if(fgH!=IntPtr.Zero){try{fgObj=Window(fgH);}catch{}}
+        var winList=new List<object>();
+        var overlayList=new List<object>();
+        EnumWindows(delegate(IntPtr h,IntPtr unused){
+            try{
+                if(!IsWindowVisible(h)||Cloaked(h))return true;
+                string cls=ClassOf(h);
+                int[] box=Bounds(h);int w=box[2]-box[0],ht=box[3]-box[1];
+                bool isOverlay=ShellOverlayClasses.Contains(cls)||cls=="Windows.UI.Core.CoreWindow";
+                if(isOverlay&&w>=24&&ht>=20){
+                    bool isPopup=cls=="#32768"||cls=="TopLevelWindowForOverflowXamlIsland"||cls=="NotifyIconOverflowWindow"||cls=="Xaml_WindowedPopupClass";
+                    var items=isPopup?CollectOverlayItems(h,32,350):new List<Dictionary<string,object>>();
+                    overlayList.Add(new{hwnd=h.ToInt64(),className=cls,bbox=box,items=items.ToArray()});
+                    return true;
+                }
+                if(w<30||ht<30||winList.Count>=40)return true;
+                var row=Window(h);if(String.IsNullOrWhiteSpace((string)row["title"]))return true;
+                row["minimized"]=IsIconic(h);row["z_order"]=winList.Count+1;
+                winList.Add(row);
+            }catch{}
+            return true;
+        },IntPtr.Zero);
+        var res=new Dictionary<string,object>{
+            {"ok",true},{"monitors",monitors},{"virtualScreen",vBox},
+            {"cursor",new{x=cp.x,y=cp.y}},{"underCursor",underCursor},{"foreground",fgObj},
+            {"windows",winList.ToArray()},{"activeOverlays",overlayList.ToArray()},
+            {"usedBackend","win32_desktop_overview"}
+        };
+        if(Get(a,"includeClipboard",false).Equals(true))res["clipboard"]=ReadClipboardSummary();
+        return res;
+    }
+    static object ElementAt(IDictionary<string,object> a){
+        int x=Num(a,"x"),y=Num(a,"y");
+        object probeSync=new object();
+        Dictionary<string,object> elementObj=null,parentObj=null,winObj=null;
+        var siblingsList=new List<object>();
+        IntPtr root=RootAt(x,y);if(root!=IntPtr.Zero){try{winObj=Window(root);}catch{}}
+        var thread=new Thread(()=>{
+            try{
+                var el=AutomationElement.FromPoint(new System.Windows.Point(x,y));
+                if(el==null)return;
+                var selfRow=DescribeUiaNode(el);
+                lock(probeSync){elementObj=selfRow;}
+                try{
+                    var parent=TreeWalker.ControlViewWalker.GetParent(el);
+                    if(parent!=null){
+                        var pRow=DescribeUiaNode(parent);
+                        lock(probeSync){parentObj=pRow;}
+                        var children=parent.FindAll(TreeScope.Children,Condition.TrueCondition);
+                        for(int i=0;i<children.Count;i++){
+                            var row=DescribeUiaNode(children[i]);
+                            if(row!=null){lock(probeSync){if(siblingsList.Count>=24)break;siblingsList.Add(row);}}
+                        }
+                    }
+                }catch{}
+            }catch{}
+        }){IsBackground=true};
+        thread.SetApartmentState(ApartmentState.MTA);thread.Start();thread.Join(600);
+        Dictionary<string,object> elSnap,pSnap;object[] sibSnap;
+        lock(probeSync){elSnap=elementObj;pSnap=parentObj;sibSnap=siblingsList.ToArray();}
+        return new{ok=true,x=x,y=y,element=elSnap,parent=pSnap,siblings=sibSnap,window=winObj,usedBackend="win32_element_at"};
+    }
+    static object Dispatch(string method,Dictionary<string,object> a){if(method=="release_input")return ReleaseInput();if(method=="ping")return new{ok=true};if(method=="resolve_keys")return KeyNames(Str(a,"keys")).SelectMany(KeyCodes).Distinct().Select(k=>(int)k).ToArray();if(method=="input_idle")return new{idleMs=(long)RawIdleMs(),userIdleMs=(long)UserIdleMs(),usedBackend="win32_last_input"};if(method=="windows")return Windows();if(method=="tray_icons")return InspectTray();if(method=="desktop_overview")return DesktopOverview(a);if(method=="element_at")return ElementAt(a);if(method=="window")return Window(new IntPtr(Convert.ToInt64(Get(a,"hwnd",0))));if(method=="window_manage")return WindowManage(a);if(method=="bg_input")return BgInput(a);if(method=="elements")return Elements(Convert.ToInt64(Get(a,"hwnd",0)),Num(a,"limit",3000));if(method=="element")return ReadElement(Obj(Get(a,"element")));if(method=="surface_facts")return SurfaceFacts(new IntPtr(Convert.ToInt64(Get(a,"hwnd",0))));if(method=="uia")return Uia(a);if(method=="input")return Act(a);if(method=="capture")return Capture(a);if(method=="image")return ImageOperation(a);if(method=="cursor"){Point p;GetCursorPos(out p);return new{x=p.x,y=p.y,hwnd=RootAt(p.x,p.y).ToInt64(),foreground=GetForegroundWindow().ToInt64()};}if(method=="launch")return WithInputOwnership(()=>{var child=Process.Start(new ProcessStartInfo(Str(a,"app")){UseShellExecute=true});return new{ok=child!=null,pid=child==null?0:child.Id,usedBackend="shell_execute"};});throw new Exception("unknown_method:"+method);}
     [STAThread] public static int Main(){try{SetProcessDpiAwarenessContext(new IntPtr(-4));}catch{SetProcessDPIAware();}Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);string line;
         while((line=Console.ReadLine())!=null){object id=null;try{var request=Json.Deserialize<Dictionary<string,object>>(line);id=Get(request,"id");var args=Obj(Get(request,"params"));CancelPath=Str(args,"cancelPath");CheckCancellation();var result=Str(request,"method")=="desktop_items"?ShellItems():Dispatch(Str(request,"method"),args);Console.WriteLine(Json.Serialize(new{id=id,result=result}));}catch(Exception e){Console.WriteLine(Json.Serialize(new{id=id,error=new{code=e.Message,message=e.ToString()}}));}finally{CancelPath="";}}
         foreach(var key in HeldKeys.ToArray())Key(key,true);HeldKeys.Clear();return 0;}

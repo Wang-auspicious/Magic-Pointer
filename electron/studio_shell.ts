@@ -45,8 +45,8 @@
       id: 'design',
       title: 'Design',
       description:
-        'Start from project assets, visual canvases, and design outputs.',
-      eyebrow: 'DESIGN WORKSPACE',
+        'Infinite multi-artboard canvas, brand design systems, and spatial critiques.',
+      eyebrow: 'DESIGN STUDIO',
       allowsDetail: true,
     }),
     Object.freeze({
