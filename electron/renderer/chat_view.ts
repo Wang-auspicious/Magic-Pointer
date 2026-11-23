@@ -4303,8 +4303,46 @@ const ChatView = (() => {
       );
       disclosureAction.setAttribute('role', 'button');
       disclosureAction.setAttribute('tabindex', '0');
+      attach(
+        disclosureAction,
+        h('span', {class: 'mp-chat-row-caret mp-subagent-caret', 'aria-hidden': 'true'}, '\ue02a'),
+      );
     }
     attach(root, disclosure);
+    if (
+      model.state === 'ok' &&
+      (model.name === 'Artifact.create' ||
+        model.name === 'Artifact.update' ||
+        model.name === 'Project.publish_artifact')
+    ) {
+      const parsedOut = model.output ? outputRecord(model.output) : null;
+      const artifactId =
+        parsedOut && typeof parsedOut.artifactId === 'string'
+          ? parsedOut.artifactId.trim()
+          : '';
+      const artifactTitle =
+        parsedOut &&
+        (typeof parsedOut.title === 'string' || typeof parsedOut.name === 'string')
+          ? String(parsedOut.title || parsedOut.name).trim()
+          : model.summary || '';
+      if (artifactId && artifactTitle) {
+        attach(
+          root,
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'mp-artifact-inline-pill',
+              'data-mp-chat-act': 'open-artifact',
+              'data-artifact-id': artifactId,
+            },
+            fileResultGlyph('\ue030', 'mp-artifact-inline-glyph'),
+            h('span', {class: 'mp-artifact-inline-title'}, artifactTitle),
+            fileResultGlyph('\ue02a', 'mp-artifact-inline-chev'),
+          ),
+        );
+      }
+    }
     return root;
   }
 
@@ -4354,7 +4392,24 @@ const ChatView = (() => {
       return null;
     }
 
-    const root = h('div', {class: 'wf-card', 'data-wf-status': card.status});
+    const rawRecord =
+      (typeof model.presentation === 'string'
+        ? outputRecord(model.presentation)
+        : recordOf(model.presentation)) ?? outputRecord(model.output);
+    const rawElapsed = Number(rawRecord?.elapsedMs);
+    const elapsedText =
+      Number.isFinite(rawElapsed) && rawElapsed > 0
+        ? formatRunMeta(rawElapsed, null)
+        : '';
+
+    const root = h('div', {
+      class: 'wf-card',
+      'data-wf-status': card.status,
+      'data-wf-compact': 'true',
+      'data-mp-chat-act': 'open-workflow',
+      role: 'button',
+      tabindex: '0',
+    });
     root.setAttribute('data-run-id', card.runId);
 
     const head = h('div', {class: 'wf-head'});
@@ -4382,7 +4437,46 @@ const ChatView = (() => {
       `${card.total} 个步骤 · ${card.doneCount}/${card.total} · ${tokens} tokens`,
     );
     attach(head, summary);
+    attach(
+      head,
+      h(
+        'span',
+        {class: 'mp-chat-row-caret mp-wf-chev', 'aria-hidden': 'true'},
+        '\ue02a',
+      ),
+    );
     attach(root, head);
+
+    const submeta = h('div', {class: 'mp-wf-submeta'});
+    attach(submeta, h('span', {class: 'mp-wf-kind'}, 'Workflow'));
+    attach(
+      submeta,
+      h(
+        'span',
+        {class: 'mp-wf-agents'},
+        `${card.total} ${card.total === 1 ? 'agent' : 'agents'}`,
+      ),
+    );
+    if (elapsedText) {
+      attach(submeta, h('span', {class: 'mp-wf-elapsed'}, elapsedText));
+    }
+    if (card.tokens > 0) {
+      attach(submeta, h('span', {class: 'mp-wf-tokens'}, `${tokens} tokens`));
+    }
+    attach(root, submeta);
+
+    const squares = h('div', {class: 'mp-wf-squares', 'aria-hidden': 'true'});
+    for (const station of card.stations) {
+      attach(
+        squares,
+        h('span', {
+          class: 'mp-wf-square',
+          'data-status': station.status,
+          title: station.title,
+        }),
+      );
+    }
+    attach(root, squares);
 
     const lanes = workflowCard.layoutWorkflowArcs(card.arcs);
     const maxLevel = lanes.reduce((top, arc) => Math.max(top, arc.level), 0);
@@ -5454,14 +5548,12 @@ const ChatView = (() => {
     if (!files.length && !validArtifacts.length) {
       return null;
     }
-    const card = h('div', {class: 'mp-chat-files'});
+    const card = h('div', {
+      class: 'mp-chat-files',
+      ...(validArtifacts.length ? {'data-artifact-delivery': 'true'} : {}),
+    });
     const list = h('ul', {class: 'mp-chat-files-list', role: 'list'});
     attach(card, list);
-    const artifactPaths = new Set(
-      validArtifacts
-        .map(item => (typeof item.path === 'string' ? deliveredFileKey(item.path) : ''))
-        .filter(Boolean),
-    );
     const undoAction = !artifact && files.length && undo
       ? h('button', {
           type: 'button', class: 'mp-chat-files-undo',
@@ -5489,14 +5581,6 @@ const ChatView = (() => {
     }
 
     for (const itemArtifact of validArtifacts) {
-      const itemPath =
-        typeof itemArtifact.path === 'string' ? itemArtifact.path : '';
-      const itemFile = itemPath
-        ? files.find(
-            file =>
-              deliveredFileKey(file.path) === deliveredFileKey(itemPath),
-          )
-        : undefined;
       const itemLabel = String(
         itemArtifact.title || itemArtifact.name || '',
       ).trim();
@@ -5507,41 +5591,32 @@ const ChatView = (() => {
           itemArtifact.artifactId ||
           'artifact',
       );
+      const displayTitle =
+        itemLabel || itemName.split(/[\\/]/).pop() || itemName;
       const badgeMeta = artifactKindBadgeMeta(
         itemArtifact.kind,
         itemArtifact.language,
       );
-      const subtitle =
-        typeof itemArtifact.filename === 'string' &&
-        itemArtifact.filename &&
-        itemArtifact.filename !== itemLabel
-          ? itemArtifact.filename
-          : lt('chat.files_artifact');
+      const artifactId = String(itemArtifact.artifactId || '');
       const row = h('button', {
         type: 'button',
-        class: 'mp-chat-file-row mp-artifact-card-btn',
+        class: 'mp-chat-file-row',
         'data-mp-chat-act': 'open-artifact',
-        'data-artifact-id': String(itemArtifact.artifactId || ''),
+        'data-artifact-id': artifactId,
         'data-artifact-conversation': conversationId,
       });
-      const added = itemFile
-        ? itemFile.added
-        : Number(itemArtifact.added || 0);
-      const removed = itemFile
-        ? itemFile.removed
-        : Number(itemArtifact.removed || 0);
-      const openBadge = h(
-        'span',
+      const openButton = h(
+        'button',
         {
+          type: 'button',
           class: 'mp-chat-files-open mp-artifact-card-open',
-          'aria-hidden': 'true',
+          'data-mp-chat-act': 'open-artifact',
+          'data-artifact-id': artifactId,
+          'data-artifact-conversation': conversationId,
+          'aria-label': lt('chat.files_open_artifact', {label: displayTitle}),
         },
         lt('chat.files_open'),
       );
-      const known = itemFile
-        ? itemFile.statKnown
-        : typeof itemArtifact.added === 'number' ||
-          typeof itemArtifact.removed === 'number';
       const badgeNode = h(
         'span',
         {
@@ -5550,21 +5625,23 @@ const ChatView = (() => {
         },
         badgeMeta.label,
       );
-      const rowNode = fileResultRow({
-        opener: row,
-        label: itemLabel || itemName.split(/[\\/]/).pop() || itemName,
-        mark: badgeNode,
-        detail: subtitle,
-        stat: known ? fileResultStat(added, removed) : null,
-        action: openBadge,
+      const rowNode = h('li', {
+        class: 'mp-chat-file-item mp-artifact-card mp-artifact-published-row',
       });
-      rowNode.setAttribute('class', 'mp-chat-file-item mp-artifact-card');
+      const labels = h(
+        'span',
+        {class: 'mp-chat-file-labels'},
+        h('span', {class: 'mp-artifact-published-prefix'}, 'Published artifact '),
+        h('span', {class: 'mp-chat-file-name mp-artifact-published-title'}, displayTitle),
+        badgeNode,
+      );
+      attach(row, labels);
+      attach(rowNode, row);
+      attach(rowNode, h('span', {class: 'mp-chat-file-trailing'}, openButton));
       attach(list, rowNode);
     }
 
-    const visibleFiles = files.filter(
-      item => !artifactPaths.has(deliveredFileKey(item.path)),
-    );
+    const visibleFiles = files;
     const hints = fileFolderHints(visibleFiles);
     const fileRow = (file: DeliveredFile): ChatNode => {
       const target = file.previewPath || file.absolutePath || file.path;
@@ -5729,8 +5806,10 @@ const ChatView = (() => {
       attach(metaNode, opts.meta);
     }
     attach(copy, metaNode);
-    const tasksNode = h('span', {
+    const tasksNode = h('button', {
+      type: 'button',
       class: 'mp-chat-turn-status-tasks',
+      'data-mp-chat-act': 'open-tasks',
       ...(!opts.tasksText ? {hidden: 'true'} : {}),
     });
     if (opts.tasksText) {
@@ -6122,6 +6201,47 @@ const ChatView = (() => {
     );
   }
 
+  function groupDiffStat(chips: TurnChip[]): DiffStat | null {
+    const writesByPath = new Map<string, DiffStat>();
+    const extras: DiffStat[] = [];
+    let any = false;
+    for (const chip of chips) {
+      if (
+        !FILE_CHANGE_TOOLS.has(chip.name) &&
+        chip.name !== 'Project.write_file'
+      ) {
+        continue;
+      }
+      if (!chip.result || chip.result.isError) {
+        continue;
+      }
+      const model = chipModel(chip);
+      if (!model.diffStat) {
+        continue;
+      }
+      any = true;
+      const isWrite = ['Write', 'write_file', 'write', 'Project.write_file'].includes(
+        chip.name,
+      );
+      if (isWrite && model.filePath) {
+        writesByPath.set(deliveredFileKey(model.filePath), model.diffStat);
+      } else {
+        extras.push(model.diffStat);
+      }
+    }
+    if (!any) {
+      return null;
+    }
+    const allStats = [...writesByPath.values(), ...extras];
+    return allStats.reduce(
+      (total, item) => ({
+        added: total.added + item.added,
+        removed: total.removed + item.removed,
+      }),
+      {added: 0, removed: 0},
+    );
+  }
+
   function fileRowKey(chip: TurnChip): string | null {
     const family = FILE_WRITE_TOOLS.has(chip.name)
       ? ['Write', 'write_file', 'write'].includes(chip.name)
@@ -6242,6 +6362,11 @@ const ChatView = (() => {
     if (model) {
       root.setAttribute('data-state', model.state);
     }
+    const resolvedDiffStat =
+      model?.diffStat ??
+      (!chips.some(chip => chip.result === undefined)
+        ? groupDiffStat(chips)
+        : null);
     if (model?.errorTitle) {
       root.setAttribute('data-error-title', 'true');
     }
@@ -6277,23 +6402,22 @@ const ChatView = (() => {
         }
       }
     }
-    if (model?.diffStat) {
+    if (
+      resolvedDiffStat &&
+      (resolvedDiffStat.added > 0 || resolvedDiffStat.removed > 0)
+    ) {
       const stat = h('span', {
-        class: 'mp-chat-diff-stat',
+        class: 'mp-chat-summary-diff mp-chat-diff-stat',
         'aria-hidden': 'true',
       });
-      if (model.diffStat.added) {
-        attach(
-          stat,
-          h('span', {class: 'mp-chat-diff-add'}, `+${model.diffStat.added}`),
-        );
-      }
-      if (model.diffStat.removed) {
-        attach(
-          stat,
-          h('span', {class: 'mp-chat-diff-del'}, `−${model.diffStat.removed}`),
-        );
-      }
+      attach(
+        stat,
+        h('span', {class: 'mp-chat-diff-add'}, `+${resolvedDiffStat.added}`),
+      );
+      attach(
+        stat,
+        h('span', {class: 'mp-chat-diff-del'}, `−${resolvedDiffStat.removed}`),
+      );
       attach(label, stat);
     }
     if (model && model.state !== 'ok') {
@@ -8817,6 +8941,15 @@ const ChatView = (() => {
             detail: {parentCallId},
           }),
         );
+      } else if (kind === 'open-tasks') {
+        DOC.dispatchEvent(new CustomEvent('mp:open-tasks'));
+      } else if (kind === 'open-workflow') {
+        const runId = act.getAttribute('data-run-id') || '';
+        DOC.dispatchEvent(
+          new CustomEvent('mp:open-workflow', {
+            detail: {runId},
+          }),
+        );
       } else if (kind === 'copy' || kind === 'copy-thinking') {
         const thinkingCopy = kind === 'copy-thinking';
         const thinkingBody = thinkingCopy
@@ -9067,6 +9200,9 @@ const ChatView = (() => {
       webCountLabel,
       commandCardNode,
       resolveReasoningId,
+      fileResultsNode,
+      toolGroupNode,
+      workflowCardNode,
     },
   };
 })();

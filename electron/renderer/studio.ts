@@ -9240,51 +9240,37 @@ const answeredStreamCheckins = new Map<
 >();
 
 function sideChatHostEl(): HTMLElement | null {
-  if (productMode === 'learn') {
-    return (
-      document.getElementById('learn-sidechat-dock-host') ||
-      document.getElementById('side-chat-pane-host')
-    );
-  }
-  return document.getElementById('side-chat-pane-host');
+  return (
+    document.getElementById('side-chat-pane-host') ||
+    document.getElementById('learn-sidechat-dock-host')
+  );
 }
 
 function isLearnSideChatOpen(): boolean {
-  if (productMode === 'learn') {
-    return learnSideChatDockOpen;
-  }
   return Boolean(inspectorState.open && activeInspectorTab === 'side-chat');
 }
 
 function setLearnSideChatDock(open: boolean): void {
   const dock = document.getElementById('learn-sidechat-dock');
-  learnSideChatDockOpen = Boolean(open && productMode === 'learn' && dock);
-  shell.dataset.learnSidechat = learnSideChatDockOpen ? 'open' : 'closed';
+  learnSideChatDockOpen = false;
+  delete shell.dataset.learnSidechat;
   if (dock) {
-    dock.hidden = !learnSideChatDockOpen;
+    dock.hidden = true;
   }
-  if (
-    learnSideChatDockOpen &&
-    inspectorState.open &&
-    window.innerWidth < 1680 &&
-    sidebarState.layout() === 'docked'
-  ) {
-    toggleSidebar();
-  }
-  if (learnSideChatDockOpen && typeof SideChatPane !== 'undefined') {
-    SideChatPane.renderPane(
-      sideChatHostEl(),
-      activeConversationRecord,
-      buildSideChatPaneHandlers(),
-    );
+  if (open) {
+    setInspector(true, 'side-chat');
+  } else if (activeInspectorTab === 'side-chat' && inspectorState.open) {
+    setInspector(false);
   }
   syncHeaderWorkspaceToggles();
 }
 
 function openSideChatSurface(): void {
-  if (productMode === 'learn') {
-    setLearnSideChatDock(true);
-    return;
+  const dock = document.getElementById('learn-sidechat-dock');
+  learnSideChatDockOpen = false;
+  delete shell.dataset.learnSidechat;
+  if (dock) {
+    dock.hidden = true;
   }
   setInspector(true, 'side-chat');
 }
@@ -11760,7 +11746,9 @@ let projectFileCodeView = false;
 let activeInspectorTab = 'files';
 let inspectorReturnFocus: HTMLElement | null = null;
 let bottomPanelReturnFocus: HTMLElement | null = null;
-let focusedSubagentId = '';
+let activeTranscriptTaskId = '';
+const collapsedTranscriptBriefIds = new Set<string>();
+const workflowPhaseOpenState = new Map<string, boolean>();
 
 type WorkspaceResourceKind =
   'file' | 'artifact' | 'browser' | 'terminal' | 'transcript';
@@ -11959,7 +11947,7 @@ function activateWorkspaceResource(tabId: string): void {
       fromResourceTab: true,
     });
   } else if (target.kind === 'transcript' && target.taskId) {
-    focusedSubagentId = target.taskId;
+    activeTranscriptTaskId = target.taskId;
     renderProjectTasks();
   } else if (target.kind === 'transcript' && target.conversationId) {
     setConversationTab('trajectory');
@@ -12053,10 +12041,10 @@ const inspectorStatePolicy = (
   globalThis as {StudioInspectorState?: InspectorStateModule}
 ).StudioInspectorState!;
 const INSPECTOR_WIDTH_KEY = 'mp:inspector-width';
-let initialInspectorWidth = 560;
+let initialInspectorWidth: number | undefined;
 try {
   const stored = Number(localStorage.getItem(INSPECTOR_WIDTH_KEY));
-  if (Number.isFinite(stored)) {
+  if (Number.isFinite(stored) && stored > 0) {
     initialInspectorWidth = stored;
   }
 } catch {
@@ -13584,6 +13572,304 @@ function workflowTokensText(tokens: number): string {
     : '';
 }
 
+function formatCompactTokensCount(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) {
+    return '0';
+  }
+  return tokens >= 1000
+    ? `${(tokens / 1000).toFixed(1)}k`
+    : String(Math.round(tokens));
+}
+
+function cleanTaskTitle(description: string): string {
+  const firstLine = String(description || '').split('\n')[0] || '';
+  const cleaned = firstLine
+    .replace(/^\[workflow-step [^\]]+\]\s*/i, '')
+    .replace(/^\[phase [^\]]+\]\s*/i, '')
+    .trim();
+  return cleaned || firstLine.trim() || 'Transcript';
+}
+
+function openTaskTranscript(taskId: string): void {
+  const cleanId = String(taskId || '').trim();
+  if (!cleanId) {
+    return;
+  }
+  const tasks = currentSubagentTasks();
+  const matched = tasks.find(
+    task => task.id === cleanId || task.parentCallId === cleanId,
+  );
+  const resolvedId = matched?.id || cleanId;
+  activeTranscriptTaskId = resolvedId;
+  if (matched) {
+    const view = backgroundTaskView();
+    view.cleared.delete(matched.id);
+  }
+  setInspector(true, 'tasks');
+  renderProjectTasks();
+}
+
+function populateSubagentSteps(
+  stepsHost: HTMLElement,
+  steps: readonly StudioSubagentStep[],
+  setTextFn: (node: Element, text: string) => void,
+): void {
+  const stepRows = new Map(
+    Array.from(stepsHost.children).map(item => [
+      (item as HTMLElement).dataset.stepId,
+      item as HTMLElement,
+    ]),
+  );
+  const wantedSteps: HTMLElement[] = [];
+  for (const step of steps) {
+    const stepId = step.callId || String(step.index);
+    let item = stepRows.get(stepId);
+    if (!item) {
+      item = document.createElement('details');
+      item.className = 'mp-subagent-step-evidence';
+      item.dataset.stepId = stepId;
+      item.innerHTML =
+        '<summary class="mp-subagent-step"><span class="mp-subagent-step-marker"></span><span class="mp-subagent-step-name"></span><small></small></summary><pre class="mp-subagent-step-input"></pre><pre class="mp-subagent-step-output"></pre>';
+    }
+    item.dataset.status = step.status;
+    item.querySelector<HTMLElement>('summary')!.dataset.status = step.status;
+    setTextFn(
+      item.querySelector('.mp-subagent-step-marker')!,
+      step.status === 'completed'
+        ? '✓'
+        : step.status === 'failed'
+          ? '!'
+          : '·',
+    );
+    setTextFn(
+      item.querySelector('.mp-subagent-step-name')!,
+      step.tool || `Step ${step.index}`,
+    );
+    setTextFn(
+      item.querySelector('small')!,
+      [
+        step.usedBackend,
+        step.latencyMs ? `${Math.round(step.latencyMs)}ms` : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
+    setTextFn(item.querySelector('.mp-subagent-step-input')!, step.input || '');
+    setTextFn(
+      item.querySelector('.mp-subagent-step-output')!,
+      step.output || '',
+    );
+    wantedSteps.push(item);
+  }
+  for (const child of Array.from(stepsHost.children)) {
+    if (!wantedSteps.includes(child as HTMLElement)) {
+      child.remove();
+    }
+  }
+  wantedSteps.forEach((item, i) => {
+    if (stepsHost.children[i] !== item) {
+      stepsHost.insertBefore(item, stepsHost.children[i] || null);
+    }
+  });
+}
+
+function renderTaskTranscriptView(
+  host: HTMLElement,
+  task: StudioSubagentTask,
+  conversationId: string,
+  setTextFn: (node: Element, text: string) => void,
+): void {
+  const existing = host.querySelector<HTMLElement>('.mp-task-transcript-view');
+  const viewEl = existing || document.createElement('div');
+  if (!existing) {
+    viewEl.className = 'mp-task-transcript-view';
+    viewEl.innerHTML =
+      '<div class="mp-task-transcript-head">' +
+      '<button type="button" class="mp-task-transcript-back" aria-label="Back to Background tasks">' +
+      '<span class="cds-icon" data-size="xs" aria-hidden="true">&#xE00C;</span>' +
+      '<span class="mp-task-transcript-title"></span>' +
+      '</button>' +
+      '<div class="mp-task-transcript-actions">' +
+      '<span class="mp-subagent-state"></span>' +
+      '<button type="button" class="mp-subagent-stop" title="Stop task" aria-label="Stop task"><span class="mp-stop-square" aria-hidden="true"></span></button>' +
+      '</div></div>' +
+      '<p class="mp-subagent-stop-error" role="status" hidden></p>' +
+      '<div class="mp-task-transcript-meta"><span class="mp-transcript-agent-label">Agent</span><span class="mp-subagent-model"></span><span class="mp-subagent-time"></span><span class="mp-subagent-usage"></span><span class="mp-subagent-tool-uses"></span></div>' +
+      '<div class="mp-sidechat-brief-card mp-transcript-brief" hidden>' +
+      '<div class="mp-sidechat-brief-text"></div>' +
+      '<button type="button" class="mp-sidechat-brief-toggle" hidden>Show less</button>' +
+      '</div>' +
+      '<div class="mp-task-transcript-body">' +
+      '<div class="mp-subagent-permission" hidden></div>' +
+      '<p class="mp-subagent-resume-note" role="status" hidden></p>' +
+      '<details class="mp-subagent-thinking" hidden><summary></summary><pre></pre></details>' +
+      '<div class="mp-task-transcript-answer"></div>' +
+      '<p class="mp-subagent-step-window" hidden></p>' +
+      '<div class="mp-subagent-steps"></div>' +
+      '</div>';
+    viewEl
+      .querySelector('.mp-task-transcript-back')!
+      .addEventListener('click', () => {
+        activeTranscriptTaskId = '';
+        renderProjectTasks();
+      });
+    viewEl.querySelector('.mp-subagent-stop')!.addEventListener('click', () => {
+      void stopSubagentTask(viewEl);
+    });
+    viewEl
+      .querySelector('.mp-sidechat-brief-toggle')!
+      .addEventListener('click', () => {
+        const id = viewEl.dataset.taskId || '';
+        if (!id) {
+          return;
+        }
+        if (collapsedTranscriptBriefIds.has(id)) {
+          collapsedTranscriptBriefIds.delete(id);
+        } else {
+          collapsedTranscriptBriefIds.add(id);
+        }
+        renderProjectTasks();
+      });
+  }
+
+  viewEl.dataset.taskId = task.id;
+  viewEl.dataset.parentCallId = task.parentCallId;
+  viewEl.dataset.conversationId = conversationId;
+  viewEl.dataset.status = task.status;
+
+  setTextFn(
+    viewEl.querySelector('.mp-task-transcript-title')!,
+    cleanTaskTitle(task.description),
+  );
+  setTextFn(
+    viewEl.querySelector('.mp-subagent-state')!,
+    task.resumeRequired
+      ? studioT('subagent.needs_resume')
+      : task.status === 'running'
+        ? viewEl.dataset.stopState
+          ? studioT('subagent.stopping')
+          : ''
+        : subagentStatusLabel(task.status),
+  );
+  setTextFn(viewEl.querySelector('.mp-subagent-model')!, task.model || '');
+  setTextFn(
+    viewEl.querySelector('.mp-subagent-time')!,
+    task.elapsedMs ? ChatView.formatRunMeta(task.elapsedMs, null) : '',
+  );
+  const usage = task.modelUsage;
+  const reportedTokens =
+    Number(usage?.totalTokens) ||
+    Number(usage?.inputTokens || 0) + Number(usage?.outputTokens || 0);
+  setTextFn(
+    viewEl.querySelector('.mp-subagent-usage')!,
+    reportedTokens > 0 ? `${formatCompactTokensCount(reportedTokens)} tokens` : '',
+  );
+  setTextFn(
+    viewEl.querySelector('.mp-subagent-tool-uses')!,
+    `${task.stepCount} tool ${task.stepCount === 1 ? 'use' : 'uses'}`,
+  );
+
+  const stopBtn = viewEl.querySelector<HTMLButtonElement>('.mp-subagent-stop')!;
+  stopBtn.hidden =
+    !childActive(task.status) ||
+    task.id.startsWith('parent:') ||
+    !conversationId;
+  if (!childActive(task.status)) {
+    delete viewEl.dataset.stopState;
+    viewEl.querySelector<HTMLElement>('.mp-subagent-stop-error')!.hidden = true;
+  }
+  stopBtn.disabled = Boolean(viewEl.dataset.stopState);
+
+  const briefCard = viewEl.querySelector<HTMLElement>('.mp-transcript-brief')!;
+  const briefTextEl = briefCard.querySelector<HTMLElement>('.mp-sidechat-brief-text')!;
+  const briefToggle = briefCard.querySelector<HTMLButtonElement>('.mp-sidechat-brief-toggle')!;
+  const description = String(task.description || '').trim();
+  briefCard.hidden = !description;
+  if (description) {
+    const isLong =
+      description.split('\n').length > 4 || description.length > 220;
+    const isCollapsed = isLong && collapsedTranscriptBriefIds.has(task.id);
+    briefCard.dataset.collapsed = isCollapsed ? 'true' : 'false';
+    setTextFn(briefTextEl, description);
+    briefToggle.hidden = !isLong;
+    briefToggle.textContent = isCollapsed ? 'Show more' : 'Show less';
+  }
+
+  const permission = viewEl.querySelector<HTMLElement>('.mp-subagent-permission')!;
+  const input = task.pendingInput;
+  const inputKey = `${conversationId}:${task.id}:${input?.requestId}`;
+  if (
+    input &&
+    (task.status === 'awaiting_user' ||
+      (task.status === 'stopped' && task.resumeRequired)) &&
+    !acceptedChildInputs.has(inputKey)
+  ) {
+    DecisionCard.render(permission, {...input, key: inputKey}, response => {
+      void respondToChildInput(permission, task, conversationId, response);
+    });
+  } else {
+    DecisionCard.clear(permission);
+  }
+
+  const resumeNote = viewEl.querySelector<HTMLElement>('.mp-subagent-resume-note')!;
+  resumeNote.hidden = !task.resumeRequired;
+  if (task.resumeRequired) {
+    setTextFn(resumeNote, subagentResumeText(task));
+  }
+
+  const thinking = viewEl.querySelector<HTMLDetailsElement>('.mp-subagent-thinking')!;
+  thinking.hidden = !task.reasoning;
+  setTextFn(
+    thinking.querySelector('summary')!,
+    task.status === 'running' && task.phase === 'thinking'
+      ? studioT('subagent.thinking_live')
+      : studioT('subagent.thought'),
+  );
+  setTextFn(thinking.querySelector('pre')!, task.reasoning || '');
+
+  const answerHost = viewEl.querySelector<HTMLElement>('.mp-task-transcript-answer')!;
+  const answerMarkdown = String(task.answer || task.summary || '').trim();
+  const prevMarkdown = answerHost.dataset.renderedSource || '';
+  if (answerMarkdown !== prevMarkdown) {
+    answerHost.dataset.renderedSource = answerMarkdown;
+    if (!answerMarkdown) {
+      answerHost.replaceChildren();
+    } else if (
+      typeof ChatMarkdown !== 'undefined' &&
+      typeof ChatMarkdown.render === 'function'
+    ) {
+      answerHost.replaceChildren(ChatMarkdown.render(answerMarkdown));
+      if (
+        typeof IntelligenceUI !== 'undefined' &&
+        typeof IntelligenceUI.hydrate === 'function'
+      ) {
+        IntelligenceUI.hydrate(answerHost);
+      }
+    } else {
+      answerHost.textContent = answerMarkdown;
+    }
+  }
+  answerHost.hidden = !answerMarkdown;
+
+  const stepWindow = viewEl.querySelector<HTMLElement>('.mp-subagent-step-window')!;
+  stepWindow.hidden = task.stepCount <= task.steps.length;
+  if (!stepWindow.hidden) {
+    setTextFn(
+      stepWindow,
+      `Showing latest ${task.steps.length} of ${task.stepCount} tool uses`,
+    );
+  }
+  populateSubagentSteps(
+    viewEl.querySelector<HTMLElement>('.mp-subagent-steps')!,
+    task.steps,
+    setTextFn,
+  );
+
+  if (host.firstElementChild !== viewEl || host.childElementCount !== 1) {
+    host.replaceChildren(viewEl);
+  }
+}
+
 function renderWorkflowRunBlocks(
   host: HTMLElement,
   blocks: WorkflowRunBlockView[],
@@ -13603,15 +13889,17 @@ function renderWorkflowRunBlocks(
   const rendered: HTMLElement[] = [];
   for (const block of blocks) {
     let section = existing.get(block.runId);
-    if (!section) {
+    if (!section || !section.querySelector('.mpwf-phases')) {
       section = document.createElement('section');
       section.className = 'mpwf-run';
       section.innerHTML =
-        '<header class="mpwf-header"><strong class="mpwf-name"></strong>' +
-        '<button type="button" class="mpwf-stop" title="Stop run" aria-label="Stop run"><span class="cds-icon" data-size="xs" aria-hidden="true">&#xE0EC;</span></button></header>' +
-        '<p class="mpwf-meta"><span class="mpwf-state"></span><span class="mpwf-progress"></span><span class="mpwf-tokens"></span></p>' +
-        '<ol class="mpwf-timeline"></ol>' +
-        '<p class="mpwf-stop-error" role="status" hidden></p>';
+        '<header class="mpwf-header"><div class="mpwf-title-col"><strong class="mpwf-name"></strong>' +
+        '<p class="mpwf-meta"><span class="mpwf-kind">Workflow</span><span class="mpwf-elapsed"></span><span class="mpwf-state"></span></p>' +
+        '<p class="mpwf-meta"><span class="mpwf-agents"></span><span class="mpwf-tokens"></span><span class="mpwf-progress"></span></p></div>' +
+        '<button type="button" class="mpwf-stop" title="Stop run" aria-label="Stop run"><span class="mp-stop-square" aria-hidden="true"></span></button></header>' +
+        '<p class="mpwf-stop-error" role="status" hidden></p>' +
+        '<div class="mpwf-phases-wrap"><h4 class="mpwf-phases-heading">Phases</h4><div class="mpwf-phases"></div></div>' +
+        '<ol class="mpwf-timeline" hidden></ol>';
       const created = section;
       created
         .querySelector('.mpwf-stop')!
@@ -13631,6 +13919,10 @@ function renderWorkflowRunBlocks(
     ).length;
     const failed = block.steps.some(step => step.status === 'failed');
     setText(
+      section.querySelector('.mpwf-elapsed')!,
+      block.elapsedMs > 0 ? ChatView.formatRunMeta(block.elapsedMs, null) : '',
+    );
+    setText(
       section.querySelector('.mpwf-state')!,
       block.active
         ? 'Running'
@@ -13641,14 +13933,16 @@ function renderWorkflowRunBlocks(
             : 'Stopped',
     );
     setText(
-      section.querySelector('.mpwf-progress')!,
-      `${succeeded}/${block.steps.length} steps`,
+      section.querySelector('.mpwf-agents')!,
+      `${block.agentCount} ${block.agentCount === 1 ? 'agent' : 'agents'}`,
     );
     setText(
       section.querySelector('.mpwf-tokens')!,
-      workflowTokensText(
-        block.steps.reduce((sum, step) => sum + step.tokens, 0),
-      ),
+      workflowTokensText(block.totalTokens),
+    );
+    setText(
+      section.querySelector('.mpwf-progress')!,
+      `${succeeded}/${block.steps.length} steps`,
     );
     const stop = section.querySelector<HTMLButtonElement>('.mpwf-stop')!;
     stop.hidden = !block.active || !conversationId;
@@ -13657,50 +13951,101 @@ function renderWorkflowRunBlocks(
       section.querySelector<HTMLElement>('.mpwf-stop-error')!.hidden = true;
     }
     stop.disabled = Boolean(section.dataset.stopState);
-    const timeline = section.querySelector<HTMLElement>('.mpwf-timeline')!;
-    const stepRows = new Map(
-      Array.from(timeline.children).map(item => [
-        (item as HTMLElement).dataset.stepId,
-        item as HTMLElement,
-      ]),
-    );
-    const wanted: HTMLElement[] = [];
-    for (const step of block.steps) {
-      let item = stepRows.get(step.stepId);
-      if (!item) {
-        item = document.createElement('li');
-        item.className = 'mpwf-step';
-        item.dataset.stepId = step.stepId;
-        item.innerHTML =
-          '<span class="mpwf-dot" aria-hidden="true"></span>' +
-          '<span class="mpwf-step-title"><code class="mpwf-step-id"></code><span class="mpwf-step-name"></span></span>' +
-          '<span class="mpwf-step-attempts"></span>' +
-          '<span class="mpwf-step-tokens"></span>';
+
+    const phasesHost = section.querySelector<HTMLElement>('.mpwf-phases')!;
+    phasesHost.replaceChildren();
+    for (const phase of block.phases) {
+      const phaseKey = `${block.runId}:${phase.title}`;
+      const isOpen = workflowPhaseOpenState.has(phaseKey)
+        ? workflowPhaseOpenState.get(phaseKey)!
+        : phase.active || block.phases.length === 1;
+      const phaseEl = document.createElement('div');
+      phaseEl.className = 'mpwf-phase';
+      phaseEl.dataset.open = isOpen ? 'true' : 'false';
+
+      const headBtn = document.createElement('button');
+      headBtn.type = 'button';
+      headBtn.className = 'mpwf-phase-head';
+      headBtn.setAttribute('aria-expanded', String(isOpen));
+      const headTop = document.createElement('div');
+      headTop.className = 'mpwf-phase-head-top';
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'mpwf-phase-title';
+      titleSpan.textContent = phase.title;
+      const chevSpan = document.createElement('span');
+      chevSpan.className = 'cds-icon mpwf-phase-chev';
+      chevSpan.dataset.size = 'xs';
+      chevSpan.setAttribute('aria-hidden', 'true');
+      chevSpan.textContent = '\ue02a';
+      headTop.append(titleSpan, chevSpan);
+      headBtn.appendChild(headTop);
+
+      const squares = document.createElement('div');
+      squares.className = 'mp-wf-squares';
+      squares.setAttribute('aria-hidden', 'true');
+      for (const step of phase.steps) {
+        const sq = document.createElement('span');
+        sq.className = 'mp-wf-square';
+        sq.dataset.status = step.status;
+        sq.title = step.title;
+        squares.appendChild(sq);
       }
-      item.dataset.status = step.status;
-      item.title = step.title;
-      setText(item.querySelector('.mpwf-step-id')!, step.stepId);
-      setText(item.querySelector('.mpwf-step-name')!, step.title);
-      setText(
-        item.querySelector('.mpwf-step-attempts')!,
-        step.attempts > 1 ? `⟳${step.attempts}` : '',
-      );
-      setText(
-        item.querySelector('.mpwf-step-tokens')!,
-        workflowTokensText(step.tokens),
-      );
-      wanted.push(item);
+      headBtn.appendChild(squares);
+      headBtn.addEventListener('click', () => {
+        workflowPhaseOpenState.set(phaseKey, !isOpen);
+        renderProjectTasks();
+      });
+      phaseEl.appendChild(headBtn);
+
+      if (isOpen) {
+        const table = document.createElement('table');
+        table.className = 'mpwf-phase-table';
+        const thead = document.createElement('thead');
+        thead.innerHTML =
+          '<tr><th>Agent</th><th>Tokens</th><th>Tools</th><th>Time</th></tr>';
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        for (const step of phase.steps) {
+          const row = document.createElement('tr');
+          row.className = 'mpwf-phase-row';
+          row.dataset.stepId = step.stepId;
+          row.dataset.subagentId = step.subagentId;
+          row.dataset.status = step.status;
+          if (step.subagentId) {
+            row.setAttribute('role', 'button');
+            row.tabIndex = 0;
+            const activate = () => openTaskTranscript(step.subagentId);
+            row.addEventListener('click', activate);
+            row.addEventListener('keydown', ev => {
+              if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                activate();
+              }
+            });
+          }
+          const tdAgent = document.createElement('td');
+          tdAgent.className = 'mpwf-col-agent';
+          tdAgent.textContent = step.title;
+          const tdTokens = document.createElement('td');
+          tdTokens.className = 'mpwf-col-num';
+          tdTokens.textContent = formatCompactTokensCount(step.tokens);
+          const tdTools = document.createElement('td');
+          tdTools.className = 'mpwf-col-num';
+          tdTools.textContent = String(step.toolUses);
+          const tdTime = document.createElement('td');
+          tdTime.className = 'mpwf-col-num';
+          tdTime.textContent =
+            step.elapsedMs > 0
+              ? ChatView.formatRunMeta(step.elapsedMs, null)
+              : '0s';
+          row.append(tdAgent, tdTokens, tdTools, tdTime);
+          tbody.appendChild(row);
+        }
+        table.appendChild(tbody);
+        phaseEl.appendChild(table);
+      }
+      phasesHost.appendChild(phaseEl);
     }
-    for (const child of Array.from(timeline.children)) {
-      if (!wanted.includes(child as HTMLElement)) {
-        child.remove();
-      }
-    }
-    wanted.forEach((item, index) => {
-      if (timeline.children[index] !== item) {
-        timeline.insertBefore(item, timeline.children[index] || null);
-      }
-    });
     rendered.push(section);
   }
   for (const [runId, section] of existing) {
@@ -13734,6 +14079,31 @@ function renderProjectTasks() {
     host.replaceChildren();
     host.dataset.taskScope = view.scope;
   }
+  const setText = (node: Element, text: string) => {
+    if (node.textContent !== text) {
+      node.textContent = text;
+    }
+  };
+  if (activeTranscriptTaskId) {
+    const transcriptTask = allTasks.find(
+      task =>
+        task.id === activeTranscriptTaskId ||
+        task.parentCallId === activeTranscriptTaskId,
+    );
+    if (transcriptTask) {
+      view.cleared.delete(transcriptTask.id);
+      host.dataset.transcriptTaskId = transcriptTask.id;
+      renderTaskTranscriptView(
+        host,
+        transcriptTask,
+        activeConversationId || pendingConversation?.conversationId || '',
+        setText,
+      );
+      return;
+    }
+    activeTranscriptTaskId = '';
+  }
+  delete host.dataset.transcriptTaskId;
   const tasks = allTasks.filter(
     task =>
       childActive(task.status) ||
@@ -13761,13 +14131,13 @@ function renderProjectTasks() {
       row => [row.dataset.taskId, row],
     ),
   );
-  const setText = (node: Element, text: string) => {
-    if (node.textContent !== text) {
-      node.textContent = text;
-    }
-  };
   host.querySelector('.mp-inspector-empty')?.remove();
-  const makeSection = (label: string, items: StudioSubagentTask[]) => {
+  host.querySelector('.mp-task-transcript-view')?.remove();
+  const makeSection = (
+    label: string,
+    items: StudioSubagentTask[],
+    prefixNodes: HTMLElement[] = [],
+  ) => {
     let section = host.querySelector<HTMLElement>(
       `[data-task-section="${label}"]`,
     );
@@ -13779,7 +14149,7 @@ function renderProjectTasks() {
       heading.className = 'mp-subagent-section-header';
       if (label === 'Finished') {
         heading.innerHTML =
-          '<button type="button" class="mp-subagent-finished-toggle"><span></span><span class="cds-icon" data-size="xs" aria-hidden="true">&#xF003;</span></button>' +
+          '<button type="button" class="mp-subagent-finished-toggle"><span></span><span class="cds-icon" data-size="xs" aria-hidden="true">&#xE02A;</span></button>' +
           '<button type="button" class="mp-subagent-clear">Clear</button>';
         heading.querySelector('button')!.addEventListener('click', () => {
           view.finishedOpen = !view.finishedOpen;
@@ -13812,18 +14182,26 @@ function renderProjectTasks() {
         '.mp-subagent-finished-toggle',
       )!;
       toggle.setAttribute('aria-expanded', String(view.finishedOpen));
-      setText(toggle.querySelector('span')!, `Finished ${items.length}`);
+      setText(
+        toggle.querySelector('span')!,
+        `Finished ${items.length + prefixNodes.length}`,
+      );
     }
+    prefixNodes.forEach((node, idx) => {
+      if (list.children[idx] !== node) {
+        list.insertBefore(node, list.children[idx] || null);
+      }
+    });
     for (const task of items) {
       let row = rows.get(task.id) || rows.get(`parent:${task.parentCallId}`);
-      if (!row) {
+      if (!row || !row.querySelector('.mp-stop-square')) {
         row = document.createElement('article');
         row.className = 'mp-subagent-task';
         row.innerHTML =
-          '<div class="mp-subagent-heading"><strong></strong><button type="button" class="mp-subagent-stop" title="Stop task" aria-label="Stop task"><span class="cds-icon" data-size="xs" aria-hidden="true">&#xE0EC;</span></button></div>' +
-          '<div class="mp-subagent-meta"><span>Agent</span><span class="mp-subagent-model"></span><span class="mp-subagent-time"></span><span class="mp-subagent-state"></span></div>' +
-          '<div class="mp-subagent-stats"><span class="mp-subagent-tool-uses"></span><span class="mp-subagent-current-tool"></span><span class="mp-subagent-usage"></span>' +
-          '<button type="button" class="mp-subagent-transcript" aria-expanded="false">View transcript</button></div>' +
+          '<div class="mp-subagent-heading"><strong></strong><button type="button" class="mp-subagent-stop" title="Stop task" aria-label="Stop task"><span class="mp-stop-square" aria-hidden="true"></span></button></div>' +
+          '<div class="mp-subagent-meta"><span>Agent</span><span class="mp-subagent-time"></span><span class="mp-subagent-model"></span><span class="mp-subagent-state"></span></div>' +
+          '<div class="mp-subagent-stats"><span class="mp-subagent-usage"></span><span class="mp-subagent-tool-uses"></span><span class="mp-subagent-current-tool"></span>' +
+          '<button type="button" class="mp-subagent-transcript">View transcript</button></div>' +
           '<p class="mp-subagent-stop-error" role="status" hidden></p>' +
           '<div class="mp-subagent-permission" hidden></div>' +
           '<p class="mp-subagent-resume-note" role="status" hidden></p>' +
@@ -13839,16 +14217,7 @@ function renderProjectTasks() {
         row
           .querySelector('.mp-subagent-transcript')!
           .addEventListener('click', () => {
-            const body =
-              taskRow.querySelector<HTMLElement>('.mp-subagent-body')!;
-            body.hidden = !body.hidden;
-            const button = taskRow.querySelector<HTMLButtonElement>(
-              '.mp-subagent-transcript',
-            )!;
-            button.textContent = body.hidden
-              ? 'View transcript'
-              : 'Hide transcript';
-            button.setAttribute('aria-expanded', String(!body.hidden));
+            openTaskTranscript(taskRow.dataset.taskId || '');
           });
       }
       row.dataset.taskId = task.id;
@@ -13856,7 +14225,7 @@ function renderProjectTasks() {
       row.dataset.conversationId =
         activeConversationId || pendingConversation?.conversationId || '';
       row.dataset.status = task.status;
-      setText(row.querySelector('strong')!, task.description);
+      setText(row.querySelector('strong')!, cleanTaskTitle(task.description));
       setText(row.querySelector('.mp-subagent-model')!, task.model || '');
       setText(
         row.querySelector('.mp-subagent-time')!,
@@ -13874,7 +14243,7 @@ function renderProjectTasks() {
       );
       setText(
         row.querySelector('.mp-subagent-tool-uses')!,
-        `${task.stepCount} tool ${task.stepCount === 1 ? 'use' : 'uses'}`,
+        `${task.stepCount} ${task.stepCount === 1 ? 'tool use' : 'tool uses'}`,
       );
       setText(
         row.querySelector('.mp-subagent-current-tool')!,
@@ -13892,7 +14261,7 @@ function renderProjectTasks() {
       setText(
         row.querySelector('.mp-subagent-usage')!,
         reportedTokens > 0
-          ? `${reportedTokens >= 1000 ? `${(reportedTokens / 1000).toFixed(1)}k` : reportedTokens} tokens`
+          ? `${formatCompactTokensCount(reportedTokens)} tokens`
           : '',
       );
       const stop = row.querySelector<HTMLButtonElement>('.mp-subagent-stop')!;
@@ -13956,69 +14325,9 @@ function renderProjectTasks() {
           `Showing latest ${task.steps.length} of ${task.stepCount} tool uses`,
         );
       }
-      const stepRows = new Map(
-        Array.from(stepsHost.children).map(item => [
-          (item as HTMLElement).dataset.stepId,
-          item as HTMLElement,
-        ]),
-      );
-      const wantedSteps: HTMLElement[] = [];
-      for (const step of task.steps) {
-        const stepId = step.callId || String(step.index);
-        let item = stepRows.get(stepId);
-        if (!item) {
-          item = document.createElement('details');
-          item.className = 'mp-subagent-step-evidence';
-          item.dataset.stepId = stepId;
-          item.innerHTML =
-            '<summary class="mp-subagent-step"><span class="mp-subagent-step-marker"></span><span class="mp-subagent-step-name"></span><small></small></summary><pre class="mp-subagent-step-input"></pre><pre class="mp-subagent-step-output"></pre>';
-        }
-        item.dataset.status = step.status;
-        item.querySelector<HTMLElement>('summary')!.dataset.status =
-          step.status;
-        setText(
-          item.querySelector('.mp-subagent-step-marker')!,
-          step.status === 'completed'
-            ? '✓'
-            : step.status === 'failed'
-              ? '!'
-              : '·',
-        );
-        setText(
-          item.querySelector('.mp-subagent-step-name')!,
-          step.tool || `Step ${step.index}`,
-        );
-        setText(
-          item.querySelector('small')!,
-          [
-            step.usedBackend,
-            step.latencyMs ? `${Math.round(step.latencyMs)}ms` : '',
-          ]
-            .filter(Boolean)
-            .join(' · '),
-        );
-        setText(
-          item.querySelector('.mp-subagent-step-input')!,
-          step.input || '',
-        );
-        setText(
-          item.querySelector('.mp-subagent-step-output')!,
-          step.output || '',
-        );
-        wantedSteps.push(item);
-      }
-      for (const child of Array.from(stepsHost.children)) {
-        if (!wantedSteps.includes(child as HTMLElement)) {
-          child.remove();
-        }
-      }
-      wantedSteps.forEach((item, i) => {
-        if (stepsHost.children[i] !== item) {
-          stepsHost.insertBefore(item, stepsHost.children[i] || null);
-        }
-      });
+      populateSubagentSteps(stepsHost, task.steps, setText);
       setText(row.querySelector('.mp-subagent-result')!, task.summary);
-      const index = items.indexOf(task);
+      const index = prefixNodes.length + items.indexOf(task);
       if (list.children[index] !== row) {
         list.insertBefore(row, list.children[index] || null);
       }
@@ -14032,21 +14341,26 @@ function renderProjectTasks() {
   const finished = plainTasks.filter(
     task => !childActive(task.status) && !attention.includes(task),
   );
-  const sections: HTMLElement[] = [
-    ...renderWorkflowRunBlocks(
-      host,
-      workflowBlocks,
-      activeConversationId || pendingConversation?.conversationId || '',
-    ),
-  ];
-  if (running.length) {
-    sections.push(makeSection('Running', running));
+  const renderedWorkflows = renderWorkflowRunBlocks(
+    host,
+    workflowBlocks,
+    activeConversationId || pendingConversation?.conversationId || '',
+  );
+  const activeWorkflows = renderedWorkflows.filter(
+    node => node.dataset.active === '1',
+  );
+  const finishedWorkflows = renderedWorkflows.filter(
+    node => node.dataset.active !== '1',
+  );
+  const sections: HTMLElement[] = [];
+  if (activeWorkflows.length || running.length) {
+    sections.push(makeSection('Running', running, activeWorkflows));
   }
   if (attention.length) {
     sections.push(makeSection('Needs attention', attention));
   }
-  if (finished.length) {
-    sections.push(makeSection('Finished', finished));
+  if (finished.length || finishedWorkflows.length) {
+    sections.push(makeSection('Finished', finished, finishedWorkflows));
   }
   for (const row of rows.values()) {
     if (!plainTasks.some(task => task.id === row.dataset.taskId)) {
@@ -14065,6 +14379,29 @@ function renderProjectTasks() {
   });
 }
 
+document.addEventListener('mp:open-tasks', () => {
+  activeTranscriptTaskId = '';
+  setInspector(true, 'tasks');
+  renderProjectTasks();
+});
+
+document.addEventListener('mp:open-workflow', event => {
+  const detail = (event as CustomEvent<{runId?: string}>).detail;
+  const runId = String(detail?.runId || '');
+  activeTranscriptTaskId = '';
+  setInspector(true, 'tasks');
+  renderProjectTasks();
+  if (runId) {
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          `.mpwf-run[data-run-id="${CSS.escape(runId)}"]`,
+        )
+        ?.scrollIntoView({block: 'nearest'});
+    });
+  }
+});
+
 document.addEventListener('mp:open-subagent', event => {
   const detail = (event as CustomEvent<{id?: string; parentCallId?: string}>)
     .detail;
@@ -14074,13 +14411,7 @@ document.addEventListener('mp:open-subagent', event => {
   const matchingTask = tasks.find(
     task => task.id === requestedId || task.parentCallId === parentCallId,
   );
-  focusedSubagentId = matchingTask?.id || requestedId;
-  openWorkspaceResource({
-    kind: 'transcript',
-    title: matchingTask?.description || 'Transcript',
-    resourceKey: `transcript:${focusedSubagentId || parentCallId || requestedId}`,
-    taskId: focusedSubagentId || undefined,
-  });
+  activeTranscriptTaskId = matchingTask?.id || requestedId;
   if (matchingTask) {
     const view = backgroundTaskView();
     view.cleared.delete(matchingTask.id);
@@ -14090,17 +14421,6 @@ document.addEventListener('mp:open-subagent', event => {
   }
   setInspector(true, 'tasks');
   renderProjectTasks();
-  if (focusedSubagentId) {
-    requestAnimationFrame(() => {
-      const taskRow = document.querySelector<HTMLElement>(
-        `.mp-subagent-task[data-task-id="${CSS.escape(focusedSubagentId)}"]`,
-      );
-      taskRow?.scrollIntoView({block: 'nearest'});
-      taskRow
-        ?.querySelector<HTMLElement>('.mp-subagent-transcript')
-        ?.focus({preventScroll: true});
-    });
-  }
 });
 
 let projectBrowserResizeFrame: number | null = null;
@@ -14267,19 +14587,14 @@ function syncInspectorGeometry() {
         ? `${Math.max(296, Math.min(340, rail.width))}px`
         : inspectorState.maximized
           ? ''
-          : backgroundTasks
-            ? '416px'
-            : `${inspectorState.width}px`;
+          : `${inspectorState.width}px`;
   renderInspectorTitle();
   if (maximize) {
-    maximize.hidden =
-      (taskRail && !backgroundTasks) ||
-      inspectorState.tab === 'side-chat' ||
-      inspectorState.tab === 'rail';
+    maximize.hidden = taskRail && !backgroundTasks;
   }
   const resizeHandle = document.getElementById('inspector-resize-handle');
   if (resizeHandle) {
-    resizeHandle.hidden = taskRail;
+    resizeHandle.hidden = false;
     resizeHandle.setAttribute('aria-valuenow', String(inspectorState.width));
     resizeHandle.setAttribute(
       'aria-valuemin',
@@ -14483,9 +14798,7 @@ function syncHeaderWorkspaceToggles(): void {
       const active =
         target === 'terminal'
           ? terminalOpen
-          : target === 'side-chat' && productMode === 'learn'
-            ? learnSideChatDockOpen
-            : inspectorOpen && activeInspectorTab === target;
+          : inspectorOpen && activeInspectorTab === target;
       btn.classList.toggle('is-on', active);
       btn.setAttribute('aria-pressed', String(active));
     });
@@ -14501,10 +14814,6 @@ document
       }
       if (target === 'terminal') {
         toggleTerminalPanel();
-        return;
-      }
-      if (target === 'side-chat' && productMode === 'learn') {
-        setLearnSideChatDock(!learnSideChatDockOpen);
         return;
       }
       if (shell.dataset.inspector === 'open' && activeInspectorTab === target) {
@@ -15508,7 +15817,39 @@ document.addEventListener('click', e => {
     const clickedChevron = Boolean(target.closest('.mpw-project-chevron'));
     if (directKey && !clickedChevron) {
       const matched = ProjectScope.find(cachedProjects || [], directKey);
-      libraryUi.openProject(matched?.id || directKey);
+      const targetRoot = matched?.root || directKey;
+      const targetId = matched?.id;
+      if (!sidebarState.groupExpanded(key)) {
+        sidebarState.toggleGroup(key);
+      }
+      const project = projectToggle.closest<HTMLElement>('.mpw-project');
+      if (project) {
+        project.dataset.open = 'true';
+      }
+      projectToggle.setAttribute('aria-expanded', 'true');
+      show('chat');
+      setActiveProject(targetRoot, targetId);
+      void Data.conversations().then(conversations => {
+        const normalizedTarget = normalizedProjectRoot(targetRoot);
+        const latest = conversations
+          .filter(item => {
+            const itemRoot = normalizedProjectRoot(item.workspaceRoot || '');
+            return (
+              (targetId && item.projectId === targetId) ||
+              (normalizedTarget && itemRoot === normalizedTarget)
+            );
+          })
+          .sort(
+            (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0),
+          )[0];
+        if (latest?.id) {
+          void openConversation(latest.id);
+        } else {
+          startNewChat();
+          setActiveProject(targetRoot, targetId);
+          show('chat');
+        }
+      });
       return;
     }
     const project = projectToggle.closest<HTMLElement>('.mpw-project');
@@ -18188,6 +18529,9 @@ function buildSideChatPaneHandlers(): SideChatPaneHandlers {
     onOpenBranch: branchId => {
       SideChatPane?.openBranch(branchId);
       openSideChatSurface();
+    },
+    onBack: () => {
+      setInspector(false);
     },
   };
 }

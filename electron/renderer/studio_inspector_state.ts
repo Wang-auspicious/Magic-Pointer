@@ -25,9 +25,9 @@
       }
     | {type: 'clear-content'};
 
-  const MIN_WIDTH = 420;
-  const MAX_WIDTH = 760;
-  const MIN_PRIMARY = 420;
+  const MIN_WIDTH = 300;
+  const MAX_RATIO = 0.72;
+  const MIN_PRIMARY = 320;
   const GAP = 8;
 
   function sessionRailGeometry(availableWidth: number): {
@@ -46,12 +46,18 @@
   ): number {
     const requested = Number(desired);
     const available = Number(availableWidth);
-    const safeRequested = Number.isFinite(requested) ? requested : 560;
-    const safeAvailable = Number.isFinite(available) ? available : 1320;
-    const maximum = Math.max(
-      MIN_WIDTH,
-      Math.min(MAX_WIDTH, safeAvailable - MIN_PRIMARY - GAP),
-    );
+    const safeAvailable = Number.isFinite(available) && available > 0 ? available : 1320;
+    const defaultWidth = Math.round(safeAvailable * 0.5);
+    const safeRequested =
+      desired !== undefined &&
+      desired !== null &&
+      desired !== '' &&
+      Number.isFinite(requested)
+        ? requested
+        : defaultWidth;
+    const ratioMax = Math.floor(safeAvailable * MAX_RATIO);
+    const spaceMax = safeAvailable - MIN_PRIMARY - GAP;
+    const maximum = Math.max(MIN_WIDTH, Math.min(Math.max(760, ratioMax), spaceMax));
     return Math.round(Math.min(maximum, Math.max(MIN_WIDTH, safeRequested)));
   }
 

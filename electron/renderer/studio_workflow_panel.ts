@@ -13,18 +13,33 @@ export interface WorkflowStepLine {
   attempts: number;
   tokens: number;
   subagentId: string;
+  toolUses: number;
+  elapsedMs: number;
+  phaseName: string;
+}
+
+export interface WorkflowPhaseGroup {
+  title: string;
+  steps: WorkflowStepLine[];
+  active: boolean;
 }
 
 export interface WorkflowRunBlock {
   runId: string;
   steps: WorkflowStepLine[];
   active: boolean;
+  totalTokens: number;
+  elapsedMs: number;
+  agentCount: number;
+  phases: WorkflowPhaseGroup[];
 }
 
 const STEP_TASK_ID = /^wf-([A-Za-z0-9]+)-(.+)$/;
 const WORKFLOW_PARENT = /^workflow-(.+)$/;
 const ATTEMPT_SUFFIX = /^(.*)-a(\d+)$/;
 const STEP_MARKER = /^\[workflow-step ([^\]]+)\][ \t]*(.*)$/;
+const PHASE_MARKER = /^\[phase ([^\]]+)\][ \t]*(.*)$/i;
+const INLINE_PHASE_MARKER = /\[phase ([^\]]+)\]/i;
 const NON_TERMINAL = new Set(['running', 'awaiting_user']);
 
 function stepStatusOf(raw: string): WorkflowStepStatus {
@@ -54,13 +69,59 @@ function tokensOf(task: Record<string, any>): number {
   return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
 }
 
-function titleOf(task: Record<string, any>, stepId: string): string {
+function phaseAndTitleOf(
+  task: Record<string, any>,
+  stepId: string,
+): {phaseName: string; title: string} {
   const firstLine = String(task.description || '').split('\n')[0] || '';
-  const marker = STEP_MARKER.exec(firstLine.trim());
-  if (marker) {
-    return marker[2]!.trim() || stepId;
+  const stepMatch = STEP_MARKER.exec(firstLine.trim());
+  const rawAfterStep = stepMatch
+    ? (stepMatch[2] ?? '').trim()
+    : firstLine.trim();
+  const phaseMatch = PHASE_MARKER.exec(rawAfterStep);
+  if (phaseMatch) {
+    return {
+      phaseName: (phaseMatch[1] || '').trim() || 'Tasks',
+      title: (phaseMatch[2] || '').trim() || stepId,
+    };
   }
-  return firstLine.trim() || stepId;
+  const inlinePhase = INLINE_PHASE_MARKER.exec(rawAfterStep);
+  if (inlinePhase) {
+    return {
+      phaseName: (inlinePhase[1] || '').trim() || 'Tasks',
+      title: rawAfterStep.replace(inlinePhase[0], '').trim() || stepId,
+    };
+  }
+  return {
+    phaseName: 'Tasks',
+    title: rawAfterStep || stepId,
+  };
+}
+
+function stepElapsedMsOf(task: Record<string, any>): number {
+  const explicit = Number(task.elapsedMs);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return explicit;
+  }
+  const startedAt = Number(task.startedAt);
+  const completedAt = Number(task.completedAt);
+  if (
+    Number.isFinite(startedAt) &&
+    startedAt > 0 &&
+    Number.isFinite(completedAt) &&
+    completedAt > startedAt
+  ) {
+    return completedAt - startedAt;
+  }
+  return 0;
+}
+
+function stepToolUsesOf(task: Record<string, any>): number {
+  const count = Number(task.stepCount);
+  if (Number.isFinite(count) && count > 0) {
+    return count;
+  }
+  return Array.isArray(task.steps) ? task.steps.length : 0;
 }
 
 /** True for workflow step subagent ids (`wf-<run>-<step>-a<attempt>`). */
@@ -137,24 +198,52 @@ export function groupWorkflowTasks(
       ...run.steps.entries(),
     ].map(([stepId, rows]) => {
       const lead = representativeOf(rows);
+      const {phaseName, title} = phaseAndTitleOf(lead.task, stepId);
       return {
         stepId,
-        title: titleOf(lead.task, stepId),
+        title,
         status: stepStatusOf(String(lead.task.status || '')),
         attempts: rows.length,
         tokens: tokensOf(lead.task),
         subagentId: String(lead.task.id || ''),
+        toolUses: stepToolUsesOf(lead.task),
+        elapsedMs: stepElapsedMsOf(lead.task),
+        phaseName,
         startedAt: Math.min(...rows.map(row => row.startedAt)),
       };
     });
     steps.sort(
       (a, b) => a.startedAt - b.startedAt || a.stepId.localeCompare(b.stepId),
     );
+    const cleanSteps = steps.map(({startedAt: _startedAt, ...step}) => step);
+    const phaseMap = new Map<string, WorkflowStepLine[]>();
+    for (const step of cleanSteps) {
+      const group = phaseMap.get(step.phaseName);
+      if (group) {
+        group.push(step);
+      } else {
+        phaseMap.set(step.phaseName, [step]);
+      }
+    }
+    const phases: WorkflowPhaseGroup[] = [...phaseMap.entries()].map(
+      ([title, phaseSteps]) => ({
+        title,
+        steps: phaseSteps,
+        active: phaseSteps.some(step => step.status === 'running'),
+      }),
+    );
     blocks.push({
       block: {
         runId,
-        steps: steps.map(({startedAt: _startedAt, ...step}) => step),
-        active: steps.some(step => step.status === 'running'),
+        steps: cleanSteps,
+        active: cleanSteps.some(step => step.status === 'running'),
+        totalTokens: cleanSteps.reduce((sum, step) => sum + step.tokens, 0),
+        elapsedMs: cleanSteps.reduce(
+          (max, step) => Math.max(max, step.elapsedMs),
+          0,
+        ),
+        agentCount: cleanSteps.length,
+        phases,
       },
       startedAt: run.startedAt,
     });

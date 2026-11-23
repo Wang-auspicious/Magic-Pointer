@@ -104,8 +104,8 @@
   --mp-window-bar: 36px; /* no CDS counterpart */
   --mp-sidebar-width: 288px; /* Claude desktop bootFrameLayout.sidebarWidth */
   --mp-content-width: 768px; /* Magic Pointer's own reading measure */
-  --mp-inspector-min: 420px; /* Magic Pointer's own; Claude's pane floor is 320px */
-  --mp-inspector-max: 760px; /* Magic Pointer's own; Claude has no pane ceiling */
+  --mp-inspector-min: 300px; /* Free resizable right split pane floor */
+  --mp-inspector-max: 72vw; /* Dynamic proportion matching Claude split pane */
 
   /* Surface roles aligned to Claude Desktop 4.23118 (c6a992d55-BxgTbpOo.css). */
   --mp-page: #FFFFFF; /* --cds-gray-0 */

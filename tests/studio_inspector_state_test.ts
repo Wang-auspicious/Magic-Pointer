@@ -10,9 +10,9 @@ assert.deepStrictEqual(sessionRailGeometry(1560 - 288), { width: 320, overlay: f
 assert.deepStrictEqual(sessionRailGeometry(1100), { width: 260, overlay: false }, 'rail uses the actual chat measure and three 24px gutters');
 assert.deepStrictEqual(sessionRailGeometry(591), { width: 240, overlay: true }, 'below the interface 592px panel threshold the rail uses an overlay');
 
-assert.strictEqual(clampInspectorWidth(300, 1200), 420);
-assert.strictEqual(clampInspectorWidth(900, 1600), 760);
-assert.strictEqual(clampInspectorWidth(700, 1000), 572, 'leave a 420px primary pane plus 8px gap');
+assert.strictEqual(clampInspectorWidth(300, 1200), 300);
+assert.strictEqual(clampInspectorWidth(900, 1600), 900);
+assert.strictEqual(clampInspectorWidth(700, 1000), 672, 'leave a 320px primary pane plus 8px gap');
 
 let state = {
   open: false,
@@ -40,8 +40,8 @@ const narrowOpen = reduceInspectorState({
   previousWidth: 747,
   tab: 'tasks',
 }, { type: 'open', tab: 'tasks', availableWidth: 911 });
-assert.strictEqual(narrowOpen.width, 483,
-  'opening a persisted wide Inspector must leave the 420px primary pane intact');
+assert.strictEqual(narrowOpen.width, 583,
+  'opening a persisted wide Inspector must leave the 320px primary pane intact');
 assert.strictEqual(narrowOpen.previousWidth, 747,
   'temporary viewport clamping must preserve the user\'s preferred Inspector width');
 
@@ -49,7 +49,7 @@ const viewportClamped = reduceInspectorState({
   ...narrowOpen,
   width: 747,
 }, { type: 'viewport', availableWidth: 911 });
-assert.strictEqual(viewportClamped.width, 483);
+assert.strictEqual(viewportClamped.width, 583);
 assert.strictEqual(viewportClamped.previousWidth, 747);
 
 const narrowRestore = reduceInspectorState({
@@ -57,7 +57,7 @@ const narrowRestore = reduceInspectorState({
   maximized: true,
   width: 747,
 }, { type: 'restore', availableWidth: 911 });
-assert.strictEqual(narrowRestore.width, 483,
+assert.strictEqual(narrowRestore.width, 583,
   'restoring from maximized must revalidate against the current viewport');
 assert.strictEqual(narrowRestore.previousWidth, 747);
 

@@ -14,7 +14,7 @@ export function generativeUiPlugin(): RuntimePlugin {
         render: options =>
           isLearnWorkMode(options.workMode)
             ? ''
-            : 'When interactive charts, diagrams, adjustable calculations, forms, or comparisons would help, discover and call UI.describe before producing an inline OpenUI interface. Use the task’s actual data. Ordinary answers remain Markdown.',
+            : 'When interactive charts, diagrams, adjustable calculations, forms, or comparisons would help, discover and call UI.describe before producing an inline OpenUI interface, or render compact inline ```svg / ```html / :::steps (step-by-step interactive walkthroughs with ## headings) / :::gallery (visual image collages from Web.search_images or Document.crop_pdf_figure). Use the task’s actual data. Ordinary answers remain Markdown.',
       });
       ctx.registerTool({
         name: 'UI.describe',

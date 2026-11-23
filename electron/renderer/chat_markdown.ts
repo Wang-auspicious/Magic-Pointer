@@ -368,26 +368,38 @@ const ChatMarkdown = (() => {
         text,
       );
     if (match) {
+      const rawAlt = match[1];
       const src = safeImageSource(match[2] || match[3]);
+      let cleanAlt = rawAlt;
+      let gallerySource = '';
+      if (rawAlt.includes('|')) {
+        const pipeIdx = rawAlt.indexOf('|');
+        cleanAlt = rawAlt.slice(0, pipeIdx).trim();
+        gallerySource = rawAlt.slice(pipeIdx + 1).trim();
+      }
       const attrs: Record<string, string> = {
         class: 'mp-chat-image',
         src: src || '',
-        alt: match[1],
+        alt: cleanAlt,
         loading: 'lazy',
         decoding: 'async',
         'data-mp-chat-act': 'view-image',
         role: 'button',
         tabindex: '0',
       };
+      if (gallerySource) {
+        attrs['data-gallery-source'] = gallerySource;
+      }
       if (match[4]) {
         attrs.title = match[4];
       }
       add(match, src ? [h('img', attrs)] : [match[0]]);
     }
 
-    match = /\[([^\]]+)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/.exec(text);
+    match = /\[([^\]]+)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)/.exec(text);
     if (match) {
       const target = match[2].trim();
+      const linkTitle = (match[3] || '').trim().toLowerCase();
       if (/^artifact:([^\s#?]+)/i.test(target)) {
         const artifactId = target.replace(/^artifact:/i, '').split(/[?#]/)[0].trim();
         add(match, [
@@ -421,13 +433,22 @@ const ChatMarkdown = (() => {
         ]);
       } else {
         const href = safeHref(target);
+        const isCite = linkTitle === 'cite' || linkTitle === 'citation';
         add(
           match,
           href
             ? [
                 h(
                   'a',
-                  {href, target: '_blank', rel: 'noreferrer'},
+                  isCite
+                    ? {
+                        class: 'mp-md-cite-pill',
+                        href,
+                        target: '_blank',
+                        rel: 'noreferrer',
+                        title: href,
+                      }
+                    : {href, target: '_blank', rel: 'noreferrer'},
                   ...inlineNodes(match[1]),
                 ),
               ]
@@ -634,6 +655,8 @@ const ChatMarkdown = (() => {
       /^\s*:::prereq\b/i.test(line) ||
       /^\s*:::lab\b/i.test(line) ||
       /^\s*:::checkin\b/i.test(line) ||
+      /^\s*:::(?:steps|stepper)\b/i.test(line) ||
+      /^\s*:::gallery\b/i.test(line) ||
       /^\s*:::(?:ui|widget)\b/i.test(line) ||
       /^\s*\$\$/.test(line) ||
       /^\s*\\\[/.test(line) ||
@@ -643,6 +666,123 @@ const ChatMarkdown = (() => {
       /^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line) ||
       (line.includes('|') && isTableDivider(lines[index + 1] || ''))
     );
+  }
+
+  function imageSourceBadgeText(imgNode: MdNode): string {
+    const attrReader = imgNode as unknown as {
+      getAttribute?: (name: string) => string | null;
+      attrs?: Record<string, string>;
+      attributes?: Record<string, string>;
+    };
+    const readAttr = (name: string): string =>
+      (typeof attrReader.getAttribute === 'function'
+        ? attrReader.getAttribute(name)
+        : attrReader.attrs?.[name] || attrReader.attributes?.[name]) || '';
+    const explicit = readAttr('data-gallery-source').trim();
+    if (explicit) {
+      return explicit;
+    }
+    const src = readAttr('src').trim();
+    if (/^https?:\/\//i.test(src)) {
+      try {
+        return new URL(src).hostname.replace(/^www\./i, '');
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  function buildGalleryNode(images: MdNode[], caption?: string): MdNode {
+    const countAttr = String(images.length);
+    const tiles = images.map(img => {
+      const sourceText = imageSourceBadgeText(img);
+      const tile = h('div', {class: 'mp-md-gallery-tile'}, img);
+      if (sourceText) {
+        append(tile, h('span', {class: 'mp-md-gallery-source'}, sourceText));
+      }
+      return tile;
+    });
+    const grid = h(
+      'div',
+      {class: 'mp-chat-image-grid', 'data-count': countAttr},
+      ...tiles,
+    );
+    const figure = h(
+      'figure',
+      {class: 'mp-md-gallery', 'data-count': countAttr},
+      grid,
+    );
+    const cleanCaption = String(caption || '').trim();
+    if (cleanCaption) {
+      append(
+        figure,
+        h('figcaption', {class: 'mp-md-gallery-caption'}, cleanCaption),
+      );
+    }
+    return figure;
+  }
+
+  function parseStepsBlock(
+    stepLines: string[],
+  ): Array<{title: string; bodyLines: string[]}> {
+    const joined = stepLines.join('\n').trim();
+    if (joined.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(joined) as Array<Record<string, unknown>>;
+        if (Array.isArray(parsed) && parsed.length) {
+          return parsed
+            .filter(item => item && typeof item === 'object')
+            .map((item, idx) => ({
+              title: String(item.title || `Step ${idx + 1}`).trim(),
+              bodyLines: String(item.body || item.content || '').split(/\r?\n/),
+            }));
+        }
+      } catch {
+        // Fall back to heading/markdown parsing while streaming partial JSON.
+      }
+    }
+    const steps: Array<{title: string; bodyLines: string[]}> = [];
+    let current: {title: string; bodyLines: string[]} | null = null;
+    for (const rawLine of stepLines) {
+      const heading = /^\s{0,3}#{1,4}\s+(.+?)\s*#*\s*$/.exec(rawLine);
+      if (heading) {
+        if (current) {
+          steps.push(current);
+        }
+        current = {title: heading[1].trim(), bodyLines: []};
+        continue;
+      }
+      const boldNumbered = /^\s*\d+[.)]\s+\*\*([^*]+)\*\*(.*)$/.exec(rawLine);
+      if (!steps.length && !current && boldNumbered) {
+        current = {
+          title: boldNumbered[1].trim(),
+          bodyLines: boldNumbered[2].trim() ? [boldNumbered[2].trim()] : [],
+        };
+        continue;
+      }
+      if (current && boldNumbered) {
+        steps.push(current);
+        current = {
+          title: boldNumbered[1].trim(),
+          bodyLines: boldNumbered[2].trim() ? [boldNumbered[2].trim()] : [],
+        };
+        continue;
+      }
+      if (!current) {
+        const cleaned = rawLine.trim();
+        if (!cleaned) {
+          continue;
+        }
+        current = {title: cleaned, bodyLines: []};
+      } else {
+        current.bodyLines.push(rawLine);
+      }
+    }
+    if (current) {
+      steps.push(current);
+    }
+    return steps.length ? steps : [{title: 'Step 1', bodyLines: stepLines}];
   }
 
   function renderBlocks(lines: string[]): MdNode[] {
@@ -706,6 +846,109 @@ const ChatMarkdown = (() => {
           );
         });
         blocks.push(strip);
+        continue;
+      }
+
+      // Interactive multi-step walkthrough card: :::steps\n## Step 1\n...\n:::
+      if (/^\s*:::(?:steps|stepper)\b/i.test(line)) {
+        const stepLines: string[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          stepLines.push(lines[index++]);
+        }
+        const complete = index < lines.length && /^\s*:::\s*$/.test(lines[index]);
+        if (complete) {
+          index += 1;
+        }
+        const steps = parseStepsBlock(stepLines);
+        const panels = steps.map((step, stepIdx) =>
+          h(
+            'article',
+            {
+              class: 'mp-iui-step-panel',
+              'data-step-index': String(stepIdx),
+              ...(stepIdx > 0 ? {hidden: 'true'} : {}),
+            },
+            h('h4', {class: 'mp-iui-steps-title'}, ...inlineNodes(step.title)),
+            h('div', {class: 'mp-iui-steps-body'}, ...renderBlocks(step.bodyLines)),
+          ),
+        );
+        const dots = steps.map((_, stepIdx) =>
+          h(
+            'button',
+            {
+              type: 'button',
+              class:
+                stepIdx === 0 ? 'mp-iui-step-dot is-active' : 'mp-iui-step-dot',
+              'data-step-target': String(stepIdx),
+              'aria-label': `Step ${stepIdx + 1}`,
+              'aria-current': stepIdx === 0 ? 'step' : 'false',
+            },
+            String(stepIdx + 1),
+          ),
+        );
+        const footer = h(
+          'footer',
+          {class: 'mp-iui-steps-footer'},
+          h(
+            'div',
+            {class: 'mp-iui-steps-nav'},
+            ...dots,
+            h(
+              'button',
+              {
+                type: 'button',
+                class: 'mp-iui-steps-all-btn',
+                'aria-pressed': 'false',
+              },
+              'View all steps',
+            ),
+          ),
+          h(
+            'div',
+            {class: 'mp-iui-steps-actions'},
+            h(
+              'button',
+              {type: 'button', class: 'mp-iui-steps-prev', hidden: 'true'},
+              'Back',
+            ),
+            h('button', {type: 'button', class: 'mp-iui-steps-next'}, 'Next'),
+          ),
+        );
+        blocks.push(
+          h(
+            'section',
+            {
+              class: 'mp-iui-steps',
+              'data-steps-complete': complete ? 'true' : 'false',
+              'data-steps-count': String(steps.length),
+            },
+            h('div', {class: 'mp-iui-steps-viewport'}, ...panels),
+            footer,
+          ),
+        );
+        continue;
+      }
+
+      // Bento image collage card: :::gallery [caption]\n![alt | source](url)...\n:::
+      const galleryMatch = /^\s*:::gallery\b(?:\s+(.*))?$/i.exec(line);
+      if (galleryMatch) {
+        const galleryCaption = (galleryMatch[1] || '').trim();
+        const galleryImages: MdNode[] = [];
+        index += 1;
+        while (index < lines.length && !/^\s*:::\s*$/.test(lines[index])) {
+          const lineImgs = imageLineNodes(lines[index]);
+          if (lineImgs) {
+            galleryImages.push(...lineImgs);
+          }
+          index += 1;
+        }
+        if (index < lines.length && /^\s*:::\s*$/.test(lines[index])) {
+          index += 1;
+        }
+        if (galleryImages.length) {
+          blocks.push(buildGalleryNode(galleryImages, galleryCaption));
+        }
         continue;
       }
 
@@ -892,11 +1135,16 @@ const ChatMarkdown = (() => {
           index += 1;
         }
         blocks.push(
-          h(
-            'div',
-            {class: 'mp-chat-image-grid', 'data-count': String(images.length)},
-            ...images,
-          ),
+          images.length >= 2
+            ? buildGalleryNode(images)
+            : h(
+                'div',
+                {
+                  class: 'mp-chat-image-grid',
+                  'data-count': String(images.length),
+                },
+                ...images,
+              ),
         );
         continue;
       }

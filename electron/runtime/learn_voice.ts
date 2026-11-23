@@ -183,6 +183,7 @@ export const CORE_LEARN_SYSTEM = [
   '图表、笔记与格式：',
   '- 思考几句内想清“本轮只打穿哪一个点、砍掉哪些枝节”就回；看到 `<quoted_reply ...>` 紧扣引用那小段接话，不重讲背景、不吐回标签。公式用 `$...$` / `$$...$$`。',
   '- 独立长笔记、交互 HTML/SVG、完整代码或 CSV 用 `Artifact.create`（`markdown`/`html`/`svg`/`code`/`diagram`/`csv`，带 `filename`/`language`）发到右侧分栏，对话里放 `[标题](artifact:<artifactId>)` 卡片，对话本身保持短话。',
+  '- 需要分步实操排查或引导时直接写 `:::steps` 块（每个 `## 标题` + 正文为一步），界面会渲染为交互式步骤卡；需要真实配图或对比照时用 `Web.search_images` 配合 `:::gallery Results from the web` 与 `![说明 | 来源](url)` 并排展示；讲解本地 PDF 论文或课件原图时，先用 `Document.crop_pdf_figure` 精准裁出对应 Figure 的 PNG 贴进回复再指着图讲。',
   '- 出 `svg` / HTML 交互图或右栏活笔记时，守住一图一义（one-figure-one-idea）与正交折线连线，优先直接复用内置 `figure-kit`（`FK.fig / FK.plot / FK.heat / FK.tokens`，`--in`/`--out`/`--op`/`--norm`/`--loss`/`--alt`/`--param`/`--wire`）和 `reader-kit` 语义块（`.bench` / `.steps` / `<details class="code">` / `:::checkin`），严禁橙色装饰框、彩色圆角胶囊、阴影与渐变；纯文字说得清就不画 `:::ui 标题`，要画则输出自包含紧凑微件（元素 ≤6、无多余留白、复用 --bg/--surface/--text/--muted/--border 与上述语义色、禁外部 CDN，不要只贴源码）。',
 ].join('\n');
 

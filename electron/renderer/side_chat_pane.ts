@@ -42,6 +42,7 @@ declare global {
       branch: MagicPointerLearnBranch,
     ) => void | Promise<void>;
     onOpenBranch?: (branchId: string) => void;
+    onBack?: () => void;
   }
 
   interface SideChatPaneApi {
@@ -71,6 +72,7 @@ declare global {
   let liveState: SideChatLiveState | null = null;
   let historyMenuOpen = false;
   const expandedMountedIds = new Set<string>();
+  const collapsedBriefKeys = new Set<string>();
 
   function el<K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -268,120 +270,154 @@ declare global {
       ? branches.find(item => item.id === activeBranchId) || null
       : null;
 
-    // 1. Subtle breadcrumb / history switcher ONLY when multi-level nested or multiple threads exist
+    // 1. Clean图5 header (`< Title` + branch switcher / new discussion)
     const ancestors = resolveBranchAncestors(
       branches,
       activeDraft ? activeDraft.parentBranchId : currentBranch?.parentBranchId,
     );
     const hasNestedCrumbs = ancestors.length > 0;
     const hasMultipleThreads = branches.length > 1;
-    if (hasNestedCrumbs || hasMultipleThreads) {
-      const topbar = el('div', 'mp-sidechat-topbar');
+    const headerTitle = activeDraft
+      ? activeDraft.quote || '新探讨'
+      : currentBranch
+        ? branchTitle(currentBranch)
+        : 'Side chat';
+    const topbar = el('div', 'mp-sidechat-topbar');
+    const backBtn = el('button', 'mp-sidechat-back-btn');
+    backBtn.type = 'button';
+    backBtn.title = hasNestedCrumbs ? '返回上一级探讨' : '收起右侧分栏';
+    const backIcon = el('span', 'cds-icon mp-sidechat-back-chevron');
+    backIcon.dataset.size = 'xs';
+    backIcon.dataset.glyph = '\uE02B';
+    backIcon.setAttribute('aria-hidden', 'true');
+    backBtn.append(
+      backIcon,
+      el('span', 'mp-sidechat-header-title', headerTitle),
+    );
+    backBtn.addEventListener('click', () => {
       if (hasNestedCrumbs) {
-        const crumbs = el('nav', 'mp-sidechat-crumbs');
-        crumbs.setAttribute('aria-label', 'Side chat hierarchy');
-        for (let i = 0; i < ancestors.length; i++) {
-          const anc = ancestors[i];
-          if (i > 0) {
-            crumbs.appendChild(el('span', 'mp-sidechat-crumb-sep', '›'));
-          }
-          const crumbBtn = el(
-            'button',
-            'mp-sidechat-crumb',
-            branchTitle(anc).slice(0, 18),
-          );
-          crumbBtn.type = 'button';
-          crumbBtn.title = branchTitle(anc);
-          crumbBtn.addEventListener('click', () => {
-            openBranch(anc.id);
-            renderPane(hostEl, conversation, handlers);
-          });
-          crumbs.appendChild(crumbBtn);
+        const parent = ancestors[ancestors.length - 1];
+        if (parent) {
+          openBranch(parent.id);
+          renderPane(hostEl, conversation, handlers);
+          return;
         }
-        crumbs.appendChild(el('span', 'mp-sidechat-crumb-sep', '›'));
-        const currLabel = activeDraft
-          ? activeDraft.quote || '深入探讨'
-          : currentBranch
-            ? branchTitle(currentBranch)
-            : '探讨';
-        crumbs.appendChild(
-          el('span', 'mp-sidechat-crumb is-current', currLabel.slice(0, 18)),
-        );
-        topbar.appendChild(crumbs);
-      } else if (currentBranch) {
-        const curLabel = el(
-          'span',
-          'mp-sidechat-crumb is-current',
-          branchTitle(currentBranch).slice(0, 24),
-        );
-        topbar.appendChild(curLabel);
       }
+      handlers.onBack?.();
+    });
+    topbar.appendChild(backBtn);
 
-      const topActions = el('div', 'mp-sidechat-top-actions');
-      if (hasMultipleThreads) {
-        const histBtn = el(
+    if (hasNestedCrumbs) {
+      const crumbs = el('nav', 'mp-sidechat-crumbs');
+      crumbs.setAttribute('aria-label', 'Side chat hierarchy');
+      for (let i = 0; i < ancestors.length; i++) {
+        const anc = ancestors[i];
+        if (i > 0) {
+          crumbs.appendChild(el('span', 'mp-sidechat-crumb-sep', '›'));
+        }
+        const crumbBtn = el(
           'button',
-          'mp-sidechat-top-btn',
-          `全部探讨 (${branches.length}) ▾`,
+          'mp-sidechat-crumb',
+          branchTitle(anc).slice(0, 18),
         );
-        histBtn.type = 'button';
-        histBtn.setAttribute('aria-expanded', String(historyMenuOpen));
-
-        const menu = el('div', 'mp-sidechat-history-menu');
-        menu.hidden = !historyMenuOpen;
-        for (const branch of branches) {
-          const isCurrent = !activeDraft && currentBranch?.id === branch.id;
-          const item = el(
-            'button',
-            `mp-sidechat-history-item${isCurrent ? ' is-on' : ''}`,
-          );
-          item.type = 'button';
-          item.appendChild(
-            el('span', 'mp-sidechat-history-title', branchTitle(branch)),
-          );
-          if (branch.mountedToParent) {
-            item.appendChild(el('span', 'mp-sidechat-crumb-sep', '已外挂'));
-          }
-          item.addEventListener('click', () => {
-            openBranch(branch.id);
-            renderPane(hostEl, conversation, handlers);
-          });
-          menu.appendChild(item);
-        }
-
-        histBtn.addEventListener('click', ev => {
-          ev.stopPropagation();
-          historyMenuOpen = !historyMenuOpen;
-          menu.hidden = !historyMenuOpen;
-          histBtn.setAttribute('aria-expanded', String(historyMenuOpen));
+        crumbBtn.type = 'button';
+        crumbBtn.title = branchTitle(anc);
+        crumbBtn.addEventListener('click', () => {
+          openBranch(anc.id);
+          renderPane(hostEl, conversation, handlers);
         });
-        topActions.appendChild(histBtn);
-        topbar.appendChild(menu);
+        crumbs.appendChild(crumbBtn);
+      }
+      topbar.appendChild(crumbs);
+    }
+
+    const topActions = el('div', 'mp-sidechat-top-actions');
+    if (hasMultipleThreads) {
+      const histBtn = el(
+        'button',
+        'mp-sidechat-top-btn',
+        `全部 (${branches.length}) ▾`,
+      );
+      histBtn.type = 'button';
+      histBtn.setAttribute('aria-expanded', String(historyMenuOpen));
+
+      const menu = el('div', 'mp-sidechat-history-menu');
+      menu.hidden = !historyMenuOpen;
+      for (const branch of branches) {
+        const isCurrent = !activeDraft && currentBranch?.id === branch.id;
+        const item = el(
+          'button',
+          `mp-sidechat-history-item${isCurrent ? ' is-on' : ''}`,
+        );
+        item.type = 'button';
+        item.appendChild(
+          el('span', 'mp-sidechat-history-title', branchTitle(branch)),
+        );
+        if (branch.mountedToParent) {
+          item.appendChild(el('span', 'mp-sidechat-crumb-sep', '已外挂'));
+        }
+        item.addEventListener('click', () => {
+          openBranch(branch.id);
+          renderPane(hostEl, conversation, handlers);
+        });
+        menu.appendChild(item);
       }
 
-      const newBtn = el('button', 'mp-sidechat-top-btn', '+ 新探讨');
-      newBtn.type = 'button';
-      newBtn.addEventListener('click', () => {
-        openDraft({
-          conversationId: conversation.id,
-          parentTurnIndex: Math.max(0, (conversation.turns?.length || 1) - 1),
-          parentBranchId: null,
-          quote: '',
-          snippet: '',
-        });
-        renderPane(hostEl, conversation, handlers);
+      histBtn.addEventListener('click', ev => {
+        ev.stopPropagation();
+        historyMenuOpen = !historyMenuOpen;
+        menu.hidden = !historyMenuOpen;
+        histBtn.setAttribute('aria-expanded', String(historyMenuOpen));
       });
-      topActions.appendChild(newBtn);
-      topbar.appendChild(topActions);
-      pane.appendChild(topbar);
+      topActions.appendChild(histBtn);
+      topbar.appendChild(menu);
     }
+
+    const newBtn = el('button', 'mp-sidechat-top-btn', '+ 新探讨');
+    newBtn.type = 'button';
+    newBtn.addEventListener('click', () => {
+      openDraft({
+        conversationId: conversation.id,
+        parentTurnIndex: Math.max(0, (conversation.turns?.length || 1) - 1),
+        parentBranchId: null,
+        quote: '',
+        snippet: '',
+      });
+      renderPane(hostEl, conversation, handlers);
+    });
+    topActions.appendChild(newBtn);
+    topbar.appendChild(topActions);
+    pane.appendChild(topbar);
 
     // 2. Normal Claude conversation stream
     const stream = el('div', 'mp-sidechat-stream');
     const turns = currentBranch?.turns || [];
     const persistedQuote =
       currentBranch?.anchor?.snippet || currentBranch?.anchor?.label || '';
-    const renderQuoteChip = (text: string) => {
+    const renderQuoteChip = (text: string, briefKey = 'brief') => {
+      const isLongBrief = text.length > 180 || text.includes('\n');
+      if (isLongBrief) {
+        const collapsed = collapsedBriefKeys.has(briefKey);
+        const box = el('div', `mp-sidechat-brief-card${collapsed ? ' is-collapsed' : ''}`);
+        const body = el('div', 'mp-sidechat-brief-body mp-chat-markdown');
+        renderRichMarkdown(body, text);
+        const toggleBtn = el(
+          'button',
+          'mp-sidechat-brief-toggle',
+          collapsed ? 'Show more' : 'Show less',
+        );
+        toggleBtn.type = 'button';
+        toggleBtn.addEventListener('click', () => {
+          if (collapsedBriefKeys.has(briefKey)) {
+            collapsedBriefKeys.delete(briefKey);
+          } else {
+            collapsedBriefKeys.add(briefKey);
+          }
+          renderPane(hostEl, conversation, handlers);
+        });
+        box.append(body, toggleBtn);
+        return box;
+      }
       const quoteChip = el('div', 'mp-sidechat-msg-quote');
       const qIcon = el('span', 'cds-icon');
       qIcon.dataset.size = 'xs';
@@ -393,11 +429,20 @@ declare global {
     };
 
     if (!turns.length && !liveState) {
-      const empty = el('div', 'mp-sidechat-empty');
-      empty.textContent = document.documentElement.lang.startsWith('zh')
-        ? '顺手聊点相关的，不打断主线'
-        : 'Ask a quick follow-up without interrupting the main chat.';
-      stream.appendChild(empty);
+      if (activeDraft?.quote) {
+        stream.appendChild(
+          renderQuoteChip(
+            activeDraft.snippet || activeDraft.quote,
+            `draft:${conversation.id}`,
+          ),
+        );
+      } else {
+        const empty = el('div', 'mp-sidechat-empty');
+        empty.textContent = document.documentElement.lang.startsWith('zh')
+          ? '顺手聊点相关的，不打断主线'
+          : 'Ask a quick follow-up without interrupting the main chat.';
+        stream.appendChild(empty);
+      }
     } else {
       for (let idx = 0; idx < turns.length; idx++) {
         const turn = turns[idx];
@@ -408,7 +453,9 @@ declare global {
           }
           const userStack = el('div', 'mp-sidechat-user-stack');
           if (idx === 0 && persistedQuote) {
-            userStack.appendChild(renderQuoteChip(persistedQuote));
+            userStack.appendChild(
+              renderQuoteChip(persistedQuote, currentBranch?.id || `turn:${idx}`),
+            );
           }
           userStack.appendChild(el('div', 'mp-sidechat-bubble', turn.question));
           userRow.appendChild(userStack);

@@ -285,13 +285,22 @@ export function initialToolNames(context: {
         'AskUser',
         'Search',
         'Fetch',
+        'Web.search_images',
+        'Document.crop_pdf_figure',
         'Knowledge.search',
         'Knowledge.read',
         'Artifact.create',
         'Artifact.read',
         'Artifact.update',
       ]
-    : ['Tools', 'AskUser', 'ToolResult.read', 'Todo'];
+    : [
+        'Tools',
+        'AskUser',
+        'ToolResult.read',
+        'Todo',
+        'Web.search_images',
+        'Document.crop_pdf_figure',
+      ];
   if (!isLearn && context.workspace) {
     names.push('Read');
     if (
@@ -1173,6 +1182,171 @@ export function registerWebTools(registry: ToolRegistry): void {
   });
   registry.alias('web_search', 'Search');
   registry.alias('web_fetch', 'Fetch');
+  registry.register({
+    name: 'Web.search_images',
+    description:
+      'Search the internet for real photos, diagrams, and reference images with titles, URLs, and source domains so you can render an inline :::gallery Bento collage in the chat.',
+    input_schema: schema(
+      {
+        query: string,
+        limit: integer,
+        description: {
+          type: 'string',
+          description: 'Short 3-6 word summary of what visual references to look up.',
+        },
+      },
+      ['query'],
+    ),
+    is_concurrency_safe: true,
+    timeout_ms: 25000,
+    used_backend: 'duckduckgo_images+wikimedia',
+    execute: async (args, context) =>
+      searchWebImages(str(args.query), Number(args.limit ?? 4), context.signal),
+  });
+  registry.alias('search_images', 'Web.search_images');
+}
+
+export interface WebImageResult {
+  title: string;
+  imageUrl: string;
+  thumbnailUrl: string;
+  sourceDomain: string;
+  pageUrl: string;
+  width: number;
+  height: number;
+}
+
+function domainOfUrl(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./i, '');
+  } catch {
+    return '';
+  }
+}
+
+export async function searchWebImages(
+  query: string,
+  requestedLimit: number,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{
+  query: string;
+  results: WebImageResult[];
+  galleryMarkdown: string;
+  usedBackend: string;
+}> {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) {
+    throw new Error('Image search query is empty');
+  }
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(6, Math.floor(requestedLimit)))
+    : 4;
+  const headers = {'User-Agent': 'MagicPointer/1.0'};
+  const results: WebImageResult[] = [];
+  let usedBackend = 'duckduckgo_images';
+
+  try {
+    const landing = await fetchImpl(
+      `https://duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&iax=images&ia=images`,
+      {signal, headers},
+    );
+    if (landing.ok) {
+      const landingHtml = await landing.text();
+      const vqdMatch =
+        /vqd=(?:'|")([^'"]+)(?:'|")/i.exec(landingHtml) ||
+        /vqd=([0-9-]+)/i.exec(landingHtml);
+      if (vqdMatch?.[1]) {
+        const apiUrl =
+          `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(cleanQuery)}` +
+          `&vqd=${encodeURIComponent(vqdMatch[1])}&f=,,,&p=1`;
+        const apiRes = await fetchImpl(apiUrl, {signal, headers});
+        if (apiRes.ok) {
+          const payload = asObject(await apiRes.json());
+          for (const raw of Array.isArray(payload.results)
+            ? payload.results
+            : []) {
+            const item = asObject(raw);
+            const imageUrl = str(item.image);
+            if (!/^https?:\/\//i.test(imageUrl)) {
+              continue;
+            }
+            const pageUrl = str(item.url || imageUrl);
+            results.push({
+              title: str(item.title || cleanQuery).slice(0, 140),
+              imageUrl,
+              thumbnailUrl: str(item.thumbnail || imageUrl),
+              sourceDomain: domainOfUrl(pageUrl) || domainOfUrl(imageUrl),
+              pageUrl,
+              width: Number(item.width) || 0,
+              height: Number(item.height) || 0,
+            });
+            if (results.length >= limit) {
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Fall through to Wikimedia Commons when DuckDuckGo throttles.
+  }
+
+  if (!results.length) {
+    usedBackend = 'wikimedia_commons_images';
+    const wikiUrl =
+      'https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6' +
+      `&gsrsearch=${encodeURIComponent(cleanQuery)}&gsrlimit=${limit}` +
+      '&prop=imageinfo&iiprop=url|size&iiurlwidth=960&format=json&origin=*';
+    const wikiRes = await fetchImpl(wikiUrl, {signal, headers});
+    if (wikiRes.ok) {
+      const body = asObject(await wikiRes.json());
+      const pages = asObject(asObject(body.query).pages);
+      for (const page of Object.values(pages)) {
+        const record = asObject(page);
+        const infos = Array.isArray(record.imageinfo) ? record.imageinfo : [];
+        const info = asObject(infos[0]);
+        const imageUrl = str(info.thumburl || info.url);
+        if (!/^https?:\/\//i.test(imageUrl)) {
+          continue;
+        }
+        const pageUrl = str(info.descriptionurl || imageUrl);
+        results.push({
+          title: str(record.title || cleanQuery)
+            .replace(/^File:/i, '')
+            .replace(/\.[a-z0-9]+$/i, '')
+            .slice(0, 140),
+          imageUrl,
+          thumbnailUrl: str(info.thumburl || imageUrl),
+          sourceDomain: 'commons.wikimedia.org',
+          pageUrl,
+          width: Number(info.width) || 0,
+          height: Number(info.height) || 0,
+        });
+        if (results.length >= limit) {
+          break;
+        }
+      }
+    }
+  }
+
+  const galleryLines = results.map(item => {
+    const cleanTitle = item.title.replace(/[[\]|]/g, ' ').trim() || cleanQuery;
+    const label = item.sourceDomain
+      ? `${cleanTitle} | ${item.sourceDomain}`
+      : cleanTitle;
+    return `![${label}](${item.imageUrl})`;
+  });
+  const galleryMarkdown = galleryLines.length
+    ? [':::gallery Results from the web', ...galleryLines, ':::'].join('\n')
+    : '';
+
+  return {
+    query: cleanQuery,
+    results,
+    galleryMarkdown,
+    usedBackend,
+  };
 }
 
 export function registerMemoryTools(

@@ -85,6 +85,7 @@ import {
 } from './desktop_perception';
 import {registerSelectionQuickTools} from './selection_quick_tools';
 import {registerLearnCaptureTool} from './learn_capture_tool';
+import {registerPdfFigureTools} from './pdf_figure_tool';
 import {readMcpConfigs, registerMcpDiscovery} from './mcp';
 import {settingsStore} from './model_admin';
 import {Fabric, registerRecipeTools} from './fabric';
@@ -540,6 +541,10 @@ export async function runRuntime(
       },
     },
     {name: 'web-tools', apply: ctx => registerWebTools(ctx.get('tools'))},
+    {
+      name: 'pdf-figure-tools',
+      apply: ctx => registerPdfFigureTools(ctx.get('tools'), {dataDir: userDataDir}),
+    },
     {
       name: 'wait-tools',
       apply: ctx =>

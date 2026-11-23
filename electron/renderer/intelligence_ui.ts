@@ -27,12 +27,16 @@ declare global {
   function themeCssVars(): string {
     const dark = document.documentElement.dataset.theme === 'dark';
     return dark
-      ? `:root{--bg:#181817;--surface:#222220;--surface-2:#2c2c29;--text:#ecebe6;--ink:#ecebe6;--ink-2:#c7c5bc;--muted:#9b9990;--border:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.20);--hover:rgba(255,255,255,.075);--slider-track:rgba(255,255,255,.14);--accent:#d97757;--accent-soft:rgba(217,119,87,.18);--blue:#6da7ec;--teal:#5eead4;--purple:#c4b5fd;--amber:#fbbf24;--green:#86efac;--danger:#ec7e7e;--in:#6da7ec;--in-bg:rgba(109,167,236,.15);--out:#e89275;--out-bg:rgba(232,146,117,.16);--op:#6ee7b7;--op-bg:rgba(110,231,183,.14);--norm:#fcd34d;--norm-bg:rgba(252,211,77,.14);--loss:#f87171;--loss-bg:rgba(248,113,113,.15);--alt:#c4b5fd;--alt-bg:rgba(196,181,253,.15);--param:#f9a8d4;--wire:#8b8a82;--radius:8px;--radius-lg:12px;}`
-      : `:root{--bg:#ffffff;--surface:#f7f7f5;--surface-2:#ffffff;--text:#1f1f1d;--ink:#1f1f1d;--ink-2:#4a4945;--muted:#6e6d68;--border:rgba(11,11,11,.09);--border-strong:rgba(11,11,11,.18);--hover:rgba(11,11,11,.05);--slider-track:rgba(11,11,11,.10);--accent:#d97757;--accent-soft:rgba(217,119,87,.14);--blue:#2563eb;--teal:#0f766e;--purple:#7c3aed;--amber:#d97706;--green:#16a34a;--danger:#b42318;--in:#2563eb;--in-bg:rgba(37,99,235,.09);--out:#d97757;--out-bg:rgba(217,119,87,.11);--op:#15803d;--op-bg:rgba(21,128,61,.09);--norm:#b45309;--norm-bg:rgba(180,83,9,.10);--loss:#dc2626;--loss-bg:rgba(220,38,38,.09);--alt:#7c3aed;--alt-bg:rgba(124,58,237,.10);--param:#db2777;--wire:#71717a;--radius:8px;--radius-lg:12px;}`;
+      ? `:root{--bg:#181817;--surface:#222220;--surface-2:#2c2c29;--text:#ecebe6;--ink:#ecebe6;--ink-2:#c7c5bc;--muted:#9b9990;--border:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.20);--hover:rgba(255,255,255,.075);--slider-track:rgba(255,255,255,.14);--accent:#6da7ec;--accent-soft:rgba(109,167,236,.16);--blue:#6da7ec;--teal:#5eead4;--purple:#c4b5fd;--amber:#fbbf24;--green:#86efac;--danger:#ec7e7e;--in:#6da7ec;--in-bg:rgba(109,167,236,.15);--out:#6da7ec;--out-bg:rgba(109,167,236,.16);--op:#6ee7b7;--op-bg:rgba(110,231,183,.14);--norm:#fcd34d;--norm-bg:rgba(252,211,77,.14);--loss:#f87171;--loss-bg:rgba(248,113,113,.15);--alt:#c4b5fd;--alt-bg:rgba(196,181,253,.15);--param:#f9a8d4;--wire:#8b8a82;--radius:8px;--radius-lg:12px;}`
+      : `:root{--bg:#ffffff;--surface:#f7f7f5;--surface-2:#ffffff;--text:#1f1f1d;--ink:#1f1f1d;--ink-2:#4a4945;--muted:#6e6d68;--border:rgba(11,11,11,.09);--border-strong:rgba(11,11,11,.18);--hover:rgba(11,11,11,.05);--slider-track:rgba(11,11,11,.10);--accent:#2563eb;--accent-soft:rgba(37,99,235,.12);--blue:#2563eb;--teal:#0f766e;--purple:#7c3aed;--amber:#d97706;--green:#16a34a;--danger:#b42318;--in:#2563eb;--in-bg:rgba(37,99,235,.09);--out:#2563eb;--out-bg:rgba(37,99,235,.10);--op:#15803d;--op-bg:rgba(21,128,61,.09);--norm:#b45309;--norm-bg:rgba(180,83,9,.10);--loss:#dc2626;--loss-bg:rgba(220,38,38,.09);--alt:#7c3aed;--alt-bg:rgba(124,58,237,.10);--param:#db2777;--wire:#71717a;--radius:8px;--radius-lg:12px;}`;
   }
 
   function ensureMessageListener(): void {
-    if (listenerBound || typeof window === 'undefined') {
+    if (
+      listenerBound ||
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function'
+    ) {
       return;
     }
     listenerBound = true;
@@ -158,6 +162,137 @@ declare global {
     });
   }
 
+  function hydrateSteppers(root: Element): void {
+    const steppers = Array.from(
+      root.querySelectorAll<HTMLElement>('.mp-iui-steps'),
+    );
+    for (const stepper of steppers) {
+      if (stepper.dataset.stepsHydrated === 'true') {
+        continue;
+      }
+      stepper.dataset.stepsHydrated = 'true';
+      const panels = Array.from(
+        stepper.querySelectorAll<HTMLElement>('.mp-iui-step-panel'),
+      );
+      const dots = Array.from(
+        stepper.querySelectorAll<HTMLButtonElement>('.mp-iui-step-dot'),
+      );
+      const prevBtn = stepper.querySelector<HTMLButtonElement>(
+        '.mp-iui-steps-prev',
+      );
+      const nextBtn = stepper.querySelector<HTMLButtonElement>(
+        '.mp-iui-steps-next',
+      );
+      const allBtn = stepper.querySelector<HTMLButtonElement>(
+        '.mp-iui-steps-all-btn',
+      );
+      let activeIndex = 0;
+      let viewAll = false;
+
+      const setElHidden = (el: HTMLElement | null, isHidden: boolean) => {
+        if (!el) {
+          return;
+        }
+        el.hidden = isHidden;
+        if (isHidden) {
+          el.setAttribute?.('hidden', 'true');
+        } else {
+          el.removeAttribute?.('hidden');
+        }
+      };
+
+      const sync = () => {
+        stepper.classList.toggle('is-all-steps', viewAll);
+        panels.forEach((panel, idx) => {
+          setElHidden(panel, !viewAll && idx !== activeIndex);
+        });
+        dots.forEach((dot, idx) => {
+          const isCurrent = !viewAll && idx === activeIndex;
+          dot.classList.toggle('is-active', isCurrent);
+          dot.setAttribute('aria-current', isCurrent ? 'step' : 'false');
+        });
+        if (allBtn) {
+          allBtn.textContent = viewAll ? 'Step-by-step' : 'View all steps';
+          allBtn.setAttribute('aria-pressed', String(viewAll));
+        }
+        setElHidden(prevBtn, viewAll || activeIndex <= 0);
+        if (nextBtn) {
+          setElHidden(nextBtn, viewAll);
+          nextBtn.textContent =
+            activeIndex >= panels.length - 1 ? 'Done' : 'Next';
+        }
+      };
+
+      dots.forEach((dot, idx) => {
+        dot.addEventListener('click', () => {
+          viewAll = false;
+          activeIndex = idx;
+          sync();
+        });
+      });
+      prevBtn?.addEventListener('click', () => {
+        viewAll = false;
+        activeIndex = Math.max(0, activeIndex - 1);
+        sync();
+      });
+      nextBtn?.addEventListener('click', () => {
+        viewAll = false;
+        activeIndex =
+          activeIndex >= panels.length - 1 ? 0 : activeIndex + 1;
+        sync();
+      });
+      allBtn?.addEventListener('click', () => {
+        viewAll = !viewAll;
+        sync();
+      });
+      sync();
+    }
+  }
+
+  function hydrateGalleryLightbox(root: Element): void {
+    const imgs = Array.from(
+      root.querySelectorAll<HTMLImageElement>('.mp-md-gallery-tile img'),
+    );
+    for (const img of imgs) {
+      if (img.dataset.galleryLightboxBound === 'true') {
+        continue;
+      }
+      img.dataset.galleryLightboxBound = 'true';
+      img.addEventListener('click', event => {
+        const viewer =
+          typeof document.querySelector === 'function'
+            ? document.querySelector('.mp-chat-image-viewer')
+            : null;
+        if (viewer || !document.body) {
+          // ChatView's global delegation handles `.mp-chat-image-viewer` inside Studio chat.
+          return;
+        }
+        event.stopPropagation?.();
+        const backdrop = document.createElement('div');
+        backdrop.className = 'mp-iui-lightbox-backdrop mp-gallery-lightbox';
+        backdrop.setAttribute('role', 'dialog');
+        backdrop.setAttribute('aria-modal', 'true');
+        const full = document.createElement('img');
+        full.className = 'mp-gallery-lightbox-img';
+        full.src = img.src;
+        full.alt = img.alt || '';
+        const close = () => {
+          document.removeEventListener('keydown', onKey);
+          backdrop.remove();
+        };
+        const onKey = (keyEvent: KeyboardEvent) => {
+          if (keyEvent.key === 'Escape') {
+            close();
+          }
+        };
+        backdrop.addEventListener('click', close);
+        document.addEventListener('keydown', onKey);
+        backdrop.append(full);
+        document.body.append(backdrop);
+      });
+    }
+  }
+
   function hydrate(
     root: Element | null,
     handlers?: {
@@ -169,6 +304,8 @@ declare global {
       return;
     }
     ensureMessageListener();
+    hydrateSteppers(root);
+    hydrateGalleryLightbox(root);
     if (handlers?.onAskMentor) {
       activeAskHandler = handlers.onAskMentor;
     }
