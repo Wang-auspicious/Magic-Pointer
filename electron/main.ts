@@ -10279,6 +10279,9 @@ function createDashboardWindow(initialView = 'chat') {
 }
 
 let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
+let stashEntryNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingStashEntryNotice: unknown = null;
+let bookmarkSyncStartTimer: ReturnType<typeof setTimeout> | null = null;
 
 let resourceService: ResourceCollectionService | null = null;
 let resourceXSource: XResourceSource | null = null;
@@ -10298,12 +10301,12 @@ function collectionWorkerView(
     // renderer keeps list loading alive without taking over the user's page.
     const created: Electron.BrowserWindow = new BrowserWindow({
       show: false,
-      width: 1280,
-      height: 900,
+      width: 960,
+      height: 720,
       webPreferences: {
         partition: collectionBrowserPartition(account),
         offscreen: true,
-        backgroundThrottling: false,
+        backgroundThrottling: true,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -10312,7 +10315,8 @@ function collectionWorkerView(
     });
     securityHardening.registerBrowserContents(created.webContents);
     created.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
-    created.webContents.setFrameRate(10);
+    created.webContents.setFrameRate(2);
+    created.webContents.setAudioMuted(true);
     collectionWorkerViews.set(key, created);
     created.webContents.once('destroyed', () =>
       collectionWorkerViews.delete(key),
@@ -10379,6 +10383,10 @@ function bookmarkSync(): ResourceBookmarkSync {
           if (job?.error) {
             throw new Error(job.error);
           }
+          void resources()
+            .drainCaptures()
+            .then(() => resources().drain())
+            .catch(error => log(`resource capture: ${String(error)}`));
         } finally {
           releaseCollectionWorkerView(account, 'history');
         }
@@ -10402,22 +10410,19 @@ function resourceBrowserHistory(): ResourceBrowserHistory {
           });
         }
       },
-      importLink: async (account, link, order) => {
-        const items = await resources().addBatch({
-          text: link.url,
-          sourceAccount: account,
-        });
-        initializeStashRuntime().updateResource(items[0].id, {
-          bookmarkBatch: order.batch,
-          bookmarkPosition: order.index,
-          ...(link.title ? {title: link.title} : {}),
-        });
-        void resources()
-          .drainCaptures()
-          .then(() => resources().drain())
-          .catch(error => log(`resource capture: ${String(error)}`));
-        return items[0].id;
-      },
+      importLink: async (account, link, order) =>
+        initializeStashRuntime().batchPersist(async () => {
+          const items = await resources().addBatch({
+            text: link.url,
+            sourceAccount: account,
+          });
+          initializeStashRuntime().updateResource(items[0].id, {
+            bookmarkBatch: order.batch,
+            bookmarkPosition: order.index,
+            ...(link.title ? {title: link.title} : {}),
+          });
+          return items[0].id;
+        }),
     });
   }
   return resourceHistory;
@@ -11160,7 +11165,18 @@ function initializeStashRuntime() {
     },
     onEntry: (entry: any) => {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        dashboardWindow.webContents.send('stash:entry', entry);
+        pendingStashEntryNotice = entry;
+        if (!stashEntryNotifyTimer) {
+          stashEntryNotifyTimer = setTimeout(() => {
+            stashEntryNotifyTimer = null;
+            const latest = pendingStashEntryNotice;
+            pendingStashEntryNotice = null;
+            if (latest && dashboardWindow && !dashboardWindow.isDestroyed()) {
+              dashboardWindow.webContents.send('stash:entry', latest);
+            }
+          }, 300);
+          stashEntryNotifyTimer.unref?.();
+        }
       }
       feedProactiveEvent({
         kind: entry?.media === 'image' ? 'shot' : 'clip',
@@ -13616,14 +13632,31 @@ if (gotLock) {
       try {
         initializeStashRuntime();
         xResourceSource();
-        void bookmarkSync().start().catch(error => log(`bookmark startup: ${String(error)}`));
-        void resources().drain().catch(error => log(`resource recovery: ${String(error)}`));
       } catch (error) {
         log(
           `stash runtime startup failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`,
         );
       }
     }, 1200);
+    bookmarkSyncStartTimer = setTimeout(() => {
+      bookmarkSyncStartTimer = null;
+      if (isQuitting) {
+        return;
+      }
+      try {
+        void bookmarkSync()
+          .start()
+          .catch(error => log(`bookmark startup: ${String(error)}`));
+        void resources()
+          .drain()
+          .catch(error => log(`resource recovery: ${String(error)}`));
+      } catch (error) {
+        log(
+          `bookmark sync startup failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`,
+        );
+      }
+    }, 15000);
+    bookmarkSyncStartTimer.unref?.();
     log(
       `onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`,
     );
@@ -13869,6 +13902,15 @@ if (gotLock) {
 }
 
 app.on('will-quit', () => {
+  if (stashEntryNotifyTimer) {
+    clearTimeout(stashEntryNotifyTimer);
+    stashEntryNotifyTimer = null;
+  }
+  pendingStashEntryNotice = null;
+  if (bookmarkSyncStartTimer) {
+    clearTimeout(bookmarkSyncStartTimer);
+    bookmarkSyncStartTimer = null;
+  }
   resourceHistory?.stop();
   resourceService?.stop();
   resourceBookmarks?.stop();

@@ -549,7 +549,7 @@
         markup = parsed.documentElement.outerHTML;
       }
       const document = `<html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html,body{margin:0;min-height:100%;overflow:hidden}svg{max-width:100%;height:auto}</style></head><body>${markup}</body></html>`;
-      return `<iframe class="mp-artifact-html-preview" title="${escape(entry.name || 'Artifact preview')}" sandbox="" tabindex="-1" srcdoc="${escape(document)}"></iframe>`;
+      return `<iframe class="mp-artifact-html-preview" loading="lazy" title="${escape(entry.name || 'Artifact preview')}" sandbox="" tabindex="-1" srcdoc="${escape(document)}"></iframe>`;
     }
     return `<strong>${escape(entry.name || '')}</strong><span>${escape(text.slice(0, 1800))}</span>`;
   }
@@ -1535,31 +1535,35 @@
       );
     }
     async function loadDesignContents() {
+      const batch = designRows(designArtifacts, designTab, query).slice(0, 12);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < batch.length) {
+          const item = batch[cursor++];
+          const key = `${item.artifactId}:${item.revision || 0}`;
+          if (
+            !item.artifactId ||
+            !item.conversationId ||
+            designContents.has(key)
+          ) {
+            continue;
+          }
+          try {
+            const result = await options.data.readArtifact(
+              item.conversationId,
+              item.artifactId,
+            );
+            designContents.set(
+              key,
+              result.ok ? String(result.artifact?.content || '') : '',
+            );
+          } catch {
+            designContents.set(key, '');
+          }
+        }
+      };
       await Promise.all(
-        designRows(designArtifacts, designTab, query)
-          .slice(0, 24)
-          .map(async item => {
-            const key = `${item.artifactId}:${item.revision || 0}`;
-            if (
-              !item.artifactId ||
-              !item.conversationId ||
-              designContents.has(key)
-            ) {
-              return;
-            }
-            try {
-              const result = await options.data.readArtifact(
-                item.conversationId,
-                item.artifactId,
-              );
-              designContents.set(
-                key,
-                result.ok ? String(result.artifact?.content || '') : '',
-              );
-            } catch {
-              designContents.set(key, '');
-            }
-          }),
+        Array.from({length: Math.min(2, batch.length)}, () => worker()),
       );
       if (activeView === 'designs' && designLayout === 'grid') {
         paint();
@@ -1615,7 +1619,7 @@
       let cachedDefaultModel = '';
       if (typeof options.data.models === 'function') {
         void options.data
-          .models(true)
+          .models(false)
           .then(catalog => {
             if (disposed || !catalog) {
               return;
@@ -2020,6 +2024,18 @@
           ...(mergedModelCtx ? {modelContext: mergedModelCtx} : {}),
         };
       };
+      let maStreamProgressTimer: ReturnType<typeof setTimeout> | null = null;
+      const clearMaStreamProgressTimer = () => {
+        if (maStreamProgressTimer !== null) {
+          clearTimeout(maStreamProgressTimer);
+          maStreamProgressTimer = null;
+        }
+      };
+      const prevActionsBack = actions.onBack;
+      actions.onBack = () => {
+        clearMaStreamProgressTimer();
+        prevActionsBack();
+      };
       const loadAndMount = async () => {
         const myGen = ++loadGeneration;
         try {
@@ -2060,6 +2076,7 @@
             projectOverviewHandle = handle;
             unmountProjectOverview = () => {
               disposed = true;
+              clearMaStreamProgressTimer();
               latestOverviewState = null;
               handle.unmount();
             };
@@ -2074,6 +2091,7 @@
             });
             unmountProjectOverview = () => {
               disposed = true;
+              clearMaStreamProgressTimer();
               latestOverviewState = null;
               rawUnmount();
             };
@@ -2087,8 +2105,8 @@
       };
       void loadAndMount();
       if (typeof options.data.onProjectsMaEvent === 'function') {
-        unsubProjectMa = options.data.onProjectsMaEvent(evt => {
-          if (evt && evt.projectId && evt.projectId !== projectId) {
+        const rawUnsub = options.data.onProjectsMaEvent(evt => {
+          if (disposed || (evt && evt.projectId && evt.projectId !== projectId)) {
             return;
           }
           const evtType = String(evt?.type || '');
@@ -2169,10 +2187,26 @@
                 activeRuns: nextRuns,
                 ...(runKey === 'coordinator' ? {activeRun: nextRun} : {}),
               };
-              projectOverviewHandle.update({...latestOverviewState, actions});
+              if (evtType === 'stream_progress') {
+                if (maStreamProgressTimer === null) {
+                  maStreamProgressTimer = setTimeout(() => {
+                    maStreamProgressTimer = null;
+                    if (!disposed && latestOverviewState && projectOverviewHandle) {
+                      projectOverviewHandle.update({
+                        ...latestOverviewState,
+                        actions,
+                      });
+                    }
+                  }, 120);
+                }
+              } else {
+                clearMaStreamProgressTimer();
+                projectOverviewHandle.update({...latestOverviewState, actions});
+              }
             }
             return;
           }
+          clearMaStreamProgressTimer();
           if (evtType === 'run_completed' && latestOverviewState) {
             const nextRuns = {...(latestOverviewState.activeRuns || {})};
             delete nextRuns[runKey];
@@ -2196,6 +2230,10 @@
           }
           void loadAndMount();
         });
+        unsubProjectMa = () => {
+          clearMaStreamProgressTimer();
+          rawUnsub();
+        };
       }
     }
     function paint() {

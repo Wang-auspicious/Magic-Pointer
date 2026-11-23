@@ -101,6 +101,7 @@ export class PersonalActivityService {
     }
     if (settings.screenEnabled && !this.screen) {
       this.screen = new PersonalScreenCapture(join(this.directory, 'screens'), {
+        ignorePid: process.pid,
         save: sample =>
           this.store.recordScreen({
             ...sample,

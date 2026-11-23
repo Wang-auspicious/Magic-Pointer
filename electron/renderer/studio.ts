@@ -6557,7 +6557,7 @@ function artifactRowMarkup(entry: ArtifactEntry) {
     entry.summary ||
     name;
   return `<div class="mp-artifact-item"><button type="button" class="mp-artifact-row" ${openAttrs} title="${esc(entry.from ? `${name} · ${entry.from}` : name)}">
-      <span class="mp-artifact-preview" aria-hidden="true">${studioLibraries.artifactPreviewMarkup({...entry, name}, excerpt)}</span>
+      <span class="mp-artifact-preview" aria-hidden="true">${artifactLayout === 'grid' ? studioLibraries.artifactPreviewMarkup({...entry, name}, excerpt) : ''}</span>
       <span class="mp-artifact-tile" data-kind="${esc(kind)}" aria-hidden="true">${artifactGlyph(artifactKindIcon(kind))}</span>
       <span class="mp-artifact-name">${esc(name)}</span>
       <span class="mp-artifact-meta">${esc(meta)}</span>
@@ -6674,7 +6674,7 @@ function paintArtifacts() {
 }
 
 async function loadArtifactPreviews(entries: ArtifactEntry[]) {
-  const pending = entries.slice(0, 24).filter(entry => {
+  const pending = entries.slice(0, 12).filter(entry => {
     const key = `${entry.artifactId}:${entry.revision || 0}`;
     return (
       entry.artifactId &&
@@ -6686,8 +6686,10 @@ async function loadArtifactPreviews(entries: ArtifactEntry[]) {
   if (!pending.length) {
     return;
   }
-  await Promise.all(
-    pending.map(async entry => {
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const entry = pending[cursor++];
       const key = `${entry.artifactId}:${entry.revision || 0}`;
       artifactPreviewPending.add(key);
       try {
@@ -6704,7 +6706,10 @@ async function loadArtifactPreviews(entries: ArtifactEntry[]) {
       } finally {
         artifactPreviewPending.delete(key);
       }
-    }),
+    }
+  };
+  await Promise.all(
+    Array.from({length: Math.min(2, pending.length)}, () => worker()),
   );
   if (artifactLayout === 'grid') {
     paintArtifacts();

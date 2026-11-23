@@ -176,6 +176,7 @@ export class ResourceBrowserHistory {
         }
         let added = 0;
         for (const link of page.links) {
+          await new Promise<void>(resolve => setImmediate(resolve));
           if (job.status !== 'running') {
             return;
           }

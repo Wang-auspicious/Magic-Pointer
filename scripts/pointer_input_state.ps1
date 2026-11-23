@@ -1,4 +1,4 @@
-param([switch]$SelfTest)
+﻿param([switch]$SelfTest)
 
 $ErrorActionPreference = "Stop"
 
@@ -131,6 +131,7 @@ public static class MagicPointerInputState {
             wheelHook = IntPtr.Zero;
         });
         hookThread.IsBackground = true;
+        hookThread.Priority = ThreadPriority.Highest;
         hookThread.Name = "MagicPointerWheelHook";
         hookThread.Start();
     }
@@ -207,11 +208,11 @@ public static class MagicPointerInputState {
         return DateTime.UtcNow.Ticks <= Interlocked.Read(ref captureDeadlineTicks);
     }
 
-    private static bool IsMatchingChordMessage(int message, MSLLHOOKSTRUCT value) {
+    private static bool IsMatchingChordMessage(int message, uint mouseData) {
         int configured = Interlocked.CompareExchange(ref episodeChord, 0, 0);
         if (configured == 3) return message == WM_MBUTTONDOWN || message == WM_MBUTTONUP;
         if ((configured == 1 || configured == 2) && (message == WM_XBUTTONDOWN || message == WM_XBUTTONUP)) {
-            int button = (int)((value.mouseData >> 16) & 0xffff);
+            int button = (int)((mouseData >> 16) & 0xffff);
             return button == configured;
         }
         return false;
@@ -220,12 +221,19 @@ public static class MagicPointerInputState {
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode < 0) return CallNextHookEx(wheelHook, nCode, wParam, lParam);
         int message = wParam.ToInt32();
-        MSLLHOOKSTRUCT value = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+        if (message == WM_MOUSEMOVE) {
+            return Interlocked.CompareExchange(ref swallowingLeft, 0, 0) == 1
+                ? (IntPtr)1
+                : CallNextHookEx(wheelHook, nCode, wParam, lParam);
+        }
+        uint mouseData = (message == WM_MOUSEWHEEL || message == WM_XBUTTONDOWN || message == WM_XBUTTONUP)
+            ? unchecked((uint)Marshal.ReadInt32(lParam, 8))
+            : 0u;
         if (message == WM_MOUSEWHEEL) {
-            short delta = unchecked((short)((value.mouseData >> 16) & 0xffff));
+            short delta = unchecked((short)((mouseData >> 16) & 0xffff));
             Interlocked.Add(ref wheelDelta, delta);
         }
-        if (IsMatchingChordMessage(message, value)) {
+        if (IsMatchingChordMessage(message, mouseData)) {
             bool down = message == WM_XBUTTONDOWN || message == WM_MBUTTONDOWN;
             Interlocked.Exchange(ref chordHeld, down ? 1 : 0);
             return (IntPtr)1;
@@ -238,9 +246,6 @@ public static class MagicPointerInputState {
                 Interlocked.Exchange(ref swallowingLeft, 1);
                 return (IntPtr)1;
             }
-        }
-        if (message == WM_MOUSEMOVE && Interlocked.CompareExchange(ref swallowingLeft, 0, 0) == 1) {
-            return (IntPtr)1;
         }
         if (message == WM_LBUTTONUP && Interlocked.Exchange(ref swallowingLeft, 0) == 1) {
             captureDeadlineTicks = DateTime.UtcNow.AddMilliseconds(burstGraceMs).Ticks;
@@ -307,10 +312,52 @@ public static class MagicPointerInputState {
         return b.ToString();
     }
 
+    private static readonly StringBuilder snapshotBuilder = new StringBuilder(256);
+    private static bool hasEmittedSnapshot = false;
+    private static int lastButtons = -1;
+    private static long lastHwnd = 0;
+    private static uint lastProcessId = 0;
+    private static bool lastWindowMoving = false;
+    private static bool lastSwallowingLeft = false;
+    private static bool lastCaptureArmed = false;
+    private static long lastEmitTicks = 0;
+
+    private static void WriteSnapshotLine(
+        int buttons,
+        string processName,
+        long hwnd,
+        uint processId,
+        bool isWindowMoving,
+        int scrollDelta,
+        bool swallowing,
+        bool armed
+    ) {
+        snapshotBuilder.Length = 0;
+        snapshotBuilder.Append("{\"buttons\":").Append(buttons)
+            .Append(",\"foregroundApp\":").Append(JsonString(processName))
+            .Append(",\"foregroundHwnd\":").Append(hwnd)
+            .Append(",\"foregroundProcessId\":").Append(processId)
+            .Append(",\"isWindowMoving\":").Append(isWindowMoving ? "true" : "false")
+            .Append(",\"scrollDelta\":").Append(scrollDelta)
+            .Append(",\"swallowingLeft\":").Append(swallowing ? "true" : "false")
+            .Append(",\"captureArmed\":").Append(armed ? "true" : "false")
+            .Append("}\n");
+        Console.Out.Write(snapshotBuilder.ToString());
+        Console.Out.Flush();
+    }
+
     /// <summary>Reads the whole snapshot and writes one JSON line to stdout.
     /// The key set and key order are the wire contract `electron/main.ts`
     /// parses — do not reorder or rename without changing both sides.</summary>
     public static void EmitSnapshot(int buttons) {
+        EmitSnapshotCore(buttons, true, 0);
+    }
+
+    public static void EmitSnapshotIfChanged(int buttons, int forceHeartbeatMs) {
+        EmitSnapshotCore(buttons, false, forceHeartbeatMs);
+    }
+
+    private static void EmitSnapshotCore(int buttons, bool alwaysEmit, int forceHeartbeatMs) {
         long hwnd = 0;
         uint processId = 0;
         bool isWindowMoving = false;
@@ -319,24 +366,57 @@ public static class MagicPointerInputState {
             IntPtr foreground = GetForegroundWindow();
             hwnd = foreground.ToInt64();
             uint threadId = GetWindowThreadProcessId(foreground, out processId);
-            processName = ProcessNameOf(processId);
             GUITHREADINFO info = new GUITHREADINFO();
             info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
             if (GetGUIThreadInfo(threadId, ref info) && info.hwndMoveSize != IntPtr.Zero) {
                 isWindowMoving = true;
             }
+            processName = ProcessNameOf(processId);
         } catch { }
-        Console.Out.Write(
-            "{\"buttons\":" + buttons
-            + ",\"foregroundApp\":" + JsonString(processName)
-            + ",\"foregroundHwnd\":" + hwnd
-            + ",\"foregroundProcessId\":" + processId
-            + ",\"isWindowMoving\":" + (isWindowMoving ? "true" : "false")
-            + ",\"scrollDelta\":" + TakeWheelDelta()
-            + ",\"swallowingLeft\":" + (IsSwallowingLeft() ? "true" : "false")
-            + ",\"captureArmed\":" + (IsCaptureArmed() ? "true" : "false")
-            + "}\n");
-        Console.Out.Flush();
+        int scrollDelta = TakeWheelDelta();
+        bool swallowing = IsSwallowingLeft();
+        bool armed = IsCaptureArmed();
+        long nowTicks = DateTime.UtcNow.Ticks;
+        bool heartbeatDue = forceHeartbeatMs > 0 && (nowTicks - lastEmitTicks) >= ((long)forceHeartbeatMs * TimeSpan.TicksPerMillisecond);
+        bool changed = !hasEmittedSnapshot
+            || buttons != lastButtons
+            || hwnd != lastHwnd
+            || processId != lastProcessId
+            || isWindowMoving != lastWindowMoving
+            || scrollDelta != 0
+            || swallowing != lastSwallowingLeft
+            || armed != lastCaptureArmed;
+        if (!alwaysEmit && !changed && !heartbeatDue) {
+            return;
+        }
+        hasEmittedSnapshot = true;
+        lastButtons = buttons;
+        lastHwnd = hwnd;
+        lastProcessId = processId;
+        lastWindowMoving = isWindowMoving;
+        lastSwallowingLeft = swallowing;
+        lastCaptureArmed = armed;
+        lastEmitTicks = nowTicks;
+        WriteSnapshotLine(buttons, processName, hwnd, processId, isWindowMoving, scrollDelta, swallowing, armed);
+    }
+
+    public static void RunLoop(int pollIntervalMs) {
+        while (true) {
+            try {
+                int buttons = ButtonsRaw();
+                if (IsSwallowingLeft()) buttons |= 1;
+                EmitSnapshotIfChanged(buttons, 500);
+            } catch {
+                try {
+                    int buttons = IsSwallowingLeft() ? 1 : 0;
+                    EmitSnapshot(buttons);
+                } catch {
+                    Console.Out.Write("{\"buttons\":0,\"foregroundApp\":\"\",\"foregroundHwnd\":0,\"foregroundProcessId\":0,\"isWindowMoving\":false,\"scrollDelta\":0,\"swallowingLeft\":false,\"captureArmed\":false}\n");
+                    Console.Out.Flush();
+                }
+            }
+            WaitForNextTick(pollIntervalMs);
+        }
     }
 
     // ---- Pacing --------------------------------------------------------
@@ -388,7 +468,7 @@ public static class MagicPointerInputState {
 # compiler time before its first sample. Bump CACHE_VERSION whenever the C#
 # above changes; the version is in the filename, so a new version never
 # collides with an old file.
-$CACHE_VERSION = "3"
+$CACHE_VERSION = "4"
 function Import-InputStateType {
     $cacheRoot = $env:LOCALAPPDATA
     if (-not $cacheRoot) { $cacheRoot = [System.IO.Path]::GetTempPath() }
@@ -437,31 +517,4 @@ try {
     if ($configuredInterval -ge 4 -and $configuredInterval -le 200) { $pollIntervalMs = $configuredInterval }
 } catch { }
 
-while ($true) {
-    try {
-        # Four calls per tick. Everything expensive lives in EmitSnapshot.
-        $buttons = [MagicPointerInputState]::ButtonsRaw()
-        # A swallowed press never reaches the async key state table, so the
-        # poller cannot see the very stroke the hook is capturing. The hook is
-        # the only thing that still knows, so it has to say so.
-        if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
-        [MagicPointerInputState]::EmitSnapshot($buttons)
-    } catch {
-        # One malformed tick must not kill the stream: Electron is watching
-        # this pipe for liveness, and a dead stream means no pointer state at
-        # all. Keep the shape Electron parses, keep the loop, try again.
-        #
-        # The fallback is itself guarded. If it throws too — a closed pipe, a
-        # type that failed to load — an unguarded retry inside `catch` would
-        # propagate out of the loop and take the whole stream down, which is
-        # the one outcome this block exists to prevent.
-        try {
-            $buttons = 0
-            if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
-            [MagicPointerInputState]::EmitSnapshot($buttons)
-        } catch {
-            '{"buttons":0,"foregroundApp":"","foregroundHwnd":0,"foregroundProcessId":0,"isWindowMoving":false,"scrollDelta":0,"swallowingLeft":false,"captureArmed":false}'
-        }
-    }
-    [MagicPointerInputState]::WaitForNextTick($pollIntervalMs)
-}
+[MagicPointerInputState]::RunLoop($pollIntervalMs)

@@ -104,6 +104,8 @@ function createStashRuntime(options: StashRuntimeOptions) {
   let lastClipboardImageDigest: string | null = null;
   const ownPaths: string[] = [];
   let busy = false;
+  let batchDepth = 0;
+  let persistDirty = false;
 
   function rememberOwnPath(absolutePath: string): void {
     ownPaths.push(absolutePath);
@@ -132,6 +134,11 @@ function createStashRuntime(options: StashRuntimeOptions) {
   }
 
   function persist(): void {
+    if (batchDepth > 0) {
+      persistDirty = true;
+      return;
+    }
+    persistDirty = false;
     fs.mkdirSync(baseDir, {recursive: true});
     const tmp = `${indexPath}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(entries, null, 0), 'utf8');
@@ -638,6 +645,18 @@ function createStashRuntime(options: StashRuntimeOptions) {
     updateCategory,
     updateResource,
     remove,
+    async batchPersist<T>(fn: () => Promise<T> | T): Promise<T> {
+      ensureLoaded();
+      batchDepth++;
+      try {
+        return await fn();
+      } finally {
+        batchDepth = Math.max(0, batchDepth - 1);
+        if (batchDepth === 0 && persistDirty) {
+          persist();
+        }
+      }
+    },
     baseDir,
   };
 }

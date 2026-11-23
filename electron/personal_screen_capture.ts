@@ -41,6 +41,7 @@ interface Dependencies {
   ): Promise<{text: string; usedBackend: string}>;
   foreground?(): Promise<number>;
   minimumIntervalMs?: number;
+  ignorePid?: number;
 }
 
 export class PersonalScreenCapture {
@@ -65,6 +66,8 @@ export class PersonalScreenCapture {
       input.idle ||
       input.locked ||
       !input.foreground?.hwnd ||
+      (this.dependencies.ignorePid &&
+        input.foreground.pid === this.dependencies.ignorePid) ||
       this.inFlight ||
       input.at - this.lastAt < (this.dependencies.minimumIntervalMs ?? 30000)
     ) {
