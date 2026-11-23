@@ -10287,6 +10287,7 @@ let resourceService: ResourceCollectionService | null = null;
 let resourceXSource: XResourceSource | null = null;
 let resourceHistory: ResourceBrowserHistory | null = null;
 let resourceBookmarks: ResourceBookmarkSync | null = null;
+let bookmarkSyncStarted = false;
 const collectionWorkerViews = new Map<string, Electron.BrowserWindow>();
 const collectionHistoryReaders = new Map<string, CollectionHistoryNetwork>();
 
@@ -10383,10 +10384,6 @@ function bookmarkSync(): ResourceBookmarkSync {
           if (job?.error) {
             throw new Error(job.error);
           }
-          void resources()
-            .drainCaptures()
-            .then(() => resources().drain())
-            .catch(error => log(`resource capture: ${String(error)}`));
         } finally {
           releaseCollectionWorkerView(account, 'history');
         }
@@ -10515,6 +10512,7 @@ async function readCollectionHistoryPage(
 function resources(): ResourceCollectionService {
   if (!resourceService) {
     resourceService = new ResourceCollectionService({
+      capturePaceMs: 4000,
       canOrganize: () =>
         !isQuitting && resourceXSource?.snapshot().organize === true,
       analysisTask: (taskId, requestId) =>
@@ -10556,10 +10554,6 @@ function resources(): ResourceCollectionService {
       },
     });
     resourceService.recover();
-    void resourceService
-      .drainCaptures()
-      .then(() => resourceService?.drain())
-      .catch(error => log(`resource capture: ${String(error)}`));
   }
   return resourceService;
 }
@@ -10681,6 +10675,12 @@ ipcMain.handle(
         };
       }
       if (raw.action === 'list' || raw.action === 'search') {
+        if (!bookmarkSyncStarted && !isQuitting) {
+          bookmarkSyncStarted = true;
+          void bookmarkSync()
+            .start()
+            .catch(error => log(`bookmark startup: ${String(error)}`));
+        }
         for (const entry of dashboardBrowserRegistry.snapshot()) {
           const account = entry.key.replace(/^collection:/, '');
           if (
@@ -13644,12 +13644,11 @@ if (gotLock) {
         return;
       }
       try {
-        void bookmarkSync()
-          .start()
-          .catch(error => log(`bookmark startup: ${String(error)}`));
-        void resources()
-          .drain()
-          .catch(error => log(`resource recovery: ${String(error)}`));
+        if (resourceXSource?.snapshot().organize === true) {
+          void resources()
+            .drain()
+            .catch(error => log(`resource recovery: ${String(error)}`));
+        }
       } catch (error) {
         log(
           `bookmark sync startup failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`,

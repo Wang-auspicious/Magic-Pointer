@@ -50,6 +50,7 @@ interface ResourceStash {
     patch: Partial<ResourceCollection>,
     revision?: number,
   ): CollectedResource;
+  batchPersist?<T>(fn: () => Promise<T> | T): Promise<T>;
 }
 
 interface ResourceProject {
@@ -61,6 +62,7 @@ interface ResourceProject {
 }
 
 interface CollectionOptions {
+  capturePaceMs?: number;
   capturePost?(url: string, account: string): Promise<ResourcePost>;
   fetchMedia?(
     url: string,
@@ -392,6 +394,8 @@ export class ResourceCollectionService {
       return this.captureDrain;
     }
     this.captureDrain = (async () => {
+      let attempted = 0;
+      const paceMs = Math.max(0, Number(this.options.capturePaceMs || 0));
       while (!this.stopped) {
         const next = this.list().find(
           item => item.collection?.captureStatus === 'queued',
@@ -399,6 +403,17 @@ export class ResourceCollectionService {
         if (!next || !this.options.capturePost) {
           return;
         }
+        if (attempted > 0 && paceMs > 0) {
+          for (let waited = 0; waited < paceMs && !this.stopped; waited += 100) {
+            await new Promise(resolve =>
+              setTimeout(resolve, Math.min(100, paceMs - waited)),
+            );
+          }
+          if (this.stopped) {
+            return;
+          }
+        }
+        attempted++;
         let result: CollectedResource;
         try {
           result = await this.capture(next.id);
@@ -484,39 +499,44 @@ export class ResourceCollectionService {
       const post = detail.postPath
         ? this.post(id)
         : await this.options.capturePost(detail.url, detail.sourceAccount);
-      const retained = await this.postStore(detail.sourceAccount).save(
-        id,
-        post,
-        paths =>
-          stash.updateResource(id, {
-            postPath: paths.path,
-            postTextPath: paths.textPath,
-          }),
-      );
-      const missing = post.media.filter(media => !media.localPath);
-      const latest = resourceCollection(stash.get(id)?.collection);
-      return stash.updateResource(id, {
-        postPath: retained.path,
-        postTextPath: retained.textPath,
-        thumbnailPath:
-          post.media.find(media => media.kind === 'image' && media.localPath)
-            ?.localPath || '',
-        captureStatus: missing.length ? 'partial' : 'saved',
-        captureError: missing.length
-          ? `${missing.length} media files are not yet saved. ${missing[0].error || ''}`
-          : '',
-        authorName: post.author.name,
-        platform: post.platform,
-        title:
-          latest.title === detail.title &&
-          (detail.title === detail.url ||
-            detail.title === (entry.text || '').slice(0, 80))
-            ? post.title
-            : latest.title,
-        coverage: post.coverage,
-        sourceExcerpt: post.text.slice(0, 6000),
-        exportedPath: '',
-      });
+      const saveCapture = async () => {
+        const retained = await this.postStore(detail.sourceAccount).save(
+          id,
+          post,
+          paths =>
+            stash.updateResource(id, {
+              postPath: paths.path,
+              postTextPath: paths.textPath,
+            }),
+        );
+        const missing = post.media.filter(media => !media.localPath);
+        const latest = resourceCollection(stash.get(id)?.collection);
+        return stash.updateResource(id, {
+          postPath: retained.path,
+          postTextPath: retained.textPath,
+          thumbnailPath:
+            post.media.find(media => media.kind === 'image' && media.localPath)
+              ?.localPath || '',
+          captureStatus: missing.length ? 'partial' : 'saved',
+          captureError: missing.length
+            ? `${missing.length} media files are not yet saved. ${missing[0].error || ''}`
+            : '',
+          authorName: post.author.name,
+          platform: post.platform,
+          title:
+            latest.title === detail.title &&
+            (detail.title === detail.url ||
+              detail.title === (entry.text || '').slice(0, 80))
+              ? post.title
+              : latest.title,
+          coverage: post.coverage,
+          sourceExcerpt: post.text.slice(0, 6000),
+          exportedPath: '',
+        });
+      };
+      return typeof stash.batchPersist === 'function'
+        ? await stash.batchPersist(saveCapture)
+        : await saveCapture();
     } catch (error) {
       if (!stash.get(id)) {
         removeResourcePost(stash.baseDir, id);

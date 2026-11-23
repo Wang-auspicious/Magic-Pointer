@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
-import {mkdtemp, rm} from 'node:fs/promises';
+import {appendFile, mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, {mock} from 'node:test';
 import vm from 'node:vm';
 import sharp from 'sharp';
 import ts from 'typescript';
+import {
+  ACTIVITY_EXCLUDED_DIRECTORIES,
+  PersonalActivityStore,
+} from '../electron/personal_activity';
 import {PersonalScreenCapture} from '../electron/personal_screen_capture';
+import {ResourceCollectionService} from '../electron/resource_collection_service';
 
 const {createStashRuntime} = require('../electron/stash_runtime');
 
@@ -250,4 +255,162 @@ test('Artifacts and Projects UI avoid eager iframes, list-mode preview work, and
     ),
     'mountProjectDetail must use cached models(false) instead of forcing live network /models on every project open',
   );
+});
+
+test('PersonalActivityStore bounds baseline scan by file count, depth, and excludes .tmp/venv while keeping live watch', async () => {
+  assert.ok(
+    ACTIVITY_EXCLUDED_DIRECTORIES.includes('.tmp') &&
+      ACTIVITY_EXCLUDED_DIRECTORIES.includes('venv'),
+    'ACTIVITY_EXCLUDED_DIRECTORIES must exclude .tmp and venv',
+  );
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mp-activity-bound-'));
+  const observed = path.join(root, 'observed');
+  const data = path.join(root, 'data');
+  try {
+    await mkdir(path.join(observed, '.tmp'), {recursive: true});
+    await mkdir(path.join(observed, 'venv'), {recursive: true});
+    await mkdir(path.join(observed, 'deep', 'l1', 'l2', 'l3'), {recursive: true});
+    await mkdir(path.join(observed, 'flat'), {recursive: true});
+    const topFile = path.join(observed, 'top.txt');
+    await writeFile(topFile, 'top');
+    await writeFile(path.join(observed, '.tmp', 'ignored.txt'), 'tmp');
+    await writeFile(path.join(observed, 'venv', 'ignored2.txt'), 'venv');
+    await writeFile(
+      path.join(observed, 'deep', 'l1', 'l2', 'l3', 'too_deep.txt'),
+      'deep',
+    );
+    await Promise.all(
+      Array.from({length: 50}, (_, i) =>
+        writeFile(path.join(observed, 'flat', `f-${i}.txt`), 'x'),
+      ),
+    );
+
+    const fsp = require('node:fs/promises') as typeof import('node:fs/promises');
+    const origLstat = fsp.lstat;
+    const probedTxt: string[] = [];
+    const lstatSpy = mock.method(fsp, 'lstat', (p: unknown, ...args: unknown[]) => {
+      const s = String(p);
+      if (s.startsWith(observed) && s.endsWith('.txt')) {
+        probedTxt.push(s);
+      }
+      return Reflect.apply(origLstat, fsp, [p, ...args]);
+    });
+
+    const store = new (PersonalActivityStore as unknown as new (
+      dir: string,
+      opts: Record<string, unknown>,
+    ) => PersonalActivityStore)(data, {
+      enabled: true,
+      maxBaselineFiles: 20,
+      maxBaselineDepth: 2,
+      maxBaselineMs: 5000,
+    });
+    try {
+      await store.startFileWatching([observed]);
+      assert.ok(
+        probedTxt.every(
+          p =>
+            !p.includes(`${path.sep}.tmp${path.sep}`) &&
+            !p.includes(`${path.sep}venv${path.sep}`) &&
+            !p.endsWith('too_deep.txt'),
+        ),
+        `baseline scan should skip excluded dirs and depth > 2, saw: ${probedTxt.filter(p => p.includes('.tmp') || p.includes('venv') || p.endsWith('too_deep.txt')).join(', ')}`,
+      );
+      assert.ok(
+        probedTxt.length <= 28,
+        `baseline scan must respect maxBaselineFiles=20 cap, saw ${probedTxt.length} file stats`,
+      );
+
+      lstatSpy.mock.restore();
+      await appendFile(topFile, '\nchanged');
+      const deadline = Date.now() + 3000;
+      let sawModified = false;
+      while (Date.now() < deadline) {
+        const day = await store.getDay();
+        if (
+          day?.files.some(
+            file => file.path === topFile && file.kind === 'modified',
+          )
+        ) {
+          sawModified = true;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 30));
+      }
+      assert.equal(sawModified, true, 'fs.watch must still observe live edits');
+    } finally {
+      lstatSpy.mock.restore();
+      await store.close();
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
+test('main.ts resources() and startup avoid eager drainCaptures and bookmarkSync crawl while ResourceCollectionService honors capturePaceMs', async () => {
+  const mainSrc = fs.readFileSync(path.join(ROOT, 'electron', 'main.ts'), 'utf8');
+  const fnMatch = mainSrc.match(
+    /function resources\(\): ResourceCollectionService \{[\s\S]*?\n\}/,
+  );
+  assert.ok(fnMatch, 'function resources() must exist in electron/main.ts');
+  assert.ok(
+    !fnMatch[0].includes('drainCaptures()'),
+    'resources() singleton initializer must recover() without launching an eager 300-item background drainCaptures crawl',
+  );
+  const bmMatch = mainSrc.match(
+    /function bookmarkSync\(\): ResourceBookmarkSync \{[\s\S]*?\n\}/,
+  );
+  assert.ok(bmMatch, 'function bookmarkSync() must exist in electron/main.ts');
+  assert.ok(
+    !bmMatch[0].includes('drainCaptures()'),
+    'bookmarkSync() sync must not trigger background 300-item drainCaptures crawl',
+  );
+  assert.ok(
+    !/bookmarkSyncStartTimer\s*=[\s\S]{0,400}bookmarkSync\(\)\.start\(\)/.test(
+      mainSrc,
+    ),
+    'startup must not eagerly launch bookmarkSync().start() in background; initialize lazily on Resources view',
+  );
+
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'mp-capture-pace-'));
+  try {
+    const stash = createStashRuntime({
+      baseDir: path.join(tmpDir, 'stash'),
+      clipboard: {
+        availableFormats: () => [],
+        readImage: () => ({isEmpty: () => true}),
+        readText: () => '',
+      },
+    });
+    const service = new ResourceCollectionService({
+      stash: () => stash,
+      projects: () => [],
+      attach: () => {},
+      analyze: async () => ({ok: true}),
+      capturePaceMs: 80,
+      capturePost: async url => ({
+        platform: 'web',
+        url,
+        id: url.split('/').pop() || 'id',
+        author: {name: 'Author', id: 'a1'},
+        title: 'Post',
+        text: 'Content',
+        media: [],
+        coverage: 'complete',
+      }),
+    } as ConstructorParameters<typeof ResourceCollectionService>[0]);
+    await service.addBatch({
+      text: 'https://example.com/p/1\nhttps://example.com/p/2',
+    });
+    const started = performance.now();
+    await service.drainCaptures();
+    const elapsed = performance.now() - started;
+    assert.ok(
+      elapsed >= 70,
+      `drainCaptures with capturePaceMs=80 should pace between captures (${Math.round(elapsed)}ms)`,
+    );
+    service.stop();
+  } finally {
+    await rm(tmpDir, {recursive: true, force: true});
+  }
 });

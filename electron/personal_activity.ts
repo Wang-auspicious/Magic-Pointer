@@ -192,16 +192,39 @@ export const ACTIVITY_EXCLUDED_DIRECTORIES = [
   'node_modules',
   '.git',
   '.venv',
+  'venv',
+  'env',
+  'site-packages',
   '__pycache__',
   '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.tox',
   '.cache',
   '.next',
+  '.tmp',
+  'tmp',
+  'temp',
+  '.idea',
+  '.vscode',
+  '.gradle',
+  '.cargo',
+  '.obsidian',
   'AppData',
   '$Recycle.Bin',
   'System Volume Information',
   'build',
   'dist',
+  'out',
+  'target',
+  'obj',
+  'bin',
+  'coverage',
+  '__macosx',
   'release',
+  'xwechat_files',
+  'wechat files',
+  'tencent files',
 ];
 const excludedDirectoryNames = new Set(
   ACTIVITY_EXCLUDED_DIRECTORIES.map(name => name.toLowerCase()),
@@ -323,16 +346,31 @@ export class PersonalActivityStore {
   private fileTimer?: ReturnType<typeof setTimeout>;
   private fileFlushPending = false;
   private closing = false;
+  private readonly maxBaselineFiles: number;
+  private readonly maxBaselineDepth: number;
+  private readonly maxBaselineMs: number;
+  private readonly maxFlushFiles: number;
+  private readonly maxFlushMs: number;
   constructor(
     directory: string,
     private options: {
       now?: () => number;
       enabled?: boolean;
       readonly?: boolean;
+      maxBaselineFiles?: number;
+      maxBaselineDepth?: number;
+      maxBaselineMs?: number;
+      maxFlushFiles?: number;
+      maxFlushMs?: number;
     } = {},
   ) {
     this.directory = resolve(directory);
     this.now = options.now ?? Date.now;
+    this.maxBaselineFiles = Math.max(1, options.maxBaselineFiles ?? 4000);
+    this.maxBaselineDepth = Math.max(0, options.maxBaselineDepth ?? 6);
+    this.maxBaselineMs = Math.max(10, options.maxBaselineMs ?? 1500);
+    this.maxFlushFiles = Math.max(1, options.maxFlushFiles ?? 500);
+    this.maxFlushMs = Math.max(10, options.maxFlushMs ?? 500);
   }
   open(): Promise<void> {
     return (this.opened ??= this.initialize());
@@ -735,20 +773,42 @@ export class PersonalActivityStore {
       this.state.errors.push({path, message});
     }
   }
-  private async scanFiles(path: string, root = path): Promise<FileScan> {
+  private async scanFiles(
+    path: string,
+    root = path,
+    limits: {maxFiles: number; maxDepth: number; maxMs: number} = {
+      maxFiles: this.maxBaselineFiles,
+      maxDepth: this.maxBaselineDepth,
+      maxMs: this.maxBaselineMs,
+    },
+  ): Promise<FileScan> {
     const result: FileScan = {
       files: new Map(),
       directories: new Set(),
       gaps: new Set(),
     };
-    const pending: Array<{path: string; directory?: boolean}> = [{path}];
+    const pending: Array<{path: string; depth: number; directory?: boolean}> = [
+      {path, depth: 0},
+    ];
     let cursor = 0;
+    let batchesProcessed = 0;
+    const startedAt = performance.now();
     while (cursor < pending.length && !this.closing) {
-      const batch = pending.slice(cursor, cursor + 16);
+      const remaining = limits.maxFiles - result.files.size;
+      if (remaining <= 0 || performance.now() - startedAt >= limits.maxMs) {
+        break;
+      }
+      const batchSize = Math.min(16, Math.max(1, remaining));
+      const batch = pending.slice(cursor, cursor + batchSize);
       cursor += batch.length;
       await Promise.all(
         batch.map(async item => {
-          if (this.excluded(item.path)) {
+          if (
+            this.excluded(item.path) ||
+            result.files.size >= limits.maxFiles ||
+            performance.now() - startedAt >= limits.maxMs ||
+            (item.directory && item.depth >= limits.maxDepth)
+          ) {
             return;
           }
           try {
@@ -766,6 +826,9 @@ export class PersonalActivityStore {
               if (!info.isDirectory()) {
                 return;
               }
+              if (item.depth >= limits.maxDepth) {
+                return;
+              }
             }
             const entries = await observedFilesystem.promises.readdir(
               item.path,
@@ -776,6 +839,7 @@ export class PersonalActivityStore {
               if (entry.isFile() || entry.isDirectory()) {
                 pending.push({
                   path: join(item.path, entry.name),
+                  depth: item.depth + 1,
                   directory: entry.isDirectory(),
                 });
               }
@@ -794,6 +858,9 @@ export class PersonalActivityStore {
           }
         }),
       );
+      if (++batchesProcessed % 8 === 0) {
+        await new Promise<void>(resolveYield => setImmediate(resolveYield));
+      }
     }
     return result;
   }
@@ -892,7 +959,11 @@ export class PersonalActivityStore {
         if (!(await observedFilesystem.promises.lstat(root)).isDirectory()) {
           throw new Error('Watch root must be a directory');
         }
-        const baseline = await this.scanFiles(root);
+        const baseline = await this.scanFiles(root, root, {
+          maxFiles: this.maxBaselineFiles,
+          maxDepth: this.maxBaselineDepth,
+          maxMs: this.maxBaselineMs,
+        });
         if (this.closing) {
           break;
         }
@@ -962,7 +1033,11 @@ export class PersonalActivityStore {
       const root =
         this.rootKeys.find(entry => withinPath(entry.key, pathKey(path)))
           ?.root ?? path;
-      const scanned = await this.scanFiles(path, root);
+      const scanned = await this.scanFiles(path, root, {
+        maxFiles: this.maxFlushFiles,
+        maxDepth: this.maxBaselineDepth,
+        maxMs: this.maxFlushMs,
+      });
       for (const gap of scanned.gaps) {
         this.knownSubtree(gap, scanned.files, scanned.directories);
       }
