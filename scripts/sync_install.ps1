@@ -1,7 +1,7 @@
 ﻿# 本机同步更新：验证 -> 构建 -> 打包安装器 -> 静默安装 -> 重启应用。
 # 用法：npm run sync（或直接 powershell -File scripts/sync_install.ps1）
 # 之后用户从快捷方式/托盘照常使用，不需要终端。
-param([switch]$SkipVerification)
+param([switch]$SkipVerification, [switch]$NoRelaunch)
 
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
@@ -76,8 +76,10 @@ if (Test-Path "secrets") {
     Write-Host "secrets synced to $userSecrets"
 }
 
-Write-Host "== relaunch =="
-Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe" -ArgumentList '--show' -WindowStyle Normal
+if (-not $NoRelaunch) {
+    Write-Host "== relaunch =="
+    Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe" -ArgumentList '--show' -WindowStyle Normal
+}
 Write-Host "== prune old local releases =="
 & (Join-Path $PSScriptRoot 'prune_local_releases.ps1') -KeepInstaller (Join-Path (Join-Path (Get-Location) 'release') $installer.Name)
 Write-Host "sync done"

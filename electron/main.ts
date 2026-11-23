@@ -13655,13 +13655,14 @@ if (gotLock) {
         );
       }
     }, 15000);
-    bookmarkSyncStartTimer.unref?.();
+    bookmarkSyncStartTimer?.unref?.();
     log(
       `onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`,
     );
     try {
       app.setLoginItemSettings({
         openAtLogin: fabricSettings.general?.launch_at_login === true,
+        args: ['--background'],
       });
     } catch (error) {
       log(
@@ -17049,6 +17050,7 @@ async function saveFabricSettingsPatch(
     if (impact.login) {
       app.setLoginItemSettings({
         openAtLogin: nextSettings.general?.launch_at_login === true,
+        args: ['--background'],
       });
     }
     if (impact.stash) {
@@ -17569,6 +17571,7 @@ ipcMain.on(
             try {
               app.setLoginItemSettings({
                 openAtLogin: fabricSettings.general?.launch_at_login === true,
+                args: ['--background'],
               });
             } catch (error) {
               log(

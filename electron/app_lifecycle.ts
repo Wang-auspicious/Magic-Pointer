@@ -27,13 +27,21 @@ function shouldStartHidden({
   const switches = new Set(
     (Array.isArray(argv) ? argv : []).map(value => String(value).toLowerCase()),
   );
-  if (captureMode === true || wasOpenedAtLogin === true) {
+  if (captureMode === true) {
     return true;
   }
   if (switches.has('--show') || switches.has('--dashboard')) {
     return false;
   }
-  return true;
+  if (
+    wasOpenedAtLogin === true ||
+    switches.has('--background') ||
+    switches.has('--hidden') ||
+    switches.has('--tray')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function onboardingIsReady(

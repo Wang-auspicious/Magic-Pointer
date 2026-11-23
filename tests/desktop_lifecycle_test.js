@@ -7,8 +7,10 @@ const path = require('path');
 
 const lifecycle = require('../electron/app_lifecycle');
 
-assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: false, captureMode: false }), true);
+assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: false, captureMode: false }), false);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--background'], wasOpenedAtLogin: false, captureMode: false }), true);
+assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--hidden'], wasOpenedAtLogin: false, captureMode: false }), true);
+assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--tray'], wasOpenedAtLogin: false, captureMode: false }), true);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: true, captureMode: false }), true);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: false, captureMode: true }), true);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--show'], wasOpenedAtLogin: false, captureMode: false }), false);
@@ -26,11 +28,11 @@ const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes('new Tray('), 'resident desktop app needs a visible tray entry');
 assert(main.includes("label: '退出 Magic Pointer'"), 'tray must expose a real quit action');
 assert(main.includes("app.on('second-instance'"), 'clicking the shortcut twice must reveal the existing app');
-assert(main.includes('showPrimarySurface({ activate: true })'),
+assert(/showPrimarySurface\(\{\s*activate:\s*true\s*\}\)/.test(main),
   'secondary launches must reveal onboarding or dashboard according to readiness');
-assert(main.includes('if (onboardingRequired) showOnboarding({}, options);'),
+assert(/if\s*\(onboardingRequired\)\s*\{\s*showOnboarding\(\{\},\s*options\);/.test(main),
   'unready installations must reveal the independent setup window');
-assert(main.includes("else showDashboard({ view: options.view || 'chat' }, options);"),
+assert(/\}\s*else\s*\{\s*showDashboard\(\{\s*view:\s*options\.view\s*\|\|\s*'chat'\s*\},\s*options\);/.test(main),
   'ready installations must reveal the main surface (studio), defaulting to the chat view');
 assert(main.includes("renderer', 'studio.html'"),
   'the primary window must load the studio, not the legacy dashboard page');
