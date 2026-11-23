@@ -8,6 +8,23 @@ interface ConversationBridgeResult {
   ok?: unknown;
 }
 
+function formatBackendErrorDetail(raw: string): string {
+  const detail = raw.trim();
+  if (/^model_request_timeout$/i.test(detail)) {
+    return '模型响应超时（上游流式连接长时间无响应，已自动重试仍未恢复），可直接点击重试。';
+  }
+  if (/^http_429\b|rate_limit/i.test(detail)) {
+    return '模型接口触发限流（HTTP 429，已自动退避重试仍受限），请稍候几秒后点击重试。';
+  }
+  if (/^circuit_open:/i.test(detail)) {
+    return '模型端点暂时处于冷却保护（连续请求失败），请稍候几秒后点击重试。';
+  }
+  if (/fetch failed|ECONNRESET|ETIMEDOUT|UND_ERR_/i.test(detail)) {
+    return `模型网络连接中断（${detail.slice(0, 140)}），可直接点击重试。`;
+  }
+  return `模型服务返回错误（${detail.slice(0, 160)}），可直接点击重试。`;
+}
+
 function conversationFailureMessage(
   result: ConversationBridgeResult | null | undefined,
 ): string {
@@ -24,9 +41,15 @@ function conversationFailureMessage(
       .replace(/^backend_error:\s*/i, '')
       .trim();
     if (rawDetail && rawDetail !== 'provider_unavailable') {
-      return `模型服务当前不可用（provider_unavailable：${rawDetail.slice(0, 160)}），可直接点击重试。`;
+      return formatBackendErrorDetail(rawDetail);
     }
     return '模型服务当前不可用（provider_unavailable）。';
+  }
+  if (/^backend_error:/i.test(error)) {
+    const rawDetail = error.replace(/^backend_error:\s*/i, '').trim();
+    if (rawDetail) {
+      return formatBackendErrorDetail(rawDetail);
+    }
   }
   if (error === 'bridge_timeout') {
     return 'Agent 桥接进程长时间没有任何输出（bridge_timeout）。';

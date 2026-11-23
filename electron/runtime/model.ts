@@ -973,10 +973,37 @@ function parseResponse(
   };
 }
 
+function parseRetryAfterMs(headers: Headers): number | null {
+  const rawMs = headers.get('retry-after-ms');
+  if (rawMs) {
+    const ms = Number(rawMs.trim());
+    if (Number.isFinite(ms) && ms > 0) {
+      return Math.min(30_000, Math.max(250, Math.round(ms)));
+    }
+  }
+  const rawAfter = headers.get('retry-after');
+  if (!rawAfter) {
+    return null;
+  }
+  const trimmed = rawAfter.trim();
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(30_000, Math.max(250, Math.round(seconds * 1000)));
+  }
+  const targetMs = Date.parse(trimmed);
+  if (Number.isFinite(targetMs)) {
+    const delta = targetMs - Date.now();
+    if (delta > 0) {
+      return Math.min(30_000, Math.max(250, Math.round(delta)));
+    }
+  }
+  return null;
+}
+
 async function parseStream(
   response: Response,
   mode: string,
-  request: StreamRequest,
+  request: StreamRequest & {onActivity?: () => void},
 ): Promise<Omit<StreamReply, 'usedBackend' | 'latencyMs'>> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -1183,6 +1210,9 @@ async function parseStream(
     while (true) {
       request.signal?.throwIfAborted();
       const next = await reader.read();
+      if (next.value && next.value.byteLength > 0) {
+        request.onActivity?.();
+      }
       buffer += decoder.decode(next.value, {stream: !next.done});
       let position: number;
       while ((position = buffer.indexOf('\n')) >= 0) {
@@ -1272,28 +1302,11 @@ export async function streamModel(
   ) {
     return fail(`circuit_open:${blocked.state}`);
   }
-  const idleTimeoutMs = Math.max(1, request.timeoutMs || 180_000);
-  const timeoutController = new AbortController();
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const resetIdleTimer = () => {
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-    }
-    idleTimer = setTimeout(() => {
-      timeoutController.abort(
-        new DOMException('model_request_timeout', 'TimeoutError'),
-      );
-    }, idleTimeoutMs);
-  };
-  const clearIdleTimer = () => {
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-      idleTimer = null;
-    }
-  };
-  const signal = request.signal
-    ? AbortSignal.any([timeoutController.signal, request.signal])
-    : timeoutController.signal;
+  const firstByteTimeoutMs = Math.max(1, request.timeoutMs || 180_000);
+  const streamChunkIdleMs = Math.min(firstByteTimeoutMs, 45_000);
+  const maxTimeoutRetries = 2;
+  const maxHttpRetries = 4;
+  const maxTransportRetries = 3;
   let body = {
     ...modelPayload(config, request),
     stream: process.env.MAGIC_POINTER_STREAMING !== '0',
@@ -1310,128 +1323,195 @@ export async function streamModel(
     body.stream_options = {include_usage: true};
   }
   let optionalRetry = true;
-  let attempts = 0;
+  let timeoutAttempts = 0;
+  let httpAttempts = 0;
+  let transportAttempts = 0;
   let committed = false;
-  const emit: StreamRequest['onEvent'] = event => {
-    resetIdleTimer();
-    if (
-      (event.type === 'text_delta' || event.type === 'tool_delta') &&
-      Boolean(event.text)
-    ) {
-      committed = true;
-    }
-    request.onEvent?.(event);
-  };
-  resetIdleTimer();
-  try {
-    while (true) {
-      try {
-        signal.throwIfAborted();
-        resetIdleTimer();
-        const response = await (request.fetch || fetch)(endpoint(config), {
-          method: 'POST',
-          headers: modelHeaders(
-            config,
-            mode,
-            config.baseUrl || 'https://api.openai.com/v1',
-          ),
-          body: JSON.stringify(body),
-          signal,
-          redirect: 'manual',
-        });
-        resetIdleTimer();
-        if (!response.ok) {
-          const detail = (await response.text())
-            .split(config.credential || '\0')
-            .join('[redacted]')
-            .replace(/<[^>]*>/g, ' ')
-            .slice(0, 500);
-          if (
-            /context.{0,35}(length|limit|window|exceed)|too many tokens|maximum.{0,20}tokens/i.test(
-              detail,
-            )
-          ) {
-            return finish({
-              text: '',
-              tool_calls: [],
-              provider_items: [],
-              usage: {},
-              stop_reason: 'context_overflow',
-            });
-          }
-          if (optionalRetry && response.status >= 400 && response.status < 500) {
-            optionalRetry = false;
-            const stripped = stripOptional(body);
-            if (JSON.stringify(stripped) !== JSON.stringify(body)) {
-              body = stripped;
-              continue;
-            }
-          }
-          recordHealth(request.healthFile, config, response.status, detail);
-          if (
-            (response.status >= 500 || response.status === 429) &&
-            attempts++ < 2
-          ) {
-            await delay(250 * 2 ** attempts, undefined, {signal});
-            continue;
-          }
-          return fail(`http_${response.status}:${detail}`);
-        }
-        const streaming = /text\/event-stream/i.test(
-          response.headers.get('content-type') || '',
+  while (true) {
+    const attemptController = new AbortController();
+    const signal = request.signal
+      ? AbortSignal.any([attemptController.signal, request.signal])
+      : attemptController.signal;
+    let receivedStreamBytes = false;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+    };
+    const armIdleTimer = (ms: number) => {
+      clearIdleTimer();
+      idleTimer = setTimeout(() => {
+        attemptController.abort(
+          new DOMException('model_request_timeout', 'TimeoutError'),
         );
-        const reply = streaming
-          ? await parseStream(response, mode, {...request, signal, onEvent: emit})
-          : parseResponse((await response.json()) as Json, mode);
-        if (!streaming) {
-          for (const item of reply.provider_items) {
-            if (item.thinking || item.reasoning_content) {
-              emit({
-                type: 'thinking_delta',
-                text: item.thinking || item.reasoning_content,
-              });
-            }
-          }
-          if (reply.text) {
-            emit({type: 'text_delta', text: reply.text});
+      }, ms);
+    };
+    const onActivity = () => {
+      receivedStreamBytes = true;
+      armIdleTimer(streamChunkIdleMs);
+    };
+    const emit: StreamRequest['onEvent'] = event => {
+      armIdleTimer(
+        receivedStreamBytes ? streamChunkIdleMs : firstByteTimeoutMs,
+      );
+      if (
+        (event.type === 'text_delta' || event.type === 'tool_delta') &&
+        Boolean(event.text)
+      ) {
+        committed = true;
+      }
+      request.onEvent?.(event);
+    };
+    try {
+      signal.throwIfAborted();
+      armIdleTimer(firstByteTimeoutMs);
+      const response = await (request.fetch || fetch)(endpoint(config), {
+        method: 'POST',
+        headers: modelHeaders(
+          config,
+          mode,
+          config.baseUrl || 'https://api.openai.com/v1',
+        ),
+        body: JSON.stringify(body),
+        signal,
+        redirect: 'manual',
+      });
+      armIdleTimer(
+        receivedStreamBytes ? streamChunkIdleMs : firstByteTimeoutMs,
+      );
+      if (!response.ok) {
+        const detail = (await response.text())
+          .split(config.credential || '\0')
+          .join('[redacted]')
+          .replace(/<[^>]*>/g, ' ')
+          .slice(0, 500);
+        if (
+          /context.{0,35}(length|limit|window|exceed)|too many tokens|maximum.{0,20}tokens/i.test(
+            detail,
+          )
+        ) {
+          return finish({
+            text: '',
+            tool_calls: [],
+            provider_items: [],
+            usage: {},
+            stop_reason: 'context_overflow',
+          });
+        }
+        if (
+          optionalRetry &&
+          response.status >= 400 &&
+          response.status < 500 &&
+          ![401, 403, 404, 429].includes(response.status)
+        ) {
+          optionalRetry = false;
+          const stripped = stripOptional(body);
+          if (JSON.stringify(stripped) !== JSON.stringify(body)) {
+            body = stripped;
+            continue;
           }
         }
         if (
-          !committed &&
-          reply.stop_reason === 'backend_error:empty_response' &&
-          body.stream
+          (response.status >= 500 || response.status === 429) &&
+          httpAttempts < maxHttpRetries
         ) {
-          body = {...body, stream: false};
-          delete body.stream_options;
+          httpAttempts++;
+          const retryAfterMs = parseRetryAfterMs(response.headers);
+          const baseWait = Math.min(16_000, 1000 * 2 ** (httpAttempts - 1));
+          const jitteredWait = Math.round(
+            baseWait * (0.85 + Math.random() * 0.3),
+          );
+          const waitMs =
+            firstByteTimeoutMs <= 500
+              ? Math.min(100, retryAfterMs ?? 25 * httpAttempts)
+              : Math.min(30_000, Math.max(jitteredWait, retryAfterMs ?? 0));
+          clearIdleTimer();
+          await delay(waitMs, undefined, {signal: request.signal});
           continue;
         }
-        if (reply.stop_reason.startsWith('backend_error:')) {
-          recordHealth(request.healthFile, config, null, reply.stop_reason);
-        } else {
-          recordHealth(request.healthFile, config, 200);
-        }
-        request.onEvent?.({type: 'usage', usage: reply.usage});
-        return finish(reply);
-      } catch (error) {
-        request.signal?.throwIfAborted();
-        if (timeoutController.signal.aborted) {
-          return fail('model_request_timeout');
-        }
-        const message = formatTransportError(error)
-          .split(config.credential || '\0')
-          .join('[redacted]');
-        if (!committed && attempts++ < 3) {
-          await delay(Math.min(1800, 300 * 2 ** (attempts - 1)), undefined, {
-            signal,
-          });
-          continue;
-        }
-        recordHealth(request.healthFile, config, null, message);
-        return fail(message);
+        recordHealth(request.healthFile, config, response.status, detail);
+        return fail(`http_${response.status}:${detail}`);
       }
+      const streaming = /text\/event-stream/i.test(
+        response.headers.get('content-type') || '',
+      );
+      const reply = streaming
+        ? await parseStream(response, mode, {
+            ...request,
+            signal,
+            onEvent: emit,
+            onActivity,
+          })
+        : parseResponse((await response.json()) as Json, mode);
+      if (!streaming) {
+        for (const item of reply.provider_items) {
+          if (item.thinking || item.reasoning_content) {
+            emit({
+              type: 'thinking_delta',
+              text: item.thinking || item.reasoning_content,
+            });
+          }
+        }
+        if (reply.text) {
+          emit({type: 'text_delta', text: reply.text});
+        }
+      }
+      if (
+        !committed &&
+        reply.stop_reason === 'backend_error:empty_response' &&
+        body.stream
+      ) {
+        body = {...body, stream: false};
+        delete body.stream_options;
+        continue;
+      }
+      if (reply.stop_reason.startsWith('backend_error:')) {
+        recordHealth(request.healthFile, config, null, reply.stop_reason);
+      } else {
+        recordHealth(request.healthFile, config, 200);
+      }
+      request.onEvent?.({type: 'usage', usage: reply.usage});
+      return finish(reply);
+    } catch (error) {
+      clearIdleTimer();
+      request.signal?.throwIfAborted();
+      if (attemptController.signal.aborted) {
+        if (!committed && timeoutAttempts < maxTimeoutRetries) {
+          timeoutAttempts++;
+          const waitMs =
+            firstByteTimeoutMs <= 500
+              ? 20
+              : Math.round(
+                  700 * 2 ** (timeoutAttempts - 1) * (0.85 + Math.random() * 0.3),
+                );
+          await delay(waitMs, undefined, {signal: request.signal});
+          continue;
+        }
+        recordHealth(
+          request.healthFile,
+          config,
+          null,
+          'model_request_timeout',
+        );
+        return fail('model_request_timeout');
+      }
+      const message = formatTransportError(error)
+        .split(config.credential || '\0')
+        .join('[redacted]');
+      if (!committed && transportAttempts < maxTransportRetries) {
+        transportAttempts++;
+        await delay(Math.min(1800, 300 * 2 ** (transportAttempts - 1)), undefined, {
+          signal: request.signal,
+        });
+        continue;
+      }
+      recordHealth(request.healthFile, config, null, message);
+      return fail(message);
+    } finally {
+      clearIdleTimer();
     }
-  } finally {
-    clearIdleTimer();
   }
 }
 

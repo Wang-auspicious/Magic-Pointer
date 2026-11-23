@@ -1192,15 +1192,19 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             timeoutMs: timeout,
             onEvent: event => {
               if (event.type === 'text_delta') {
+                lastProgress = Date.now();
                 emit({kind: 'model_chunk', text: event.text ?? ''});
               }
               if (event.type === 'thinking_delta') {
+                lastProgress = Date.now();
                 emit({kind: 'reasoning_chunk', text: event.text ?? ''});
               }
               if (event.type === 'tool_delta') {
+                lastProgress = Date.now();
                 emit({kind: 'tool_delta', ...event});
               }
               if (event.type === 'usage') {
+                lastProgress = Date.now();
                 emit({kind: 'model_usage', usage: event.usage});
               }
             },
@@ -1304,6 +1308,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           answer = reply.stop_reason;
           break;
         }
+        lastProgress = Date.now();
       }
       const ids = new Set(
         session

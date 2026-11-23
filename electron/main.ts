@@ -7251,7 +7251,12 @@ ipcMain.handle(
         const failed =
           !stopped && (parsed?.ok !== true || !rawCombinedAnswer.trim());
         const error = failed ? conversationFailureMessage(parsed) : '';
-        const finalAnswer = rawCombinedAnswer;
+        const finalAnswer =
+          failed && /^backend_error:/i.test(rawCombinedAnswer.trim())
+            ? /^backend_error:/i.test(String(progress.answer || '').trim())
+              ? ''
+              : String(progress.answer || '')
+            : rawCombinedAnswer;
         const finalThinking = String(
           parsed?.thinking || progress.thinking || '',
         );
@@ -8583,6 +8588,12 @@ async function sendConversation(
           (receipt: any) => receipt?.status === 'unverified',
         );
       const error = failed ? conversationFailureMessage(parsed) : '';
+      const finalAnswer =
+        failed && /^backend_error:/i.test(cleanParsedAnswer.trim())
+          ? /^backend_error:/i.test(String(progress.answer || '').trim())
+            ? ''
+            : String(progress.answer || '')
+          : cleanParsedAnswer;
       const settled = {
         ...parsed,
         ...(previousTurn
@@ -8610,7 +8621,7 @@ async function sendConversation(
           (typeof parsed?.hasPendingWork === 'boolean'
             ? parsed.hasPendingWork
             : failed || terminated || Boolean(parsed?.pendingInput)),
-        answer: cleanParsedAnswer,
+        answer: finalAnswer,
         thinking: String(
           parsed?.thinking || progress.thinking || previousTurn?.thinking || '',
         ),
