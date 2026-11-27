@@ -66,10 +66,21 @@ import {
   relevantSkills,
 } from './agent_services';
 import {
+  buildCompanionMemoryBlock,
+  findRecurringTopicHit,
+  loadCompanionMemory,
+  recordCompanionTurn,
+} from './learn_companion_memory';
+import {
   CORE_LEARN_SYSTEM,
   LEARN_PROMPT_VERSION,
   buildLearnPrimingMessages,
+  buildLearnTurnSteerMessage,
   buildLearnVoicePrompt,
+  classifyLearnTurn,
+  detectConversationTension,
+  detectLearnTopicDomain,
+  getLearnSamplingProfile,
 } from './learn_voice';
 export {LEARN_PROMPT_VERSION} from './learn_voice';
 import {
@@ -113,6 +124,8 @@ export interface ModelRequest {
   forkMessageCount?: number;
   maxTokens?: number;
   temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
   presencePenalty?: number;
   timeoutMs?: number;
   onEvent?: (event: ModelEvent) => void;
@@ -668,6 +681,9 @@ export async function buildSystemPrompt(
             typeof buildLearnVoicePrompt
           >[0]['courseMemory'])
         : null;
+    const companionMemory = buildCompanionMemoryBlock(
+      loadCompanionMemory(options.userDataDir),
+    );
     const learnBase = buildLearnVoicePrompt({
       topicText: options.instruction,
       hasSelection: options.hasSelection,
@@ -676,6 +692,7 @@ export async function buildSystemPrompt(
       workspace: options.workspace,
       memory,
       courseMemory,
+      companionMemory,
     });
     return overlaySection ? `${learnBase}\n\n${overlaySection}` : learnBase;
   }
@@ -1081,6 +1098,33 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
             : '') +
           `\n\n当前生效权限模式：${session.permissionMode(options.permissionMode ?? 'default')}。以本条运行状态为准，历史模式描述不代表当前权限。`;
       const contexts = await options.requestContext?.({sessionId: session.id, turn: turns, signal}) ?? [];
+      const learnTurnState = () => {
+        const derivedUserMessages = session
+          .deriveMessages()
+          .filter(
+            message =>
+              message.role === 'user' &&
+              !message.injected &&
+              message.origin !== 'data' &&
+              typeof message.content === 'string',
+          );
+        const firstUserText = String(
+          derivedUserMessages[0]?.content || options.instruction || '',
+        );
+        const latestUserText = String(
+          derivedUserMessages.at(-1)?.content || options.instruction || '',
+        );
+        const priorUserMessages = derivedUserMessages
+          .slice(0, -1)
+          .map(item => String(item.content || ''))
+          .filter(Boolean);
+        return {
+          firstUserText,
+          latestUserText,
+          priorUserMessages,
+          turnIndex: Math.max(0, derivedUserMessages.length - 1),
+        };
+      };
       const learnPrimingMessages = (): AgentMessage[] => {
         if (
           !learnMode ||
@@ -1088,29 +1132,43 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         ) {
           return [];
         }
-        const firstUser = session
-          .deriveMessages()
-          .find(
-            message =>
-              message.role === 'user' &&
-              !message.injected &&
-              message.origin !== 'data' &&
-              typeof message.content === 'string',
-          );
-        return buildLearnPrimingMessages(
-          String(firstUser?.content || options.instruction || ''),
-        );
+        return buildLearnPrimingMessages(learnTurnState().firstUserText);
       };
-      const projectRequestMessages = (): AgentMessage[] => [
-        ...learnPrimingMessages(),
-        ...modelMessages(),
-        ...contexts.map(context => ({
-          role: 'user' as const,
-          origin: 'data' as const,
-          injected: true,
-          content: `[Module context: ${context.moduleId}]\n${context.text}`,
-        })),
-      ];
+      const projectRequestMessages = (): AgentMessage[] => {
+        const assembled: AgentMessage[] = [
+          ...learnPrimingMessages(),
+          ...modelMessages(),
+          ...contexts.map(context => ({
+            role: 'user' as const,
+            origin: 'data' as const,
+            injected: true,
+            content: `[Module context: ${context.moduleId}]\n${context.text}`,
+          })),
+        ];
+        if (
+          learnMode &&
+          !outputArtifact &&
+          assembled.at(-1)?.role === 'user'
+        ) {
+          const state = learnTurnState();
+          const companionState = loadCompanionMemory(options.userDataDir);
+          const recurringTopicHit = findRecurringTopicHit(
+            companionState,
+            state.latestUserText,
+          );
+          const steer = buildLearnTurnSteerMessage({
+            instruction: state.latestUserText,
+            turnIndex: state.turnIndex,
+            domain: detectLearnTopicDomain(state.latestUserText),
+            priorUserMessages: state.priorUserMessages,
+            recurringTopicHit,
+          });
+          if (steer) {
+            assembled.push(steer);
+          }
+        }
+        return assembled;
+      };
       const estimated = estimateTokens(
         requestSystem +
           JSON.stringify(schemas) +
@@ -1187,7 +1245,9 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
               : undefined,
             maxTokens: outputTokens,
             ...(learnMode
-              ? {temperature: 1.1, presencePenalty: 0.15}
+              ? getLearnSamplingProfile(
+                  classifyLearnTurn(learnTurnState().latestUserText),
+                )
               : {}),
             timeoutMs: timeout,
             onEvent: event => {
@@ -1900,6 +1960,42 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         emit({kind: 'cleanup_error', error: String(result.reason)});
       }
     }
+  }
+  if (
+    reason === 'completed' &&
+    isLearnWorkMode(options.workMode) &&
+    options.instruction?.trim() &&
+    answer.trim()
+  ) {
+    try {
+      const priorUsers = session
+        .deriveMessages()
+        .filter(
+          message =>
+            message.role === 'user' &&
+            !message.injected &&
+            message.origin !== 'data' &&
+            typeof message.content === 'string',
+        )
+        .slice(0, -1)
+        .map(message => String(message.content || ''));
+      const companionBefore = loadCompanionMemory(options.userDataDir);
+      const recurringHit = findRecurringTopicHit(
+        companionBefore,
+        options.instruction,
+      );
+      const tension = detectConversationTension({
+        instruction: options.instruction,
+        priorUserMessages: priorUsers,
+        recurringTopicHit: recurringHit,
+      });
+      recordCompanionTurn(options.userDataDir, {
+        sessionId: session.id,
+        userText: options.instruction,
+        assistantText: answer,
+        tension,
+      });
+    } catch {}
   }
   const recoveryPending = session.pendingRecovery().length > 0;
   let outcomes = taskOutcomes(session.events);

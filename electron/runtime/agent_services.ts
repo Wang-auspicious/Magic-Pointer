@@ -289,6 +289,8 @@ export function initialToolNames(context: {
         'Document.crop_pdf_figure',
         'Knowledge.search',
         'Knowledge.read',
+        'LearnMemory.remember',
+        'LearnMemory.forget',
         'Artifact.create',
         'Artifact.read',
         'Artifact.update',

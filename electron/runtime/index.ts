@@ -85,6 +85,7 @@ import {
 } from './desktop_perception';
 import {registerSelectionQuickTools} from './selection_quick_tools';
 import {registerLearnCaptureTool} from './learn_capture_tool';
+import {registerLearnCompanionMemoryTools} from './learn_companion_memory';
 import {registerPdfFigureTools} from './pdf_figure_tool';
 import {readMcpConfigs, registerMcpDiscovery} from './mcp';
 import {settingsStore} from './model_admin';
@@ -638,6 +639,11 @@ export async function runRuntime(
             ? {vaultDir: String(payload.knowledgeVaultDir)}
             : {}),
         }),
+    },
+    {
+      name: 'learn-companion-memory-tools',
+      apply: ctx =>
+        registerLearnCompanionMemoryTools(ctx.get('tools'), userDataDir),
     },
     {
       name: 'cu-desktop-workspace-tools',

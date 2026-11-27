@@ -106,6 +106,8 @@ export interface StreamRequest {
   forkMessageCount?: number;
   maxTokens?: number;
   temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
   presencePenalty?: number;
   timeoutMs?: number;
   fetch?: typeof fetch;
@@ -534,6 +536,8 @@ function stripOptional(body: Json): Json {
     reasoning: _reasoning,
     reasoning_effort: _effort,
     temperature: _temperature,
+    top_p: _topP,
+    frequency_penalty: _frequencyPenalty,
     presence_penalty: _presencePenalty,
     output_config: output,
     ...required
@@ -592,6 +596,8 @@ export function modelPayload(
     | 'tools'
     | 'maxTokens'
     | 'temperature'
+    | 'topP'
+    | 'frequencyPenalty'
     | 'presencePenalty'
     | 'forkMessageCount'
   >,
@@ -857,6 +863,12 @@ export function modelPayload(
       max_tokens: maxTokens,
       ...(typeof request.temperature === 'number' && !rejectsTemperature
         ? {temperature: request.temperature}
+        : {}),
+      ...(typeof request.topP === 'number' && !rejectsTemperature
+        ? {top_p: request.topP}
+        : {}),
+      ...(typeof request.frequencyPenalty === 'number' && !rejectsTemperature
+        ? {frequency_penalty: request.frequencyPenalty}
         : {}),
       ...(typeof request.presencePenalty === 'number' && !rejectsTemperature
         ? {presence_penalty: request.presencePenalty}

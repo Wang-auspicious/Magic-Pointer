@@ -253,7 +253,7 @@ test('Item 1: Interrupted turn preserves partial answer and avoids red crash box
 
 test('Item 2: Tool group updates keep header DOM stable, hide Loaded tools, humanize patterns, and restrict Learn repo scanning', () => {
   const learnVoice = require('../electron/runtime/learn_voice');
-  assert.equal(learnVoice.LEARN_PROMPT_VERSION, 'learn-v4.0-cognitive-studio-20261122');
+  assert.equal(learnVoice.LEARN_PROMPT_VERSION, 'learn-v6.0-real-mentor-memory-20261127');
   const conceptualPrompt = learnVoice.buildLearnVoicePrompt({
     topicText: '老师在讲大数据spark程序，完全看不懂怎么办',
     localDate: '2026-11-19',
